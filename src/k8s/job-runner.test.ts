@@ -370,6 +370,9 @@ describe('JobRunner', () => {
         },
       };
 
+      // Attach rejection handler before emitting so it's never unhandled
+      const expectation = expect(streamPromise).rejects.toThrow('Job failed');
+
       mockSubscriber.emit(
         'message',
         'nanoclaw:messages:test-group',
@@ -378,8 +381,7 @@ describe('JobRunner', () => {
 
       // Wait for promise chain to resolve
       await vi.runAllTimersAsync();
-
-      await expect(streamPromise).rejects.toThrow('Job failed');
+      await expectation;
 
       vi.useRealTimers();
     });
@@ -506,10 +508,12 @@ describe('JobRunner', () => {
 
       const promise = jobRunner.waitForJobCompletion('test-job');
 
+      // Attach rejection handler before advancing time so it's never unhandled
+      const expectation = expect(promise).rejects.toThrow('Timeout');
+
       // Advance time beyond max wait time (30 min = 1800000ms)
       await vi.advanceTimersByTimeAsync(1800001);
-
-      await expect(promise).rejects.toThrow('Timeout');
+      await expectation;
 
       vi.useRealTimers();
     });

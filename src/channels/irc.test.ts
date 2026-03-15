@@ -52,6 +52,10 @@ vi.mock('irc-upd', () => {
       // noop in test
     }
 
+    join(channel: string) {
+      // noop in test
+    }
+
     disconnect(message: string, callback?: Function) {
       this.conn.connected = false;
       if (callback) callback();
@@ -84,7 +88,7 @@ function createTestOpts(overrides?: Partial<IRCChannelOpts>): IRCChannelOpts {
     onMessage: vi.fn(),
     onChatMetadata: vi.fn(),
     registeredGroups: vi.fn(() => ({
-      'irc:#test@irc.example.com': {
+      'irc:#test@irc.example.com:6697': {
         name: 'Test Channel',
         folder: 'test-channel',
         trigger: '@Andy',
@@ -181,7 +185,7 @@ describe('IRCChannel', () => {
       }
 
       expect(opts.onMessage).toHaveBeenCalledWith(
-        'irc:#test@irc.example.com',
+        'irc:#test@irc.example.com:6697',
         expect.objectContaining({
           sender: 'alice',
           sender_name: 'alice',
@@ -214,7 +218,7 @@ describe('IRCChannel', () => {
       }
 
       expect(opts.onMessage).toHaveBeenCalledWith(
-        'irc:#test@irc.example.com',
+        'irc:#test@irc.example.com:6697',
         expect.objectContaining({
           content: '@Andy @TestBot what time is it?',
         }),
@@ -244,7 +248,7 @@ describe('IRCChannel', () => {
       }
 
       expect(opts.onMessage).toHaveBeenCalledWith(
-        'irc:#test@irc.example.com',
+        'irc:#test@irc.example.com:6697',
         expect.objectContaining({
           content: '@Andy hello',
         }),
@@ -311,7 +315,7 @@ describe('IRCChannel', () => {
       const channel = new IRCChannel(config, opts);
       await channel.connect();
 
-      await channel.sendMessage('irc:#test@irc.example.com', 'Hello');
+      await channel.sendMessage('irc:#test@irc.example.com:6697', 'Hello');
     });
 
     it('splits messages exceeding 480 characters', async () => {
@@ -321,7 +325,7 @@ describe('IRCChannel', () => {
       await channel.connect();
 
       const longText = 'x'.repeat(1000);
-      await channel.sendMessage('irc:#test@irc.example.com', longText);
+      await channel.sendMessage('irc:#test@irc.example.com:6697', longText);
     });
 
     it('handles send failure gracefully', async () => {
@@ -331,7 +335,7 @@ describe('IRCChannel', () => {
       await channel.connect();
 
       await expect(
-        channel.sendMessage('irc:#test@irc.example.com', 'Hello'),
+        channel.sendMessage('irc:#test@irc.example.com:6697', 'Hello'),
       ).resolves.toBeUndefined();
     });
 
@@ -340,7 +344,7 @@ describe('IRCChannel', () => {
       const config = createConfig();
       const channel = new IRCChannel(config, opts);
 
-      await channel.sendMessage('irc:#test@irc.example.com', 'No client');
+      await channel.sendMessage('irc:#test@irc.example.com:6697', 'No client');
     });
   });
 
@@ -350,7 +354,7 @@ describe('IRCChannel', () => {
       const config = createConfig({ server: 'irc.example.com' });
       const channel = new IRCChannel(config, opts);
 
-      expect(channel.ownsJid('irc:#test@irc.example.com')).toBe(true);
+      expect(channel.ownsJid('irc:#test@irc.example.com:6697')).toBe(true);
     });
 
     it('does not own JIDs for different server', () => {

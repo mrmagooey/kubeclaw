@@ -10,6 +10,8 @@ const { mocked: mockRedis } = vi.hoisted(() => {
   const mockZrem = vi.fn().mockResolvedValue(1);
   const mockZrange = vi.fn().mockResolvedValue([]);
   const mockXadd = vi.fn().mockResolvedValue('stream-id');
+  // acquireSlot uses eval with a Lua script; return 1 = slot acquired, 0 = at limit
+  const mockEval = vi.fn().mockResolvedValue(1);
 
   return {
     mocked: {
@@ -22,6 +24,7 @@ const { mocked: mockRedis } = vi.hoisted(() => {
       zrem: mockZrem,
       zrange: mockZrange,
       xadd: mockXadd,
+      eval: mockEval,
       reset: () => {
         mockIncr.mockResolvedValue(1);
         mockDecr.mockResolvedValue(0);
@@ -32,6 +35,7 @@ const { mocked: mockRedis } = vi.hoisted(() => {
         mockZrem.mockResolvedValue(1);
         mockZrange.mockResolvedValue([]);
         mockXadd.mockResolvedValue('stream-id');
+        mockEval.mockResolvedValue(1);
       },
     },
   };
@@ -48,6 +52,7 @@ vi.mock('./redis-client.js', () => ({
     zrem: mockRedis.zrem,
     zrange: mockRedis.zrange,
     xadd: mockRedis.xadd,
+    eval: mockRedis.eval,
   })),
   getQueueKey: vi.fn(() => 'nanoclaw:job-queue'),
   getConcurrencyKey: vi.fn(() => 'nanoclaw:concurrency'),
@@ -88,7 +93,7 @@ describe('DistributedJobQueue', () => {
       await queue.enqueueMessageCheck('group1@g.us');
       await vi.advanceTimersByTimeAsync(10);
 
-      expect(mockRedis.incr).toHaveBeenCalledWith('nanoclaw:concurrency');
+      expect(mockRedis.eval).toHaveBeenCalled();
       expect(processMessages).toHaveBeenCalledWith('group1@g.us');
     });
 
@@ -116,7 +121,7 @@ describe('DistributedJobQueue', () => {
     });
 
     it('queues in Redis when at concurrency limit', async () => {
-      mockRedis.incr.mockResolvedValue(11);
+      mockRedis.eval.mockResolvedValue(0); // 0 = slot not acquired (at limit)
       const processMessages = vi.fn().mockResolvedValue(true);
       queue.setProcessMessagesFn(processMessages);
 
@@ -194,7 +199,7 @@ describe('DistributedJobQueue', () => {
     });
 
     it('queues in Redis when at concurrency limit', async () => {
-      mockRedis.incr.mockResolvedValue(11);
+      mockRedis.eval.mockResolvedValue(0); // 0 = slot not acquired (at limit)
       const processMessages = vi.fn().mockResolvedValue(true);
       queue.setProcessMessagesFn(processMessages);
 
@@ -257,7 +262,7 @@ describe('DistributedJobQueue', () => {
       const processMessages = vi.fn().mockResolvedValue(true);
       queue.setProcessMessagesFn(processMessages);
 
-      mockRedis.incr.mockResolvedValue(11);
+      mockRedis.eval.mockResolvedValue(0); // 0 = slot not acquired (at limit)
       await queue.enqueueMessageCheck('group1@g.us');
 
       expect(mockRedis.zadd).toHaveBeenCalled();
