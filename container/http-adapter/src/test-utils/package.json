@@ -1,0 +1,10 @@
+{
+  "name": "nanoclaw-test-utils",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    "./redis-mock": "./redis-mock.ts",
+    "./fs-mock": "./fs-mock.ts"
+  }
+}

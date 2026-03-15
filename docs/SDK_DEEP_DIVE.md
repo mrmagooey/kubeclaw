@@ -61,41 +61,41 @@ All complex logic — the agent loop, tool execution, background tasks, teammate
 
 Full `Options` type from the official docs:
 
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| `abortController` | `AbortController` | `new AbortController()` | Controller for cancelling operations |
-| `additionalDirectories` | `string[]` | `[]` | Additional directories Claude can access |
-| `agents` | `Record<string, AgentDefinition>` | `undefined` | Programmatically define subagents (not agent teams — no orchestration) |
-| `allowDangerouslySkipPermissions` | `boolean` | `false` | Required when using `permissionMode: 'bypassPermissions'` |
-| `allowedTools` | `string[]` | All tools | List of allowed tool names |
-| `betas` | `SdkBeta[]` | `[]` | Beta features (e.g., `['context-1m-2025-08-07']` for 1M context) |
-| `canUseTool` | `CanUseTool` | `undefined` | Custom permission function for tool usage |
-| `continue` | `boolean` | `false` | Continue the most recent conversation |
-| `cwd` | `string` | `process.cwd()` | Current working directory |
-| `disallowedTools` | `string[]` | `[]` | List of disallowed tool names |
-| `enableFileCheckpointing` | `boolean` | `false` | Enable file change tracking for rewinding |
-| `env` | `Dict<string>` | `process.env` | Environment variables |
-| `executable` | `'bun' \| 'deno' \| 'node'` | Auto-detected | JavaScript runtime |
-| `fallbackModel` | `string` | `undefined` | Model to use if primary fails |
-| `forkSession` | `boolean` | `false` | When resuming, fork to a new session ID instead of continuing original |
-| `hooks` | `Partial<Record<HookEvent, HookCallbackMatcher[]>>` | `{}` | Hook callbacks for events |
-| `includePartialMessages` | `boolean` | `false` | Include partial message events (streaming) |
-| `maxBudgetUsd` | `number` | `undefined` | Maximum budget in USD for the query |
-| `maxThinkingTokens` | `number` | `undefined` | Maximum tokens for thinking process |
-| `maxTurns` | `number` | `undefined` | Maximum conversation turns |
-| `mcpServers` | `Record<string, McpServerConfig>` | `{}` | MCP server configurations |
-| `model` | `string` | Default from CLI | Claude model to use |
-| `outputFormat` | `{ type: 'json_schema', schema: JSONSchema }` | `undefined` | Structured output format |
-| `pathToClaudeCodeExecutable` | `string` | Uses built-in | Path to Claude Code executable |
-| `permissionMode` | `PermissionMode` | `'default'` | Permission mode |
-| `plugins` | `SdkPluginConfig[]` | `[]` | Load custom plugins from local paths |
-| `resume` | `string` | `undefined` | Session ID to resume |
-| `resumeSessionAt` | `string` | `undefined` | Resume session at a specific message UUID |
-| `sandbox` | `SandboxSettings` | `undefined` | Sandbox behavior configuration |
-| `settingSources` | `SettingSource[]` | `[]` (none) | Which filesystem settings to load. Must include `'project'` to load CLAUDE.md |
-| `stderr` | `(data: string) => void` | `undefined` | Callback for stderr output |
-| `systemPrompt` | `string \| { type: 'preset'; preset: 'claude_code'; append?: string }` | `undefined` | System prompt. Use preset to get Claude Code's prompt, with optional `append` |
-| `tools` | `string[] \| { type: 'preset'; preset: 'claude_code' }` | `undefined` | Tool configuration |
+| Property                          | Type                                                                   | Default                 | Description                                                                   |
+| --------------------------------- | ---------------------------------------------------------------------- | ----------------------- | ----------------------------------------------------------------------------- |
+| `abortController`                 | `AbortController`                                                      | `new AbortController()` | Controller for cancelling operations                                          |
+| `additionalDirectories`           | `string[]`                                                             | `[]`                    | Additional directories Claude can access                                      |
+| `agents`                          | `Record<string, AgentDefinition>`                                      | `undefined`             | Programmatically define subagents (not agent teams — no orchestration)        |
+| `allowDangerouslySkipPermissions` | `boolean`                                                              | `false`                 | Required when using `permissionMode: 'bypassPermissions'`                     |
+| `allowedTools`                    | `string[]`                                                             | All tools               | List of allowed tool names                                                    |
+| `betas`                           | `SdkBeta[]`                                                            | `[]`                    | Beta features (e.g., `['context-1m-2025-08-07']` for 1M context)              |
+| `canUseTool`                      | `CanUseTool`                                                           | `undefined`             | Custom permission function for tool usage                                     |
+| `continue`                        | `boolean`                                                              | `false`                 | Continue the most recent conversation                                         |
+| `cwd`                             | `string`                                                               | `process.cwd()`         | Current working directory                                                     |
+| `disallowedTools`                 | `string[]`                                                             | `[]`                    | List of disallowed tool names                                                 |
+| `enableFileCheckpointing`         | `boolean`                                                              | `false`                 | Enable file change tracking for rewinding                                     |
+| `env`                             | `Dict<string>`                                                         | `process.env`           | Environment variables                                                         |
+| `executable`                      | `'bun' \| 'deno' \| 'node'`                                            | Auto-detected           | JavaScript runtime                                                            |
+| `fallbackModel`                   | `string`                                                               | `undefined`             | Model to use if primary fails                                                 |
+| `forkSession`                     | `boolean`                                                              | `false`                 | When resuming, fork to a new session ID instead of continuing original        |
+| `hooks`                           | `Partial<Record<HookEvent, HookCallbackMatcher[]>>`                    | `{}`                    | Hook callbacks for events                                                     |
+| `includePartialMessages`          | `boolean`                                                              | `false`                 | Include partial message events (streaming)                                    |
+| `maxBudgetUsd`                    | `number`                                                               | `undefined`             | Maximum budget in USD for the query                                           |
+| `maxThinkingTokens`               | `number`                                                               | `undefined`             | Maximum tokens for thinking process                                           |
+| `maxTurns`                        | `number`                                                               | `undefined`             | Maximum conversation turns                                                    |
+| `mcpServers`                      | `Record<string, McpServerConfig>`                                      | `{}`                    | MCP server configurations                                                     |
+| `model`                           | `string`                                                               | Default from CLI        | Claude model to use                                                           |
+| `outputFormat`                    | `{ type: 'json_schema', schema: JSONSchema }`                          | `undefined`             | Structured output format                                                      |
+| `pathToClaudeCodeExecutable`      | `string`                                                               | Uses built-in           | Path to Claude Code executable                                                |
+| `permissionMode`                  | `PermissionMode`                                                       | `'default'`             | Permission mode                                                               |
+| `plugins`                         | `SdkPluginConfig[]`                                                    | `[]`                    | Load custom plugins from local paths                                          |
+| `resume`                          | `string`                                                               | `undefined`             | Session ID to resume                                                          |
+| `resumeSessionAt`                 | `string`                                                               | `undefined`             | Resume session at a specific message UUID                                     |
+| `sandbox`                         | `SandboxSettings`                                                      | `undefined`             | Sandbox behavior configuration                                                |
+| `settingSources`                  | `SettingSource[]`                                                      | `[]` (none)             | Which filesystem settings to load. Must include `'project'` to load CLAUDE.md |
+| `stderr`                          | `(data: string) => void`                                               | `undefined`             | Callback for stderr output                                                    |
+| `systemPrompt`                    | `string \| { type: 'preset'; preset: 'claude_code'; append?: string }` | `undefined`             | System prompt. Use preset to get Claude Code's prompt, with optional `append` |
+| `tools`                           | `string[] \| { type: 'preset'; preset: 'claude_code' }`                | `undefined`             | Tool configuration                                                            |
 
 ### PermissionMode
 
@@ -120,21 +120,26 @@ Programmatic subagents (NOT agent teams — these are simpler, no inter-agent co
 
 ```typescript
 type AgentDefinition = {
-  description: string;  // When to use this agent
-  tools?: string[];     // Allowed tools (inherits all if omitted)
-  prompt: string;       // Agent's system prompt
+  description: string; // When to use this agent
+  tools?: string[]; // Allowed tools (inherits all if omitted)
+  prompt: string; // Agent's system prompt
   model?: 'sonnet' | 'opus' | 'haiku' | 'inherit';
-}
+};
 ```
 
 ### McpServerConfig
 
 ```typescript
 type McpServerConfig =
-  | { type?: 'stdio'; command: string; args?: string[]; env?: Record<string, string> }
+  | {
+      type?: 'stdio';
+      command: string;
+      args?: string[];
+      env?: Record<string, string>;
+    }
   | { type: 'sse'; url: string; headers?: Record<string, string> }
   | { type: 'http'; url: string; headers?: Record<string, string> }
-  | { type: 'sdk'; name: string; instance: McpServer }  // in-process
+  | { type: 'sdk'; name: string; instance: McpServer }; // in-process
 ```
 
 ### SdkBeta
@@ -150,11 +155,15 @@ type SdkBeta = 'context-1m-2025-08-07';
 type CanUseTool = (
   toolName: string,
   input: ToolInput,
-  options: { signal: AbortSignal; suggestions?: PermissionUpdate[] }
+  options: { signal: AbortSignal; suggestions?: PermissionUpdate[] },
 ) => Promise<PermissionResult>;
 
 type PermissionResult =
-  | { behavior: 'allow'; updatedInput: ToolInput; updatedPermissions?: PermissionUpdate[] }
+  | {
+      behavior: 'allow';
+      updatedInput: ToolInput;
+      updatedPermissions?: PermissionUpdate[];
+    }
   | { behavior: 'deny'; message: string; interrupt?: boolean };
 ```
 
@@ -162,24 +171,24 @@ type PermissionResult =
 
 `query()` can yield 16 message types. The official docs show a simplified union of 7, but `sdk.d.ts` has the full set:
 
-| Type | Subtype | Purpose |
-|------|---------|---------|
-| `system` | `init` | Session initialized, contains session_id, tools, model |
-| `system` | `task_notification` | Background agent completed/failed/stopped |
-| `system` | `compact_boundary` | Conversation was compacted |
-| `system` | `status` | Status change (e.g. compacting) |
-| `system` | `hook_started` | Hook execution started |
-| `system` | `hook_progress` | Hook progress output |
-| `system` | `hook_response` | Hook completed |
-| `system` | `files_persisted` | Files saved |
-| `assistant` | — | Claude's response (text + tool calls) |
-| `user` | — | User message (internal) |
-| `user` (replay) | — | Replayed user message on resume |
-| `result` | `success` / `error_*` | Final result of a prompt processing round |
-| `stream_event` | — | Partial streaming (when includePartialMessages) |
-| `tool_progress` | — | Long-running tool progress |
-| `auth_status` | — | Authentication state changes |
-| `tool_use_summary` | — | Summary of preceding tool uses |
+| Type               | Subtype               | Purpose                                                |
+| ------------------ | --------------------- | ------------------------------------------------------ |
+| `system`           | `init`                | Session initialized, contains session_id, tools, model |
+| `system`           | `task_notification`   | Background agent completed/failed/stopped              |
+| `system`           | `compact_boundary`    | Conversation was compacted                             |
+| `system`           | `status`              | Status change (e.g. compacting)                        |
+| `system`           | `hook_started`        | Hook execution started                                 |
+| `system`           | `hook_progress`       | Hook progress output                                   |
+| `system`           | `hook_response`       | Hook completed                                         |
+| `system`           | `files_persisted`     | Files saved                                            |
+| `assistant`        | —                     | Claude's response (text + tool calls)                  |
+| `user`             | —                     | User message (internal)                                |
+| `user` (replay)    | —                     | Replayed user message on resume                        |
+| `result`           | `success` / `error_*` | Final result of a prompt processing round              |
+| `stream_event`     | —                     | Partial streaming (when includePartialMessages)        |
+| `tool_progress`    | —                     | Long-running tool progress                             |
+| `auth_status`      | —                     | Authentication state changes                           |
+| `tool_use_summary` | —                     | Summary of preceding tool uses                         |
 
 ### SDKTaskNotificationMessage (sdk.d.ts:1507)
 
@@ -217,7 +226,11 @@ type SDKResultSuccess = {
 // Error:
 type SDKResultError = {
   type: 'result';
-  subtype: 'error_during_execution' | 'error_max_turns' | 'error_max_budget_usd' | 'error_max_structured_output_retries';
+  subtype:
+    | 'error_during_execution'
+    | 'error_max_turns'
+    | 'error_max_budget_usd'
+    | 'error_max_structured_output_retries';
   errors: string[];
   // ...shared fields
 };
@@ -284,17 +297,17 @@ Claude responded with text only — it decided it has completed the task. The AP
 
 ### Decision Table
 
-| Condition | Action | Result Type |
-|-----------|--------|-------------|
-| Response has `tool_use` blocks | Execute tools, recurse into `EZ` | continues |
-| Response has NO `tool_use` blocks | Run stop hooks, return | `success` |
-| `turnCount > maxTurns` | Yield max_turns_reached | `error_max_turns` |
-| `totalCost >= maxBudgetUsd` | Yield budget error | `error_max_budget_usd` |
-| `abortController.signal.aborted` | Yield interrupted msg | depends on context |
-| `stop_reason === "max_tokens"` (output) | Retry up to 3x with recovery prompt | continues |
-| Stop hook `preventContinuation` | Return immediately | `success` |
-| Stop hook blocking error | Feed error back, recurse | continues |
-| Model fallback error | Retry with fallback model (one-time) | continues |
+| Condition                               | Action                               | Result Type            |
+| --------------------------------------- | ------------------------------------ | ---------------------- |
+| Response has `tool_use` blocks          | Execute tools, recurse into `EZ`     | continues              |
+| Response has NO `tool_use` blocks       | Run stop hooks, return               | `success`              |
+| `turnCount > maxTurns`                  | Yield max_turns_reached              | `error_max_turns`      |
+| `totalCost >= maxBudgetUsd`             | Yield budget error                   | `error_max_budget_usd` |
+| `abortController.signal.aborted`        | Yield interrupted msg                | depends on context     |
+| `stop_reason === "max_tokens"` (output) | Retry up to 3x with recovery prompt  | continues              |
+| Stop hook `preventContinuation`         | Return immediately                   | `success`              |
+| Stop hook blocking error                | Feed error back, recurse             | continues              |
+| Model fallback error                    | Retry with fallback model (one-time) | continues              |
 
 ## Subagent Execution Modes
 
@@ -317,10 +330,10 @@ The team leader runs its normal EZ loop, which includes spawning teammates. When
 
 ```javascript
 while (true) {
-    // Check if no active teammates AND no running tasks → break
-    // Check for unread messages from teammates → re-inject as new prompt, restart EZ loop
-    // If stdin closed with active teammates → inject shutdown prompt
-    // Poll every 500ms
+  // Check if no active teammates AND no running tasks → break
+  // Check for unread messages from teammates → re-inject as new prompt, restart EZ loop
+  // If stdin closed with active teammates → inject shutdown prompt
+  // Poll every 500ms
 }
 ```
 
@@ -331,14 +344,14 @@ From the SDK consumer's perspective: you receive the initial `type: "result"`, b
 From sdk.mjs:
 
 ```javascript
-QK = typeof X === "string"  // isSingleUserTurn = true when prompt is a string
+QK = typeof X === 'string'; // isSingleUserTurn = true when prompt is a string
 ```
 
 When `isSingleUserTurn` is true and the first `result` message arrives:
 
 ```javascript
 if (this.isSingleUserTurn) {
-  this.transport.endInput();  // closes stdin to CLI
+  this.transport.endInput(); // closes stdin to CLI
 }
 ```
 
@@ -381,13 +394,14 @@ Instead of passing a string prompt (which sets `isSingleUserTurn = true`), pass 
 
 ```typescript
 // Before (broken for agent teams):
-query({ prompt: "do something" })
+query({ prompt: 'do something' });
 
 // After (keeps CLI alive):
-query({ prompt: asyncIterableOfMessages })
+query({ prompt: asyncIterableOfMessages });
 ```
 
 When prompt is an `AsyncIterable`:
+
 - `isSingleUserTurn = false`
 - SDK does NOT close stdin after first result
 - CLI stays alive, continues processing
@@ -431,11 +445,15 @@ for await (const msg of q) { /* process events */ }
 ### V2: `createSession()` + `send()` / `stream()` — Persistent session
 
 ```typescript
-await using session = unstable_v2_createSession({ model: "..." });
-await session.send("first message");
-for await (const msg of session.stream()) { /* events */ }
-await session.send("follow-up");
-for await (const msg of session.stream()) { /* events */ }
+await using session = unstable_v2_createSession({ model: '...' });
+await session.send('first message');
+for await (const msg of session.stream()) {
+  /* events */
+}
+await session.send('follow-up');
+for await (const msg of session.stream()) {
+  /* events */
+}
 ```
 
 - `isSingleUserTurn = false` always → stdin stays open
@@ -446,15 +464,15 @@ for await (const msg of session.stream()) { /* events */ }
 
 ### Comparison Table
 
-| Aspect | V1 | V2 |
-|--------|----|----|
-| `isSingleUserTurn` | `true` for string prompt | always `false` |
-| Multi-turn | Requires managing `AsyncIterable` | Just call `send()`/`stream()` |
-| stdin lifecycle | Auto-closes after first result | Stays open until `close()` |
-| Agentic loop | Identical `EZ()` | Identical `EZ()` |
-| Stop conditions | Same | Same |
-| Session persistence | Must pass `resume` to new `query()` | Built-in via session object |
-| API stability | Stable | Unstable preview (`unstable_v2_*` prefix) |
+| Aspect              | V1                                  | V2                                        |
+| ------------------- | ----------------------------------- | ----------------------------------------- |
+| `isSingleUserTurn`  | `true` for string prompt            | always `false`                            |
+| Multi-turn          | Requires managing `AsyncIterable`   | Just call `send()`/`stream()`             |
+| stdin lifecycle     | Auto-closes after first result      | Stays open until `close()`                |
+| Agentic loop        | Identical `EZ()`                    | Identical `EZ()`                          |
+| Stop conditions     | Same                                | Same                                      |
+| Session persistence | Must pass `resume` to new `query()` | Built-in via session object               |
+| API stability       | Stable                              | Unstable preview (`unstable_v2_*` prefix) |
 
 **Key finding: Zero difference in turn behavior.** Both use the same CLI process, the same `EZ()` recursive generator, and the same decision logic.
 
@@ -462,17 +480,17 @@ for await (const msg of session.stream()) { /* events */ }
 
 ```typescript
 type HookEvent =
-  | 'PreToolUse'         // Before tool execution
-  | 'PostToolUse'        // After successful tool execution
+  | 'PreToolUse' // Before tool execution
+  | 'PostToolUse' // After successful tool execution
   | 'PostToolUseFailure' // After failed tool execution
-  | 'Notification'       // Notification messages
-  | 'UserPromptSubmit'   // User prompt submitted
-  | 'SessionStart'       // Session started (startup/resume/clear/compact)
-  | 'SessionEnd'         // Session ended
-  | 'Stop'               // Agent stopping
-  | 'SubagentStart'      // Subagent spawned
-  | 'SubagentStop'       // Subagent stopped
-  | 'PreCompact'         // Before conversation compaction
+  | 'Notification' // Notification messages
+  | 'UserPromptSubmit' // User prompt submitted
+  | 'SessionStart' // Session started (startup/resume/clear/compact)
+  | 'SessionEnd' // Session ended
+  | 'Stop' // Agent stopping
+  | 'SubagentStart' // Subagent spawned
+  | 'SubagentStop' // Subagent stopped
+  | 'PreCompact' // Before conversation compaction
   | 'PermissionRequest'; // Permission being requested
 ```
 
@@ -480,14 +498,14 @@ type HookEvent =
 
 ```typescript
 interface HookCallbackMatcher {
-  matcher?: string;      // Optional tool name matcher
+  matcher?: string; // Optional tool name matcher
   hooks: HookCallback[];
 }
 
 type HookCallback = (
   input: HookInput,
   toolUseID: string | undefined,
-  options: { signal: AbortSignal }
+  options: { signal: AbortSignal },
 ) => Promise<HookJSONOutput>;
 ```
 
@@ -506,7 +524,11 @@ type SyncHookJSONOutput = {
   systemMessage?: string;
   reason?: string;
   hookSpecificOutput?:
-    | { hookEventName: 'PreToolUse'; permissionDecision?: 'allow' | 'deny' | 'ask'; updatedInput?: Record<string, unknown> }
+    | {
+        hookEventName: 'PreToolUse';
+        permissionDecision?: 'allow' | 'deny' | 'ask';
+        updatedInput?: Record<string, unknown>;
+      }
     | { hookEventName: 'UserPromptSubmit'; additionalContext?: string }
     | { hookEventName: 'SessionStart'; additionalContext?: string }
     | { hookEventName: 'PostToolUse'; additionalContext?: string };
@@ -539,19 +561,20 @@ The `Query` object (sdk.d.ts:931). Official docs list these public methods:
 
 ```typescript
 interface Query extends AsyncGenerator<SDKMessage, void> {
-  interrupt(): Promise<void>;                     // Stop current execution (streaming input mode only)
+  interrupt(): Promise<void>; // Stop current execution (streaming input mode only)
   rewindFiles(userMessageUuid: string): Promise<void>; // Restore files to state at message (needs enableFileCheckpointing)
   setPermissionMode(mode: PermissionMode): Promise<void>; // Change permissions (streaming input mode only)
-  setModel(model?: string): Promise<void>;        // Change model (streaming input mode only)
+  setModel(model?: string): Promise<void>; // Change model (streaming input mode only)
   setMaxThinkingTokens(max: number | null): Promise<void>; // Change thinking tokens (streaming input mode only)
-  supportedCommands(): Promise<SlashCommand[]>;   // Available slash commands
-  supportedModels(): Promise<ModelInfo[]>;         // Available models
-  mcpServerStatus(): Promise<McpServerStatus[]>;  // MCP server connection status
-  accountInfo(): Promise<AccountInfo>;             // Authenticated user info
+  supportedCommands(): Promise<SlashCommand[]>; // Available slash commands
+  supportedModels(): Promise<ModelInfo[]>; // Available models
+  mcpServerStatus(): Promise<McpServerStatus[]>; // MCP server connection status
+  accountInfo(): Promise<AccountInfo>; // Authenticated user info
 }
 ```
 
 Found in sdk.d.ts but NOT in official docs (may be internal):
+
 - `streamInput(stream)` — stream additional user messages
 - `close()` — forcefully end the query
 - `setMcpServers(servers)` — dynamically add/remove MCP servers
@@ -591,8 +614,11 @@ function tool<Schema extends ZodRawShape>(
   name: string,
   description: string,
   inputSchema: Schema,
-  handler: (args: z.infer<ZodObject<Schema>>, extra: unknown) => Promise<CallToolResult>
-): SdkMcpToolDefinition<Schema>
+  handler: (
+    args: z.infer<ZodObject<Schema>>,
+    extra: unknown,
+  ) => Promise<CallToolResult>,
+): SdkMcpToolDefinition<Schema>;
 ```
 
 ### createSdkMcpServer()
@@ -604,36 +630,36 @@ function createSdkMcpServer(options: {
   name: string;
   version?: string;
   tools?: Array<SdkMcpToolDefinition<any>>;
-}): McpSdkServerConfigWithInstance
+}): McpSdkServerConfigWithInstance;
 ```
 
 ## Internals Reference
 
 ### Key minified identifiers (sdk.mjs)
 
-| Minified | Purpose |
-|----------|---------|
-| `s_` | V1 `query()` export |
-| `e_` | `unstable_v2_createSession` |
-| `Xx` | `unstable_v2_resumeSession` |
-| `Qx` | `unstable_v2_prompt` |
-| `U9` | V2 Session class (`send`/`stream`/`close`) |
-| `XX` | ProcessTransport (spawns cli.js) |
-| `$X` | Query class (JSON-line routing, async iterable) |
-| `QX` | AsyncQueue (input stream buffer) |
+| Minified | Purpose                                         |
+| -------- | ----------------------------------------------- |
+| `s_`     | V1 `query()` export                             |
+| `e_`     | `unstable_v2_createSession`                     |
+| `Xx`     | `unstable_v2_resumeSession`                     |
+| `Qx`     | `unstable_v2_prompt`                            |
+| `U9`     | V2 Session class (`send`/`stream`/`close`)      |
+| `XX`     | ProcessTransport (spawns cli.js)                |
+| `$X`     | Query class (JSON-line routing, async iterable) |
+| `QX`     | AsyncQueue (input stream buffer)                |
 
 ### Key minified identifiers (cli.js)
 
-| Minified | Purpose |
-|----------|---------|
-| `EZ` | Core recursive agentic loop (async generator) |
-| `_t4` | Stop hook handler (runs when no tool_use blocks) |
-| `PU1` | Streaming tool executor (parallel during API response) |
-| `TP6` | Standard tool executor (after API response) |
-| `GU1` | Individual tool executor |
-| `lTq` | SDK session runner (calls EZ directly) |
-| `bd1` | stdin reader (JSON-lines from transport) |
-| `mW1` | Anthropic API streaming caller |
+| Minified | Purpose                                                |
+| -------- | ------------------------------------------------------ |
+| `EZ`     | Core recursive agentic loop (async generator)          |
+| `_t4`    | Stop hook handler (runs when no tool_use blocks)       |
+| `PU1`    | Streaming tool executor (parallel during API response) |
+| `TP6`    | Standard tool executor (after API response)            |
+| `GU1`    | Individual tool executor                               |
+| `lTq`    | SDK session runner (calls EZ directly)                 |
+| `bd1`    | stdin reader (JSON-lines from transport)               |
+| `mW1`    | Anthropic API streaming caller                         |
 
 ## Key Files
 
@@ -641,3 +667,366 @@ function createSdkMcpServer(options: {
 - `sdk-tools.d.ts` — Tool input schemas
 - `sdk.mjs` — SDK runtime (minified, 376KB)
 - `cli.js` — CLI executable (minified, runs as subprocess)
+
+---
+
+# OpenRouter Agent Runner Architecture
+
+NanoClaw supports dual LLM providers: Claude (via the Claude Agent SDK) and OpenRouter (via the OpenAI SDK with OpenRouter's unified API). This section documents the OpenRouter implementation.
+
+## Architecture Overview
+
+```
+Orchestrator (src/index.ts)
+    │
+    ├──► Claude Container ──► Claude Agent SDK ──► Anthropic API
+    │
+    └──► OpenRouter Container ──► OpenAI SDK ──► OpenRouter API
+                                        │
+                                        └──► MCP Server (Tools)
+```
+
+The OpenRouter implementation provides equivalent functionality to Claude but through a different architecture:
+
+- **Manual conversation loop**: Instead of the SDK's internal recursive `EZ()` generator, the OpenRouter runner implements its own conversation loop
+- **Tool calling via MCP**: Tools are exposed through the Model Context Protocol (MCP) rather than being built into the SDK
+- **OpenAI-compatible API**: Uses the OpenAI SDK to communicate with OpenRouter's unified endpoint
+
+## Container Structure
+
+```
+container/
+├── Dockerfile.openrouter          # Multi-stage build for OpenRouter agent
+└── agent-runner-openrouter/
+    ├── package.json               # OpenAI SDK + MCP dependencies
+    ├── tsconfig.json
+    └── src/
+        ├── index.ts               # Main entry point (manual agent loop)
+        └── ipc-mcp-stdio.ts       # MCP server for tool handling
+```
+
+## Key Differences from Claude Runner
+
+| Aspect                 | Claude Runner                    | OpenRouter Runner               |
+| ---------------------- | -------------------------------- | ------------------------------- |
+| **SDK**                | `@anthropic-ai/claude-agent-sdk` | `openai`                        |
+| **Agent Loop**         | SDK-managed recursive `EZ()`     | Manual while loop in `index.ts` |
+| **Tool System**        | Built into SDK                   | MCP (Model Context Protocol)    |
+| **Response Format**    | Custom SDK events                | OpenAI chat completions         |
+| **Session Management** | SDK-managed                      | Custom SQLite-backed            |
+| **Streaming**          | Partial message streaming        | Response-level streaming        |
+
+## The Manual Conversation Loop
+
+Unlike Claude's `EZ()` recursive generator, the OpenRouter runner implements an explicit conversation loop:
+
+```typescript
+// Simplified representation of runConversation()
+async function runConversation(openai, model, messages, tools, mcpClient) {
+  const maxIterations = 50;
+  let iterations = 0;
+
+  while (iterations < maxIterations) {
+    iterations++;
+
+    // 1. Check for new IPC messages
+    const ipcMessages = drainIpcInput();
+    for (const msg of ipcMessages) {
+      messages.push({ role: 'user', content: msg });
+    }
+
+    // 2. Call OpenRouter API
+    const completion = await openai.chat.completions.create({
+      model,
+      messages,
+      tools: tools.length > 0 ? tools : undefined,
+      tool_choice: 'auto',
+      stream: false,
+    });
+
+    const response = completion.choices[0];
+
+    // 3. Add assistant message to history
+    messages.push({
+      role: 'assistant',
+      content: response.message.content || '',
+      tool_calls: response.message.tool_calls,
+    });
+
+    // 4. Emit user-facing content immediately
+    if (response.message.content) {
+      writeOutput({ status: 'success', result: response.message.content });
+    }
+
+    // 5. Handle tool calls
+    if (response.message.tool_calls?.length > 0) {
+      for (const toolCall of response.message.tool_calls) {
+        // Execute tool via MCP
+        const result = await executeTool(mcpClient, toolName, args);
+
+        // Add tool result to conversation history
+        messages.push({
+          role: 'tool',
+          content: result,
+          tool_call_id: toolCall.id,
+        });
+      }
+      continue; // Loop back for next API call with tool results
+    }
+
+    // 6. No tool calls = conversation complete
+    break;
+  }
+}
+```
+
+### Why Manual?
+
+1. **Tool Integration**: OpenAI's API expects tool definitions in a specific format, and tool results are passed back as `role: 'tool'` messages. This differs from Claude's SDK where tools are executed internally.
+
+2. **Session Management**: The runner manages session IDs and conversation history manually, storing them in `/workspace/group/.transcript-{sessionId}.jsonl`.
+
+3. **IPC Handling**: The loop checks for new messages from the orchestrator via IPC files between iterations, allowing streaming message injection.
+
+## MCP (Model Context Protocol) Integration
+
+The OpenRouter runner uses MCP to expose tools because the OpenAI SDK doesn't have built-in tools like Claude's SDK.
+
+### MCP Server: `ipc-mcp-stdio.ts`
+
+```
+┌─────────────────────────────────────────────┐
+│  OpenRouter Agent Runner (index.ts)         │
+│                                             │
+│  ┌──────────────┐    stdio    ┌──────────┐ │
+│  │ OpenAI SDK   │◄────────────►│ MCP      │ │
+│  │              │              │ Server   │ │
+│  └──────────────┘              └──────────┘ │
+│                                       │     │
+│                                ┌──────▼──┐  │
+│                                │  Tools  │  │
+│                                │  Bash   │  │
+│                                │  Read   │  │
+│                                │  Write  │  │
+│                                │  ...    │  │
+│                                └─────────┘  │
+└─────────────────────────────────────────────┘
+```
+
+### Tool Flow
+
+1. **Discovery**: At startup, `discoverMcpTools()` calls `mcpClient.listTools()` to get available tools
+2. **Conversion**: Tools are converted to OpenAI's function format via `mcpToolsToOpenAIFormat()`
+3. **Execution**: When the model requests a tool, `executeTool()` calls `mcpClient.callTool()`
+4. **Result**: Tool results are added to the conversation as `role: 'tool'` messages
+
+### Available Tools
+
+The OpenRouter runner supports the same tools as Claude:
+
+- **Bash** - Execute shell commands
+- **Read/Write/Edit** - File operations
+- **Glob/Grep** - File searching
+- **WebSearch/WebFetch** - Web access
+- **Task/TaskOutput/TaskStop** - Subagent management
+- **TeamCreate/TeamDelete/SendMessage** - Agent teams
+- **Skill** - Skill system
+- **NotebookEdit** - Notebook operations
+- **Scheduling tools** - Task scheduling (send_message, schedule_task, etc.)
+
+## Message Flow
+
+### Input Protocol
+
+The OpenRouter runner uses the same input protocol as Claude:
+
+```typescript
+// Via stdin (initial message)
+interface ContainerInput {
+  prompt: string;
+  sessionId?: string;
+  groupFolder: string;
+  chatJid: string;
+  isMain: boolean;
+  isScheduledTask?: boolean;
+  assistantName?: string;
+  secrets?: Record<string, string>;
+  allowedTools?: string[];
+}
+
+// Via IPC files (follow-up messages)
+// /workspace/ipc/input/{timestamp}.json
+{ "type": "message", "text": "..." }
+
+// Close sentinel
+// /workspace/ipc/input/_close
+```
+
+### Output Protocol
+
+Output uses the same sentinel markers as Claude:
+
+```
+---NANOCLAW_OUTPUT_START---
+{"status": "success", "result": "Hello!", "newSessionId": "..."}
+---NANOCLAW_OUTPUT_END---
+```
+
+Multiple outputs may be emitted during a conversation (one per tool result or user-facing response).
+
+## Configuration
+
+### Environment Variables (Container)
+
+The OpenRouter runner reads these from the environment:
+
+| Variable                  | Description        | Default                        |
+| ------------------------- | ------------------ | ------------------------------ |
+| `OPENROUTER_API_KEY`      | OpenRouter API key | (required)                     |
+| `OPENROUTER_MODEL`        | Model ID           | `openai/gpt-4o`                |
+| `OPENROUTER_BASE_URL`     | API base URL       | `https://openrouter.ai/api/v1` |
+| `OPENROUTER_HTTP_REFERER` | Referer header     | `https://nanoclaw.local`       |
+| `OPENROUTER_X_TITLE`      | App title header   | `NanoClaw`                     |
+
+### Model Selection
+
+Models are specified in OpenRouter's format: `provider/model-name`
+
+Examples:
+
+- `openai/gpt-4o` - GPT-4o via OpenAI
+- `anthropic/claude-3.5-sonnet` - Claude 3.5 Sonnet via Anthropic
+- `meta-llama/llama-3.1-70b-instruct` - Llama 3.1 70B
+
+## Error Handling
+
+The OpenRouter runner handles several error scenarios:
+
+### API Errors
+
+```typescript
+try {
+  const completion = await openai.chat.completions.create({...});
+} catch (err) {
+  // Handle 401 (bad key), 429 (rate limit), 402 (payment), 500 (server error)
+  writeOutput({
+    status: 'error',
+    error: err.message,
+  });
+}
+```
+
+### Tool Execution Errors
+
+Tool errors are caught and returned as string results to the model:
+
+```typescript
+try {
+  const result = await mcpClient.callTool({...});
+  return extractTextContent(result);
+} catch (err) {
+  return `Error executing ${toolName}: ${err.message}`;
+}
+```
+
+### Iteration Limits
+
+The conversation loop has a `maxIterations` (50) to prevent infinite loops from models that excessively tool-call.
+
+## Session Management
+
+### Session ID Flow
+
+1. **New session**: `sessionId` is undefined, runner generates `session-${Date.now()}`
+2. **Resume session**: Pass existing `sessionId`, runner loads transcript from disk
+3. **Session persistence**: Transcript saved to `/workspace/group/.transcript-{sessionId}.jsonl`
+
+### Transcript Format
+
+```json
+[
+  {"role": "system", "content": "..."},
+  {"role": "user", "content": "..."},
+  {"role": "assistant", "content": "...", "tool_calls": [...]},
+  {"role": "tool", "content": "...", "tool_call_id": "..."}
+]
+```
+
+## Conversation Archiving
+
+Conversations are archived to Markdown when:
+
+1. Session compaction occurs (via `beforeCompact` hook)
+2. Container exits cleanly
+
+Archive location: `groups/{folder}/conversations/{date}-{summary}.md`
+
+## Security Considerations
+
+### Secret Handling
+
+Secrets are passed via stdin (same as Claude) and sanitized from Bash tool environments:
+
+```typescript
+const SECRET_ENV_VARS = [
+  'OPENROUTER_API_KEY',
+  'ANTHROPIC_API_KEY',
+  'CLAUDE_CODE_OAUTH_TOKEN',
+];
+
+function sanitizeBashCommand(command: string): string {
+  const unsetPrefix = `unset ${SECRET_ENV_VARS.join(' ')} 2>/dev/null; `;
+  return unsetPrefix + command;
+}
+```
+
+### Tool Allowlisting
+
+Tools can be filtered via `allowedTools` in the container input:
+
+```typescript
+const allowedTools = containerInput.allowedTools || [
+  'Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', ...
+];
+```
+
+## Provider Selection
+
+The orchestrator determines which provider to use per group:
+
+```typescript
+// src/container-runner.ts
+function getGroupProvider(group: RegisteredGroup): LLMProvider {
+  return group.llmProvider || DEFAULT_LLM_PROVIDER; // 'claude' or 'openrouter'
+}
+
+function getContainerImage(provider: LLMProvider): string {
+  return provider === 'openrouter'
+    ? 'nanoclaw-agent:openrouter'
+    : 'nanoclaw-agent:claude';
+}
+```
+
+Groups default to `DEFAULT_LLM_PROVIDER` (from env) unless they have an explicit `llmProvider` override.
+
+## Testing
+
+See `scripts/test-openrouter.sh` for automated tests that verify:
+
+1. Container image exists
+2. API key is configured
+3. API connectivity works
+4. Chat completion functions
+5. Tool calling works
+6. MCP server is available
+
+## Migration from Claude
+
+When switching a group from Claude to OpenRouter:
+
+1. Session history is NOT transferred (different formats)
+2. Group starts fresh with new session ID
+3. Previous conversations are archived in `groups/{folder}/conversations/`
+4. CLAUDE.md context is preserved (it's just text)
+
+See [docs/MIGRATING_TO_OPENROUTER.md](MIGRATING_TO_OPENROUTER.md) for detailed migration guidance.

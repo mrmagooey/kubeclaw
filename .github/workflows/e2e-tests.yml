@@ -1,0 +1,343 @@
+name: E2E Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      test_phase:
+        description: 'Test phase to run (all, phase-1, phase-2, phase-3)'
+        required: false
+        default: 'all'
+      debug_mode:
+        description: 'Enable debug mode'
+        type: boolean
+        default: false
+
+env:
+  NODE_VERSION: '20'
+  MINIKUBE_VERSION: 'v1.33.1'
+  KUBECTL_VERSION: 'v1.29.0'
+
+jobs:
+  # Build and cache Docker images
+  build-images:
+    runs-on: ubuntu-latest
+    outputs:
+      orchestrator_tag: ${{ steps.tags.outputs.orchestrator }}
+      agent_tag: ${{ steps.tags.outputs.agent }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Generate image tags
+        id: tags
+        run: |
+          echo "orchestrator=nanoclaw-orchestrator:${{ github.sha }}" >> $GITHUB_OUTPUT
+          echo "agent=nanoclaw-agent:${{ github.sha }}" >> $GITHUB_OUTPUT
+          echo "orchestrator_tag=nanoclaw-orchestrator:${{ github.sha }}" >> $GITHUB_OUTPUT
+          echo "agent_tag=nanoclaw-agent:${{ github.sha }}" >> $GITHUB_OUTPUT
+
+      - name: Cache Docker layers
+        uses: actions/cache@v4
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-buildx-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-buildx-
+
+      - name: Build orchestrator image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: false
+          load: true
+          tags: ${{ steps.tags.outputs.orchestrator }}
+          cache-from: type=local,src=/tmp/.buildx-cache
+          cache-to: type=local,dest=/tmp/.buildx-cache-new,mode=max
+
+      - name: Build agent image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./container
+          file: ./container/Dockerfile
+          push: false
+          load: true
+          tags: ${{ steps.tags.outputs.agent }}
+          cache-from: type=local,src=/tmp/.buildx-cache
+          cache-to: type=local,dest=/tmp/.buildx-cache-new,mode=max
+
+      - name: Move cache
+        run: |
+          rm -rf /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
+
+      - name: Save images to artifacts
+        run: |
+          docker save ${{ steps.tags.outputs.orchestrator }} > /tmp/orchestrator.tar
+          docker save ${{ steps.tags.outputs.agent }} > /tmp/agent.tar
+
+      - name: Upload images
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-images
+          path: |
+            /tmp/orchestrator.tar
+            /tmp/agent.tar
+          retention-days: 1
+
+  # Run E2E tests on minikube
+  e2e-tests:
+    needs: build-images
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        test-phase: [phase-1, phase-2, phase-3]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download images
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-images
+          path: /tmp/images
+
+      - name: Load images
+        run: |
+          docker load < /tmp/images/orchestrator.tar
+          docker load < /tmp/images/agent.tar
+
+      - name: Setup minikube
+        uses: medyagh/setup-minikube@latest
+        with:
+          minikube-version: ${{ env.MINIKUBE_VERSION }}
+          kubernetes-version: ${{ env.KUBECTL_VERSION }}
+          driver: docker
+          cpus: max
+          memory: max
+
+      - name: Cache minikube
+        uses: actions/cache@v4
+        with:
+          path: ~/.minikube/cache
+          key: ${{ runner.os }}-minikube-${{ env.MINIKUBE_VERSION }}
+
+      - name: Setup kubectl
+        run: |
+          minikube kubectl -- version
+          kubectl config use-context minikube
+
+      - name: Load images into minikube
+        run: |
+          minikube image load ${{ needs.build-images.outputs.orchestrator_tag }}
+          minikube image load ${{ needs.build-images.outputs.agent_tag }}
+
+      - name: Create namespace
+        run: kubectl create namespace nanoclaw
+
+      - name: Apply Kubernetes manifests
+        run: |
+          kubectl apply -f k8s/00-namespace.yaml || true
+          kubectl apply -f k8s/10-redis.yaml
+          kubectl apply -f k8s/20-storage.yaml
+          kubectl apply -f k8s/30-orchestrator.yaml
+          kubectl apply -f k8s/40-agent-job-template.yaml
+          kubectl apply -f k8s/01-network-policy.yaml || true
+
+      - name: Wait for Redis
+        run: |
+          kubectl wait --namespace=nanoclaw --for=condition=ready pod -l app=nanoclaw-redis --timeout=120s
+
+      - name: Deploy orchestrator
+        run: |
+          # Update image tag in orchestrator deployment
+          sed -i 's|image: nanoclaw-orchestrator:latest|image: ${{ needs.build-images.outputs.orchestrator_tag }}|' k8s/30-orchestrator.yaml
+
+          # Create secrets
+          kubectl create secret generic nanoclaw-secrets \
+            --namespace=nanoclaw \
+            --from-literal=anthropic-api-key=${{ secrets.ANTHROPIC_API_KEY }} \
+            --from-literal=claude-code-oauth-token=${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }} \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+          kubectl apply -f k8s/30-orchestrator.yaml
+
+      - name: Wait for orchestrator
+        run: |
+          kubectl wait --namespace=nanoclaw --for=condition=available deployment/nanoclaw-orchestrator --timeout=180s
+
+      - name: Run E2E tests - ${{ matrix.test-phase }}
+        id: test
+        continue-on-error: true
+        run: |
+          mkdir -p e2e/results
+
+          # Run specific test phase.
+          # On failure: write sentinel file so report-results can detect it.
+          # (continue-on-error: true on this step keeps the job alive for log collection.)
+          if [ "${{ matrix.test-phase }}" == "phase-1" ]; then
+            npm run test:e2e:phase-1 -- --reporter=json --outputFile=e2e/results/phase-1.json \
+              || touch e2e/results/test-failed
+          elif [ "${{ matrix.test-phase }}" == "phase-2" ]; then
+            npm run test:e2e:phase-2 -- --reporter=json --outputFile=e2e/results/phase-2.json \
+              || touch e2e/results/test-failed
+          elif [ "${{ matrix.test-phase }}" == "phase-3" ]; then
+            npm run test:e2e:phase-3 -- --reporter=json --outputFile=e2e/results/phase-3.json \
+              || touch e2e/results/test-failed
+          fi
+        env:
+          REDIS_URL: redis://nanoclaw-redis.nanoclaw.svc.cluster.local:6379
+          KUBECONFIG: ${{ github.workspace }}/kubeconfig
+          DEBUG: ${{ github.event.inputs.debug_mode && 'true' || 'false' }}
+
+      - name: Generate test report
+        if: always()
+        run: |
+          node e2e/ci/test-reporter.js \
+            --input="e2e/results/${{ matrix.test-phase }}.json" \
+            --output="e2e/results/${{ matrix.test-phase }}-junit.xml" \
+            --summary="e2e/results/${{ matrix.test-phase }}-summary.md"
+
+      - name: Collect logs
+        if: always()
+        run: |
+          mkdir -p e2e/results/logs
+          kubectl logs --namespace=nanoclaw -l app=nanoclaw-orchestrator --tail=1000 > e2e/results/logs/orchestrator.log || true
+          kubectl logs --namespace=nanoclaw -l app=nanoclaw-redis --tail=500 > e2e/results/logs/redis.log || true
+          kubectl describe pods --namespace=nanoclaw > e2e/results/logs/pods-describe.log || true
+          kubectl get events --namespace=nanoclaw --sort-by='.lastTimestamp' > e2e/results/logs/events.log || true
+
+          # Get job logs if any
+          for job in $(kubectl get jobs --namespace=nanoclaw -o name 2>/dev/null); do
+            kubectl logs --namespace=nanoclaw "job/${job#job/}" > "e2e/results/logs/${job#job/}.log" 2>/dev/null || true
+          done
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-results-${{ matrix.test-phase }}
+          path: |
+            e2e/results/
+          retention-days: 7
+
+      - name: Cleanup minikube
+        if: always()
+        run: |
+          minikube delete || true
+
+  # Report test results
+  report-results:
+    needs: e2e-tests
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download all test results
+        uses: actions/download-artifact@v4
+        with:
+          path: e2e/results
+          pattern: e2e-results-*
+          merge-multiple: true
+
+      - name: Generate combined report
+        run: |
+          node e2e/ci/test-reporter.js \
+            --combine \
+            --input="e2e/results" \
+            --output="e2e/results/combined-junit.xml" \
+            --summary="e2e/results/combined-summary.md"
+
+      - name: Upload combined results
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-combined-results
+          path: e2e/results/
+          retention-days: 30
+
+      - name: Comment PR with test results
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const summary = fs.readFileSync('e2e/results/combined-summary.md', 'utf8');
+
+            const { data: comments } = await github.rest.issues.listComments({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo
+            });
+
+            const existingComment = comments.find(comment => 
+              comment.body.includes('## E2E Test Results')
+            );
+
+            const body = `## E2E Test Results\n\n${summary}`;
+
+            if (existingComment) {
+              await github.rest.issues.updateComment({
+                comment_id: existingComment.id,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: body
+              });
+            }
+
+      - name: Post to Slack
+        if: failure() && env.SLACK_WEBHOOK_URL
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          curl -X POST -H 'Content-type: application/json' \
+            --data '{"text":"⚠️ E2E tests failed for ${{ github.repository }} on ${{ github.ref }}"}' \
+            $SLACK_WEBHOOK_URL
+
+      - name: Post to Discord
+        if: failure() && env.DISCORD_WEBHOOK_URL
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          curl -X POST -H 'Content-type: application/json' \
+            --data '{"content":"⚠️ E2E tests failed for ${{ github.repository }} on ${{ github.ref }}"}' \
+            $DISCORD_WEBHOOK_URL
+
+      - name: Fail if tests failed
+        run: |
+          # Check if any test phase failed
+          failed=0
+          for dir in e2e/results/e2e-results-*; do
+            if [ -f "$dir/test-failed" ]; then
+              failed=1
+              break
+            fi
+          done
+          if [ $failed -eq 1 ]; then
+            echo "Tests failed"
+            exit 1
+          fi

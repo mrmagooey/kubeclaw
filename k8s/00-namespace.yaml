@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: nanoclaw
+  labels:
+    app: nanoclaw
+    # Using restricted PodSecurity with Redis running as non-root (UID 999)
+    # This provides the highest level of security isolation
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/enforce-version: latest

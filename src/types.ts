@@ -30,7 +30,18 @@ export interface AllowedRoot {
 export interface ContainerConfig {
   additionalMounts?: AdditionalMount[];
   timeout?: number; // Default: 300000 (5 minutes)
+  // File sidecar configuration
+  userImage?: string; // Container image for file-based sidecar mode
+  userCommand?: string[]; // Command to run in user container
+  userArgs?: string[]; // Arguments for user container command
+  filePollInterval?: number; // Poll interval in ms (default: 1000)
+  memoryRequest?: string; // K8s memory request (e.g., "512Mi")
+  memoryLimit?: string; // K8s memory limit (e.g., "4Gi")
+  cpuRequest?: string; // K8s CPU request (e.g., "250m")
+  cpuLimit?: string; // K8s CPU limit (e.g., "2000m")
 }
+
+export type LLMProvider = 'claude' | 'openrouter';
 
 export interface RegisteredGroup {
   name: string;
@@ -40,6 +51,7 @@ export interface RegisteredGroup {
   containerConfig?: ContainerConfig;
   requiresTrigger?: boolean; // Default: true for groups, false for solo chats
   isMain?: boolean; // True for the main control group (no trigger, elevated privileges)
+  llmProvider?: LLMProvider; // Override default LLM provider for this group
 }
 
 export interface NewMessage {
@@ -105,3 +117,15 @@ export type OnChatMetadata = (
   channel?: string,
   isGroup?: boolean,
 ) => void;
+
+// --- Redis ACL Types ---
+
+export interface JobACL {
+  jobId: string; // Primary key
+  groupFolder: string; // For lookup
+  username: string; // ACL username (sidecar-{jobId})
+  password: string; // ACL password (encrypted at rest)
+  createdAt: string; // ISO timestamp
+  expiresAt: string; // ISO timestamp
+  status: 'active' | 'revoked';
+}

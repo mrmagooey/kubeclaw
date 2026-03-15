@@ -1,0 +1,85 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: nanoclaw-redis
+  namespace: nanoclaw
+spec:
+  serviceName: nanoclaw-redis
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nanoclaw-redis
+  template:
+    metadata:
+      labels:
+        app: nanoclaw-redis
+    spec:
+      securityContext:
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: fix-permissions
+          image: busybox:latest
+          command: ['sh', '-c', 'chown -R 999:999 /data']
+          securityContext:
+            runAsUser: 0
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          command:
+            - redis-server
+            - --appendonly
+            - 'yes'
+            - --appendfsync
+            - everysec
+            - --maxmemory
+            - 2gb
+            - --maxmemory-policy
+            - allkeys-lru
+            - --aclfile
+            - /data/redis-acl.conf
+            - --requirepass
+            - '$(REDIS_ADMIN_PASSWORD)'
+          env:
+            - name: REDIS_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: nanoclaw-redis
+                  key: admin-password
+          ports:
+            - containerPort: 6379
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          resources:
+            requests:
+              memory: 256Mi
+              cpu: 100m
+            limits:
+              memory: 2Gi
+              cpu: '1'
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 10Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nanoclaw-redis
+  namespace: nanoclaw
+spec:
+  selector:
+    app: nanoclaw-redis
+  ports:
+    - port: 6379
+      targetPort: 6379

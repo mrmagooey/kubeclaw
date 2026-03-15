@@ -37,8 +37,8 @@ const THIRD_GROUP: RegisteredGroup = {
 let groups: Record<string, RegisteredGroup>;
 let deps: IpcDeps;
 
-beforeEach(() => {
-  _initTestDatabase();
+beforeEach(async () => {
+  await _initTestDatabase();
 
   groups = {
     'main@g.us': MAIN_GROUP,
@@ -379,6 +379,52 @@ describe('refresh_groups authorization', () => {
     );
     // If we got here without error, the auth gate worked
   });
+
+  it('main group can trigger refresh and writes snapshot', async () => {
+    let syncCalled = false;
+    let snapshotWritten = false;
+
+    const depsWithMock = {
+      ...deps,
+      syncGroups: async () => {
+        syncCalled = true;
+      },
+      getAvailableGroups: () => [
+        {
+          jid: 'main@g.us',
+          name: 'Main',
+          folder: 'whatsapp_main',
+          lastActivity: '2024-01-01T00:00:00.000Z',
+          isRegistered: true,
+        },
+        {
+          jid: 'other@g.us',
+          name: 'Other',
+          folder: 'other-group',
+          lastActivity: '2024-01-01T00:00:00.000Z',
+          isRegistered: false,
+        },
+      ],
+      writeGroupsSnapshot: (
+        _groupFolder: string,
+        _isMain: boolean,
+        _availableGroups: any[],
+        _registeredJids: Set<string>,
+      ) => {
+        snapshotWritten = true;
+      },
+    };
+
+    await processTaskIpc(
+      { type: 'refresh_groups' },
+      'whatsapp_main',
+      true,
+      depsWithMock,
+    );
+
+    expect(syncCalled).toBe(true);
+    expect(snapshotWritten).toBe(true);
+  });
 });
 
 // --- IPC message authorization ---
@@ -674,5 +720,168 @@ describe('register_group success', () => {
     );
 
     expect(getRegisteredGroup('partial@g.us')).toBeUndefined();
+  });
+});
+
+// --- update_task ---
+
+describe('update_task', () => {
+  beforeEach(() => {
+    createTask({
+      id: 'task-to-update',
+      group_folder: 'other-group',
+      chat_jid: 'other@g.us',
+      prompt: 'original prompt',
+      schedule_type: 'once',
+      schedule_value: '2025-06-01T00:00:00',
+      context_mode: 'isolated',
+      next_run: '2025-06-01T00:00:00.000Z',
+      status: 'active',
+      created_at: '2024-01-01T00:00:00.000Z',
+    });
+    createTask({
+      id: 'task-main-owned',
+      group_folder: 'whatsapp_main',
+      chat_jid: 'main@g.us',
+      prompt: 'main task',
+      schedule_type: 'once',
+      schedule_value: '2025-06-01T00:00:00',
+      context_mode: 'isolated',
+      next_run: '2025-06-01T00:00:00.000Z',
+      status: 'active',
+      created_at: '2024-01-01T00:00:00.000Z',
+    });
+  });
+
+  it('returns warning when task not found', async () => {
+    await processTaskIpc(
+      { type: 'update_task', taskId: 'nonexistent' },
+      'whatsapp_main',
+      true,
+      deps,
+    );
+    // Should not throw - warning is logged
+    expect(getTaskById('task-to-update')).toBeDefined();
+  });
+
+  it('non-main group cannot update another groups task', async () => {
+    await processTaskIpc(
+      { type: 'update_task', taskId: 'task-main-owned', prompt: 'hacked' },
+      'other-group',
+      false,
+      deps,
+    );
+    expect(getTaskById('task-main-owned')!.prompt).toBe('main task');
+  });
+
+  it('main group can update any task', async () => {
+    await processTaskIpc(
+      {
+        type: 'update_task',
+        taskId: 'task-to-update',
+        prompt: 'updated prompt',
+      },
+      'whatsapp_main',
+      true,
+      deps,
+    );
+    expect(getTaskById('task-to-update')!.prompt).toBe('updated prompt');
+  });
+
+  it('non-main group can update its own task', async () => {
+    await processTaskIpc(
+      { type: 'update_task', taskId: 'task-to-update', prompt: 'my update' },
+      'other-group',
+      false,
+      deps,
+    );
+    expect(getTaskById('task-to-update')!.prompt).toBe('my update');
+  });
+
+  it('updates schedule_type and recomputes next_run for cron', async () => {
+    await processTaskIpc(
+      {
+        type: 'update_task',
+        taskId: 'task-to-update',
+        schedule_type: 'cron',
+        schedule_value: '0 10 * * *',
+      },
+      'whatsapp_main',
+      true,
+      deps,
+    );
+    const task = getTaskById('task-to-update')!;
+    expect(task.schedule_type).toBe('cron');
+    expect(task.schedule_value).toBe('0 10 * * *');
+    expect(task.next_run).toBeTruthy();
+  });
+
+  it('rejects invalid cron in update', async () => {
+    await processTaskIpc(
+      {
+        type: 'update_task',
+        taskId: 'task-to-update',
+        schedule_type: 'cron',
+        schedule_value: 'invalid cron',
+      },
+      'whatsapp_main',
+      true,
+      deps,
+    );
+    // Task should not be updated with invalid cron
+    expect(getTaskById('task-to-update')!.schedule_type).toBe('once');
+  });
+
+  it('updates interval and recomputes next_run', async () => {
+    const before = Date.now();
+    await processTaskIpc(
+      {
+        type: 'update_task',
+        taskId: 'task-to-update',
+        schedule_type: 'interval',
+        schedule_value: '7200000',
+      },
+      'whatsapp_main',
+      true,
+      deps,
+    );
+    const task = getTaskById('task-to-update')!;
+    expect(task.schedule_type).toBe('interval');
+    expect(task.schedule_value).toBe('7200000');
+    const nextRun = new Date(task.next_run!).getTime();
+    expect(nextRun).toBeGreaterThanOrEqual(before + 7200000 - 1000);
+  });
+
+  it('updates only schedule_value without schedule_type', async () => {
+    await processTaskIpc(
+      {
+        type: 'update_task',
+        taskId: 'task-to-update',
+        schedule_value: '2026-01-01T00:00:00',
+      },
+      'whatsapp_main',
+      true,
+      deps,
+    );
+    // When only schedule_value changes without schedule_type, next_run is not recomputed
+    expect(getTaskById('task-to-update')!.schedule_value).toBe(
+      '2026-01-01T00:00:00',
+    );
+  });
+});
+
+// --- unknown IPC task type ---
+
+describe('unknown IPC task type', () => {
+  it('handles unrecognized task type gracefully', async () => {
+    // This should not throw, just log a warning
+    await expect(
+      processTaskIpc(
+        { type: 'unknown_task_type_xyz' } as any,
+        'whatsapp_main',
+        true,
+        deps,
+      ),
+    ).resolves.not.toThrow();
   });
 });

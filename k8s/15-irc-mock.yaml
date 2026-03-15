@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nanoclaw-irc-mock
+  namespace: nanoclaw
+  labels:
+    app: nanoclaw-irc-mock
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nanoclaw-irc-mock
+  template:
+    metadata:
+      labels:
+        app: nanoclaw-irc-mock
+    spec:
+      containers:
+        - name: irc-mock
+          image: nanoclaw-irc-mock:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 16667
+              name: irc
+              protocol: TCP
+          env:
+            - name: IRC_MOCK_PORT
+              value: '16667'
+            - name: IRC_MOCK_HOST
+              value: '0.0.0.0'
+          resources:
+            requests:
+              memory: 64Mi
+              cpu: 50m
+            limits:
+              memory: 128Mi
+              cpu: 200m
+          livenessProbe:
+            tcpSocket:
+              port: irc
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            tcpSocket:
+              port: irc
+            initialDelaySeconds: 2
+            periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nanoclaw-irc-mock
+  namespace: nanoclaw
+  labels:
+    app: nanoclaw-irc-mock
+spec:
+  type: ClusterIP
+  selector:
+    app: nanoclaw-irc-mock
+  ports:
+    - port: 16667
+      targetPort: irc
+      protocol: TCP
+      name: irc

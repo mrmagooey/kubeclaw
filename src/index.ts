@@ -5,6 +5,7 @@ import {
   ASSISTANT_NAME,
   IDLE_TIMEOUT,
   POLL_INTERVAL,
+  RUNTIME_MODE,
   TIMEZONE,
   TRIGGER_PATTERN,
 } from './config.js';
@@ -14,11 +15,10 @@ import {
   getRegisteredChannelNames,
 } from './channels/registry.js';
 import {
+  AvailableGroup,
   ContainerOutput,
-  runContainerAgent,
-  writeGroupsSnapshot,
-  writeTasksSnapshot,
-} from './container-runner.js';
+  getAgentRunner,
+} from './runtime/index.js';
 import {
   cleanupOrphans,
   ensureContainerRuntimeRunning,
@@ -41,7 +41,8 @@ import {
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
-import { startIpcWatcher } from './ipc.js';
+import { startIpcWatcher as startFsIpcWatcher } from './ipc.js';
+import { startIpcWatcher as startRedisIpcWatcher } from './k8s/ipc-redis.js';
 import { findChannel, formatMessages, formatOutbound } from './router.js';
 import {
   isSenderAllowed,
@@ -65,7 +66,8 @@ let messageLoopRunning = false;
 const channels: Channel[] = [];
 const queue = new GroupQueue();
 
-function loadState(): void {
+/** @internal - exported for testing */
+export function loadState(): void {
   lastTimestamp = getRouterState('last_timestamp') || '';
   const agentTs = getRouterState('last_agent_timestamp');
   try {
@@ -82,12 +84,14 @@ function loadState(): void {
   );
 }
 
-function saveState(): void {
+/** @internal - exported for testing */
+export function saveState(): void {
   setRouterState('last_timestamp', lastTimestamp);
   setRouterState('last_agent_timestamp', JSON.stringify(lastAgentTimestamp));
 }
 
-function registerGroup(jid: string, group: RegisteredGroup): void {
+/** @internal - exported for testing */
+export function registerGroup(jid: string, group: RegisteredGroup): void {
   let groupDir: string;
   try {
     groupDir = resolveGroupFolderPath(group.folder);
@@ -115,7 +119,7 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
  * Get available groups list for the agent.
  * Returns groups ordered by most recent activity.
  */
-export function getAvailableGroups(): import('./container-runner.js').AvailableGroup[] {
+export function getAvailableGroups(): AvailableGroup[] {
   const chats = getAllChats();
   const registeredJids = new Set(Object.keys(registeredGroups));
 
@@ -264,11 +268,19 @@ async function runAgent(
   onOutput?: (output: ContainerOutput) => Promise<void>,
 ): Promise<'success' | 'error'> {
   const isMain = group.isMain === true;
+  const provider = group.llmProvider || 'claude';
   const sessionId = sessions[group.folder];
+
+  logger.info(
+    { group: group.name, provider, hasProviderOverride: !!group.llmProvider },
+    'Running agent with LLM provider',
+  );
+
+  const agentRunner = getAgentRunner();
 
   // Update tasks snapshot for container to read (filtered by group)
   const tasks = getAllTasks();
-  writeTasksSnapshot(
+  agentRunner.writeTasksSnapshot(
     group.folder,
     isMain,
     tasks.map((t) => ({
@@ -284,7 +296,7 @@ async function runAgent(
 
   // Update available groups snapshot (main group only can see all groups)
   const availableGroups = getAvailableGroups();
-  writeGroupsSnapshot(
+  agentRunner.writeGroupsSnapshot(
     group.folder,
     isMain,
     availableGroups,
@@ -303,7 +315,7 @@ async function runAgent(
     : undefined;
 
   try {
-    const output = await runContainerAgent(
+    const output = await agentRunner.runAgent(
       group,
       {
         prompt,
@@ -313,8 +325,15 @@ async function runAgent(
         isMain,
         assistantName: ASSISTANT_NAME,
       },
-      (proc, containerName) =>
-        queue.registerProcess(chatJid, proc, containerName, group.folder),
+      RUNTIME_MODE === 'kubernetes'
+        ? undefined
+        : (proc, containerName) =>
+            queue.registerProcess(
+              chatJid,
+              proc as import('child_process').ChildProcess,
+              containerName,
+              group.folder,
+            ),
       wrappedOnOutput,
     );
 
@@ -458,13 +477,20 @@ function recoverPendingMessages(): void {
 }
 
 function ensureContainerSystemRunning(): void {
+  // Skip container runtime check in Kubernetes mode
+  if (RUNTIME_MODE === 'kubernetes') {
+    logger.info(
+      'Running in Kubernetes mode - skipping container runtime check',
+    );
+    return;
+  }
   ensureContainerRuntimeRunning();
   cleanupOrphans();
 }
 
 async function main(): Promise<void> {
   ensureContainerSystemRunning();
-  initDatabase();
+  await initDatabase();
   logger.info('Database initialized');
   loadState();
 
@@ -472,6 +498,7 @@ async function main(): Promise<void> {
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
     await queue.shutdown(10000);
+    await getAgentRunner().shutdown();
     for (const ch of channels) await ch.disconnect();
     process.exit(0);
   };
@@ -512,7 +539,14 @@ async function main(): Promise<void> {
   // Create and connect all registered channels.
   // Each channel self-registers via the barrel import above.
   // Factories return null when credentials are missing, so unconfigured channels are skipped.
-  for (const channelName of getRegisteredChannelNames()) {
+  const registeredChannelNames = getRegisteredChannelNames();
+  logger.info(
+    { channels: registeredChannelNames },
+    'Registered channel factories',
+  );
+
+  for (const channelName of registeredChannelNames) {
+    logger.info({ channel: channelName }, 'Creating channel');
     const factory = getChannelFactory(channelName)!;
     const channel = factory(channelOpts);
     if (!channel) {
@@ -522,8 +556,13 @@ async function main(): Promise<void> {
       );
       continue;
     }
+    logger.info(
+      { channel: channelName, channelType: channel.name },
+      'Channel created, connecting...',
+    );
     channels.push(channel);
     await channel.connect();
+    logger.info({ channel: channelName }, 'Channel connected successfully');
   }
   if (channels.length === 0) {
     logger.fatal('No channels connected');
@@ -535,8 +574,16 @@ async function main(): Promise<void> {
     registeredGroups: () => registeredGroups,
     getSessions: () => sessions,
     queue,
-    onProcess: (groupJid, proc, containerName, groupFolder) =>
-      queue.registerProcess(groupJid, proc, containerName, groupFolder),
+    onProcess: (groupJid, proc, containerName, groupFolder) => {
+      if (RUNTIME_MODE !== 'kubernetes') {
+        queue.registerProcess(
+          groupJid,
+          proc as import('child_process').ChildProcess,
+          containerName,
+          groupFolder,
+        );
+      }
+    },
     sendMessage: async (jid, rawText) => {
       const channel = findChannel(channels, jid);
       if (!channel) {
@@ -547,8 +594,9 @@ async function main(): Promise<void> {
       if (text) await channel.sendMessage(jid, text);
     },
   });
-  startIpcWatcher({
-    sendMessage: (jid, text) => {
+
+  const ipcDeps = {
+    sendMessage: (jid: string, text: string) => {
       const channel = findChannel(channels, jid);
       if (!channel) throw new Error(`No channel for JID: ${jid}`);
       return channel.sendMessage(jid, text);
@@ -563,9 +611,18 @@ async function main(): Promise<void> {
       );
     },
     getAvailableGroups,
-    writeGroupsSnapshot: (gf, im, ag, rj) =>
-      writeGroupsSnapshot(gf, im, ag, rj),
-  });
+    writeGroupsSnapshot: (
+      gf: string,
+      im: boolean,
+      ag: AvailableGroup[],
+      rj: Set<string>,
+    ) => getAgentRunner().writeGroupsSnapshot(gf, im, ag, rj),
+  };
+  if (RUNTIME_MODE === 'kubernetes') {
+    startRedisIpcWatcher(ipcDeps);
+  } else {
+    startFsIpcWatcher(ipcDeps);
+  }
   queue.setProcessMessagesFn(processGroupMessages);
   recoverPendingMessages();
   startMessageLoop().catch((err) => {

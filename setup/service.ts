@@ -20,11 +20,39 @@ import {
 } from './platform.js';
 import { emitStatus } from './status.js';
 
+function isKubernetesMode(): boolean {
+  try {
+    // Check if Kubernetes orchestrator is already deployed
+    execSync('kubectl get deployment nanoclaw-orchestrator -n nanoclaw', {
+      stdio: 'ignore',
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function run(_args: string[]): Promise<void> {
   const projectRoot = process.cwd();
   const platform = getPlatform();
   const nodePath = getNodePath();
   const homeDir = os.homedir();
+
+  // Check if Kubernetes mode is active
+  if (isKubernetesMode()) {
+    logger.info(
+      'Kubernetes orchestrator detected — skipping local service setup',
+    );
+    emitStatus('SETUP_SERVICE', {
+      SERVICE_TYPE: 'kubernetes',
+      NODE_PATH: nodePath,
+      PROJECT_PATH: projectRoot,
+      SERVICE_LOADED: true,
+      STATUS: 'success',
+      LOG: 'logs/setup.log',
+    });
+    return;
+  }
 
   logger.info({ platform, nodePath, projectRoot }, 'Setting up service');
 

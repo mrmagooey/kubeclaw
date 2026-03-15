@@ -45,6 +45,7 @@ Then run `/setup`. Claude Code handles everything: dependencies, authentication,
 **Customization = code changes.** No configuration sprawl. Want different behavior? Modify the code. The codebase is small enough that it's safe to make changes.
 
 **AI-native.**
+
 - No installation wizard; Claude Code guides setup.
 - No monitoring dashboard; ask Claude what's happening.
 - No debugging tools; describe the problem and Claude fixes it.
@@ -62,6 +63,7 @@ Then run `/setup`. Claude Code handles everything: dependencies, authentication,
 - **Web access** - Search and fetch content from the Web
 - **Container isolation** - Agents are sandboxed in Apple Container (macOS) or Docker (macOS/Linux)
 - **Agent Swarms** - Spin up teams of specialized agents that collaborate on complex tasks. NanoClaw is the first personal AI assistant to support agent swarms.
+- **Dual LLM provider support** - Use Claude (via Claude Code) or OpenRouter (access to 100+ models including GPT-4o, Llama, and more)
 - **Optional integrations** - Add Gmail (`/add-gmail`) and more via skills
 
 ## Usage
@@ -75,6 +77,7 @@ Talk to your assistant with the trigger word (default: `@Andy`):
 ```
 
 From the main channel (your self-chat), you can manage groups and tasks:
+
 ```
 @Andy list all scheduled tasks across groups
 @Andy pause the Monday briefing task
@@ -107,9 +110,11 @@ Users then run `/add-telegram` on their fork and get clean code that does exactl
 Skills we'd like to see:
 
 **Communication Channels**
+
 - `/add-signal` - Add Signal as a channel
 
 **Session Management**
+
 - `/clear` - Add a `/clear` command that compacts the conversation (summarizes context while preserving critical information in the same session). Requires figuring out how to trigger compaction programmatically via the Claude Agent SDK.
 
 ## Requirements
@@ -130,6 +135,7 @@ Single Node.js process. Channels are added via skills and self-register at start
 For the full architecture details, see [docs/SPEC.md](docs/SPEC.md).
 
 Key files:
+
 - `src/index.ts` - Orchestrator: state, message loop, agent invocation
 - `src/channels/registry.ts` - Channel registry (self-registration at startup)
 - `src/ipc.ts` - IPC watcher and task processing
@@ -139,6 +145,113 @@ Key files:
 - `src/task-scheduler.ts` - Runs scheduled tasks
 - `src/db.ts` - SQLite operations (messages, groups, sessions, state)
 - `groups/*/CLAUDE.md` - Per-group memory
+
+## Kubernetes Runtime
+
+NanoClaw supports running agents as Kubernetes Jobs instead of Docker containers. This enables better scalability, resource management, and cloud-native operation.
+
+### When to Use Kubernetes
+
+- You want to run NanoClaw on a Kubernetes cluster
+- You need better resource limits and isolation per agent
+- You want horizontal scaling across multiple nodes
+- You're deploying to a cloud environment (EKS, GKE, AKS)
+
+### Prerequisites
+
+- Kubernetes cluster (v1.24+)
+- `kubectl` configured with cluster access
+- Storage class supporting `ReadWriteMany` (e.g., AWS EFS, NFS)
+- Redis (deployed as part of the manifests)
+
+### Quick Deploy
+
+```bash
+# Deploy infrastructure
+kubectl apply -f k8s/00-namespace.yaml
+kubectl apply -f k8s/01-network-policy.yaml
+kubectl apply -f k8s/10-redis.yaml
+kubectl apply -f k8s/20-storage.yaml
+
+# Create secrets (Redis 7+ required for ACL support)
+kubectl create secret generic nanoclaw-redis \
+  --from-literal=admin-password=$(openssl rand -base64 32) \
+  -n nanoclaw
+
+kubectl create secret generic nanoclaw-secrets \
+  --from-literal=anthropic-api-key=$ANTHROPIC_API_KEY \
+  --from-literal=claude-code-oauth-token=$CLAUDE_CODE_OAUTH_TOKEN \
+  -n nanoclaw
+
+# Build and push images
+docker build -t your-registry/nanoclaw-agent:latest -f container/Dockerfile .
+docker build -t your-registry/nanoclaw-orchestrator:latest .
+docker push your-registry/nanoclaw-agent:latest
+docker push your-registry/nanoclaw-orchestrator:latest
+
+# Update image references in orchestrator manifest, then deploy
+kubectl apply -f k8s/30-orchestrator.yaml
+```
+
+### Configuration
+
+Set these environment variables in the orchestrator deployment:
+
+```yaml
+env:
+  - name: NANOCLAW_RUNTIME
+    value: kubernetes
+  - name: REDIS_URL
+    value: redis://nanoclaw-redis:6379
+  - name: NANOCLAW_NAMESPACE
+    value: nanoclaw
+  - name: MAX_CONCURRENT_JOBS
+    value: '10'
+```
+
+Or use Docker mode (default) for local development:
+
+```bash
+NANOCLAW_RUNTIME=docker  # or omit (docker is default)
+```
+
+### Architecture Differences
+
+| Feature             | Docker              | Kubernetes                     |
+| ------------------- | ------------------- | ------------------------------ |
+| **Agent execution** | Docker containers   | Kubernetes Jobs                |
+| **Communication**   | Filesystem IPC      | Redis Pub/Sub + Streams        |
+| **Concurrency**     | Local process limit | Distributed via Redis          |
+| **Storage**         | Bind mounts         | PersistentVolumeClaims         |
+| **Networking**      | Docker bridge       | Kubernetes CNI + NetworkPolicy |
+| **Secrets**         | Stdin injection     | Kubernetes Secrets             |
+
+### Security
+
+The Kubernetes runtime includes additional security features:
+
+- **Network isolation**: Agents can only reach DNS, Redis, and HTTPS endpoints
+- **RBAC**: Minimal permissions for job management
+- **Resource limits**: CPU/memory limits per agent job
+- **TTL cleanup**: Jobs auto-delete after 1 hour
+
+### Monitoring
+
+```bash
+# Check running jobs
+kubectl get jobs -n nanoclaw
+
+# View agent logs
+kubectl logs job/nanoclaw-agent-{folder}-{timestamp} -n nanoclaw
+
+# Check Redis (requires admin password for ACL authentication)
+kubectl exec -it nanoclaw-redis-0 -n nanoclaw -- redis-cli -a $(kubectl get secret nanoclaw-redis -n nanoclaw -o jsonpath='{.data.admin-password}' | base64 -d)
+
+# View orchestrator logs
+kubectl logs -f deployment/nanoclaw-orchestrator -n nanoclaw
+```
+
+See [KUBERNETES_MIGRATION.md](KUBERNETES_MIGRATION.md) for detailed documentation.
 
 ## FAQ
 
@@ -160,7 +273,22 @@ We don't want configuration sprawl. Every user should customize NanoClaw so that
 
 **Can I use third-party or open-source models?**
 
-Yes. NanoClaw supports any Claude API-compatible model endpoint. Set these environment variables in your `.env` file:
+Yes. NanoClaw supports multiple LLM providers:
+
+**Option 1: OpenRouter (Recommended for multi-model access)**
+
+Set up OpenRouter to access 100+ models including GPT-4o, Llama, and more:
+
+```bash
+OPENROUTER_API_KEY=your-key-here
+OPENROUTER_MODEL=openai/gpt-4o
+```
+
+See [docs/OPENROUTER.md](docs/OPENROUTER.md) for detailed configuration.
+
+**Option 2: Claude API-compatible endpoints**
+
+For endpoints that support the Anthropic API format:
 
 ```bash
 ANTHROPIC_BASE_URL=https://your-api-endpoint.com
@@ -168,11 +296,10 @@ ANTHROPIC_AUTH_TOKEN=your-token-here
 ```
 
 This allows you to use:
+
 - Local models via [Ollama](https://ollama.ai) with an API proxy
 - Open-source models hosted on [Together AI](https://together.ai), [Fireworks](https://fireworks.ai), etc.
 - Custom model deployments with Anthropic-compatible APIs
-
-Note: The model must support the Anthropic API format for best compatibility.
 
 **How do I debug issues?**
 

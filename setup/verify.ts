@@ -29,61 +29,88 @@ export async function run(_args: string[]): Promise<void> {
 
   logger.info('Starting verification');
 
-  // 1. Check service status
+  // 1. Check service status (local or Kubernetes)
   let service = 'not_found';
+  let kubernetesDeployment = 'not_found';
   const mgr = getServiceManager();
 
-  if (mgr === 'launchd') {
+  // Check if Kubernetes is the runtime
+  try {
+    execSync('kubectl cluster-info', { stdio: 'ignore' });
+    // Kubernetes detected — check orchestrator deployment
     try {
-      const output = execSync('launchctl list', { encoding: 'utf-8' });
-      if (output.includes('com.nanoclaw')) {
-        // Check if it has a PID (actually running)
-        const line = output.split('\n').find((l) => l.includes('com.nanoclaw'));
-        if (line) {
-          const pidField = line.trim().split(/\s+/)[0];
-          service = pidField !== '-' && pidField ? 'running' : 'stopped';
-        }
+      const output = execSync(
+        'kubectl get deployment nanoclaw-orchestrator -n nanoclaw -o jsonpath={.status.readyReplicas}',
+        { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
+      );
+      const readyReplicas = parseInt(output.trim(), 10);
+      if (readyReplicas > 0) {
+        kubernetesDeployment = 'running';
+        service = 'running';
+      } else {
+        kubernetesDeployment = 'deployed_not_ready';
+        service = 'stopped';
       }
     } catch {
-      // launchctl not available
+      kubernetesDeployment = 'not_deployed';
     }
-  } else if (mgr === 'systemd') {
-    const prefix = isRoot() ? 'systemctl' : 'systemctl --user';
-    try {
-      execSync(`${prefix} is-active nanoclaw`, { stdio: 'ignore' });
-      service = 'running';
-    } catch {
+  } catch {
+    // No Kubernetes — check local service
+    if (mgr === 'launchd') {
       try {
-        const output = execSync(`${prefix} list-unit-files`, {
-          encoding: 'utf-8',
-        });
-        if (output.includes('nanoclaw')) {
+        const output = execSync('launchctl list', { encoding: 'utf-8' });
+        if (output.includes('com.nanoclaw')) {
+          // Check if it has a PID (actually running)
+          const line = output
+            .split('\n')
+            .find((l) => l.includes('com.nanoclaw'));
+          if (line) {
+            const pidField = line.trim().split(/\s+/)[0];
+            service = pidField !== '-' && pidField ? 'running' : 'stopped';
+          }
+        }
+      } catch {
+        // launchctl not available
+      }
+    } else if (mgr === 'systemd') {
+      const prefix = isRoot() ? 'systemctl' : 'systemctl --user';
+      try {
+        execSync(`${prefix} is-active nanoclaw`, { stdio: 'ignore' });
+        service = 'running';
+      } catch {
+        try {
+          const output = execSync(`${prefix} list-unit-files`, {
+            encoding: 'utf-8',
+          });
+          if (output.includes('nanoclaw')) {
+            service = 'stopped';
+          }
+        } catch {
+          // systemctl not available
+        }
+      }
+    } else {
+      // Check for nohup PID file
+      const pidFile = path.join(projectRoot, 'nanoclaw.pid');
+      if (fs.existsSync(pidFile)) {
+        try {
+          const raw = fs.readFileSync(pidFile, 'utf-8').trim();
+          const pid = Number(raw);
+          if (raw && Number.isInteger(pid) && pid > 0) {
+            process.kill(pid, 0);
+            service = 'running';
+          }
+        } catch {
           service = 'stopped';
         }
-      } catch {
-        // systemctl not available
-      }
-    }
-  } else {
-    // Check for nohup PID file
-    const pidFile = path.join(projectRoot, 'nanoclaw.pid');
-    if (fs.existsSync(pidFile)) {
-      try {
-        const raw = fs.readFileSync(pidFile, 'utf-8').trim();
-        const pid = Number(raw);
-        if (raw && Number.isInteger(pid) && pid > 0) {
-          process.kill(pid, 0);
-          service = 'running';
-        }
-      } catch {
-        service = 'stopped';
       }
     }
   }
-  logger.info({ service }, 'Service status');
+  logger.info({ service, kubernetesDeployment }, 'Service status');
 
   // 2. Check container runtime
   let containerRuntime = 'none';
+  let kubernetesStatus = 'not_found';
   try {
     execSync('command -v container', { stdio: 'ignore' });
     containerRuntime = 'apple-container';
@@ -92,7 +119,23 @@ export async function run(_args: string[]): Promise<void> {
       execSync('docker info', { stdio: 'ignore' });
       containerRuntime = 'docker';
     } catch {
-      // No runtime
+      // Check for Kubernetes
+      try {
+        execSync('kubectl cluster-info', { stdio: 'ignore' });
+        containerRuntime = 'kubernetes';
+        kubernetesStatus = 'connected';
+        // Check orchestrator deployment status
+        try {
+          execSync('kubectl get deployment nanoclaw-orchestrator -n nanoclaw', {
+            stdio: 'ignore',
+          });
+          kubernetesStatus = 'deployed';
+        } catch {
+          kubernetesStatus = 'connected_not_deployed';
+        }
+      } catch {
+        // No runtime
+      }
     }
   }
 
@@ -166,6 +209,7 @@ export async function run(_args: string[]): Promise<void> {
   }
 
   // Determine overall status
+  const isKubernetes = kubernetesDeployment !== 'not_found';
   const status =
     service === 'running' &&
     credentials !== 'missing' &&
@@ -174,11 +218,12 @@ export async function run(_args: string[]): Promise<void> {
       ? 'success'
       : 'failed';
 
-  logger.info({ status, channelAuth }, 'Verification complete');
+  logger.info({ status, channelAuth, isKubernetes }, 'Verification complete');
 
   emitStatus('VERIFY', {
     SERVICE: service,
     CONTAINER_RUNTIME: containerRuntime,
+    KUBERNETES_DEPLOYMENT: kubernetesDeployment,
     CREDENTIALS: credentials,
     CONFIGURED_CHANNELS: configuredChannels.join(','),
     CHANNEL_AUTH: JSON.stringify(channelAuth),

@@ -35,11 +35,14 @@ Run `npx tsx setup/index.ts --step environment` and parse the status block.
 
 ### 3a. Choose runtime
 
-Check the preflight results for `APPLE_CONTAINER` and `DOCKER`, and the PLATFORM from step 1.
+Check the preflight results for `APPLE_CONTAINER`, `DOCKER`, and `KUBERNETES`, and the PLATFORM from step 1.
 
-- PLATFORM=linux → Docker (only option)
-- PLATFORM=macos + APPLE_CONTAINER=installed → Use `AskUserQuestion: Docker (cross-platform) or Apple Container (native macOS)?` If Apple Container, run `/convert-to-apple-container` now, then skip to 3c.
-- PLATFORM=macos + APPLE_CONTAINER=not_found → Docker
+- PLATFORM=linux + KUBERNETES=connected → Use `AskUserQuestion: Docker (local), Apple Container (not available on Linux), or Kubernetes (cloud/cluster)?`
+- PLATFORM=linux + KUBERNETES!=connected → Docker (only option)
+- PLATFORM=macos + APPLE_CONTAINER=installed + KUBERNETES=connected → Use `AskUserQuestion: Docker (cross-platform), Apple Container (native macOS), or Kubernetes (cloud/cluster)?` If Apple Container, run `/convert-to-apple-container` now, then skip to 3c.
+- PLATFORM=macos + APPLE_CONTAINER=installed + KUBERNETES!=connected → Use `AskUserQuestion: Docker (cross-platform) or Apple Container (native macOS)?` If Apple Container, run `/convert-to-apple-container` now, then skip to 3c.
+- PLATFORM=macos + APPLE_CONTAINER=not_found + KUBERNETES=connected → Use `AskUserQuestion: Docker (cross-platform) or Kubernetes (cloud/cluster)?`
+- PLATFORM=macos + APPLE_CONTAINER=not_found + KUBERNETES!=connected → Docker
 
 ### 3a-docker. Install Docker
 
@@ -63,15 +66,60 @@ grep -q "CONTAINER_RUNTIME_BIN = 'container'" src/container-runtime.ts && echo "
 
 **If the chosen runtime is Docker**, no conversion is needed. Continue to 3c.
 
-### 3c. Build and test
+**If the chosen runtime is Kubernetes**, skip to 3d.
+
+### 3c. Build and test (Docker / Apple Container)
 
 Run `npx tsx setup/index.ts --step container -- --runtime <chosen>` and parse the status block.
 
 **If BUILD_OK=false:** Read `logs/setup.log` tail for the build error.
+
 - Cache issue (stale layers): `docker builder prune -f` (Docker) or `container builder stop && container builder rm && container builder start` (Apple Container). Retry.
 - Dockerfile syntax or missing files: diagnose from the log and fix, then retry.
 
 **If TEST_OK=false but BUILD_OK=true:** The image built but won't run. Check logs — common cause is runtime not fully started. Wait a moment and retry the test.
+
+### 3d. Kubernetes setup (if chosen)
+
+If Kubernetes was selected as the runtime:
+
+**Prerequisites check:**
+
+- Verify kubectl is connected: `kubectl cluster-info`
+- Check for required storage class: `kubectl get storageclass`
+- If no ReadWriteMany storage class exists, warn user that multi-node clusters may not work properly
+
+**AskUserQuestion:** Kubernetes configuration options
+
+- Namespace (default: `nanoclaw`)
+- Storage class to use (optional — will auto-detect if not specified)
+- Container registry (optional — for pushing images, e.g., `your-registry.com/nanoclaw`)
+
+**Run Kubernetes setup:**
+
+```bash
+npx tsx setup/index.ts --step kubernetes -- --namespace <namespace> [--storage-class <class>] [--registry <registry>]
+```
+
+**If SECRETS_CONFIGURED=false:** The orchestrator needs API credentials. Guide user to create secrets:
+
+```bash
+kubectl create secret generic nanoclaw-secrets \
+  --from-literal=anthropic-api-key=$ANTHROPIC_API_KEY \
+  --from-literal=claude-code-oauth-token=$CLAUDE_CODE_OAUTH_TOKEN \
+  -n <namespace>
+```
+
+**If IMAGES_BUILT=false:** Images couldn't be built/pushed. This is OK if using a pre-built registry image.
+
+**If DEPLOYMENT_READY=false:** Check pod status:
+
+```bash
+kubectl get pods -n <namespace>
+kubectl describe deployment nanoclaw-orchestrator -n <namespace>
+```
+
+**Skip to Step 5 (channels)** — Kubernetes doesn't need local service setup (Step 7).
 
 ## 4. Claude Authentication (No Script)
 
@@ -86,6 +134,7 @@ AskUserQuestion: Claude subscription (Pro/Max) vs Anthropic API key?
 ## 5. Set Up Channels
 
 AskUserQuestion (multiSelect): Which messaging channels do you want to enable?
+
 - WhatsApp (authenticates via QR code or pairing code)
 - Telegram (authenticates via bot token from @BotFather)
 - Slack (authenticates via Slack app with Socket Mode)
@@ -101,6 +150,7 @@ For each selected channel, invoke its skill:
 - **Discord:** Invoke `/add-discord`
 
 Each skill will:
+
 1. Install the channel code (via `apply-skill`)
 2. Collect credentials/tokens and write to `.env`
 3. Authenticate (WhatsApp QR/pairing, or verify token-based connection)
@@ -118,7 +168,10 @@ AskUserQuestion: Agent access to external directories?
 
 ## 7. Start Service
 
+**Skip this step if Kubernetes runtime was chosen.** Kubernetes orchestrator runs as a Deployment, not a local service.
+
 If service already running: unload first.
+
 - macOS: `launchctl unload ~/Library/LaunchAgents/com.nanoclaw.plist`
 - Linux: `systemctl --user stop nanoclaw` (or `systemctl stop nanoclaw` if root)
 
@@ -130,6 +183,7 @@ Run `npx tsx setup/index.ts --step service` and parse the status block.
 
 1. Immediate fix: `sudo setfacl -m u:$(whoami):rw /var/run/docker.sock`
 2. Persistent fix (re-applies after every Docker restart):
+
 ```bash
 sudo mkdir -p /etc/systemd/system/docker.service.d
 sudo tee /etc/systemd/system/docker.service.d/socket-acl.conf << 'EOF'
@@ -138,9 +192,11 @@ ExecStartPost=/usr/bin/setfacl -m u:USERNAME:rw /var/run/docker.sock
 EOF
 sudo systemctl daemon-reload
 ```
+
 Replace `USERNAME` with the actual username (from `whoami`). Run the two `sudo` commands separately — the `tee` heredoc first, then `daemon-reload`. After user confirms setfacl ran, re-run the service step.
 
 **If SERVICE_LOADED=false:**
+
 - Read `logs/setup.log` for the error.
 - macOS: check `launchctl list | grep nanoclaw`. If PID=`-` and status non-zero, read `logs/nanoclaw.error.log`.
 - Linux: check `systemctl --user status nanoclaw`.
@@ -150,7 +206,15 @@ Replace `USERNAME` with the actual username (from `whoami`). Run the two `sudo` 
 
 Run `npx tsx setup/index.ts --step verify` and parse the status block.
 
-**If STATUS=failed, fix each:**
+**If Kubernetes runtime:**
+
+- KUBERNETES_DEPLOYMENT=running → Service is up
+- KUBERNETES_DEPLOYMENT=deployed_not_ready → Check pod logs: `kubectl logs -n nanoclaw deployment/nanoclaw-orchestrator`
+- KUBERNETES_DEPLOYMENT=not_deployed → Re-run step 3d
+- KUBERNETES_DEPLOYMENT=not_found → kubectl not connected to cluster
+
+**If local runtime (Docker/Apple Container) and STATUS=failed, fix each:**
+
 - SERVICE=stopped → `npm run build`, then restart: `launchctl kickstart -k gui/$(id -u)/com.nanoclaw` (macOS) or `systemctl --user restart nanoclaw` (Linux) or `bash start-nanoclaw.sh` (WSL nohup)
 - SERVICE=not_found → re-run step 7
 - CREDENTIALS=missing → re-run step 4
@@ -158,7 +222,7 @@ Run `npx tsx setup/index.ts --step verify` and parse the status block.
 - REGISTERED_GROUPS=0 → re-invoke the channel skills from step 5
 - MOUNT_ALLOWLIST=missing → `npx tsx setup/index.ts --step mounts -- --empty`
 
-Tell user to test: send a message in their registered chat. Show: `tail -f logs/nanoclaw.log`
+Tell user to test: send a message in their registered chat. Show: `tail -f logs/nanoclaw.log` (local) or `kubectl logs -n nanoclaw deployment/nanoclaw-orchestrator -f` (Kubernetes)
 
 ## Troubleshooting
 

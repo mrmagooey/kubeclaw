@@ -1,0 +1,167 @@
+{
+  "agent_output_messages": [
+    {
+      "type": "text",
+      "content": "Hello, I have analyzed your code. The issue is on line 42 where the variable 'count' is not initialized."
+    },
+    {
+      "type": "text",
+      "content": "Here's the fix:\n```javascript\nlet count = 0;\n```"
+    },
+    {
+      "type": "tool_use",
+      "tool": "read",
+      "params": {
+        "filePath": "/workspace/src/index.ts",
+        "offset": 40,
+        "limit": 10
+      }
+    },
+    {
+      "type": "thinking",
+      "content": "The user is asking about a JavaScript bug. Let me trace through the code to find the initialization issue."
+    }
+  ],
+  "task_request_messages": {
+    "schedule": {
+      "id": "task-001",
+      "type": "task_request",
+      "action": "schedule",
+      "payload": {
+        "command": "run-backup",
+        "schedule": "0 2 * * *",
+        "timezone": "America/New_York"
+      },
+      "timestamp": "2024-01-15T10:30:00Z",
+      "reply_to": "group-123@example.com"
+    },
+    "pause": {
+      "id": "task-002",
+      "type": "task_request",
+      "action": "pause",
+      "payload": {
+        "task_id": "task-001"
+      },
+      "timestamp": "2024-01-15T10:35:00Z",
+      "reply_to": "group-123@example.com"
+    },
+    "resume": {
+      "id": "task-003",
+      "type": "task_request",
+      "action": "resume",
+      "payload": {
+        "task_id": "task-001"
+      },
+      "timestamp": "2024-01-15T10:40:00Z",
+      "reply_to": "group-123@example.com"
+    },
+    "cancel": {
+      "id": "task-004",
+      "type": "task_request",
+      "action": "cancel",
+      "payload": {
+        "task_id": "task-001"
+      },
+      "timestamp": "2024-01-15T10:45:00Z",
+      "reply_to": "group-123@example.com"
+    }
+  },
+  "input_stream_messages": [
+    {
+      "id": "msg-001",
+      "type": "user_message",
+      "jid": "user@example.com",
+      "content": "Hello, can you help me with my code?",
+      "timestamp": "2024-01-15T10:00:00Z",
+      "group_jid": "group-123@example.com",
+      "is_main": false
+    },
+    {
+      "id": "msg-002",
+      "type": "user_message",
+      "jid": "user@example.com",
+      "content": "Here's the code:\n```\nfunction fib(n) {\n  return n < 2 ? n : fib(n-1) + fib(n-2);\n}\n```",
+      "timestamp": "2024-01-15T10:01:00Z",
+      "group_jid": "group-123@example.com",
+      "is_main": false
+    },
+    {
+      "id": "msg-003",
+      "type": "image",
+      "jid": "user@example.com",
+      "image_url": "https://example.com/image.png",
+      "caption": "Screenshot of the error",
+      "timestamp": "2024-01-15T10:02:00Z",
+      "group_jid": "group-123@example.com",
+      "is_main": false
+    }
+  ],
+  "close_sentinel_messages": [
+    {
+      "type": "close",
+      "timestamp": "2024-01-15T10:30:00Z",
+      "reason": "completed"
+    },
+    {
+      "type": "close",
+      "timestamp": "2024-01-15T10:35:00Z",
+      "reason": "timeout",
+      "timeout_seconds": 300
+    },
+    {
+      "type": "close",
+      "timestamp": "2024-01-15T10:40:00Z",
+      "reason": "error",
+      "error": "Connection lost"
+    }
+  ],
+  "system_messages": [
+    {
+      "type": "system",
+      "event": "container_started",
+      "container_id": "abc123",
+      "timestamp": "2024-01-15T10:00:01Z"
+    },
+    {
+      "type": "system",
+      "event": "job_created",
+      "job_name": "nanoclaw-agent-group-123",
+      "namespace": "nanoclaw",
+      "timestamp": "2024-01-15T10:00:02Z"
+    },
+    {
+      "type": "system",
+      "event": "job_completed",
+      "job_name": "nanoclaw-agent-group-123",
+      "exit_code": 0,
+      "timestamp": "2024-01-15T10:05:00Z"
+    }
+  ],
+  "agent_request_payload": {
+    "jid": "group-123@example.com",
+    "prompt": "Help me fix this bug in my JavaScript code",
+    "history": [
+      {
+        "role": "user",
+        "content": "Hello, can you help me with my code?"
+      },
+      {
+        "role": "assistant",
+        "content": "Sure! Please share your code and describe the issue."
+      }
+    ],
+    "group_context": {
+      "name": "e2e-test-group",
+      "folder": "/workspace/group/e2e-test-group",
+      "is_main": false
+    },
+    "container_context": {
+      "image": "nanoclaw-agent:latest",
+      "namespace": "nanoclaw",
+      "resource_limits": {
+        "memory": "4Gi",
+        "cpu": "2"
+      }
+    }
+  }
+}

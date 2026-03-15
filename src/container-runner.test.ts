@@ -15,6 +15,18 @@ vi.mock('./config.js', () => ({
   GROUPS_DIR: '/tmp/nanoclaw-test-groups',
   IDLE_TIMEOUT: 1800000, // 30min
   TIMEZONE: 'America/Los_Angeles',
+  DEFAULT_LLM_PROVIDER: 'claude',
+  LLMProvider: 'claude',
+  OPENROUTER_BASE_URL: 'https://openrouter.ai/v1',
+  OPENROUTER_MODEL: 'anthropic/claude-3-sonnet',
+  validateOpenRouterConfig: vi.fn(() => true),
+  sanitizeProvider: vi.fn((provider, defaultProvider = 'claude') => {
+    if (provider === 'claude' || provider === 'openrouter') {
+      return provider;
+    }
+    return defaultProvider;
+  }),
+  getContainerImage: vi.fn((provider = 'claude') => 'nanoclaw-agent:latest'),
 }));
 
 // Mock logger

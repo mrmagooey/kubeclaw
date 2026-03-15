@@ -1,0 +1,13 @@
+{
+  "name": "nanoclaw-example-http-agent",
+  "version": "1.0.0",
+  "description": "Example NanoClaw HTTP agent using Express",
+  "type": "module",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  }
+}

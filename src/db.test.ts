@@ -13,10 +13,16 @@ import {
   storeChatMetadata,
   storeMessage,
   updateTask,
+  storeJobACL,
+  getJobACL,
+  getJobACLByGroup,
+  revokeJobACL,
+  cleanupExpiredACLs,
 } from './db.js';
+import { JobACL } from './types.js';
 
-beforeEach(() => {
-  _initTestDatabase();
+beforeEach(async () => {
+  await _initTestDatabase();
 });
 
 // Helper to store a message using the normalized NewMessage interface
@@ -480,5 +486,289 @@ describe('registered group isMain', () => {
     const group = groups['group@g.us'];
     expect(group).toBeDefined();
     expect(group.isMain).toBeUndefined();
+  });
+});
+
+// --- Job ACL Functions ---
+
+describe('Job ACL Functions', () => {
+  describe('storeJobACL', () => {
+    it('should store and retrieve ACL correctly', () => {
+      const acl: JobACL = {
+        jobId: 'acl-test-job-1',
+        groupFolder: 'test-group',
+        username: 'sidecar-acl-test-job-1',
+        password: 'encrypted-password-xyz',
+        createdAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 3600000).toISOString(),
+        status: 'active',
+      };
+
+      storeJobACL(acl);
+      const retrieved = getJobACL('acl-test-job-1');
+
+      expect(retrieved).toBeDefined();
+      expect(retrieved?.jobId).toBe(acl.jobId);
+      expect(retrieved?.groupFolder).toBe(acl.groupFolder);
+      expect(retrieved?.username).toBe(acl.username);
+      expect(retrieved?.password).toBe(acl.password);
+      expect(retrieved?.status).toBe(acl.status);
+    });
+
+    it('should update existing ACL on conflict', () => {
+      const acl: JobACL = {
+        jobId: 'acl-test-job-update',
+        groupFolder: 'test-group',
+        username: 'sidecar-original',
+        password: 'password-v1',
+        createdAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 3600000).toISOString(),
+        status: 'active',
+      };
+
+      storeJobACL(acl);
+
+      const updatedAcl: JobACL = {
+        ...acl,
+        username: 'sidecar-updated',
+        password: 'password-v2',
+        status: 'revoked',
+      };
+
+      storeJobACL(updatedAcl);
+      const retrieved = getJobACL('acl-test-job-update');
+
+      expect(retrieved?.username).toBe('sidecar-updated');
+      expect(retrieved?.password).toBe('password-v2');
+      expect(retrieved?.status).toBe('revoked');
+    });
+  });
+
+  describe('getJobACL', () => {
+    it('should return undefined for non-existent job', () => {
+      const retrieved = getJobACL('non-existent-acl-job');
+      expect(retrieved).toBeUndefined();
+    });
+
+    it('should return correct ACL for existing job', () => {
+      const acl: JobACL = {
+        jobId: 'acl-exists-test',
+        groupFolder: 'test-group',
+        username: 'sidecar-exists',
+        password: 'secret',
+        createdAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 3600000).toISOString(),
+        status: 'active',
+      };
+
+      storeJobACL(acl);
+      const retrieved = getJobACL('acl-exists-test');
+
+      expect(retrieved).toBeDefined();
+      expect(retrieved?.jobId).toBe('acl-exists-test');
+    });
+  });
+
+  describe('getJobACLByGroup', () => {
+    it('should find ACL by group folder', () => {
+      const acl: JobACL = {
+        jobId: 'acl-group-test',
+        groupFolder: 'specific-group',
+        username: 'sidecar-group',
+        password: 'encrypted',
+        createdAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 3600000).toISOString(),
+        status: 'active',
+      };
+
+      storeJobACL(acl);
+      const retrieved = getJobACLByGroup('specific-group');
+
+      expect(retrieved).toBeDefined();
+      expect(retrieved?.jobId).toBe('acl-group-test');
+    });
+
+    it('should return most recent active ACL for group', () => {
+      const olderAcl: JobACL = {
+        jobId: 'acl-older',
+        groupFolder: 'multi-acl-group',
+        username: 'sidecar-older',
+        password: 'encrypted',
+        createdAt: new Date(Date.now() - 5000).toISOString(),
+        expiresAt: new Date(Date.now() + 3600000).toISOString(),
+        status: 'active',
+      };
+
+      const newerAcl: JobACL = {
+        jobId: 'acl-newer',
+        groupFolder: 'multi-acl-group',
+        username: 'sidecar-newer',
+        password: 'encrypted',
+        createdAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 3600000).toISOString(),
+        status: 'active',
+      };
+
+      storeJobACL(olderAcl);
+      storeJobACL(newerAcl);
+
+      const retrieved = getJobACLByGroup('multi-acl-group');
+      expect(retrieved?.jobId).toBe('acl-newer');
+    });
+
+    it('should not return revoked ACLs', () => {
+      const acl: JobACL = {
+        jobId: 'acl-revoked-group',
+        groupFolder: 'revoked-group',
+        username: 'sidecar-revoked',
+        password: 'encrypted',
+        createdAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 3600000).toISOString(),
+        status: 'revoked',
+      };
+
+      storeJobACL(acl);
+      const retrieved = getJobACLByGroup('revoked-group');
+
+      expect(retrieved).toBeUndefined();
+    });
+
+    it('should return undefined for non-existent group', () => {
+      const retrieved = getJobACLByGroup('no-such-group');
+      expect(retrieved).toBeUndefined();
+    });
+  });
+
+  describe('revokeJobACL', () => {
+    it('should mark ACL as revoked', () => {
+      const acl: JobACL = {
+        jobId: 'acl-to-revoke',
+        groupFolder: 'test-group',
+        username: 'sidecar-revoke',
+        password: 'encrypted',
+        createdAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 3600000).toISOString(),
+        status: 'active',
+      };
+
+      storeJobACL(acl);
+      revokeJobACL('acl-to-revoke');
+
+      const retrieved = getJobACL('acl-to-revoke');
+      expect(retrieved?.status).toBe('revoked');
+    });
+
+    it('should not throw for non-existent job', () => {
+      expect(() => revokeJobACL('non-existent-job')).not.toThrow();
+    });
+
+    it('should keep other fields intact when revoking', () => {
+      const acl: JobACL = {
+        jobId: 'acl-revoke-intact',
+        groupFolder: 'test-group',
+        username: 'sidecar-intact',
+        password: 'encrypted-password',
+        createdAt: '2024-01-01T00:00:00.000Z',
+        expiresAt: '2024-12-31T23:59:59.000Z',
+        status: 'active',
+      };
+
+      storeJobACL(acl);
+      revokeJobACL('acl-revoke-intact');
+
+      const retrieved = getJobACL('acl-revoke-intact');
+      expect(retrieved?.groupFolder).toBe('test-group');
+      expect(retrieved?.username).toBe('sidecar-intact');
+      expect(retrieved?.password).toBe('encrypted-password');
+      expect(retrieved?.createdAt).toBe('2024-01-01T00:00:00.000Z');
+    });
+  });
+
+  describe('cleanupExpiredACLs', () => {
+    it('should mark expired ACLs as revoked', () => {
+      const expiredAcl: JobACL = {
+        jobId: 'acl-expired-1',
+        groupFolder: 'test-group',
+        username: 'sidecar-expired',
+        password: 'encrypted',
+        createdAt: new Date(Date.now() - 7200000).toISOString(),
+        expiresAt: new Date(Date.now() - 3600000).toISOString(),
+        status: 'active',
+      };
+
+      storeJobACL(expiredAcl);
+
+      const revokedIds = cleanupExpiredACLs();
+
+      expect(revokedIds).toContain('acl-expired-1');
+      const retrieved = getJobACL('acl-expired-1');
+      expect(retrieved?.status).toBe('revoked');
+    });
+
+    it('should not affect active ACLs', () => {
+      const activeAcl: JobACL = {
+        jobId: 'acl-active-cleanup',
+        groupFolder: 'test-group',
+        username: 'sidecar-active',
+        password: 'encrypted',
+        createdAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 3600000).toISOString(),
+        status: 'active',
+      };
+
+      storeJobACL(activeAcl);
+
+      const revokedIds = cleanupExpiredACLs();
+
+      expect(revokedIds).not.toContain('acl-active-cleanup');
+      const retrieved = getJobACL('acl-active-cleanup');
+      expect(retrieved?.status).toBe('active');
+    });
+
+    it('should handle multiple expired ACLs', () => {
+      const expiredIds = ['acl-exp-1', 'acl-exp-2', 'acl-exp-3'];
+
+      for (const jobId of expiredIds) {
+        storeJobACL({
+          jobId,
+          groupFolder: 'test-group',
+          username: `sidecar-${jobId}`,
+          password: 'encrypted',
+          createdAt: new Date(Date.now() - 7200000).toISOString(),
+          expiresAt: new Date(Date.now() - 3600000).toISOString(),
+          status: 'active',
+        });
+      }
+
+      const revokedIds = cleanupExpiredACLs();
+
+      expect(revokedIds).toHaveLength(3);
+      for (const jobId of expiredIds) {
+        expect(revokedIds).toContain(jobId);
+      }
+    });
+
+    it('should return empty array when no expired ACLs', () => {
+      const revokedIds = cleanupExpiredACLs();
+      expect(revokedIds).toEqual([]);
+    });
+
+    it('should not double-revoke already revoked expired ACLs', () => {
+      const alreadyRevoked: JobACL = {
+        jobId: 'acl-already-revoked',
+        groupFolder: 'test-group',
+        username: 'sidecar-already',
+        password: 'encrypted',
+        createdAt: new Date(Date.now() - 7200000).toISOString(),
+        expiresAt: new Date(Date.now() - 3600000).toISOString(),
+        status: 'revoked',
+      };
+
+      storeJobACL(alreadyRevoked);
+
+      const revokedIds = cleanupExpiredACLs();
+
+      expect(revokedIds).not.toContain('acl-already-revoked');
+    });
   });
 });

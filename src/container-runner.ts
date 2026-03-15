@@ -11,9 +11,16 @@ import {
   CONTAINER_MAX_OUTPUT_SIZE,
   CONTAINER_TIMEOUT,
   DATA_DIR,
+  DEFAULT_LLM_PROVIDER,
+  getContainerImage,
   GROUPS_DIR,
   IDLE_TIMEOUT,
+  LLMProvider,
+  OPENROUTER_BASE_URL,
+  OPENROUTER_MODEL,
+  sanitizeProvider,
   TIMEZONE,
+  validateOpenRouterConfig,
 } from './config.js';
 import { readEnvFile } from './env.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
@@ -213,24 +220,83 @@ function buildVolumeMounts(
 /**
  * Read allowed secrets from .env for passing to the container via stdin.
  * Secrets are never written to disk or mounted as files.
+ * Includes both Claude and OpenRouter credentials.
  */
-function readSecrets(): Record<string, string> {
-  return readEnvFile([
+function readSecrets(provider: LLMProvider): Record<string, string> {
+  const secrets = readEnvFile([
     'CLAUDE_CODE_OAUTH_TOKEN',
     'ANTHROPIC_API_KEY',
     'ANTHROPIC_BASE_URL',
     'ANTHROPIC_AUTH_TOKEN',
+    'OPENROUTER_API_KEY',
+    'OPENROUTER_MODEL',
+    'OPENROUTER_BASE_URL',
+    'OPENROUTER_HTTP_REFERER',
+    'OPENROUTER_X_TITLE',
   ]);
+
+  // Inject OpenRouter defaults if not set in env
+  if (provider === 'openrouter') {
+    if (!secrets.OPENROUTER_MODEL) {
+      secrets.OPENROUTER_MODEL = OPENROUTER_MODEL;
+    }
+    if (!secrets.OPENROUTER_BASE_URL) {
+      secrets.OPENROUTER_BASE_URL = OPENROUTER_BASE_URL;
+    }
+  }
+
+  return secrets;
+}
+
+/**
+ * Determine which LLM provider to use for a group.
+ * Falls back to the default provider if not specified or invalid.
+ * Validates OpenRouter configuration when that provider is selected.
+ */
+function getGroupProvider(group: RegisteredGroup): LLMProvider {
+  const provider = sanitizeProvider(group.llmProvider, DEFAULT_LLM_PROVIDER);
+
+  // Additional validation for OpenRouter
+  if (provider === 'openrouter') {
+    const orConfig = validateOpenRouterConfig();
+    if (!orConfig.valid) {
+      logger.warn(
+        {
+          group: group.name,
+          warnings: orConfig.warnings,
+        },
+        'OpenRouter configuration invalid, falling back to Claude',
+      );
+      return 'claude';
+    }
+
+    // Log warnings but don't fail
+    if (orConfig.warnings.length > 0) {
+      logger.warn(
+        {
+          group: group.name,
+          warnings: orConfig.warnings,
+        },
+        'OpenRouter configuration has warnings',
+      );
+    }
+  }
+
+  return provider;
 }
 
 function buildContainerArgs(
   mounts: VolumeMount[],
   containerName: string,
+  provider: LLMProvider,
 ): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
 
   // Pass host timezone so container's local time matches the user's
   args.push('-e', `TZ=${TIMEZONE}`);
+
+  // Pass LLM provider selection to container
+  args.push('-e', `LLM_PROVIDER=${provider}`);
 
   // Run as host user so bind-mounted files are accessible.
   // Skip when running as root (uid 0), as the container's node user (uid 1000),
@@ -250,7 +316,9 @@ function buildContainerArgs(
     }
   }
 
-  args.push(CONTAINER_IMAGE);
+  // Select container image based on LLM provider
+  const image = getContainerImage(provider);
+  args.push(image);
 
   return args;
 }
@@ -263,13 +331,27 @@ export async function runContainerAgent(
 ): Promise<ContainerOutput> {
   const startTime = Date.now();
 
+  // Determine which LLM provider to use for this group
+  const provider = getGroupProvider(group);
+  const image = getContainerImage(provider);
+
+  logger.info(
+    {
+      group: group.name,
+      provider,
+      image,
+      isMain: input.isMain,
+    },
+    'LLM provider selected',
+  );
+
   const groupDir = resolveGroupFolderPath(group.folder);
   fs.mkdirSync(groupDir, { recursive: true });
 
   const mounts = buildVolumeMounts(group, input.isMain);
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const containerName = `nanoclaw-${safeName}-${Date.now()}`;
-  const containerArgs = buildContainerArgs(mounts, containerName);
+  const containerArgs = buildContainerArgs(mounts, containerName, provider);
 
   logger.debug(
     {
@@ -310,7 +392,8 @@ export async function runContainerAgent(
     let stderrTruncated = false;
 
     // Pass secrets via stdin (never written to disk or mounted as files)
-    input.secrets = readSecrets();
+    // Include provider-specific secrets (Claude or OpenRouter)
+    input.secrets = readSecrets(provider);
     container.stdin.write(JSON.stringify(input));
     container.stdin.end();
     // Remove secrets from input so they don't appear in logs

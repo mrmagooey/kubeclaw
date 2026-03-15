@@ -39,6 +39,19 @@ export async function run(_args: string[]): Promise<void> {
     }
   }
 
+  // Check Kubernetes (kubectl)
+  let kubernetes: 'connected' | 'installed_no_cluster' | 'not_found' =
+    'not_found';
+  if (commandExists('kubectl')) {
+    try {
+      const { execSync } = await import('child_process');
+      execSync('kubectl cluster-info', { stdio: 'ignore' });
+      kubernetes = 'connected';
+    } catch {
+      kubernetes = 'installed_no_cluster';
+    }
+  }
+
   // Check existing config
   const hasEnv = fs.existsSync(path.join(projectRoot, '.env'));
 
@@ -72,6 +85,7 @@ export async function run(_args: string[]): Promise<void> {
       wsl,
       appleContainer,
       docker,
+      kubernetes,
       hasEnv,
       hasAuth,
       hasRegisteredGroups,
@@ -85,6 +99,7 @@ export async function run(_args: string[]): Promise<void> {
     IS_HEADLESS: headless,
     APPLE_CONTAINER: appleContainer,
     DOCKER: docker,
+    KUBERNETES: kubernetes,
     HAS_ENV: hasEnv,
     HAS_AUTH: hasAuth,
     HAS_REGISTERED_GROUPS: hasRegisteredGroups,

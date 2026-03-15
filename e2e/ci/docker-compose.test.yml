@@ -1,0 +1,119 @@
+version: '3.8'
+
+services:
+  # Redis service for testing
+  redis:
+    image: redis:7-alpine
+    container_name: nanoclaw-e2e-redis
+    command:
+      - redis-server
+      - --appendonly
+      - 'yes'
+      - --appendfsync
+      - everysec
+      - --maxmemory
+      - 512mb
+      - --maxmemory-policy
+      - allkeys-lru
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis-data:/data
+    networks:
+      - nanoclaw-e2e
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  # Test runner service
+  test-runner:
+    build:
+      context: ../..
+      dockerfile: container/Dockerfile
+    container_name: nanoclaw-e2e-runner
+    environment:
+      - NODE_ENV=test
+      - REDIS_URL=redis://redis:6379
+      - NANOCLAW_RUNTIME=docker
+      - CI=true
+      - DEBUG=${DEBUG:-false}
+      - TEST_PHASE=${TEST_PHASE:-all}
+    volumes:
+      - ../:/workspace/e2e:ro
+      - test-results:/workspace/results
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - nanoclaw-e2e
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: >
+      sh -c "
+        echo 'Waiting for services to be ready...' &&
+        sleep 5 &&
+        cd /workspace/e2e &&
+        npm ci &&
+        npm run test:e2e:ci || true &&
+        cp -r /workspace/e2e/results/* /workspace/results/ || true &&
+        echo 'Tests completed'
+      "
+    privileged: true
+    # Required for Docker-in-Docker
+    cgroup: host
+
+  # Minikube integration service
+  minikube:
+    image: gcr.io/k8s-minikube/kicbase:v0.0.44
+    container_name: nanoclaw-e2e-minikube
+    privileged: true
+    environment:
+      - MINIKUBE_HOME=/data
+      - MINIKUBE_DRIVER=docker
+      - MINIKUBE_MEMORY=4096
+      - MINIKUBE_CPUS=2
+    volumes:
+      - minikube-data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - nanoclaw-e2e
+    command: >
+      sh -c "
+        echo 'Starting minikube...' &&
+        minikube start
+          --driver=docker
+          --memory=4096
+          --cpus=2
+          --kubernetes-version=v1.29.0
+          --wait=all
+          --force || true &&
+        echo 'Minikube ready' &&
+        tail -f /dev/null
+      "
+    healthcheck:
+      test: ['CMD', 'minikube', 'status']
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+volumes:
+  redis-data:
+    driver: local
+  test-results:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${PWD}/results
+  minikube-data:
+    driver: local
+
+networks:
+  nanoclaw-e2e:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16

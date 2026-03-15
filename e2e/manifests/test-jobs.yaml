@@ -1,0 +1,302 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: simple-job
+  namespace: nanoclaw
+  labels:
+    app: nanoclaw
+    test: e2e
+    job-type: simple
+spec:
+  ttlSecondsAfterFinished: 60
+  backoffLimit: 0
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      labels:
+        app: nanoclaw
+        test: e2e
+        job-type: simple
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: test
+          image: busybox:stable
+          command:
+            [
+              'sh',
+              '-c',
+              'echo "Hello from simple-job" && sleep 1 && echo "Success"',
+            ]
+          resources:
+            requests:
+              memory: 32Mi
+              cpu: 50m
+            limits:
+              memory: 128Mi
+              cpu: 200m
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: failing-job
+  namespace: nanoclaw
+  labels:
+    app: nanoclaw
+    test: e2e
+    job-type: failing
+spec:
+  ttlSecondsAfterFinished: 60
+  backoffLimit: 0
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      labels:
+        app: nanoclaw
+        test: e2e
+        job-type: failing
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: test
+          image: busybox:stable
+          command: ['sh', '-c', 'echo "This job will fail" && exit 1']
+          resources:
+            requests:
+              memory: 32Mi
+              cpu: 50m
+            limits:
+              memory: 128Mi
+              cpu: 200m
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: slow-job
+  namespace: nanoclaw
+  labels:
+    app: nanoclaw
+    test: e2e
+    job-type: slow
+spec:
+  ttlSecondsAfterFinished: 120
+  backoffLimit: 0
+  activeDeadlineSeconds: 600
+  template:
+    metadata:
+      labels:
+        app: nanoclaw
+        test: e2e
+        job-type: slow
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: test
+          image: busybox:stable
+          command:
+            [
+              'sh',
+              '-c',
+              'echo "Starting slow job" && sleep 30 && echo "Completed"',
+            ]
+          resources:
+            requests:
+              memory: 32Mi
+              cpu: 50m
+            limits:
+              memory: 128Mi
+              cpu: 200m
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: resource-test-job
+  namespace: nanoclaw
+  labels:
+    app: nanoclaw
+    test: e2e
+    job-type: resource-test
+spec:
+  ttlSecondsAfterFinished: 60
+  backoffLimit: 0
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      labels:
+        app: nanoclaw
+        test: e2e
+        job-type: resource-test
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: test
+          image: busybox:stable
+          command:
+            [
+              'sh',
+              '-c',
+              'echo "CPU: $(nproc), Memory: $(cat /proc/meminfo | grep MemTotal)" && sleep 2',
+            ]
+          resources:
+            requests:
+              memory: 256Mi
+              cpu: 500m
+            limits:
+              memory: 512Mi
+              cpu: '1'
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: write-test-job
+  namespace: nanoclaw
+  labels:
+    app: nanoclaw
+    test: e2e
+    job-type: pvc-write
+spec:
+  ttlSecondsAfterFinished: 60
+  backoffLimit: 0
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      labels:
+        app: nanoclaw
+        test: e2e
+        job-type: pvc-write
+    spec:
+      restartPolicy: Never
+      volumes:
+        - name: test-pvc
+          persistentVolumeClaim:
+            claimName: nanoclaw-test-pvc-data
+      containers:
+        - name: test
+          image: busybox:stable
+          command:
+            [
+              'sh',
+              '-c',
+              'echo "Test data from $(hostname) at $(date)" > /data/test-file.txt && echo "Written successfully" && cat /data/test-file.txt',
+            ]
+          volumeMounts:
+            - name: test-pvc
+              mountPath: /data
+          resources:
+            requests:
+              memory: 32Mi
+              cpu: 50m
+            limits:
+              memory: 128Mi
+              cpu: 200m
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: read-test-job
+  namespace: nanoclaw
+  labels:
+    app: nanoclaw
+    test: e2e
+    job-type: pvc-read
+spec:
+  ttlSecondsAfterFinished: 60
+  backoffLimit: 0
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      labels:
+        app: nanoclaw
+        test: e2e
+        job-type: pvc-read
+    spec:
+      restartPolicy: Never
+      volumes:
+        - name: test-pvc
+          persistentVolumeClaim:
+            claimName: nanoclaw-test-pvc-data
+      containers:
+        - name: test
+          image: busybox:stable
+          command:
+            [
+              'sh',
+              '-c',
+              'if [ -f /data/test-file.txt ]; then echo "Read: $(cat /data/test-file.txt)"; else echo "File not found"; exit 1; fi',
+            ]
+          volumeMounts:
+            - name: test-pvc
+              mountPath: /data
+          resources:
+            requests:
+              memory: 32Mi
+              cpu: 50m
+            limits:
+              memory: 128Mi
+              cpu: 200m
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: agent-like-job
+  namespace: nanoclaw
+  labels:
+    app: nanoclaw-agent
+    test: e2e
+    job-type: agent-mock
+spec:
+  ttlSecondsAfterFinished: 120
+  backoffLimit: 0
+  activeDeadlineSeconds: 600
+  template:
+    metadata:
+      labels:
+        app: nanoclaw-agent
+        test: e2e
+        job-type: agent-mock
+    spec:
+      restartPolicy: Never
+      serviceAccountName: default
+      volumes:
+        - name: groups-pvc
+          persistentVolumeClaim:
+            claimName: nanoclaw-groups
+        - name: sessions-pvc
+          persistentVolumeClaim:
+            claimName: nanoclaw-sessions
+      containers:
+        - name: agent
+          image: busybox:stable
+          command:
+            [
+              'sh',
+              '-c',
+              'echo "Mock agent job"; echo "Group folder: $NANOCLAW_GROUP_FOLDER"; echo "Session ID: $NANOCLAW_SESSION_ID"; echo "Testing PVC access..."; ls -la /workspace/group 2>/dev/null || echo "Groups PVC mounted"; sleep 5; echo "Done"',
+            ]
+          env:
+            - name: REDIS_URL
+              value: redis://nanoclaw-redis:6379
+            - name: NANOCLAW_GROUP_FOLDER
+              value: e2e-test-group
+            - name: NANOCLAW_CHAT_JID
+              value: e2e-test@example.com
+            - name: NANOCLAW_IS_MAIN
+              value: 'false'
+            - name: NANOCLAW_SESSION_ID
+              value: e2e-session-001
+            - name: NANOCLAW_ASSISTANT_NAME
+              value: TestAgent
+          volumeMounts:
+            - name: groups-pvc
+              mountPath: /workspace/group
+              subPathExpr: $(NANOCLAW_GROUP_FOLDER)
+            - name: sessions-pvc
+              mountPath: /home/node/.claude
+              subPathExpr: $(NANOCLAW_GROUP_FOLDER)
+          resources:
+            requests:
+              memory: 512Mi
+              cpu: 500m
+            limits:
+              memory: 1Gi
+              cpu: '1'

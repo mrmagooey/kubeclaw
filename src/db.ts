@@ -1,28 +1,37 @@
-import Database from 'better-sqlite3';
+import initSqlJs, { Database as SqlJsDatabase } from 'sql.js';
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 
 import { ASSISTANT_NAME, DATA_DIR, STORE_DIR } from './config.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
 import {
   NewMessage,
+  LLMProvider,
   RegisteredGroup,
   ScheduledTask,
   TaskRunLog,
+  JobACL,
 } from './types.js';
 
-let db: Database.Database;
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-function createSchema(database: Database.Database): void {
-  database.exec(`
+let db: SqlJsDatabase;
+let dbPath: string;
+
+function createSchema(database: SqlJsDatabase): void {
+  database.run(`
     CREATE TABLE IF NOT EXISTS chats (
       jid TEXT PRIMARY KEY,
       name TEXT,
       last_message_time TEXT,
       channel TEXT,
       is_group INTEGER DEFAULT 0
-    );
+    )
+  `);
+  database.run(`
     CREATE TABLE IF NOT EXISTS messages (
       id TEXT,
       chat_jid TEXT,
@@ -34,9 +43,13 @@ function createSchema(database: Database.Database): void {
       is_bot_message INTEGER DEFAULT 0,
       PRIMARY KEY (id, chat_jid),
       FOREIGN KEY (chat_jid) REFERENCES chats(jid)
-    );
-    CREATE INDEX IF NOT EXISTS idx_timestamp ON messages(timestamp);
+    )
+  `);
+  database.run(
+    `CREATE INDEX IF NOT EXISTS idx_timestamp ON messages(timestamp)`,
+  );
 
+  database.run(`
     CREATE TABLE IF NOT EXISTS scheduled_tasks (
       id TEXT PRIMARY KEY,
       group_folder TEXT NOT NULL,
@@ -49,10 +62,16 @@ function createSchema(database: Database.Database): void {
       last_result TEXT,
       status TEXT DEFAULT 'active',
       created_at TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_next_run ON scheduled_tasks(next_run);
-    CREATE INDEX IF NOT EXISTS idx_status ON scheduled_tasks(status);
+    )
+  `);
+  database.run(
+    `CREATE INDEX IF NOT EXISTS idx_next_run ON scheduled_tasks(next_run)`,
+  );
+  database.run(
+    `CREATE INDEX IF NOT EXISTS idx_status ON scheduled_tasks(status)`,
+  );
 
+  database.run(`
     CREATE TABLE IF NOT EXISTS task_run_logs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       task_id TEXT NOT NULL,
@@ -62,17 +81,25 @@ function createSchema(database: Database.Database): void {
       result TEXT,
       error TEXT,
       FOREIGN KEY (task_id) REFERENCES scheduled_tasks(id)
-    );
-    CREATE INDEX IF NOT EXISTS idx_task_run_logs ON task_run_logs(task_id, run_at);
+    )
+  `);
+  database.run(
+    `CREATE INDEX IF NOT EXISTS idx_task_run_logs ON task_run_logs(task_id, run_at)`,
+  );
 
+  database.run(`
     CREATE TABLE IF NOT EXISTS router_state (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
-    );
+    )
+  `);
+  database.run(`
     CREATE TABLE IF NOT EXISTS sessions (
       group_folder TEXT PRIMARY KEY,
       session_id TEXT NOT NULL
-    );
+    )
+  `);
+  database.run(`
     CREATE TABLE IF NOT EXISTS registered_groups (
       jid TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -81,87 +108,170 @@ function createSchema(database: Database.Database): void {
       added_at TEXT NOT NULL,
       container_config TEXT,
       requires_trigger INTEGER DEFAULT 1
-    );
+    )
   `);
 
-  // Add context_mode column if it doesn't exist (migration for existing DBs)
+  database.run(`
+    CREATE TABLE IF NOT EXISTS job_acls (
+      job_id TEXT PRIMARY KEY,
+      group_folder TEXT NOT NULL,
+      username TEXT NOT NULL,
+      password TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      status TEXT DEFAULT 'active'
+    )
+  `);
+  database.run(
+    `CREATE INDEX IF NOT EXISTS idx_job_acls_group ON job_acls(group_folder)`,
+  );
+  database.run(
+    `CREATE INDEX IF NOT EXISTS idx_job_acls_expires ON job_acls(expires_at, status)`,
+  );
+
   try {
-    database.exec(
+    database.run(
       `ALTER TABLE scheduled_tasks ADD COLUMN context_mode TEXT DEFAULT 'isolated'`,
     );
   } catch {
     /* column already exists */
   }
 
-  // Add is_bot_message column if it doesn't exist (migration for existing DBs)
   try {
-    database.exec(
+    database.run(
       `ALTER TABLE messages ADD COLUMN is_bot_message INTEGER DEFAULT 0`,
     );
-    // Backfill: mark existing bot messages that used the content prefix pattern
-    database
-      .prepare(`UPDATE messages SET is_bot_message = 1 WHERE content LIKE ?`)
-      .run(`${ASSISTANT_NAME}:%`);
   } catch {
     /* column already exists */
   }
 
-  // Add is_main column if it doesn't exist (migration for existing DBs)
   try {
-    database.exec(
+    database.run(
       `ALTER TABLE registered_groups ADD COLUMN is_main INTEGER DEFAULT 0`,
     );
-    // Backfill: existing rows with folder = 'main' are the main group
-    database.exec(
-      `UPDATE registered_groups SET is_main = 1 WHERE folder = 'main'`,
-    );
   } catch {
     /* column already exists */
   }
 
-  // Add channel and is_group columns if they don't exist (migration for existing DBs)
   try {
-    database.exec(`ALTER TABLE chats ADD COLUMN channel TEXT`);
-    database.exec(`ALTER TABLE chats ADD COLUMN is_group INTEGER DEFAULT 0`);
-    // Backfill from JID patterns
-    database.exec(
-      `UPDATE chats SET channel = 'whatsapp', is_group = 1 WHERE jid LIKE '%@g.us'`,
-    );
-    database.exec(
-      `UPDATE chats SET channel = 'whatsapp', is_group = 0 WHERE jid LIKE '%@s.whatsapp.net'`,
-    );
-    database.exec(
-      `UPDATE chats SET channel = 'discord', is_group = 1 WHERE jid LIKE 'dc:%'`,
-    );
-    database.exec(
-      `UPDATE chats SET channel = 'telegram', is_group = 1 WHERE jid LIKE 'tg:%'`,
-    );
+    database.run(`ALTER TABLE chats ADD COLUMN channel TEXT`);
+    database.run(`ALTER TABLE chats ADD COLUMN is_group INTEGER DEFAULT 0`);
   } catch {
     /* columns already exist */
   }
+
+  try {
+    database.run(`ALTER TABLE registered_groups ADD COLUMN llm_provider TEXT`);
+  } catch {
+    /* column already exists */
+  }
 }
 
-export function initDatabase(): void {
-  const dbPath = path.join(STORE_DIR, 'messages.db');
+function saveDatabase(): void {
+  const data = db.export();
+  const buffer = Buffer.from(data);
+  fs.writeFileSync(dbPath, buffer);
+}
+
+export async function initDatabase(): Promise<void> {
+  dbPath = path.join(STORE_DIR, 'messages.db');
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 
-  db = new Database(dbPath);
-  createSchema(db);
+  const wasmPath = path.join(
+    __dirname,
+    '..',
+    'node_modules',
+    'sql.js',
+    'dist',
+    'sql-wasm.wasm',
+  );
+  const SQL = await initSqlJs({
+    locateFile: () => wasmPath,
+  });
 
-  // Migrate from JSON files if they exist
+  if (fs.existsSync(dbPath)) {
+    const fileBuffer = fs.readFileSync(dbPath);
+    db = new SQL.Database(fileBuffer);
+  } else {
+    db = new SQL.Database();
+  }
+
+  createSchema(db);
+  saveDatabase();
   migrateJsonState();
 }
 
-/** @internal - for tests only. Creates a fresh in-memory database. */
-export function _initTestDatabase(): void {
-  db = new Database(':memory:');
+let SQL: initSqlJs.SqlJsStatic | null = null;
+
+async function getSqlJs(): Promise<initSqlJs.SqlJsStatic> {
+  if (!SQL) {
+    SQL = await initSqlJs();
+  }
+  return SQL;
+}
+
+export async function _initTestDatabase(): Promise<void> {
+  dbPath = '/tmp/nanoclaw-test.db';
+  const SQL = await getSqlJs();
+  db = new SQL.Database();
   createSchema(db);
 }
 
-/**
- * Store chat metadata only (no message content).
- * Used for all chats to enable group discovery without storing sensitive content.
- */
+function backfillBotMessages(): void {
+  const result = db.exec(
+    `SELECT COUNT(*) as count FROM messages WHERE content LIKE '${ASSISTANT_NAME}:%' AND is_bot_message = 0`,
+  );
+  if (
+    result.length > 0 &&
+    result[0].values.length > 0 &&
+    Number(result[0].values[0][0]) > 0
+  ) {
+    db.run(
+      `UPDATE messages SET is_bot_message = 1 WHERE content LIKE '${ASSISTANT_NAME}:%'`,
+    );
+    saveDatabase();
+  }
+}
+
+function backfillMainGroups(): void {
+  const result = db.exec(
+    `SELECT COUNT(*) as count FROM registered_groups WHERE folder = 'main' AND is_main IS NULL`,
+  );
+  if (
+    result.length > 0 &&
+    result[0].values.length > 0 &&
+    Number(result[0].values[0][0]) > 0
+  ) {
+    db.run(`UPDATE registered_groups SET is_main = 1 WHERE folder = 'main'`);
+    saveDatabase();
+  }
+}
+
+function backfillChatChannels(): void {
+  const result = db.exec(
+    `SELECT COUNT(*) as count FROM chats WHERE channel IS NULL`,
+  );
+  if (
+    result.length > 0 &&
+    result[0].values.length > 0 &&
+    Number(result[0].values[0][0]) > 0
+  ) {
+    db.run(
+      `UPDATE chats SET channel = 'whatsapp', is_group = 1 WHERE jid LIKE '%@g.us'`,
+    );
+    db.run(
+      `UPDATE chats SET channel = 'whatsapp', is_group = 0 WHERE jid LIKE '%@s.whatsapp.net'`,
+    );
+    db.run(
+      `UPDATE chats SET channel = 'discord', is_group = 1 WHERE jid LIKE 'dc:%'`,
+    );
+    db.run(
+      `UPDATE chats SET channel = 'telegram', is_group = 1 WHERE jid LIKE 'tg:%'`,
+    );
+    saveDatabase();
+  }
+}
+
 export function storeChatMetadata(
   chatJid: string,
   timestamp: string,
@@ -173,43 +283,35 @@ export function storeChatMetadata(
   const group = isGroup === undefined ? null : isGroup ? 1 : 0;
 
   if (name) {
-    // Update with name, preserving existing timestamp if newer
-    db.prepare(
-      `
-      INSERT INTO chats (jid, name, last_message_time, channel, is_group) VALUES (?, ?, ?, ?, ?)
-      ON CONFLICT(jid) DO UPDATE SET
-        name = excluded.name,
-        last_message_time = MAX(last_message_time, excluded.last_message_time),
-        channel = COALESCE(excluded.channel, channel),
-        is_group = COALESCE(excluded.is_group, is_group)
-    `,
-    ).run(chatJid, name, timestamp, ch, group);
+    db.run(
+      `INSERT INTO chats (jid, name, last_message_time, channel, is_group) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(jid) DO UPDATE SET
+         name = excluded.name,
+         last_message_time = MAX(last_message_time, excluded.last_message_time),
+         channel = COALESCE(excluded.channel, channel),
+         is_group = COALESCE(excluded.is_group, is_group)`,
+      [chatJid, name, timestamp, ch, group],
+    );
   } else {
-    // Update timestamp only, preserve existing name if any
-    db.prepare(
-      `
-      INSERT INTO chats (jid, name, last_message_time, channel, is_group) VALUES (?, ?, ?, ?, ?)
-      ON CONFLICT(jid) DO UPDATE SET
-        last_message_time = MAX(last_message_time, excluded.last_message_time),
-        channel = COALESCE(excluded.channel, channel),
-        is_group = COALESCE(excluded.is_group, is_group)
-    `,
-    ).run(chatJid, chatJid, timestamp, ch, group);
+    db.run(
+      `INSERT INTO chats (jid, name, last_message_time, channel, is_group) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(jid) DO UPDATE SET
+         last_message_time = MAX(last_message_time, excluded.last_message_time),
+         channel = COALESCE(excluded.channel, channel),
+         is_group = COALESCE(excluded.is_group, is_group)`,
+      [chatJid, chatJid, timestamp, ch, group],
+    );
   }
+  saveDatabase();
 }
 
-/**
- * Update chat name without changing timestamp for existing chats.
- * New chats get the current time as their initial timestamp.
- * Used during group metadata sync.
- */
 export function updateChatName(chatJid: string, name: string): void {
-  db.prepare(
-    `
-    INSERT INTO chats (jid, name, last_message_time) VALUES (?, ?, ?)
-    ON CONFLICT(jid) DO UPDATE SET name = excluded.name
-  `,
-  ).run(chatJid, name, new Date().toISOString());
+  db.run(
+    `INSERT INTO chats (jid, name, last_message_time) VALUES (?, ?, ?)
+     ON CONFLICT(jid) DO UPDATE SET name = excluded.name`,
+    [chatJid, name, new Date().toISOString()],
+  );
+  saveDatabase();
 }
 
 export interface ChatInfo {
@@ -220,64 +322,57 @@ export interface ChatInfo {
   is_group: number;
 }
 
-/**
- * Get all known chats, ordered by most recent activity.
- */
 export function getAllChats(): ChatInfo[] {
-  return db
-    .prepare(
-      `
+  const result = db.exec(`
     SELECT jid, name, last_message_time, channel, is_group
     FROM chats
     ORDER BY last_message_time DESC
-  `,
-    )
-    .all() as ChatInfo[];
+  `);
+  if (result.length === 0) return [];
+
+  return result[0].values.map((row: unknown[]) => ({
+    jid: row[0] as string,
+    name: row[1] as string,
+    last_message_time: row[2] as string,
+    channel: row[3] as string,
+    is_group: row[4] as number,
+  }));
 }
 
-/**
- * Get timestamp of last group metadata sync.
- */
 export function getLastGroupSync(): string | null {
-  // Store sync time in a special chat entry
-  const row = db
-    .prepare(`SELECT last_message_time FROM chats WHERE jid = '__group_sync__'`)
-    .get() as { last_message_time: string } | undefined;
-  return row?.last_message_time || null;
+  const result = db.exec(
+    `SELECT last_message_time FROM chats WHERE jid = '__group_sync__'`,
+  );
+  if (result.length === 0 || result[0].values.length === 0) return null;
+  return result[0].values[0][0] as string;
 }
 
-/**
- * Record that group metadata was synced.
- */
 export function setLastGroupSync(): void {
   const now = new Date().toISOString();
-  db.prepare(
+  db.run(
     `INSERT OR REPLACE INTO chats (jid, name, last_message_time) VALUES ('__group_sync__', '__group_sync__', ?)`,
-  ).run(now);
-}
-
-/**
- * Store a message with full content.
- * Only call this for registered groups where message history is needed.
- */
-export function storeMessage(msg: NewMessage): void {
-  db.prepare(
-    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    msg.id,
-    msg.chat_jid,
-    msg.sender,
-    msg.sender_name,
-    msg.content,
-    msg.timestamp,
-    msg.is_from_me ? 1 : 0,
-    msg.is_bot_message ? 1 : 0,
+    [now],
   );
+  saveDatabase();
 }
 
-/**
- * Store a message directly.
- */
+export function storeMessage(msg: NewMessage): void {
+  db.run(
+    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      msg.id,
+      msg.chat_jid,
+      msg.sender,
+      msg.sender_name,
+      msg.content,
+      msg.timestamp,
+      msg.is_from_me ? 1 : 0,
+      msg.is_bot_message ? 1 : 0,
+    ],
+  );
+  saveDatabase();
+}
+
 export function storeMessageDirect(msg: {
   id: string;
   chat_jid: string;
@@ -288,18 +383,20 @@ export function storeMessageDirect(msg: {
   is_from_me: boolean;
   is_bot_message?: boolean;
 }): void {
-  db.prepare(
+  db.run(
     `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    msg.id,
-    msg.chat_jid,
-    msg.sender,
-    msg.sender_name,
-    msg.content,
-    msg.timestamp,
-    msg.is_from_me ? 1 : 0,
-    msg.is_bot_message ? 1 : 0,
+    [
+      msg.id,
+      msg.chat_jid,
+      msg.sender,
+      msg.sender_name,
+      msg.content,
+      msg.timestamp,
+      msg.is_from_me ? 1 : 0,
+      msg.is_bot_message ? 1 : 0,
+    ],
   );
+  saveDatabase();
 }
 
 export function getNewMessages(
@@ -311,9 +408,6 @@ export function getNewMessages(
   if (jids.length === 0) return { messages: [], newTimestamp: lastTimestamp };
 
   const placeholders = jids.map(() => '?').join(',');
-  // Filter bot messages using both the is_bot_message flag AND the content
-  // prefix as a backstop for messages written before the migration ran.
-  // Subquery takes the N most recent, outer query re-sorts chronologically.
   const sql = `
     SELECT * FROM (
       SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me
@@ -326,16 +420,20 @@ export function getNewMessages(
     ) ORDER BY timestamp
   `;
 
-  const rows = db
-    .prepare(sql)
-    .all(lastTimestamp, ...jids, `${botPrefix}:%`, limit) as NewMessage[];
+  const stmt = db.prepare(sql);
+  stmt.bind([lastTimestamp, ...jids, `${botPrefix}:%`, limit]);
 
+  const messages: NewMessage[] = [];
   let newTimestamp = lastTimestamp;
-  for (const row of rows) {
+
+  while (stmt.step()) {
+    const row = stmt.getAsObject() as unknown as NewMessage;
+    messages.push(row);
     if (row.timestamp > newTimestamp) newTimestamp = row.timestamp;
   }
+  stmt.free();
 
-  return { messages: rows, newTimestamp };
+  return { messages, newTimestamp };
 }
 
 export function getMessagesSince(
@@ -344,9 +442,6 @@ export function getMessagesSince(
   botPrefix: string,
   limit: number = 200,
 ): NewMessage[] {
-  // Filter bot messages using both the is_bot_message flag AND the content
-  // prefix as a backstop for messages written before the migration ran.
-  // Subquery takes the N most recent, outer query re-sorts chronologically.
   const sql = `
     SELECT * FROM (
       SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me
@@ -358,51 +453,80 @@ export function getMessagesSince(
       LIMIT ?
     ) ORDER BY timestamp
   `;
-  return db
-    .prepare(sql)
-    .all(chatJid, sinceTimestamp, `${botPrefix}:%`, limit) as NewMessage[];
+
+  const stmt = db.prepare(sql);
+  stmt.bind([chatJid, sinceTimestamp, `${botPrefix}:%`, limit]);
+
+  const messages: NewMessage[] = [];
+  while (stmt.step()) {
+    messages.push(stmt.getAsObject() as unknown as NewMessage);
+  }
+  stmt.free();
+
+  return messages;
 }
 
 export function createTask(
   task: Omit<ScheduledTask, 'last_run' | 'last_result'>,
 ): void {
-  db.prepare(
-    `
-    INSERT INTO scheduled_tasks (id, group_folder, chat_jid, prompt, schedule_type, schedule_value, context_mode, next_run, status, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `,
-  ).run(
-    task.id,
-    task.group_folder,
-    task.chat_jid,
-    task.prompt,
-    task.schedule_type,
-    task.schedule_value,
-    task.context_mode || 'isolated',
-    task.next_run,
-    task.status,
-    task.created_at,
+  db.run(
+    `INSERT INTO scheduled_tasks (id, group_folder, chat_jid, prompt, schedule_type, schedule_value, context_mode, next_run, status, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      task.id,
+      task.group_folder,
+      task.chat_jid,
+      task.prompt,
+      task.schedule_type,
+      task.schedule_value,
+      task.context_mode || 'isolated',
+      task.next_run,
+      task.status,
+      task.created_at,
+    ],
   );
+  saveDatabase();
 }
 
 export function getTaskById(id: string): ScheduledTask | undefined {
-  return db.prepare('SELECT * FROM scheduled_tasks WHERE id = ?').get(id) as
-    | ScheduledTask
-    | undefined;
+  const stmt = db.prepare('SELECT * FROM scheduled_tasks WHERE id = ?');
+  stmt.bind([id]);
+
+  if (stmt.step()) {
+    const result = stmt.getAsObject() as unknown as ScheduledTask;
+    stmt.free();
+    return result;
+  }
+  stmt.free();
+  return undefined;
 }
 
 export function getTasksForGroup(groupFolder: string): ScheduledTask[] {
-  return db
-    .prepare(
-      'SELECT * FROM scheduled_tasks WHERE group_folder = ? ORDER BY created_at DESC',
-    )
-    .all(groupFolder) as ScheduledTask[];
+  const stmt = db.prepare(
+    'SELECT * FROM scheduled_tasks WHERE group_folder = ? ORDER BY created_at DESC',
+  );
+  stmt.bind([groupFolder]);
+
+  const tasks: ScheduledTask[] = [];
+  while (stmt.step()) {
+    tasks.push(stmt.getAsObject() as unknown as ScheduledTask);
+  }
+  stmt.free();
+  return tasks;
 }
 
 export function getAllTasks(): ScheduledTask[] {
-  return db
-    .prepare('SELECT * FROM scheduled_tasks ORDER BY created_at DESC')
-    .all() as ScheduledTask[];
+  const result = db.exec(
+    'SELECT * FROM scheduled_tasks ORDER BY created_at DESC',
+  );
+  if (result.length === 0) return [];
+
+  return result[0].values.map((row: unknown[]) => {
+    const cols = result[0].columns;
+    const obj: Record<string, unknown> = {};
+    cols.forEach((col: string, i: number) => (obj[col] = row[i]));
+    return obj as unknown as ScheduledTask;
+  });
 }
 
 export function updateTask(
@@ -441,28 +565,34 @@ export function updateTask(
   if (fields.length === 0) return;
 
   values.push(id);
-  db.prepare(
+  db.run(
     `UPDATE scheduled_tasks SET ${fields.join(', ')} WHERE id = ?`,
-  ).run(...values);
+    values as unknown as initSqlJs.BindParams,
+  );
+  saveDatabase();
 }
 
 export function deleteTask(id: string): void {
-  // Delete child records first (FK constraint)
-  db.prepare('DELETE FROM task_run_logs WHERE task_id = ?').run(id);
-  db.prepare('DELETE FROM scheduled_tasks WHERE id = ?').run(id);
+  db.run('DELETE FROM task_run_logs WHERE task_id = ?', [id]);
+  db.run('DELETE FROM scheduled_tasks WHERE id = ?', [id]);
+  saveDatabase();
 }
 
 export function getDueTasks(): ScheduledTask[] {
   const now = new Date().toISOString();
-  return db
-    .prepare(
-      `
+  const stmt = db.prepare(`
     SELECT * FROM scheduled_tasks
     WHERE status = 'active' AND next_run IS NOT NULL AND next_run <= ?
     ORDER BY next_run
-  `,
-    )
-    .all(now) as ScheduledTask[];
+  `);
+  stmt.bind([now]);
+
+  const tasks: ScheduledTask[] = [];
+  while (stmt.step()) {
+    tasks.push(stmt.getAsObject() as unknown as ScheduledTask);
+  }
+  stmt.free();
+  return tasks;
 }
 
 export function updateTaskAfterRun(
@@ -471,92 +601,110 @@ export function updateTaskAfterRun(
   lastResult: string,
 ): void {
   const now = new Date().toISOString();
-  db.prepare(
-    `
-    UPDATE scheduled_tasks
-    SET next_run = ?, last_run = ?, last_result = ?, status = CASE WHEN ? IS NULL THEN 'completed' ELSE status END
-    WHERE id = ?
-  `,
-  ).run(nextRun, now, lastResult, nextRun, id);
+  db.run(
+    `UPDATE scheduled_tasks
+     SET next_run = ?, last_run = ?, last_result = ?, status = CASE WHEN ? IS NULL THEN 'completed' ELSE status END
+     WHERE id = ?`,
+    [nextRun, now, lastResult, nextRun, id],
+  );
+  saveDatabase();
 }
 
 export function logTaskRun(log: TaskRunLog): void {
-  db.prepare(
-    `
-    INSERT INTO task_run_logs (task_id, run_at, duration_ms, status, result, error)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `,
-  ).run(
-    log.task_id,
-    log.run_at,
-    log.duration_ms,
-    log.status,
-    log.result,
-    log.error,
+  db.run(
+    `INSERT INTO task_run_logs (task_id, run_at, duration_ms, status, result, error)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [
+      log.task_id,
+      log.run_at,
+      log.duration_ms,
+      log.status,
+      log.result,
+      log.error,
+    ],
   );
+  saveDatabase();
 }
 
-// --- Router state accessors ---
-
 export function getRouterState(key: string): string | undefined {
-  const row = db
-    .prepare('SELECT value FROM router_state WHERE key = ?')
-    .get(key) as { value: string } | undefined;
-  return row?.value;
+  const stmt = db.prepare('SELECT value FROM router_state WHERE key = ?');
+  stmt.bind([key]);
+
+  if (stmt.step()) {
+    const result = stmt.getAsObject() as { value: string };
+    stmt.free();
+    return result.value;
+  }
+  stmt.free();
+  return undefined;
 }
 
 export function setRouterState(key: string, value: string): void {
-  db.prepare(
-    'INSERT OR REPLACE INTO router_state (key, value) VALUES (?, ?)',
-  ).run(key, value);
+  db.run('INSERT OR REPLACE INTO router_state (key, value) VALUES (?, ?)', [
+    key,
+    value,
+  ]);
+  saveDatabase();
 }
 
-// --- Session accessors ---
-
 export function getSession(groupFolder: string): string | undefined {
-  const row = db
-    .prepare('SELECT session_id FROM sessions WHERE group_folder = ?')
-    .get(groupFolder) as { session_id: string } | undefined;
-  return row?.session_id;
+  const stmt = db.prepare(
+    'SELECT session_id FROM sessions WHERE group_folder = ?',
+  );
+  stmt.bind([groupFolder]);
+
+  if (stmt.step()) {
+    const result = stmt.getAsObject() as { session_id: string };
+    stmt.free();
+    return result.session_id;
+  }
+  stmt.free();
+  return undefined;
 }
 
 export function setSession(groupFolder: string, sessionId: string): void {
-  db.prepare(
+  db.run(
     'INSERT OR REPLACE INTO sessions (group_folder, session_id) VALUES (?, ?)',
-  ).run(groupFolder, sessionId);
+    [groupFolder, sessionId],
+  );
+  saveDatabase();
 }
 
 export function getAllSessions(): Record<string, string> {
-  const rows = db
-    .prepare('SELECT group_folder, session_id FROM sessions')
-    .all() as Array<{ group_folder: string; session_id: string }>;
-  const result: Record<string, string> = {};
-  for (const row of rows) {
-    result[row.group_folder] = row.session_id;
-  }
-  return result;
-}
+  const result = db.exec('SELECT group_folder, session_id FROM sessions');
+  if (result.length === 0) return {};
 
-// --- Registered group accessors ---
+  const sessions: Record<string, string> = {};
+  result[0].values.forEach((row: unknown[]) => {
+    sessions[row[0] as string] = row[1] as string;
+  });
+  return sessions;
+}
 
 export function getRegisteredGroup(
   jid: string,
 ): (RegisteredGroup & { jid: string }) | undefined {
-  const row = db
-    .prepare('SELECT * FROM registered_groups WHERE jid = ?')
-    .get(jid) as
-    | {
-        jid: string;
-        name: string;
-        folder: string;
-        trigger_pattern: string;
-        added_at: string;
-        container_config: string | null;
-        requires_trigger: number | null;
-        is_main: number | null;
-      }
-    | undefined;
-  if (!row) return undefined;
+  const stmt = db.prepare('SELECT * FROM registered_groups WHERE jid = ?');
+  stmt.bind([jid]);
+
+  if (!stmt.step()) {
+    stmt.free();
+    return undefined;
+  }
+
+  const row = stmt.getAsObject() as {
+    jid: string;
+    name: string;
+    folder: string;
+    trigger_pattern: string;
+    added_at: string;
+    container_config: string | null;
+    requires_trigger: number | null;
+    is_main: number | null;
+    llm_provider: string | null;
+  };
+  stmt.free();
+
   if (!isValidGroupFolder(row.folder)) {
     logger.warn(
       { jid: row.jid, folder: row.folder },
@@ -576,6 +724,7 @@ export function getRegisteredGroup(
     requiresTrigger:
       row.requires_trigger === null ? undefined : row.requires_trigger === 1,
     isMain: row.is_main === 1 ? true : undefined,
+    llmProvider: (row.llm_provider as LLMProvider) || undefined,
   };
 }
 
@@ -583,58 +732,114 @@ export function setRegisteredGroup(jid: string, group: RegisteredGroup): void {
   if (!isValidGroupFolder(group.folder)) {
     throw new Error(`Invalid group folder "${group.folder}" for JID ${jid}`);
   }
-  db.prepare(
-    `INSERT OR REPLACE INTO registered_groups (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger, is_main)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    jid,
-    group.name,
-    group.folder,
-    group.trigger,
-    group.added_at,
-    group.containerConfig ? JSON.stringify(group.containerConfig) : null,
-    group.requiresTrigger === undefined ? 1 : group.requiresTrigger ? 1 : 0,
-    group.isMain ? 1 : 0,
+  db.run(
+    `INSERT OR REPLACE INTO registered_groups (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger, is_main, llm_provider)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      jid,
+      group.name,
+      group.folder,
+      group.trigger,
+      group.added_at,
+      group.containerConfig ? JSON.stringify(group.containerConfig) : null,
+      group.requiresTrigger === undefined ? 1 : group.requiresTrigger ? 1 : 0,
+      group.isMain ? 1 : 0,
+      group.llmProvider || null,
+    ],
   );
+  saveDatabase();
+}
+
+export function updateGroupProvider(
+  jid: string,
+  provider: string | null | undefined,
+): boolean {
+  const validProviders = ['claude', 'openrouter'];
+  const validatedProvider =
+    provider && validProviders.includes(provider) ? provider : null;
+
+  const before = getRegisteredGroup(jid);
+  db.run('UPDATE registered_groups SET llm_provider = ? WHERE jid = ?', [
+    validatedProvider,
+    jid,
+  ]);
+  const after = getRegisteredGroup(jid);
+
+  saveDatabase();
+  return before !== after;
+}
+
+export function clearInvalidProviders(): number {
+  const validProviders = ['claude', 'openrouter'];
+  const before = db.exec(
+    'SELECT COUNT(*) FROM registered_groups WHERE llm_provider IS NOT NULL AND llm_provider NOT IN (' +
+      validProviders.map(() => '?').join(',') +
+      ')',
+  );
+  const beforeCount =
+    before.length > 0 ? (before[0].values[0][0] as number) : 0;
+
+  if (beforeCount === 0) return 0;
+
+  db.run(
+    `UPDATE registered_groups 
+     SET llm_provider = NULL 
+     WHERE llm_provider IS NOT NULL 
+     AND llm_provider NOT IN (${validProviders.map(() => '?').join(',')})`,
+    validProviders,
+  );
+
+  saveDatabase();
+  return beforeCount;
 }
 
 export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
-  const rows = db.prepare('SELECT * FROM registered_groups').all() as Array<{
-    jid: string;
-    name: string;
-    folder: string;
-    trigger_pattern: string;
-    added_at: string;
-    container_config: string | null;
-    requires_trigger: number | null;
-    is_main: number | null;
-  }>;
-  const result: Record<string, RegisteredGroup> = {};
-  for (const row of rows) {
-    if (!isValidGroupFolder(row.folder)) {
+  const result = db.exec('SELECT * FROM registered_groups');
+  if (result.length === 0) return {};
+
+  const groups: Record<string, RegisteredGroup> = {};
+  const cols = result[0].columns;
+
+  result[0].values.forEach((row: unknown[]) => {
+    const obj: Record<string, unknown> = {};
+    cols.forEach((col: string, i: number) => (obj[col] = row[i]));
+
+    const r = obj as {
+      jid: string;
+      name: string;
+      folder: string;
+      trigger_pattern: string;
+      added_at: string;
+      container_config: string | null;
+      requires_trigger: number | null;
+      is_main: number | null;
+      llm_provider: string | null;
+    };
+
+    if (!isValidGroupFolder(r.folder)) {
       logger.warn(
-        { jid: row.jid, folder: row.folder },
+        { jid: r.jid, folder: r.folder },
         'Skipping registered group with invalid folder',
       );
-      continue;
+      return;
     }
-    result[row.jid] = {
-      name: row.name,
-      folder: row.folder,
-      trigger: row.trigger_pattern,
-      added_at: row.added_at,
-      containerConfig: row.container_config
-        ? JSON.parse(row.container_config)
+    groups[r.jid] = {
+      name: r.name,
+      folder: r.folder,
+      trigger: r.trigger_pattern,
+      added_at: r.added_at,
+      containerConfig: r.container_config
+        ? JSON.parse(r.container_config)
         : undefined,
       requiresTrigger:
-        row.requires_trigger === null ? undefined : row.requires_trigger === 1,
-      isMain: row.is_main === 1 ? true : undefined,
+        r.requires_trigger === null ? undefined : r.requires_trigger === 1,
+      isMain: r.is_main === 1 ? true : undefined,
+      llmProvider: (r.llm_provider as LLMProvider) || undefined,
     };
-  }
-  return result;
-}
+  });
 
-// --- JSON migration ---
+  return groups;
+}
 
 function migrateJsonState(): void {
   const migrateFile = (filename: string) => {
@@ -649,7 +854,6 @@ function migrateJsonState(): void {
     }
   };
 
-  // Migrate router_state.json
   const routerState = migrateFile('router_state.json') as {
     last_timestamp?: string;
     last_agent_timestamp?: Record<string, string>;
@@ -666,7 +870,6 @@ function migrateJsonState(): void {
     }
   }
 
-  // Migrate sessions.json
   const sessions = migrateFile('sessions.json') as Record<
     string,
     string
@@ -677,7 +880,6 @@ function migrateJsonState(): void {
     }
   }
 
-  // Migrate registered_groups.json
   const groups = migrateFile('registered_groups.json') as Record<
     string,
     RegisteredGroup
@@ -694,4 +896,114 @@ function migrateJsonState(): void {
       }
     }
   }
+}
+
+// --- Job ACL Functions ---
+
+export function storeJobACL(acl: JobACL): void {
+  db.run(
+    `INSERT OR REPLACE INTO job_acls (job_id, group_folder, username, password, created_at, expires_at, status)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [
+      acl.jobId,
+      acl.groupFolder,
+      acl.username,
+      acl.password,
+      acl.createdAt,
+      acl.expiresAt,
+      acl.status,
+    ],
+  );
+  saveDatabase();
+}
+
+export function getJobACL(jobId: string): JobACL | undefined {
+  const stmt = db.prepare('SELECT * FROM job_acls WHERE job_id = ?');
+  stmt.bind([jobId]);
+
+  if (stmt.step()) {
+    const row = stmt.getAsObject() as {
+      job_id: string;
+      group_folder: string;
+      username: string;
+      password: string;
+      created_at: string;
+      expires_at: string;
+      status: string;
+    };
+    stmt.free();
+    return {
+      jobId: row.job_id,
+      groupFolder: row.group_folder,
+      username: row.username,
+      password: row.password,
+      createdAt: row.created_at,
+      expiresAt: row.expires_at,
+      status: row.status as 'active' | 'revoked',
+    };
+  }
+  stmt.free();
+  return undefined;
+}
+
+export function getJobACLByGroup(groupFolder: string): JobACL | undefined {
+  const stmt = db.prepare(
+    'SELECT * FROM job_acls WHERE group_folder = ? AND status = ? ORDER BY created_at DESC LIMIT 1',
+  );
+  stmt.bind([groupFolder, 'active']);
+
+  if (stmt.step()) {
+    const row = stmt.getAsObject() as {
+      job_id: string;
+      group_folder: string;
+      username: string;
+      password: string;
+      created_at: string;
+      expires_at: string;
+      status: string;
+    };
+    stmt.free();
+    return {
+      jobId: row.job_id,
+      groupFolder: row.group_folder,
+      username: row.username,
+      password: row.password,
+      createdAt: row.created_at,
+      expiresAt: row.expires_at,
+      status: row.status as 'active' | 'revoked',
+    };
+  }
+  stmt.free();
+  return undefined;
+}
+
+export function revokeJobACL(jobId: string): void {
+  db.run(`UPDATE job_acls SET status = 'revoked' WHERE job_id = ?`, [jobId]);
+  saveDatabase();
+}
+
+export function cleanupExpiredACLs(): string[] {
+  const now = new Date().toISOString();
+  const stmt = db.prepare(
+    `SELECT job_id FROM job_acls WHERE status = 'active' AND expires_at < ?`,
+  );
+  stmt.bind([now]);
+
+  const revokedJobIds: string[] = [];
+  while (stmt.step()) {
+    const row = stmt.getAsObject() as { job_id: string };
+    revokedJobIds.push(row.job_id);
+  }
+  stmt.free();
+
+  if (revokedJobIds.length > 0) {
+    const placeholders = revokedJobIds.map(() => '?').join(',');
+    db.run(
+      `UPDATE job_acls SET status = 'revoked' WHERE job_id IN (${placeholders})`,
+      revokedJobIds,
+    );
+    saveDatabase();
+  }
+
+  return revokedJobIds;
 }

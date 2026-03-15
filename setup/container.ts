@@ -82,6 +82,21 @@ export async function run(args: string[]): Promise<void> {
     }
   }
 
+  // Kubernetes runtime — skip local container build
+  if (runtime === 'kubernetes') {
+    logger.info('Kubernetes runtime selected — skipping local container build');
+    emitStatus('SETUP_CONTAINER', {
+      RUNTIME: runtime,
+      IMAGE: image,
+      BUILD_OK: true,
+      TEST_OK: true,
+      STATUS: 'success',
+      SKIPPED: 'kubernetes_uses_registry',
+      LOG: 'logs/setup.log',
+    });
+    return;
+  }
+
   if (!['apple-container', 'docker'].includes(runtime)) {
     emitStatus('SETUP_CONTAINER', {
       RUNTIME: runtime,

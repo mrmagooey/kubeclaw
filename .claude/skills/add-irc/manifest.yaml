@@ -1,0 +1,20 @@
+skill: irc
+version: 1.0.0
+description: 'IRC Bot integration via irc-upd'
+core_version: 0.1.0
+adds:
+  - src/channels/irc.ts
+  - src/channels/irc.test.ts
+modifies:
+  - src/channels/index.ts
+structured:
+  npm_dependencies:
+    irc-upd: '^0.11.0'
+  env_additions:
+    - IRC_SERVER
+    - IRC_PORT
+    - IRC_NICK
+    - IRC_CHANNELS
+conflicts: []
+depends: []
+test: 'npx vitest run src/channels/irc.test.ts'

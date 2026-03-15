@@ -1,0 +1,184 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: network-test-config
+  namespace: nanoclaw
+  labels:
+    app: nanoclaw
+    test: e2e
+    test-type: network
+data:
+  redis-host: 'nanoclaw-redis'
+  redis-port: '6379'
+  external-host: 'example.com'
+  external-port: '443'
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: network-test-external
+  namespace: nanoclaw
+  labels:
+    app: nanoclaw
+    test: e2e
+    test-type: network
+    network-test: external-access
+  annotations:
+    test/description: 'Tests that external network access is blocked (should fail)'
+spec:
+  restartPolicy: Never
+  containers:
+    - name: test
+      image: busybox:stable
+      command:
+        - sh
+        - -c
+        - |
+          echo "Testing external network access..."
+          echo "Attempting to reach example.com:443"
+          if wget -q --timeout=5 -O - https://example.com 2>/dev/null; then
+            echo "ERROR: External access succeeded - policy not enforced!"
+            exit 1
+          else
+            echo "SUCCESS: External access blocked as expected"
+            exit 0
+          fi
+      resources:
+        requests:
+          memory: 32Mi
+          cpu: 50m
+        limits:
+          memory: 128Mi
+          cpu: 200m
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: network-test-redis
+  namespace: nanoclaw
+  labels:
+    app: nanoclaw
+    test: e2e
+    test-type: network
+    network-test: redis-access
+  annotations:
+    test/description: 'Tests that Redis access within namespace is allowed (should succeed)'
+spec:
+  restartPolicy: Never
+  containers:
+    - name: test
+      image: redis:7-alpine
+      command:
+        - sh
+        - -c
+        - |
+          echo "Testing Redis connectivity..."
+          echo "Attempting to connect to nanoclaw-redis:6379"
+          if redis-cli -h nanoclaw-redis -p 6379 ping 2>/dev/null | grep -q PONG; then
+            echo "SUCCESS: Redis connection established"
+            echo "Setting test key..."
+            redis-cli -h nanoclaw-redis -p 6379 SET e2e-test-key "hello from e2e" EX 60
+            echo "Reading test key..."
+            redis-cli -h nanoclaw-redis -p 6379 GET e2e-test-key
+            echo "Cleaning up..."
+            redis-cli -h nanoclaw-redis -p 6379 DEL e2e-test-key
+            echo "Redis test completed successfully"
+            exit 0
+          else
+            echo "ERROR: Could not connect to Redis"
+            exit 1
+          fi
+      resources:
+        requests:
+          memory: 32Mi
+          cpu: 50m
+        limits:
+          memory: 128Mi
+          cpu: 200m
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: network-test-dns
+  namespace: nanoclaw
+  labels:
+    app: nanoclaw
+    test: e2e
+    test-type: network
+    network-test: dns-resolution
+  annotations:
+    test/description: 'Tests that DNS resolution works within the namespace'
+spec:
+  restartPolicy: Never
+  containers:
+    - name: test
+      image: busybox:stable
+      command:
+        - sh
+        - -c
+        - |
+          echo "Testing DNS resolution..."
+          echo "Resolving nanoclaw-redis..."
+          if nslookup nanoclaw-redis 2>/dev/null; then
+            echo "SUCCESS: DNS resolution works"
+            exit 0
+          else
+            echo "ERROR: DNS resolution failed"
+            exit 1
+          fi
+      resources:
+        requests:
+          memory: 32Mi
+          cpu: 50m
+        limits:
+          memory: 128Mi
+          cpu: 200m
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: network-test-port-scan
+  namespace: nanoclaw
+  labels:
+    app: nanoclaw
+    test: e2e
+    test-type: network
+    network-test: port-scan
+  annotations:
+    test/description: 'Tests port connectivity to Redis'
+spec:
+  restartPolicy: Never
+  containers:
+    - name: test
+      image: busybox:stable
+      command:
+        - sh
+        - -c
+        - |
+          echo "Testing port connectivity..."
+          echo "Checking if Redis port (6379) is open..."
+          timeout 5 sh -c 'until nc -z nanoclaw-redis 6379; do sleep 1; done' 2>/dev/null
+          if [ $? -eq 0 ]; then
+            echo "SUCCESS: Port 6379 is accessible"
+          else
+            echo "ERROR: Port 6379 is not accessible"
+            exit 1
+          fi
+
+          echo "Checking if other ports are blocked..."
+          timeout 3 nc -z nanoclaw-redis 80 2>/dev/null
+          if [ $? -eq 0 ]; then
+            echo "WARNING: Port 80 is accessible (unexpected)"
+          else
+            echo "SUCCESS: Port 80 is blocked as expected"
+          fi
+
+          echo "Port scan test completed"
+          exit 0
+      resources:
+        requests:
+          memory: 32Mi
+          cpu: 50m
+        limits:
+          memory: 128Mi
+          cpu: 200m

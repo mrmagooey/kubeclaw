@@ -1,10 +1,19 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 import { _initTestDatabase, getAllChats, storeChatMetadata } from './db.js';
 import { getAvailableGroups, _setRegisteredGroups } from './index.js';
+import {
+  escapeXml,
+  formatMessages,
+  stripInternalTags,
+  formatOutbound,
+  routeOutbound,
+  findChannel,
+} from './router.js';
+import { Channel, NewMessage } from './types.js';
 
-beforeEach(() => {
-  _initTestDatabase();
+beforeEach(async () => {
+  await _initTestDatabase();
   _setRegisteredGroups({});
 });
 
@@ -166,5 +175,285 @@ describe('getAvailableGroups', () => {
   it('returns empty array when no chats exist', () => {
     const groups = getAvailableGroups();
     expect(groups).toHaveLength(0);
+  });
+});
+
+// --- escapeXml ---
+
+describe('escapeXml', () => {
+  it('returns empty string for empty input', () => {
+    expect(escapeXml('')).toBe('');
+  });
+
+  it('returns empty string for null/undefined', () => {
+    expect(escapeXml('')).toBe('');
+  });
+
+  it('escapes ampersand', () => {
+    expect(escapeXml('foo & bar')).toBe('foo &amp; bar');
+  });
+
+  it('escapes less than', () => {
+    expect(escapeXml('foo < bar')).toBe('foo &lt; bar');
+  });
+
+  it('escapes greater than', () => {
+    expect(escapeXml('foo > bar')).toBe('foo &gt; bar');
+  });
+
+  it('escapes double quote', () => {
+    expect(escapeXml('foo "bar"')).toBe('foo &quot;bar&quot;');
+  });
+
+  it('escapes all special characters together', () => {
+    expect(escapeXml('& < > "')).toBe('&amp; &lt; &gt; &quot;');
+  });
+
+  it('returns unchanged string without special chars', () => {
+    expect(escapeXml('hello world')).toBe('hello world');
+  });
+});
+
+// --- formatMessages ---
+
+describe('formatMessages', () => {
+  it('formats single message correctly', () => {
+    const messages: NewMessage[] = [
+      {
+        id: '1',
+        chat_jid: 'chat@g.us',
+        sender: 'alice',
+        sender_name: 'Alice',
+        content: 'Hello there',
+        timestamp: '2024-01-01T12:00:00.000Z',
+      },
+    ];
+
+    const result = formatMessages(messages, 'UTC');
+    expect(result).toContain('<message sender="Alice"');
+    expect(result).toContain('>Hello there</message>');
+    expect(result).toContain('<context timezone="UTC" />');
+  });
+
+  it('formats multiple messages', () => {
+    const messages: NewMessage[] = [
+      {
+        id: '1',
+        chat_jid: 'chat@g.us',
+        sender: 'alice',
+        sender_name: 'Alice',
+        content: 'Hi',
+        timestamp: '2024-01-01T12:00:00.000Z',
+      },
+      {
+        id: '2',
+        chat_jid: 'chat@g.us',
+        sender: 'bob',
+        sender_name: 'Bob',
+        content: 'Hey',
+        timestamp: '2024-01-01T12:01:00.000Z',
+      },
+    ];
+
+    const result = formatMessages(messages, 'America/New_York');
+    expect(result).toContain('sender="Alice"');
+    expect(result).toContain('sender="Bob"');
+    expect(result).toContain('<messages>');
+    expect(result).toContain('</messages>');
+  });
+
+  it('escapes special characters in sender and content', () => {
+    const messages: NewMessage[] = [
+      {
+        id: '1',
+        chat_jid: 'chat@g.us',
+        sender: 'alice',
+        sender_name: 'Alice & Bob',
+        content: 'Hello <world> & "test"',
+        timestamp: '2024-01-01T12:00:00.000Z',
+      },
+    ];
+
+    const result = formatMessages(messages, 'UTC');
+    expect(result).toContain('sender="Alice &amp; Bob"');
+    expect(result).toContain('&lt;world&gt; &amp; &quot;test&quot;');
+  });
+
+  it('handles empty messages array', () => {
+    const result = formatMessages([], 'UTC');
+    expect(result).toContain('<messages>');
+    expect(result).toContain('</messages>');
+    expect(result).not.toContain('<message ');
+  });
+});
+
+// --- stripInternalTags ---
+
+describe('stripInternalTags', () => {
+  it('returns unchanged text without internal tags', () => {
+    expect(stripInternalTags('Hello world')).toBe('Hello world');
+  });
+
+  it('removes internal tags from text', () => {
+    expect(stripInternalTags('Hello <internal>secret</internal> world')).toBe(
+      'Hello  world',
+    );
+  });
+
+  it('handles multiple internal tags', () => {
+    const result = stripInternalTags(
+      'Start <internal>one</internal> middle <internal>two</internal> end',
+    );
+    expect(result).toBe('Start  middle  end');
+  });
+
+  it('handles nested internal tags', () => {
+    const result = stripInternalTags(
+      'Before <internal>outer <internal>inner</internal> outer</internal> after',
+    );
+    expect(result).toBe('Before  outer</internal> after');
+  });
+
+  it('trims result', () => {
+    expect(stripInternalTags('<internal>test</internal>')).toBe('');
+    expect(stripInternalTags('  <internal>test</internal>')).toBe('');
+    expect(stripInternalTags('<internal>test</internal>  ')).toBe('');
+  });
+
+  it('handles empty string', () => {
+    expect(stripInternalTags('')).toBe('');
+  });
+});
+
+// --- formatOutbound ---
+
+describe('formatOutbound', () => {
+  it('returns empty string for empty input', () => {
+    expect(formatOutbound('')).toBe('');
+  });
+
+  it('returns text without internal tags', () => {
+    expect(formatOutbound('Hello <internal>secret</internal> world')).toBe(
+      'Hello  world',
+    );
+  });
+
+  it('returns text unchanged when no internal tags', () => {
+    expect(formatOutbound('Hello world')).toBe('Hello world');
+  });
+
+  it('trims internal tags and whitespace', () => {
+    expect(formatOutbound('<internal>test</internal>')).toBe('');
+    expect(formatOutbound('  Hello  ')).toBe('Hello');
+  });
+});
+
+// --- findChannel ---
+
+describe('findChannel', () => {
+  const createMockChannel = (jidPrefix: string): Channel =>
+    ({
+      name: `channel-${jidPrefix}`,
+      ownsJid: (jid: string) => jid.startsWith(jidPrefix),
+      isConnected: () => true,
+      sendMessage: vi.fn(),
+      connect: vi.fn(),
+      disconnect: vi.fn(),
+    }) as Channel;
+
+  it('returns channel when found', () => {
+    const channels: Channel[] = [createMockChannel('wa-')];
+    const result = findChannel(channels, 'wa-12345@g.us');
+    expect(result).toBeDefined();
+    expect(result?.ownsJid('wa-12345@g.us')).toBe(true);
+  });
+
+  it('returns undefined when channel not found', () => {
+    const channels: Channel[] = [createMockChannel('wa-')];
+    const result = findChannel(channels, 'other-12345@g.us');
+    expect(result).toBeUndefined();
+  });
+
+  it('returns undefined for empty channels array', () => {
+    const result = findChannel([], 'any-jid@g.us');
+    expect(result).toBeUndefined();
+  });
+
+  it('finds first matching channel', () => {
+    const channels: Channel[] = [
+      createMockChannel('first-'),
+      createMockChannel('second-'),
+    ];
+    const result = findChannel(channels, 'first-123@g.us');
+    expect(result).toBe(channels[0]);
+  });
+});
+
+// --- routeOutbound ---
+
+describe('routeOutbound', () => {
+  const createMockChannel = (
+    jidPrefix: string,
+    connected: boolean = true,
+  ): Channel =>
+    ({
+      name: `channel-${jidPrefix}`,
+      ownsJid: (jid: string) => jid.startsWith(jidPrefix),
+      isConnected: () => connected,
+      sendMessage: vi.fn().mockResolvedValue(undefined),
+      connect: vi.fn(),
+      disconnect: vi.fn(),
+    }) as Channel;
+
+  it('calls sendMessage on found channel', async () => {
+    const mockSend = vi.fn().mockResolvedValue(undefined);
+    const channel: Channel = {
+      name: 'wa-channel',
+      ownsJid: (jid: string) => jid.startsWith('wa-'),
+      isConnected: () => true,
+      sendMessage: mockSend,
+      connect: vi.fn(),
+      disconnect: vi.fn(),
+    };
+
+    await routeOutbound([channel], 'wa-123@g.us', 'Hello');
+
+    expect(mockSend).toHaveBeenCalledWith('wa-123@g.us', 'Hello');
+  });
+
+  it('throws error when channel not found', async () => {
+    const channel: Channel = {
+      name: 'wa-channel',
+      ownsJid: (jid: string) => jid.startsWith('wa-'),
+      isConnected: () => true,
+      sendMessage: vi.fn(),
+      connect: vi.fn(),
+      disconnect: vi.fn(),
+    };
+
+    await expect(
+      (async () => await routeOutbound([channel], 'other-123@g.us', 'Hello'))(),
+    ).rejects.toThrow('No channel for JID: other-123@g.us');
+  });
+
+  it('throws error when channel not connected', async () => {
+    const channel: Channel = {
+      name: 'wa-channel',
+      ownsJid: (jid: string) => jid.startsWith('wa-'),
+      isConnected: () => false,
+      sendMessage: vi.fn(),
+      connect: vi.fn(),
+      disconnect: vi.fn(),
+    };
+
+    await expect(
+      (async () => await routeOutbound([channel], 'wa-123@g.us', 'Hello'))(),
+    ).rejects.toThrow('No channel for JID: wa-123@g.us');
+  });
+
+  it('throws error for empty channels array', async () => {
+    await expect(
+      (async () => await routeOutbound([], 'any-jid@g.us', 'Hello'))(),
+    ).rejects.toThrow('No channel for JID: any-jid@g.us');
   });
 });

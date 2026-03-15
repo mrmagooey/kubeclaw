@@ -1,0 +1,81 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: nanoclaw-agent-placeholder
+  namespace: nanoclaw
+  labels:
+    app: nanoclaw-agent
+spec:
+  ttlSecondsAfterFinished: 3600
+  backoffLimit: 0
+  # Timeout tuning: Increase for CI environments (3600s = 1 hour)
+  # For production, 1800s (30 min) may be sufficient
+  # Can be overridden via env var: AGENT_JOB_TIMEOUT_SECONDS
+  activeDeadlineSeconds: 3600
+  template:
+    metadata:
+      labels:
+        app: nanoclaw-agent
+    spec:
+      serviceAccountName: default
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      volumes:
+        - name: groups-pvc
+          persistentVolumeClaim:
+            claimName: nanoclaw-groups
+        - name: sessions-pvc
+          persistentVolumeClaim:
+            claimName: nanoclaw-sessions
+      containers:
+        - name: agent
+          image: nanoclaw-agent:latest
+          imagePullPolicy: Never
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          env:
+            - name: REDIS_URL
+              value: redis://nanoclaw-redis:6379
+            - name: NANOCLAW_GROUP_FOLDER
+              value: placeholder
+            - name: NANOCLAW_CHAT_JID
+              value: placeholder
+            - name: NANOCLAW_IS_MAIN
+              value: 'false'
+            - name: NANOCLAW_PROMPT
+              value: placeholder
+            - name: NANOCLAW_SESSION_ID
+              value: ''
+            - name: NANOCLAW_ASSISTANT_NAME
+              value: Andy
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: nanoclaw-secrets
+                  key: ANTHROPIC_API_KEY
+            - name: CLAUDE_CODE_OAUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: nanoclaw-secrets
+                  key: CLAUDE_CODE_OAUTH_TOKEN
+          volumeMounts:
+            - name: groups-pvc
+              mountPath: /workspace/group
+              subPathExpr: $(NANOCLAW_GROUP_FOLDER)
+            - name: sessions-pvc
+              mountPath: /home/node/.claude
+              subPathExpr: $(NANOCLAW_GROUP_FOLDER)
+          resources:
+            requests:
+              memory: 512Mi
+              cpu: 500m
+            limits:
+              memory: 4Gi
+              cpu: '2'

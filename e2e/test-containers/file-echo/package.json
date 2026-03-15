@@ -1,0 +1,10 @@
+{
+  "name": "nanoclaw-test-file-echo",
+  "version": "1.0.0",
+  "description": "Test container for file-based sidecar - echoes input back",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js"
+  }
+}

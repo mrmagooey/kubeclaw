@@ -1,0 +1,159 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: nanoclaw-orchestrator
+  namespace: nanoclaw
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: nanoclaw-job-manager
+  namespace: nanoclaw
+rules:
+  - apiGroups:
+      - batch
+    resources:
+      - jobs
+    verbs:
+      - create
+      - get
+      - list
+      - watch
+      - delete
+  - apiGroups:
+      - ''
+    resources:
+      - pods
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - ''
+    resources:
+      - pods/log
+    verbs:
+      - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: nanoclaw-orchestrator-binding
+  namespace: nanoclaw
+subjects:
+  - kind: ServiceAccount
+    name: nanoclaw-orchestrator
+    namespace: nanoclaw
+roleRef:
+  kind: Role
+  name: nanoclaw-job-manager
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nanoclaw-orchestrator
+  namespace: nanoclaw
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nanoclaw-orchestrator
+  template:
+    metadata:
+      labels:
+        app: nanoclaw-orchestrator
+    spec:
+      serviceAccountName: nanoclaw-orchestrator
+      securityContext:
+        runAsUser: 0
+        runAsNonRoot: false
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: fix-permissions
+          image: busybox:latest
+          command:
+            [
+              'sh',
+              '-c',
+              'chown -R 1000:1000 /workspace/groups /data/sessions && mkdir -p /app/store && chown -R 1000:1000 /app/store',
+            ]
+          securityContext:
+            runAsUser: 0
+          volumeMounts:
+            - name: groups
+              mountPath: /workspace/groups
+            - name: sessions
+              mountPath: /data/sessions
+            - name: store
+              mountPath: /app/store
+      containers:
+        - name: orchestrator
+          image: nanoclaw-orchestrator:latest
+          imagePullPolicy: Never
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+          env:
+            - name: REDIS_URL
+              value: redis://nanoclaw-redis:6379
+            - name: NANOCLAW_RUNTIME
+              value: kubernetes
+            - name: NANOCLAW_NAMESPACE
+              value: nanoclaw
+            - name: NANOCLAW_IPC_BASE
+              value: /data/sessions
+            - name: MAX_CONCURRENT_JOBS
+              value: '10'
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: nanoclaw-secrets
+                  key: anthropic-api-key
+            - name: CLAUDE_CODE_OAUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: nanoclaw-secrets
+                  key: claude-code-oauth-token
+            - name: IRC_SERVER
+              value: nanoclaw-irc-mock
+            - name: IRC_PORT
+              value: '16667'
+            - name: IRC_NICK
+              value: NanoClawBot
+            - name: IRC_CHANNELS
+              value: '#test-e2e'
+          volumeMounts:
+            - name: groups
+              mountPath: /workspace/groups
+            - name: sessions
+              mountPath: /data/sessions
+            - name: data
+              mountPath: /workspace/data
+            - name: store
+              mountPath: /app/store
+          resources:
+            requests:
+              memory: 256Mi
+              cpu: 100m
+            limits:
+              memory: 512Mi
+              cpu: 500m
+      volumes:
+        - name: groups
+          persistentVolumeClaim:
+            claimName: nanoclaw-groups
+        - name: sessions
+          persistentVolumeClaim:
+            claimName: nanoclaw-sessions
+        - name: data
+          emptyDir: {}
+        - name: store
+          emptyDir: {}

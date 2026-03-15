@@ -1,13 +1,8 @@
-import { ChildProcess } from 'child_process';
 import { CronExpressionParser } from 'cron-parser';
 import fs from 'fs';
 
 import { ASSISTANT_NAME, SCHEDULER_POLL_INTERVAL, TIMEZONE } from './config.js';
-import {
-  ContainerOutput,
-  runContainerAgent,
-  writeTasksSnapshot,
-} from './container-runner.js';
+import { ContainerOutput, getAgentRunner } from './runtime/index.js';
 import {
   getAllTasks,
   getDueTasks,
@@ -68,7 +63,7 @@ export interface SchedulerDependencies {
   queue: GroupQueue;
   onProcess: (
     groupJid: string,
-    proc: ChildProcess,
+    proc: unknown,
     containerName: string,
     groupFolder: string,
   ) => void;
@@ -132,7 +127,7 @@ async function runTask(
   // Update tasks snapshot for container to read (filtered by group)
   const isMain = group.isMain === true;
   const tasks = getAllTasks();
-  writeTasksSnapshot(
+  getAgentRunner().writeTasksSnapshot(
     task.group_folder,
     isMain,
     tasks.map((t) => ({
@@ -169,7 +164,7 @@ async function runTask(
   };
 
   try {
-    const output = await runContainerAgent(
+    const output = await getAgentRunner().runAgent(
       group,
       {
         prompt: task.prompt,
