@@ -239,8 +239,13 @@ describe('Phase 3: End-to-End', () => {
 
       await channel.sendMessage(chatJid, messageText);
 
-      // Allow the server to process the outbound PRIVMSG
-      await new Promise((r) => setTimeout(r, 300));
+      // Wait for the server to receive the outbound PRIVMSG (flood protection may add delay)
+      await waitFor(
+        () =>
+          (ircServer?.getChannelMessages?.(IRC_CHANNEL) ?? []).length >
+          messagesBefore.length,
+        3000,
+      );
 
       const messagesAfter = ircServer?.getChannelMessages?.(IRC_CHANNEL) ?? [];
       const newMessages = messagesAfter.slice(messagesBefore.length);

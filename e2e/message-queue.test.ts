@@ -13,6 +13,7 @@ import {
   getNamespace,
   createTestNamespace,
   flushTestKeys,
+  waitFor,
 } from './setup.js';
 
 const NAMESPACE = getNamespace();
@@ -257,39 +258,40 @@ describe('Message Queue Integration', () => {
         return;
       }
       const channel = `${NAMESPACE}:realtime:${testGroup}`;
-      const received: string[] = new Array<string>();
+      const received: string[] = [];
 
-      const subRedis = new (await import('ioredis')).default(REDIS_URL, {
-        connectTimeout: 10000,
-      });
+      const { default: Redis } = await import('ioredis');
 
-      const subReady = new Promise<void>((resolve) => {
-        subRedis.once('ready', () => resolve());
-      });
-      await subReady;
+      // Use dedicated clients to avoid shared-state issues from preceding tests
+      const subRedis = new Redis(REDIS_URL, { connectTimeout: 10000 });
+      const pubRedis = new Redis(REDIS_URL, { connectTimeout: 10000 });
 
-      const messageHandler = (ch: string, msg: string) => {
-        if (ch === channel) {
-          received.push(msg);
-        }
-      };
+      try {
+        // Wait for both connections to be ready
+        await Promise.all([
+          new Promise<void>((resolve) => subRedis.once('ready', resolve)),
+          new Promise<void>((resolve) => pubRedis.once('ready', resolve)),
+        ]);
 
-      subRedis.on('message', messageHandler);
+        subRedis.on('message', (ch: string, msg: string) => {
+          if (ch === channel) received.push(msg);
+        });
 
-      await subRedis.subscribe(channel);
+        await subRedis.subscribe(channel);
 
-      await new Promise((r) => setTimeout(r, 100));
+        // Give subscription time to register server-side
+        await new Promise((r) => setTimeout(r, 100));
 
-      await redis.publish(channel, 'message-1');
-      await redis.publish(channel, 'message-2');
+        await pubRedis.publish(channel, 'message-1');
+        await pubRedis.publish(channel, 'message-2');
 
-      await new Promise((r) => setTimeout(r, 500));
+        await waitFor(() => received.length >= 1, 5000);
 
-      expect(received.length).toBeGreaterThanOrEqual(1);
-
-      subRedis.off('message', messageHandler);
-      await subRedis.unsubscribe(channel);
-      await subRedis.quit();
+        expect(received.length).toBeGreaterThanOrEqual(1);
+      } finally {
+        await subRedis.quit();
+        await pubRedis.quit();
+      }
     }, 15000);
   });
 
