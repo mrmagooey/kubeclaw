@@ -52,9 +52,32 @@ RUN npm run build
 RUN mkdir -p /workspace/group /workspace/global /workspace/extra /workspace/ipc/messages /workspace/ipc/tasks /workspace/ipc/input
 
 # Create entrypoint script
-# Secrets are passed via stdin JSON — temp file is deleted immediately after Node reads it
+# Docker mode: task JSON is piped to stdin (cat > /tmp/input.json)
+# K8s mode:   task is passed as env vars (NANOCLAW_PROMPT etc.) — build JSON from them
 # Follow-up messages arrive via IPC files in /workspace/ipc/input/
-RUN printf '#!/bin/bash\nset -e\ncd /app && npx tsc --outDir /tmp/dist 2>&1 >&2\nln -s /app/node_modules /tmp/dist/node_modules\nchmod -R a-w /tmp/dist\ncat > /tmp/input.json\nnode /tmp/dist/index.js < /tmp/input.json\n' > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
+RUN cat > /app/entrypoint.sh <<'ENTRYPOINT'
+#!/bin/bash
+set -e
+if [ -n "$NANOCLAW_PROMPT" ]; then
+  # Kubernetes mode: build ContainerInput JSON from env vars
+  node -e "
+process.stdout.write(JSON.stringify({
+  prompt: process.env.NANOCLAW_PROMPT,
+  groupFolder: process.env.NANOCLAW_GROUP_FOLDER || '',
+  chatJid: process.env.NANOCLAW_CHAT_JID || '',
+  sessionId: process.env.NANOCLAW_SESSION_ID || undefined,
+  isMain: process.env.NANOCLAW_IS_MAIN === 'true',
+  assistantName: process.env.NANOCLAW_ASSISTANT_NAME || 'Andy',
+  isScheduledTask: process.env.NANOCLAW_IS_SCHEDULED === 'true',
+}));
+" > /tmp/input.json
+else
+  # Docker mode: read JSON from stdin
+  cat > /tmp/input.json
+fi
+node /app/dist/index.js < /tmp/input.json
+ENTRYPOINT
+RUN chmod +x /app/entrypoint.sh
 
 # Set ownership to node user (non-root) for writable directories
 RUN chown -R node:node /workspace && chmod 777 /home/node

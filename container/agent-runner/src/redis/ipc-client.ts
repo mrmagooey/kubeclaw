@@ -181,7 +181,9 @@ export class RedisIPCClient {
       payload: output,
     };
 
-    const channel = `nanoclaw:output:${this.groupFolder}`;
+    // Must match the channel KubernetesJobRunner.streamOutput() subscribes to:
+    // nanoclaw:messages:${groupFolder}
+    const channel = `nanoclaw:messages:${this.groupFolder}`;
     await this.redis.publish(channel, JSON.stringify(message));
   }
 

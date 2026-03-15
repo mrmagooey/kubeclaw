@@ -226,24 +226,20 @@ export class JobRunner {
         value: String(CONTAINER_MAX_OUTPUT_SIZE),
       },
       { name: 'IDLE_TIMEOUT', value: String(IDLE_TIMEOUT) },
-      // Redis configuration
+      // Redis URL is not secret — pass directly from orchestrator's env so agents
+      // can connect for IPC output. No secret key needed.
       {
         name: 'REDIS_URL',
-        valueFrom: {
-          secretKeyRef: {
-            name: 'nanoclaw-redis',
-            key: 'url',
-            optional: true,
-          },
-        },
+        value: process.env.REDIS_URL || 'redis://nanoclaw-redis:6379',
       },
-      // Secrets from Kubernetes secrets
+      // Credentials from nanoclaw-secrets — key names use hyphens to match the
+      // secret template in k8s/05-secrets.yaml.
       {
         name: 'CLAUDE_CODE_OAUTH_TOKEN',
         valueFrom: {
           secretKeyRef: {
             name: 'nanoclaw-secrets',
-            key: 'CLAUDE_CODE_OAUTH_TOKEN',
+            key: 'claude-code-oauth-token',
             optional: true,
           },
         },
@@ -253,7 +249,7 @@ export class JobRunner {
         valueFrom: {
           secretKeyRef: {
             name: 'nanoclaw-secrets',
-            key: 'ANTHROPIC_API_KEY',
+            key: 'anthropic-api-key',
             optional: true,
           },
         },
@@ -263,7 +259,7 @@ export class JobRunner {
         valueFrom: {
           secretKeyRef: {
             name: 'nanoclaw-secrets',
-            key: 'ANTHROPIC_BASE_URL',
+            key: 'anthropic-base-url',
             optional: true,
           },
         },
@@ -273,7 +269,7 @@ export class JobRunner {
         valueFrom: {
           secretKeyRef: {
             name: 'nanoclaw-secrets',
-            key: 'ANTHROPIC_AUTH_TOKEN',
+            key: 'anthropic-auth-token',
             optional: true,
           },
         },
@@ -283,7 +279,7 @@ export class JobRunner {
         valueFrom: {
           secretKeyRef: {
             name: 'nanoclaw-secrets',
-            key: 'OPENROUTER_API_KEY',
+            key: 'openrouter-api-key',
             optional: true,
           },
         },
@@ -293,7 +289,7 @@ export class JobRunner {
         valueFrom: {
           secretKeyRef: {
             name: 'nanoclaw-secrets',
-            key: 'OPENROUTER_MODEL',
+            key: 'openrouter-model',
             optional: true,
           },
         },
@@ -303,7 +299,7 @@ export class JobRunner {
         valueFrom: {
           secretKeyRef: {
             name: 'nanoclaw-secrets',
-            key: 'OPENROUTER_BASE_URL',
+            key: 'openrouter-base-url',
             optional: true,
           },
         },

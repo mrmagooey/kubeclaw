@@ -1,23 +1,26 @@
 /**
  * NanoClaw Agent Runner
- * Runs inside a container, receives config via stdin, outputs result to stdout
+ * Runs inside a container, receives config via stdin or env vars, outputs result.
  *
  * Input protocol:
- *   Stdin: Full ContainerInput JSON (read until EOF, like before)
- *   IPC:   Follow-up messages written as JSON files to /workspace/ipc/input/
- *          Files: {type:"message", text:"..."}.json — polled and consumed
- *          Sentinel: /workspace/ipc/input/_close — signals session end
+ *   Docker mode: Full ContainerInput JSON piped to stdin
+ *   K8s mode:   Task fields passed as env vars (NANOCLAW_PROMPT etc.),
+ *               entrypoint.sh builds the JSON before starting this process
+ *   IPC:        Follow-up messages written as JSON files to /workspace/ipc/input/
+ *               Files: {type:"message", text:"..."}.json — polled and consumed
+ *               Sentinel: /workspace/ipc/input/_close — signals session end
  *
- * Stdout protocol:
- *   Each result is wrapped in OUTPUT_START_MARKER / OUTPUT_END_MARKER pairs.
- *   Multiple results may be emitted (one per agent teams result).
- *   Final marker after loop ends signals completion.
+ * Output protocol:
+ *   Docker mode: Each result wrapped in OUTPUT_START_MARKER / OUTPUT_END_MARKER pairs on stdout
+ *   K8s mode:    Same stdout output PLUS published to Redis nanoclaw:messages:${groupFolder}
+ *                so KubernetesJobRunner.streamOutput() can receive it without reading pod logs
  */
 
 import fs from 'fs';
 import path from 'path';
 import { query, HookCallback, PreCompactHookInput, PreToolUseHookInput } from '@anthropic-ai/claude-agent-sdk';
 import { fileURLToPath } from 'url';
+import { RedisIPCClient } from './redis/ipc-client.js';
 
 interface ContainerInput {
   prompt: string;
@@ -108,10 +111,22 @@ async function readStdin(): Promise<string> {
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
 const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
 
+// Shared Redis client — set in main() when REDIS_URL is available (K8s mode).
+// Kept module-level so writeOutput can publish without threading it through every call.
+let redisClient: RedisIPCClient | null = null;
+
 function writeOutput(output: ContainerOutput): void {
+  // Always write to stdout (Docker mode reads this; K8s logs still capture it).
   console.log(OUTPUT_START_MARKER);
   console.log(JSON.stringify(output));
   console.log(OUTPUT_END_MARKER);
+
+  // In K8s mode, also publish to Redis so KubernetesJobRunner.streamOutput() receives it.
+  if (redisClient) {
+    redisClient.sendOutput(output).catch((err) => {
+      log(`Warning: failed to publish output to Redis: ${err instanceof Error ? err.message : String(err)}`);
+    });
+  }
 }
 
 function log(message: string): void {
@@ -508,6 +523,27 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  // In K8s mode, connect to Redis for output publishing.
+  // REDIS_URL and NANOCLAW_JOB_ID are injected by KubernetesJobRunner.
+  const redisUrl = process.env.REDIS_URL;
+  const jobId = process.env.NANOCLAW_JOB_ID || '';
+  if (redisUrl && jobId) {
+    try {
+      redisClient = new RedisIPCClient(
+        redisUrl,
+        containerInput.groupFolder,
+        containerInput.chatJid,
+        containerInput.isMain,
+        jobId,
+      );
+      await redisClient.connect();
+      log('Redis IPC connected (K8s output mode)');
+    } catch (err) {
+      log(`Warning: failed to connect Redis IPC, falling back to stdout-only: ${err instanceof Error ? err.message : String(err)}`);
+      redisClient = null;
+    }
+  }
+
   // Build SDK env: merge secrets into process.env for the SDK only.
   // Secrets never touch process.env itself, so Bash subprocesses can't see them.
   const sdkEnv: Record<string, string | undefined> = { ...process.env };
@@ -581,8 +617,11 @@ async function main(): Promise<void> {
       newSessionId: sessionId,
       error: errorMessage
     });
+    await redisClient?.disconnect().catch(() => {});
     process.exit(1);
   }
+
+  await redisClient?.disconnect().catch(() => {});
 }
 
 main();
