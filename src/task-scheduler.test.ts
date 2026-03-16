@@ -7,12 +7,6 @@ import {
   startSchedulerLoop,
 } from './task-scheduler.js';
 
-vi.mock('./container-runner.js', async () => {
-  return {
-    runContainerAgent: vi.fn().mockResolvedValue({ status: 'success' }),
-    writeTasksSnapshot: vi.fn(),
-  };
-});
 
 vi.mock('./group-folder.js', () => ({
   resolveGroupFolderPath: vi.fn((path: string) => {

@@ -22,6 +22,12 @@ import {
   AGENT_JOB_CPU_REQUEST,
   AGENT_JOB_CPU_LIMIT,
   TIMEZONE,
+  BROWSER_SIDECAR_IMAGE,
+  BROWSER_SIDECAR_PORT,
+  BROWSER_SIDECAR_MEMORY_REQUEST,
+  BROWSER_SIDECAR_MEMORY_LIMIT,
+  BROWSER_SIDECAR_CPU_REQUEST,
+  BROWSER_SIDECAR_CPU_LIMIT,
 } from '../config.js';
 import {
   JobInput,
@@ -29,7 +35,7 @@ import {
   AgentJobSpec,
   AgentOutputMessage,
 } from './types.js';
-import { ContainerOutput } from '../container-runner.js';
+import { ContainerOutput } from '../runtime/types.js';
 import {
   getRedisSubscriber,
   getOutputChannel,
@@ -134,15 +140,25 @@ export class JobRunner {
           }
         : undefined;
 
+      // Compute effective timeout for streaming and wait
+      const effectiveTimeoutMs = Math.max(
+        group.containerConfig?.timeout || CONTAINER_TIMEOUT,
+        IDLE_TIMEOUT + 30_000,
+      );
+
       // Start streaming output from Redis
       const streamingPromise = this.streamOutput(
         jobName,
         group.folder,
         wrappedOnOutput,
+        effectiveTimeoutMs,
       );
 
       // Wait for job completion
-      const completionPromise = this.waitForJobCompletion(jobName);
+      const completionPromise = this.waitForJobCompletion(
+        jobName,
+        effectiveTimeoutMs,
+      );
 
       // Race between streaming and completion
       await Promise.all([streamingPromise, completionPromise]);
@@ -200,6 +216,15 @@ export class JobRunner {
       assistantName: input.assistantName,
       timeout: Math.max(configTimeout, IDLE_TIMEOUT + 30_000),
       provider: group.llmProvider || 'claude',
+      browserSidecar: group.containerConfig?.browserSidecar,
+      nodeSelector: group.containerConfig?.nodeSelector,
+      tolerations: group.containerConfig?.tolerations,
+      affinity: group.containerConfig?.affinity,
+      priorityClassName: group.containerConfig?.priorityClassName,
+      deviceRequests: group.containerConfig?.deviceRequests,
+      imagePullSecrets: group.containerConfig?.imagePullSecrets,
+      securityContext: group.containerConfig?.securityContext,
+      additionalMounts: group.containerConfig?.additionalMounts,
     };
   }
 
@@ -365,6 +390,109 @@ export class JobRunner {
       });
     }
 
+    // Add additional volumes (configmap, secret, tmpfs) from spec
+    if (spec.additionalMounts) {
+      for (const mount of spec.additionalMounts) {
+        const mountType = mount.type || 'hostpath';
+        if (mountType === 'hostpath') continue; // hostpath not supported in K8s mode
+
+        const volumeName = `extra-${mount.configMapName || mount.secretName || 'tmpfs'}-${volumes.length}`;
+        const containerPath = mount.containerPath || mount.configMapName || mount.secretName || 'tmpfs';
+
+        if (mountType === 'configmap' && mount.configMapName) {
+          volumes.push({
+            name: volumeName,
+            configMap: { name: mount.configMapName },
+          } as any);
+          volumeMounts.push({
+            name: volumeName,
+            mountPath: `/workspace/extra/${containerPath}`,
+            readOnly: mount.readonly !== false,
+          } as any);
+        } else if (mountType === 'secret' && mount.secretName) {
+          volumes.push({
+            name: volumeName,
+            secret: { secretName: mount.secretName },
+          } as any);
+          volumeMounts.push({
+            name: volumeName,
+            mountPath: `/workspace/extra/${containerPath}`,
+            readOnly: mount.readonly !== false,
+          } as any);
+        } else if (mountType === 'tmpfs') {
+          volumes.push({
+            name: volumeName,
+            emptyDir: {
+              medium: 'Memory',
+              ...(mount.sizeLimit && { sizeLimit: mount.sizeLimit }),
+            },
+          } as any);
+          volumeMounts.push({
+            name: volumeName,
+            mountPath: `/workspace/extra/${containerPath || 'tmpfs'}`,
+          } as any);
+        }
+      }
+    }
+
+    // Add browser WebSocket endpoint to agent env when sidecar is enabled
+    if (spec.browserSidecar) {
+      envVars.push({
+        name: 'PLAYWRIGHT_BROWSER_WS_ENDPOINT',
+        value: `ws://localhost:${BROWSER_SIDECAR_PORT}`,
+      });
+    }
+
+    // Build resource limits — include GPU/device requests when specified
+    const resourceLimits: Record<string, string> = {
+      memory: AGENT_JOB_MEMORY_LIMIT,
+      cpu: AGENT_JOB_CPU_LIMIT,
+      ...(spec.deviceRequests || {}),
+    };
+
+    const agentContainer = {
+      name: 'agent',
+      image: getContainerImage(spec.provider || 'claude'),
+      env: envVars,
+      volumeMounts,
+      resources: {
+        requests: {
+          memory: AGENT_JOB_MEMORY_REQUEST,
+          cpu: AGENT_JOB_CPU_REQUEST,
+        },
+        limits: resourceLimits,
+      },
+      ...(spec.securityContext && { securityContext: spec.securityContext }),
+    } as any;
+
+    // Browser sidecar as K8s 1.29+ sidecar init container (starts before agent, restarts on failure)
+    const initContainers = spec.browserSidecar
+      ? [
+          {
+            name: 'browser',
+            image: BROWSER_SIDECAR_IMAGE,
+            ports: [{ containerPort: BROWSER_SIDECAR_PORT }],
+            readinessProbe: {
+              httpGet: { path: '/json/version', port: BROWSER_SIDECAR_PORT },
+              initialDelaySeconds: 2,
+              periodSeconds: 2,
+              failureThreshold: 10,
+            },
+            resources: {
+              requests: {
+                memory: BROWSER_SIDECAR_MEMORY_REQUEST,
+                cpu: BROWSER_SIDECAR_CPU_REQUEST,
+              },
+              limits: {
+                memory: BROWSER_SIDECAR_MEMORY_LIMIT,
+                cpu: BROWSER_SIDECAR_CPU_LIMIT,
+              },
+            },
+            restartPolicy: 'Always', // K8s 1.29+ sidecar pattern
+          },
+        ]
+      : undefined;
+
     const job: V1Job = {
       apiVersion: 'batch/v1',
       kind: 'Job',
@@ -379,10 +507,7 @@ export class JobRunner {
       },
       spec: {
         ttlSecondsAfterFinished: JOB_TTL_SECONDS_AFTER_FINISHED,
-        activeDeadlineSeconds: Math.min(
-          timeoutSeconds,
-          JOB_ACTIVE_DEADLINE_SECONDS,
-        ),
+        activeDeadlineSeconds: timeoutSeconds,
         backoffLimit: JOB_BACKOFF_LIMIT,
         template: {
           metadata: {
@@ -390,25 +515,16 @@ export class JobRunner {
           },
           spec: {
             restartPolicy: 'Never',
-            containers: [
-              {
-                name: 'agent',
-                image: getContainerImage(spec.provider || 'claude'),
-                env: envVars,
-                volumeMounts,
-                resources: {
-                  requests: {
-                    memory: AGENT_JOB_MEMORY_REQUEST,
-                    cpu: AGENT_JOB_CPU_REQUEST,
-                  },
-                  limits: {
-                    memory: AGENT_JOB_MEMORY_LIMIT,
-                    cpu: AGENT_JOB_CPU_LIMIT,
-                  },
-                },
-              },
-            ],
+            ...(initContainers && { initContainers }),
+            containers: [agentContainer],
             volumes,
+            ...(spec.nodeSelector && { nodeSelector: spec.nodeSelector }),
+            ...(spec.tolerations && { tolerations: spec.tolerations }),
+            ...(spec.affinity && { affinity: spec.affinity }),
+            ...(spec.priorityClassName && { priorityClassName: spec.priorityClassName }),
+            ...(spec.imagePullSecrets && {
+              imagePullSecrets: spec.imagePullSecrets.map((name) => ({ name })),
+            }),
           },
         },
       },
@@ -425,6 +541,7 @@ export class JobRunner {
     jobName: string,
     groupFolder: string,
     onOutput?: (output: JobOutput) => Promise<void>,
+    timeoutMs: number = JOB_ACTIVE_DEADLINE_SECONDS * 1000,
   ): Promise<void> {
     if (!onOutput) {
       return;
@@ -507,7 +624,6 @@ export class JobRunner {
       });
 
       // Timeout fallback
-      const timeoutMs = JOB_ACTIVE_DEADLINE_SECONDS * 1000;
       setTimeout(() => {
         if (!completed) {
           logger.warn({ jobName, timeoutMs }, 'Redis output stream timeout');
@@ -533,9 +649,12 @@ export class JobRunner {
    * Wait for a Kubernetes Job to complete
    * Polls the K8s API for job status
    */
-  async waitForJobCompletion(jobName: string): Promise<void> {
+  async waitForJobCompletion(
+    jobName: string,
+    timeoutMs: number = JOB_ACTIVE_DEADLINE_SECONDS * 1000,
+  ): Promise<void> {
     const pollInterval = 5000; // 5 seconds
-    const maxWaitTime = JOB_ACTIVE_DEADLINE_SECONDS * 1000;
+    const maxWaitTime = timeoutMs;
     const startTime = Date.now();
 
     logger.debug({ jobName }, 'Waiting for job completion');

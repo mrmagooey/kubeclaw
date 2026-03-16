@@ -1,7 +1,40 @@
+export interface K8sToleration {
+  key?: string;
+  operator?: 'Exists' | 'Equal';
+  value?: string;
+  effect?: 'NoSchedule' | 'PreferNoSchedule' | 'NoExecute';
+  tolerationSeconds?: number;
+}
+
+export interface K8sAffinity {
+  nodeAffinity?: Record<string, unknown>;
+  podAffinity?: Record<string, unknown>;
+  podAntiAffinity?: Record<string, unknown>;
+}
+
+export interface ContainerSecurityContext {
+  runAsUser?: number;
+  runAsGroup?: number;
+  runAsNonRoot?: boolean;
+  readOnlyRootFilesystem?: boolean;
+  allowPrivilegeEscalation?: boolean;
+  fsGroup?: number;
+}
+
 export interface AdditionalMount {
-  hostPath: string; // Absolute path on host (supports ~ for home)
-  containerPath?: string; // Optional — defaults to basename of hostPath. Mounted at /workspace/extra/{value}
+  /** Volume type. Defaults to 'hostpath' for backward compatibility. */
+  type?: 'hostpath' | 'configmap' | 'secret' | 'tmpfs';
+  /** Absolute path on host (supports ~ for home). Required for type 'hostpath'. */
+  hostPath?: string;
+  /** Mount destination in container. Defaults to basename of hostPath / resource name. Mounted at /workspace/extra/{value} */
+  containerPath?: string;
   readonly?: boolean; // Default: true for safety
+  /** ConfigMap name. Required for type 'configmap'. */
+  configMapName?: string;
+  /** Secret name. Required for type 'secret'. */
+  secretName?: string;
+  /** Size limit for tmpfs (e.g. '512Mi'). Optional for type 'tmpfs'. */
+  sizeLimit?: string;
 }
 
 /**
@@ -39,6 +72,19 @@ export interface ContainerConfig {
   memoryLimit?: string; // K8s memory limit (e.g., "4Gi")
   cpuRequest?: string; // K8s CPU request (e.g., "250m")
   cpuLimit?: string; // K8s CPU limit (e.g., "2000m")
+  browserSidecar?: boolean; // Run Chromium as a sidecar container (Kubernetes only)
+  // Node scheduling
+  nodeSelector?: Record<string, string>; // e.g. { "nvidia.com/gpu.present": "true" }
+  tolerations?: K8sToleration[]; // For tainted nodes (spot, GPU, etc.)
+  affinity?: K8sAffinity; // Pod/node affinity rules
+  priorityClassName?: string; // K8s PriorityClass name
+  // GPU / accelerator device requests
+  deviceRequests?: Record<string, string>; // e.g. { "nvidia.com/gpu": "1" }
+  // Private registry support
+  imagePullSecrets?: string[]; // Names of K8s Secrets of type dockerconfigjson
+  imagePullPolicy?: 'Always' | 'IfNotPresent' | 'Never'; // For user images
+  // Security context
+  securityContext?: ContainerSecurityContext;
 }
 
 export type LLMProvider = 'claude' | 'openrouter';

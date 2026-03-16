@@ -5,7 +5,6 @@ import {
   ASSISTANT_NAME,
   IDLE_TIMEOUT,
   POLL_INTERVAL,
-  RUNTIME_MODE,
   TIMEZONE,
   TRIGGER_PATTERN,
 } from './config.js';
@@ -19,10 +18,6 @@ import {
   ContainerOutput,
   getAgentRunner,
 } from './runtime/index.js';
-import {
-  cleanupOrphans,
-  ensureContainerRuntimeRunning,
-} from './container-runtime.js';
 import {
   getAllChats,
   getAllRegisteredGroups,
@@ -41,7 +36,6 @@ import {
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
-import { startIpcWatcher as startFsIpcWatcher } from './ipc.js';
 import { startIpcWatcher as startRedisIpcWatcher } from './k8s/ipc-redis.js';
 import { findChannel, formatMessages, formatOutbound } from './router.js';
 import {
@@ -138,6 +132,27 @@ export function _setRegisteredGroups(
   groups: Record<string, RegisteredGroup>,
 ): void {
   registeredGroups = groups;
+}
+
+/** @internal - exported for testing */
+export async function _processGroupMessages(
+  chatJid: string,
+): Promise<boolean> {
+  return processGroupMessages(chatJid);
+}
+
+/** @internal - exported for testing */
+export function _pushChannel(channel: Channel): void {
+  channels.push(channel);
+}
+
+/** @internal - exported for testing */
+export function _resetState(): void {
+  channels.length = 0;
+  lastTimestamp = '';
+  lastAgentTimestamp = {};
+  sessions = {};
+  registeredGroups = {};
 }
 
 /**
@@ -325,15 +340,7 @@ async function runAgent(
         isMain,
         assistantName: ASSISTANT_NAME,
       },
-      RUNTIME_MODE === 'kubernetes'
-        ? undefined
-        : (proc, containerName) =>
-            queue.registerProcess(
-              chatJid,
-              proc as import('child_process').ChildProcess,
-              containerName,
-              group.folder,
-            ),
+      undefined,
       wrappedOnOutput,
     );
 
@@ -476,20 +483,7 @@ function recoverPendingMessages(): void {
   }
 }
 
-function ensureContainerSystemRunning(): void {
-  // Skip container runtime check in Kubernetes mode
-  if (RUNTIME_MODE === 'kubernetes') {
-    logger.info(
-      'Running in Kubernetes mode - skipping container runtime check',
-    );
-    return;
-  }
-  ensureContainerRuntimeRunning();
-  cleanupOrphans();
-}
-
 async function main(): Promise<void> {
-  ensureContainerSystemRunning();
   await initDatabase();
   logger.info('Database initialized');
   loadState();
@@ -574,16 +568,7 @@ async function main(): Promise<void> {
     registeredGroups: () => registeredGroups,
     getSessions: () => sessions,
     queue,
-    onProcess: (groupJid, proc, containerName, groupFolder) => {
-      if (RUNTIME_MODE !== 'kubernetes') {
-        queue.registerProcess(
-          groupJid,
-          proc as import('child_process').ChildProcess,
-          containerName,
-          groupFolder,
-        );
-      }
-    },
+    onProcess: () => {},
     sendMessage: async (jid, rawText) => {
       const channel = findChannel(channels, jid);
       if (!channel) {
@@ -618,11 +603,7 @@ async function main(): Promise<void> {
       rj: Set<string>,
     ) => getAgentRunner().writeGroupsSnapshot(gf, im, ag, rj),
   };
-  if (RUNTIME_MODE === 'kubernetes') {
-    startRedisIpcWatcher(ipcDeps);
-  } else {
-    startFsIpcWatcher(ipcDeps);
-  }
+  startRedisIpcWatcher(ipcDeps);
   queue.setProcessMessagesFn(processGroupMessages);
   recoverPendingMessages();
   startMessageLoop().catch((err) => {

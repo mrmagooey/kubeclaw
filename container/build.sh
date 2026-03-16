@@ -14,6 +14,7 @@ BUILD_CLAUDE=true
 BUILD_OPENROUTER=true
 BUILD_FILE_ADAPTER=false
 BUILD_HTTP_ADAPTER=false
+BUILD_BROWSER=false
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -37,16 +38,21 @@ while [[ $# -gt 0 ]]; do
       BUILD_HTTP_ADAPTER=true
       shift
       ;;
+    --browser)
+      BUILD_BROWSER=true
+      shift
+      ;;
     --all)
       BUILD_CLAUDE=true
       BUILD_OPENROUTER=true
       BUILD_FILE_ADAPTER=true
       BUILD_HTTP_ADAPTER=true
+      BUILD_BROWSER=true
       shift
       ;;
     *)
       echo "Unknown option: $1"
-      echo "Usage: $0 [--claude-only|--openrouter-only|--file-adapter|--http-adapter|--all]"
+      echo "Usage: $0 [--claude-only|--openrouter-only|--file-adapter|--http-adapter|--browser|--all]"
       exit 1
       ;;
   esac
@@ -105,6 +111,19 @@ if [ "$BUILD_HTTP_ADAPTER" = true ]; then
   echo ""
 fi
 
+# Build Browser Sidecar
+if [ "$BUILD_BROWSER" = true ]; then
+  echo "Building Browser Sidecar..."
+  echo "Image: nanoclaw-browser-sidecar:latest"
+  if [ -d "browser" ]; then
+    ${CONTAINER_RUNTIME} build -f browser/Dockerfile -t nanoclaw-browser-sidecar:latest browser
+    echo "Browser sidecar build complete!"
+  else
+    echo "WARNING: browser directory not found, skipping browser sidecar build"
+  fi
+  echo ""
+fi
+
 echo "================================"
 echo "Build complete!"
 
@@ -119,6 +138,9 @@ if [ "$BUILD_FILE_ADAPTER" = true ] && [ -d "file-adapter" ]; then
 fi
 if [ "$BUILD_HTTP_ADAPTER" = true ] && [ -d "http-adapter" ]; then
   echo "  HTTP adapter image: nanoclaw-http-adapter:latest"
+fi
+if [ "$BUILD_BROWSER" = true ] && [ -d "browser" ]; then
+  echo "  Browser sidecar image: nanoclaw-browser-sidecar:latest"
 fi
 
 echo ""

@@ -2,7 +2,13 @@
  * Kubernetes-specific types for NanoClaw runtime
  */
 
-import { ContainerInput, ContainerOutput } from '../container-runner.js';
+import { ContainerInput, ContainerOutput } from '../runtime/types.js';
+import {
+  AdditionalMount,
+  K8sToleration,
+  K8sAffinity,
+  ContainerSecurityContext,
+} from '../types.js';
 
 export interface JobInput extends ContainerInput {
   jobId?: string;
@@ -30,6 +36,20 @@ export interface AgentJobSpec {
   assistantName?: string;
   timeout?: number;
   provider?: 'claude' | 'openrouter';
+  browserSidecar?: boolean;
+  // Node scheduling
+  nodeSelector?: Record<string, string>;
+  tolerations?: K8sToleration[];
+  affinity?: K8sAffinity;
+  priorityClassName?: string;
+  // GPU / accelerator
+  deviceRequests?: Record<string, string>;
+  // Private registry
+  imagePullSecrets?: string[];
+  // Security context
+  securityContext?: ContainerSecurityContext;
+  // Additional volumes
+  additionalMounts?: AdditionalMount[];
 }
 
 export interface SidecarJobSpec extends AgentJobSpec {
@@ -41,6 +61,7 @@ export interface SidecarJobSpec extends AgentJobSpec {
   memoryLimit?: string;
   cpuRequest?: string;
   cpuLimit?: string;
+  userImagePullPolicy?: 'Always' | 'IfNotPresent' | 'Never';
 }
 
 export interface SidecarCredentials {
@@ -57,6 +78,7 @@ export interface SidecarHttpJobSpec extends AgentJobSpec {
   cpuRequest?: string;
   cpuLimit?: string;
   credentials?: SidecarCredentials;
+  userImagePullPolicy?: 'Always' | 'IfNotPresent' | 'Never';
 }
 
 export interface SidecarFileJobSpec extends AgentJobSpec {
@@ -70,6 +92,7 @@ export interface SidecarFileJobSpec extends AgentJobSpec {
   cpuLimit?: string;
   secrets?: Record<string, string>;
   credentials?: SidecarCredentials;
+  userImagePullPolicy?: 'Always' | 'IfNotPresent' | 'Never';
 }
 
 export interface RedisConfig {

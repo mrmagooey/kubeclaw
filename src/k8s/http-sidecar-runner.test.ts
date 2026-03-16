@@ -159,7 +159,7 @@ describe('HttpSidecarJobRunner', () => {
       expect(manifest.spec?.backoffLimit).toBe(0);
     });
 
-    it('should cap activeDeadlineSeconds at JOB_ACTIVE_DEADLINE_SECONDS (1800)', () => {
+    it('should use spec timeout as activeDeadlineSeconds without capping', () => {
       const input: JobInput = {
         groupFolder: 'test-group',
         chatJid: 'test@g.us',
@@ -174,7 +174,7 @@ describe('HttpSidecarJobRunner', () => {
         isMain: false,
         prompt: 'Test',
         userImage: 'test-image:latest',
-        // timeout of 1 hour (3600s) should be capped at 1800s
+        // timeout of 1 hour — should be used as-is (no 30-min cap)
         timeout: 3600000,
       };
 
@@ -185,8 +185,8 @@ describe('HttpSidecarJobRunner', () => {
         'test-job-id',
       );
 
-      // activeDeadlineSeconds should be capped at 1800
-      expect(manifest.spec?.activeDeadlineSeconds).toBeLessThanOrEqual(1800);
+      // activeDeadlineSeconds should reflect the full 1-hour timeout
+      expect(manifest.spec?.activeDeadlineSeconds).toBe(3600);
     });
 
     it('should use spec timeout when smaller than the cap', () => {
@@ -976,7 +976,7 @@ describe('HttpSidecarJobRunner', () => {
       expect(manifest.spec?.template?.spec?.restartPolicy).toBe('Never');
     });
 
-    it('should set imagePullPolicy to Never on both containers', () => {
+    it('should set imagePullPolicy to IfNotPresent by default on both containers', () => {
       const input: JobInput = {
         groupFolder: 'test-group',
         chatJid: 'test@g.us',
@@ -1001,8 +1001,8 @@ describe('HttpSidecarJobRunner', () => {
       );
 
       const containers = manifest.spec?.template?.spec?.containers;
-      expect(containers?.[0].imagePullPolicy).toBe('Never');
-      expect(containers?.[1].imagePullPolicy).toBe('Never');
+      expect(containers?.[0].imagePullPolicy).toBe('IfNotPresent');
+      expect(containers?.[1].imagePullPolicy).toBe('IfNotPresent');
     });
 
     it('should use the userImage specified in spec for the user container', () => {

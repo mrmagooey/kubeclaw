@@ -234,6 +234,14 @@ export function validateMount(
   mount: AdditionalMount,
   isMain: boolean,
 ): MountValidationResult {
+  // K8s-native volume types don't need host path validation
+  if (mount.type && mount.type !== 'hostpath') {
+    return {
+      allowed: true,
+      reason: `K8s-native volume type: ${mount.type}`,
+    };
+  }
+
   const allowlist = loadMountAllowlist();
 
   // If no allowlist, block all additional mounts
@@ -245,7 +253,8 @@ export function validateMount(
   }
 
   // Derive containerPath from hostPath basename if not specified
-  const containerPath = mount.containerPath || path.basename(mount.hostPath);
+  const hostPath = mount.hostPath || '';
+  const containerPath = mount.containerPath || path.basename(hostPath);
 
   // Validate container path (cheap check)
   if (!isValidContainerPath(containerPath)) {
@@ -256,13 +265,13 @@ export function validateMount(
   }
 
   // Expand and resolve the host path
-  const expandedPath = expandPath(mount.hostPath);
+  const expandedPath = expandPath(hostPath);
   const realPath = getRealPath(expandedPath);
 
   if (realPath === null) {
     return {
       allowed: false,
-      reason: `Host path does not exist: "${mount.hostPath}" (expanded: "${expandedPath}")`,
+      reason: `Host path does not exist: "${hostPath}" (expanded: "${expandedPath}")`,
     };
   }
 
@@ -299,7 +308,7 @@ export function validateMount(
       effectiveReadonly = true;
       logger.info(
         {
-          mount: mount.hostPath,
+          mount: hostPath,
         },
         'Mount forced to read-only for non-main group',
       );
@@ -308,7 +317,7 @@ export function validateMount(
       effectiveReadonly = true;
       logger.info(
         {
-          mount: mount.hostPath,
+          mount: hostPath,
           root: allowedRoot.path,
         },
         'Mount forced to read-only - root does not allow read-write',
@@ -372,7 +381,7 @@ export function validateAdditionalMounts(
       logger.warn(
         {
           group: groupName,
-          requestedPath: mount.hostPath,
+          requestedPath: mount.hostPath || mount.configMapName || mount.secretName,
           containerPath: mount.containerPath,
           reason: result.reason,
         },

@@ -30,7 +30,7 @@ import {
   TIMEZONE,
 } from '../config.js';
 import { JobInput, JobOutput, SidecarJobSpec } from './types.js';
-import { ContainerOutput } from '../container-runner.js';
+import { ContainerOutput } from '../runtime/types.js';
 import { parseSidecarLogBuffer } from './sidecar-log-parser.js';
 
 // Job constants
@@ -108,15 +108,21 @@ export class SidecarJobRunner {
         onProcess(jobName);
       }
 
+      const effectiveTimeoutMs = spec.timeout || CONTAINER_TIMEOUT;
+
       // Stream output from the sidecar container logs
       const streamingPromise = this.streamSidecarLogs(
         jobName,
         group.folder,
         onOutput,
+        effectiveTimeoutMs,
       );
 
       // Wait for job completion
-      const completionPromise = this.waitForJobCompletion(jobName);
+      const completionPromise = this.waitForJobCompletion(
+        jobName,
+        effectiveTimeoutMs,
+      );
 
       // Race between streaming and completion
       await Promise.all([streamingPromise, completionPromise]);
@@ -297,10 +303,7 @@ export class SidecarJobRunner {
       },
       spec: {
         ttlSecondsAfterFinished: JOB_TTL_SECONDS_AFTER_FINISHED,
-        activeDeadlineSeconds: Math.min(
-          timeoutSeconds,
-          JOB_ACTIVE_DEADLINE_SECONDS,
-        ),
+        activeDeadlineSeconds: timeoutSeconds,
         backoffLimit: JOB_BACKOFF_LIMIT,
         template: {
           metadata: {
@@ -309,6 +312,13 @@ export class SidecarJobRunner {
           spec: {
             restartPolicy: 'Never',
             volumes: [sharedVolume, wrapperVolume, ...pvcVolumes],
+            ...(spec.nodeSelector && { nodeSelector: spec.nodeSelector }),
+            ...(spec.tolerations && { tolerations: spec.tolerations }),
+            ...(spec.affinity && { affinity: spec.affinity }),
+            ...(spec.priorityClassName && { priorityClassName: spec.priorityClassName }),
+            ...(spec.imagePullSecrets && {
+              imagePullSecrets: spec.imagePullSecrets.map((name) => ({ name })),
+            }),
             containers: [
               // Sidecar adapter container (handles NanoClaw protocol)
               {
@@ -332,6 +342,7 @@ export class SidecarJobRunner {
               {
                 name: 'user-agent',
                 image: spec.userImage,
+                imagePullPolicy: spec.userImagePullPolicy || 'IfNotPresent',
                 command: spec.userCommand,
                 args: spec.userArgs,
                 env: userEnvVars,
@@ -364,6 +375,7 @@ export class SidecarJobRunner {
     jobName: string,
     groupFolder: string,
     onOutput?: (output: JobOutput) => Promise<void>,
+    timeoutMs: number = JOB_ACTIVE_DEADLINE_SECONDS * 1000,
   ): Promise<void> {
     if (!onOutput) {
       return;
@@ -372,7 +384,7 @@ export class SidecarJobRunner {
     logger.debug({ jobName, groupFolder }, 'Starting sidecar log stream');
 
     const startTime = Date.now();
-    const maxWaitTime = JOB_ACTIVE_DEADLINE_SECONDS * 1000;
+    const maxWaitTime = timeoutMs;
     const pollInterval = 1000; // Check for logs every second
 
     let parseBuffer = '';
@@ -494,9 +506,12 @@ export class SidecarJobRunner {
   /**
    * Wait for a Kubernetes Job to complete
    */
-  async waitForJobCompletion(jobName: string): Promise<void> {
+  async waitForJobCompletion(
+    jobName: string,
+    timeoutMs: number = JOB_ACTIVE_DEADLINE_SECONDS * 1000,
+  ): Promise<void> {
     const pollInterval = 5000; // 5 seconds
-    const maxWaitTime = JOB_ACTIVE_DEADLINE_SECONDS * 1000;
+    const maxWaitTime = timeoutMs;
     const startTime = Date.now();
 
     logger.debug({ jobName }, 'Waiting for job completion');

@@ -32,7 +32,7 @@ import {
   REDIS_ADMIN_PASSWORD,
 } from '../config.js';
 import { JobInput, JobOutput, SidecarFileJobSpec } from './types.js';
-import { ContainerOutput } from '../container-runner.js';
+import { ContainerOutput } from '../runtime/types.js';
 import { parseSidecarLogBuffer } from './sidecar-log-parser.js';
 
 // Job constants
@@ -110,15 +110,21 @@ export class FileSidecarJobRunner {
         onProcess(jobName);
       }
 
+      const effectiveTimeoutMs = spec.timeout || CONTAINER_TIMEOUT;
+
       // Stream output from the sidecar container logs
       const streamingPromise = this.streamSidecarLogs(
         jobName,
         group.folder,
         onOutput,
+        effectiveTimeoutMs,
       );
 
       // Wait for job completion
-      const completionPromise = this.waitForJobCompletion(jobName);
+      const completionPromise = this.waitForJobCompletion(
+        jobName,
+        effectiveTimeoutMs,
+      );
 
       // Race between streaming and completion
       await Promise.all([streamingPromise, completionPromise]);
@@ -316,10 +322,7 @@ export class FileSidecarJobRunner {
       },
       spec: {
         ttlSecondsAfterFinished: JOB_TTL_SECONDS_AFTER_FINISHED,
-        activeDeadlineSeconds: Math.min(
-          timeoutSeconds,
-          JOB_ACTIVE_DEADLINE_SECONDS,
-        ),
+        activeDeadlineSeconds: timeoutSeconds,
         backoffLimit: JOB_BACKOFF_LIMIT,
         template: {
           metadata: {
@@ -328,12 +331,19 @@ export class FileSidecarJobRunner {
           spec: {
             restartPolicy: 'Never',
             volumes: [workspaceVolume, wrapperVolume, ...pvcVolumes],
+            ...(spec.nodeSelector && { nodeSelector: spec.nodeSelector }),
+            ...(spec.tolerations && { tolerations: spec.tolerations }),
+            ...(spec.affinity && { affinity: spec.affinity }),
+            ...(spec.priorityClassName && { priorityClassName: spec.priorityClassName }),
+            ...(spec.imagePullSecrets && {
+              imagePullSecrets: spec.imagePullSecrets.map((name) => ({ name })),
+            }),
             containers: [
               // Sidecar adapter container (handles NanoClaw protocol)
               {
                 name: 'nanoclaw-file-adapter',
                 image: SIDECAR_FILE_ADAPTER_IMAGE,
-                imagePullPolicy: 'Never',
+                imagePullPolicy: 'IfNotPresent',
                 env: adapterEnvVars,
                 volumeMounts: adapterVolumeMounts,
                 resources: {
@@ -352,7 +362,7 @@ export class FileSidecarJobRunner {
               {
                 name: 'user-agent',
                 image: spec.userImage,
-                imagePullPolicy: 'Never',
+                imagePullPolicy: spec.userImagePullPolicy || 'IfNotPresent',
                 command: spec.userCommand || ['/bin/sh'],
                 args: spec.userArgs || ['-c', '/workspace/runner-wrapper.sh'],
                 env: userEnvVars,
@@ -385,6 +395,7 @@ export class FileSidecarJobRunner {
     jobName: string,
     groupFolder: string,
     onOutput?: (output: JobOutput) => Promise<void>,
+    timeoutMs: number = JOB_ACTIVE_DEADLINE_SECONDS * 1000,
   ): Promise<void> {
     if (!onOutput) {
       return;
@@ -393,7 +404,7 @@ export class FileSidecarJobRunner {
     logger.debug({ jobName, groupFolder }, 'Starting file sidecar log stream');
 
     const startTime = Date.now();
-    const maxWaitTime = JOB_ACTIVE_DEADLINE_SECONDS * 1000;
+    const maxWaitTime = timeoutMs;
     const pollInterval = 1000; // Check for logs every second
 
     let parseBuffer = '';
@@ -508,9 +519,12 @@ export class FileSidecarJobRunner {
   /**
    * Wait for a Kubernetes Job to complete
    */
-  async waitForJobCompletion(jobName: string): Promise<void> {
+  async waitForJobCompletion(
+    jobName: string,
+    timeoutMs: number = JOB_ACTIVE_DEADLINE_SECONDS * 1000,
+  ): Promise<void> {
     const pollInterval = 5000; // 5 seconds
-    const maxWaitTime = JOB_ACTIVE_DEADLINE_SECONDS * 1000;
+    const maxWaitTime = timeoutMs;
     const startTime = Date.now();
 
     logger.debug({ jobName }, 'Waiting for job completion');

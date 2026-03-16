@@ -44,7 +44,7 @@ vi.mock('ioredis', () => ({
 }));
 
 vi.mock('../config.js', () => ({
-  IPC_POLL_INTERVAL: 1000,
+  SIDECAR_POLL_INTERVAL: 1000,
   TIMEZONE: 'UTC',
 }));
 

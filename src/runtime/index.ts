@@ -1,9 +1,8 @@
 /**
  * Runtime Factory for NanoClaw
- * Selects between Docker and Kubernetes runtimes
+ * Kubernetes runtime
  */
 
-import { ChildProcess } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
@@ -18,17 +17,9 @@ import {
   AvailableGroup,
   Task,
 } from './types.js';
-import {
-  ContainerInput as DockerContainerInput,
-  ContainerOutput as DockerContainerOutput,
-  runContainerAgent,
-  writeTasksSnapshot as dockerWriteTasksSnapshot,
-  writeGroupsSnapshot as dockerWriteGroupsSnapshot,
-  AvailableGroup as DockerAvailableGroup,
-} from '../container-runner.js';
 import { RegisteredGroup } from '../types.js';
 import { logger } from '../logger.js';
-import { RUNTIME_MODE, SIDECAR_ENABLED } from '../config.js';
+import { SIDECAR_ENABLED } from '../config.js';
 import { getACLManager, RedisACLManager } from '../k8s/acl-manager.js';
 
 // Re-export types from runtime types for convenience
@@ -39,89 +30,6 @@ export type {
   AvailableGroup,
   Task,
 };
-
-/**
- * Docker runtime implementation using container-runner.ts
- */
-class DockerAgentRunner implements AgentRunner {
-  async runAgent(
-    group: RegisteredGroup,
-    input: ContainerInput,
-    onProcess?: (proc: unknown, containerName: string) => void,
-    onOutput?: (output: ContainerOutput) => Promise<void>,
-  ): Promise<ContainerOutput> {
-    // Cast the input to Docker's expected type (they're compatible)
-    const dockerInput: DockerContainerInput = {
-      ...input,
-    };
-
-    // Cast the onOutput callback to match Docker's expected signature
-    const dockerOnOutput = onOutput
-      ? async (output: DockerContainerOutput) => {
-          await onOutput(output as ContainerOutput);
-        }
-      : undefined;
-
-    // Cast the onProcess callback
-    const dockerOnProcess = onProcess
-      ? (proc: ChildProcess, containerName: string) => {
-          onProcess(proc, containerName);
-        }
-      : () => {}; // No-op function when not provided
-
-    return runContainerAgent(
-      group,
-      dockerInput,
-      dockerOnProcess,
-      dockerOnOutput,
-    );
-  }
-
-  writeTasksSnapshot(
-    groupFolder: string,
-    isMain: boolean,
-    tasks: Task[],
-  ): void {
-    // Convert Task array to the format expected by container-runner
-    const dockerTasks = tasks.map((t) => ({
-      id: t.id,
-      groupFolder: t.groupFolder,
-      prompt: t.prompt,
-      schedule_type: t.schedule_type,
-      schedule_value: t.schedule_value,
-      status: t.status,
-      next_run: t.next_run,
-    }));
-    dockerWriteTasksSnapshot(groupFolder, isMain, dockerTasks);
-  }
-
-  writeGroupsSnapshot(
-    groupFolder: string,
-    isMain: boolean,
-    groups: AvailableGroup[],
-    registeredJids: Set<string>,
-  ): void {
-    // Convert AvailableGroup array to the format expected by container-runner
-    const dockerGroups: DockerAvailableGroup[] = groups.map((g) => ({
-      jid: g.jid,
-      name: g.name,
-      lastActivity: g.lastActivity,
-      isRegistered: g.isRegistered,
-    }));
-    dockerWriteGroupsSnapshot(
-      groupFolder,
-      isMain,
-      dockerGroups,
-      registeredJids,
-    );
-  }
-
-  async shutdown(): Promise<void> {
-    // Docker runtime doesn't require explicit cleanup
-    // Containers are cleaned up automatically via --rm flag
-    logger.info('Docker runtime shutdown (no cleanup required)');
-  }
-}
 
 /**
  * Kubernetes runtime implementation using k8s/job-runner.ts
@@ -848,16 +756,11 @@ export interface SidecarRunner {
 }
 
 /**
- * Factory function to create the appropriate AgentRunner based on runtime mode
+ * Factory function to create the appropriate AgentRunner
  */
 export function createAgentRunner(): AgentRunner {
-  if (RUNTIME_MODE === 'kubernetes') {
-    logger.info('Creating Kubernetes Agent Runner');
-    return new KubernetesAgentRunner();
-  }
-
-  logger.info('Creating Docker Agent Runner');
-  return new DockerAgentRunner();
+  logger.info('Creating Kubernetes Agent Runner');
+  return new KubernetesAgentRunner();
 }
 
 /**
