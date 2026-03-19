@@ -25,9 +25,10 @@ COPY . .
 # Build TypeScript
 RUN npm run build
 
-# Create workspace directories and store with proper permissions
-RUN mkdir -p /workspace/groups /workspace/data /workspace/ipc/messages /workspace/ipc/tasks /workspace/ipc/input /app/store && \
-    chown -R 1000:1000 /workspace /app/store
+# Create runtime directories (groups and store are overridden by PVCs in K8s;
+# these exist so the orchestrator works when run locally without volume mounts)
+RUN mkdir -p /app/groups /app/store && \
+    chown -R 1000:1000 /app/groups /app/store
 
 # Set environment variables
 ENV NANOCLAW_RUNTIME=kubernetes
