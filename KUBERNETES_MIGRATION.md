@@ -170,17 +170,32 @@ kubectl create secret generic nanoclaw-secrets \
 ### 3. Build and Deploy
 
 ```bash
-# Build images
-docker build -t nanoclaw-agent:latest -f container/Dockerfile .
+# Build all container images (agent, browser sidecar, and adapters)
+./container/build.sh --all
+
+# Build orchestrator image
 docker build -t nanoclaw-orchestrator:latest .
 
 # Push to registry (or load into cluster)
-kind load docker-image nanoclaw-agent:latest
+kind load docker-image nanoclaw-agent:claude
+kind load docker-image nanoclaw-agent:openrouter
+kind load docker-image nanoclaw-browser-sidecar:latest
+kind load docker-image nanoclaw-file-adapter:latest
+kind load docker-image nanoclaw-http-adapter:latest
 kind load docker-image nanoclaw-orchestrator:latest
 
 # Deploy orchestrator
 kubectl apply -f k8s/30-orchestrator.yaml
 ```
+
+The `--all` flag builds:
+
+- `nanoclaw-agent:claude` — main agent image (Claude SDK variant)
+- `nanoclaw-agent:openrouter` — OpenRouter variant
+- `nanoclaw-browser-sidecar:latest` — required for groups with `browserSidecar: true`
+- `nanoclaw-file-adapter:latest` and `nanoclaw-http-adapter:latest` — sidecar adapters
+
+For minimal K8s deployments that only need the Claude agent and browser sidecar, use `./container/build.sh --claude-only --browser` instead.
 
 ## Storage Configuration
 

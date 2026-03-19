@@ -34,6 +34,7 @@ import {
   JobOutput,
   AgentJobSpec,
   AgentOutputMessage,
+  ToolPodJobSpec,
 } from './types.js';
 import { ContainerOutput } from '../runtime/types.js';
 import {
@@ -41,6 +42,22 @@ import {
   getOutputChannel,
   closeRedisConnections,
 } from './redis-client.js';
+
+/**
+ * Build Redis URL with embedded password if password is provided and URL
+ * doesn't already contain credentials.
+ * - redis://host:port + password → redis://:password@host:port
+ * - redis://:existing@host:port + password → leave unchanged (already has auth)
+ * - any URL + no password → return URL unchanged
+ */
+function buildRedisUrl(base: string, password?: string): string {
+  if (!password) return base;
+  // Check if URL already contains credentials (look for @ in authority part)
+  // redis://host:port has no @, redis://:pass@host:port has @
+  if (base.includes('@')) return base;
+  // Embed password: redis://host:port → redis://:password@host:port
+  return base.replace(/^(redis:\/\/)/, `$1:${encodeURIComponent(password)}@`);
+}
 
 /**
  * Build a valid Kubernetes Job name from a group folder.
@@ -253,9 +270,13 @@ export class JobRunner {
       { name: 'IDLE_TIMEOUT', value: String(IDLE_TIMEOUT) },
       // Redis URL is not secret — pass directly from orchestrator's env so agents
       // can connect for IPC output. No secret key needed.
+      // Password is embedded when available for node-redis URL-based auth.
       {
         name: 'REDIS_URL',
-        value: process.env.REDIS_URL || 'redis://nanoclaw-redis:6379',
+        value: buildRedisUrl(
+          process.env.REDIS_URL || 'redis://nanoclaw-redis:6379',
+          process.env.REDIS_ADMIN_PASSWORD,
+        ),
       },
       // Credentials from nanoclaw-secrets — key names use hyphens to match the
       // secret template in k8s/05-secrets.yaml.
@@ -397,7 +418,11 @@ export class JobRunner {
         if (mountType === 'hostpath') continue; // hostpath not supported in K8s mode
 
         const volumeName = `extra-${mount.configMapName || mount.secretName || 'tmpfs'}-${volumes.length}`;
-        const containerPath = mount.containerPath || mount.configMapName || mount.secretName || 'tmpfs';
+        const containerPath =
+          mount.containerPath ||
+          mount.configMapName ||
+          mount.secretName ||
+          'tmpfs';
 
         if (mountType === 'configmap' && mount.configMapName) {
           volumes.push({
@@ -521,7 +546,9 @@ export class JobRunner {
             ...(spec.nodeSelector && { nodeSelector: spec.nodeSelector }),
             ...(spec.tolerations && { tolerations: spec.tolerations }),
             ...(spec.affinity && { affinity: spec.affinity }),
-            ...(spec.priorityClassName && { priorityClassName: spec.priorityClassName }),
+            ...(spec.priorityClassName && {
+              priorityClassName: spec.priorityClassName,
+            }),
             ...(spec.imagePullSecrets && {
               imagePullSecrets: spec.imagePullSecrets.map((name) => ({ name })),
             }),
@@ -636,7 +663,7 @@ export class JobRunner {
   /**
    * Unsubscribe from output channel
    */
-  private unsubscribeFromOutput(jobName: string): void {
+  unsubscribeFromOutput(jobName: string): void {
     const unsubscribe = this.activeSubscriptions.get(jobName);
     if (unsubscribe) {
       unsubscribe();
@@ -805,6 +832,139 @@ export class JobRunner {
     await closeRedisConnections();
 
     logger.info('JobRunner cleanup completed');
+  }
+
+  /**
+   * Create a tool pod job (execution or browser category)
+   * Returns the K8s job name as podJobId
+   */
+  async createToolPodJob(spec: ToolPodJobSpec): Promise<string> {
+    const jobName = buildJobName(`${spec.groupFolder}-${spec.category}`);
+    const timeoutSeconds = Math.floor(spec.timeout / 1000);
+
+    const envVars: Array<{ name: string; value?: string; valueFrom?: object }> =
+      [
+        { name: 'TZ', value: TIMEZONE },
+        { name: 'NANOCLAW_AGENT_JOB_ID', value: spec.agentJobId },
+        { name: 'NANOCLAW_CATEGORY', value: spec.category },
+        { name: 'NANOCLAW_GROUP_FOLDER', value: spec.groupFolder },
+        {
+          name: 'REDIS_URL',
+          value: buildRedisUrl(
+            process.env.REDIS_URL || 'redis://nanoclaw-redis:6379',
+            process.env.REDIS_ADMIN_PASSWORD,
+          ),
+        },
+        { name: 'IDLE_TIMEOUT', value: String(spec.timeout) },
+        {
+          name: 'ANTHROPIC_API_KEY',
+          valueFrom: {
+            secretKeyRef: {
+              name: 'nanoclaw-secrets',
+              key: 'anthropic-api-key',
+              optional: true,
+            },
+          },
+        },
+        {
+          name: 'CLAUDE_CODE_OAUTH_TOKEN',
+          valueFrom: {
+            secretKeyRef: {
+              name: 'nanoclaw-secrets',
+              key: 'claude-code-oauth-token',
+              optional: true,
+            },
+          },
+        },
+      ];
+
+    const volumeMounts: Array<{
+      name: string;
+      mountPath: string;
+      subPath?: string;
+    }> = [];
+    const volumes: Array<any> = [];
+
+    if (spec.category === 'execution') {
+      volumeMounts.push(
+        {
+          name: 'groups-pvc',
+          mountPath: '/workspace/group',
+          subPath: spec.groupFolder,
+        },
+        {
+          name: 'sessions-pvc',
+          mountPath: '/home/node/.claude',
+          subPath: `${spec.groupFolder}/.claude`,
+        },
+      );
+      volumes.push(
+        {
+          name: 'groups-pvc',
+          persistentVolumeClaim: { claimName: 'nanoclaw-groups' },
+        },
+        {
+          name: 'sessions-pvc',
+          persistentVolumeClaim: { claimName: 'nanoclaw-sessions' },
+        },
+      );
+    }
+
+    const job: V1Job = {
+      apiVersion: 'batch/v1',
+      kind: 'Job',
+      metadata: {
+        name: jobName,
+        namespace: this.namespace,
+        labels: {
+          app: 'nanoclaw-tool-pod',
+          'nanoclaw/group': spec.groupFolder,
+          'nanoclaw/category': spec.category,
+          'nanoclaw/agent-job': spec.agentJobId,
+        },
+      },
+      spec: {
+        ttlSecondsAfterFinished: JOB_TTL_SECONDS_AFTER_FINISHED,
+        activeDeadlineSeconds: timeoutSeconds,
+        backoffLimit: 0,
+        template: {
+          metadata: { labels: { app: 'nanoclaw-tool-pod' } },
+          spec: {
+            restartPolicy: 'Never',
+            containers: [
+              {
+                name: 'tool-server',
+                image: getContainerImage('claude'),
+                command: ['node', '/app/src/tool-server.js'],
+                env: envVars,
+                volumeMounts,
+                resources: {
+                  requests: {
+                    memory: AGENT_JOB_MEMORY_REQUEST,
+                    cpu: AGENT_JOB_CPU_REQUEST,
+                  },
+                  limits: {
+                    memory: AGENT_JOB_MEMORY_LIMIT,
+                    cpu: AGENT_JOB_CPU_LIMIT,
+                  },
+                },
+              } as any,
+            ],
+            volumes,
+          },
+        },
+      },
+    };
+
+    await this.batchApi.createNamespacedJob({
+      namespace: this.namespace,
+      body: job,
+    });
+    logger.info(
+      { jobName, category: spec.category, agentJobId: spec.agentJobId },
+      'Tool pod job created',
+    );
+    return jobName;
   }
 }
 

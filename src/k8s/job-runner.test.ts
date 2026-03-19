@@ -1,7 +1,11 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { EventEmitter } from 'events';
 import type { RegisteredGroup } from '../types.js';
-import type { JobInput, AgentOutputMessage } from './types.js';
+import type { JobInput, AgentOutputMessage, ToolPodJobSpec } from './types.js';
+
+// Store original env vars for cleanup
+const originalRedisUrl = process.env.REDIS_URL;
+const originalRedisPassword = process.env.REDIS_ADMIN_PASSWORD;
 
 // Mock config
 vi.mock('../config.js', () => ({
@@ -87,7 +91,7 @@ vi.mock('@kubernetes/client-node', () => {
 });
 
 // Now import after mocks are set up
-import { JobRunner } from './job-runner.js';
+import { JobRunner, buildJobName } from './job-runner.js';
 
 const testGroup: RegisteredGroup = {
   name: 'Test Group',
@@ -116,6 +120,17 @@ describe('JobRunner', () => {
   afterEach(() => {
     // Clean up any pending promises that might cause unhandled rejection warnings
     vi.useRealTimers();
+    // Clean up Redis env vars
+    if (originalRedisUrl !== undefined) {
+      process.env.REDIS_URL = originalRedisUrl;
+    } else {
+      delete process.env.REDIS_URL;
+    }
+    if (originalRedisPassword !== undefined) {
+      process.env.REDIS_ADMIN_PASSWORD = originalRedisPassword;
+    } else {
+      delete process.env.REDIS_ADMIN_PASSWORD;
+    }
   });
 
   describe('generateJobManifest', () => {
@@ -235,6 +250,160 @@ describe('JobRunner', () => {
       expect(resources?.limits?.memory).toBe('4Gi');
       expect(resources?.requests?.cpu).toBe('250m');
       expect(resources?.limits?.cpu).toBe('2000m');
+    });
+  });
+
+  describe('REDIS_URL in generateJobManifest', () => {
+    it('should return base URL unchanged when REDIS_ADMIN_PASSWORD is not set', () => {
+      delete process.env.REDIS_ADMIN_PASSWORD;
+      process.env.REDIS_URL = 'redis://nanoclaw-redis:6379';
+
+      const spec = {
+        name: 'test-job',
+        groupFolder: 'test-group',
+        chatJid: 'test@g.us',
+        isMain: false,
+        prompt: 'Test prompt',
+        timeout: 1800000,
+        provider: 'claude' as const,
+      };
+
+      const manifest = jobRunner.generateJobManifest(spec);
+      const envVars = manifest.spec?.template?.spec?.containers?.[0]?.env || [];
+      const redisUrl = envVars.find((e) => e.name === 'REDIS_URL')?.value;
+
+      expect(redisUrl).toBe('redis://nanoclaw-redis:6379');
+    });
+
+    it('should embed password when REDIS_ADMIN_PASSWORD is set', () => {
+      process.env.REDIS_ADMIN_PASSWORD = 'secretpassword';
+      process.env.REDIS_URL = 'redis://nanoclaw-redis:6379';
+
+      const spec = {
+        name: 'test-job',
+        groupFolder: 'test-group',
+        chatJid: 'test@g.us',
+        isMain: false,
+        prompt: 'Test prompt',
+        timeout: 1800000,
+        provider: 'claude' as const,
+      };
+
+      const manifest = jobRunner.generateJobManifest(spec);
+      const envVars = manifest.spec?.template?.spec?.containers?.[0]?.env || [];
+      const redisUrl = envVars.find((e) => e.name === 'REDIS_URL')?.value;
+
+      expect(redisUrl).toBe('redis://:secretpassword@nanoclaw-redis:6379');
+    });
+
+    it('should not double-embed password when URL already contains @', () => {
+      process.env.REDIS_ADMIN_PASSWORD = 'newpassword';
+      process.env.REDIS_URL = 'redis://:existing@nanoclaw-redis:6379';
+
+      const spec = {
+        name: 'test-job',
+        groupFolder: 'test-group',
+        chatJid: 'test@g.us',
+        isMain: false,
+        prompt: 'Test prompt',
+        timeout: 1800000,
+        provider: 'claude' as const,
+      };
+
+      const manifest = jobRunner.generateJobManifest(spec);
+      const envVars = manifest.spec?.template?.spec?.containers?.[0]?.env || [];
+      const redisUrl = envVars.find((e) => e.name === 'REDIS_URL')?.value;
+
+      // Should remain unchanged since it already has credentials
+      expect(redisUrl).toBe('redis://:existing@nanoclaw-redis:6379');
+    });
+
+    it('should percent-encode special characters in password', () => {
+      process.env.REDIS_ADMIN_PASSWORD = 'p@ss#';
+      process.env.REDIS_URL = 'redis://nanoclaw-redis:6379';
+
+      const spec = {
+        name: 'test-job',
+        groupFolder: 'test-group',
+        chatJid: 'test@g.us',
+        isMain: false,
+        prompt: 'Test prompt',
+        timeout: 1800000,
+        provider: 'claude' as const,
+      };
+
+      const manifest = jobRunner.generateJobManifest(spec);
+      const envVars = manifest.spec?.template?.spec?.containers?.[0]?.env || [];
+      const redisUrl = envVars.find((e) => e.name === 'REDIS_URL')?.value;
+
+      // @ becomes %40, # becomes %23
+      expect(redisUrl).toBe('redis://:p%40ss%23@nanoclaw-redis:6379');
+    });
+  });
+
+  describe('buildJobName', () => {
+    it('should return a string starting with nc-', () => {
+      const name = buildJobName('test-group');
+      expect(name).toMatch(/^nc-/);
+    });
+
+    it('should return result with ≤ 63 characters', () => {
+      const name = buildJobName('test-group');
+      expect(name.length).toBeLessThanOrEqual(63);
+    });
+
+    it('should truncate long folder names to keep total ≤ 63 chars', () => {
+      const longFolder = 'a'.repeat(100);
+      const name = buildJobName(longFolder);
+      expect(name.length).toBeLessThanOrEqual(63);
+      // Should still start with nc- and have suffix
+      expect(name).toMatch(/^nc-.*-[a-z0-9]{6}$/);
+    });
+
+    it('should replace special characters with hyphens', () => {
+      const name = buildJobName('test@group#name!');
+      expect(name).toMatch(/^nc-test-group-name-/);
+    });
+
+    it('should strip leading hyphens from sanitized folder', () => {
+      const name = buildJobName('@test-group');
+      // Leading @ becomes hyphen which should be stripped
+      expect(name).toMatch(/^nc-test-group-/);
+      expect(name).not.toMatch(/^nc--/);
+    });
+
+    it('should strip trailing hyphens from sanitized folder', () => {
+      const name = buildJobName('test-group@');
+      // Trailing @ becomes hyphen which should be stripped
+      expect(name).toMatch(/^nc-test-group-/);
+      // Make sure there are no trailing hyphens before the suffix dash
+      expect(name).not.toMatch(/test-group--[a-z0-9]/);
+    });
+
+    it('should return different names for two calls with same folder', () => {
+      vi.useFakeTimers();
+
+      const name1 = buildJobName('test-group');
+
+      // Advance time to ensure different suffix
+      vi.advanceTimersByTime(1000);
+
+      const name2 = buildJobName('test-group');
+
+      expect(name1).not.toBe(name2);
+
+      vi.useRealTimers();
+    });
+
+    it('should convert uppercase letters to lowercase', () => {
+      const name = buildJobName('Test-Group');
+      expect(name).toBe(name.toLowerCase());
+    });
+
+    it('should handle multiple consecutive special chars as single hyphen', () => {
+      const name = buildJobName('test@@@group');
+      // Multiple @ should be collapsed to single hyphens by replace
+      expect(name).toMatch(/^nc-test-group-/);
     });
   });
 
@@ -686,6 +855,225 @@ describe('JobRunner', () => {
 
       const callArgs = mockBatchApi.createNamespacedJob.mock.calls[0][0];
       expect(callArgs.body.metadata.name).toContain('test-group');
+    });
+  });
+
+  describe('createToolPodJob', () => {
+    it('should create a job with correct labels', async () => {
+      mockBatchApi.createNamespacedJob.mockResolvedValue({});
+
+      const spec: ToolPodJobSpec = {
+        agentJobId: 'agent-job-123',
+        groupFolder: 'test-group',
+        category: 'execution',
+        timeout: 300000,
+      };
+
+      await jobRunner.createToolPodJob(spec);
+
+      const callArgs = mockBatchApi.createNamespacedJob.mock.calls[0][0];
+      const labels = callArgs.body.metadata?.labels;
+
+      expect(labels?.app).toBe('nanoclaw-tool-pod');
+      expect(labels?.['nanoclaw/group']).toBe('test-group');
+      expect(labels?.['nanoclaw/category']).toBe('execution');
+      expect(labels?.['nanoclaw/agent-job']).toBe('agent-job-123');
+    });
+
+    it('should run container with node /app/src/tool-server.js command', async () => {
+      mockBatchApi.createNamespacedJob.mockResolvedValue({});
+
+      const spec: ToolPodJobSpec = {
+        agentJobId: 'agent-job-123',
+        groupFolder: 'test-group',
+        category: 'execution',
+        timeout: 300000,
+      };
+
+      await jobRunner.createToolPodJob(spec);
+
+      const callArgs = mockBatchApi.createNamespacedJob.mock.calls[0][0];
+      const container = callArgs.body.spec?.template?.spec?.containers?.[0];
+
+      expect(container?.command).toEqual(['node', '/app/src/tool-server.js']);
+    });
+
+    it('should set NANOCLAW_AGENT_JOB_ID and NANOCLAW_CATEGORY env vars', async () => {
+      mockBatchApi.createNamespacedJob.mockResolvedValue({});
+
+      const spec: ToolPodJobSpec = {
+        agentJobId: 'agent-job-123',
+        groupFolder: 'test-group',
+        category: 'browser',
+        timeout: 300000,
+      };
+
+      await jobRunner.createToolPodJob(spec);
+
+      const callArgs = mockBatchApi.createNamespacedJob.mock.calls[0][0];
+      const envVars =
+        callArgs.body.spec?.template?.spec?.containers?.[0]?.env || [];
+
+      expect(
+        envVars.find(
+          (e: { name: string }) => e.name === 'NANOCLAW_AGENT_JOB_ID',
+        )?.value,
+      ).toBe('agent-job-123');
+      expect(
+        envVars.find((e: { name: string }) => e.name === 'NANOCLAW_CATEGORY')
+          ?.value,
+      ).toBe('browser');
+    });
+
+    it('should set REDIS_URL env var', async () => {
+      delete process.env.REDIS_ADMIN_PASSWORD;
+      process.env.REDIS_URL = 'redis://nanoclaw-redis:6379';
+
+      mockBatchApi.createNamespacedJob.mockResolvedValue({});
+
+      const spec: ToolPodJobSpec = {
+        agentJobId: 'agent-job-123',
+        groupFolder: 'test-group',
+        category: 'execution',
+        timeout: 300000,
+      };
+
+      await jobRunner.createToolPodJob(spec);
+
+      const callArgs = mockBatchApi.createNamespacedJob.mock.calls[0][0];
+      const envVars =
+        callArgs.body.spec?.template?.spec?.containers?.[0]?.env || [];
+
+      expect(
+        envVars.find((e: { name: string }) => e.name === 'REDIS_URL')?.value,
+      ).toBe('redis://nanoclaw-redis:6379');
+    });
+
+    it('should set REDIS_URL with password when REDIS_ADMIN_PASSWORD is set', async () => {
+      process.env.REDIS_ADMIN_PASSWORD = 'toolpassword';
+      process.env.REDIS_URL = 'redis://nanoclaw-redis:6379';
+
+      mockBatchApi.createNamespacedJob.mockResolvedValue({});
+
+      const spec: ToolPodJobSpec = {
+        agentJobId: 'agent-job-123',
+        groupFolder: 'test-group',
+        category: 'execution',
+        timeout: 300000,
+      };
+
+      await jobRunner.createToolPodJob(spec);
+
+      const callArgs = mockBatchApi.createNamespacedJob.mock.calls[0][0];
+      const envVars =
+        callArgs.body.spec?.template?.spec?.containers?.[0]?.env || [];
+
+      expect(
+        envVars.find((e: { name: string }) => e.name === 'REDIS_URL')?.value,
+      ).toBe('redis://:toolpassword@nanoclaw-redis:6379');
+    });
+
+    it('should return the job name string on success', async () => {
+      mockBatchApi.createNamespacedJob.mockResolvedValue({});
+
+      const spec: ToolPodJobSpec = {
+        agentJobId: 'agent-job-123',
+        groupFolder: 'test-group',
+        category: 'execution',
+        timeout: 300000,
+      };
+
+      const result = await jobRunner.createToolPodJob(spec);
+
+      expect(typeof result).toBe('string');
+      expect(result).toMatch(/^nc-test-group-execution-/);
+    });
+
+    it('should throw when batchApi.createNamespacedJob rejects', async () => {
+      mockBatchApi.createNamespacedJob.mockRejectedValue(
+        new Error('K8s API error'),
+      );
+
+      const spec: ToolPodJobSpec = {
+        agentJobId: 'agent-job-123',
+        groupFolder: 'test-group',
+        category: 'execution',
+        timeout: 300000,
+      };
+
+      await expect(jobRunner.createToolPodJob(spec)).rejects.toThrow(
+        'K8s API error',
+      );
+    });
+
+    it('should include volume mounts for execution category', async () => {
+      mockBatchApi.createNamespacedJob.mockResolvedValue({});
+
+      const spec: ToolPodJobSpec = {
+        agentJobId: 'agent-job-123',
+        groupFolder: 'test-group',
+        category: 'execution',
+        timeout: 300000,
+      };
+
+      await jobRunner.createToolPodJob(spec);
+
+      const callArgs = mockBatchApi.createNamespacedJob.mock.calls[0][0];
+      const volumeMounts =
+        callArgs.body.spec?.template?.spec?.containers?.[0]?.volumeMounts || [];
+
+      expect(
+        volumeMounts.some(
+          (v: { mountPath: string }) => v.mountPath === '/workspace/group',
+        ),
+      ).toBe(true);
+      expect(
+        volumeMounts.some(
+          (v: { mountPath: string }) => v.mountPath === '/home/node/.claude',
+        ),
+      ).toBe(true);
+    });
+
+    it('should not include volume mounts for browser category', async () => {
+      mockBatchApi.createNamespacedJob.mockResolvedValue({});
+
+      const spec: ToolPodJobSpec = {
+        agentJobId: 'agent-job-123',
+        groupFolder: 'test-group',
+        category: 'browser',
+        timeout: 300000,
+      };
+
+      await jobRunner.createToolPodJob(spec);
+
+      const callArgs = mockBatchApi.createNamespacedJob.mock.calls[0][0];
+      const volumeMounts =
+        callArgs.body.spec?.template?.spec?.containers?.[0]?.volumeMounts || [];
+
+      expect(volumeMounts.length).toBe(0);
+    });
+
+    it('should include correct volumes for execution category', async () => {
+      mockBatchApi.createNamespacedJob.mockResolvedValue({});
+
+      const spec: ToolPodJobSpec = {
+        agentJobId: 'agent-job-123',
+        groupFolder: 'test-group',
+        category: 'execution',
+        timeout: 300000,
+      };
+
+      await jobRunner.createToolPodJob(spec);
+
+      const callArgs = mockBatchApi.createNamespacedJob.mock.calls[0][0];
+      const volumes = callArgs.body.spec?.template?.spec?.volumes || [];
+
+      expect(
+        volumes.some((v: { name: string }) => v.name === 'groups-pvc'),
+      ).toBe(true);
+      expect(
+        volumes.some((v: { name: string }) => v.name === 'sessions-pvc'),
+      ).toBe(true);
     });
   });
 });

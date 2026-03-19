@@ -74,20 +74,18 @@ spec:
         - name: fix-permissions
           image: busybox:latest
           command:
-            [
-              'sh',
-              '-c',
-              'chown -R 1000:1000 /workspace/groups /data/sessions && mkdir -p /app/store && chown -R 1000:1000 /app/store',
-            ]
+            - sh
+            - -c
+            - chown -R 1000:1000 /app/groups /app/store /data/sessions
           securityContext:
             runAsUser: 0
           volumeMounts:
             - name: groups
-              mountPath: /workspace/groups
-            - name: sessions
-              mountPath: /data/sessions
+              mountPath: /app/groups
             - name: store
               mountPath: /app/store
+            - name: sessions
+              mountPath: /data/sessions
       containers:
         - name: orchestrator
           image: nanoclaw-orchestrator:latest
@@ -104,6 +102,11 @@ spec:
           env:
             - name: REDIS_URL
               value: redis://nanoclaw-redis:6379
+            - name: REDIS_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: nanoclaw-redis
+                  key: admin-password
             - name: NANOCLAW_RUNTIME
               value: kubernetes
             - name: NANOCLAW_NAMESPACE
@@ -117,11 +120,13 @@ spec:
                 secretKeyRef:
                   name: nanoclaw-secrets
                   key: anthropic-api-key
+                  optional: true
             - name: CLAUDE_CODE_OAUTH_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: nanoclaw-secrets
                   key: claude-code-oauth-token
+                  optional: true
             - name: IRC_SERVER
               value: nanoclaw-irc-mock
             - name: IRC_PORT
@@ -132,13 +137,11 @@ spec:
               value: '#test-e2e'
           volumeMounts:
             - name: groups
-              mountPath: /workspace/groups
-            - name: sessions
-              mountPath: /data/sessions
-            - name: data
-              mountPath: /workspace/data
+              mountPath: /app/groups
             - name: store
               mountPath: /app/store
+            - name: sessions
+              mountPath: /data/sessions
           resources:
             requests:
               memory: 256Mi
@@ -150,10 +153,9 @@ spec:
         - name: groups
           persistentVolumeClaim:
             claimName: nanoclaw-groups
+        - name: store
+          persistentVolumeClaim:
+            claimName: nanoclaw-store
         - name: sessions
           persistentVolumeClaim:
             claimName: nanoclaw-sessions
-        - name: data
-          emptyDir: {}
-        - name: store
-          emptyDir: {}
