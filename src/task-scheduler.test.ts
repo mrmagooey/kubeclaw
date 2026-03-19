@@ -7,7 +7,6 @@ import {
   startSchedulerLoop,
 } from './task-scheduler.js';
 
-
 vi.mock('./group-folder.js', () => ({
   resolveGroupFolderPath: vi.fn((path: string) => {
     if (path === '../../outside') {
