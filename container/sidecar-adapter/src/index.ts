@@ -1,41 +1,44 @@
 /**
  * NanoClaw Sidecar Adapter
  *
- * This container runs as a sidecar in Kubernetes, providing file-based IPC
- * between NanoClaw orchestrator and arbitrary user containers.
+ * Runs alongside an arbitrary user container in a Kubernetes Pod. Uses
+ * file-based IPC (shared emptyDir) to pass tasks in and receive results out,
+ * then delivers output to the orchestrator via Redis pub/sub.
  *
  * Input protocol:
- *   - Stdin: TaskInput JSON from orchestrator
- *   - File input: Additional task files written to /workspace/input/
+ *   - Stdin: initial TaskInput JSON from orchestrator
+ *   - Follow-ups: Redis Streams (nanoclaw:input:{jobId})
  *
  * Output protocol:
- *   - File output: User container writes results to /workspace/output/
- *   - Stdout: Sidecar wraps results in NanoClaw markers and writes to stdout
+ *   - Redis Pub/Sub on nanoclaw:messages:{groupFolder} (AgentOutputMessage envelope)
  *
  * File protocol:
- *   - Input: /workspace/input/task.json (initial), task_1.json, task_2.json (follow-ups)
+ *   - Input:  /workspace/input/task.json (initial), task_1.json, task_2.json (follow-ups)
  *   - Output: /workspace/output/result.json
  */
 
-import fs from 'fs';
 import { FileIPC } from './file-ipc.js';
-import { ProtocolHandler } from './protocol.js';
 import { TaskInput, TaskOutput, SidecarConfig } from './types.js';
+import { RedisIPCClient } from './redis-ipc.js';
 
 // Configuration from environment
 const config: SidecarConfig = {
   inputDir: process.env.NANOCLAW_INPUT_DIR || '/workspace/input',
   outputDir: process.env.NANOCLAW_OUTPUT_DIR || '/workspace/output',
   pollIntervalMs: parseInt(process.env.NANOCLAW_POLL_INTERVAL || '1000', 10),
-  timeoutMs: parseInt(process.env.NANOCLAW_TIMEOUT || '1800000', 10), // 30min default
+  timeoutMs: parseInt(process.env.NANOCLAW_TIMEOUT || '1800000', 10),
 };
 
-const protocol = new ProtocolHandler();
-const fileIPC = new FileIPC(
-  config.inputDir,
-  config.outputDir,
-  config.pollIntervalMs,
-);
+const IDLE_TIMEOUT = parseInt(process.env.IDLE_TIMEOUT || '1800000', 10);
+const REDIS_URL = process.env.REDIS_URL;
+const REDIS_USERNAME = process.env.REDIS_USERNAME;
+const REDIS_PASSWORD = process.env.REDIS_PASSWORD;
+const JOB_ID = process.env.NANOCLAW_JOB_ID || '';
+const GROUP_FOLDER = process.env.NANOCLAW_GROUP_FOLDER || '';
+
+function log(message: string): void {
+  console.error(`[sidecar-adapter] ${message}`);
+}
 
 /**
  * Read all data from stdin
@@ -44,110 +47,147 @@ async function readStdin(): Promise<string> {
   return new Promise((resolve, reject) => {
     let data = '';
     process.stdin.setEncoding('utf8');
-    process.stdin.on('data', (chunk) => {
-      data += chunk;
-    });
+    process.stdin.on('data', (chunk) => { data += chunk; });
     process.stdin.on('end', () => resolve(data));
     process.stdin.on('error', reject);
   });
 }
 
 /**
- * Main loop: handle initial task, then wait for follow-ups
+ * Main loop: handle initial task via file IPC, then follow-ups via Redis Streams
  */
 async function main(): Promise<void> {
-  protocol.log('Sidecar adapter starting...');
-  protocol.log(`Input dir: ${config.inputDir}`);
-  protocol.log(`Output dir: ${config.outputDir}`);
-  protocol.log(`Poll interval: ${config.pollIntervalMs}ms`);
-  protocol.log(`Timeout: ${config.timeoutMs}ms`);
+  log('Sidecar adapter starting...');
+  log(`Input dir: ${config.inputDir}`);
+  log(`Output dir: ${config.outputDir}`);
+  log(`Poll interval: ${config.pollIntervalMs}ms`);
+  log(`Timeout: ${config.timeoutMs}ms`);
+
+  // Validate Redis config
+  if (!REDIS_URL || !REDIS_USERNAME || !REDIS_PASSWORD || !JOB_ID || !GROUP_FOLDER) {
+    log('Missing required env vars: REDIS_URL, REDIS_USERNAME, REDIS_PASSWORD, NANOCLAW_JOB_ID, NANOCLAW_GROUP_FOLDER');
+    process.exit(1);
+  }
+
+  const redisClient = new RedisIPCClient({
+    url: REDIS_URL,
+    username: REDIS_USERNAME,
+    password: REDIS_PASSWORD,
+    jobId: JOB_ID,
+    groupFolder: GROUP_FOLDER,
+  });
+
+  try {
+    await redisClient.connect();
+  } catch (err) {
+    log(`Failed to connect to Redis: ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(1);
+  }
+
+  const fileIPC = new FileIPC(config.inputDir, config.outputDir, config.pollIntervalMs);
 
   try {
     // Read initial task from stdin
     const stdinData = await readStdin();
     const initialTask = await fileIPC.readInitialTask(stdinData);
+    log(`Received initial task for group: ${initialTask.groupFolder}`);
 
-    protocol.log(`Received initial task for group: ${initialTask.groupFolder}`);
-
-    // Write initial task to file for user container
+    // Write initial task file for user container
     fileIPC.writeTaskFile(initialTask, 0);
 
-    // Track session state
     let sessionId = initialTask.sessionId;
-    let taskSequence = 1;
+    let lastActivity = Date.now();
 
-    // Main loop: wait for output, then wait for new tasks
-    while (true) {
-      try {
-        // Wait for user container to produce output
-        protocol.log('Waiting for output from user container...');
-        const output = await fileIPC.waitForOutput(config.timeoutMs);
+    // Process initial task
+    log('Waiting for output from user container...');
+    const output = await fileIPC.waitForOutput(config.timeoutMs);
+    if (output.newSessionId) sessionId = output.newSessionId;
 
-        // Update session if provided
-        if (output.newSessionId) {
-          sessionId = output.newSessionId;
-        }
+    await redisClient.sendOutput({ ...output, newSessionId: sessionId });
 
-        // Write output to stdout with markers
-        protocol.writeOutput(output);
-
-        protocol.log('Output written to stdout, waiting for next input...');
-
-        // Wait for follow-up task or timeout
-        const nextTask = await fileIPC.waitForNewTask(config.timeoutMs);
-
-        if (nextTask === null) {
-          // Timeout - no new tasks
-          protocol.log('Timeout waiting for next task, exiting');
-          break;
-        }
-
-        // Process the follow-up task
-        protocol.log(`Received follow-up task #${nextTask.sequence}`);
-
-        // Clean up the processed task file
-        fileIPC.cleanupTaskFile(nextTask.filename);
-
-        // Write follow-up to input directory for user container
-        fileIPC.writeTaskFile(nextTask.input, taskSequence++);
-
-        protocol.log('Follow-up task written to input directory');
-      } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : String(err);
-        protocol.log(`Error in main loop: ${errorMessage}`);
-
-        // Write error to stdout and exit
-        protocol.writeError(errorMessage);
-        process.exit(1);
-      }
+    // Check if the initial task completed the session
+    if (output.status === 'success' && output.result === null) {
+      log('Completion marker received, exiting');
+      await redisClient.sendCompleted();
+      return;
     }
 
-    // Write final completion marker
-    protocol.writeCompletion(sessionId);
-    protocol.log('Sidecar adapter completed successfully');
+    lastActivity = Date.now();
+
+    // Listen for follow-ups via Redis Streams
+    log('Listening for follow-up messages...');
+    let taskSequence = 1;
+
+    for await (const message of redisClient.listenForMessages()) {
+      if (Date.now() - lastActivity > IDLE_TIMEOUT) {
+        log('Idle timeout reached, exiting');
+        break;
+      }
+
+      if (message.type === 'close') {
+        log('Received close signal, exiting');
+        break;
+      }
+
+      if (message.type === 'followup' && message.prompt) {
+        log(`Processing follow-up #${taskSequence}: ${message.prompt.substring(0, 50)}...`);
+
+        if (message.sessionId) sessionId = message.sessionId;
+
+        const followupTask: TaskInput = {
+          ...initialTask,
+          prompt: message.prompt,
+          sessionId,
+        };
+
+        fileIPC.writeTaskFile(followupTask, taskSequence++);
+
+        log('Waiting for follow-up output...');
+        const followupOutput = await fileIPC.waitForOutput(config.timeoutMs);
+        if (followupOutput.newSessionId) sessionId = followupOutput.newSessionId;
+
+        await redisClient.sendOutput({ ...followupOutput, newSessionId: sessionId });
+        lastActivity = Date.now();
+
+        if (followupOutput.status === 'success' && followupOutput.result === null) {
+          log('Completion marker received, exiting');
+          await redisClient.sendCompleted();
+          break;
+        }
+      }
+    }
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
-    protocol.log(`Fatal error: ${errorMessage}`);
-    protocol.writeError(errorMessage);
+    log(`Fatal error: ${errorMessage}`);
+    try {
+      await redisClient.sendOutput({
+        status: 'error',
+        result: null,
+        error: errorMessage,
+      });
+    } catch (_) {}
     process.exit(1);
   } finally {
-    // Clean up any remaining task files
     fileIPC.cleanupAllTasks();
+    try {
+      await redisClient.sendCompleted();
+    } catch (_) {
+      // Best-effort: ignore if already sent or connection lost
+    }
+    await redisClient.disconnect();
   }
+
+  log('Sidecar adapter exiting');
 }
 
-// Handle SIGTERM and SIGINT gracefully
 process.on('SIGTERM', () => {
-  protocol.log('Received SIGTERM, cleaning up...');
-  fileIPC.cleanupAllTasks();
+  log('Received SIGTERM, exiting');
   process.exit(0);
 });
 
 process.on('SIGINT', () => {
-  protocol.log('Received SIGINT, cleaning up...');
-  fileIPC.cleanupAllTasks();
+  log('Received SIGINT, exiting');
   process.exit(0);
 });
 
-// Run main
 main();

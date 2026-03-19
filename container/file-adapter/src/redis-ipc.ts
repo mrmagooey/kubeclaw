@@ -13,6 +13,7 @@ export interface RedisIPCConfig {
   username: string;
   password: string;
   jobId: string;
+  groupFolder: string;
 }
 
 export interface RedisMessage {
@@ -32,7 +33,7 @@ export class RedisIPCClient {
   constructor(config: RedisIPCConfig) {
     this.config = config;
     this.inputStream = `nanoclaw:input:${config.jobId}`;
-    this.outputChannel = `nanoclaw:output:${config.jobId}`;
+    this.outputChannel = `nanoclaw:messages:${config.groupFolder}`;
   }
 
   /**
@@ -164,6 +165,7 @@ export class RedisIPCClient {
 
   /**
    * Send output to the orchestrator via Redis Pub/Sub
+   * Wraps ContainerOutput in AgentOutputMessage envelope.
    */
   async sendOutput(output: ContainerOutput): Promise<void> {
     if (!this.client || !this.connected) {
@@ -171,12 +173,43 @@ export class RedisIPCClient {
     }
 
     try {
-      const message = JSON.stringify(output);
+      const message = JSON.stringify({
+        type: 'output',
+        jobId: this.config.jobId,
+        groupFolder: this.config.groupFolder,
+        timestamp: new Date().toISOString(),
+        payload: output,
+      });
       await this.client.publish(this.outputChannel, message);
       console.error(`[redis-ipc] Sent output to ${this.outputChannel}`);
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       throw new Error(`Failed to send output: ${errorMsg}`);
+    }
+  }
+
+  /**
+   * Send completion status to the orchestrator via Redis Pub/Sub.
+   * Must be called before disconnect so the orchestrator resolves the stream.
+   */
+  async sendCompleted(): Promise<void> {
+    if (!this.client || !this.connected) {
+      throw new Error('Redis client not connected');
+    }
+
+    try {
+      const message = JSON.stringify({
+        type: 'status',
+        jobId: this.config.jobId,
+        groupFolder: this.config.groupFolder,
+        timestamp: new Date().toISOString(),
+        payload: { status: 'completed' },
+      });
+      await this.client.publish(this.outputChannel, message);
+      console.error(`[redis-ipc] Sent completed status to ${this.outputChannel}`);
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      throw new Error(`Failed to send completed status: ${errorMsg}`);
     }
   }
 

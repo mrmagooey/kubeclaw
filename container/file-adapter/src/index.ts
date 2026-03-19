@@ -167,6 +167,7 @@ async function main(): Promise<void> {
     username: REDIS_USERNAME!,
     password: REDIS_PASSWORD!,
     jobId: NANOCLAW_JOB_ID!,
+    groupFolder: process.env.NANOCLAW_GROUP_FOLDER!,
   });
 
   // Connect to Redis
@@ -237,6 +238,7 @@ async function main(): Promise<void> {
     // Check if this was the final message (null result with success indicates end)
     if (output.status === 'success' && output.result === null) {
       log('Received completion marker, exiting');
+      await redisClient.sendCompleted();
       await redisClient.disconnect();
       return;
     }
@@ -289,6 +291,7 @@ async function main(): Promise<void> {
           followupOutput.result === null
         ) {
           log('Received completion marker, exiting');
+          await redisClient.sendCompleted();
           break;
         }
       }
@@ -305,8 +308,13 @@ async function main(): Promise<void> {
     await sendOutput(redisClient, output);
     process.exit(1);
   } finally {
-    // Final cleanup
+    // Final cleanup — always signal completion so the orchestrator resolves
     fileIPC.cleanupFiles();
+    try {
+      await redisClient.sendCompleted();
+    } catch (_) {
+      // Best-effort: ignore if already sent or connection lost
+    }
     await redisClient.disconnect();
   }
 

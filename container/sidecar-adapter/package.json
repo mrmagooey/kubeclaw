@@ -10,7 +10,8 @@
     "dev": "tsx src/index.ts"
   },
   "dependencies": {
-    "@types/node": "^20.0.0"
+    "@types/node": "^20.0.0",
+    "redis": "^4.6.0"
   },
   "devDependencies": {
     "tsx": "^4.0.0",
