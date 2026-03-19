@@ -113,3 +113,17 @@ export function getQueueKey(): string {
 export function getSessionKey(groupFolder: string): string {
   return `nanoclaw:sessions:${groupFolder}`;
 }
+
+export function getToolCallsStream(
+  agentJobId: string,
+  category: string,
+): string {
+  return `nanoclaw:toolcalls:${agentJobId}:${category}`;
+}
+
+export function getToolResultsStream(
+  agentJobId: string,
+  category: string,
+): string {
+  return `nanoclaw:toolresults:${agentJobId}:${category}`;
+}

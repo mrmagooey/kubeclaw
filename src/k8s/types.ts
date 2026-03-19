@@ -61,6 +61,7 @@ export interface SidecarJobSpec extends AgentJobSpec {
   memoryLimit?: string;
   cpuRequest?: string;
   cpuLimit?: string;
+  credentials?: SidecarCredentials;
   userImagePullPolicy?: 'Always' | 'IfNotPresent' | 'Never';
 }
 
@@ -110,10 +111,12 @@ export interface AgentOutputMessage {
 }
 
 export interface HostInputMessage {
-  type: 'message' | 'close' | 'task_update';
+  type: 'message' | 'close' | 'task_update' | 'tool_pod_ack';
   text?: string;
   taskId?: string;
   status?: 'paused' | 'resumed' | 'cancelled';
+  category?: string;
+  podJobId?: string;
 }
 
 export interface TaskRequest {
@@ -124,7 +127,8 @@ export interface TaskRequest {
     | 'cancel_task'
     | 'update_task'
     | 'register_group'
-    | 'refresh_groups';
+    | 'refresh_groups'
+    | 'tool_pod_request';
   taskId?: string;
   prompt?: string;
   schedule_type?: 'cron' | 'interval' | 'once';
@@ -138,6 +142,16 @@ export interface TaskRequest {
   trigger?: string;
   requiresTrigger?: boolean;
   containerConfig?: Record<string, unknown>;
+  // Tool pod request fields
+  category?: 'execution' | 'browser';
+  agentJobId?: string;
+}
+
+export interface ToolPodJobSpec {
+  agentJobId: string;
+  groupFolder: string;
+  category: 'execution' | 'browser';
+  timeout: number;
 }
 
 export interface StatusUpdate {

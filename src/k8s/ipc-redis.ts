@@ -19,6 +19,8 @@ import {
   getTaskChannel,
 } from './redis-client.js';
 import { TaskRequest } from './types.js';
+import { jobRunner } from './job-runner.js';
+import { CONTAINER_TIMEOUT, IDLE_TIMEOUT } from '../config.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
@@ -36,6 +38,9 @@ export interface IpcDeps {
 
 let ipcWatcherRunning = false;
 let subscribers: Redis[] = [];
+
+// Track tool pod jobs per agent job for cleanup
+const toolPodsByAgent = new Map<string, Set<string>>();
 
 interface AgentOutputMessage {
   type: 'message' | 'task_request';
@@ -474,8 +479,70 @@ export async function processTaskIpc(
       }
       break;
 
+    case 'tool_pod_request':
+      if (data.agentJobId && data.category && data.groupFolder) {
+        const { agentJobId, category, groupFolder: podGroupFolder } = data;
+        try {
+          const timeout = Math.max(CONTAINER_TIMEOUT, IDLE_TIMEOUT + 30_000);
+          const podJobId = await jobRunner.createToolPodJob({
+            agentJobId,
+            groupFolder: podGroupFolder,
+            category,
+            timeout,
+          });
+
+          // Track pod for cleanup when agent ends
+          if (!toolPodsByAgent.has(agentJobId)) {
+            toolPodsByAgent.set(agentJobId, new Set());
+          }
+          toolPodsByAgent.get(agentJobId)!.add(podJobId);
+
+          // Send ack back to agent via input stream
+          const client = getRedisClient();
+          const streamKey = getInputStream(agentJobId);
+          await client.xadd(
+            streamKey,
+            '*',
+            'type',
+            'tool_pod_ack',
+            'category',
+            category,
+            'podJobId',
+            podJobId,
+          );
+          logger.info(
+            { agentJobId, category, podJobId },
+            'Tool pod created and ack sent',
+          );
+        } catch (err) {
+          logger.error(
+            { agentJobId, category, err },
+            'Failed to create tool pod',
+          );
+        }
+      }
+      break;
+
     default:
       logger.warn({ type: data.type }, 'Unknown Redis IPC task type');
+  }
+}
+
+/**
+ * Clean up all tool pods associated with an agent job
+ */
+export async function cleanupToolPods(agentJobId: string): Promise<void> {
+  const pods = toolPodsByAgent.get(agentJobId);
+  if (!pods || pods.size === 0) return;
+
+  toolPodsByAgent.delete(agentJobId);
+  for (const podJobId of pods) {
+    try {
+      await jobRunner.stopJob(podJobId);
+      logger.info({ agentJobId, podJobId }, 'Tool pod cleaned up');
+    } catch (err) {
+      logger.warn({ agentJobId, podJobId, err }, 'Failed to cleanup tool pod');
+    }
   }
 }
 
