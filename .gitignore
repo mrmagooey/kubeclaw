@@ -25,6 +25,9 @@ groups/global/*
 # Temp files
 .tmp-*
 
+# Local planning/working notes
+misc/
+
 # OS
 .DS_Store
 
