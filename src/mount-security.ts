@@ -381,7 +381,8 @@ export function validateAdditionalMounts(
       logger.warn(
         {
           group: groupName,
-          requestedPath: mount.hostPath || mount.configMapName || mount.secretName,
+          requestedPath:
+            mount.hostPath || mount.configMapName || mount.secretName,
           containerPath: mount.containerPath,
           reason: result.reason,
         },

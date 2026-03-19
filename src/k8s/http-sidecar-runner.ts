@@ -35,6 +35,7 @@ import {
   REDIS_ADMIN_PASSWORD,
 } from '../config.js';
 import { JobInput, JobOutput, SidecarHttpJobSpec } from './types.js';
+import { jobRunner } from './job-runner.js';
 import { ContainerOutput } from '../runtime/types.js';
 import { parseSidecarLogBuffer } from './sidecar-log-parser.js';
 
@@ -115,11 +116,20 @@ export class HttpSidecarJobRunner {
 
       const effectiveTimeoutMs = spec.timeout || CONTAINER_TIMEOUT;
 
-      // Stream output from the sidecar container logs
-      const streamingPromise = this.streamSidecarLogs(
+      // Wrap onOutput to capture newSessionId from Redis-delivered output
+      let capturedSessionId: string | undefined;
+      const wrappedOnOutput = onOutput
+        ? async (output: JobOutput) => {
+            if (output.newSessionId) capturedSessionId = output.newSessionId;
+            return onOutput(output);
+          }
+        : undefined;
+
+      // Stream output via Redis pub/sub
+      const streamingPromise = jobRunner.streamOutput(
         jobName,
         group.folder,
-        onOutput,
+        wrappedOnOutput,
         effectiveTimeoutMs,
       );
 
@@ -158,6 +168,8 @@ export class HttpSidecarJobRunner {
         error: errorMessage,
         jobId,
       };
+    } finally {
+      jobRunner.unsubscribeFromOutput(jobId);
     }
   }
 
@@ -254,7 +266,9 @@ export class HttpSidecarJobRunner {
             ...(spec.nodeSelector && { nodeSelector: spec.nodeSelector }),
             ...(spec.tolerations && { tolerations: spec.tolerations }),
             ...(spec.affinity && { affinity: spec.affinity }),
-            ...(spec.priorityClassName && { priorityClassName: spec.priorityClassName }),
+            ...(spec.priorityClassName && {
+              priorityClassName: spec.priorityClassName,
+            }),
             ...(spec.imagePullSecrets && {
               imagePullSecrets: spec.imagePullSecrets.map((name) => ({ name })),
             }),
@@ -309,6 +323,7 @@ export class HttpSidecarJobRunner {
   }
 
   /**
+   * @deprecated Use jobRunner.streamOutput() instead — output now flows through Redis
    * Stream output from the sidecar container logs
    * Parses NanoClaw marker output from log stream
    */

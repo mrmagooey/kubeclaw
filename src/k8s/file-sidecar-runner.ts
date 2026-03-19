@@ -32,6 +32,7 @@ import {
   REDIS_ADMIN_PASSWORD,
 } from '../config.js';
 import { JobInput, JobOutput, SidecarFileJobSpec } from './types.js';
+import { jobRunner } from './job-runner.js';
 import { ContainerOutput } from '../runtime/types.js';
 import { parseSidecarLogBuffer } from './sidecar-log-parser.js';
 
@@ -112,11 +113,20 @@ export class FileSidecarJobRunner {
 
       const effectiveTimeoutMs = spec.timeout || CONTAINER_TIMEOUT;
 
-      // Stream output from the sidecar container logs
-      const streamingPromise = this.streamSidecarLogs(
+      // Track session ID from streamed outputs
+      let capturedSessionId: string | undefined;
+      const wrappedOnOutput = onOutput
+        ? async (output: JobOutput) => {
+            if (output.newSessionId) capturedSessionId = output.newSessionId;
+            return onOutput(output);
+          }
+        : undefined;
+
+      // Stream output via Redis (same channel as agent jobs)
+      const streamingPromise = jobRunner.streamOutput(
         jobName,
         group.folder,
-        onOutput,
+        wrappedOnOutput,
         effectiveTimeoutMs,
       );
 
@@ -139,6 +149,7 @@ export class FileSidecarJobRunner {
       return {
         status: 'success',
         result: null,
+        newSessionId: capturedSessionId,
         jobId,
       };
     } catch (error) {
@@ -155,6 +166,8 @@ export class FileSidecarJobRunner {
         error: errorMessage,
         jobId,
       };
+    } finally {
+      jobRunner.unsubscribeFromOutput(jobId);
     }
   }
 
@@ -334,7 +347,9 @@ export class FileSidecarJobRunner {
             ...(spec.nodeSelector && { nodeSelector: spec.nodeSelector }),
             ...(spec.tolerations && { tolerations: spec.tolerations }),
             ...(spec.affinity && { affinity: spec.affinity }),
-            ...(spec.priorityClassName && { priorityClassName: spec.priorityClassName }),
+            ...(spec.priorityClassName && {
+              priorityClassName: spec.priorityClassName,
+            }),
             ...(spec.imagePullSecrets && {
               imagePullSecrets: spec.imagePullSecrets.map((name) => ({ name })),
             }),
@@ -387,10 +402,7 @@ export class FileSidecarJobRunner {
     return job;
   }
 
-  /**
-   * Stream output from the sidecar container logs
-   * Parses NanoClaw marker output from log stream
-   */
+  /** @deprecated Use jobRunner.streamOutput instead */
   async streamSidecarLogs(
     jobName: string,
     groupFolder: string,
