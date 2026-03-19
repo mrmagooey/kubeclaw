@@ -135,9 +135,7 @@ export function _setRegisteredGroups(
 }
 
 /** @internal - exported for testing */
-export async function _processGroupMessages(
-  chatJid: string,
-): Promise<boolean> {
+export async function _processGroupMessages(chatJid: string): Promise<boolean> {
   return processGroupMessages(chatJid);
 }
 
@@ -193,12 +191,14 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   const prompt = formatMessages(missedMessages, TIMEZONE);
 
-  // Advance cursor so the piping path in startMessageLoop won't re-fetch
-  // these messages. Save the old cursor so we can roll back on error.
+  // Advance cursor in memory so the piping path in startMessageLoop sends
+  // only new messages as deltas rather than re-fetching the full history.
+  // Do NOT persist yet — if the process crashes before the agent completes,
+  // the on-disk cursor stays at its previous position and recovery re-queues
+  // these messages on next startup.
   const previousCursor = lastAgentTimestamp[chatJid] || '';
   lastAgentTimestamp[chatJid] =
     missedMessages[missedMessages.length - 1].timestamp;
-  saveState();
 
   logger.info(
     { group: group.name, messageCount: missedMessages.length },
@@ -261,11 +261,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         { group: group.name },
         'Agent error after output was sent, skipping cursor rollback to prevent duplicates',
       );
+      saveState();
       return true;
     }
     // Roll back cursor so retries can re-process these messages
     lastAgentTimestamp[chatJid] = previousCursor;
-    saveState();
     logger.warn(
       { group: group.name },
       'Agent error, rolled back message cursor for retry',
@@ -273,6 +273,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     return false;
   }
 
+  // Persist the advanced cursor only after the agent completes successfully.
+  saveState();
   return true;
 }
 
