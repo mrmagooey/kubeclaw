@@ -4,7 +4,7 @@ services:
   # Redis service for testing
   redis:
     image: redis:7-alpine
-    container_name: nanoclaw-e2e-redis
+    container_name: kubeclaw-e2e-redis
     command:
       - redis-server
       - --appendonly
@@ -20,7 +20,7 @@ services:
     volumes:
       - redis-data:/data
     networks:
-      - nanoclaw-e2e
+      - kubeclaw-e2e
     healthcheck:
       test: ['CMD', 'redis-cli', 'ping']
       interval: 5s
@@ -33,11 +33,11 @@ services:
     build:
       context: ../..
       dockerfile: container/Dockerfile
-    container_name: nanoclaw-e2e-runner
+    container_name: kubeclaw-e2e-runner
     environment:
       - NODE_ENV=test
       - REDIS_URL=redis://redis:6379
-      - NANOCLAW_RUNTIME=docker
+      - KUBECLAW_RUNTIME=docker
       - CI=true
       - DEBUG=${DEBUG:-false}
       - TEST_PHASE=${TEST_PHASE:-all}
@@ -46,7 +46,7 @@ services:
       - test-results:/workspace/results
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
-      - nanoclaw-e2e
+      - kubeclaw-e2e
     depends_on:
       redis:
         condition: service_healthy
@@ -67,7 +67,7 @@ services:
   # Minikube integration service
   minikube:
     image: gcr.io/k8s-minikube/kicbase:v0.0.44
-    container_name: nanoclaw-e2e-minikube
+    container_name: kubeclaw-e2e-minikube
     privileged: true
     environment:
       - MINIKUBE_HOME=/data
@@ -78,7 +78,7 @@ services:
       - minikube-data:/data
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
-      - nanoclaw-e2e
+      - kubeclaw-e2e
     command: >
       sh -c "
         echo 'Starting minikube...' &&
@@ -112,7 +112,7 @@ volumes:
     driver: local
 
 networks:
-  nanoclaw-e2e:
+  kubeclaw-e2e:
     driver: bridge
     ipam:
       config:

@@ -2,9 +2,9 @@ import { execSync, spawn } from 'child_process';
 import { existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 
-// Port used to forward nanoclaw-redis to the host for e2e tests
+// Port used to forward kubeclaw-redis to the host for e2e tests
 // We use a non-standard port to avoid colliding with any host-local Redis.
-export const NANOCLAW_REDIS_LOCAL_PORT = 16379;
+export const KUBECLAW_REDIS_LOCAL_PORT = 16379;
 
 // Keep a reference so teardown can kill the port-forward process
 let portForwardProcess: ReturnType<typeof spawn> | null = null;
@@ -98,22 +98,22 @@ export default async function setup() {
   }
 
   // Set up a port-forward so e2e tests can subscribe/publish to the SAME
-  // Redis that the in-cluster adapter containers use (nanoclaw-redis).
+  // Redis that the in-cluster adapter containers use (kubeclaw-redis).
   // Without this, host-side subscribers connect to a host-local Redis while
   // adapter pods publish to the in-cluster Redis, so pub/sub never matches.
   if (minikubeRunning) {
     try {
       console.log(
-        `🔌 Starting kubectl port-forward nanoclaw-redis → localhost:${NANOCLAW_REDIS_LOCAL_PORT}`,
+        `🔌 Starting kubectl port-forward kubeclaw-redis → localhost:${KUBECLAW_REDIS_LOCAL_PORT}`,
       );
       portForwardProcess = spawn(
         'kubectl',
         [
           'port-forward',
           '-n',
-          'nanoclaw',
-          'svc/nanoclaw-redis',
-          `${NANOCLAW_REDIS_LOCAL_PORT}:6379`,
+          'kubeclaw',
+          'svc/kubeclaw-redis',
+          `${KUBECLAW_REDIS_LOCAL_PORT}:6379`,
         ],
         { stdio: 'ignore', detached: false },
       );
@@ -122,18 +122,18 @@ export default async function setup() {
       await new Promise((resolve) => setTimeout(resolve, 2000));
 
       // Verify the port is open
-      execSync(`nc -z localhost ${NANOCLAW_REDIS_LOCAL_PORT}`, {
+      execSync(`nc -z localhost ${KUBECLAW_REDIS_LOCAL_PORT}`, {
         stdio: 'pipe',
       });
       console.log(
-        `✅ nanoclaw-redis port-forward active on localhost:${NANOCLAW_REDIS_LOCAL_PORT}\n`,
+        `✅ kubeclaw-redis port-forward active on localhost:${KUBECLAW_REDIS_LOCAL_PORT}\n`,
       );
 
       // Tell all test files to use this forwarded Redis
-      process.env.NANOCLAW_REDIS_URL = `redis://localhost:${NANOCLAW_REDIS_LOCAL_PORT}`;
+      process.env.KUBECLAW_REDIS_URL = `redis://localhost:${KUBECLAW_REDIS_LOCAL_PORT}`;
     } catch (err) {
       console.warn(
-        `⚠️  Could not set up nanoclaw-redis port-forward: ${err}\n`,
+        `⚠️  Could not set up kubeclaw-redis port-forward: ${err}\n`,
       );
       // Non-fatal — tests that need it will still run but pub/sub tests may fail
     }

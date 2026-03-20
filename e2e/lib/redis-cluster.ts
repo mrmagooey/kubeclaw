@@ -8,7 +8,7 @@ import { execSync } from 'child_process';
 import { getNamespace } from '../setup.js';
 
 const NAMESPACE = getNamespace();
-const REDIS_POD = 'nanoclaw-redis-0';
+const REDIS_POD = 'kubeclaw-redis-0';
 
 /**
  * Execute a Redis CLI command inside the minikube Redis pod
@@ -58,11 +58,11 @@ export function execRedisCommandAuth(
  */
 export function createClusterACLUser(jobId: string, password: string): void {
   const username = `sidecar-${jobId}`;
-  const keyPattern = `nanoclaw:*:${jobId}`;
+  const keyPattern = `kubeclaw:*:${jobId}`;
   // In Redis 7+, channel access is controlled separately from key access.
   // resetchannels (applied by default via -@all) revokes all channel perms.
   // We must explicitly grant access to the output pub/sub channel using &<pattern>.
-  const channelPattern = `nanoclaw:output:${jobId}`;
+  const channelPattern = `kubeclaw:output:${jobId}`;
 
   // Build ACL SETUSER command - password must be quoted to prevent shell interpretation
   const aclCommand = `ACL SETUSER ${username} on ">${password}" "~${keyPattern}" "&${channelPattern}" +@read +@write +@stream +@pubsub -@admin -@dangerous`;
@@ -113,7 +113,7 @@ export function getE2ERedisCredentials(jobId: string): {
   return {
     username: `sidecar-${jobId}`,
     password: generateTestPassword(),
-    keyPattern: `nanoclaw:*:${jobId}`,
+    keyPattern: `kubeclaw:*:${jobId}`,
   };
 }
 
@@ -161,7 +161,7 @@ export function cleanupTestACLUsers(pattern: string = 'sidecar-*'): void {
 /**
  * Clean up test keys matching a pattern
  */
-export function cleanupTestKeys(pattern: string = 'nanoclaw:*'): void {
+export function cleanupTestKeys(pattern: string = 'kubeclaw:*'): void {
   try {
     const keys = execRedisCommand(`KEYS ${pattern}`);
     if (keys && keys !== '(empty array)') {

@@ -38,10 +38,10 @@ jobs:
       - name: Generate image tags
         id: tags
         run: |
-          echo "orchestrator=nanoclaw-orchestrator:${{ github.sha }}" >> $GITHUB_OUTPUT
-          echo "agent=nanoclaw-agent:${{ github.sha }}" >> $GITHUB_OUTPUT
-          echo "orchestrator_tag=nanoclaw-orchestrator:${{ github.sha }}" >> $GITHUB_OUTPUT
-          echo "agent_tag=nanoclaw-agent:${{ github.sha }}" >> $GITHUB_OUTPUT
+          echo "orchestrator=kubeclaw-orchestrator:${{ github.sha }}" >> $GITHUB_OUTPUT
+          echo "agent=kubeclaw-agent:${{ github.sha }}" >> $GITHUB_OUTPUT
+          echo "orchestrator_tag=kubeclaw-orchestrator:${{ github.sha }}" >> $GITHUB_OUTPUT
+          echo "agent_tag=kubeclaw-agent:${{ github.sha }}" >> $GITHUB_OUTPUT
 
       - name: Cache Docker layers
         uses: actions/cache@v4
@@ -149,7 +149,7 @@ jobs:
           minikube image load ${{ needs.build-images.outputs.agent_tag }}
 
       - name: Create namespace
-        run: kubectl create namespace nanoclaw
+        run: kubectl create namespace kubeclaw
 
       - name: Apply Kubernetes manifests
         run: |
@@ -162,16 +162,16 @@ jobs:
 
       - name: Wait for Redis
         run: |
-          kubectl wait --namespace=nanoclaw --for=condition=ready pod -l app=nanoclaw-redis --timeout=120s
+          kubectl wait --namespace=kubeclaw --for=condition=ready pod -l app=kubeclaw-redis --timeout=120s
 
       - name: Deploy orchestrator
         run: |
           # Update image tag in orchestrator deployment
-          sed -i 's|image: nanoclaw-orchestrator:latest|image: ${{ needs.build-images.outputs.orchestrator_tag }}|' k8s/30-orchestrator.yaml
+          sed -i 's|image: kubeclaw-orchestrator:latest|image: ${{ needs.build-images.outputs.orchestrator_tag }}|' k8s/30-orchestrator.yaml
 
           # Create secrets
-          kubectl create secret generic nanoclaw-secrets \
-            --namespace=nanoclaw \
+          kubectl create secret generic kubeclaw-secrets \
+            --namespace=kubeclaw \
             --from-literal=anthropic-api-key=${{ secrets.ANTHROPIC_API_KEY }} \
             --from-literal=claude-code-oauth-token=${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }} \
             --dry-run=client -o yaml | kubectl apply -f -
@@ -180,7 +180,7 @@ jobs:
 
       - name: Wait for orchestrator
         run: |
-          kubectl wait --namespace=nanoclaw --for=condition=available deployment/nanoclaw-orchestrator --timeout=180s
+          kubectl wait --namespace=kubeclaw --for=condition=available deployment/kubeclaw-orchestrator --timeout=180s
 
       - name: Run E2E tests - ${{ matrix.test-phase }}
         id: test
@@ -202,7 +202,7 @@ jobs:
               || touch e2e/results/test-failed
           fi
         env:
-          REDIS_URL: redis://nanoclaw-redis.nanoclaw.svc.cluster.local:6379
+          REDIS_URL: redis://kubeclaw-redis.kubeclaw.svc.cluster.local:6379
           KUBECONFIG: ${{ github.workspace }}/kubeconfig
           DEBUG: ${{ github.event.inputs.debug_mode && 'true' || 'false' }}
 
@@ -218,14 +218,14 @@ jobs:
         if: always()
         run: |
           mkdir -p e2e/results/logs
-          kubectl logs --namespace=nanoclaw -l app=nanoclaw-orchestrator --tail=1000 > e2e/results/logs/orchestrator.log || true
-          kubectl logs --namespace=nanoclaw -l app=nanoclaw-redis --tail=500 > e2e/results/logs/redis.log || true
-          kubectl describe pods --namespace=nanoclaw > e2e/results/logs/pods-describe.log || true
-          kubectl get events --namespace=nanoclaw --sort-by='.lastTimestamp' > e2e/results/logs/events.log || true
+          kubectl logs --namespace=kubeclaw -l app=kubeclaw-orchestrator --tail=1000 > e2e/results/logs/orchestrator.log || true
+          kubectl logs --namespace=kubeclaw -l app=kubeclaw-redis --tail=500 > e2e/results/logs/redis.log || true
+          kubectl describe pods --namespace=kubeclaw > e2e/results/logs/pods-describe.log || true
+          kubectl get events --namespace=kubeclaw --sort-by='.lastTimestamp' > e2e/results/logs/events.log || true
 
           # Get job logs if any
-          for job in $(kubectl get jobs --namespace=nanoclaw -o name 2>/dev/null); do
-            kubectl logs --namespace=nanoclaw "job/${job#job/}" > "e2e/results/logs/${job#job/}.log" 2>/dev/null || true
+          for job in $(kubectl get jobs --namespace=kubeclaw -o name 2>/dev/null); do
+            kubectl logs --namespace=kubeclaw "job/${job#job/}" > "e2e/results/logs/${job#job/}.log" 2>/dev/null || true
           done
 
       - name: Upload test results

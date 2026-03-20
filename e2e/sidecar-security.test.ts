@@ -51,7 +51,7 @@ describe('Sidecar Security Tests', () => {
         }
 
         // Clean up test keys
-        const testKeys = await redis.keys('nanoclaw:security-test:*');
+        const testKeys = await redis.keys('kubeclaw:security-test:*');
         if (testKeys.length > 0) {
           await redis.del(...testKeys);
         }
@@ -80,7 +80,7 @@ describe('Sidecar Security Tests', () => {
           `sidecar-${jobIdA}`,
           'on',
           `>${passwordA}`,
-          `~nanoclaw:*:${jobIdA}`,
+          `~kubeclaw:*:${jobIdA}`,
           '+@read',
           '+@write',
           '+@stream',
@@ -93,7 +93,7 @@ describe('Sidecar Security Tests', () => {
           `sidecar-${jobIdB}`,
           'on',
           `>${passwordB}`,
-          `~nanoclaw:*:${jobIdB}`,
+          `~kubeclaw:*:${jobIdB}`,
           '+@read',
           '+@write',
           '+@stream',
@@ -120,34 +120,34 @@ describe('Sidecar Security Tests', () => {
 
         try {
           // Sidecar A writes to its own keys
-          await sidecarA.set(`nanoclaw:input:${jobIdA}`, 'data-a');
-          await sidecarA.set(`nanoclaw:output:${jobIdA}`, 'output-a');
+          await sidecarA.set(`kubeclaw:input:${jobIdA}`, 'data-a');
+          await sidecarA.set(`kubeclaw:output:${jobIdA}`, 'output-a');
 
           // Sidecar B writes to its own keys
-          await sidecarB.set(`nanoclaw:input:${jobIdB}`, 'data-b');
-          await sidecarB.set(`nanoclaw:output:${jobIdB}`, 'output-b');
+          await sidecarB.set(`kubeclaw:input:${jobIdB}`, 'data-b');
+          await sidecarB.set(`kubeclaw:output:${jobIdB}`, 'output-b');
 
           // Sidecar A can read its own keys
-          const ownInput = await sidecarA.get(`nanoclaw:input:${jobIdA}`);
-          const ownOutput = await sidecarA.get(`nanoclaw:output:${jobIdA}`);
+          const ownInput = await sidecarA.get(`kubeclaw:input:${jobIdA}`);
+          const ownOutput = await sidecarA.get(`kubeclaw:output:${jobIdA}`);
           expect(ownInput).toBe('data-a');
           expect(ownOutput).toBe('output-a');
 
           // Sidecar A CANNOT read Sidecar B's keys
           await expect(
-            sidecarA.get(`nanoclaw:input:${jobIdB}`),
+            sidecarA.get(`kubeclaw:input:${jobIdB}`),
           ).rejects.toThrow();
           await expect(
-            sidecarA.get(`nanoclaw:output:${jobIdB}`),
+            sidecarA.get(`kubeclaw:output:${jobIdB}`),
           ).rejects.toThrow();
 
           // Sidecar B can read its own keys
-          const bOwnInput = await sidecarB.get(`nanoclaw:input:${jobIdB}`);
+          const bOwnInput = await sidecarB.get(`kubeclaw:input:${jobIdB}`);
           expect(bOwnInput).toBe('data-b');
 
           // Sidecar B CANNOT read Sidecar A's keys
           await expect(
-            sidecarB.get(`nanoclaw:input:${jobIdA}`),
+            sidecarB.get(`kubeclaw:input:${jobIdA}`),
           ).rejects.toThrow();
         } finally {
           await sidecarA.quit();
@@ -173,7 +173,7 @@ describe('Sidecar Security Tests', () => {
           `sidecar-${jobId}`,
           'on',
           `>${password}`,
-          `~nanoclaw:*:${jobId}`,
+          `~kubeclaw:*:${jobId}`,
           '+@read',
           '+@write',
         );
@@ -188,14 +188,14 @@ describe('Sidecar Security Tests', () => {
 
         try {
           // Create multiple keys matching other patterns
-          await redis.set('nanoclaw:input:other-job-1', 'secret1');
-          await redis.set('nanoclaw:input:other-job-2', 'secret2');
-          await redis.set('nanoclaw:data:another-job', 'secret3');
+          await redis.set('kubeclaw:input:other-job-1', 'secret1');
+          await redis.set('kubeclaw:input:other-job-2', 'secret2');
+          await redis.set('kubeclaw:data:another-job', 'secret3');
 
           // Sidecar should not be able to use KEYS command on other patterns
           // Note: KEYS is a dangerous command, ACL might block it
           try {
-            const keys = await sidecar.keys('nanoclaw:*');
+            const keys = await sidecar.keys('kubeclaw:*');
             // If KEYS is allowed, it should only see its own keys
             expect(keys.every((k) => k.includes(jobId))).toBe(true);
           } catch {
@@ -204,17 +204,17 @@ describe('Sidecar Security Tests', () => {
 
           // Verify it cannot access specific other keys
           await expect(
-            sidecar.get('nanoclaw:input:other-job-1'),
+            sidecar.get('kubeclaw:input:other-job-1'),
           ).rejects.toThrow();
           await expect(
-            sidecar.get('nanoclaw:input:other-job-2'),
+            sidecar.get('kubeclaw:input:other-job-2'),
           ).rejects.toThrow();
         } finally {
           await sidecar.quit();
           await redis.acl('DELUSER', `sidecar-${jobId}`);
-          await redis.del('nanoclaw:input:other-job-1');
-          await redis.del('nanoclaw:input:other-job-2');
-          await redis.del('nanoclaw:data:another-job');
+          await redis.del('kubeclaw:input:other-job-1');
+          await redis.del('kubeclaw:input:other-job-2');
+          await redis.del('kubeclaw:data:another-job');
         }
       },
     );
@@ -236,7 +236,7 @@ describe('Sidecar Security Tests', () => {
           `sidecar-${jobId}`,
           'on',
           `>${password}`,
-          `~nanoclaw:*:${jobId}`,
+          `~kubeclaw:*:${jobId}`,
           '+@read',
           '+@write',
           '+@stream',
@@ -281,7 +281,7 @@ describe('Sidecar Security Tests', () => {
           `sidecar-${jobId}`,
           'on',
           `>${password}`,
-          `~nanoclaw:*:${jobId}`,
+          `~kubeclaw:*:${jobId}`,
           '+@read',
           '+@write',
           '-@admin',
@@ -325,7 +325,7 @@ describe('Sidecar Security Tests', () => {
           `sidecar-${jobId}`,
           'on',
           `>${password}`,
-          `~nanoclaw:*:${jobId}`,
+          `~kubeclaw:*:${jobId}`,
           '+@read',
           '+@write',
           '-@admin',
@@ -367,7 +367,7 @@ describe('Sidecar Security Tests', () => {
         `sidecar-${jobId}`,
         'on',
         `>${password}`,
-        `~nanoclaw:*:${jobId}`,
+        `~kubeclaw:*:${jobId}`,
         '+@read',
         '+@write',
         '-@dangerous',
@@ -412,7 +412,7 @@ describe('Sidecar Security Tests', () => {
         `sidecar-${jobId}`,
         'on',
         `>${correctPassword}`,
-        `~nanoclaw:*:${jobId}`,
+        `~kubeclaw:*:${jobId}`,
         '+@read',
         '+@write',
       );
@@ -469,7 +469,7 @@ describe('Sidecar Security Tests', () => {
         `sidecar-${jobId}`,
         'on',
         `>${password}`,
-        `~nanoclaw:*:${jobId}`,
+        `~kubeclaw:*:${jobId}`,
         '+@read',
         '+@write',
       );
@@ -526,7 +526,7 @@ describe('Sidecar Security Tests', () => {
           `sidecar-${jobId}`,
           'on',
           `>${password}`,
-          `~nanoclaw:*:${jobId}`,
+          `~kubeclaw:*:${jobId}`,
           '+get',
           '+set',
           '+del',
@@ -544,19 +544,19 @@ describe('Sidecar Security Tests', () => {
 
         try {
           // Allowed commands should work
-          await sidecar.set(`nanoclaw:test:${jobId}`, 'value');
-          const value = await sidecar.get(`nanoclaw:test:${jobId}`);
+          await sidecar.set(`kubeclaw:test:${jobId}`, 'value');
+          const value = await sidecar.get(`kubeclaw:test:${jobId}`);
           expect(value).toBe('value');
 
           // Disallowed commands should fail
           await expect(
-            sidecar.lpush(`nanoclaw:list:${jobId}`, 'item'),
+            sidecar.lpush(`kubeclaw:list:${jobId}`, 'item'),
           ).rejects.toThrow();
           await expect(
-            sidecar.sadd(`nanoclaw:set:${jobId}`, 'member'),
+            sidecar.sadd(`kubeclaw:set:${jobId}`, 'member'),
           ).rejects.toThrow();
           await expect(
-            sidecar.hset(`nanoclaw:hash:${jobId}`, 'field', 'value'),
+            sidecar.hset(`kubeclaw:hash:${jobId}`, 'field', 'value'),
           ).rejects.toThrow();
         } finally {
           await sidecar.quit();

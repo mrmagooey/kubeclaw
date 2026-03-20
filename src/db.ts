@@ -211,7 +211,7 @@ async function getSqlJs(): Promise<initSqlJs.SqlJsStatic> {
 }
 
 export async function _initTestDatabase(): Promise<void> {
-  dbPath = '/tmp/nanoclaw-test.db';
+  dbPath = '/tmp/kubeclaw-test.db';
   const SQL = await getSqlJs();
   db = new SQL.Database();
   createSchema(db);

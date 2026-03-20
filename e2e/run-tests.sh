@@ -12,7 +12,7 @@ TOTAL_TESTS=0
 PASSED_TESTS=0
 FAILED_TESTS=0
 CURRENT_PHASE=""
-NAMESPACE="nanoclaw"
+NAMESPACE="kubeclaw"
 
 # Colors
 RED='\033[0;31m'
@@ -149,19 +149,19 @@ test_storage_class() {
 }
 
 test_secrets_creation() {
-    kubectl create secret generic nanoclaw-config \
+    kubectl create secret generic kubeclaw-config \
         --from-literal=redis-url="redis://redis:6379" \
         --from-literal=api-key="test-api-key-12345" \
         -n "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f - > /dev/null 2>&1
-    kubectl get secret nanoclaw-config -n "$NAMESPACE" > /dev/null 2>&1
+    kubectl get secret kubeclaw-config -n "$NAMESPACE" > /dev/null 2>&1
 }
 
 test_configmap_creation() {
-    kubectl create configmap nanoclaw-env \
+    kubectl create configmap kubeclaw-env \
         --from-literal=LOG_LEVEL=debug \
         --from-literal=MAX_CONCURRENT_JOBS=5 \
         -n "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f - > /dev/null 2>&1
-    kubectl get configmap nanoclaw-env -n "$NAMESPACE" > /dev/null 2>&1
+    kubectl get configmap kubeclaw-env -n "$NAMESPACE" > /dev/null 2>&1
 }
 
 # ============================================================================
@@ -173,33 +173,33 @@ test_orchestrator_deployment() {
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: nanoclaw-orchestrator
+  name: kubeclaw-orchestrator
   namespace: $NAMESPACE
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: nanoclaw-orchestrator
+      app: kubeclaw-orchestrator
   template:
     metadata:
       labels:
-        app: nanoclaw-orchestrator
+        app: kubeclaw-orchestrator
     spec:
-      serviceAccountName: nanoclaw-orchestrator
+      serviceAccountName: kubeclaw-orchestrator
       containers:
       - name: orchestrator
-        image: nanoclaw:latest
+        image: kubeclaw:latest
         imagePullPolicy: IfNotPresent
         env:
         - name: REDIS_URL
           valueFrom:
             secretKeyRef:
-              name: nanoclaw-config
+              name: kubeclaw-config
               key: redis-url
         - name: LOG_LEVEL
           valueFrom:
             configMapKeyRef:
-              name: nanoclaw-env
+              name: kubeclaw-env
               key: LOG_LEVEL
         resources:
           requests:
@@ -212,16 +212,16 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: nanoclaw-orchestrator
+  name: kubeclaw-orchestrator
   namespace: $NAMESPACE
 spec:
   selector:
-    app: nanoclaw-orchestrator
+    app: kubeclaw-orchestrator
   ports:
   - port: 8080
     targetPort: 8080
 EOF
-    wait_for_pod "nanoclaw-orchestrator" "$NAMESPACE" 120
+    wait_for_pod "kubeclaw-orchestrator" "$NAMESPACE" 120
 }
 
 test_rbac_permissions() {
@@ -229,13 +229,13 @@ test_rbac_permissions() {
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: nanoclaw-orchestrator
+  name: kubeclaw-orchestrator
   namespace: $NAMESPACE
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: nanoclaw-orchestrator
+  name: kubeclaw-orchestrator
   namespace: $NAMESPACE
 rules:
 - apiGroups: ["batch"]
@@ -251,18 +251,18 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: nanoclaw-orchestrator
+  name: kubeclaw-orchestrator
   namespace: $NAMESPACE
 subjects:
 - kind: ServiceAccount
-  name: nanoclaw-orchestrator
+  name: kubeclaw-orchestrator
   namespace: $NAMESPACE
 roleRef:
   kind: Role
-  name: nanoclaw-orchestrator
+  name: kubeclaw-orchestrator
   apiGroup: rbac.authorization.k8s.io
 EOF
-    kubectl get serviceaccount nanoclaw-orchestrator -n "$NAMESPACE" > /dev/null 2>&1
+    kubectl get serviceaccount kubeclaw-orchestrator -n "$NAMESPACE" > /dev/null 2>&1
 }
 
 # ============================================================================
@@ -277,7 +277,7 @@ metadata:
   name: test-agent-job-1
   namespace: $NAMESPACE
   labels:
-    app: nanoclaw-agent
+    app: kubeclaw-agent
     test-id: "test-001"
 spec:
   ttlSecondsAfterFinished: 300
@@ -286,7 +286,7 @@ spec:
       restartPolicy: Never
       containers:
       - name: agent
-        image: nanoclaw-agent:latest
+        image: kubeclaw-agent:latest
         imagePullPolicy: IfNotPresent
         command: ["sh", "-c", "echo 'Agent job completed successfully' && exit 0"]
 EOF
@@ -307,7 +307,7 @@ spec:
       restartPolicy: Never
       containers:
       - name: agent
-        image: nanoclaw-agent:latest
+        image: kubeclaw-agent:latest
         imagePullPolicy: IfNotPresent
         resources:
           requests:
@@ -336,7 +336,7 @@ spec:
       restartPolicy: Never
       containers:
       - name: agent
-        image: nanoclaw-agent:latest
+        image: kubeclaw-agent:latest
         imagePullPolicy: IfNotPresent
         command: ["sh", "-c", "echo 'Job complete' && exit 0"]
 EOF
@@ -457,7 +457,7 @@ spec:
       restartPolicy: Never
       containers:
       - name: agent
-        image: nanoclaw-agent:latest
+        image: kubeclaw-agent:latest
         imagePullPolicy: IfNotPresent
         command: ["sh", "-c", "sleep 2 && echo 'Job $i complete'"]
 EOF
@@ -553,7 +553,7 @@ spec:
         - -c
         - |
           # Test that we can read configmap (simulating auth check)
-          kubectl get configmap nanoclaw-env -n $NAMESPACE
+          kubectl get configmap kubeclaw-env -n $NAMESPACE
           exit 0
 EOF
     wait_for_job "test-authorization" "$NAMESPACE" 60
@@ -579,7 +579,7 @@ spec:
       restartPolicy: Never
       containers:
       - name: failing-agent
-        image: nanoclaw-agent:latest
+        image: kubeclaw-agent:latest
         imagePullPolicy: IfNotPresent
         command: ["sh", "-c", "echo 'Failing intentionally' && exit 1"]
 EOF
@@ -729,7 +729,7 @@ spec:
       restartPolicy: Never
       containers:
       - name: agent
-        image: nanoclaw-agent:latest
+        image: kubeclaw-agent:latest
         imagePullPolicy: IfNotPresent
         command: ["sh", "-c", "echo 'Quick job'"]
 EOF
@@ -745,8 +745,8 @@ EOF
 test_resource_teardown() {
     # Verify resources can be deleted
     kubectl delete deployment redis -n "$NAMESPACE" --ignore-not-found=true > /dev/null 2>&1 || true
-    kubectl delete deployment nanoclaw-orchestrator -n "$NAMESPACE" --ignore-not-found=true > /dev/null 2>&1 || true
-    kubectl delete job -l app=nanoclaw-agent -n "$NAMESPACE" --ignore-not-found=true > /dev/null 2>&1 || true
+    kubectl delete deployment kubeclaw-orchestrator -n "$NAMESPACE" --ignore-not-found=true > /dev/null 2>&1 || true
+    kubectl delete job -l app=kubeclaw-agent -n "$NAMESPACE" --ignore-not-found=true > /dev/null 2>&1 || true
     kubectl delete pvc test-pvc -n "$NAMESPACE" --ignore-not-found=true > /dev/null 2>&1 || true
     return 0
 }

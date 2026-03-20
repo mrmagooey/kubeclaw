@@ -28,7 +28,7 @@ const NAMESPACE = getNamespace();
  * - IRC channel integration
  */
 describe('Phase 3: End-to-End', () => {
-  const namespace = 'nanoclaw';
+  const namespace = 'kubeclaw';
   let redis: import('ioredis').Redis;
 
   beforeAll(async () => {
@@ -103,7 +103,7 @@ describe('Phase 3: End-to-End', () => {
   describe('Error Handling', () => {
     it.todo(
       'should handle invalid messages gracefully',
-      // Push malformed JSON to nanoclaw:messages, verify orchestrator logs a warning
+      // Push malformed JSON to kubeclaw:messages, verify orchestrator logs a warning
       // and continues processing subsequent valid messages without crashing.
     );
 
@@ -317,7 +317,7 @@ describe('Phase 3: End-to-End', () => {
     ): Promise<string> {
       try {
         return execSync(
-          `kubectl logs -n ${namespace} -l app=nanoclaw-orchestrator --tail=${tail}`,
+          `kubectl logs -n ${namespace} -l app=kubeclaw-orchestrator --tail=${tail}`,
           { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] },
         );
       } catch {
@@ -417,7 +417,7 @@ describe('Phase 3: End-to-End', () => {
       };
 
       await redis.lpush(
-        'nanoclaw:messages',
+        'kubeclaw:messages',
         JSON.stringify(orchestratorMessage),
       );
       console.log('✅ Message published to Redis queue');

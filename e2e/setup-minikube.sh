@@ -5,7 +5,7 @@ set -e
 # Sets up minikube environment for Kubernetes testing
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-NAMESPACE="nanoclaw-e2e"
+NAMESPACE="kubeclaw-e2e"
 
 # Colors
 RED='\033[0;31m'
@@ -139,31 +139,31 @@ echo ""
 
 echo -e "${BLUE}Building Docker images...${NC}"
 
-# Build nanoclaw image
+# Build kubeclaw image
 if [ -f "${SCRIPT_DIR}/../Dockerfile" ]; then
-    echo "Building nanoclaw image..."
-    docker build -t nanoclaw:latest "${SCRIPT_DIR}/.."
-    echo -e "${GREEN}✓${NC} nanoclaw image built"
+    echo "Building kubeclaw image..."
+    docker build -t kubeclaw:latest "${SCRIPT_DIR}/.."
+    echo -e "${GREEN}✓${NC} kubeclaw image built"
 else
     echo -e "${YELLOW}Warning:${NC} Dockerfile not found, creating placeholder image"
     # Create a simple placeholder image
-    cat <<EOF | docker build -t nanoclaw:latest -f - "${SCRIPT_DIR}"
+    cat <<EOF | docker build -t kubeclaw:latest -f - "${SCRIPT_DIR}"
 FROM alpine:latest
-RUN echo "Placeholder nanoclaw image"
+RUN echo "Placeholder kubeclaw image"
 CMD ["sh", "-c", "echo 'NanoClaw placeholder' && sleep infinity"]
 EOF
 fi
 
-# Build nanoclaw-agent image
+# Build kubeclaw-agent image
 if [ -f "${SCRIPT_DIR}/../container/Dockerfile" ]; then
-    echo "Building nanoclaw-agent image..."
-    docker build -t nanoclaw-agent:latest "${SCRIPT_DIR}/../container"
-    echo -e "${GREEN}✓${NC} nanoclaw-agent image built"
+    echo "Building kubeclaw-agent image..."
+    docker build -t kubeclaw-agent:latest "${SCRIPT_DIR}/../container"
+    echo -e "${GREEN}✓${NC} kubeclaw-agent image built"
 else
     echo -e "${YELLOW}Warning:${NC} Agent Dockerfile not found, creating placeholder image"
-    cat <<EOF | docker build -t nanoclaw-agent:latest -f - "${SCRIPT_DIR}"
+    cat <<EOF | docker build -t kubeclaw-agent:latest -f - "${SCRIPT_DIR}"
 FROM alpine:latest
-RUN echo "Placeholder nanoclaw-agent image"
+RUN echo "Placeholder kubeclaw-agent image"
 CMD ["sh"]
 EOF
 fi
@@ -199,11 +199,11 @@ echo ""
 
 # Check Docker images
 echo -e "${BLUE}Verifying Docker images...${NC}"
-if docker images | grep -q "nanoclaw"; then
-    echo -e "${GREEN}✓${NC} nanoclaw images available:"
-    docker images | grep "nanoclaw" || true
+if docker images | grep -q "kubeclaw"; then
+    echo -e "${GREEN}✓${NC} kubeclaw images available:"
+    docker images | grep "kubeclaw" || true
 else
-    echo -e "${YELLOW}Warning:${NC} nanoclaw images not found in registry"
+    echo -e "${YELLOW}Warning:${NC} kubeclaw images not found in registry"
 fi
 
 echo ""

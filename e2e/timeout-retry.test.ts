@@ -535,7 +535,7 @@ describe('Timeout and Retry Behavior', () => {
       ) => {
         if (shouldSucceed) {
           await redis.set(key, 'success');
-          await redis.del(key.replace('nanoclaw', 'nanoclaw:cleanup'));
+          await redis.del(key.replace('kubeclaw', 'kubeclaw:cleanup'));
         }
         return shouldSucceed;
       };

@@ -17,22 +17,22 @@ describe('Phase 1: Infrastructure', () => {
       expect(isKubernetesAvailable()).toBe(true);
     });
 
-    it('should have nanoclaw namespace', async () => {
+    it('should have kubeclaw namespace', async () => {
       // Require Kubernetes - will throw and fail test if not available
       requireKubernetes();
 
       const { execSync } = await import('child_process');
 
       try {
-        const output = execSync('kubectl get namespace nanoclaw', {
+        const output = execSync('kubectl get namespace kubeclaw', {
           encoding: 'utf8',
           stdio: ['pipe', 'pipe', 'ignore'],
         });
-        expect(output).toContain('nanoclaw');
+        expect(output).toContain('kubeclaw');
       } catch {
-        console.warn('⚠️  nanoclaw namespace not found');
+        console.warn('⚠️  kubeclaw namespace not found');
         // Fail if namespace doesn't exist
-        expect.fail('nanoclaw namespace should exist in Kubernetes cluster');
+        expect.fail('kubeclaw namespace should exist in Kubernetes cluster');
       }
     });
 
@@ -45,14 +45,14 @@ describe('Phase 1: Infrastructure', () => {
       try {
         // Check if we can create jobs
         const canCreate = execSync(
-          'kubectl auth can-i create jobs --namespace=nanoclaw',
+          'kubectl auth can-i create jobs --namespace=kubeclaw',
           { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] },
         );
         expect(canCreate.trim()).toBe('yes');
       } catch {
         console.warn('⚠️  RBAC permissions check failed');
         expect.fail(
-          'Should have permission to create jobs in nanoclaw namespace',
+          'Should have permission to create jobs in kubeclaw namespace',
         );
       }
     });
@@ -141,13 +141,13 @@ describe('Phase 1: Infrastructure', () => {
         const images = execSync('docker images --format "{{.Repository}}"', {
           encoding: 'utf8',
         });
-        const hasOrchestrator = images.includes('nanoclaw-orchestrator');
-        const hasAgent = images.includes('nanoclaw-agent');
+        const hasOrchestrator = images.includes('kubeclaw-orchestrator');
+        const hasAgent = images.includes('kubeclaw-agent');
 
         if (!hasOrchestrator || !hasAgent) {
           console.warn('⚠️  Required images not found. Run: make build-images');
           expect.fail(
-            `Required Docker images not found. Missing: ${!hasOrchestrator ? 'nanoclaw-orchestrator ' : ''}${!hasAgent ? 'nanoclaw-agent' : ''}`,
+            `Required Docker images not found. Missing: ${!hasOrchestrator ? 'kubeclaw-orchestrator ' : ''}${!hasAgent ? 'kubeclaw-agent' : ''}`,
           );
         }
 

@@ -2,7 +2,7 @@
  * Kubernetes Sidecar Job Runner for NanoClaw
  *
  * Creates Kubernetes Jobs with two containers:
- * - nanoclaw-adapter: Handles NanoClaw protocol via file-based IPC
+ * - kubeclaw-adapter: Handles NanoClaw protocol via file-based IPC
  * - user-agent: User's arbitrary container image
  *
  * Uses emptyDir volume for file-based IPC between containers.
@@ -20,7 +20,7 @@ import { logger } from '../logger.js';
 import {
   CONTAINER_TIMEOUT,
   IDLE_TIMEOUT,
-  NANOCLAW_NAMESPACE,
+  KUBECLAW_NAMESPACE,
   SIDECAR_ADAPTER_IMAGE,
   SIDECAR_POLL_INTERVAL,
   AGENT_JOB_MEMORY_REQUEST,
@@ -40,8 +40,8 @@ import { parseSidecarLogBuffer } from './sidecar-log-parser.js';
 const JOB_TTL_SECONDS_AFTER_FINISHED = 3600;
 const JOB_ACTIVE_DEADLINE_SECONDS = 1800; // 30 min
 const JOB_BACKOFF_LIMIT = 0;
-const JOB_LABELS = { app: 'nanoclaw-sidecar-agent' };
-const NAMESPACE = NANOCLAW_NAMESPACE;
+const JOB_LABELS = { app: 'kubeclaw-sidecar-agent' };
+const NAMESPACE = KUBECLAW_NAMESPACE;
 
 export class SidecarJobRunner {
   private coreApi: CoreV1Api;
@@ -68,7 +68,7 @@ export class SidecarJobRunner {
     onOutput?: (output: JobOutput) => Promise<void>,
   ): Promise<JobOutput> {
     const startTime = Date.now();
-    const jobId = input.jobId || `nanoclaw-${group.folder}-${Date.now()}`;
+    const jobId = input.jobId || `kubeclaw-${group.folder}-${Date.now()}`;
 
     logger.info(
       {
@@ -209,18 +209,18 @@ export class SidecarJobRunner {
     // Environment variables for the sidecar adapter
     const adapterEnvVars = [
       { name: 'TZ', value: TIMEZONE },
-      { name: 'NANOCLAW_GROUP_FOLDER', value: input.groupFolder },
-      { name: 'NANOCLAW_CHAT_JID', value: input.chatJid },
-      { name: 'NANOCLAW_IS_MAIN', value: String(input.isMain) },
-      { name: 'NANOCLAW_PROMPT', value: input.prompt },
-      { name: 'NANOCLAW_SESSION_ID', value: input.sessionId || '' },
-      { name: 'NANOCLAW_ASSISTANT_NAME', value: input.assistantName || 'Andy' },
-      { name: 'NANOCLAW_JOB_ID', value: jobId },
-      { name: 'NANOCLAW_INPUT_DIR', value: '/workspace/input' },
-      { name: 'NANOCLAW_OUTPUT_DIR', value: '/workspace/output' },
-      { name: 'NANOCLAW_POLL_INTERVAL', value: String(SIDECAR_POLL_INTERVAL) },
+      { name: 'KUBECLAW_GROUP_FOLDER', value: input.groupFolder },
+      { name: 'KUBECLAW_CHAT_JID', value: input.chatJid },
+      { name: 'KUBECLAW_IS_MAIN', value: String(input.isMain) },
+      { name: 'KUBECLAW_PROMPT', value: input.prompt },
+      { name: 'KUBECLAW_SESSION_ID', value: input.sessionId || '' },
+      { name: 'KUBECLAW_ASSISTANT_NAME', value: input.assistantName || 'Andy' },
+      { name: 'KUBECLAW_JOB_ID', value: jobId },
+      { name: 'KUBECLAW_INPUT_DIR', value: '/workspace/input' },
+      { name: 'KUBECLAW_OUTPUT_DIR', value: '/workspace/output' },
+      { name: 'KUBECLAW_POLL_INTERVAL', value: String(SIDECAR_POLL_INTERVAL) },
       {
-        name: 'NANOCLAW_TIMEOUT',
+        name: 'KUBECLAW_TIMEOUT',
         value: String(spec.timeout || CONTAINER_TIMEOUT),
       },
       // Idle timeout for follow-up message handling
@@ -242,12 +242,12 @@ export class SidecarJobRunner {
 
     // Environment variables for the user container
     const userEnvVars = [
-      { name: 'NANOCLAW_INPUT_DIR', value: '/workspace/input' },
-      { name: 'NANOCLAW_OUTPUT_DIR', value: '/workspace/output' },
-      { name: 'NANOCLAW_POLL_INTERVAL', value: '1' }, // User container polls every second
+      { name: 'KUBECLAW_INPUT_DIR', value: '/workspace/input' },
+      { name: 'KUBECLAW_OUTPUT_DIR', value: '/workspace/output' },
+      { name: 'KUBECLAW_POLL_INTERVAL', value: '1' }, // User container polls every second
       // Optional user command from spec
       ...(spec.userCommand
-        ? [{ name: 'NANOCLAW_USER_COMMAND', value: spec.userCommand.join(' ') }]
+        ? [{ name: 'KUBECLAW_USER_COMMAND', value: spec.userCommand.join(' ') }]
         : []),
     ];
 
@@ -256,13 +256,13 @@ export class SidecarJobRunner {
       {
         name: 'groups-pvc',
         persistentVolumeClaim: {
-          claimName: 'nanoclaw-groups',
+          claimName: 'kubeclaw-groups',
         },
       },
       {
         name: 'sessions-pvc',
         persistentVolumeClaim: {
-          claimName: 'nanoclaw-sessions',
+          claimName: 'kubeclaw-sessions',
         },
       },
     ];
@@ -272,7 +272,7 @@ export class SidecarJobRunner {
       pvcVolumes.push({
         name: 'project-pvc',
         persistentVolumeClaim: {
-          claimName: 'nanoclaw-project',
+          claimName: 'kubeclaw-project',
         },
       } as any);
     }
@@ -304,7 +304,7 @@ export class SidecarJobRunner {
     const wrapperVolume = {
       name: 'runner-wrapper',
       configMap: {
-        name: 'nanoclaw-runner-wrapper',
+        name: 'kubeclaw-runner-wrapper',
         defaultMode: 0o755,
       },
     };
@@ -351,7 +351,7 @@ export class SidecarJobRunner {
             containers: [
               // Sidecar adapter container (handles NanoClaw protocol)
               {
-                name: 'nanoclaw-adapter',
+                name: 'kubeclaw-adapter',
                 image: SIDECAR_ADAPTER_IMAGE,
                 env: adapterEnvVars,
                 volumeMounts: [...adapterVolumeMounts, ...adapterPvcMounts],
@@ -456,7 +456,7 @@ export class SidecarJobRunner {
           const logs = await this.coreApi.readNamespacedPodLog({
             name: podName,
             namespace: this.namespace,
-            container: 'nanoclaw-adapter',
+            container: 'kubeclaw-adapter',
             ...(sinceTime ? { sinceTime } : {}),
           });
 
@@ -651,7 +651,7 @@ export class SidecarJobRunner {
         adapterLogs = await this.coreApi.readNamespacedPodLog({
           name: podName,
           namespace: this.namespace,
-          container: 'nanoclaw-adapter',
+          container: 'kubeclaw-adapter',
         });
       } catch (e) {
         adapterLogs = `Error getting adapter logs: ${e instanceof Error ? e.message : String(e)}`;

@@ -65,8 +65,8 @@ echo ""
 # Build Claude agent
 if [ "$BUILD_CLAUDE" = true ]; then
   echo "Building Claude agent..."
-  echo "Image: nanoclaw-agent:claude"
-  ${CONTAINER_RUNTIME} build -f Dockerfile -t nanoclaw-agent:claude .
+  echo "Image: kubeclaw-agent:claude"
+  ${CONTAINER_RUNTIME} build -f Dockerfile -t kubeclaw-agent:claude .
   echo "Claude agent build complete!"
   echo ""
 fi
@@ -74,9 +74,9 @@ fi
 # Build OpenRouter agent
 if [ "$BUILD_OPENROUTER" = true ]; then
   echo "Building OpenRouter agent..."
-  echo "Image: nanoclaw-agent:openrouter"
+  echo "Image: kubeclaw-agent:openrouter"
   if [ -f "Dockerfile.openrouter" ]; then
-    ${CONTAINER_RUNTIME} build -f Dockerfile.openrouter -t nanoclaw-agent:openrouter .
+    ${CONTAINER_RUNTIME} build -f Dockerfile.openrouter -t kubeclaw-agent:openrouter .
     echo "OpenRouter agent build complete!"
   else
     echo "WARNING: Dockerfile.openrouter not found, skipping OpenRouter build"
@@ -88,9 +88,9 @@ fi
 # Build File Adapter
 if [ "$BUILD_FILE_ADAPTER" = true ]; then
   echo "Building File Adapter..."
-  echo "Image: nanoclaw-file-adapter:latest"
+  echo "Image: kubeclaw-file-adapter:latest"
   if [ -d "file-adapter" ]; then
-    ${CONTAINER_RUNTIME} build -f file-adapter/Dockerfile -t nanoclaw-file-adapter:latest file-adapter
+    ${CONTAINER_RUNTIME} build -f file-adapter/Dockerfile -t kubeclaw-file-adapter:latest file-adapter
     echo "File adapter build complete!"
   else
     echo "WARNING: file-adapter directory not found, skipping file adapter build"
@@ -101,9 +101,9 @@ fi
 # Build HTTP Adapter
 if [ "$BUILD_HTTP_ADAPTER" = true ]; then
   echo "Building HTTP Adapter..."
-  echo "Image: nanoclaw-http-adapter:latest"
+  echo "Image: kubeclaw-http-adapter:latest"
   if [ -d "http-adapter" ]; then
-    ${CONTAINER_RUNTIME} build -f http-adapter/Dockerfile -t nanoclaw-http-adapter:latest http-adapter
+    ${CONTAINER_RUNTIME} build -f http-adapter/Dockerfile -t kubeclaw-http-adapter:latest http-adapter
     echo "HTTP adapter build complete!"
   else
     echo "WARNING: http-adapter directory not found, skipping HTTP adapter build"
@@ -128,16 +128,16 @@ echo "================================"
 echo "Build complete!"
 
 if [ "$BUILD_CLAUDE" = true ]; then
-  echo "  Claude image: nanoclaw-agent:claude"
+  echo "  Claude image: kubeclaw-agent:claude"
 fi
 if [ "$BUILD_OPENROUTER" = true ] && [ -f "Dockerfile.openrouter" ]; then
-  echo "  OpenRouter image: nanoclaw-agent:openrouter"
+  echo "  OpenRouter image: kubeclaw-agent:openrouter"
 fi
 if [ "$BUILD_FILE_ADAPTER" = true ] && [ -d "file-adapter" ]; then
-  echo "  File adapter image: nanoclaw-file-adapter:latest"
+  echo "  File adapter image: kubeclaw-file-adapter:latest"
 fi
 if [ "$BUILD_HTTP_ADAPTER" = true ] && [ -d "http-adapter" ]; then
-  echo "  HTTP adapter image: nanoclaw-http-adapter:latest"
+  echo "  HTTP adapter image: kubeclaw-http-adapter:latest"
 fi
 if [ "$BUILD_BROWSER" = true ] && [ -d "browser" ]; then
   echo "  Browser sidecar image: nanoclaw-browser-sidecar:latest"
@@ -145,4 +145,4 @@ fi
 
 echo ""
 echo "Test Claude agent with:"
-echo "  echo '{\"prompt\":\"What is 2+2?\",\"groupFolder\":\"test\",\"chatJid\":\"test@g.us\",\"isMain\":false}' | ${CONTAINER_RUNTIME} run -i nanoclaw-agent:claude"
+echo "  echo '{\"prompt\":\"What is 2+2?\",\"groupFolder\":\"test\",\"chatJid\":\"test@g.us\",\"isMain\":false}' | ${CONTAINER_RUNTIME} run -i kubeclaw-agent:claude"

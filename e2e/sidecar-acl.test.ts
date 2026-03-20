@@ -65,7 +65,7 @@ describe('Sidecar ACL E2E Tests', () => {
         }
 
         // Clean up test keys
-        const testKeys = await redis.keys('nanoclaw:test:*');
+        const testKeys = await redis.keys('kubeclaw:test:*');
         if (testKeys.length > 0) {
           await redis.del(...testKeys);
         }
@@ -164,7 +164,7 @@ describe('Sidecar ACL E2E Tests', () => {
       const jobId = 'test-job-123';
       const username = `sidecar-${jobId}`;
       const password = 'secure-random-password';
-      const keyPattern = `nanoclaw:*:${jobId}`;
+      const keyPattern = `kubeclaw:*:${jobId}`;
 
       // Create ACL user
       await redis.acl(
@@ -195,8 +195,8 @@ describe('Sidecar ACL E2E Tests', () => {
       });
 
       try {
-        await jobRedis.set(`nanoclaw:input:${jobId}`, 'test data');
-        const value = await jobRedis.get(`nanoclaw:input:${jobId}`);
+        await jobRedis.set(`kubeclaw:input:${jobId}`, 'test data');
+        const value = await jobRedis.get(`kubeclaw:input:${jobId}`);
         expect(value).toBe('test data');
       } finally {
         await jobRedis.quit();
@@ -259,7 +259,7 @@ describe('Sidecar ACL E2E Tests', () => {
       async () => {
         if (!redis) return;
         const jobId = 'test-job-followup';
-        const outputChannel = `nanoclaw:output:${jobId}`;
+        const outputChannel = `kubeclaw:output:${jobId}`;
         const username = `sidecar-${jobId}`;
         const password = 'testpass';
 
@@ -269,7 +269,7 @@ describe('Sidecar ACL E2E Tests', () => {
           username,
           'on',
           `>${password}`,
-          `~nanoclaw:*:${jobId}`,
+          `~kubeclaw:*:${jobId}`,
           '+@read',
           '+@write',
           '+@pubsub',
@@ -328,7 +328,7 @@ describe('Sidecar ACL E2E Tests', () => {
       async () => {
         if (!redis) return;
         const jobId = 'test-job-stream';
-        const inputStream = `nanoclaw:stream:input:${jobId}`;
+        const inputStream = `kubeclaw:stream:input:${jobId}`;
         const username = `sidecar-${jobId}`;
         const password = 'testpass';
 
@@ -338,7 +338,7 @@ describe('Sidecar ACL E2E Tests', () => {
           username,
           'on',
           `>${password}`,
-          `~nanoclaw:*:${jobId}`,
+          `~kubeclaw:*:${jobId}`,
           '+@read',
           '+@write',
           '+@stream',
@@ -405,7 +405,7 @@ describe('Sidecar ACL E2E Tests', () => {
           `sidecar-${jobId1}`,
           'on',
           `>${password1}`,
-          `~nanoclaw:*:${jobId1}`,
+          `~kubeclaw:*:${jobId1}`,
           '+@read',
           '+@write',
         );
@@ -415,7 +415,7 @@ describe('Sidecar ACL E2E Tests', () => {
           `sidecar-${jobId2}`,
           'on',
           `>${password2}`,
-          `~nanoclaw:*:${jobId2}`,
+          `~kubeclaw:*:${jobId2}`,
           '+@read',
           '+@write',
         );
@@ -439,35 +439,35 @@ describe('Sidecar ACL E2E Tests', () => {
 
         try {
           // Job 1 writes to its key
-          await job1Redis.set(`nanoclaw:data:${jobId1}`, 'job1-data');
+          await job1Redis.set(`kubeclaw:data:${jobId1}`, 'job1-data');
 
           // Job 2 writes to its key
-          await job2Redis.set(`nanoclaw:data:${jobId2}`, 'job2-data');
+          await job2Redis.set(`kubeclaw:data:${jobId2}`, 'job2-data');
 
           // Job 1 should be able to read its own key
-          const job1OwnData = await job1Redis.get(`nanoclaw:data:${jobId1}`);
+          const job1OwnData = await job1Redis.get(`kubeclaw:data:${jobId1}`);
           expect(job1OwnData).toBe('job1-data');
 
           // Job 1 should NOT be able to read job 2's key
           await expect(
-            job1Redis.get(`nanoclaw:data:${jobId2}`),
+            job1Redis.get(`kubeclaw:data:${jobId2}`),
           ).rejects.toThrow();
 
           // Job 2 should be able to read its own key
-          const job2OwnData = await job2Redis.get(`nanoclaw:data:${jobId2}`);
+          const job2OwnData = await job2Redis.get(`kubeclaw:data:${jobId2}`);
           expect(job2OwnData).toBe('job2-data');
 
           // Job 2 should NOT be able to read job 1's key
           await expect(
-            job2Redis.get(`nanoclaw:data:${jobId1}`),
+            job2Redis.get(`kubeclaw:data:${jobId1}`),
           ).rejects.toThrow();
         } finally {
           await job1Redis.quit();
           await job2Redis.quit();
           await redis.acl('DELUSER', `sidecar-${jobId1}`);
           await redis.acl('DELUSER', `sidecar-${jobId2}`);
-          await redis.del(`nanoclaw:data:${jobId1}`);
-          await redis.del(`nanoclaw:data:${jobId2}`);
+          await redis.del(`kubeclaw:data:${jobId1}`);
+          await redis.del(`kubeclaw:data:${jobId2}`);
         }
       },
     );

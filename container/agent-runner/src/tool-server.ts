@@ -13,13 +13,13 @@ import { createClient, RedisClientType } from 'redis';
 
 const execFileAsync = promisify(execFile);
 
-const agentJobId = process.env.NANOCLAW_AGENT_JOB_ID!;
-const category = process.env.NANOCLAW_CATEGORY as 'execution' | 'browser';
-const redisUrl = process.env.REDIS_URL || 'redis://nanoclaw-redis:6379';
+const agentJobId = process.env.KUBECLAW_AGENT_JOB_ID!;
+const category = process.env.KUBECLAW_CATEGORY as 'execution' | 'browser';
+const redisUrl = process.env.REDIS_URL || 'redis://kubeclaw-redis:6379';
 const idleTimeout = parseInt(process.env.IDLE_TIMEOUT || '1800000', 10);
 
-const TOOLCALLS_STREAM = `nanoclaw:toolcalls:${agentJobId}:${category}`;
-const TOOLRESULTS_STREAM = `nanoclaw:toolresults:${agentJobId}:${category}`;
+const TOOLCALLS_STREAM = `kubeclaw:toolcalls:${agentJobId}:${category}`;
+const TOOLRESULTS_STREAM = `kubeclaw:toolresults:${agentJobId}:${category}`;
 
 const SECRET_ENV_VARS = ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_AUTH_TOKEN', 'OPENROUTER_API_KEY'];
 
@@ -144,9 +144,9 @@ async function toolAgentBrowser(input: { command: string }): Promise<string> {
 async function toolTask(input: Record<string, unknown>): Promise<string> {
   // Proxy to orchestrator via Redis tasks channel
   const redis = await getRedisForTask();
-  const groupFolder = process.env.NANOCLAW_GROUP_FOLDER || 'unknown';
+  const groupFolder = process.env.KUBECLAW_GROUP_FOLDER || 'unknown';
   await redis.publish(
-    `nanoclaw:tasks:${groupFolder}`,
+    `kubeclaw:tasks:${groupFolder}`,
     JSON.stringify({ type: 'schedule_task', ...input }),
   );
   return 'Task request sent.';
@@ -190,7 +190,7 @@ async function executeTool(tool: string, input: Record<string, unknown>): Promis
 
 async function main(): Promise<void> {
   if (!agentJobId || !category) {
-    log('NANOCLAW_AGENT_JOB_ID and NANOCLAW_CATEGORY are required');
+    log('KUBECLAW_AGENT_JOB_ID and KUBECLAW_CATEGORY are required');
     process.exit(1);
   }
 

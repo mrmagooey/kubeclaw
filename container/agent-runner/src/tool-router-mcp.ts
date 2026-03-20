@@ -1,7 +1,7 @@
 /**
  * Tool Router MCP Server
  * Proxies tool calls from the Claude agent to category pods via Redis Streams.
- * Runs as a stdio MCP server alongside the nanoclaw MCP server.
+ * Runs as a stdio MCP server alongside the kubeclaw MCP server.
  */
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -10,9 +10,9 @@ import { z } from 'zod';
 import { createClient, RedisClientType } from 'redis';
 import { randomUUID } from 'crypto';
 
-const agentJobId = process.env.NANOCLAW_JOB_ID!;
-const groupFolder = process.env.NANOCLAW_GROUP_FOLDER!;
-const redisUrl = process.env.REDIS_URL || 'redis://nanoclaw-redis:6379';
+const agentJobId = process.env.KUBECLAW_JOB_ID!;
+const groupFolder = process.env.KUBECLAW_GROUP_FOLDER!;
+const redisUrl = process.env.REDIS_URL || 'redis://kubeclaw-redis:6379';
 
 // How long to wait for a tool result before giving up (ms)
 const TOOL_CALL_TIMEOUT = 120_000;
@@ -44,8 +44,8 @@ async function ensurePodReady(category: 'execution' | 'browser'): Promise<void> 
 
   const promise = (async () => {
     const r = await getRedis();
-    const taskChannel = `nanoclaw:tasks:${groupFolder}`;
-    const inputStream = `nanoclaw:input:${agentJobId}`;
+    const taskChannel = `kubeclaw:tasks:${groupFolder}`;
+    const inputStream = `kubeclaw:input:${agentJobId}`;
 
     log(`Requesting ${category} pod`);
     await r.publish(taskChannel, JSON.stringify({
@@ -92,8 +92,8 @@ async function callTool(
 
   const r = await getRedis();
   const requestId = randomUUID();
-  const callsStream = `nanoclaw:toolcalls:${agentJobId}:${category}`;
-  const resultsStream = `nanoclaw:toolresults:${agentJobId}:${category}`;
+  const callsStream = `kubeclaw:toolcalls:${agentJobId}:${category}`;
+  const resultsStream = `kubeclaw:toolresults:${agentJobId}:${category}`;
 
   await r.xAdd(callsStream, '*', {
     requestId,

@@ -10,7 +10,7 @@ import { requireKubernetes } from './setup.js';
  * - Message routing
  */
 describe('Phase 2: Integration', () => {
-  const namespace = 'nanoclaw';
+  const namespace = 'kubeclaw';
 
   beforeAll(async () => {
     // Require Kubernetes for all integration tests
@@ -27,14 +27,14 @@ describe('Phase 2: Integration', () => {
 
       try {
         const output = execSync(
-          `kubectl get deployment nanoclaw-orchestrator --namespace=${namespace}`,
+          `kubectl get deployment kubeclaw-orchestrator --namespace=${namespace}`,
           { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] },
         );
-        expect(output).toContain('nanoclaw-orchestrator');
+        expect(output).toContain('kubeclaw-orchestrator');
       } catch {
         console.warn('⚠️  Orchestrator deployment not found');
         expect.fail(
-          'Orchestrator deployment should exist in nanoclaw namespace',
+          'Orchestrator deployment should exist in kubeclaw namespace',
         );
       }
     });
@@ -44,13 +44,13 @@ describe('Phase 2: Integration', () => {
 
       try {
         const output = execSync(
-          `kubectl get pods --namespace=${namespace} -l app=nanoclaw-orchestrator`,
+          `kubectl get pods --namespace=${namespace} -l app=kubeclaw-orchestrator`,
           { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] },
         );
-        expect(output).toContain('nanoclaw-orchestrator');
+        expect(output).toContain('kubeclaw-orchestrator');
       } catch {
         console.warn('⚠️  No orchestrator pods found');
-        expect.fail('Orchestrator pods should exist in nanoclaw namespace');
+        expect.fail('Orchestrator pods should exist in kubeclaw namespace');
       }
     });
   });
@@ -61,13 +61,13 @@ describe('Phase 2: Integration', () => {
 
       try {
         const output = execSync(
-          `kubectl get statefulset nanoclaw-redis --namespace=${namespace}`,
+          `kubectl get statefulset kubeclaw-redis --namespace=${namespace}`,
           { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] },
         );
-        expect(output).toContain('nanoclaw-redis');
+        expect(output).toContain('kubeclaw-redis');
       } catch {
         console.warn('⚠️  Redis statefulset not found');
-        expect.fail('Redis statefulset should exist in nanoclaw namespace');
+        expect.fail('Redis statefulset should exist in kubeclaw namespace');
       }
     });
 
@@ -76,13 +76,13 @@ describe('Phase 2: Integration', () => {
 
       try {
         const output = execSync(
-          `kubectl get service nanoclaw-redis --namespace=${namespace}`,
+          `kubectl get service kubeclaw-redis --namespace=${namespace}`,
           { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] },
         );
-        expect(output).toContain('nanoclaw-redis');
+        expect(output).toContain('kubeclaw-redis');
       } catch {
         console.warn('⚠️  Redis service not found');
-        expect.fail('Redis service should exist in nanoclaw namespace');
+        expect.fail('Redis service should exist in kubeclaw namespace');
       }
     });
   });
@@ -100,7 +100,7 @@ describe('Phase 2: Integration', () => {
       } catch {
         console.warn('⚠️  No PVCs found');
         expect.fail(
-          'PersistentVolumeClaims should exist in nanoclaw namespace',
+          'PersistentVolumeClaims should exist in kubeclaw namespace',
         );
       }
     });

@@ -1,10 +1,10 @@
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: nanoclaw-test-pvc-rwo
-  namespace: nanoclaw
+  name: kubeclaw-test-pvc-rwo
+  namespace: kubeclaw
   labels:
-    app: nanoclaw
+    app: kubeclaw
     test: e2e
     storage-class: rwo
 spec:
@@ -17,10 +17,10 @@ spec:
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: nanoclaw-test-pvc-rwx
-  namespace: nanoclaw
+  name: kubeclaw-test-pvc-rwx
+  namespace: kubeclaw
   labels:
-    app: nanoclaw
+    app: kubeclaw
     test: e2e
     storage-class: rwx
 spec:
@@ -33,10 +33,10 @@ spec:
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: nanoclaw-test-pvc-data
-  namespace: nanoclaw
+  name: kubeclaw-test-pvc-data
+  namespace: kubeclaw
   labels:
-    app: nanoclaw
+    app: kubeclaw
     test: e2e
     storage-class: data
 spec:

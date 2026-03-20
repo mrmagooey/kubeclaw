@@ -43,7 +43,7 @@ cleanup() {
     log_info "Cleaning up resources..."
     cd "${SCRIPT_DIR}"
     docker-compose -f "${COMPOSE_FILE}" down -v --remove-orphans 2>/dev/null || true
-    docker network rm nanoclaw-e2e 2>/dev/null || true
+    docker network rm kubeclaw-e2e 2>/dev/null || true
     log_info "Cleanup complete"
   fi
 }

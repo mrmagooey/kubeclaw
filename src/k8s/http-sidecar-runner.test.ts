@@ -4,7 +4,7 @@
  * Tests for the HttpSidecarJobRunner class, specifically
  * generateHttpSidecarJobManifest. Key differences from the file sidecar:
  * - No shared volumes (communication is over localhost)
- * - NANOCLAW_AGENT_URL env var instead of workspace paths
+ * - KUBECLAW_AGENT_URL env var instead of workspace paths
  * - Health endpoint config env vars
  * - PORT env var in the user container
  */
@@ -53,8 +53,8 @@ vi.mock('@kubernetes/client-node', () => {
 // Mock config
 vi.mock('../config.js', () => ({
   CONTAINER_TIMEOUT: 300000,
-  NANOCLAW_NAMESPACE: 'nanoclaw',
-  SIDECAR_HTTP_ADAPTER_IMAGE: 'nanoclaw-http-adapter:latest',
+  KUBECLAW_NAMESPACE: 'nanoclaw',
+  SIDECAR_HTTP_ADAPTER_IMAGE: 'kubeclaw-http-adapter:latest',
   SIDECAR_HTTP_REQUEST_TIMEOUT: 300000,
   SIDECAR_HTTP_MAX_RETRIES: 3,
   SIDECAR_HTTP_RETRY_DELAY: 1000,
@@ -270,7 +270,7 @@ describe('HttpSidecarJobRunner', () => {
       );
 
       const containers = manifest.spec?.template?.spec?.containers;
-      expect(containers?.[0].name).toBe('nanoclaw-http-adapter');
+      expect(containers?.[0].name).toBe('kubeclaw-http-adapter');
       expect(containers?.[1].name).toBe('user-agent');
     });
 
@@ -359,7 +359,7 @@ describe('HttpSidecarJobRunner', () => {
       expect(userContainer?.volumeMounts).toBeUndefined();
     });
 
-    it('should construct NANOCLAW_AGENT_URL using default port 8080', () => {
+    it('should construct KUBECLAW_AGENT_URL using default port 8080', () => {
       const input: JobInput = {
         groupFolder: 'test-group',
         chatJid: 'test@g.us',
@@ -386,12 +386,12 @@ describe('HttpSidecarJobRunner', () => {
 
       const adapterEnv = manifest.spec?.template?.spec?.containers?.[0].env;
       expect(adapterEnv).toContainEqual({
-        name: 'NANOCLAW_AGENT_URL',
+        name: 'KUBECLAW_AGENT_URL',
         value: 'http://localhost:8080',
       });
     });
 
-    it('should construct NANOCLAW_AGENT_URL using custom userPort', () => {
+    it('should construct KUBECLAW_AGENT_URL using custom userPort', () => {
       const input: JobInput = {
         groupFolder: 'test-group',
         chatJid: 'test@g.us',
@@ -418,7 +418,7 @@ describe('HttpSidecarJobRunner', () => {
 
       const adapterEnv = manifest.spec?.template?.spec?.containers?.[0].env;
       expect(adapterEnv).toContainEqual({
-        name: 'NANOCLAW_AGENT_URL',
+        name: 'KUBECLAW_AGENT_URL',
         value: 'http://localhost:3000',
       });
     });
@@ -449,7 +449,7 @@ describe('HttpSidecarJobRunner', () => {
 
       const adapterEnv = manifest.spec?.template?.spec?.containers?.[0].env;
       expect(adapterEnv).toContainEqual({
-        name: 'NANOCLAW_HEALTH_ENDPOINT',
+        name: 'KUBECLAW_HEALTH_ENDPOINT',
         value: '/agent/health',
       });
     });
@@ -481,7 +481,7 @@ describe('HttpSidecarJobRunner', () => {
 
       const adapterEnv = manifest.spec?.template?.spec?.containers?.[0].env;
       expect(adapterEnv).toContainEqual({
-        name: 'NANOCLAW_HEALTH_ENDPOINT',
+        name: 'KUBECLAW_HEALTH_ENDPOINT',
         value: '/health',
       });
     });
@@ -514,28 +514,28 @@ describe('HttpSidecarJobRunner', () => {
 
       expect(adapterEnv).toContainEqual({ name: 'TZ', value: 'UTC' });
       expect(adapterEnv).toContainEqual({
-        name: 'NANOCLAW_REQUEST_TIMEOUT',
+        name: 'KUBECLAW_REQUEST_TIMEOUT',
         value: '300000',
       });
       expect(adapterEnv).toContainEqual({
-        name: 'NANOCLAW_HEALTH_POLL_INTERVAL',
+        name: 'KUBECLAW_HEALTH_POLL_INTERVAL',
         value: '1000',
       });
       expect(adapterEnv).toContainEqual({
-        name: 'NANOCLAW_HEALTH_POLL_TIMEOUT',
+        name: 'KUBECLAW_HEALTH_POLL_TIMEOUT',
         value: '30000',
       });
       expect(adapterEnv).toContainEqual({
-        name: 'NANOCLAW_MAX_RETRIES',
+        name: 'KUBECLAW_MAX_RETRIES',
         value: '3',
       });
       expect(adapterEnv).toContainEqual({
-        name: 'NANOCLAW_RETRY_DELAY',
+        name: 'KUBECLAW_RETRY_DELAY',
         value: '1000',
       });
     });
 
-    it('should set NANOCLAW_JOB_ID on adapter container', () => {
+    it('should set KUBECLAW_JOB_ID on adapter container', () => {
       const input: JobInput = {
         groupFolder: 'test-group',
         chatJid: 'test@g.us',
@@ -561,7 +561,7 @@ describe('HttpSidecarJobRunner', () => {
 
       const adapterEnv = manifest.spec?.template?.spec?.containers?.[0].env;
       expect(adapterEnv).toContainEqual({
-        name: 'NANOCLAW_JOB_ID',
+        name: 'KUBECLAW_JOB_ID',
         value: 'my-unique-job-id',
       });
     });
@@ -942,10 +942,10 @@ describe('HttpSidecarJobRunner', () => {
       );
 
       expect(manifest.metadata?.labels?.['app']).toBe(
-        'nanoclaw-http-sidecar-agent',
+        'kubeclaw-http-sidecar-agent',
       );
       expect(manifest.spec?.template?.metadata?.labels?.['app']).toBe(
-        'nanoclaw-http-sidecar-agent',
+        'kubeclaw-http-sidecar-agent',
       );
     });
 
@@ -1058,7 +1058,7 @@ describe('HttpSidecarJobRunner', () => {
       );
 
       const adapterContainer = manifest.spec?.template?.spec?.containers?.[0];
-      expect(adapterContainer?.image).toBe('nanoclaw-http-adapter:latest');
+      expect(adapterContainer?.image).toBe('kubeclaw-http-adapter:latest');
     });
   });
 });

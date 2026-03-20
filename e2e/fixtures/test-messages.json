@@ -125,14 +125,14 @@
     {
       "type": "system",
       "event": "job_created",
-      "job_name": "nanoclaw-agent-group-123",
-      "namespace": "nanoclaw",
+      "job_name": "kubeclaw-agent-group-123",
+      "namespace": "kubeclaw",
       "timestamp": "2024-01-15T10:00:02Z"
     },
     {
       "type": "system",
       "event": "job_completed",
-      "job_name": "nanoclaw-agent-group-123",
+      "job_name": "kubeclaw-agent-group-123",
       "exit_code": 0,
       "timestamp": "2024-01-15T10:05:00Z"
     }
@@ -156,8 +156,8 @@
       "is_main": false
     },
     "container_context": {
-      "image": "nanoclaw-agent:latest",
-      "namespace": "nanoclaw",
+      "image": "kubeclaw-agent:latest",
+      "namespace": "kubeclaw",
       "resource_limits": {
         "memory": "4Gi",
         "cpu": "2"

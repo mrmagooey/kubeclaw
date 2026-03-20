@@ -6,8 +6,8 @@
  */
 
 // Marker constants matching the main agent runner
-export const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
-export const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
+export const OUTPUT_START_MARKER = '---KUBECLAW_OUTPUT_START---';
+export const OUTPUT_END_MARKER = '---KUBECLAW_OUTPUT_END---';
 
 /**
  * Container input from orchestrator (via stdin)

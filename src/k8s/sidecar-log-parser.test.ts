@@ -5,9 +5,9 @@
  * The parser processes a string buffer accumulated from repeated
  * readNamespacedPodLog calls and extracts JSON payloads delimited by:
  *
- *   ---NANOCLAW_OUTPUT_START---
+ *   ---KUBECLAW_OUTPUT_START---
  *   <json>
- *   ---NANOCLAW_OUTPUT_END---
+ *   ---KUBECLAW_OUTPUT_END---
  */
 
 import { describe, it, expect } from 'vitest';

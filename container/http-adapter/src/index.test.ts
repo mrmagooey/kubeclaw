@@ -29,7 +29,7 @@ describe('validateEnv', () => {
     delete process.env.REDIS_URL;
     delete process.env.REDIS_USERNAME;
     delete process.env.REDIS_PASSWORD;
-    delete process.env.NANOCLAW_JOB_ID;
+    delete process.env.KUBECLAW_JOB_ID;
   });
 
   afterEach(() => {
@@ -40,7 +40,7 @@ describe('validateEnv', () => {
     process.env.REDIS_URL = 'redis://localhost:6379';
     process.env.REDIS_USERNAME = 'user';
     process.env.REDIS_PASSWORD = 'pass';
-    process.env.NANOCLAW_JOB_ID = 'job-123';
+    process.env.KUBECLAW_JOB_ID = 'job-123';
 
     const result = validateEnv();
 
@@ -50,7 +50,7 @@ describe('validateEnv', () => {
   it('should return missing vars when REDIS_URL is missing', () => {
     process.env.REDIS_USERNAME = 'user';
     process.env.REDIS_PASSWORD = 'pass';
-    process.env.NANOCLAW_JOB_ID = 'job-123';
+    process.env.KUBECLAW_JOB_ID = 'job-123';
 
     const result = validateEnv();
 
@@ -61,7 +61,7 @@ describe('validateEnv', () => {
   it('should return missing vars when REDIS_USERNAME is missing', () => {
     process.env.REDIS_URL = 'redis://localhost:6379';
     process.env.REDIS_PASSWORD = 'pass';
-    process.env.NANOCLAW_JOB_ID = 'job-123';
+    process.env.KUBECLAW_JOB_ID = 'job-123';
 
     const result = validateEnv();
 
@@ -71,21 +71,21 @@ describe('validateEnv', () => {
   it('should return missing vars when REDIS_PASSWORD is missing', () => {
     process.env.REDIS_URL = 'redis://localhost:6379';
     process.env.REDIS_USERNAME = 'user';
-    process.env.NANOCLAW_JOB_ID = 'job-123';
+    process.env.KUBECLAW_JOB_ID = 'job-123';
 
     const result = validateEnv();
 
     expect(result).toContain('REDIS_PASSWORD');
   });
 
-  it('should return missing vars when NANOCLAW_JOB_ID is missing', () => {
+  it('should return missing vars when KUBECLAW_JOB_ID is missing', () => {
     process.env.REDIS_URL = 'redis://localhost:6379';
     process.env.REDIS_USERNAME = 'user';
     process.env.REDIS_PASSWORD = 'pass';
 
     const result = validateEnv();
 
-    expect(result).toContain('NANOCLAW_JOB_ID');
+    expect(result).toContain('KUBECLAW_JOB_ID');
   });
 
   it('should return all missing vars when none are set', () => {
@@ -95,7 +95,7 @@ describe('validateEnv', () => {
     expect(result).toContain('REDIS_URL');
     expect(result).toContain('REDIS_USERNAME');
     expect(result).toContain('REDIS_PASSWORD');
-    expect(result).toContain('NANOCLAW_JOB_ID');
+    expect(result).toContain('KUBECLAW_JOB_ID');
   });
 });
 

@@ -137,7 +137,7 @@ export class RedisIPCClient {
       timestamp: new Date().toISOString(),
     };
 
-    const channel = `nanoclaw:messages:${this.groupFolder}`;
+    const channel = `kubeclaw:messages:${this.groupFolder}`;
     await this.redis.publish(channel, JSON.stringify(data));
   }
 
@@ -161,7 +161,7 @@ export class RedisIPCClient {
       },
     };
 
-    const channel = `nanoclaw:tasks:${this.groupFolder}`;
+    const channel = `kubeclaw:tasks:${this.groupFolder}`;
     await this.redis.publish(channel, JSON.stringify(message));
   }
 
@@ -182,8 +182,8 @@ export class RedisIPCClient {
     };
 
     // Must match the channel KubernetesJobRunner.streamOutput() subscribes to:
-    // nanoclaw:messages:${groupFolder}
-    const channel = `nanoclaw:messages:${this.groupFolder}`;
+    // kubeclaw:messages:${groupFolder}
+    const channel = `kubeclaw:messages:${this.groupFolder}`;
     await this.redis.publish(channel, JSON.stringify(message));
   }
 
@@ -209,7 +209,7 @@ export class RedisIPCClient {
       context,
     };
 
-    const channel = `nanoclaw:logs:${this.groupFolder}`;
+    const channel = `kubeclaw:logs:${this.groupFolder}`;
     await this.redis.publish(channel, JSON.stringify(logMessage));
   }
 
@@ -222,7 +222,7 @@ export class RedisIPCClient {
       throw new Error('Redis not connected');
     }
 
-    const streamKey = `nanoclaw:input:${this.jobId}`;
+    const streamKey = `kubeclaw:input:${this.jobId}`;
     let lastId = '0';
 
     while (true) {
@@ -273,7 +273,7 @@ export class RedisIPCClient {
       throw new Error('Redis not connected');
     }
 
-    const streamKey = `nanoclaw:input:${this.jobId}`;
+    const streamKey = `kubeclaw:input:${this.jobId}`;
     let lastId = '0';
 
     // Try to read any pending messages first

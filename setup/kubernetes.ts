@@ -47,7 +47,7 @@ function parseArgs(args: string[]): {
   skipBuild: boolean;
   registry?: string;
 } {
-  let namespace = 'nanoclaw';
+  let namespace = 'kubeclaw';
   let storageClass: string | undefined;
   let skipBuild = true; // Default: skip build (opt-in)
   let registry: string | undefined;
@@ -139,7 +139,7 @@ export async function run(args: string[]): Promise<void> {
 
     // Collect StatefulSet diagnostics (pod doesn't exist yet on apply failure)
     const redisStatefulsetEvents = runKubectl(
-      ['describe', 'statefulset', 'nanoclaw-redis', '-n', namespace],
+      ['describe', 'statefulset', 'kubeclaw-redis', '-n', namespace],
       50,
     );
 
@@ -192,7 +192,7 @@ export async function run(args: string[]): Promise<void> {
     // Collect PVC diagnostics
     const storageStatus = runKubectl(['get', 'pvc', '-n', namespace], 50);
     const pvcEvents = runKubectl(
-      ['describe', 'pvc', 'nanoclaw-groups', '-n', namespace],
+      ['describe', 'pvc', 'kubeclaw-groups', '-n', namespace],
       50,
     );
 
@@ -221,11 +221,11 @@ export async function run(args: string[]): Promise<void> {
 
     // Collect Redis pod diagnostics
     const redisPodStatus = runKubectl(
-      ['get', 'pods', '-n', namespace, '-l', 'app=nanoclaw-redis'],
+      ['get', 'pods', '-n', namespace, '-l', 'app=kubeclaw-redis'],
       50,
     );
     const redisPodEvents = runKubectl(
-      ['describe', 'pod', '-n', namespace, '-l', 'app=nanoclaw-redis'],
+      ['describe', 'pod', '-n', namespace, '-l', 'app=kubeclaw-redis'],
       50,
     );
 
@@ -273,8 +273,8 @@ export async function run(args: string[]): Promise<void> {
     // Update image references if registry specified
     if (registry) {
       content = content.replace(
-        /image: nanoclaw-orchestrator:latest/g,
-        `image: ${registry}/nanoclaw-orchestrator:latest`,
+        /image: kubeclaw-orchestrator:latest/g,
+        `image: ${registry}/kubeclaw-orchestrator:latest`,
       );
       content = content.replace(
         /imagePullPolicy: Never/g,
@@ -306,7 +306,7 @@ export async function run(args: string[]): Promise<void> {
   let deploymentReady = false;
   try {
     execSync(
-      `kubectl rollout status deployment/nanoclaw-orchestrator -n ${namespace} --timeout=120s`,
+      `kubectl rollout status deployment/kubeclaw-orchestrator -n ${namespace} --timeout=120s`,
       { stdio: ['ignore', 'pipe', 'pipe'] },
     );
     deploymentReady = true;
@@ -316,7 +316,7 @@ export async function run(args: string[]): Promise<void> {
 
     // Collect deployment diagnostics on timeout
     const deploymentEvents = runKubectl(
-      ['describe', 'deployment', 'nanoclaw-orchestrator', '-n', namespace],
+      ['describe', 'deployment', 'kubeclaw-orchestrator', '-n', namespace],
       50,
     );
     const podEvents = runKubectl(
@@ -382,7 +382,7 @@ function detectStorageManifest(k8sDir: string): string {
 
 function checkSecretsExist(namespace: string): boolean {
   try {
-    execSync(`kubectl get secret nanoclaw-secrets -n ${namespace}`, {
+    execSync(`kubectl get secret kubeclaw-secrets -n ${namespace}`, {
       stdio: 'ignore',
     });
     return true;
@@ -426,8 +426,8 @@ async function buildAndPushImages(
       }
 
       // Tag and push Claude agent
-      const localTag = 'nanoclaw-agent:claude';
-      const remoteTag = `${registry}/nanoclaw-agent:claude`;
+      const localTag = 'kubeclaw-agent:claude';
+      const remoteTag = `${registry}/kubeclaw-agent:claude`;
 
       try {
         execSync(`docker tag ${localTag} ${remoteTag}`, {
@@ -445,20 +445,20 @@ async function buildAndPushImages(
       // Tag and push other images if they exist
       const imagesToPush = [
         {
-          local: 'nanoclaw-agent:openrouter',
-          remote: 'nanoclaw-agent:openrouter',
+          local: 'kubeclaw-agent:openrouter',
+          remote: 'kubeclaw-agent:openrouter',
         },
         {
-          local: 'nanoclaw-file-adapter:latest',
-          remote: 'nanoclaw-file-adapter:latest',
+          local: 'kubeclaw-file-adapter:latest',
+          remote: 'kubeclaw-file-adapter:latest',
         },
         {
-          local: 'nanoclaw-http-adapter:latest',
-          remote: 'nanoclaw-http-adapter:latest',
+          local: 'kubeclaw-http-adapter:latest',
+          remote: 'kubeclaw-http-adapter:latest',
         },
         {
-          local: 'nanoclaw-browser-sidecar:latest',
-          remote: 'nanoclaw-browser-sidecar:latest',
+          local: 'kubeclaw-browser-sidecar:latest',
+          remote: 'kubeclaw-browser-sidecar:latest',
         },
       ];
 
@@ -516,7 +516,7 @@ async function waitForRedis(
           '-n',
           namespace,
           '-l',
-          'app=nanoclaw-redis',
+          'app=kubeclaw-redis',
           '-o',
           'jsonpath={.items[0].status.phase}',
         ],

@@ -7,10 +7,10 @@
  *
  * Input protocol:
  *   - Stdin: initial TaskInput JSON from orchestrator
- *   - Follow-ups: Redis Streams (nanoclaw:input:{jobId})
+ *   - Follow-ups: Redis Streams (kubeclaw:input:{jobId})
  *
  * Output protocol:
- *   - Redis Pub/Sub on nanoclaw:messages:{groupFolder} (AgentOutputMessage envelope)
+ *   - Redis Pub/Sub on kubeclaw:messages:{groupFolder} (AgentOutputMessage envelope)
  *
  * File protocol:
  *   - Input:  /workspace/input/task.json (initial), task_1.json, task_2.json (follow-ups)
@@ -23,18 +23,18 @@ import { RedisIPCClient } from './redis-ipc.js';
 
 // Configuration from environment
 const config: SidecarConfig = {
-  inputDir: process.env.NANOCLAW_INPUT_DIR || '/workspace/input',
-  outputDir: process.env.NANOCLAW_OUTPUT_DIR || '/workspace/output',
-  pollIntervalMs: parseInt(process.env.NANOCLAW_POLL_INTERVAL || '1000', 10),
-  timeoutMs: parseInt(process.env.NANOCLAW_TIMEOUT || '1800000', 10),
+  inputDir: process.env.KUBECLAW_INPUT_DIR || '/workspace/input',
+  outputDir: process.env.KUBECLAW_OUTPUT_DIR || '/workspace/output',
+  pollIntervalMs: parseInt(process.env.KUBECLAW_POLL_INTERVAL || '1000', 10),
+  timeoutMs: parseInt(process.env.KUBECLAW_TIMEOUT || '1800000', 10),
 };
 
 const IDLE_TIMEOUT = parseInt(process.env.IDLE_TIMEOUT || '1800000', 10);
 const REDIS_URL = process.env.REDIS_URL;
 const REDIS_USERNAME = process.env.REDIS_USERNAME;
 const REDIS_PASSWORD = process.env.REDIS_PASSWORD;
-const JOB_ID = process.env.NANOCLAW_JOB_ID || '';
-const GROUP_FOLDER = process.env.NANOCLAW_GROUP_FOLDER || '';
+const JOB_ID = process.env.KUBECLAW_JOB_ID || '';
+const GROUP_FOLDER = process.env.KUBECLAW_GROUP_FOLDER || '';
 
 function log(message: string): void {
   console.error(`[sidecar-adapter] ${message}`);
@@ -65,7 +65,7 @@ async function main(): Promise<void> {
 
   // Validate Redis config
   if (!REDIS_URL || !REDIS_USERNAME || !REDIS_PASSWORD || !JOB_ID || !GROUP_FOLDER) {
-    log('Missing required env vars: REDIS_URL, REDIS_USERNAME, REDIS_PASSWORD, NANOCLAW_JOB_ID, NANOCLAW_GROUP_FOLDER');
+    log('Missing required env vars: REDIS_URL, REDIS_USERNAME, REDIS_PASSWORD, KUBECLAW_JOB_ID, KUBECLAW_GROUP_FOLDER');
     process.exit(1);
   }
 

@@ -145,12 +145,12 @@ class KubernetesAgentRunner implements AgentRunner {
       return this.groupIpcPaths.get(folder)!;
     }
 
-    // NANOCLAW_IPC_BASE must point to the orchestrator's mount of the sessions PVC.
+    // KUBECLAW_IPC_BASE must point to the orchestrator's mount of the sessions PVC.
     // The agent job mounts sessions PVC subPath "${folder}/ipc" at /workspace/ipc,
     // so this path must resolve to the same location on the shared volume.
-    // In the orchestrator pod: set NANOCLAW_IPC_BASE to the sessions PVC mountPath
+    // In the orchestrator pod: set KUBECLAW_IPC_BASE to the sessions PVC mountPath
     // (e.g. /data/sessions). Default falls back to a local temp dir for testing.
-    const ipcBaseDir = process.env.NANOCLAW_IPC_BASE || '/tmp/nanoclaw-ipc';
+    const ipcBaseDir = process.env.KUBECLAW_IPC_BASE || '/tmp/kubeclaw-ipc';
     const ipcPath = path.join(ipcBaseDir, folder, 'ipc');
 
     this.groupIpcPaths.set(folder, ipcPath);
@@ -447,7 +447,7 @@ class FileSidecarAgentRunner implements AgentRunner {
       return this.groupIpcPaths.get(folder)!;
     }
 
-    const ipcBaseDir = process.env.NANOCLAW_IPC_BASE || '/tmp/nanoclaw-ipc';
+    const ipcBaseDir = process.env.KUBECLAW_IPC_BASE || '/tmp/kubeclaw-ipc';
     const ipcPath = path.join(ipcBaseDir, folder, 'ipc');
 
     this.groupIpcPaths.set(folder, ipcPath);
@@ -742,7 +742,7 @@ class HttpSidecarAgentRunner implements AgentRunner {
       return this.groupIpcPaths.get(folder)!;
     }
 
-    const ipcBaseDir = process.env.NANOCLAW_IPC_BASE || '/tmp/nanoclaw-ipc';
+    const ipcBaseDir = process.env.KUBECLAW_IPC_BASE || '/tmp/kubeclaw-ipc';
     const ipcPath = path.join(ipcBaseDir, folder, 'ipc');
 
     this.groupIpcPaths.set(folder, ipcPath);

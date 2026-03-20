@@ -4,7 +4,7 @@
  *
  * Input protocol:
  *   Docker mode: Full ContainerInput JSON piped to stdin
- *   K8s mode:   Task fields passed as env vars (NANOCLAW_PROMPT etc.),
+ *   K8s mode:   Task fields passed as env vars (KUBECLAW_PROMPT etc.),
  *               entrypoint.sh builds the JSON before starting this process
  *   IPC:        Follow-up messages written as JSON files to /workspace/ipc/input/
  *               Files: {type:"message", text:"..."}.json — polled and consumed
@@ -12,7 +12,7 @@
  *
  * Output protocol:
  *   Docker mode: Each result wrapped in OUTPUT_START_MARKER / OUTPUT_END_MARKER pairs on stdout
- *   K8s mode:    Same stdout output PLUS published to Redis nanoclaw:messages:${groupFolder}
+ *   K8s mode:    Same stdout output PLUS published to Redis kubeclaw:messages:${groupFolder}
  *                so KubernetesJobRunner.streamOutput() can receive it without reading pod logs
  */
 
@@ -108,8 +108,8 @@ async function readStdin(): Promise<string> {
   });
 }
 
-const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
-const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
+const OUTPUT_START_MARKER = '---KUBECLAW_OUTPUT_START---';
+const OUTPUT_END_MARKER = '---KUBECLAW_OUTPUT_END---';
 
 // Shared Redis client — set in main() when REDIS_URL is available (K8s mode).
 // Kept module-level so writeOutput can publish without threading it through every call.
@@ -434,21 +434,21 @@ async function runQuery(
       allowDangerouslySkipPermissions: true,
       settingSources: ['project', 'user'],
       mcpServers: {
-        nanoclaw: {
+        kubeclaw: {
           command: 'node',
           args: [mcpServerPath],
           env: {
-            NANOCLAW_CHAT_JID: containerInput.chatJid,
-            NANOCLAW_GROUP_FOLDER: containerInput.groupFolder,
-            NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
+            KUBECLAW_CHAT_JID: containerInput.chatJid,
+            KUBECLAW_GROUP_FOLDER: containerInput.groupFolder,
+            KUBECLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
           },
         },
         toolrouter: {
           command: 'node',
           args: [toolRouterMcpPath],
           env: {
-            NANOCLAW_JOB_ID: process.env.NANOCLAW_JOB_ID,
-            NANOCLAW_GROUP_FOLDER: containerInput.groupFolder,
+            KUBECLAW_JOB_ID: process.env.KUBECLAW_JOB_ID,
+            KUBECLAW_GROUP_FOLDER: containerInput.groupFolder,
             REDIS_URL: process.env.REDIS_URL,
           },
         },
@@ -512,9 +512,9 @@ async function main(): Promise<void> {
   }
 
   // In K8s mode, connect to Redis for output publishing.
-  // REDIS_URL and NANOCLAW_JOB_ID are injected by KubernetesJobRunner.
+  // REDIS_URL and KUBECLAW_JOB_ID are injected by KubernetesJobRunner.
   const redisUrl = process.env.REDIS_URL;
-  const jobId = process.env.NANOCLAW_JOB_ID || '';
+  const jobId = process.env.KUBECLAW_JOB_ID || '';
   if (redisUrl && jobId) {
     try {
       redisClient = new RedisIPCClient(

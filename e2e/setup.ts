@@ -6,13 +6,13 @@ import {
 } from './lib/mock-llm-server.js';
 import { _initTestDatabase } from '../src/db.js';
 
-const NAMESPACE = process.env.NAMESPACE || 'nanoclaw';
+const NAMESPACE = process.env.NAMESPACE || 'kubeclaw';
 
 function getRedisUrl(): string {
-  // Prefer the nanoclaw-specific Redis URL set by global-setup's port-forward.
+  // Prefer the kubeclaw-specific Redis URL set by global-setup's port-forward.
   // This ensures host-side subscribers use the same Redis as in-cluster adapters.
-  if (process.env.NANOCLAW_REDIS_URL) {
-    return process.env.NANOCLAW_REDIS_URL;
+  if (process.env.KUBECLAW_REDIS_URL) {
+    return process.env.KUBECLAW_REDIS_URL;
   }
 
   if (process.env.REDIS_URL) {

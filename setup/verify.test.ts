@@ -81,7 +81,7 @@ vi.mock('./status.js', () => ({
 // Mock config to use a temp directory for STORE_DIR
 vi.mock('../src/config.js', async () => {
   return {
-    STORE_DIR: '/tmp/test-nanoclaw-verify-store',
+    STORE_DIR: '/tmp/test-kubeclaw-verify-store',
   };
 });
 
@@ -115,13 +115,13 @@ describe('verify step', () => {
     }) as unknown as typeof process.exit;
 
     // Ensure db directory exists in mock (for verify.ts to see)
-    mockExistsSyncResults.set('/tmp/test-nanoclaw-verify-store', true);
+    mockExistsSyncResults.set('/tmp/test-kubeclaw-verify-store', true);
 
     // Create real database file on disk that verify.ts can read
-    const dbPath = '/tmp/test-nanoclaw-verify-store/messages.db';
+    const dbPath = '/tmp/test-kubeclaw-verify-store/messages.db';
     // Ensure directory exists using actual fs (bypassing mock)
-    if (!actualFs.existsSync('/tmp/test-nanoclaw-verify-store')) {
-      actualFs.mkdirSync('/tmp/test-nanoclaw-verify-store', {
+    if (!actualFs.existsSync('/tmp/test-kubeclaw-verify-store')) {
+      actualFs.mkdirSync('/tmp/test-kubeclaw-verify-store', {
         recursive: true,
       });
     }
@@ -151,7 +151,7 @@ describe('verify step', () => {
     process.exit = originalExit;
     // Clean up database file using actual fs
     try {
-      const dbPath = '/tmp/test-nanoclaw-verify-store/messages.db';
+      const dbPath = '/tmp/test-kubeclaw-verify-store/messages.db';
       if (actualFs.existsSync(dbPath)) {
         actualFs.unlinkSync(dbPath);
       }
@@ -166,11 +166,11 @@ describe('verify step', () => {
 
       // First command (readyReplicas) fails, second (deployment check) fails, third (kubectl version) fails
       mockExecSyncResults.set(
-        'kubectl get deployment nanoclaw-orchestrator -n nanoclaw -o jsonpath={.status.readyReplicas}',
+        'kubectl get deployment kubeclaw-orchestrator -n kubeclaw -o jsonpath={.status.readyReplicas}',
         new Error('kubectl not found'),
       );
       mockExecSyncResults.set(
-        'kubectl get deployment nanoclaw-orchestrator -n nanoclaw',
+        'kubectl get deployment kubeclaw-orchestrator -n kubeclaw',
         new Error('kubectl not found'),
       );
       mockExecSyncResults.set(
@@ -208,7 +208,7 @@ describe('verify step', () => {
       const { run } = await import('./verify.js');
 
       mockExecSyncResults.set(
-        'kubectl get deployment nanoclaw-orchestrator -n nanoclaw -o jsonpath={.status.readyReplicas}',
+        'kubectl get deployment kubeclaw-orchestrator -n kubeclaw -o jsonpath={.status.readyReplicas}',
         '0',
       );
 
@@ -226,7 +226,7 @@ describe('verify step', () => {
       const { run } = await import('./verify.js');
 
       mockExecSyncResults.set(
-        'kubectl get deployment nanoclaw-orchestrator -n nanoclaw -o jsonpath={.status.readyReplicas}',
+        'kubectl get deployment kubeclaw-orchestrator -n kubeclaw -o jsonpath={.status.readyReplicas}',
         '',
       );
 
@@ -245,33 +245,33 @@ describe('verify step', () => {
 
       // Setup orchestrator as running
       mockExecSyncResults.set(
-        'kubectl get deployment nanoclaw-orchestrator -n nanoclaw -o jsonpath={.status.readyReplicas}',
+        'kubectl get deployment kubeclaw-orchestrator -n kubeclaw -o jsonpath={.status.readyReplicas}',
         '2',
       );
       // Minimal mocks for other checks - need to match actual command strings
       mockExecSyncResults.set(
-        'kubectl get secret nanoclaw-secrets -n nanoclaw',
-        'nanoclaw-secrets',
+        'kubectl get secret kubeclaw-secrets -n kubeclaw',
+        'kubeclaw-secrets',
       );
-      // The redis command uses "-l app=nanoclaw-redis" so we need to match differently
+      // The redis command uses "-l app=kubeclaw-redis" so we need to match differently
       mockExecSyncResults.set(
-        'kubectl get pods -n nanoclaw -l app=nanoclaw-redis',
+        'kubectl get pods -n kubeclaw -l app=kubeclaw-redis',
         'Running',
       );
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/store/auth',
+        '/home/peter/projects/kubeclaw/store/auth',
         true,
       );
-      mockReaddirSyncResults.set('/home/peter/projects/nanoclaw/store/auth', [
+      mockReaddirSyncResults.set('/home/peter/projects/kubeclaw/store/auth', [
         'auth-file.json',
       ]);
       mockExistsSyncResults.set(
-        '/home/test/.config/nanoclaw/mount-allowlist.json',
+        '/home/test/.config/kubeclaw/mount-allowlist.json',
         true,
       );
 
       const path = await import('path');
-      const dbPath = path.join('/tmp/test-nanoclaw-verify-store', 'messages.db');
+      const dbPath = path.join('/tmp/test-kubeclaw-verify-store', 'messages.db');
       mockExistsSyncResults.set(dbPath, true);
 
       db.prepare(
@@ -299,32 +299,32 @@ describe('verify step', () => {
 
       // Setup minimal conditions for redis check
       mockExecSyncResults.set(
-        'kubectl get deployment nanoclaw-orchestrator -n nanoclaw -o jsonpath={.status.readyReplicas}',
+        'kubectl get deployment kubeclaw-orchestrator -n kubeclaw -o jsonpath={.status.readyReplicas}',
         '1',
       );
-      // The redis command uses "-l app=nanoclaw-redis" so we need to match the full command pattern
+      // The redis command uses "-l app=kubeclaw-redis" so we need to match the full command pattern
       mockExecSyncResults.set(
-        'kubectl get pods -n nanoclaw -l app=nanoclaw-redis',
+        'kubectl get pods -n kubeclaw -l app=kubeclaw-redis',
         'Running',
       );
       mockExecSyncResults.set(
-        'kubectl get secret nanoclaw-secrets -n nanoclaw',
-        'nanoclaw-secrets',
+        'kubectl get secret kubeclaw-secrets -n kubeclaw',
+        'kubeclaw-secrets',
       );
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/store/auth',
+        '/home/peter/projects/kubeclaw/store/auth',
         true,
       );
-      mockReaddirSyncResults.set('/home/peter/projects/nanoclaw/store/auth', [
+      mockReaddirSyncResults.set('/home/peter/projects/kubeclaw/store/auth', [
         'auth-file.json',
       ]);
       mockExistsSyncResults.set(
-        '/home/test/.config/nanoclaw/mount-allowlist.json',
+        '/home/test/.config/kubeclaw/mount-allowlist.json',
         true,
       );
 
       const path = await import('path');
-      const dbPath = path.join('/tmp/test-nanoclaw-verify-store', 'messages.db');
+      const dbPath = path.join('/tmp/test-kubeclaw-verify-store', 'messages.db');
       mockExistsSyncResults.set(dbPath, true);
 
       db.prepare(
@@ -349,7 +349,7 @@ describe('verify step', () => {
       const { run } = await import('./verify.js');
 
       mockExecSyncResults.set(
-        'kubectl get pods -n nanoclaw -l app=nanoclaw-redis',
+        'kubectl get pods -n kubeclaw -l app=kubeclaw-redis',
         'Pending',
       );
 
@@ -367,7 +367,7 @@ describe('verify step', () => {
       const { run } = await import('./verify.js');
 
       mockExecSyncResults.set(
-        'kubectl get pods -n nanoclaw -l app=nanoclaw-redis',
+        'kubectl get pods -n kubeclaw -l app=kubeclaw-redis',
         '',
       );
 
@@ -385,7 +385,7 @@ describe('verify step', () => {
       const { run } = await import('./verify.js');
 
       mockExecSyncResults.set(
-        'kubectl get pods -n nanoclaw -l app=nanoclaw-redis',
+        'kubectl get pods -n kubeclaw -l app=kubeclaw-redis',
         new Error('kubectl failed'),
       );
 
@@ -406,31 +406,31 @@ describe('verify step', () => {
 
       // Setup minimal conditions for credentials check
       mockExecSyncResults.set(
-        'kubectl get deployment nanoclaw-orchestrator -n nanoclaw -o jsonpath={.status.readyReplicas}',
+        'kubectl get deployment kubeclaw-orchestrator -n kubeclaw -o jsonpath={.status.readyReplicas}',
         '1',
       );
       mockExecSyncResults.set(
-        'kubectl get pods -n nanoclaw -l app=nanoclaw-redis',
+        'kubectl get pods -n kubeclaw -l app=kubeclaw-redis',
         'Running',
       );
       mockExecSyncResults.set(
-        'kubectl get secret nanoclaw-secrets -n nanoclaw',
-        'nanoclaw-secrets',
+        'kubectl get secret kubeclaw-secrets -n kubeclaw',
+        'kubeclaw-secrets',
       );
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/store/auth',
+        '/home/peter/projects/kubeclaw/store/auth',
         true,
       );
-      mockReaddirSyncResults.set('/home/peter/projects/nanoclaw/store/auth', [
+      mockReaddirSyncResults.set('/home/peter/projects/kubeclaw/store/auth', [
         'auth-file.json',
       ]);
       mockExistsSyncResults.set(
-        '/home/test/.config/nanoclaw/mount-allowlist.json',
+        '/home/test/.config/kubeclaw/mount-allowlist.json',
         true,
       );
 
       const path = await import('path');
-      const dbPath = path.join('/tmp/test-nanoclaw-verify-store', 'messages.db');
+      const dbPath = path.join('/tmp/test-kubeclaw-verify-store', 'messages.db');
       mockExistsSyncResults.set(dbPath, true);
 
       db.prepare(
@@ -455,7 +455,7 @@ describe('verify step', () => {
       const { run } = await import('./verify.js');
 
       mockExecSyncResults.set(
-        'kubectl get secret nanoclaw-secrets -n nanoclaw',
+        'kubectl get secret kubeclaw-secrets -n kubeclaw',
         new Error('secret not found'),
       );
 
@@ -476,32 +476,32 @@ describe('verify step', () => {
 
       // Setup all success conditions with full command mocks
       mockExecSyncResults.set(
-        'kubectl get deployment nanoclaw-orchestrator -n nanoclaw -o jsonpath={.status.readyReplicas}',
+        'kubectl get deployment kubeclaw-orchestrator -n kubeclaw -o jsonpath={.status.readyReplicas}',
         '1',
       );
       mockExecSyncResults.set(
-        'kubectl get pods -n nanoclaw -l app=nanoclaw-redis',
+        'kubectl get pods -n kubeclaw -l app=kubeclaw-redis',
         'Running',
       );
       mockExecSyncResults.set(
-        'kubectl get secret nanoclaw-secrets -n nanoclaw',
-        'nanoclaw-secrets',
+        'kubectl get secret kubeclaw-secrets -n kubeclaw',
+        'kubeclaw-secrets',
       );
 
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/store/auth',
+        '/home/peter/projects/kubeclaw/store/auth',
         true,
       );
       mockExistsSyncResults.set(
-        '/home/test/.config/nanoclaw/mount-allowlist.json',
+        '/home/test/.config/kubeclaw/mount-allowlist.json',
         true,
       );
-      mockReaddirSyncResults.set('/home/peter/projects/nanoclaw/store/auth', [
+      mockReaddirSyncResults.set('/home/peter/projects/kubeclaw/store/auth', [
         'auth-file.json',
       ]);
 
       const path = await import('path');
-      const dbPath = path.join('/tmp/test-nanoclaw-verify-store', 'messages.db');
+      const dbPath = path.join('/tmp/test-kubeclaw-verify-store', 'messages.db');
       mockExistsSyncResults.set(dbPath, true);
 
       db.prepare(
@@ -539,7 +539,7 @@ describe('verify step', () => {
 
     it('returns failed when redis is not running', async () => {
       mockExecSyncResults.set(
-        'kubectl get pods -n nanoclaw -l app=nanoclaw-redis',
+        'kubectl get pods -n kubeclaw -l app=kubeclaw-redis',
         'Pending',
       );
 
@@ -557,7 +557,7 @@ describe('verify step', () => {
 
     it('returns failed when credentials are missing', async () => {
       mockExecSyncResults.set(
-        'kubectl get secret nanoclaw-secrets -n nanoclaw',
+        'kubectl get secret kubeclaw-secrets -n kubeclaw',
         new Error('secret not found'),
       );
 
@@ -576,51 +576,51 @@ describe('verify step', () => {
     it('returns failed when no channels configured', async () => {
       // Set up all passing conditions EXCEPT channels
       mockExecSyncResults.set(
-        'kubectl get deployment nanoclaw-orchestrator -n nanoclaw -o jsonpath={.status.readyReplicas}',
+        'kubectl get deployment kubeclaw-orchestrator -n kubeclaw -o jsonpath={.status.readyReplicas}',
         '1',
       );
       mockExecSyncResults.set(
-        'kubectl get pods -n nanoclaw -l app=nanoclaw-redis',
+        'kubectl get pods -n kubeclaw -l app=kubeclaw-redis',
         'Running',
       );
       mockExecSyncResults.set(
-        'kubectl get secret nanoclaw-secrets -n nanoclaw',
-        'nanoclaw-secrets',
+        'kubectl get secret kubeclaw-secrets -n kubeclaw',
+        'kubeclaw-secrets',
       );
 
       // No channel auth - auth dir doesn't exist and is empty
-      mockExistsSyncResults.delete('/home/peter/projects/nanoclaw/store/auth');
+      mockExistsSyncResults.delete('/home/peter/projects/kubeclaw/store/auth');
       mockReaddirSyncResults.set(
-        '/home/peter/projects/nanoclaw/store/auth',
+        '/home/peter/projects/kubeclaw/store/auth',
         [],
       );
 
       // Mock token secret calls to return empty/not found (prevent partial match from credentials check)
       mockExecSyncResults.set(
-        'kubectl get secret nanoclaw-secrets -n nanoclaw -o jsonpath={.data.TELEGRAM_BOT_TOKEN}',
+        'kubectl get secret kubeclaw-secrets -n kubeclaw -o jsonpath={.data.TELEGRAM_BOT_TOKEN}',
         '',
       );
       mockExecSyncResults.set(
-        'kubectl get secret nanoclaw-secrets -n nanoclaw -o jsonpath={.data.SLACK_BOT_TOKEN}',
+        'kubectl get secret kubeclaw-secrets -n kubeclaw -o jsonpath={.data.SLACK_BOT_TOKEN}',
         '',
       );
       mockExecSyncResults.set(
-        'kubectl get secret nanoclaw-secrets -n nanoclaw -o jsonpath={.data.SLACK_APP_TOKEN}',
+        'kubectl get secret kubeclaw-secrets -n kubeclaw -o jsonpath={.data.SLACK_APP_TOKEN}',
         '',
       );
       mockExecSyncResults.set(
-        'kubectl get secret nanoclaw-secrets -n nanoclaw -o jsonpath={.data.DISCORD_BOT_TOKEN}',
+        'kubectl get secret kubeclaw-secrets -n kubeclaw -o jsonpath={.data.DISCORD_BOT_TOKEN}',
         '',
       );
 
       // Other requirements pass
       mockExistsSyncResults.set(
-        '/home/test/.config/nanoclaw/mount-allowlist.json',
+        '/home/test/.config/kubeclaw/mount-allowlist.json',
         true,
       );
 
       const path = await import('path');
-      const dbPath = path.join('/tmp/test-nanoclaw-verify-store', 'messages.db');
+      const dbPath = path.join('/tmp/test-kubeclaw-verify-store', 'messages.db');
       mockExistsSyncResults.set(dbPath, true);
 
       db.prepare(
@@ -672,37 +672,37 @@ describe('verify step', () => {
 
       // Setup minimal conditions with full command mocks
       mockExecSyncResults.set(
-        'kubectl get deployment nanoclaw-orchestrator -n nanoclaw -o jsonpath={.status.readyReplicas}',
+        'kubectl get deployment kubeclaw-orchestrator -n kubeclaw -o jsonpath={.status.readyReplicas}',
         '1',
       );
       mockExecSyncResults.set(
-        'kubectl get pods -n nanoclaw -l app=nanoclaw-redis',
+        'kubectl get pods -n kubeclaw -l app=kubeclaw-redis',
         'Running',
       );
       mockExecSyncResults.set(
-        'kubectl get secret nanoclaw-secrets -n nanoclaw',
-        'nanoclaw-secrets',
+        'kubectl get secret kubeclaw-secrets -n kubeclaw',
+        'kubeclaw-secrets',
       );
       // Mock the TELEGRAM_BOT_TOKEN secret fetch - need to match "data.TELEGRAM_BOT_TOKEN"
       mockExecSyncResults.set(
-        'kubectl get secret nanoclaw-secrets -n nanoclaw -o jsonpath={.data.TELEGRAM_BOT_TOKEN}',
+        'kubectl get secret kubeclaw-secrets -n kubeclaw -o jsonpath={.data.TELEGRAM_BOT_TOKEN}',
         'dGVzdC10b2tlbg==',
       );
 
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/store/auth',
+        '/home/peter/projects/kubeclaw/store/auth',
         true,
       );
       mockExistsSyncResults.set(
-        '/home/test/.config/nanoclaw/mount-allowlist.json',
+        '/home/test/.config/kubeclaw/mount-allowlist.json',
         true,
       );
-      mockReaddirSyncResults.set('/home/peter/projects/nanoclaw/store/auth', [
+      mockReaddirSyncResults.set('/home/peter/projects/kubeclaw/store/auth', [
         'auth-file.json',
       ]);
 
       const path = await import('path');
-      const dbPath = path.join('/tmp/test-nanoclaw-verify-store', 'messages.db');
+      const dbPath = path.join('/tmp/test-kubeclaw-verify-store', 'messages.db');
       mockExistsSyncResults.set(dbPath, true);
 
       db.prepare(
@@ -736,32 +736,32 @@ describe('verify step', () => {
 
       // Setup minimal conditions
       mockExecSyncResults.set(
-        'kubectl get deployment nanoclaw-orchestrator -n nanoclaw -o jsonpath={.status.readyReplicas}',
+        'kubectl get deployment kubeclaw-orchestrator -n kubeclaw -o jsonpath={.status.readyReplicas}',
         '1',
       );
       mockExecSyncResults.set(
-        'kubectl get pods -n nanoclaw -l app=nanoclaw-redis',
+        'kubectl get pods -n kubeclaw -l app=kubeclaw-redis',
         'Running',
       );
       mockExecSyncResults.set(
-        'kubectl get secret nanoclaw-secrets -n nanoclaw',
-        'nanoclaw-secrets',
+        'kubectl get secret kubeclaw-secrets -n kubeclaw',
+        'kubeclaw-secrets',
       );
 
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/store/auth',
+        '/home/peter/projects/kubeclaw/store/auth',
         true,
       );
       mockExistsSyncResults.set(
-        '/home/test/.config/nanoclaw/mount-allowlist.json',
+        '/home/test/.config/kubeclaw/mount-allowlist.json',
         true,
       );
-      mockReaddirSyncResults.set('/home/peter/projects/nanoclaw/store/auth', [
+      mockReaddirSyncResults.set('/home/peter/projects/kubeclaw/store/auth', [
         'auth-file.json',
       ]);
 
       const path = await import('path');
-      const dbPath = path.join('/tmp/test-nanoclaw-verify-store', 'messages.db');
+      const dbPath = path.join('/tmp/test-kubeclaw-verify-store', 'messages.db');
       mockExistsSyncResults.set(dbPath, true);
 
       db.prepare(

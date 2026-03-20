@@ -94,7 +94,7 @@ const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'openai/gpt-4o';
 const OPENROUTER_BASE_URL =
   process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1';
 const OPENROUTER_REFERER =
-  process.env.OPENROUTER_HTTP_REFERER || 'https://nanoclaw.local';
+  process.env.OPENROUTER_HTTP_REFERER || 'https://kubeclaw.local';
 const OPENROUTER_TITLE = process.env.OPENROUTER_X_TITLE || 'NanoClaw';
 
 // Secrets to strip from Bash tool subprocess environments
@@ -145,8 +145,8 @@ async function readStdin(): Promise<string> {
   });
 }
 
-const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
-const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
+const OUTPUT_START_MARKER = '---KUBECLAW_OUTPUT_START---';
+const OUTPUT_END_MARKER = '---KUBECLAW_OUTPUT_END---';
 
 function writeOutput(output: ContainerOutput): void {
   console.log(OUTPUT_START_MARKER);
@@ -659,14 +659,14 @@ async function runQuery(
     args: [mcpServerPath],
     env: {
       ...process.env,
-      NANOCLAW_CHAT_JID: containerInput.chatJid,
-      NANOCLAW_GROUP_FOLDER: containerInput.groupFolder,
-      NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
+      KUBECLAW_CHAT_JID: containerInput.chatJid,
+      KUBECLAW_GROUP_FOLDER: containerInput.groupFolder,
+      KUBECLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
     } as Record<string, string>,
   });
 
   const mcpClient = new Client({
-    name: 'nanoclaw-openrouter',
+    name: 'kubeclaw-openrouter',
     version: '1.0.0',
   });
   await mcpClient.connect(mcpTransport);

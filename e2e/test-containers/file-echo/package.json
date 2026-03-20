@@ -1,5 +1,5 @@
 {
-  "name": "nanoclaw-test-file-echo",
+  "name": "kubeclaw-test-file-echo",
   "version": "1.0.0",
   "description": "Test container for file-based sidecar - echoes input back",
   "main": "src/index.js",

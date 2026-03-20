@@ -27,7 +27,7 @@ import {
 } from './lib/redis-cluster.js';
 
 const NAMESPACE = getNamespace();
-const TEST_IMAGE_NAME = 'nanoclaw-test-file-echo:latest';
+const TEST_IMAGE_NAME = 'kubeclaw-test-file-echo:latest';
 
 // Module-level check for Kubernetes availability
 // This must be at module level because skipIf is evaluated at test definition time
@@ -109,14 +109,14 @@ describe('File Sidecar E2E Tests', () => {
 
     // Clean up test keys
     if (K8S_AVAILABLE) {
-      cleanupTestKeys('nanoclaw:*:file-echo-test-*');
+      cleanupTestKeys('kubeclaw:*:file-echo-test-*');
     }
   }, 30000);
 
   beforeEach(async () => {
     // Clean up test keys before each test
     if (K8S_AVAILABLE) {
-      cleanupTestKeys('nanoclaw:*:file-echo-test-*');
+      cleanupTestKeys('kubeclaw:*:file-echo-test-*');
     }
   });
 
@@ -173,7 +173,7 @@ describe('File Sidecar E2E Tests', () => {
       console.log('Verifying ACL authentication...');
       try {
         execSync(
-          `kubectl exec -n ${NAMESPACE} nanoclaw-redis-0 -- redis-cli --user ${credentials.username} --pass ${credentials.password} PING`,
+          `kubectl exec -n ${NAMESPACE} kubeclaw-redis-0 -- redis-cli --user ${credentials.username} --pass ${credentials.password} PING`,
           { stdio: 'ignore' },
         );
         console.log('ACL authentication verified');
@@ -233,14 +233,14 @@ describe('File Sidecar E2E Tests', () => {
 
     // Fix REDIS_URL to use in-cluster service
     const adapterContainer = manifest.spec?.template?.spec?.containers?.find(
-      (c: any) => c.name === 'nanoclaw-file-adapter',
+      (c: any) => c.name === 'kubeclaw-file-adapter',
     );
     if (adapterContainer?.env) {
       const redisEnv = adapterContainer.env.find(
         (e: any) => e.name === 'REDIS_URL',
       );
       if (redisEnv) {
-        redisEnv.value = 'redis://nanoclaw-redis:6379';
+        redisEnv.value = 'redis://kubeclaw-redis:6379';
       }
     }
 
@@ -258,7 +258,7 @@ describe('File Sidecar E2E Tests', () => {
     // Create the job using kubectl via a temp file (avoids shell quoting issues
     // with single quotes in JSON values such as passwords)
     const manifestJson = JSON.stringify(manifest);
-    const tmpFile = join(tmpdir(), `nanoclaw-manifest-${jobId}.json`);
+    const tmpFile = join(tmpdir(), `kubeclaw-manifest-${jobId}.json`);
     try {
       writeFileSync(tmpFile, manifestJson, 'utf8');
       execSync(`kubectl apply -n ${NAMESPACE} -f ${tmpFile}`, {
@@ -287,7 +287,7 @@ describe('File Sidecar E2E Tests', () => {
    * Subscribe to the pub/sub output channel for a job BEFORE creating the job.
    * Returns a handle whose waitForResult() resolves when a message arrives.
    *
-   * The adapters use `PUBLISH nanoclaw:output:{jobId}` (not SET), so we must
+   * The adapters use `PUBLISH kubeclaw:output:{jobId}` (not SET), so we must
    * subscribe rather than poll with GET.
    */
   async function subscribeToOutput(jobId: string): Promise<{
@@ -299,7 +299,7 @@ describe('File Sidecar E2E Tests', () => {
       throw new Error('Shared Redis not available for pub/sub subscription');
     }
 
-    const channel = `nanoclaw:output:${jobId}`;
+    const channel = `kubeclaw:output:${jobId}`;
     const { Redis } = await import('ioredis');
     const subscriber = new Redis({
       host: (redis as any).options?.host ?? 'localhost',
@@ -363,7 +363,7 @@ describe('File Sidecar E2E Tests', () => {
       throw new Error('Shared Redis not available for pub/sub subscription');
     }
 
-    const channel = `nanoclaw:output:${jobId}`;
+    const channel = `kubeclaw:output:${jobId}`;
     const { Redis } = await import('ioredis');
     const subscriber = new Redis({
       host: (redis as any).options?.host ?? 'localhost',
@@ -425,7 +425,7 @@ describe('File Sidecar E2E Tests', () => {
    * Send a follow-up message to a job via XADD on the Redis Stream
    * that the adapter is blocking-reading from.
    *
-   * Stream key: nanoclaw:input:{jobId}
+   * Stream key: kubeclaw:input:{jobId}
    * Fields: type=followup  prompt=<prompt>  [sessionId=<id>]
    */
   function sendFollowupMessage(
@@ -434,7 +434,7 @@ describe('File Sidecar E2E Tests', () => {
     sessionId?: string,
   ): void {
     const safePrompt = prompt.replace(/'/g, "'\"'\"'");
-    let cmd = `XADD nanoclaw:input:${jobId} '*' type followup prompt '${safePrompt}'`;
+    let cmd = `XADD kubeclaw:input:${jobId} '*' type followup prompt '${safePrompt}'`;
     if (sessionId) {
       cmd += ` sessionId '${sessionId}'`;
     }
@@ -445,7 +445,7 @@ describe('File Sidecar E2E Tests', () => {
    * Send a close message to shut down the adapter cleanly.
    */
   function sendCloseMessage(jobId: string): void {
-    execRedisCommand(`XADD nanoclaw:input:${jobId} '*' type close`);
+    execRedisCommand(`XADD kubeclaw:input:${jobId} '*' type close`);
   }
 
   describe('Simple Echo Task Processing', () => {

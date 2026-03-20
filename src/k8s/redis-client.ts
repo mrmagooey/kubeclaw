@@ -12,7 +12,7 @@ let redisSubscriber: Redis | null = null;
 
 export function getRedisConfig(): RedisConfig {
   return {
-    url: process.env.REDIS_URL || 'redis://nanoclaw-redis:6379',
+    url: process.env.REDIS_URL || 'redis://kubeclaw-redis:6379',
     maxRetriesPerRequest: 3,
     enableReadyCheck: true,
   };

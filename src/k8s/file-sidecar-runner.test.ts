@@ -57,7 +57,7 @@ vi.mock('@kubernetes/client-node', () => {
 vi.mock('../config.js', () => ({
   CONTAINER_TIMEOUT: 300000,
   IDLE_TIMEOUT: 30000,
-  NANOCLAW_NAMESPACE: 'nanoclaw',
+  KUBECLAW_NAMESPACE: 'nanoclaw',
   SIDECAR_FILE_ADAPTER_IMAGE: 'nanoclaw/file-adapter:latest',
   SIDECAR_FILE_POLL_INTERVAL: 1000,
   AGENT_JOB_MEMORY_REQUEST: '512Mi',
@@ -168,7 +168,7 @@ describe('FileSidecarJobRunner', () => {
 
       const containers = manifest.spec?.template?.spec?.containers;
       expect(containers).toHaveLength(2);
-      expect(containers?.[0].name).toBe('nanoclaw-file-adapter');
+      expect(containers?.[0].name).toBe('kubeclaw-file-adapter');
       expect(containers?.[1].name).toBe('user-agent');
     });
 
@@ -235,35 +235,35 @@ describe('FileSidecarJobRunner', () => {
 
       expect(env).toContainEqual({ name: 'TZ', value: 'UTC' });
       expect(env).toContainEqual({
-        name: 'NANOCLAW_GROUP_FOLDER',
+        name: 'KUBECLAW_GROUP_FOLDER',
         value: 'test-group',
       });
       expect(env).toContainEqual({
-        name: 'NANOCLAW_CHAT_JID',
+        name: 'KUBECLAW_CHAT_JID',
         value: 'test@g.us',
       });
-      expect(env).toContainEqual({ name: 'NANOCLAW_IS_MAIN', value: 'true' });
+      expect(env).toContainEqual({ name: 'KUBECLAW_IS_MAIN', value: 'true' });
       expect(env).toContainEqual({
-        name: 'NANOCLAW_PROMPT',
+        name: 'KUBECLAW_PROMPT',
         value: 'Test prompt',
       });
       expect(env).toContainEqual({
-        name: 'NANOCLAW_SESSION_ID',
+        name: 'KUBECLAW_SESSION_ID',
         value: 'session-123',
       });
       expect(env).toContainEqual({
-        name: 'NANOCLAW_ASSISTANT_NAME',
+        name: 'KUBECLAW_ASSISTANT_NAME',
         value: 'TestBot',
       });
       expect(env).toContainEqual({
-        name: 'NANOCLAW_JOB_ID',
+        name: 'KUBECLAW_JOB_ID',
         value: 'test-job-id',
       });
       expect(env).toContainEqual({
-        name: 'NANOCLAW_POLL_INTERVAL',
+        name: 'KUBECLAW_POLL_INTERVAL',
         value: '500',
       });
-      expect(env).toContainEqual({ name: 'NANOCLAW_TIMEOUT', value: '60000' });
+      expect(env).toContainEqual({ name: 'KUBECLAW_TIMEOUT', value: '60000' });
     });
 
     it('should mount groups and sessions PVCs', () => {

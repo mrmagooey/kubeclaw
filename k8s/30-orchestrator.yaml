@@ -1,14 +1,14 @@
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: nanoclaw-orchestrator
-  namespace: nanoclaw
+  name: kubeclaw-orchestrator
+  namespace: kubeclaw
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: nanoclaw-job-manager
-  namespace: nanoclaw
+  name: kubeclaw-job-manager
+  namespace: kubeclaw
 rules:
   - apiGroups:
       - batch
@@ -38,33 +38,33 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: nanoclaw-orchestrator-binding
-  namespace: nanoclaw
+  name: kubeclaw-orchestrator-binding
+  namespace: kubeclaw
 subjects:
   - kind: ServiceAccount
-    name: nanoclaw-orchestrator
-    namespace: nanoclaw
+    name: kubeclaw-orchestrator
+    namespace: kubeclaw
 roleRef:
   kind: Role
-  name: nanoclaw-job-manager
+  name: kubeclaw-job-manager
   apiGroup: rbac.authorization.k8s.io
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: nanoclaw-orchestrator
-  namespace: nanoclaw
+  name: kubeclaw-orchestrator
+  namespace: kubeclaw
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: nanoclaw-orchestrator
+      app: kubeclaw-orchestrator
   template:
     metadata:
       labels:
-        app: nanoclaw-orchestrator
+        app: kubeclaw-orchestrator
     spec:
-      serviceAccountName: nanoclaw-orchestrator
+      serviceAccountName: kubeclaw-orchestrator
       securityContext:
         runAsUser: 0
         runAsNonRoot: false
@@ -88,7 +88,7 @@ spec:
               mountPath: /data/sessions
       containers:
         - name: orchestrator
-          image: nanoclaw-orchestrator:latest
+          image: kubeclaw-orchestrator:latest
           imagePullPolicy: Never
           securityContext:
             runAsUser: 0
@@ -101,11 +101,11 @@ spec:
               type: RuntimeDefault
           env:
             - name: REDIS_URL
-              value: redis://nanoclaw-redis:6379
+              value: redis://kubeclaw-redis:6379
             - name: REDIS_ADMIN_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: nanoclaw-redis
+                  name: kubeclaw-redis
                   key: admin-password
             - name: NANOCLAW_RUNTIME
               value: kubernetes
@@ -118,17 +118,17 @@ spec:
             - name: ANTHROPIC_API_KEY
               valueFrom:
                 secretKeyRef:
-                  name: nanoclaw-secrets
+                  name: kubeclaw-secrets
                   key: anthropic-api-key
                   optional: true
             - name: CLAUDE_CODE_OAUTH_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: nanoclaw-secrets
+                  name: kubeclaw-secrets
                   key: claude-code-oauth-token
                   optional: true
             - name: IRC_SERVER
-              value: nanoclaw-irc-mock
+              value: kubeclaw-irc-mock
             - name: IRC_PORT
               value: '16667'
             - name: IRC_NICK
@@ -152,10 +152,10 @@ spec:
       volumes:
         - name: groups
           persistentVolumeClaim:
-            claimName: nanoclaw-groups
+            claimName: kubeclaw-groups
         - name: store
           persistentVolumeClaim:
-            claimName: nanoclaw-store
+            claimName: kubeclaw-store
         - name: sessions
           persistentVolumeClaim:
-            claimName: nanoclaw-sessions
+            claimName: kubeclaw-sessions

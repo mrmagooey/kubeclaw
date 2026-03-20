@@ -42,7 +42,7 @@ describe('RedisIPCClient', () => {
       await client.connect();
 
       // Add a message to verify stream name is used correctly
-      mockRedis.addStreamMessage('nanoclaw:input:job-123', { type: 'close' });
+      mockRedis.addStreamMessage('kubeclaw:input:job-123', { type: 'close' });
 
       const messages: RedisMessage[] = [];
       const generator = client.listenForMessages();
@@ -64,8 +64,8 @@ describe('RedisIPCClient', () => {
       };
 
       let publishedChannel = '';
-      mockRedis.subscribe('nanoclaw:output:job-123', (msg: string) => {
-        publishedChannel = 'nanoclaw:output:job-123';
+      mockRedis.subscribe('kubeclaw:output:job-123', (msg: string) => {
+        publishedChannel = 'kubeclaw:output:job-123';
       });
 
       await client.sendOutput(output);
@@ -182,7 +182,7 @@ describe('RedisIPCClient', () => {
     it('should yield followup messages', async () => {
       await client.connect();
 
-      mockRedis.addStreamMessage('nanoclaw:input:job-123', {
+      mockRedis.addStreamMessage('kubeclaw:input:job-123', {
         type: 'followup',
         prompt: 'Hello',
         sessionId: 'session-1',
@@ -202,7 +202,7 @@ describe('RedisIPCClient', () => {
     it('should yield close signals', async () => {
       await client.connect();
 
-      mockRedis.addStreamMessage('nanoclaw:input:job-123', {
+      mockRedis.addStreamMessage('kubeclaw:input:job-123', {
         type: 'close',
       });
 
@@ -233,7 +233,7 @@ describe('RedisIPCClient', () => {
         }
         return [
           {
-            name: 'nanoclaw:input:job-123',
+            name: 'kubeclaw:input:job-123',
             messages: [
               {
                 id: '1',
@@ -264,7 +264,7 @@ describe('RedisIPCClient', () => {
         mockRedis.isReady = true;
         return [
           {
-            name: 'nanoclaw:input:job-123',
+            name: 'kubeclaw:input:job-123',
             messages: [
               {
                 id: '1',

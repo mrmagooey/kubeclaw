@@ -90,13 +90,13 @@ describe('kubernetes step', () => {
   });
 
   describe('parseArgs', () => {
-    it('defaults to skipBuild=true and namespace=nanoclaw', async () => {
+    it('defaults to skipBuild=true and namespace=kubeclaw', async () => {
       const { run } = await import('./kubernetes.js');
 
       // Mock cluster-info to succeed so we don't exit early
       mockExecSyncResults.set('kubectl cluster-info', '');
       mockExecSyncResults.set(
-        'kubectl get secret nanoclaw-secrets -n nanoclaw',
+        'kubectl get secret kubeclaw-secrets -n kubeclaw',
         new Error('secret not found'),
       );
 
@@ -107,33 +107,33 @@ describe('kubernetes step', () => {
         stderr: '',
       });
       mockSpawnSyncResults.set(
-        'kubectl rollout status deployment/nanoclaw-orchestrator -n nanoclaw --timeout=120s',
+        'kubectl rollout status deployment/kubeclaw-orchestrator -n kubeclaw --timeout=120s',
         { status: 0, stdout: '', stderr: '' },
       );
       mockSpawnSyncResults.set(
-        'kubectl get pods -n nanoclaw -l app=nanoclaw-redis -o jsonpath={.items[0].status.phase}',
+        'kubectl get pods -n kubeclaw -l app=kubeclaw-redis -o jsonpath={.items[0].status.phase}',
         { status: 0, stdout: 'Running', stderr: '' },
       );
 
       // Mock fs.existsSync for manifest files
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/00-namespace.yaml',
+        '/home/peter/projects/kubeclaw/k8s/00-namespace.yaml',
         true,
       );
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/01-network-policy.yaml',
+        '/home/peter/projects/kubeclaw/k8s/01-network-policy.yaml',
         true,
       );
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/10-redis.yaml',
+        '/home/peter/projects/kubeclaw/k8s/10-redis.yaml',
         true,
       );
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/20-storage.yaml',
+        '/home/peter/projects/kubeclaw/k8s/20-storage.yaml',
         true,
       );
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/30-orchestrator.yaml',
+        '/home/peter/projects/kubeclaw/k8s/30-orchestrator.yaml',
         true,
       );
 
@@ -155,7 +155,7 @@ describe('kubernetes step', () => {
       let buildCalled = false;
       mockExecSyncResults.set('kubectl cluster-info', '');
       mockExecSyncResults.set(
-        'kubectl get secret nanoclaw-secrets -n nanoclaw',
+        'kubectl get secret kubeclaw-secrets -n kubeclaw',
         new Error('secret not found'),
       );
 
@@ -165,32 +165,32 @@ describe('kubernetes step', () => {
         stderr: '',
       });
       mockSpawnSyncResults.set(
-        'kubectl rollout status deployment/nanoclaw-orchestrator -n nanoclaw --timeout=120s',
+        'kubectl rollout status deployment/kubeclaw-orchestrator -n kubeclaw --timeout=120s',
         { status: 0, stdout: '', stderr: '' },
       );
       mockSpawnSyncResults.set(
-        'kubectl get pods -n nanoclaw -l app=nanoclaw-redis -o jsonpath={.items[0].status.phase}',
+        'kubectl get pods -n kubeclaw -l app=kubeclaw-redis -o jsonpath={.items[0].status.phase}',
         { status: 0, stdout: 'Running', stderr: '' },
       );
 
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/00-namespace.yaml',
+        '/home/peter/projects/kubeclaw/k8s/00-namespace.yaml',
         true,
       );
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/01-network-policy.yaml',
+        '/home/peter/projects/kubeclaw/k8s/01-network-policy.yaml',
         true,
       );
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/10-redis.yaml',
+        '/home/peter/projects/kubeclaw/k8s/10-redis.yaml',
         true,
       );
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/20-storage.yaml',
+        '/home/peter/projects/kubeclaw/k8s/20-storage.yaml',
         true,
       );
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/30-orchestrator.yaml',
+        '/home/peter/projects/kubeclaw/k8s/30-orchestrator.yaml',
         true,
       );
 
@@ -217,7 +217,7 @@ describe('kubernetes step', () => {
 
       mockExecSyncResults.set('kubectl cluster-info', '');
       mockExecSyncResults.set(
-        'kubectl get secret nanoclaw-secrets -n custom-ns',
+        'kubectl get secret kubeclaw-secrets -n custom-ns',
         new Error('secret not found'),
       );
 
@@ -227,32 +227,32 @@ describe('kubernetes step', () => {
         stderr: '',
       });
       mockSpawnSyncResults.set(
-        'kubectl rollout status deployment/nanoclaw-orchestrator -n custom-ns --timeout=120s',
+        'kubectl rollout status deployment/kubeclaw-orchestrator -n custom-ns --timeout=120s',
         { status: 0, stdout: '', stderr: '' },
       );
       mockSpawnSyncResults.set(
-        'kubectl get pods -n custom-ns -l app=nanoclaw-redis -o jsonpath={.items[0].status.phase}',
+        'kubectl get pods -n custom-ns -l app=kubeclaw-redis -o jsonpath={.items[0].status.phase}',
         { status: 0, stdout: 'Running', stderr: '' },
       );
 
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/00-namespace.yaml',
+        '/home/peter/projects/kubeclaw/k8s/00-namespace.yaml',
         true,
       );
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/01-network-policy.yaml',
+        '/home/peter/projects/kubeclaw/k8s/01-network-policy.yaml',
         true,
       );
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/10-redis.yaml',
+        '/home/peter/projects/kubeclaw/k8s/10-redis.yaml',
         true,
       );
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/20-storage.yaml',
+        '/home/peter/projects/kubeclaw/k8s/20-storage.yaml',
         true,
       );
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/30-orchestrator.yaml',
+        '/home/peter/projects/kubeclaw/k8s/30-orchestrator.yaml',
         true,
       );
 
@@ -271,7 +271,7 @@ describe('kubernetes step', () => {
 
       mockExecSyncResults.set('kubectl cluster-info', '');
       mockExecSyncResults.set(
-        'kubectl get secret nanoclaw-secrets -n nanoclaw',
+        'kubectl get secret kubeclaw-secrets -n kubeclaw',
         new Error('secret not found'),
       );
 
@@ -281,39 +281,39 @@ describe('kubernetes step', () => {
         stderr: '',
       });
       mockSpawnSyncResults.set(
-        'kubectl rollout status deployment/nanoclaw-orchestrator -n nanoclaw --timeout=120s',
+        'kubectl rollout status deployment/kubeclaw-orchestrator -n kubeclaw --timeout=120s',
         { status: 0, stdout: '', stderr: '' },
       );
       mockSpawnSyncResults.set(
-        'kubectl get pods -n nanoclaw -l app=nanoclaw-redis -o jsonpath={.items[0].status.phase}',
+        'kubectl get pods -n kubeclaw -l app=kubeclaw-redis -o jsonpath={.items[0].status.phase}',
         { status: 0, stdout: 'Running', stderr: '' },
       );
 
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/00-namespace.yaml',
+        '/home/peter/projects/kubeclaw/k8s/00-namespace.yaml',
         true,
       );
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/01-network-policy.yaml',
+        '/home/peter/projects/kubeclaw/k8s/01-network-policy.yaml',
         true,
       );
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/10-redis.yaml',
+        '/home/peter/projects/kubeclaw/k8s/10-redis.yaml',
         true,
       );
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/20-storage.yaml',
+        '/home/peter/projects/kubeclaw/k8s/20-storage.yaml',
         true,
       );
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/30-orchestrator.yaml',
+        '/home/peter/projects/kubeclaw/k8s/30-orchestrator.yaml',
         true,
       );
 
       // Mock fs.readFileSync to return orchestrator content
       mockReadFileResults.set(
-        '/home/peter/projects/nanoclaw/k8s/30-orchestrator.yaml',
-        'image: nanoclaw-orchestrator:latest\nimagePullPolicy: Never',
+        '/home/peter/projects/kubeclaw/k8s/30-orchestrator.yaml',
+        'image: kubeclaw-orchestrator:latest\nimagePullPolicy: Never',
       );
 
       await run(['--build', '--registry', 'reg.example.com']);
@@ -327,8 +327,8 @@ describe('kubernetes step', () => {
     it('returns true when kubectl get secret succeeds', async () => {
       mockExecSyncResults.set('kubectl cluster-info', '');
       mockExecSyncResults.set(
-        'kubectl get secret nanoclaw-secrets -n nanoclaw',
-        'nanoclaw-secrets',
+        'kubectl get secret kubeclaw-secrets -n kubeclaw',
+        'kubeclaw-secrets',
       );
 
       mockSpawnSyncResults.set('kubectl apply -f -', {
@@ -337,32 +337,32 @@ describe('kubernetes step', () => {
         stderr: '',
       });
       mockSpawnSyncResults.set(
-        'kubectl rollout status deployment/nanoclaw-orchestrator -n nanoclaw --timeout=120s',
+        'kubectl rollout status deployment/kubeclaw-orchestrator -n kubeclaw --timeout=120s',
         { status: 0, stdout: '', stderr: '' },
       );
       mockSpawnSyncResults.set(
-        'kubectl get pods -n nanoclaw -l app=nanoclaw-redis -o jsonpath={.items[0].status.phase}',
+        'kubectl get pods -n kubeclaw -l app=kubeclaw-redis -o jsonpath={.items[0].status.phase}',
         { status: 0, stdout: 'Running', stderr: '' },
       );
 
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/00-namespace.yaml',
+        '/home/peter/projects/kubeclaw/k8s/00-namespace.yaml',
         true,
       );
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/01-network-policy.yaml',
+        '/home/peter/projects/kubeclaw/k8s/01-network-policy.yaml',
         true,
       );
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/10-redis.yaml',
+        '/home/peter/projects/kubeclaw/k8s/10-redis.yaml',
         true,
       );
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/20-storage.yaml',
+        '/home/peter/projects/kubeclaw/k8s/20-storage.yaml',
         true,
       );
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/30-orchestrator.yaml',
+        '/home/peter/projects/kubeclaw/k8s/30-orchestrator.yaml',
         true,
       );
 
@@ -373,7 +373,7 @@ describe('kubernetes step', () => {
       const execSyncMock = vi.mocked(execSync);
       const secretCalls = execSyncMock.mock.calls.filter(
         (call) =>
-          typeof call[0] === 'string' && call[0].includes('nanoclaw-secrets'),
+          typeof call[0] === 'string' && call[0].includes('kubeclaw-secrets'),
       );
       expect(secretCalls.length).toBeGreaterThan(0);
 
@@ -387,7 +387,7 @@ describe('kubernetes step', () => {
     it('returns false when kubectl get secret fails', async () => {
       mockExecSyncResults.set('kubectl cluster-info', '');
       mockExecSyncResults.set(
-        'kubectl get secret nanoclaw-secrets -n nanoclaw',
+        'kubectl get secret kubeclaw-secrets -n kubeclaw',
         new Error('secret not found'),
       );
 
@@ -397,32 +397,32 @@ describe('kubernetes step', () => {
         stderr: '',
       });
       mockSpawnSyncResults.set(
-        'kubectl rollout status deployment/nanoclaw-orchestrator -n nanoclaw --timeout=120s',
+        'kubectl rollout status deployment/kubeclaw-orchestrator -n kubeclaw --timeout=120s',
         { status: 0, stdout: '', stderr: '' },
       );
       mockSpawnSyncResults.set(
-        'kubectl get pods -n nanoclaw -l app=nanoclaw-redis -o jsonpath={.items[0].status.phase}',
+        'kubectl get pods -n kubeclaw -l app=kubeclaw-redis -o jsonpath={.items[0].status.phase}',
         { status: 0, stdout: 'Running', stderr: '' },
       );
 
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/00-namespace.yaml',
+        '/home/peter/projects/kubeclaw/k8s/00-namespace.yaml',
         true,
       );
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/01-network-policy.yaml',
+        '/home/peter/projects/kubeclaw/k8s/01-network-policy.yaml',
         true,
       );
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/10-redis.yaml',
+        '/home/peter/projects/kubeclaw/k8s/10-redis.yaml',
         true,
       );
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/20-storage.yaml',
+        '/home/peter/projects/kubeclaw/k8s/20-storage.yaml',
         true,
       );
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/30-orchestrator.yaml',
+        '/home/peter/projects/kubeclaw/k8s/30-orchestrator.yaml',
         true,
       );
 
@@ -433,7 +433,7 @@ describe('kubernetes step', () => {
       const execSyncMock = vi.mocked(execSync);
       const secretCalls = execSyncMock.mock.calls.filter(
         (call) =>
-          typeof call[0] === 'string' && call[0].includes('nanoclaw-secrets'),
+          typeof call[0] === 'string' && call[0].includes('kubeclaw-secrets'),
       );
       expect(secretCalls.length).toBeGreaterThan(0);
 
@@ -453,7 +453,7 @@ describe('kubernetes step', () => {
         '{"minikube":"true"}',
       );
       mockExecSyncResults.set(
-        'kubectl get secret nanoclaw-secrets -n nanoclaw',
+        'kubectl get secret kubeclaw-secrets -n kubeclaw',
         new Error('secret not found'),
       );
 
@@ -463,32 +463,32 @@ describe('kubernetes step', () => {
         stderr: '',
       });
       mockSpawnSyncResults.set(
-        'kubectl rollout status deployment/nanoclaw-orchestrator -n nanoclaw --timeout=120s',
+        'kubectl rollout status deployment/kubeclaw-orchestrator -n kubeclaw --timeout=120s',
         { status: 0, stdout: '', stderr: '' },
       );
       mockSpawnSyncResults.set(
-        'kubectl get pods -n nanoclaw -l app=nanoclaw-redis -o jsonpath={.items[0].status.phase}',
+        'kubectl get pods -n kubeclaw -l app=kubeclaw-redis -o jsonpath={.items[0].status.phase}',
         { status: 0, stdout: 'Running', stderr: '' },
       );
 
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/00-namespace.yaml',
+        '/home/peter/projects/kubeclaw/k8s/00-namespace.yaml',
         true,
       );
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/01-network-policy.yaml',
+        '/home/peter/projects/kubeclaw/k8s/01-network-policy.yaml',
         true,
       );
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/10-redis.yaml',
+        '/home/peter/projects/kubeclaw/k8s/10-redis.yaml',
         true,
       );
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/20-storage-minikube.yaml',
+        '/home/peter/projects/kubeclaw/k8s/20-storage-minikube.yaml',
         true,
       );
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/30-orchestrator.yaml',
+        '/home/peter/projects/kubeclaw/k8s/30-orchestrator.yaml',
         true,
       );
 
@@ -511,7 +511,7 @@ describe('kubernetes step', () => {
         '{"kubernetes.io/os":"linux"}',
       );
       mockExecSyncResults.set(
-        'kubectl get secret nanoclaw-secrets -n nanoclaw',
+        'kubectl get secret kubeclaw-secrets -n kubeclaw',
         new Error('secret not found'),
       );
 
@@ -521,32 +521,32 @@ describe('kubernetes step', () => {
         stderr: '',
       });
       mockSpawnSyncResults.set(
-        'kubectl rollout status deployment/nanoclaw-orchestrator -n nanoclaw --timeout=120s',
+        'kubectl rollout status deployment/kubeclaw-orchestrator -n kubeclaw --timeout=120s',
         { status: 0, stdout: '', stderr: '' },
       );
       mockSpawnSyncResults.set(
-        'kubectl get pods -n nanoclaw -l app=nanoclaw-redis -o jsonpath={.items[0].status.phase}',
+        'kubectl get pods -n kubeclaw -l app=kubeclaw-redis -o jsonpath={.items[0].status.phase}',
         { status: 0, stdout: 'Running', stderr: '' },
       );
 
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/00-namespace.yaml',
+        '/home/peter/projects/kubeclaw/k8s/00-namespace.yaml',
         true,
       );
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/01-network-policy.yaml',
+        '/home/peter/projects/kubeclaw/k8s/01-network-policy.yaml',
         true,
       );
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/10-redis.yaml',
+        '/home/peter/projects/kubeclaw/k8s/10-redis.yaml',
         true,
       );
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/20-storage.yaml',
+        '/home/peter/projects/kubeclaw/k8s/20-storage.yaml',
         true,
       );
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/30-orchestrator.yaml',
+        '/home/peter/projects/kubeclaw/k8s/30-orchestrator.yaml',
         true,
       );
 
@@ -569,7 +569,7 @@ describe('kubernetes step', () => {
         new Error('kubectl failed'),
       );
       mockExecSyncResults.set(
-        'kubectl get secret nanoclaw-secrets -n nanoclaw',
+        'kubectl get secret kubeclaw-secrets -n kubeclaw',
         new Error('secret not found'),
       );
 
@@ -579,32 +579,32 @@ describe('kubernetes step', () => {
         stderr: '',
       });
       mockSpawnSyncResults.set(
-        'kubectl rollout status deployment/nanoclaw-orchestrator -n nanoclaw --timeout=120s',
+        'kubectl rollout status deployment/kubeclaw-orchestrator -n kubeclaw --timeout=120s',
         { status: 0, stdout: '', stderr: '' },
       );
       mockSpawnSyncResults.set(
-        'kubectl get pods -n nanoclaw -l app=nanoclaw-redis -o jsonpath={.items[0].status.phase}',
+        'kubectl get pods -n kubeclaw -l app=kubeclaw-redis -o jsonpath={.items[0].status.phase}',
         { status: 0, stdout: 'Running', stderr: '' },
       );
 
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/00-namespace.yaml',
+        '/home/peter/projects/kubeclaw/k8s/00-namespace.yaml',
         true,
       );
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/01-network-policy.yaml',
+        '/home/peter/projects/kubeclaw/k8s/01-network-policy.yaml',
         true,
       );
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/10-redis.yaml',
+        '/home/peter/projects/kubeclaw/k8s/10-redis.yaml',
         true,
       );
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/20-storage.yaml',
+        '/home/peter/projects/kubeclaw/k8s/20-storage.yaml',
         true,
       );
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/30-orchestrator.yaml',
+        '/home/peter/projects/kubeclaw/k8s/30-orchestrator.yaml',
         true,
       );
 
@@ -625,7 +625,7 @@ describe('kubernetes step', () => {
     it('resolves true when pod reaches Running on first poll', async () => {
       mockExecSyncResults.set('kubectl cluster-info', '');
       mockExecSyncResults.set(
-        'kubectl get secret nanoclaw-secrets -n nanoclaw',
+        'kubectl get secret kubeclaw-secrets -n kubeclaw',
         new Error('secret not found'),
       );
 
@@ -635,32 +635,32 @@ describe('kubernetes step', () => {
         stderr: '',
       });
       mockSpawnSyncResults.set(
-        'kubectl rollout status deployment/nanoclaw-orchestrator -n nanoclaw --timeout=120s',
+        'kubectl rollout status deployment/kubeclaw-orchestrator -n kubeclaw --timeout=120s',
         { status: 0, stdout: '', stderr: '' },
       );
       mockSpawnSyncResults.set(
-        'kubectl get pods -n nanoclaw -l app=nanoclaw-redis -o jsonpath={.items[0].status.phase}',
+        'kubectl get pods -n kubeclaw -l app=kubeclaw-redis -o jsonpath={.items[0].status.phase}',
         { status: 0, stdout: 'Running', stderr: '' },
       );
 
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/00-namespace.yaml',
+        '/home/peter/projects/kubeclaw/k8s/00-namespace.yaml',
         true,
       );
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/01-network-policy.yaml',
+        '/home/peter/projects/kubeclaw/k8s/01-network-policy.yaml',
         true,
       );
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/10-redis.yaml',
+        '/home/peter/projects/kubeclaw/k8s/10-redis.yaml',
         true,
       );
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/20-storage.yaml',
+        '/home/peter/projects/kubeclaw/k8s/20-storage.yaml',
         true,
       );
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/30-orchestrator.yaml',
+        '/home/peter/projects/kubeclaw/k8s/30-orchestrator.yaml',
         true,
       );
 
@@ -677,7 +677,7 @@ describe('kubernetes step', () => {
     it('resolves true when pod reaches Running on third poll', async () => {
       mockExecSyncResults.set('kubectl cluster-info', '');
       mockExecSyncResults.set(
-        'kubectl get secret nanoclaw-secrets -n nanoclaw',
+        'kubectl get secret kubeclaw-secrets -n kubeclaw',
         new Error('secret not found'),
       );
 
@@ -687,7 +687,7 @@ describe('kubernetes step', () => {
         stderr: '',
       });
       mockSpawnSyncResults.set(
-        'kubectl rollout status deployment/nanoclaw-orchestrator -n nanoclaw --timeout=120s',
+        'kubectl rollout status deployment/kubeclaw-orchestrator -n kubeclaw --timeout=120s',
         { status: 0, stdout: '', stderr: '' },
       );
 
@@ -698,7 +698,7 @@ describe('kubernetes step', () => {
         (cmd: string, args?: readonly string[]) => {
           const argsStr = args?.join(' ') ?? '';
           const key = `${cmd} ${argsStr}`;
-          if (key.includes('nanoclaw-redis') && key.includes('phase')) {
+          if (key.includes('kubeclaw-redis') && key.includes('phase')) {
             pollCount++;
             return {
               status: 0,
@@ -721,23 +721,23 @@ describe('kubernetes step', () => {
       );
 
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/00-namespace.yaml',
+        '/home/peter/projects/kubeclaw/k8s/00-namespace.yaml',
         true,
       );
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/01-network-policy.yaml',
+        '/home/peter/projects/kubeclaw/k8s/01-network-policy.yaml',
         true,
       );
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/10-redis.yaml',
+        '/home/peter/projects/kubeclaw/k8s/10-redis.yaml',
         true,
       );
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/20-storage.yaml',
+        '/home/peter/projects/kubeclaw/k8s/20-storage.yaml',
         true,
       );
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/30-orchestrator.yaml',
+        '/home/peter/projects/kubeclaw/k8s/30-orchestrator.yaml',
         true,
       );
 
@@ -766,7 +766,7 @@ describe('kubernetes step', () => {
     it('resolves false when pod never reaches Running within timeout', async () => {
       mockExecSyncResults.set('kubectl cluster-info', '');
       mockExecSyncResults.set(
-        'kubectl get secret nanoclaw-secrets -n nanoclaw',
+        'kubectl get secret kubeclaw-secrets -n kubeclaw',
         new Error('secret not found'),
       );
 
@@ -776,7 +776,7 @@ describe('kubernetes step', () => {
         stderr: '',
       });
       mockSpawnSyncResults.set(
-        'kubectl rollout status deployment/nanoclaw-orchestrator -n nanoclaw --timeout=120s',
+        'kubectl rollout status deployment/kubeclaw-orchestrator -n kubeclaw --timeout=120s',
         { status: 0, stdout: '', stderr: '' },
       );
 
@@ -786,7 +786,7 @@ describe('kubernetes step', () => {
         (cmd: string, args?: readonly string[]) => {
           const argsStr = args?.join(' ') ?? '';
           const key = `${cmd} ${argsStr}`;
-          if (key.includes('nanoclaw-redis') && key.includes('phase')) {
+          if (key.includes('kubeclaw-redis') && key.includes('phase')) {
             return {
               status: 0,
               stdout: 'Pending',
@@ -808,23 +808,23 @@ describe('kubernetes step', () => {
       );
 
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/00-namespace.yaml',
+        '/home/peter/projects/kubeclaw/k8s/00-namespace.yaml',
         true,
       );
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/01-network-policy.yaml',
+        '/home/peter/projects/kubeclaw/k8s/01-network-policy.yaml',
         true,
       );
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/10-redis.yaml',
+        '/home/peter/projects/kubeclaw/k8s/10-redis.yaml',
         true,
       );
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/20-storage.yaml',
+        '/home/peter/projects/kubeclaw/k8s/20-storage.yaml',
         true,
       );
       mockExistsSyncResults.set(
-        '/home/peter/projects/nanoclaw/k8s/30-orchestrator.yaml',
+        '/home/peter/projects/kubeclaw/k8s/30-orchestrator.yaml',
         true,
       );
 

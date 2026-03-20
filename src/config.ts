@@ -87,8 +87,8 @@ export const defaultLLMConfig: LLMConfig = {
 // Container image selection based on LLM provider
 export function getContainerImage(provider: LLMProvider): string {
   return provider === 'openrouter'
-    ? process.env.OPENROUTER_CONTAINER_IMAGE || 'nanoclaw-agent:openrouter'
-    : process.env.CLAUDE_CONTAINER_IMAGE || 'nanoclaw-agent:claude';
+    ? process.env.OPENROUTER_CONTAINER_IMAGE || 'kubeclaw-agent:openrouter'
+    : process.env.CLAUDE_CONTAINER_IMAGE || 'kubeclaw-agent:claude';
 }
 
 // Valid LLM providers
@@ -178,9 +178,9 @@ export const TIMEZONE =
 
 // --- Kubernetes Configuration ---
 export const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
-export const NANOCLAW_NAMESPACE = process.env.NANOCLAW_NAMESPACE || 'default';
-export const NANOCLAW_IPC_BASE =
-  process.env.NANOCLAW_IPC_BASE || '/tmp/nanoclaw-ipc';
+export const KUBECLAW_NAMESPACE = process.env.KUBECLAW_NAMESPACE || 'default';
+export const KUBECLAW_IPC_BASE =
+  process.env.KUBECLAW_IPC_BASE || '/tmp/kubeclaw-ipc';
 
 // --- Job Queue Configuration ---
 export const MAX_CONCURRENT_JOBS = Math.max(
@@ -203,16 +203,16 @@ export const AGENT_JOB_CPU_LIMIT = process.env.AGENT_JOB_CPU_LIMIT || '2000m';
 
 // --- Sidecar Adapter Configuration ---
 export const SIDECAR_ADAPTER_IMAGE =
-  process.env.SIDECAR_ADAPTER_IMAGE || 'nanoclaw-sidecar-adapter:latest';
+  process.env.SIDECAR_ADAPTER_IMAGE || 'kubeclaw-sidecar-adapter:latest';
 export const SIDECAR_POLL_INTERVAL = parseInt(
   process.env.SIDECAR_POLL_INTERVAL || '1000',
   10,
 );
-export const SIDECAR_ENABLED = process.env.NANOCLAW_SIDECAR_ENABLED === 'true';
+export const SIDECAR_ENABLED = process.env.KUBECLAW_SIDECAR_ENABLED === 'true';
 
 // --- Sidecar HTTP Adapter Configuration ---
 export const SIDECAR_HTTP_ADAPTER_IMAGE =
-  process.env.SIDECAR_HTTP_ADAPTER_IMAGE || 'nanoclaw-http-adapter:latest';
+  process.env.SIDECAR_HTTP_ADAPTER_IMAGE || 'kubeclaw-http-adapter:latest';
 export const SIDECAR_HTTP_REQUEST_TIMEOUT = 300000; // Fixed 5min
 export const SIDECAR_HTTP_MAX_RETRIES = 3;
 export const SIDECAR_HTTP_RETRY_DELAY = 1000; // Initial delay 1s
@@ -221,7 +221,7 @@ export const SIDECAR_HTTP_HEALTH_POLL_TIMEOUT = 30000; // 30 seconds
 
 // --- File Sidecar Configuration ---
 export const SIDECAR_FILE_ADAPTER_IMAGE =
-  process.env.SIDECAR_FILE_ADAPTER_IMAGE || 'nanoclaw-file-adapter:latest';
+  process.env.SIDECAR_FILE_ADAPTER_IMAGE || 'kubeclaw-file-adapter:latest';
 export const SIDECAR_FILE_POLL_INTERVAL = parseInt(
   process.env.SIDECAR_FILE_POLL_INTERVAL || '1000',
   10,
@@ -229,7 +229,7 @@ export const SIDECAR_FILE_POLL_INTERVAL = parseInt(
 
 // --- Browser Sidecar Configuration ---
 export const BROWSER_SIDECAR_IMAGE =
-  process.env.BROWSER_SIDECAR_IMAGE || 'nanoclaw-browser-sidecar:latest';
+  process.env.BROWSER_SIDECAR_IMAGE || 'kubeclaw-browser-sidecar:latest';
 export const BROWSER_SIDECAR_PORT = parseInt(
   process.env.BROWSER_SIDECAR_PORT || '9222',
   10,

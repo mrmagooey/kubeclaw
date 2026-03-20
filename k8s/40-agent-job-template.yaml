@@ -1,10 +1,10 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: nanoclaw-agent-placeholder
-  namespace: nanoclaw
+  name: kubeclaw-agent-placeholder
+  namespace: kubeclaw
   labels:
-    app: nanoclaw-agent
+    app: kubeclaw-agent
 spec:
   ttlSecondsAfterFinished: 3600
   backoffLimit: 0
@@ -15,7 +15,7 @@ spec:
   template:
     metadata:
       labels:
-        app: nanoclaw-agent
+        app: kubeclaw-agent
     spec:
       serviceAccountName: default
       restartPolicy: Never
@@ -27,13 +27,13 @@ spec:
       volumes:
         - name: groups-pvc
           persistentVolumeClaim:
-            claimName: nanoclaw-groups
+            claimName: kubeclaw-groups
         - name: sessions-pvc
           persistentVolumeClaim:
-            claimName: nanoclaw-sessions
+            claimName: kubeclaw-sessions
       containers:
         - name: agent
-          image: nanoclaw-agent:latest
+          image: kubeclaw-agent:latest
           imagePullPolicy: Never
           securityContext:
             allowPrivilegeEscalation: false
@@ -42,7 +42,7 @@ spec:
                 - ALL
           env:
             - name: REDIS_URL
-              value: redis://nanoclaw-redis:6379
+              value: redis://kubeclaw-redis:6379
             - name: NANOCLAW_GROUP_FOLDER
               value: placeholder
             - name: NANOCLAW_CHAT_JID
@@ -58,12 +58,12 @@ spec:
             - name: ANTHROPIC_API_KEY
               valueFrom:
                 secretKeyRef:
-                  name: nanoclaw-secrets
+                  name: kubeclaw-secrets
                   key: ANTHROPIC_API_KEY
             - name: CLAUDE_CODE_OAUTH_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: nanoclaw-secrets
+                  name: kubeclaw-secrets
                   key: CLAUDE_CODE_OAUTH_TOKEN
           volumeMounts:
             - name: groups-pvc

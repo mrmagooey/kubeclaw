@@ -33,8 +33,8 @@ export class RedisIPCClient {
 
   constructor(config: RedisIPCConfig) {
     this.config = config;
-    this.inputStream = `nanoclaw:input:${config.jobId}`;
-    this.outputChannel = `nanoclaw:messages:${config.groupFolder}`;
+    this.inputStream = `kubeclaw:input:${config.jobId}`;
+    this.outputChannel = `kubeclaw:messages:${config.groupFolder}`;
   }
 
   async connect(): Promise<void> {

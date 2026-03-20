@@ -1,8 +1,8 @@
 # NanoClaw ConfigMaps
 # Contains scripts that are mounted into agent sidecar containers.
 #
-# nanoclaw-runner-wrapper  — used by sidecar-job-runner (mounts at /scripts)
-# nanoclaw-wrapper-script  — used by file-sidecar-runner (mounts at /workspace/runner-wrapper.sh)
+# kubeclaw-runner-wrapper  — used by sidecar-job-runner (mounts at /scripts)
+# kubeclaw-wrapper-script  — used by file-sidecar-runner (mounts at /workspace/runner-wrapper.sh)
 #
 # Both hold the same runner-wrapper.sh script, which polls /workspace/input/
 # for task files, runs the user command, and writes results to /workspace/output/.
@@ -12,8 +12,8 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: nanoclaw-runner-wrapper
-  namespace: nanoclaw
+  name: kubeclaw-runner-wrapper
+  namespace: kubeclaw
 data:
   runner-wrapper.sh: |
     #!/bin/sh
@@ -116,8 +116,8 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: nanoclaw-wrapper-script
-  namespace: nanoclaw
+  name: kubeclaw-wrapper-script
+  namespace: kubeclaw
 data:
   runner-wrapper.sh: |
     #!/bin/sh

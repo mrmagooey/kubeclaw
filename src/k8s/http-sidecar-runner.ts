@@ -2,7 +2,7 @@
  * HTTP Sidecar Job Runner for NanoClaw
  *
  * Creates Kubernetes Jobs with two containers sharing localhost network:
- * - nanoclaw-http-adapter: Handles NanoClaw protocol, communicates via HTTP
+ * - kubeclaw-http-adapter: Handles NanoClaw protocol, communicates via HTTP
  * - user-agent: User's arbitrary container image exposing HTTP REST API
  *
  * No shared volumes needed — communication is over localhost within the Pod.
@@ -19,7 +19,7 @@ import { RegisteredGroup } from '../types.js';
 import { logger } from '../logger.js';
 import {
   CONTAINER_TIMEOUT,
-  NANOCLAW_NAMESPACE,
+  KUBECLAW_NAMESPACE,
   SIDECAR_HTTP_ADAPTER_IMAGE,
   SIDECAR_HTTP_REQUEST_TIMEOUT,
   SIDECAR_HTTP_MAX_RETRIES,
@@ -43,8 +43,8 @@ import { parseSidecarLogBuffer } from './sidecar-log-parser.js';
 const JOB_TTL_SECONDS_AFTER_FINISHED = 3600;
 const JOB_ACTIVE_DEADLINE_SECONDS = 1800; // 30 min
 const JOB_BACKOFF_LIMIT = 0;
-const JOB_LABELS = { app: 'nanoclaw-http-sidecar-agent' };
-const NAMESPACE = NANOCLAW_NAMESPACE;
+const JOB_LABELS = { app: 'kubeclaw-http-sidecar-agent' };
+const NAMESPACE = KUBECLAW_NAMESPACE;
 
 export class HttpSidecarJobRunner {
   private coreApi: CoreV1Api;
@@ -71,7 +71,7 @@ export class HttpSidecarJobRunner {
     onOutput?: (output: JobOutput) => Promise<void>,
   ): Promise<JobOutput> {
     const startTime = Date.now();
-    const jobId = input.jobId || `nanoclaw-http-${group.folder}-${Date.now()}`;
+    const jobId = input.jobId || `kubeclaw-http-${group.folder}-${Date.now()}`;
 
     logger.info(
       {
@@ -194,34 +194,34 @@ export class HttpSidecarJobRunner {
     const adapterEnvVars = [
       { name: 'TZ', value: TIMEZONE },
       {
-        name: 'NANOCLAW_AGENT_URL',
+        name: 'KUBECLAW_AGENT_URL',
         value: `http://localhost:${userPort}`,
       },
       {
-        name: 'NANOCLAW_REQUEST_TIMEOUT',
+        name: 'KUBECLAW_REQUEST_TIMEOUT',
         value: String(SIDECAR_HTTP_REQUEST_TIMEOUT),
       },
       {
-        name: 'NANOCLAW_HEALTH_POLL_INTERVAL',
+        name: 'KUBECLAW_HEALTH_POLL_INTERVAL',
         value: String(SIDECAR_HTTP_HEALTH_POLL_INTERVAL),
       },
       {
-        name: 'NANOCLAW_HEALTH_POLL_TIMEOUT',
+        name: 'KUBECLAW_HEALTH_POLL_TIMEOUT',
         value: String(SIDECAR_HTTP_HEALTH_POLL_TIMEOUT),
       },
       {
-        name: 'NANOCLAW_MAX_RETRIES',
+        name: 'KUBECLAW_MAX_RETRIES',
         value: String(SIDECAR_HTTP_MAX_RETRIES),
       },
       {
-        name: 'NANOCLAW_RETRY_DELAY',
+        name: 'KUBECLAW_RETRY_DELAY',
         value: String(SIDECAR_HTTP_RETRY_DELAY),
       },
       {
-        name: 'NANOCLAW_HEALTH_ENDPOINT',
+        name: 'KUBECLAW_HEALTH_ENDPOINT',
         value: healthEndpoint,
       },
-      { name: 'NANOCLAW_JOB_ID', value: jobId },
+      { name: 'KUBECLAW_JOB_ID', value: jobId },
       // Redis ACL credentials for follow-up support
       { name: 'REDIS_URL', value: REDIS_URL },
       ...(spec.credentials
@@ -275,7 +275,7 @@ export class HttpSidecarJobRunner {
             containers: [
               // Sidecar adapter container (handles NanoClaw protocol via HTTP)
               {
-                name: 'nanoclaw-http-adapter',
+                name: 'kubeclaw-http-adapter',
                 image: SIDECAR_HTTP_ADAPTER_IMAGE,
                 imagePullPolicy: 'IfNotPresent',
                 env: adapterEnvVars,
@@ -376,7 +376,7 @@ export class HttpSidecarJobRunner {
           const logs = await this.coreApi.readNamespacedPodLog({
             name: podName,
             namespace: this.namespace,
-            container: 'nanoclaw-http-adapter',
+            container: 'kubeclaw-http-adapter',
             ...(sinceTime ? { sinceTime } : {}),
           });
 
@@ -570,7 +570,7 @@ export class HttpSidecarJobRunner {
         adapterLogs = await this.coreApi.readNamespacedPodLog({
           name: podName,
           namespace: this.namespace,
-          container: 'nanoclaw-http-adapter',
+          container: 'kubeclaw-http-adapter',
         });
       } catch (e) {
         adapterLogs = `Error getting adapter logs: ${e instanceof Error ? e.message : String(e)}`;

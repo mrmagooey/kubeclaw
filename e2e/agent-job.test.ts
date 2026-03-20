@@ -3,7 +3,7 @@ import { execSync, spawn } from 'child_process';
 import { requireKubernetes, getNamespace } from './setup.js';
 
 const NAMESPACE = getNamespace();
-const AGENT_JOBLabels = { app: 'nanoclaw-agent', type: 'agent-job' };
+const AGENT_JOBLabels = { app: 'kubeclaw-agent', type: 'agent-job' };
 const TEST_JOB_NAME = 'e2e-test-agent-job';
 
 describe('Agent Job Lifecycle', () => {
@@ -77,9 +77,9 @@ describe('Agent Job Lifecycle', () => {
       }
     });
 
-    it('should have permission to create jobs in nanoclaw namespace', async () => {
+    it('should have permission to create jobs in kubeclaw namespace', async () => {
       const canCreate = execSync(
-        'kubectl auth can-i create jobs --namespace=nanoclaw',
+        'kubectl auth can-i create jobs --namespace=kubeclaw',
         {
           encoding: 'utf8',
           stdio: ['pipe', 'pipe', 'ignore'],
@@ -98,7 +98,7 @@ metadata:
   name: ${TEST_JOB_NAME}
   namespace: ${NAMESPACE}
   labels:
-    app: nanoclaw-agent
+    app: kubeclaw-agent
     type: agent-job
 spec:
   ttlSecondsAfterFinished: 60
@@ -106,7 +106,7 @@ spec:
   template:
     metadata:
       labels:
-        app: nanoclaw-agent
+        app: kubeclaw-agent
         type: agent-job
     spec:
       restartPolicy: Never
@@ -160,7 +160,7 @@ metadata:
   name: ${simpleJobName}
   namespace: ${NAMESPACE}
   labels:
-    app: nanoclaw-agent
+    app: kubeclaw-agent
     type: agent-job
 spec:
   ttlSecondsAfterFinished: 30
@@ -168,7 +168,7 @@ spec:
   template:
     metadata:
       labels:
-        app: nanoclaw-agent
+        app: kubeclaw-agent
         type: agent-job
     spec:
       restartPolicy: Never
@@ -213,7 +213,7 @@ metadata:
   name: ${podJobName}
   namespace: ${NAMESPACE}
   labels:
-    app: nanoclaw-agent
+    app: kubeclaw-agent
     type: agent-job
 spec:
   ttlSecondsAfterFinished: 30
@@ -221,7 +221,7 @@ spec:
   template:
     metadata:
       labels:
-        app: nanoclaw-agent
+        app: kubeclaw-agent
         type: agent-job
     spec:
       restartPolicy: Never
@@ -272,7 +272,7 @@ metadata:
   name: ${completeJobName}
   namespace: ${NAMESPACE}
   labels:
-    app: nanoclaw-agent
+    app: kubeclaw-agent
     type: agent-job
 spec:
   ttlSecondsAfterFinished: 30
@@ -280,7 +280,7 @@ spec:
   template:
     metadata:
       labels:
-        app: nanoclaw-agent
+        app: kubeclaw-agent
         type: agent-job
     spec:
       restartPolicy: Never
@@ -335,7 +335,7 @@ metadata:
   name: ${logJobName}
   namespace: ${NAMESPACE}
   labels:
-    app: nanoclaw-agent
+    app: kubeclaw-agent
     type: agent-job
 spec:
   ttlSecondsAfterFinished: 30
@@ -343,7 +343,7 @@ spec:
   template:
     metadata:
       labels:
-        app: nanoclaw-agent
+        app: kubeclaw-agent
         type: agent-job
     spec:
       restartPolicy: Never
@@ -390,7 +390,7 @@ metadata:
   name: ${cleanupJobName}
   namespace: ${NAMESPACE}
   labels:
-    app: nanoclaw-agent
+    app: kubeclaw-agent
     type: agent-job
 spec:
   ttlSecondsAfterFinished: 5
@@ -398,7 +398,7 @@ spec:
   template:
     metadata:
       labels:
-        app: nanoclaw-agent
+        app: kubeclaw-agent
         type: agent-job
     spec:
       restartPolicy: Never
@@ -461,7 +461,7 @@ metadata:
   name: ${deleteJobName}
   namespace: ${NAMESPACE}
   labels:
-    app: nanoclaw-agent
+    app: kubeclaw-agent
     type: agent-job
 spec:
   ttlSecondsAfterFinished: 300
@@ -469,7 +469,7 @@ spec:
   template:
     metadata:
       labels:
-        app: nanoclaw-agent
+        app: kubeclaw-agent
         type: agent-job
     spec:
       restartPolicy: Never

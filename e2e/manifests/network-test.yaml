@@ -2,13 +2,13 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: network-test-config
-  namespace: nanoclaw
+  namespace: kubeclaw
   labels:
-    app: nanoclaw
+    app: kubeclaw
     test: e2e
     test-type: network
 data:
-  redis-host: 'nanoclaw-redis'
+  redis-host: 'kubeclaw-redis'
   redis-port: '6379'
   external-host: 'example.com'
   external-port: '443'
@@ -17,9 +17,9 @@ apiVersion: v1
 kind: Pod
 metadata:
   name: network-test-external
-  namespace: nanoclaw
+  namespace: kubeclaw
   labels:
-    app: nanoclaw
+    app: kubeclaw
     test: e2e
     test-type: network
     network-test: external-access
@@ -55,9 +55,9 @@ apiVersion: v1
 kind: Pod
 metadata:
   name: network-test-redis
-  namespace: nanoclaw
+  namespace: kubeclaw
   labels:
-    app: nanoclaw
+    app: kubeclaw
     test: e2e
     test-type: network
     network-test: redis-access
@@ -73,15 +73,15 @@ spec:
         - -c
         - |
           echo "Testing Redis connectivity..."
-          echo "Attempting to connect to nanoclaw-redis:6379"
-          if redis-cli -h nanoclaw-redis -p 6379 ping 2>/dev/null | grep -q PONG; then
+          echo "Attempting to connect to kubeclaw-redis:6379"
+          if redis-cli -h kubeclaw-redis -p 6379 ping 2>/dev/null | grep -q PONG; then
             echo "SUCCESS: Redis connection established"
             echo "Setting test key..."
-            redis-cli -h nanoclaw-redis -p 6379 SET e2e-test-key "hello from e2e" EX 60
+            redis-cli -h kubeclaw-redis -p 6379 SET e2e-test-key "hello from e2e" EX 60
             echo "Reading test key..."
-            redis-cli -h nanoclaw-redis -p 6379 GET e2e-test-key
+            redis-cli -h kubeclaw-redis -p 6379 GET e2e-test-key
             echo "Cleaning up..."
-            redis-cli -h nanoclaw-redis -p 6379 DEL e2e-test-key
+            redis-cli -h kubeclaw-redis -p 6379 DEL e2e-test-key
             echo "Redis test completed successfully"
             exit 0
           else
@@ -100,9 +100,9 @@ apiVersion: v1
 kind: Pod
 metadata:
   name: network-test-dns
-  namespace: nanoclaw
+  namespace: kubeclaw
   labels:
-    app: nanoclaw
+    app: kubeclaw
     test: e2e
     test-type: network
     network-test: dns-resolution
@@ -118,8 +118,8 @@ spec:
         - -c
         - |
           echo "Testing DNS resolution..."
-          echo "Resolving nanoclaw-redis..."
-          if nslookup nanoclaw-redis 2>/dev/null; then
+          echo "Resolving kubeclaw-redis..."
+          if nslookup kubeclaw-redis 2>/dev/null; then
             echo "SUCCESS: DNS resolution works"
             exit 0
           else
@@ -138,9 +138,9 @@ apiVersion: v1
 kind: Pod
 metadata:
   name: network-test-port-scan
-  namespace: nanoclaw
+  namespace: kubeclaw
   labels:
-    app: nanoclaw
+    app: kubeclaw
     test: e2e
     test-type: network
     network-test: port-scan
@@ -157,7 +157,7 @@ spec:
         - |
           echo "Testing port connectivity..."
           echo "Checking if Redis port (6379) is open..."
-          timeout 5 sh -c 'until nc -z nanoclaw-redis 6379; do sleep 1; done' 2>/dev/null
+          timeout 5 sh -c 'until nc -z kubeclaw-redis 6379; do sleep 1; done' 2>/dev/null
           if [ $? -eq 0 ]; then
             echo "SUCCESS: Port 6379 is accessible"
           else
@@ -166,7 +166,7 @@ spec:
           fi
 
           echo "Checking if other ports are blocked..."
-          timeout 3 nc -z nanoclaw-redis 80 2>/dev/null
+          timeout 3 nc -z kubeclaw-redis 80 2>/dev/null
           if [ $? -eq 0 ]; then
             echo "WARNING: Port 80 is accessible (unexpected)"
           else

@@ -32,29 +32,29 @@ import { sendTask, ClientError, RetryExhaustedError } from './http-client.js';
 import { RedisIPCClient, RedisMessage } from './redis-ipc.js';
 
 // Configuration from environment variables
-const AGENT_URL = process.env.NANOCLAW_AGENT_URL || 'http://localhost:8080';
+const AGENT_URL = process.env.KUBECLAW_AGENT_URL || 'http://localhost:8080';
 const REQUEST_TIMEOUT = parseInt(
-  process.env.NANOCLAW_REQUEST_TIMEOUT || '300000',
+  process.env.KUBECLAW_REQUEST_TIMEOUT || '300000',
   10,
 );
 const HEALTH_POLL_INTERVAL = parseInt(
-  process.env.NANOCLAW_HEALTH_POLL_INTERVAL || '1000',
+  process.env.KUBECLAW_HEALTH_POLL_INTERVAL || '1000',
   10,
 );
 const HEALTH_POLL_TIMEOUT = parseInt(
-  process.env.NANOCLAW_HEALTH_POLL_TIMEOUT || '30000',
+  process.env.KUBECLAW_HEALTH_POLL_TIMEOUT || '30000',
   10,
 );
-const MAX_RETRIES = parseInt(process.env.NANOCLAW_MAX_RETRIES || '3', 10);
-const RETRY_DELAY = parseInt(process.env.NANOCLAW_RETRY_DELAY || '1000', 10);
-const HEALTH_ENDPOINT = process.env.NANOCLAW_HEALTH_ENDPOINT || '/agent/health';
+const MAX_RETRIES = parseInt(process.env.KUBECLAW_MAX_RETRIES || '3', 10);
+const RETRY_DELAY = parseInt(process.env.KUBECLAW_RETRY_DELAY || '1000', 10);
+const HEALTH_ENDPOINT = process.env.KUBECLAW_HEALTH_ENDPOINT || '/agent/health';
 const IDLE_TIMEOUT = parseInt(process.env.IDLE_TIMEOUT || '1800000', 10); // 30 minutes
 
 // Redis configuration from environment
 const REDIS_URL = process.env.REDIS_URL;
 const REDIS_USERNAME = process.env.REDIS_USERNAME;
 const REDIS_PASSWORD = process.env.REDIS_PASSWORD;
-const NANOCLAW_JOB_ID = process.env.NANOCLAW_JOB_ID;
+const KUBECLAW_JOB_ID = process.env.KUBECLAW_JOB_ID;
 
 /**
  * Log to stderr (stdout is reserved for protocol output)
@@ -74,7 +74,7 @@ export function validateEnv(): string[] {
   if (!process.env.REDIS_URL) missing.push('REDIS_URL');
   if (!process.env.REDIS_USERNAME) missing.push('REDIS_USERNAME');
   if (!process.env.REDIS_PASSWORD) missing.push('REDIS_PASSWORD');
-  if (!process.env.NANOCLAW_JOB_ID) missing.push('NANOCLAW_JOB_ID');
+  if (!process.env.KUBECLAW_JOB_ID) missing.push('KUBECLAW_JOB_ID');
 
   return missing;
 }
@@ -151,15 +151,15 @@ async function main(): Promise<void> {
   log('Environment validation passed');
 
   log(`Redis URL: ${REDIS_URL}`);
-  log(`Job ID: ${NANOCLAW_JOB_ID}`);
+  log(`Job ID: ${KUBECLAW_JOB_ID}`);
 
   // Initialize Redis client
   const redisClient = new RedisIPCClient({
     url: REDIS_URL!,
     username: REDIS_USERNAME!,
     password: REDIS_PASSWORD!,
-    jobId: NANOCLAW_JOB_ID!,
-    groupFolder: process.env.NANOCLAW_GROUP_FOLDER!,
+    jobId: KUBECLAW_JOB_ID!,
+    groupFolder: process.env.KUBECLAW_GROUP_FOLDER!,
   });
 
   // Connect to Redis

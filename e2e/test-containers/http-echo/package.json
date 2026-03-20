@@ -1,5 +1,5 @@
 {
-  "name": "nanoclaw-test-http-echo",
+  "name": "kubeclaw-test-http-echo",
   "version": "1.0.0",
   "description": "Test container for HTTP-based sidecar - echoes input back via HTTP API",
   "main": "src/index.js",

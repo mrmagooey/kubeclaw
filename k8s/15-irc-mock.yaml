@@ -1,23 +1,23 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: nanoclaw-irc-mock
-  namespace: nanoclaw
+  name: kubeclaw-irc-mock
+  namespace: kubeclaw
   labels:
-    app: nanoclaw-irc-mock
+    app: kubeclaw-irc-mock
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: nanoclaw-irc-mock
+      app: kubeclaw-irc-mock
   template:
     metadata:
       labels:
-        app: nanoclaw-irc-mock
+        app: kubeclaw-irc-mock
     spec:
       containers:
         - name: irc-mock
-          image: nanoclaw-irc-mock:latest
+          image: kubeclaw-irc-mock:latest
           imagePullPolicy: Never
           ports:
             - containerPort: 16667
@@ -49,14 +49,14 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: nanoclaw-irc-mock
-  namespace: nanoclaw
+  name: kubeclaw-irc-mock
+  namespace: kubeclaw
   labels:
-    app: nanoclaw-irc-mock
+    app: kubeclaw-irc-mock
 spec:
   type: ClusterIP
   selector:
-    app: nanoclaw-irc-mock
+    app: kubeclaw-irc-mock
   ports:
     - port: 16667
       targetPort: irc

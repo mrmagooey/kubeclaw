@@ -22,8 +22,8 @@
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: nanoclaw-groups
-  namespace: nanoclaw
+  name: kubeclaw-groups
+  namespace: kubeclaw
 spec:
   accessModes:
     - ReadWriteMany
@@ -39,8 +39,8 @@ spec:
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: nanoclaw-sessions
-  namespace: nanoclaw
+  name: kubeclaw-sessions
+  namespace: kubeclaw
 spec:
   accessModes:
     - ReadWriteMany
@@ -56,8 +56,8 @@ spec:
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: nanoclaw-project
-  namespace: nanoclaw
+  name: kubeclaw-project
+  namespace: kubeclaw
 spec:
   accessModes:
     - ReadWriteMany

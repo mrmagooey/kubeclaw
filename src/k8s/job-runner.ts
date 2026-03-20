@@ -16,7 +16,7 @@ import {
   CONTAINER_TIMEOUT,
   CONTAINER_MAX_OUTPUT_SIZE,
   IDLE_TIMEOUT,
-  NANOCLAW_NAMESPACE,
+  KUBECLAW_NAMESPACE,
   AGENT_JOB_MEMORY_REQUEST,
   AGENT_JOB_MEMORY_LIMIT,
   AGENT_JOB_CPU_REQUEST,
@@ -81,8 +81,8 @@ export function buildJobName(folder: string): string {
 const JOB_TTL_SECONDS_AFTER_FINISHED = 3600;
 const JOB_ACTIVE_DEADLINE_SECONDS = 1800; // 30 min
 const JOB_BACKOFF_LIMIT = 0;
-const JOB_LABELS = { app: 'nanoclaw-agent' };
-const NAMESPACE = NANOCLAW_NAMESPACE;
+const JOB_LABELS = { app: 'kubeclaw-agent' };
+const NAMESPACE = KUBECLAW_NAMESPACE;
 
 export class JobRunner {
   private coreApi: CoreV1Api;
@@ -256,13 +256,13 @@ export class JobRunner {
     // Environment variables for the container
     const envVars = [
       { name: 'TZ', value: TIMEZONE },
-      { name: 'NANOCLAW_GROUP_FOLDER', value: spec.groupFolder },
-      { name: 'NANOCLAW_CHAT_JID', value: spec.chatJid },
-      { name: 'NANOCLAW_IS_MAIN', value: String(spec.isMain) },
-      { name: 'NANOCLAW_PROMPT', value: spec.prompt },
-      { name: 'NANOCLAW_SESSION_ID', value: spec.sessionId || '' },
-      { name: 'NANOCLAW_ASSISTANT_NAME', value: spec.assistantName || 'Andy' },
-      { name: 'NANOCLAW_JOB_ID', value: spec.name },
+      { name: 'KUBECLAW_GROUP_FOLDER', value: spec.groupFolder },
+      { name: 'KUBECLAW_CHAT_JID', value: spec.chatJid },
+      { name: 'KUBECLAW_IS_MAIN', value: String(spec.isMain) },
+      { name: 'KUBECLAW_PROMPT', value: spec.prompt },
+      { name: 'KUBECLAW_SESSION_ID', value: spec.sessionId || '' },
+      { name: 'KUBECLAW_ASSISTANT_NAME', value: spec.assistantName || 'Andy' },
+      { name: 'KUBECLAW_JOB_ID', value: spec.name },
       {
         name: 'CONTAINER_MAX_OUTPUT_SIZE',
         value: String(CONTAINER_MAX_OUTPUT_SIZE),
@@ -274,17 +274,17 @@ export class JobRunner {
       {
         name: 'REDIS_URL',
         value: buildRedisUrl(
-          process.env.REDIS_URL || 'redis://nanoclaw-redis:6379',
+          process.env.REDIS_URL || 'redis://kubeclaw-redis:6379',
           process.env.REDIS_ADMIN_PASSWORD,
         ),
       },
-      // Credentials from nanoclaw-secrets — key names use hyphens to match the
+      // Credentials from kubeclaw-secrets — key names use hyphens to match the
       // secret template in k8s/05-secrets.yaml.
       {
         name: 'CLAUDE_CODE_OAUTH_TOKEN',
         valueFrom: {
           secretKeyRef: {
-            name: 'nanoclaw-secrets',
+            name: 'kubeclaw-secrets',
             key: 'claude-code-oauth-token',
             optional: true,
           },
@@ -294,7 +294,7 @@ export class JobRunner {
         name: 'ANTHROPIC_API_KEY',
         valueFrom: {
           secretKeyRef: {
-            name: 'nanoclaw-secrets',
+            name: 'kubeclaw-secrets',
             key: 'anthropic-api-key',
             optional: true,
           },
@@ -304,7 +304,7 @@ export class JobRunner {
         name: 'ANTHROPIC_BASE_URL',
         valueFrom: {
           secretKeyRef: {
-            name: 'nanoclaw-secrets',
+            name: 'kubeclaw-secrets',
             key: 'anthropic-base-url',
             optional: true,
           },
@@ -314,7 +314,7 @@ export class JobRunner {
         name: 'ANTHROPIC_AUTH_TOKEN',
         valueFrom: {
           secretKeyRef: {
-            name: 'nanoclaw-secrets',
+            name: 'kubeclaw-secrets',
             key: 'anthropic-auth-token',
             optional: true,
           },
@@ -324,7 +324,7 @@ export class JobRunner {
         name: 'OPENROUTER_API_KEY',
         valueFrom: {
           secretKeyRef: {
-            name: 'nanoclaw-secrets',
+            name: 'kubeclaw-secrets',
             key: 'openrouter-api-key',
             optional: true,
           },
@@ -334,7 +334,7 @@ export class JobRunner {
         name: 'OPENROUTER_MODEL',
         valueFrom: {
           secretKeyRef: {
-            name: 'nanoclaw-secrets',
+            name: 'kubeclaw-secrets',
             key: 'openrouter-model',
             optional: true,
           },
@@ -344,7 +344,7 @@ export class JobRunner {
         name: 'OPENROUTER_BASE_URL',
         valueFrom: {
           secretKeyRef: {
-            name: 'nanoclaw-secrets',
+            name: 'kubeclaw-secrets',
             key: 'openrouter-base-url',
             optional: true,
           },
@@ -390,13 +390,13 @@ export class JobRunner {
       {
         name: 'groups-pvc',
         persistentVolumeClaim: {
-          claimName: 'nanoclaw-groups',
+          claimName: 'kubeclaw-groups',
         },
       },
       {
         name: 'sessions-pvc',
         persistentVolumeClaim: {
-          claimName: 'nanoclaw-sessions',
+          claimName: 'kubeclaw-sessions',
         },
       },
     ];
@@ -406,7 +406,7 @@ export class JobRunner {
       volumes.push({
         name: 'project-pvc',
         persistentVolumeClaim: {
-          claimName: 'nanoclaw-project',
+          claimName: 'kubeclaw-project',
         },
       });
     }
@@ -845,13 +845,13 @@ export class JobRunner {
     const envVars: Array<{ name: string; value?: string; valueFrom?: object }> =
       [
         { name: 'TZ', value: TIMEZONE },
-        { name: 'NANOCLAW_AGENT_JOB_ID', value: spec.agentJobId },
-        { name: 'NANOCLAW_CATEGORY', value: spec.category },
-        { name: 'NANOCLAW_GROUP_FOLDER', value: spec.groupFolder },
+        { name: 'KUBECLAW_AGENT_JOB_ID', value: spec.agentJobId },
+        { name: 'KUBECLAW_CATEGORY', value: spec.category },
+        { name: 'KUBECLAW_GROUP_FOLDER', value: spec.groupFolder },
         {
           name: 'REDIS_URL',
           value: buildRedisUrl(
-            process.env.REDIS_URL || 'redis://nanoclaw-redis:6379',
+            process.env.REDIS_URL || 'redis://kubeclaw-redis:6379',
             process.env.REDIS_ADMIN_PASSWORD,
           ),
         },
@@ -860,7 +860,7 @@ export class JobRunner {
           name: 'ANTHROPIC_API_KEY',
           valueFrom: {
             secretKeyRef: {
-              name: 'nanoclaw-secrets',
+              name: 'kubeclaw-secrets',
               key: 'anthropic-api-key',
               optional: true,
             },
@@ -870,7 +870,7 @@ export class JobRunner {
           name: 'CLAUDE_CODE_OAUTH_TOKEN',
           valueFrom: {
             secretKeyRef: {
-              name: 'nanoclaw-secrets',
+              name: 'kubeclaw-secrets',
               key: 'claude-code-oauth-token',
               optional: true,
             },
@@ -901,11 +901,11 @@ export class JobRunner {
       volumes.push(
         {
           name: 'groups-pvc',
-          persistentVolumeClaim: { claimName: 'nanoclaw-groups' },
+          persistentVolumeClaim: { claimName: 'kubeclaw-groups' },
         },
         {
           name: 'sessions-pvc',
-          persistentVolumeClaim: { claimName: 'nanoclaw-sessions' },
+          persistentVolumeClaim: { claimName: 'kubeclaw-sessions' },
         },
       );
     }
@@ -917,7 +917,7 @@ export class JobRunner {
         name: jobName,
         namespace: this.namespace,
         labels: {
-          app: 'nanoclaw-tool-pod',
+          app: 'kubeclaw-tool-pod',
           'nanoclaw/group': spec.groupFolder,
           'nanoclaw/category': spec.category,
           'nanoclaw/agent-job': spec.agentJobId,
@@ -928,7 +928,7 @@ export class JobRunner {
         activeDeadlineSeconds: timeoutSeconds,
         backoffLimit: 0,
         template: {
-          metadata: { labels: { app: 'nanoclaw-tool-pod' } },
+          metadata: { labels: { app: 'kubeclaw-tool-pod' } },
           spec: {
             restartPolicy: 'Never',
             containers: [

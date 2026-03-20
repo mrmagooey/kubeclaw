@@ -38,7 +38,7 @@ describe('getRedisConfig', () => {
   it('returns default config when REDIS_URL is not set', () => {
     delete process.env.REDIS_URL;
     const config = getRedisConfig();
-    expect(config.url).toBe('redis://nanoclaw-redis:6379');
+    expect(config.url).toBe('redis://kubeclaw-redis:6379');
     expect(config.maxRetriesPerRequest).toBe(3);
     expect(config.enableReadyCheck).toBe(true);
   });

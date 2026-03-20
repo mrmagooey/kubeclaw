@@ -23,7 +23,7 @@ import { execSync } from 'child_process';
 import { requireKubernetes, getSharedRedis, getNamespace, isKubernetesAvailable } from './setup.js';
 
 const NAMESPACE = getNamespace();
-const ORCHESTRATOR_APP = 'nanoclaw-orchestrator';
+const ORCHESTRATOR_APP = 'kubeclaw-orchestrator';
 const TEST_LABEL = 'e2e-test=true';
 
 let orchestratorAvailable = false;
@@ -373,7 +373,7 @@ describe('Real Orchestrator E2E', () => {
     if (!orchestratorRunning) {
       console.log('\n🔨 Building orchestrator image...');
       try {
-        execSync('docker build -t nanoclaw-orchestrator:latest .', {
+        execSync('docker build -t kubeclaw-orchestrator:latest .', {
           stdio: 'inherit',
           cwd: process.cwd(),
         });
@@ -566,8 +566,8 @@ describe('Real Orchestrator E2E', () => {
 
     // The K8s orchestrator receives messages through channel plugins (IRC,
     // WhatsApp, etc.) via pub/sub — it does not consume from the Docker-era
-    // nanoclaw:messages Redis list. Skip this test in K8s mode.
-    if (process.env.NANOCLAW_RUNTIME === 'kubernetes' || isKubernetesAvailable()) {
+    // kubeclaw:messages Redis list. Skip this test in K8s mode.
+    if (process.env.KUBECLAW_RUNTIME === 'kubernetes' || isKubernetesAvailable()) {
       ctx.skip();
     }
 
@@ -585,16 +585,16 @@ describe('Real Orchestrator E2E', () => {
     };
 
     // Snapshot queue length before publishing so we can verify consumption
-    const queueLenBefore = await redis.llen('nanoclaw:messages');
+    const queueLenBefore = await redis.llen('kubeclaw:messages');
 
     console.log('📤 Publishing test message to Redis...');
-    await redis.lpush('nanoclaw:messages', JSON.stringify(testMessage));
+    await redis.lpush('kubeclaw:messages', JSON.stringify(testMessage));
 
     console.log('⏳ Waiting for message processing...');
     await new Promise((r) => setTimeout(r, 15000));
 
     // The orchestrator must consume the message — queue should shrink
-    const queueLenAfter = await redis.llen('nanoclaw:messages');
+    const queueLenAfter = await redis.llen('kubeclaw:messages');
     expect(queueLenAfter).toBeLessThanOrEqual(queueLenBefore);
 
     // The specific message ID must appear in logs so we know THIS message was seen
@@ -632,7 +632,7 @@ describe('Real Orchestrator E2E', () => {
     };
 
     console.log('📤 Publishing trigger message to Redis...');
-    await redis.lpush('nanoclaw:messages', JSON.stringify(testMessage));
+    await redis.lpush('kubeclaw:messages', JSON.stringify(testMessage));
 
     console.log('⏳ Waiting for job creation...');
     await new Promise((r) => setTimeout(r, 30000));
@@ -686,15 +686,15 @@ describe('Real Orchestrator E2E', () => {
     };
 
     console.log('📤 Publishing scheduled task to Redis...');
-    await redis.lpush('nanoclaw:tasks', JSON.stringify(testTask));
+    await redis.lpush('kubeclaw:tasks', JSON.stringify(testTask));
 
     console.log('⏳ Waiting for task processing...');
     await new Promise((r) => setTimeout(r, 10000));
 
-    // The orchestrator reads from nanoclaw:tasks:{groupFolder} not the bare
-    // nanoclaw:tasks key, so the generic push above may not be consumed.
+    // The orchestrator reads from kubeclaw:tasks:{groupFolder} not the bare
+    // kubeclaw:tasks key, so the generic push above may not be consumed.
     // We verify the task was at least enqueued successfully.
-    const queueLen = await redis.llen('nanoclaw:tasks');
+    const queueLen = await redis.llen('kubeclaw:tasks');
     // Either the task was consumed (queueLen === 0) or still present (queueLen > 0).
     // Both are acceptable here — the important thing is no crash occurred.
     expect(queueLen).toBeGreaterThanOrEqual(0);
@@ -712,7 +712,7 @@ describe('Real Orchestrator E2E', () => {
     }
 
     const testJobId = `e2e-ipc-${Date.now()}`;
-    const ipcChannel = `nanoclaw:ipc:${testJobId}`;
+    const ipcChannel = `kubeclaw:ipc:${testJobId}`;
 
     console.log(`📤 Publishing IPC message to ${ipcChannel}...`);
 
@@ -789,7 +789,7 @@ describe('Real Orchestrator E2E', () => {
       };
 
       console.log('📤 Step 1: Publishing message to orchestrator...');
-      await redis.lpush('nanoclaw:messages', JSON.stringify(pipelineMessage));
+      await redis.lpush('kubeclaw:messages', JSON.stringify(pipelineMessage));
 
       console.log('⏳ Step 2: Waiting for message pickup...');
       await new Promise((r) => setTimeout(r, 15000));
@@ -987,11 +987,11 @@ describe('Real Orchestrator E2E', () => {
       };
 
       await redis.lpush(
-        'nanoclaw:messages',
+        'kubeclaw:messages',
         JSON.stringify(orchestratorMessage),
       );
       console.log('✅ [IRC Orchestrator] Message published to Redis queue');
-      console.log('   Queue: nanoclaw:messages');
+      console.log('   Queue: kubeclaw:messages');
       console.log('   Message ID:', orchestratorMessage.payload.id);
 
       // Step 6: Wait for orchestrator to process
@@ -1124,7 +1124,7 @@ describe('Real Orchestrator E2E', () => {
         };
 
         await redis.lpush(
-          'nanoclaw:messages',
+          'kubeclaw:messages',
           JSON.stringify(orchestratorMessage),
         );
         console.log(

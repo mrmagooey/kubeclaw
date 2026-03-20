@@ -9,21 +9,21 @@ const originalRedisPassword = process.env.REDIS_ADMIN_PASSWORD;
 
 // Mock config
 vi.mock('../config.js', () => ({
-  CONTAINER_IMAGE: 'nanoclaw-agent:latest',
+  CONTAINER_IMAGE: 'kubeclaw-agent:latest',
   CONTAINER_MAX_OUTPUT_SIZE: 10485760,
   CONTAINER_TIMEOUT: 1800000,
   IDLE_TIMEOUT: 1800000,
   TIMEZONE: 'America/Los_Angeles',
-  NANOCLAW_NAMESPACE: 'nanoclaw',
+  KUBECLAW_NAMESPACE: 'nanoclaw',
   AGENT_JOB_MEMORY_REQUEST: '512Mi',
   AGENT_JOB_MEMORY_LIMIT: '4Gi',
   AGENT_JOB_CPU_REQUEST: '250m',
   AGENT_JOB_CPU_LIMIT: '2000m',
   getContainerImage: vi.fn((provider: string) => {
     if (provider === 'openrouter') {
-      return 'nanoclaw-agent:openrouter';
+      return 'kubeclaw-agent:openrouter';
     }
-    return 'nanoclaw-agent:claude';
+    return 'kubeclaw-agent:claude';
   }),
 }));
 
@@ -154,7 +154,7 @@ describe('JobRunner', () => {
       expect(manifest.metadata?.name).toBe('test-job');
       expect(manifest.metadata?.namespace).toBe('nanoclaw');
       expect(manifest.spec?.template?.spec?.containers?.[0]?.image).toBe(
-        'nanoclaw-agent:claude',
+        'kubeclaw-agent:claude',
       );
       expect(manifest.spec?.template?.spec?.restartPolicy).toBe('Never');
     });
@@ -177,17 +177,17 @@ describe('JobRunner', () => {
 
       expect(
         envVars.some(
-          (e) => e.name === 'NANOCLAW_GROUP_FOLDER' && e.value === 'test-group',
+          (e) => e.name === 'KUBECLAW_GROUP_FOLDER' && e.value === 'test-group',
         ),
       ).toBe(true);
       expect(
         envVars.some(
-          (e) => e.name === 'NANOCLAW_PROMPT' && e.value === 'Test prompt',
+          (e) => e.name === 'KUBECLAW_PROMPT' && e.value === 'Test prompt',
         ),
       ).toBe(true);
       expect(
         envVars.some(
-          (e) => e.name === 'NANOCLAW_SESSION_ID' && e.value === 'session-123',
+          (e) => e.name === 'KUBECLAW_SESSION_ID' && e.value === 'session-123',
         ),
       ).toBe(true);
     });
@@ -227,7 +227,7 @@ describe('JobRunner', () => {
 
       const manifest = jobRunner.generateJobManifest(spec);
       expect(manifest.spec?.template?.spec?.containers?.[0]?.image).toBe(
-        'nanoclaw-agent:openrouter',
+        'kubeclaw-agent:openrouter',
       );
     });
 
@@ -256,7 +256,7 @@ describe('JobRunner', () => {
   describe('REDIS_URL in generateJobManifest', () => {
     it('should return base URL unchanged when REDIS_ADMIN_PASSWORD is not set', () => {
       delete process.env.REDIS_ADMIN_PASSWORD;
-      process.env.REDIS_URL = 'redis://nanoclaw-redis:6379';
+      process.env.REDIS_URL = 'redis://kubeclaw-redis:6379';
 
       const spec = {
         name: 'test-job',
@@ -272,12 +272,12 @@ describe('JobRunner', () => {
       const envVars = manifest.spec?.template?.spec?.containers?.[0]?.env || [];
       const redisUrl = envVars.find((e) => e.name === 'REDIS_URL')?.value;
 
-      expect(redisUrl).toBe('redis://nanoclaw-redis:6379');
+      expect(redisUrl).toBe('redis://kubeclaw-redis:6379');
     });
 
     it('should embed password when REDIS_ADMIN_PASSWORD is set', () => {
       process.env.REDIS_ADMIN_PASSWORD = 'secretpassword';
-      process.env.REDIS_URL = 'redis://nanoclaw-redis:6379';
+      process.env.REDIS_URL = 'redis://kubeclaw-redis:6379';
 
       const spec = {
         name: 'test-job',
@@ -293,12 +293,12 @@ describe('JobRunner', () => {
       const envVars = manifest.spec?.template?.spec?.containers?.[0]?.env || [];
       const redisUrl = envVars.find((e) => e.name === 'REDIS_URL')?.value;
 
-      expect(redisUrl).toBe('redis://:secretpassword@nanoclaw-redis:6379');
+      expect(redisUrl).toBe('redis://:secretpassword@kubeclaw-redis:6379');
     });
 
     it('should not double-embed password when URL already contains @', () => {
       process.env.REDIS_ADMIN_PASSWORD = 'newpassword';
-      process.env.REDIS_URL = 'redis://:existing@nanoclaw-redis:6379';
+      process.env.REDIS_URL = 'redis://:existing@kubeclaw-redis:6379';
 
       const spec = {
         name: 'test-job',
@@ -315,12 +315,12 @@ describe('JobRunner', () => {
       const redisUrl = envVars.find((e) => e.name === 'REDIS_URL')?.value;
 
       // Should remain unchanged since it already has credentials
-      expect(redisUrl).toBe('redis://:existing@nanoclaw-redis:6379');
+      expect(redisUrl).toBe('redis://:existing@kubeclaw-redis:6379');
     });
 
     it('should percent-encode special characters in password', () => {
       process.env.REDIS_ADMIN_PASSWORD = 'p@ss#';
-      process.env.REDIS_URL = 'redis://nanoclaw-redis:6379';
+      process.env.REDIS_URL = 'redis://kubeclaw-redis:6379';
 
       const spec = {
         name: 'test-job',
@@ -337,7 +337,7 @@ describe('JobRunner', () => {
       const redisUrl = envVars.find((e) => e.name === 'REDIS_URL')?.value;
 
       // @ becomes %40, # becomes %23
-      expect(redisUrl).toBe('redis://:p%40ss%23@nanoclaw-redis:6379');
+      expect(redisUrl).toBe('redis://:p%40ss%23@kubeclaw-redis:6379');
     });
   });
 
@@ -788,7 +788,7 @@ describe('JobRunner', () => {
     it('should create job and return success', async () => {
       mockBatchApi.createNamespacedJob.mockResolvedValue({
         metadata: {
-          name: 'nanoclaw-test-group-123',
+          name: 'kubeclaw-test-group-123',
         },
       });
       mockBatchApi.readNamespacedJob.mockResolvedValue({
@@ -842,7 +842,7 @@ describe('JobRunner', () => {
     it('should use group folder in job name', async () => {
       mockBatchApi.createNamespacedJob.mockResolvedValue({
         metadata: {
-          name: 'nanoclaw-test-group-123',
+          name: 'kubeclaw-test-group-123',
         },
       });
       mockBatchApi.readNamespacedJob.mockResolvedValue({
@@ -874,7 +874,7 @@ describe('JobRunner', () => {
       const callArgs = mockBatchApi.createNamespacedJob.mock.calls[0][0];
       const labels = callArgs.body.metadata?.labels;
 
-      expect(labels?.app).toBe('nanoclaw-tool-pod');
+      expect(labels?.app).toBe('kubeclaw-tool-pod');
       expect(labels?.['nanoclaw/group']).toBe('test-group');
       expect(labels?.['nanoclaw/category']).toBe('execution');
       expect(labels?.['nanoclaw/agent-job']).toBe('agent-job-123');
@@ -898,7 +898,7 @@ describe('JobRunner', () => {
       expect(container?.command).toEqual(['node', '/app/src/tool-server.js']);
     });
 
-    it('should set NANOCLAW_AGENT_JOB_ID and NANOCLAW_CATEGORY env vars', async () => {
+    it('should set KUBECLAW_AGENT_JOB_ID and KUBECLAW_CATEGORY env vars', async () => {
       mockBatchApi.createNamespacedJob.mockResolvedValue({});
 
       const spec: ToolPodJobSpec = {
@@ -916,18 +916,18 @@ describe('JobRunner', () => {
 
       expect(
         envVars.find(
-          (e: { name: string }) => e.name === 'NANOCLAW_AGENT_JOB_ID',
+          (e: { name: string }) => e.name === 'KUBECLAW_AGENT_JOB_ID',
         )?.value,
       ).toBe('agent-job-123');
       expect(
-        envVars.find((e: { name: string }) => e.name === 'NANOCLAW_CATEGORY')
+        envVars.find((e: { name: string }) => e.name === 'KUBECLAW_CATEGORY')
           ?.value,
       ).toBe('browser');
     });
 
     it('should set REDIS_URL env var', async () => {
       delete process.env.REDIS_ADMIN_PASSWORD;
-      process.env.REDIS_URL = 'redis://nanoclaw-redis:6379';
+      process.env.REDIS_URL = 'redis://kubeclaw-redis:6379';
 
       mockBatchApi.createNamespacedJob.mockResolvedValue({});
 
@@ -946,12 +946,12 @@ describe('JobRunner', () => {
 
       expect(
         envVars.find((e: { name: string }) => e.name === 'REDIS_URL')?.value,
-      ).toBe('redis://nanoclaw-redis:6379');
+      ).toBe('redis://kubeclaw-redis:6379');
     });
 
     it('should set REDIS_URL with password when REDIS_ADMIN_PASSWORD is set', async () => {
       process.env.REDIS_ADMIN_PASSWORD = 'toolpassword';
-      process.env.REDIS_URL = 'redis://nanoclaw-redis:6379';
+      process.env.REDIS_URL = 'redis://kubeclaw-redis:6379';
 
       mockBatchApi.createNamespacedJob.mockResolvedValue({});
 
@@ -970,7 +970,7 @@ describe('JobRunner', () => {
 
       expect(
         envVars.find((e: { name: string }) => e.name === 'REDIS_URL')?.value,
-      ).toBe('redis://:toolpassword@nanoclaw-redis:6379');
+      ).toBe('redis://:toolpassword@kubeclaw-redis:6379');
     });
 
     it('should return the job name string on success', async () => {

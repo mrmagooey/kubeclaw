@@ -1,12 +1,12 @@
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: nanoclaw-agent-policy
-  namespace: nanoclaw
+  name: kubeclaw-agent-policy
+  namespace: kubeclaw
 spec:
   podSelector:
     matchLabels:
-      app: nanoclaw-agent
+      app: kubeclaw-agent
   policyTypes:
     - Egress
   egress:
@@ -19,7 +19,7 @@ spec:
     - to:
         - podSelector:
             matchLabels:
-              app: nanoclaw-redis
+              app: kubeclaw-redis
       ports:
         - protocol: TCP
           port: 6379
@@ -32,12 +32,12 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: nanoclaw-orchestrator-policy
-  namespace: nanoclaw
+  name: kubeclaw-orchestrator-policy
+  namespace: kubeclaw
 spec:
   podSelector:
     matchLabels:
-      app: nanoclaw-orchestrator
+      app: kubeclaw-orchestrator
   policyTypes:
     - Ingress
     - Egress

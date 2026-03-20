@@ -6,8 +6,8 @@
 import { TaskOutput } from './types.js';
 
 // Must match markers in container/agent-runner/src/index.ts
-const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
-const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
+const OUTPUT_START_MARKER = '---KUBECLAW_OUTPUT_START---';
+const OUTPUT_END_MARKER = '---KUBECLAW_OUTPUT_END---';
 
 export class ProtocolHandler {
   /**

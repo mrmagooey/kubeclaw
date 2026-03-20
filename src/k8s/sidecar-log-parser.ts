@@ -11,9 +11,9 @@
  * The sidecar adapter container writes structured output to stdout wrapped in
  * sentinel markers:
  *
- *   ---NANOCLAW_OUTPUT_START---
+ *   ---KUBECLAW_OUTPUT_START---
  *   {"status":"success","result":"..."}
- *   ---NANOCLAW_OUTPUT_END---
+ *   ---KUBECLAW_OUTPUT_END---
  *
  * The runner polls for logs (with tailLines: 100) and accumulates them in a
  * string buffer.  Each call to `parseSidecarLogBuffer` consumes complete
@@ -31,8 +31,8 @@
  * handles a buffer that was already truncated (markers never appear).
  */
 
-export const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
-export const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
+export const OUTPUT_START_MARKER = '---KUBECLAW_OUTPUT_START---';
+export const OUTPUT_END_MARKER = '---KUBECLAW_OUTPUT_END---';
 
 export interface ParseResult {
   /** Extracted JSON strings between every complete START/END pair found */

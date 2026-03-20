@@ -32,12 +32,12 @@ describe('getContainerImage', () => {
 
   it('returns claude image for claude provider', () => {
     const result = getContainerImage('claude');
-    expect(result).toBe('nanoclaw-agent:claude');
+    expect(result).toBe('kubeclaw-agent:claude');
   });
 
   it('returns openrouter image for openrouter provider', () => {
     const result = getContainerImage('openrouter');
-    expect(result).toBe('nanoclaw-agent:openrouter');
+    expect(result).toBe('kubeclaw-agent:openrouter');
   });
 
   it('uses env override for claude provider', () => {

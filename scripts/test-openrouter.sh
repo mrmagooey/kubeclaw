@@ -54,11 +54,11 @@ check_docker() {
 # Check if OpenRouter container image exists
 check_container_image() {
     log_info "Checking OpenRouter container image..."
-    if docker images nanoclaw-agent:openrouter --format "{{.Repository}}:{{.Tag}}" | grep -q "nanoclaw-agent:openrouter"; then
+    if docker images kubeclaw-agent:openrouter --format "{{.Repository}}:{{.Tag}}" | grep -q "kubeclaw-agent:openrouter"; then
         log_success "OpenRouter container image exists"
         return 0
     else
-        log_error "OpenRouter container image not found (nanoclaw-agent:openrouter)"
+        log_error "OpenRouter container image not found (kubeclaw-agent:openrouter)"
         log_info "Build it with: ./container/build.sh openrouter"
         return 1
     fi
@@ -104,7 +104,7 @@ test_api_connectivity() {
     # Test with a simple models list request
     RESPONSE=$(curl -s -w "\n%{http_code}" \
         -H "Authorization: Bearer $OPENROUTER_API_KEY" \
-        -H "HTTP-Referer: https://nanoclaw.local" \
+        -H "HTTP-Referer: https://kubeclaw.local" \
         -H "X-Title: NanoClaw Test" \
         "https://openrouter.ai/api/v1/models" 2>&1)
     
@@ -143,7 +143,7 @@ test_chat_completion() {
         -X POST \
         -H "Authorization: Bearer $OPENROUTER_API_KEY" \
         -H "Content-Type: application/json" \
-        -H "HTTP-Referer: https://nanoclaw.local" \
+        -H "HTTP-Referer: https://kubeclaw.local" \
         -H "X-Title: NanoClaw Test" \
         -d "{
             \"model\": \"$MODEL\",
@@ -193,7 +193,7 @@ test_tool_calling() {
         -X POST \
         -H "Authorization: Bearer $OPENROUTER_API_KEY" \
         -H "Content-Type: application/json" \
-        -H "HTTP-Referer: https://nanoclaw.local" \
+        -H "HTTP-Referer: https://kubeclaw.local" \
         -H "X-Title: NanoClaw Test" \
         -d "{
             \"model\": \"$MODEL\",

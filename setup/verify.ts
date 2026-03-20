@@ -26,7 +26,7 @@ function getK8sSecretValue(key: string): string | undefined {
   }
   try {
     const output = execSync(
-      `kubectl get secret nanoclaw-secrets -n nanoclaw -o jsonpath={.data.${key}}`,
+      `kubectl get secret kubeclaw-secrets -n kubeclaw -o jsonpath={.data.${key}}`,
       { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
     );
     const encoded = output.trim();
@@ -52,7 +52,7 @@ export async function run(_args: string[]): Promise<void> {
     | 'not_found' = 'not_found';
   try {
     const output = execSync(
-      'kubectl get deployment nanoclaw-orchestrator -n nanoclaw -o jsonpath={.status.readyReplicas}',
+      'kubectl get deployment kubeclaw-orchestrator -n kubeclaw -o jsonpath={.status.readyReplicas}',
       { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
     );
     const readyReplicas = parseInt(output.trim(), 10);
@@ -64,7 +64,7 @@ export async function run(_args: string[]): Promise<void> {
   } catch (error: unknown) {
     // Check if the error is because deployment doesn't exist vs kubectl not available
     try {
-      execSync('kubectl get deployment nanoclaw-orchestrator -n nanoclaw', {
+      execSync('kubectl get deployment kubeclaw-orchestrator -n kubeclaw', {
         stdio: ['pipe', 'pipe', 'pipe'],
       });
       // Deployment exists but readyReplicas check failed
@@ -85,7 +85,7 @@ export async function run(_args: string[]): Promise<void> {
   let redis: 'running' | 'not_ready' | 'not_found' = 'not_found';
   try {
     const output = execSync(
-      'kubectl get pods -n nanoclaw -l app=nanoclaw-redis -o jsonpath={.items[0].status.phase}',
+      'kubectl get pods -n kubeclaw -l app=kubeclaw-redis -o jsonpath={.items[0].status.phase}',
       { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
     );
     const phase = output.trim();
@@ -102,7 +102,7 @@ export async function run(_args: string[]): Promise<void> {
   // 3. Check Kubernetes Secrets for credentials
   let credentials: 'configured' | 'missing' = 'missing';
   try {
-    execSync('kubectl get secret nanoclaw-secrets -n nanoclaw', {
+    execSync('kubectl get secret kubeclaw-secrets -n kubeclaw', {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     credentials = 'configured';
@@ -179,7 +179,7 @@ export async function run(_args: string[]): Promise<void> {
   let mountAllowlist: 'configured' | 'missing' = 'missing';
   if (
     fs.existsSync(
-      path.join(homeDir, '.config', 'nanoclaw', 'mount-allowlist.json'),
+      path.join(homeDir, '.config', 'kubeclaw', 'mount-allowlist.json'),
     )
   ) {
     mountAllowlist = 'configured';

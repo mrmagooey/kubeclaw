@@ -2,9 +2,9 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   name: simple-job
-  namespace: nanoclaw
+  namespace: kubeclaw
   labels:
-    app: nanoclaw
+    app: kubeclaw
     test: e2e
     job-type: simple
 spec:
@@ -14,7 +14,7 @@ spec:
   template:
     metadata:
       labels:
-        app: nanoclaw
+        app: kubeclaw
         test: e2e
         job-type: simple
     spec:
@@ -40,9 +40,9 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   name: failing-job
-  namespace: nanoclaw
+  namespace: kubeclaw
   labels:
-    app: nanoclaw
+    app: kubeclaw
     test: e2e
     job-type: failing
 spec:
@@ -52,7 +52,7 @@ spec:
   template:
     metadata:
       labels:
-        app: nanoclaw
+        app: kubeclaw
         test: e2e
         job-type: failing
     spec:
@@ -73,9 +73,9 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   name: slow-job
-  namespace: nanoclaw
+  namespace: kubeclaw
   labels:
-    app: nanoclaw
+    app: kubeclaw
     test: e2e
     job-type: slow
 spec:
@@ -85,7 +85,7 @@ spec:
   template:
     metadata:
       labels:
-        app: nanoclaw
+        app: kubeclaw
         test: e2e
         job-type: slow
     spec:
@@ -111,9 +111,9 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   name: resource-test-job
-  namespace: nanoclaw
+  namespace: kubeclaw
   labels:
-    app: nanoclaw
+    app: kubeclaw
     test: e2e
     job-type: resource-test
 spec:
@@ -123,7 +123,7 @@ spec:
   template:
     metadata:
       labels:
-        app: nanoclaw
+        app: kubeclaw
         test: e2e
         job-type: resource-test
     spec:
@@ -149,9 +149,9 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   name: write-test-job
-  namespace: nanoclaw
+  namespace: kubeclaw
   labels:
-    app: nanoclaw
+    app: kubeclaw
     test: e2e
     job-type: pvc-write
 spec:
@@ -161,7 +161,7 @@ spec:
   template:
     metadata:
       labels:
-        app: nanoclaw
+        app: kubeclaw
         test: e2e
         job-type: pvc-write
     spec:
@@ -169,7 +169,7 @@ spec:
       volumes:
         - name: test-pvc
           persistentVolumeClaim:
-            claimName: nanoclaw-test-pvc-data
+            claimName: kubeclaw-test-pvc-data
       containers:
         - name: test
           image: busybox:stable
@@ -194,9 +194,9 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   name: read-test-job
-  namespace: nanoclaw
+  namespace: kubeclaw
   labels:
-    app: nanoclaw
+    app: kubeclaw
     test: e2e
     job-type: pvc-read
 spec:
@@ -206,7 +206,7 @@ spec:
   template:
     metadata:
       labels:
-        app: nanoclaw
+        app: kubeclaw
         test: e2e
         job-type: pvc-read
     spec:
@@ -214,7 +214,7 @@ spec:
       volumes:
         - name: test-pvc
           persistentVolumeClaim:
-            claimName: nanoclaw-test-pvc-data
+            claimName: kubeclaw-test-pvc-data
       containers:
         - name: test
           image: busybox:stable
@@ -239,9 +239,9 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   name: agent-like-job
-  namespace: nanoclaw
+  namespace: kubeclaw
   labels:
-    app: nanoclaw-agent
+    app: kubeclaw-agent
     test: e2e
     job-type: agent-mock
 spec:
@@ -251,7 +251,7 @@ spec:
   template:
     metadata:
       labels:
-        app: nanoclaw-agent
+        app: kubeclaw-agent
         test: e2e
         job-type: agent-mock
     spec:
@@ -260,10 +260,10 @@ spec:
       volumes:
         - name: groups-pvc
           persistentVolumeClaim:
-            claimName: nanoclaw-groups
+            claimName: kubeclaw-groups
         - name: sessions-pvc
           persistentVolumeClaim:
-            claimName: nanoclaw-sessions
+            claimName: kubeclaw-sessions
       containers:
         - name: agent
           image: busybox:stable
@@ -271,28 +271,28 @@ spec:
             [
               'sh',
               '-c',
-              'echo "Mock agent job"; echo "Group folder: $NANOCLAW_GROUP_FOLDER"; echo "Session ID: $NANOCLAW_SESSION_ID"; echo "Testing PVC access..."; ls -la /workspace/group 2>/dev/null || echo "Groups PVC mounted"; sleep 5; echo "Done"',
+              'echo "Mock agent job"; echo "Group folder: $KUBECLAW_GROUP_FOLDER"; echo "Session ID: $KUBECLAW_SESSION_ID"; echo "Testing PVC access..."; ls -la /workspace/group 2>/dev/null || echo "Groups PVC mounted"; sleep 5; echo "Done"',
             ]
           env:
             - name: REDIS_URL
-              value: redis://nanoclaw-redis:6379
-            - name: NANOCLAW_GROUP_FOLDER
+              value: redis://kubeclaw-redis:6379
+            - name: KUBECLAW_GROUP_FOLDER
               value: e2e-test-group
-            - name: NANOCLAW_CHAT_JID
+            - name: KUBECLAW_CHAT_JID
               value: e2e-test@example.com
-            - name: NANOCLAW_IS_MAIN
+            - name: KUBECLAW_IS_MAIN
               value: 'false'
-            - name: NANOCLAW_SESSION_ID
+            - name: KUBECLAW_SESSION_ID
               value: e2e-session-001
-            - name: NANOCLAW_ASSISTANT_NAME
+            - name: KUBECLAW_ASSISTANT_NAME
               value: TestAgent
           volumeMounts:
             - name: groups-pvc
               mountPath: /workspace/group
-              subPathExpr: $(NANOCLAW_GROUP_FOLDER)
+              subPathExpr: $(KUBECLAW_GROUP_FOLDER)
             - name: sessions-pvc
               mountPath: /home/node/.claude
-              subPathExpr: $(NANOCLAW_GROUP_FOLDER)
+              subPathExpr: $(KUBECLAW_GROUP_FOLDER)
           resources:
             requests:
               memory: 512Mi

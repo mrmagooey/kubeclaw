@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-IMAGE_NAME="nanoclaw-irc-mock"
+IMAGE_NAME="kubeclaw-irc-mock"
 IMAGE_TAG="${1:-latest}"
 
 echo "=== Building IRC Mock Server Image ==="

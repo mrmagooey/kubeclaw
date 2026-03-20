@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { execSync, spawnSync } from 'child_process';
 import fs from 'fs';
+import path from 'path';
 import Database from 'better-sqlite3';
 
 // Get actual fs module for file operations (bypassing mock)
@@ -68,7 +69,7 @@ vi.mock('../src/logger.js', () => ({
 
 vi.mock('../src/config.js', async () => {
   return {
-    STORE_DIR: '/tmp/test-nanoclaw-integration-store',
+    STORE_DIR: '/tmp/test-kubeclaw-integration-store',
   };
 });
 
@@ -104,7 +105,7 @@ describe('K8s setup integration', () => {
     }) as unknown as typeof process.exit;
 
     // Create real database file on disk that verify.ts can read
-    const dbDir = '/tmp/test-nanoclaw-integration-store';
+    const dbDir = '/tmp/test-kubeclaw-integration-store';
     const dbPath = `${dbDir}/messages.db`;
 
     // Ensure directory exists using actual fs
@@ -159,7 +160,7 @@ describe('K8s setup integration', () => {
 
     // Clean up database file using actual fs
     try {
-      const dbPath = '/tmp/test-nanoclaw-integration-store/messages.db';
+      const dbPath = '/tmp/test-kubeclaw-integration-store/messages.db';
       if (actualFs.existsSync(dbPath)) {
         actualFs.unlinkSync(dbPath);
       }
@@ -169,15 +170,17 @@ describe('K8s setup integration', () => {
   });
 
   it('environment and kubernetes steps complete successfully', async () => {
+    const cwd = process.cwd();
+
     // Mock environment check calls
     mockExecSyncResults.set('kubectl cluster-info', '');
-    mockExistsSyncResults.set('/home/peter/projects/nanoclaw/.env', true);
-    mockExistsSyncResults.set('/home/peter/projects/nanoclaw/store/auth', true);
+    mockExistsSyncResults.set(path.join(cwd, '.env'), true);
+    mockExistsSyncResults.set(path.join(cwd, 'store', 'auth'), true);
 
     // Mock kubernetes step calls
     mockExecSyncResults.set(
-      'kubectl get secret nanoclaw-secrets -n nanoclaw',
-      'nanoclaw-secrets',
+      'kubectl get secret kubeclaw-secrets -n kubeclaw',
+      'kubeclaw-secrets',
     );
     mockSpawnSyncResults.set('kubectl apply -f -', {
       status: 0,
@@ -185,38 +188,23 @@ describe('K8s setup integration', () => {
       stderr: '',
     });
     mockSpawnSyncResults.set(
-      'kubectl rollout status deployment/nanoclaw-orchestrator -n nanoclaw --timeout=120s',
+      'kubectl rollout status deployment/kubeclaw-orchestrator -n kubeclaw --timeout=120s',
       { status: 0, stdout: '', stderr: '' },
     );
     mockSpawnSyncResults.set(
-      'kubectl get pods -n nanoclaw -l app=nanoclaw-redis -o jsonpath={.items[0].status.phase}',
+      'kubectl get pods -n kubeclaw -l app=kubeclaw-redis -o jsonpath={.items[0].status.phase}',
       { status: 0, stdout: 'Running', stderr: '' },
     );
 
-    mockExistsSyncResults.set(
-      '/home/peter/projects/nanoclaw/k8s/00-namespace.yaml',
-      true,
-    );
-    mockExistsSyncResults.set(
-      '/home/peter/projects/nanoclaw/k8s/01-network-policy.yaml',
-      true,
-    );
-    mockExistsSyncResults.set(
-      '/home/peter/projects/nanoclaw/k8s/10-redis.yaml',
-      true,
-    );
-    mockExistsSyncResults.set(
-      '/home/peter/projects/nanoclaw/k8s/20-storage.yaml',
-      true,
-    );
-    mockExistsSyncResults.set(
-      '/home/peter/projects/nanoclaw/k8s/30-orchestrator.yaml',
-      true,
-    );
+    mockExistsSyncResults.set(path.join(cwd, 'k8s', '00-namespace.yaml'), true);
+    mockExistsSyncResults.set(path.join(cwd, 'k8s', '01-network-policy.yaml'), true);
+    mockExistsSyncResults.set(path.join(cwd, 'k8s', '10-redis.yaml'), true);
+    mockExistsSyncResults.set(path.join(cwd, 'k8s', '20-storage.yaml'), true);
+    mockExistsSyncResults.set(path.join(cwd, 'k8s', '30-orchestrator.yaml'), true);
 
     mockReadFileResults.set(
-      '/home/peter/projects/nanoclaw/k8s/30-orchestrator.yaml',
-      'image: nanoclaw-orchestrator:latest\nimagePullPolicy: Never',
+      path.join(cwd, 'k8s', '30-orchestrator.yaml'),
+      'image: kubeclaw-orchestrator:latest\nimagePullPolicy: Never',
     );
 
     // Run environment step
@@ -241,16 +229,16 @@ describe('K8s setup integration', () => {
 
     // Run verify step
     mockExecSyncResults.set(
-      'kubectl get deployment nanoclaw-orchestrator -n nanoclaw -o jsonpath={.status.readyReplicas}',
+      'kubectl get deployment kubeclaw-orchestrator -n kubeclaw -o jsonpath={.status.readyReplicas}',
       '1',
     );
     mockExecSyncResults.set(
-      'kubectl get pods -n nanoclaw -l app=nanoclaw-redis -o jsonpath={.items[0].status.phase}',
+      'kubectl get pods -n kubeclaw -l app=kubeclaw-redis -o jsonpath={.items[0].status.phase}',
       'Running',
     );
     mockExecSyncResults.set(
-      'kubectl get secret nanoclaw-secrets -n nanoclaw',
-      'nanoclaw-secrets',
+      'kubectl get secret kubeclaw-secrets -n kubeclaw',
+      'kubeclaw-secrets',
     );
 
     const { run: runVerify } = await import('./verify.js');
@@ -266,23 +254,23 @@ describe('K8s setup integration', () => {
 
   it('verify fails when deployment is not ready', async () => {
     mockExecSyncResults.set(
-      'kubectl get deployment nanoclaw-orchestrator -n nanoclaw -o jsonpath={.status.readyReplicas}',
+      'kubectl get deployment kubeclaw-orchestrator -n kubeclaw -o jsonpath={.status.readyReplicas}',
       '0',
     );
-    mockExecSyncResults.set('nanoclaw-redis', 'Running');
+    mockExecSyncResults.set('kubeclaw-redis', 'Running');
     mockExecSyncResults.set(
-      'kubectl get secret nanoclaw-secrets -n nanoclaw',
-      'nanoclaw-secrets',
+      'kubectl get secret kubeclaw-secrets -n kubeclaw',
+      'kubeclaw-secrets',
     );
-    mockExistsSyncResults.set('/home/peter/projects/nanoclaw/store/auth', true);
+    const cwd = process.cwd();
+    mockExistsSyncResults.set(path.join(cwd, 'store', 'auth'), true);
     mockExistsSyncResults.set(
-      '/home/test/.config/nanoclaw/mount-allowlist.json',
+      '/home/test/.config/kubeclaw/mount-allowlist.json',
       true,
     );
 
-    const path = await import('path');
     const dbPath = path.join(
-      '/tmp/test-nanoclaw-integration-store',
+      '/tmp/test-kubeclaw-integration-store',
       'messages.db',
     );
     mockExistsSyncResults.set(dbPath, true);

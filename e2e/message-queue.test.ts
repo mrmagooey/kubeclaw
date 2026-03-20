@@ -58,7 +58,7 @@ describe('Message Queue Integration', () => {
   }, 10000);
 
   describe('Redis Queue Publishing', () => {
-    it('should publish messages to nanoclaw:tasks queue', async () => {
+    it('should publish messages to kubeclaw:tasks queue', async () => {
       if (!redis) {
         console.warn('⚠️  Redis not available, skipping test');
         return;
@@ -82,7 +82,7 @@ describe('Message Queue Integration', () => {
       expect(JSON.parse(popped!)).toEqual(message);
     });
 
-    it('should publish messages to nanoclaw:messages queue', async () => {
+    it('should publish messages to kubeclaw:messages queue', async () => {
       if (!redis) {
         console.warn('⚠️  Redis not available, skipping test');
         return;

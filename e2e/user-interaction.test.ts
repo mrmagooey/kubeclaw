@@ -73,10 +73,10 @@ vi.mock('../src/k8s/redis-client.js', () => ({
     xadd: vi.fn().mockResolvedValue('stream-id'),
     eval: vi.fn().mockResolvedValue(1),
   }),
-  getQueueKey: vi.fn().mockReturnValue('nanoclaw:job-queue'),
-  getConcurrencyKey: vi.fn().mockReturnValue('nanoclaw:concurrency'),
-  getInputStream: vi.fn((jobId: string) => `nanoclaw:input:${jobId}`),
-  getJobStatusKey: vi.fn((jobId: string) => `nanoclaw:job:${jobId}:status`),
+  getQueueKey: vi.fn().mockReturnValue('kubeclaw:job-queue'),
+  getConcurrencyKey: vi.fn().mockReturnValue('kubeclaw:concurrency'),
+  getInputStream: vi.fn((jobId: string) => `kubeclaw:input:${jobId}`),
+  getJobStatusKey: vi.fn((jobId: string) => `kubeclaw:job:${jobId}:status`),
 }));
 
 // Mock the ACL manager separately

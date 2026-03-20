@@ -1,18 +1,18 @@
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: nanoclaw-redis
-  namespace: nanoclaw
+  name: kubeclaw-redis
+  namespace: kubeclaw
 spec:
-  serviceName: nanoclaw-redis
+  serviceName: kubeclaw-redis
   replicas: 1
   selector:
     matchLabels:
-      app: nanoclaw-redis
+      app: kubeclaw-redis
   template:
     metadata:
       labels:
-        app: nanoclaw-redis
+        app: kubeclaw-redis
     spec:
       securityContext:
         fsGroup: 999
@@ -48,7 +48,7 @@ spec:
             - name: REDIS_ADMIN_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: nanoclaw-redis
+                  name: kubeclaw-redis
                   key: admin-password
           ports:
             - containerPort: 6379
@@ -75,11 +75,11 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: nanoclaw-redis
-  namespace: nanoclaw
+  name: kubeclaw-redis
+  namespace: kubeclaw
 spec:
   selector:
-    app: nanoclaw-redis
+    app: kubeclaw-redis
   ports:
     - port: 6379
       targetPort: 6379

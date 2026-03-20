@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: nanoclaw
+  name: kubeclaw
   labels:
     app: nanoclaw
     # Using restricted PodSecurity with Redis running as non-root (UID 999)

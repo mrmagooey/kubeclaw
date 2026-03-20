@@ -13,7 +13,7 @@ echo "Step 1: Building IRC Mock image..."
 # Load the image into minikube
 echo ""
 echo "Step 2: Loading image into minikube..."
-minikube image load "nanoclaw-irc-mock:latest"
+minikube image load "kubeclaw-irc-mock:latest"
 
 # Apply the Kubernetes manifests
 echo ""
@@ -23,15 +23,15 @@ kubectl apply -f "${PROJECT_ROOT}/k8s/15-irc-mock.yaml"
 # Wait for the deployment to be ready
 echo ""
 echo "Step 4: Waiting for deployment to be ready..."
-kubectl rollout status deployment/nanoclaw-irc-mock -n nanoclaw --timeout=120s
+kubectl rollout status deployment/kubeclaw-irc-mock -n kubeclaw --timeout=120s
 
 # Check service
 echo "Step 4: Verifying service..."
-kubectl get service nanoclaw-irc-mock -n nanoclaw
+kubectl get service kubeclaw-irc-mock -n kubeclaw
 
 echo ""
 echo "=== Deployment Complete ==="
-echo "IRC Mock Server is running at: nanoclaw-irc-mock.nanoclaw.svc.cluster.local:16667"
+echo "IRC Mock Server is running at: kubeclaw-irc-mock.kubeclaw.svc.cluster.local:16667"
 echo ""
 echo "To view logs:"
-echo "  kubectl logs -n nanoclaw -l app=nanoclaw-irc-mock -f"
+echo "  kubectl logs -n kubeclaw -l app=kubeclaw-irc-mock -f"

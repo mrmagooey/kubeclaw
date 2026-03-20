@@ -10,7 +10,7 @@ import { emitStatus } from './status.js';
 function isKubernetesMode(): boolean {
   try {
     // Check if Kubernetes orchestrator is already deployed
-    execSync('kubectl get deployment nanoclaw-orchestrator -n nanoclaw', {
+    execSync('kubectl get deployment kubeclaw-orchestrator -n kubeclaw', {
       stdio: 'ignore',
     });
     return true;

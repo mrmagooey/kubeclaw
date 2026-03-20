@@ -329,7 +329,7 @@ export class RedisACLManager {
         'ACL_ENCRYPTION_KEY not set, using derived key - this is insecure!',
       );
       // Derive a key from a constant for development only
-      return crypto.scryptSync('nanoclaw-default-key', 'salt', 32);
+      return crypto.scryptSync('kubeclaw-default-key', 'salt', 32);
     }
 
     // Use the provided key, hash it to ensure 32 bytes

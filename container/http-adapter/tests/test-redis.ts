@@ -17,7 +17,7 @@ async function runTests(): Promise<void> {
   const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
   const redisUsername = process.env.REDIS_USERNAME || 'default';
   const redisPassword = process.env.REDIS_PASSWORD || '';
-  const jobId = process.env.NANOCLAW_JOB_ID || 'test-job-' + Date.now();
+  const jobId = process.env.KUBECLAW_JOB_ID || 'test-job-' + Date.now();
 
   console.error('Configuration:');
   console.error(`  URL: ${redisUrl}`);
@@ -63,7 +63,7 @@ async function runTests(): Promise<void> {
   );
   console.error('  Send a message to the stream to test:');
   console.error(
-    `  XADD nanoclaw:input:${jobId} * type followup prompt "Test followup"`,
+    `  XADD kubeclaw:input:${jobId} * type followup prompt "Test followup"`,
   );
   console.error();
 
