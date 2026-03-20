@@ -21,24 +21,6 @@ export async function run(_args: string[]): Promise<void> {
   const wsl = isWSL();
   const headless = isHeadless();
 
-  // Check Apple Container
-  let appleContainer: 'installed' | 'not_found' = 'not_found';
-  if (commandExists('container')) {
-    appleContainer = 'installed';
-  }
-
-  // Check Docker
-  let docker: 'running' | 'installed_not_running' | 'not_found' = 'not_found';
-  if (commandExists('docker')) {
-    try {
-      const { execSync } = await import('child_process');
-      execSync('docker info', { stdio: 'ignore' });
-      docker = 'running';
-    } catch {
-      docker = 'installed_not_running';
-    }
-  }
-
   // Check Kubernetes (kubectl)
   let kubernetes: 'connected' | 'installed_no_cluster' | 'not_found' =
     'not_found';
@@ -83,8 +65,6 @@ export async function run(_args: string[]): Promise<void> {
     {
       platform,
       wsl,
-      appleContainer,
-      docker,
       kubernetes,
       hasEnv,
       hasAuth,
@@ -97,8 +77,6 @@ export async function run(_args: string[]): Promise<void> {
     PLATFORM: platform,
     IS_WSL: wsl,
     IS_HEADLESS: headless,
-    APPLE_CONTAINER: appleContainer,
-    DOCKER: docker,
     KUBERNETES: kubernetes,
     HAS_ENV: hasEnv,
     HAS_AUTH: hasAuth,

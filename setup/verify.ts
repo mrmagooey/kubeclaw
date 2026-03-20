@@ -1,8 +1,9 @@
 /**
- * Step: verify — End-to-end health check of the full installation.
+ * Step: verify — End-to-end health check for Kubernetes deployment.
  * Replaces 09-verify.sh
  *
- * Uses better-sqlite3 directly (no sqlite3 CLI), platform-aware service checks.
+ * Kubernetes-only: checks orchestrator deployment, Redis pod, K8s Secrets,
+ * channel auth, registered groups, and mount allowlist.
  */
 import { execSync } from 'child_process';
 import fs from 'fs';
@@ -14,140 +15,101 @@ import Database from 'better-sqlite3';
 import { STORE_DIR } from '../src/config.js';
 import { readEnvFile } from '../src/env.js';
 import { logger } from '../src/logger.js';
-import {
-  getPlatform,
-  getServiceManager,
-  hasSystemd,
-  isRoot,
-} from './platform.js';
 import { emitStatus } from './status.js';
+
+// Helper to get a value from K8s Secret
+function getK8sSecretValue(key: string): string | undefined {
+  // Validate key against allowlist to prevent command injection
+  if (!/^[A-Z0-9_]+$/.test(key)) {
+    logger.warn({ key }, 'Invalid K8s secret key name — skipping');
+    return undefined;
+  }
+  try {
+    const output = execSync(
+      `kubectl get secret nanoclaw-secrets -n nanoclaw -o jsonpath={.data.${key}}`,
+      { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
+    );
+    const encoded = output.trim();
+    if (!encoded) return undefined;
+    const decoded = Buffer.from(encoded, 'base64').toString('utf-8').trim();
+    return decoded || undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 export async function run(_args: string[]): Promise<void> {
   const projectRoot = process.cwd();
-  const platform = getPlatform();
   const homeDir = os.homedir();
 
   logger.info('Starting verification');
 
-  // 1. Check service status (local or Kubernetes)
-  let service = 'not_found';
-  let kubernetesDeployment = 'not_found';
-  const mgr = getServiceManager();
-
-  // Check if Kubernetes is the runtime
+  // 1. Check Kubernetes orchestrator deployment
+  let orchestrator:
+    | 'running'
+    | 'deployed_not_ready'
+    | 'not_deployed'
+    | 'not_found' = 'not_found';
   try {
-    execSync('kubectl cluster-info', { stdio: 'ignore' });
-    // Kubernetes detected — check orchestrator deployment
-    try {
-      const output = execSync(
-        'kubectl get deployment nanoclaw-orchestrator -n nanoclaw -o jsonpath={.status.readyReplicas}',
-        { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
-      );
-      const readyReplicas = parseInt(output.trim(), 10);
-      if (readyReplicas > 0) {
-        kubernetesDeployment = 'running';
-        service = 'running';
-      } else {
-        kubernetesDeployment = 'deployed_not_ready';
-        service = 'stopped';
-      }
-    } catch {
-      kubernetesDeployment = 'not_deployed';
-    }
-  } catch {
-    // No Kubernetes — check local service
-    if (mgr === 'launchd') {
-      try {
-        const output = execSync('launchctl list', { encoding: 'utf-8' });
-        if (output.includes('com.nanoclaw')) {
-          // Check if it has a PID (actually running)
-          const line = output
-            .split('\n')
-            .find((l) => l.includes('com.nanoclaw'));
-          if (line) {
-            const pidField = line.trim().split(/\s+/)[0];
-            service = pidField !== '-' && pidField ? 'running' : 'stopped';
-          }
-        }
-      } catch {
-        // launchctl not available
-      }
-    } else if (mgr === 'systemd') {
-      const prefix = isRoot() ? 'systemctl' : 'systemctl --user';
-      try {
-        execSync(`${prefix} is-active nanoclaw`, { stdio: 'ignore' });
-        service = 'running';
-      } catch {
-        try {
-          const output = execSync(`${prefix} list-unit-files`, {
-            encoding: 'utf-8',
-          });
-          if (output.includes('nanoclaw')) {
-            service = 'stopped';
-          }
-        } catch {
-          // systemctl not available
-        }
-      }
+    const output = execSync(
+      'kubectl get deployment nanoclaw-orchestrator -n nanoclaw -o jsonpath={.status.readyReplicas}',
+      { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
+    );
+    const readyReplicas = parseInt(output.trim(), 10);
+    if (!isNaN(readyReplicas) && readyReplicas > 0) {
+      orchestrator = 'running';
     } else {
-      // Check for nohup PID file
-      const pidFile = path.join(projectRoot, 'nanoclaw.pid');
-      if (fs.existsSync(pidFile)) {
-        try {
-          const raw = fs.readFileSync(pidFile, 'utf-8').trim();
-          const pid = Number(raw);
-          if (raw && Number.isInteger(pid) && pid > 0) {
-            process.kill(pid, 0);
-            service = 'running';
-          }
-        } catch {
-          service = 'stopped';
-        }
-      }
+      orchestrator = 'deployed_not_ready';
     }
-  }
-  logger.info({ service, kubernetesDeployment }, 'Service status');
-
-  // 2. Check container runtime
-  let containerRuntime = 'none';
-  let kubernetesStatus = 'not_found';
-  try {
-    execSync('command -v container', { stdio: 'ignore' });
-    containerRuntime = 'apple-container';
-  } catch {
+  } catch (error: unknown) {
+    // Check if the error is because deployment doesn't exist vs kubectl not available
     try {
-      execSync('docker info', { stdio: 'ignore' });
-      containerRuntime = 'docker';
+      execSync('kubectl get deployment nanoclaw-orchestrator -n nanoclaw', {
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      // Deployment exists but readyReplicas check failed
+      orchestrator = 'deployed_not_ready';
     } catch {
-      // Check for Kubernetes
+      // Check if kubectl is available
       try {
-        execSync('kubectl cluster-info', { stdio: 'ignore' });
-        containerRuntime = 'kubernetes';
-        kubernetesStatus = 'connected';
-        // Check orchestrator deployment status
-        try {
-          execSync('kubectl get deployment nanoclaw-orchestrator -n nanoclaw', {
-            stdio: 'ignore',
-          });
-          kubernetesStatus = 'deployed';
-        } catch {
-          kubernetesStatus = 'connected_not_deployed';
-        }
+        execSync('kubectl version', { stdio: 'ignore' });
+        orchestrator = 'not_deployed';
       } catch {
-        // No runtime
+        orchestrator = 'not_found';
       }
     }
   }
+  logger.info({ orchestrator }, 'Orchestrator status');
 
-  // 3. Check credentials
-  let credentials = 'missing';
-  const envFile = path.join(projectRoot, '.env');
-  if (fs.existsSync(envFile)) {
-    const envContent = fs.readFileSync(envFile, 'utf-8');
-    if (/^(CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_API_KEY)=/m.test(envContent)) {
-      credentials = 'configured';
+  // 2. Check Redis pod readiness
+  let redis: 'running' | 'not_ready' | 'not_found' = 'not_found';
+  try {
+    const output = execSync(
+      'kubectl get pods -n nanoclaw -l app=nanoclaw-redis -o jsonpath={.items[0].status.phase}',
+      { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
+    );
+    const phase = output.trim();
+    if (phase === 'Running') {
+      redis = 'running';
+    } else if (phase) {
+      redis = 'not_ready';
     }
+  } catch {
+    redis = 'not_found';
   }
+  logger.info({ redis }, 'Redis status');
+
+  // 3. Check Kubernetes Secrets for credentials
+  let credentials: 'configured' | 'missing' = 'missing';
+  try {
+    execSync('kubectl get secret nanoclaw-secrets -n nanoclaw', {
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    credentials = 'configured';
+  } catch {
+    credentials = 'missing';
+  }
+  logger.info({ credentials }, 'Credentials status');
 
   // 4. Check channel auth (detect configured channels by credentials)
   const envVars = readEnvFile([
@@ -165,17 +127,32 @@ export async function run(_args: string[]): Promise<void> {
     channelAuth.whatsapp = 'authenticated';
   }
 
-  // Token-based channels: check .env
-  if (process.env.TELEGRAM_BOT_TOKEN || envVars.TELEGRAM_BOT_TOKEN) {
+  // Token-based channels: check .env and K8s Secrets as fallback
+  const telegramToken =
+    process.env.TELEGRAM_BOT_TOKEN ||
+    envVars.TELEGRAM_BOT_TOKEN ||
+    getK8sSecretValue('TELEGRAM_BOT_TOKEN');
+  if (telegramToken) {
     channelAuth.telegram = 'configured';
   }
-  if (
-    (process.env.SLACK_BOT_TOKEN || envVars.SLACK_BOT_TOKEN) &&
-    (process.env.SLACK_APP_TOKEN || envVars.SLACK_APP_TOKEN)
-  ) {
+
+  const slackBotToken =
+    process.env.SLACK_BOT_TOKEN ||
+    envVars.SLACK_BOT_TOKEN ||
+    getK8sSecretValue('SLACK_BOT_TOKEN');
+  const slackAppToken =
+    process.env.SLACK_APP_TOKEN ||
+    envVars.SLACK_APP_TOKEN ||
+    getK8sSecretValue('SLACK_APP_TOKEN');
+  if (slackBotToken && slackAppToken) {
     channelAuth.slack = 'configured';
   }
-  if (process.env.DISCORD_BOT_TOKEN || envVars.DISCORD_BOT_TOKEN) {
+
+  const discordToken =
+    process.env.DISCORD_BOT_TOKEN ||
+    envVars.DISCORD_BOT_TOKEN ||
+    getK8sSecretValue('DISCORD_BOT_TOKEN');
+  if (discordToken) {
     channelAuth.discord = 'configured';
   }
 
@@ -199,7 +176,7 @@ export async function run(_args: string[]): Promise<void> {
   }
 
   // 6. Check mount allowlist
-  let mountAllowlist = 'missing';
+  let mountAllowlist: 'configured' | 'missing' = 'missing';
   if (
     fs.existsSync(
       path.join(homeDir, '.config', 'nanoclaw', 'mount-allowlist.json'),
@@ -209,21 +186,20 @@ export async function run(_args: string[]): Promise<void> {
   }
 
   // Determine overall status
-  const isKubernetes = kubernetesDeployment !== 'not_found';
-  const status =
-    service === 'running' &&
-    credentials !== 'missing' &&
+  const status: 'success' | 'failed' =
+    orchestrator === 'running' &&
+    redis === 'running' &&
+    credentials === 'configured' &&
     anyChannelConfigured &&
     registeredGroups > 0
       ? 'success'
       : 'failed';
 
-  logger.info({ status, channelAuth, isKubernetes }, 'Verification complete');
+  logger.info({ status, channelAuth }, 'Verification complete');
 
   emitStatus('VERIFY', {
-    SERVICE: service,
-    CONTAINER_RUNTIME: containerRuntime,
-    KUBERNETES_DEPLOYMENT: kubernetesDeployment,
+    ORCHESTRATOR: orchestrator,
+    REDIS: redis,
     CREDENTIALS: credentials,
     CONFIGURED_CHANNELS: configuredChannels.join(','),
     CHANNEL_AUTH: JSON.stringify(channelAuth),
