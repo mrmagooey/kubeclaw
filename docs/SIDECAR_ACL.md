@@ -4,7 +4,7 @@ This document describes the Redis ACL-based implementation for bidirectional com
 
 ## Overview
 
-The ACL-based sidecar system allows NanoClaw to:
+The ACL-based sidecar system allows KubeClaw to:
 
 1. **Run arbitrary containers** via file-based or HTTP-based sidecar patterns
 2. **Send follow-up messages** to active sidecar jobs
@@ -41,7 +41,7 @@ The ACL-based sidecar system allows NanoClaw to:
 │                           Kubernetes Job                                    │
 │                                                                             │
 │  ┌──────────────────────────────┐  ┌──────────────────────────────────┐    │
-│  │  nanoclaw-file-adapter       │  │  user-agent                      │    │
+│  │  kubeclaw-file-adapter       │  │  user-agent                      │    │
 │  │  (or http-adapter)           │  │  (arbitrary container)           │    │
 │  │                              │  │                                  │    │
 │  │  - Reads input from stdin    │  │  - Reads from /workspace/input   │    │
@@ -58,11 +58,11 @@ The ACL-based sidecar system allows NanoClaw to:
 │             ▼                                                               │
 │  ┌─────────────────────────────────────────────────────────────────────┐   │
 │  │                    Redis 7+ (StatefulSet)                             │   │
-│  │  - Per-job ACL users (~nanoclaw:*:${jobId})                          │   │
+│  │  - Per-job ACL users (~kubeclaw:*:${jobId})                          │   │
 │  │  - Key-pattern restricted                                             │   │
 │  │  - Admin commands blocked                                             │   │
-│  │  - Input streams: nanoclaw:input:${jobId}                            │   │
-│  │  - Output channels: nanoclaw:output:${jobId}                         │   │
+│  │  - Input streams: kubeclaw:input:${jobId}                            │   │
+│  │  - Output channels: kubeclaw:output:${jobId}                         │   │
 │  └─────────────────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -118,10 +118,10 @@ For containers that communicate via files:
 
 ```typescript
 // Environment variables expected:
-REDIS_URL=redis://nanoclaw-redis:6379
+REDIS_URL=redis://kubeclaw-redis:6379
 REDIS_USERNAME=sidecar-${jobId}
 REDIS_PASSWORD=${decryptedPassword}
-NANOCLAW_JOB_ID=${jobId}
+KUBECLAW_JOB_ID=${jobId}
 ```
 
 #### HTTP Adapter (`container/http-adapter/`)
@@ -155,7 +155,7 @@ Each sidecar gets an ACL user with these restrictions:
 
 ```redis
 ACL SETUSER sidecar-${jobId} on >${password} \
-  ~nanoclaw:*:${jobId} \      # Can only access own keys
+  ~kubeclaw:*:${jobId} \      # Can only access own keys
   +@read +@write +@stream +@pubsub \  # Basic operations
   -@admin -@dangerous          # No admin commands
 ```
@@ -163,9 +163,9 @@ ACL SETUSER sidecar-${jobId} on >${password} \
 ### Key Isolation
 
 - Sidecar A **cannot** access keys of Sidecar B
-- Keys follow pattern: `nanoclaw:{type}:{jobId}`
-- Input stream: `nanoclaw:input:${jobId}`
-- Output channel: `nanoclaw:output:${jobId}`
+- Keys follow pattern: `kubeclaw:{type}:{jobId}`
+- Input stream: `kubeclaw:input:${jobId}`
+- Output channel: `kubeclaw:output:${jobId}`
 
 ### Command Restrictions
 
@@ -189,7 +189,7 @@ Sidecars **cannot** run:
 
 ```bash
 # Redis connection
-REDIS_URL=redis://nanoclaw-redis:6379
+REDIS_URL=redis://kubeclaw-redis:6379
 REDIS_ADMIN_PASSWORD=your-secure-password
 
 # ACL encryption (32+ bytes recommended)
@@ -215,9 +215,9 @@ containers:
 Create Redis secret:
 
 ```bash
-kubectl create secret generic nanoclaw-redis \
+kubectl create secret generic kubeclaw-redis \
   --from-literal=admin-password=$(openssl rand -base64 32) \
-  -n nanoclaw
+  -n kubeclaw
 ```
 
 ## Flow: Follow-Up Message
@@ -230,14 +230,14 @@ kubectl create secret generic nanoclaw-redis \
 3. Orchestrator retrieves ACL credentials from DB
    ↓
 4. Orchestrator publishes to Redis Stream:
-      XADD nanoclaw:input:${jobId} * type followup prompt "..."
+      XADD kubeclaw:input:${jobId} * type followup prompt "..."
    ↓
 5. Sidecar adapter (in Job) receives via XREAD
    ↓
 6. Sidecar processes follow-up via file IPC or HTTP
    ↓
 7. Sidecar publishes response via Redis Pub/Sub:
-      PUBLISH nanoclaw:output:${jobId} {...}
+      PUBLISH kubeclaw:output:${jobId} {...}
    ↓
 8. Orchestrator receives and routes to channel
 ```
@@ -305,7 +305,7 @@ Check `REDIS_ADMIN_PASSWORD` is set correctly and matches the Redis secret.
 Verify ACL was created:
 
 ```bash
-kubectl exec -it nanoclaw-redis-0 -- redis-cli ACL LIST
+kubectl exec -it kubeclaw-redis-0 -- redis-cli ACL LIST
 ```
 
 ### Credentials not found

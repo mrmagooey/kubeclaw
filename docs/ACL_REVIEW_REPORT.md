@@ -33,7 +33,7 @@ The Redis ACL-based sidecar implementation is well-architected and secure. Durin
 - `REDIS_URL`
 - `REDIS_USERNAME`
 - `REDIS_PASSWORD`
-- `NANOCLAW_JOB_ID`
+- `KUBECLAW_JOB_ID`
 
 **Fix Applied:**
 
@@ -97,14 +97,14 @@ Added to `.env.example`:
 
 ```redis
 ACL SETUSER sidecar-${jobId} on >${password} \
-  ~nanoclaw:*:${jobId} \          # Job-specific keys only
+  ~kubeclaw:*:${jobId} \          # Job-specific keys only
   +@read +@write +@stream +@pubsub \  # Allowed operations
   -@admin -@dangerous             # Blocked operations
 ```
 
 ### ✅ Key Isolation
 
-- Sidecars can only access keys matching `nanoclaw:*:${jobId}`
+- Sidecars can only access keys matching `kubeclaw:*:${jobId}`
 - Sidecar A cannot access Sidecar B's keys
 - Verified by `e2e/sidecar-security.test.ts`
 
@@ -233,7 +233,7 @@ All required env vars have defaults or are documented:
 | `REDIS_URL`            | `redis://localhost:6379` | K8s mode              |
 | `REDIS_ADMIN_PASSWORD` | `''`                     | ACL management        |
 | `ACL_ENCRYPTION_KEY`   | `''`                     | Credential encryption |
-| `NANOCLAW_NAMESPACE`   | `default`                | K8s mode              |
+| `KUBECLAW_NAMESPACE`   | `default`                | K8s mode              |
 
 ### Validation in Place
 

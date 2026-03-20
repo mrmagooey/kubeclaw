@@ -1,10 +1,10 @@
 # Migrating to OpenRouter
 
-This guide helps you switch from Claude to OpenRouter for specific groups or your entire NanoClaw installation.
+This guide helps you switch from Claude to OpenRouter for specific groups or your entire KubeClaw installation.
 
 ## Overview
 
-NanoClaw supports running different groups on different LLM providers. You can:
+KubeClaw supports running different groups on different LLM providers. You can:
 
 - Keep existing groups on Claude
 - Register new groups with OpenRouter
@@ -75,7 +75,7 @@ DEFAULT_LLM_PROVIDER=openrouter
 Or if using Docker directly:
 
 ```bash
-docker build -t nanoclaw-agent:openrouter -f container/Dockerfile.openrouter .
+docker build -t kubeclaw-agent:openrouter -f container/Dockerfile.openrouter .
 ```
 
 ### Step 3: Test the Setup
@@ -137,7 +137,7 @@ sqlite3 store/messages.db "SELECT jid, name, folder FROM registered_groups;"
 sqlite3 store/messages.db "UPDATE registered_groups SET llm_provider = 'openrouter' WHERE folder = 'family-chat';"
 ```
 
-Restart NanoClaw after database changes.
+Restart KubeClaw after database changes.
 
 ## Model Selection Strategy
 
@@ -303,7 +303,7 @@ sqlite3 store/messages.db "UPDATE registered_groups SET llm_provider = 'openrout
 
 ### Container Image Issues
 
-**Error**: `Error: No such image: nanoclaw-agent:openrouter`
+**Error**: `Error: No such image: kubeclaw-agent:openrouter`
 
 **Fix**:
 

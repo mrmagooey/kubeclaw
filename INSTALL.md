@@ -1,8 +1,8 @@
-# NanoClaw — Kubernetes Installation Guide
+# KubeClaw — Kubernetes Installation Guide
 
 ## Overview
 
-NanoClaw runs as two persistent services on Kubernetes:
+KubeClaw runs as two persistent services on Kubernetes:
 
 - **Orchestrator** — Node.js process that receives messages from channels (Slack, Telegram, etc.) and manages agent jobs
 - **Redis** — Message bus between orchestrator and agent jobs
@@ -27,7 +27,7 @@ Claude response → back through channel
 - Kubernetes 1.24+ with `batch/v1` Job support
 - `kubectl` configured for your cluster
 - Redis 7+ (provided via `k8s/10-redis.yaml`)
-- Container runtime that can pull or load the NanoClaw images
+- Container runtime that can pull or load the KubeClaw images
 - Persistent storage with **ReadWriteMany** (RWX) for multi-node clusters, or ReadWriteOnce (RWO) for single-node
 
 ## Quick Start
@@ -39,17 +39,17 @@ Claude response → back through channel
 ./container/build.sh
 
 # Build the orchestrator image
-docker build -t nanoclaw-orchestrator:latest .
+docker build -t kubeclaw-orchestrator:latest .
 ```
 
 For local clusters (kind, minikube), load the images:
 
 ```bash
-kind load docker-image nanoclaw-agent:latest
-kind load docker-image nanoclaw-orchestrator:latest
+kind load docker-image kubeclaw-agent:latest
+kind load docker-image kubeclaw-orchestrator:latest
 # OR
-minikube image load nanoclaw-agent:latest
-minikube image load nanoclaw-orchestrator:latest
+minikube image load kubeclaw-agent:latest
+minikube image load kubeclaw-orchestrator:latest
 ```
 
 For remote clusters, push to a registry and update `image:` fields in `k8s/30-orchestrator.yaml` and `k8s/40-agent-job-template.yaml`.
@@ -65,22 +65,22 @@ kubectl apply -f k8s/01-network-policy.yaml
 
 ```bash
 # Redis admin password (required for ACL auth)
-kubectl create secret generic nanoclaw-redis \
+kubectl create secret generic kubeclaw-redis \
   --from-literal=admin-password=$(openssl rand -base64 32) \
-  -n nanoclaw
+  -n kubeclaw
 
 # Application secrets — use one of ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN
-kubectl create secret generic nanoclaw-secrets \
+kubectl create secret generic kubeclaw-secrets \
   --from-literal=anthropic-api-key=sk-ant-... \
   --from-literal=claude-code-oauth-token=... \
-  -n nanoclaw
+  -n kubeclaw
 ```
 
 ### 4. Deploy Redis
 
 ```bash
 kubectl apply -f k8s/10-redis.yaml
-kubectl rollout status statefulset/nanoclaw-redis -n nanoclaw
+kubectl rollout status statefulset/kubeclaw-redis -n kubeclaw
 ```
 
 ### 5. Create Storage
@@ -103,18 +103,18 @@ kubectl apply -f k8s/20-storage-production.yaml
 ```bash
 kubectl apply -f k8s/35-configmaps.yaml
 kubectl apply -f k8s/30-orchestrator.yaml
-kubectl rollout status deployment/nanoclaw-orchestrator -n nanoclaw
+kubectl rollout status deployment/kubeclaw-orchestrator -n kubeclaw
 ```
 
 ### 7. Verify
 
 ```bash
-kubectl get pods -n nanoclaw
+kubectl get pods -n kubeclaw
 # Expected:
-#   nanoclaw-redis-0        Running
-#   nanoclaw-orchestrator-* Running
+#   kubeclaw-redis-0        Running
+#   kubeclaw-orchestrator-* Running
 
-kubectl logs -f deployment/nanoclaw-orchestrator -n nanoclaw
+kubectl logs -f deployment/kubeclaw-orchestrator -n kubeclaw
 ```
 
 ---
@@ -144,18 +144,18 @@ All configuration is via environment variables. For Docker-mode development, cop
 | `OPENROUTER_MODEL` | `openai/gpt-4o` | Model identifier for OpenRouter |
 | `OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | OpenRouter API base URL |
 | `OPENROUTER_HTTP_REFERER` | — | Your domain, for OpenRouter rankings (optional) |
-| `OPENROUTER_X_TITLE` | `NanoClaw` | App name for OpenRouter rankings (optional) |
+| `OPENROUTER_X_TITLE` | `KubeClaw` | App name for OpenRouter rankings (optional) |
 
 ### Kubernetes Runtime
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `NANOCLAW_RUNTIME` | `docker` | Set to `kubernetes` to enable K8s mode |
-| `NANOCLAW_NAMESPACE` | `nanoclaw` | Kubernetes namespace for agent Jobs |
-| `NANOCLAW_IPC_BASE` | `/data/sessions` | Mount path for the sessions PVC (must match orchestrator volumeMount) |
+| `KUBECLAW_RUNTIME` | `docker` | Set to `kubernetes` to enable K8s mode |
+| `KUBECLAW_NAMESPACE` | `kubeclaw` | Kubernetes namespace for agent Jobs |
+| `KUBECLAW_IPC_BASE` | `/data/sessions` | Mount path for the sessions PVC (must match orchestrator volumeMount) |
 | `MAX_CONCURRENT_JOBS` | `10` | Maximum parallel agent Jobs |
-| `REDIS_URL` | `redis://nanoclaw-redis:6379` | Redis connection URL |
-| `REDIS_ADMIN_PASSWORD` | — | Redis ACL admin password (from `nanoclaw-redis` secret) |
+| `REDIS_URL` | `redis://kubeclaw-redis:6379` | Redis connection URL |
+| `REDIS_ADMIN_PASSWORD` | — | Redis ACL admin password (from `kubeclaw-redis` secret) |
 | `ACL_ENCRYPTION_KEY` | — | 32-byte key to encrypt ACL credentials at rest. If unset, a derived key is used (insecure — dev only) |
 
 ### Agent Job Resources
@@ -176,8 +176,8 @@ These control the resource requests/limits for each agent Job pod.
 | `CONTAINER_TIMEOUT` | `1800000` | Max agent runtime in ms (30 min) |
 | `CONTAINER_MAX_OUTPUT_SIZE` | `10485760` | Max agent output in bytes (10 MB) |
 | `IDLE_TIMEOUT` | `1800000` | Idle timeout after last result in ms (30 min) |
-| `CLAUDE_CONTAINER_IMAGE` | `nanoclaw-agent:claude` | Image for Claude-backed agents |
-| `OPENROUTER_CONTAINER_IMAGE` | `nanoclaw-agent:openrouter` | Image for OpenRouter-backed agents |
+| `CLAUDE_CONTAINER_IMAGE` | `kubeclaw-agent:claude` | Image for Claude-backed agents |
+| `OPENROUTER_CONTAINER_IMAGE` | `kubeclaw-agent:openrouter` | Image for OpenRouter-backed agents |
 
 ### Channel Integrations
 
@@ -201,11 +201,11 @@ Add secrets for any channels you use. See the `/add-telegram`, `/add-slack`, `/a
 
 | PVC | Size | Access | Purpose |
 |-----|------|--------|---------|
-| `nanoclaw-redis` | 10 Gi | RWO | Redis AOF persistence |
-| `nanoclaw-groups` | 50 Gi | RWX* | Group folders and `CLAUDE.md` memory files |
-| `nanoclaw-sessions` | 20 Gi | RWX* | Claude SDK session state |
+| `kubeclaw-redis` | 10 Gi | RWO | Redis AOF persistence |
+| `kubeclaw-groups` | 50 Gi | RWX* | Group folders and `CLAUDE.md` memory files |
+| `kubeclaw-sessions` | 20 Gi | RWX* | Claude SDK session state |
 
-*`nanoclaw-groups` and `nanoclaw-sessions` need RWX on multi-node clusters because both the orchestrator and agent Jobs mount them simultaneously. RWO works on single-node clusters where all pods schedule on the same node.
+*`kubeclaw-groups` and `kubeclaw-sessions` need RWX on multi-node clusters because both the orchestrator and agent Jobs mount them simultaneously. RWO works on single-node clusters where all pods schedule on the same node.
 
 **Recommended storage classes by provider:**
 
@@ -225,13 +225,13 @@ Add secrets for any channels you use. See the `/add-telegram`, `/add-slack`, `/a
 
 | Secret | Key | Description |
 |--------|-----|-------------|
-| `nanoclaw-redis` | `admin-password` | Redis ACL admin password |
-| `nanoclaw-secrets` | `anthropic-api-key` | Anthropic API key |
-| `nanoclaw-secrets` | `claude-code-oauth-token` | Claude Code OAuth token |
+| `kubeclaw-redis` | `admin-password` | Redis ACL admin password |
+| `kubeclaw-secrets` | `anthropic-api-key` | Anthropic API key |
+| `kubeclaw-secrets` | `claude-code-oauth-token` | Claude Code OAuth token |
 
 You need at least one of `anthropic-api-key` or `claude-code-oauth-token`.
 
-### Optional (add to `nanoclaw-secrets`)
+### Optional (add to `kubeclaw-secrets`)
 
 | Key | Description |
 |-----|-------------|
@@ -243,7 +243,7 @@ You need at least one of `anthropic-api-key` or `claude-code-oauth-token`.
 
 ## RBAC
 
-The orchestrator runs with a minimal service account (`nanoclaw-orchestrator`) that has permission only to:
+The orchestrator runs with a minimal service account (`kubeclaw-orchestrator`) that has permission only to:
 
 - Create, get, list, watch, delete **Jobs** (`batch/v1`)
 - Get, list, watch **Pods** (to monitor job pods)
@@ -269,7 +269,7 @@ The orchestrator has no NetworkPolicy restrictions by default.
 
 1. Build new images
 2. Load/push to your registry
-3. Roll the orchestrator: `kubectl rollout restart deployment/nanoclaw-orchestrator -n nanoclaw`
+3. Roll the orchestrator: `kubectl rollout restart deployment/kubeclaw-orchestrator -n kubeclaw`
 
 In-progress agent Jobs will complete before the pod terminates (graceful shutdown). New jobs start on the new image automatically.
 
@@ -279,21 +279,21 @@ In-progress agent Jobs will complete before the pod terminates (graceful shutdow
 
 ```bash
 # Orchestrator logs
-kubectl logs -f deployment/nanoclaw-orchestrator -n nanoclaw
+kubectl logs -f deployment/kubeclaw-orchestrator -n kubeclaw
 
 # List recent agent jobs
-kubectl get jobs -n nanoclaw --sort-by=.metadata.creationTimestamp
+kubectl get jobs -n kubeclaw --sort-by=.metadata.creationTimestamp
 
 # Logs for a specific agent job
-kubectl logs job/<job-name> -n nanoclaw
+kubectl logs job/<job-name> -n kubeclaw
 
 # Check Redis connectivity
-kubectl exec -it statefulset/nanoclaw-redis -n nanoclaw -- \
-  redis-cli -a $(kubectl get secret nanoclaw-redis -n nanoclaw \
+kubectl exec -it statefulset/kubeclaw-redis -n kubeclaw -- \
+  redis-cli -a $(kubectl get secret kubeclaw-redis -n kubeclaw \
     -o jsonpath='{.data.admin-password}' | base64 -d) ping
 
 # Check PVC usage
-kubectl exec -it deployment/nanoclaw-orchestrator -n nanoclaw -- \
+kubectl exec -it deployment/kubeclaw-orchestrator -n kubeclaw -- \
   du -sh /workspace/groups/* /data/sessions/*
 ```
 
@@ -304,11 +304,11 @@ See also the `/debug` skill for guided troubleshooting.
 ## Uninstalling
 
 ```bash
-kubectl delete namespace nanoclaw
+kubectl delete namespace kubeclaw
 ```
 
 This removes all resources. **PersistentVolumes are retained by default** — delete them manually if you want to remove all data:
 
 ```bash
-kubectl delete pv $(kubectl get pv | grep nanoclaw | awk '{print $1}')
+kubectl delete pv $(kubectl get pv | grep kubeclaw | awk '{print $1}')
 ```

@@ -1,6 +1,6 @@
 # Phase 3 Implementation Summary: OpenRouter Support
 
-This document summarizes the Phase 3 implementation of OpenRouter support for NanoClaw, which focused on testing, edge case handling, documentation, and type safety.
+This document summarizes the Phase 3 implementation of OpenRouter support for KubeClaw, which focused on testing, edge case handling, documentation, and type safety.
 
 ## Files Created
 

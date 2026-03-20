@@ -1,4 +1,4 @@
-# NanoClaw E2E Testing - Minikube Environment Validation Report
+# KubeClaw E2E Testing - Minikube Environment Validation Report
 
 **Date:** 2026-03-08  
 **Tester:** Automated E2E Validation  
@@ -8,7 +8,7 @@
 
 ## Executive Summary
 
-This report documents the setup and validation of a minikube environment for NanoClaw e2e testing. The infrastructure was successfully deployed with several documented issues and workarounds.
+This report documents the setup and validation of a minikube environment for KubeClaw e2e testing. The infrastructure was successfully deployed with several documented issues and workarounds.
 
 **Overall Status:** ⚠️ PARTIALLY SUCCESSFUL
 
@@ -96,22 +96,22 @@ Addons: storage-provisioner
 ### 3.2 Component Status
 
 ```
-Namespace: nanoclaw
+Namespace: kubeclaw
 
 Pods:
-  nanoclaw-redis-0           1/1     Running   0          5m
+  kubeclaw-redis-0           1/1     Running   0          5m
 
 Services:
-  nanoclaw-redis             ClusterIP   10.107.245.229   6379/TCP
+  kubeclaw-redis             ClusterIP   10.107.245.229   6379/TCP
 
 PVCs:
-  data-nanoclaw-redis-0      Bound   10Gi   RWO   standard
-  nanoclaw-groups            Bound   50Gi   RWO   standard
-  nanoclaw-redis-data        Bound   10Gi   RWO   standard
-  nanoclaw-sessions          Bound   20Gi   RWO   standard
+  data-kubeclaw-redis-0      Bound   10Gi   RWO   standard
+  kubeclaw-groups            Bound   50Gi   RWO   standard
+  kubeclaw-redis-data        Bound   10Gi   RWO   standard
+  kubeclaw-sessions          Bound   20Gi   RWO   standard
 
 Secrets:
-  nanoclaw-secrets           Opaque   2      5m
+  kubeclaw-secrets           Opaque   2      5m
 ```
 
 ---
@@ -146,7 +146,7 @@ curl -L https://storage.googleapis.com/minikube/releases/latest/minikube-linux-a
 **Problem:**
 
 ```
-Create Pod nanoclaw-redis-0 failed: violates PodSecurity "restricted:latest":
+Create Pod kubeclaw-redis-0 failed: violates PodSecurity "restricted:latest":
 - allowPrivilegeEscalation != false
 - unrestricted capabilities
 - runAsNonRoot != true
@@ -290,7 +290,7 @@ minikube kubectl -- get pods -A
 ### Test 1: Redis Connectivity
 
 ```bash
-kubectl exec nanoclaw-redis-0 -- redis-cli ping
+kubectl exec kubeclaw-redis-0 -- redis-cli ping
 ```
 
 **Result:** ✅ PONG
@@ -298,7 +298,7 @@ kubectl exec nanoclaw-redis-0 -- redis-cli ping
 ### Test 2: Redis Pub/Sub
 
 ```bash
-kubectl exec nanoclaw-redis-0 -- redis-cli PUBLISH nanoclaw:test "message"
+kubectl exec kubeclaw-redis-0 -- redis-cli PUBLISH kubeclaw:test "message"
 ```
 
 **Result:** ✅ Published successfully
@@ -306,7 +306,7 @@ kubectl exec nanoclaw-redis-0 -- redis-cli PUBLISH nanoclaw:test "message"
 ### Test 3: PVC Binding
 
 ```bash
-kubectl get pvc -n nanoclaw
+kubectl get pvc -n kubeclaw
 ```
 
 **Result:** ✅ All PVCs bound
@@ -315,7 +315,7 @@ kubectl get pvc -n nanoclaw
 
 ```bash
 kubectl apply -f test-job.yaml
-kubectl logs job/nanoclaw-test-job
+kubectl logs job/kubeclaw-test-job
 ```
 
 **Result:** ✅ "Test job completed successfully"
@@ -323,7 +323,7 @@ kubectl logs job/nanoclaw-test-job
 ### Test 5: Network Policies
 
 ```bash
-kubectl get networkpolicy -n nanoclaw
+kubectl get networkpolicy -n kubeclaw
 ```
 
 **Result:** ✅ Policies applied
@@ -336,8 +336,8 @@ kubectl get networkpolicy -n nanoclaw
 
 | Image                 | Tag    | Size    | Status          |
 | --------------------- | ------ | ------- | --------------- |
-| nanoclaw-agent        | latest | 1.78 GB | ✅ Built        |
-| nanoclaw-orchestrator | latest | N/A     | ❌ Build failed |
+| kubeclaw-agent        | latest | 1.78 GB | ✅ Built        |
+| kubeclaw-orchestrator | latest | N/A     | ❌ Build failed |
 
 ### 6.2 Agent Image Details
 
@@ -362,14 +362,14 @@ kubectl get networkpolicy -n nanoclaw
 
 ⏸️ **Not yet deployed** (requires orchestrator)
 
-- ServiceAccount: nanoclaw-orchestrator
+- ServiceAccount: kubeclaw-orchestrator
 - Role: job-manager (create/get/list/watch/delete Jobs, get/list/watch Pods, get Pod logs)
 
 ### 7.3 Secrets Management
 
 ✅ **Configured:**
 
-- Secret: nanoclaw-secrets
+- Secret: kubeclaw-secrets
 - Keys: anthropic-api-key, claude-code-oauth-token
 - Mounted as environment variables
 
@@ -427,10 +427,10 @@ kubectl apply -f k8s/10-redis.yaml
 kubectl apply -f k8s/20-storage.yaml
 
 # Create secrets
-kubectl create secret generic nanoclaw-secrets \
+kubectl create secret generic kubeclaw-secrets \
   --from-literal=anthropic-api-key=$ANTHROPIC_API_KEY \
   --from-literal=claude-code-oauth-token=$CLAUDE_CODE_OAUTH_TOKEN \
-  -n nanoclaw
+  -n kubeclaw
 ```
 
 ### Build and Deploy Orchestrator (after TypeScript fixes)
@@ -440,8 +440,8 @@ kubectl create secret generic nanoclaw-secrets \
 eval $(minikube docker-env)
 
 # Build images
-docker build -t nanoclaw-orchestrator:latest -f Dockerfile .
-docker build -t nanoclaw-agent:latest -f container/Dockerfile .
+docker build -t kubeclaw-orchestrator:latest -f Dockerfile .
+docker build -t kubeclaw-agent:latest -f container/Dockerfile .
 
 # Deploy orchestrator
 kubectl apply -f k8s/30-orchestrator.yaml
@@ -451,12 +451,12 @@ kubectl apply -f k8s/30-orchestrator.yaml
 
 ```bash
 # Check status
-kubectl get pods -n nanoclaw
-kubectl get jobs -n nanoclaw
+kubectl get pods -n kubeclaw
+kubectl get jobs -n kubeclaw
 
 # View logs
-kubectl logs -f deployment/nanoclaw-orchestrator -n nanoclaw
-kubectl logs job/nanoclaw-agent-<name> -n nanoclaw
+kubectl logs -f deployment/kubeclaw-orchestrator -n kubeclaw
+kubectl logs job/kubeclaw-agent-<name> -n kubeclaw
 ```
 
 ### Cleanup
@@ -496,7 +496,7 @@ minikube delete
 - name: Deploy and test
   run: |
     kubectl apply -f k8s/
-    kubectl wait --for=condition=ready pod -l app=nanoclaw-redis -n nanoclaw --timeout=120s
+    kubectl wait --for=condition=ready pod -l app=kubeclaw-redis -n kubeclaw --timeout=120s
     # Run e2e tests
 ```
 
@@ -510,7 +510,7 @@ Changed PodSecurity from `restricted` to `baseline`.
 
 ### k8s/20-storage.yaml
 
-Changed `nanoclaw-groups` PVC from `ReadWriteMany` to `ReadWriteOnce`.
+Changed `kubeclaw-groups` PVC from `ReadWriteMany` to `ReadWriteOnce`.
 
 ### Dockerfile (created)
 

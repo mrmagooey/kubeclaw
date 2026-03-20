@@ -1,9 +1,9 @@
 ---
 name: setup
-description: Run initial NanoClaw setup. Use when user wants to install dependencies, authenticate messaging channels, register their main channel, or start the background services. Triggers on "setup", "install", "configure nanoclaw", or first-time setup requests.
+description: Run initial KubeClaw setup. Use when user wants to install dependencies, authenticate messaging channels, register their main channel, or start the background services. Triggers on "setup", "install", "configure kubeclaw", or first-time setup requests.
 ---
 
-# NanoClaw Setup
+# KubeClaw Setup
 
 Run setup steps automatically. Only pause when user action is required (channel authentication, configuration choices). Setup uses `bash setup.sh` for bootstrap, then `npx tsx setup/index.ts --step <name>` for all other steps. Steps emit structured status blocks to stdout. Verbose logs go to `logs/setup.log`.
 
@@ -32,7 +32,7 @@ Run `npx tsx setup/index.ts --step environment` and parse the status block.
 
 ## 3. Kubernetes Setup
 
-NanoClaw runs exclusively on Kubernetes. Check KUBERNETES status from step 2.
+KubeClaw runs exclusively on Kubernetes. Check KUBERNETES status from step 2.
 
 **Prerequisites check:**
 
@@ -48,9 +48,9 @@ NanoClaw runs exclusively on Kubernetes. Check KUBERNETES status from step 2.
 
 **AskUserQuestion:** Kubernetes configuration options
 
-- Namespace (default: `nanoclaw`)
+- Namespace (default: `kubeclaw`)
 - Storage class to use (optional — will auto-detect if not specified)
-- Container registry (optional — for pushing images, e.g., `your-registry.com/nanoclaw`)
+- Container registry (optional — for pushing images, e.g., `your-registry.com/kubeclaw`)
 
 **Build and Deploy:**
 
@@ -67,7 +67,7 @@ npx tsx setup/index.ts --step kubernetes -- --namespace <namespace> --build [--r
 **If SECRETS_CONFIGURED=false:** The orchestrator needs API credentials. Guide user to create secrets:
 
 ```bash
-kubectl create secret generic nanoclaw-secrets \
+kubectl create secret generic kubeclaw-secrets \
   --from-literal=anthropic-api-key=$ANTHROPIC_API_KEY \
   --from-literal=claude-code-oauth-token=$CLAUDE_CODE_OAUTH_TOKEN \
   -n <namespace>
@@ -79,7 +79,7 @@ kubectl create secret generic nanoclaw-secrets \
 
 ```bash
 kubectl get pods -n <namespace>
-kubectl describe deployment nanoclaw-orchestrator -n <namespace>
+kubectl describe deployment kubeclaw-orchestrator -n <namespace>
 ```
 
 **Skip to Step 5 (channels)** — Kubernetes doesn't need local service setup.
@@ -96,12 +96,12 @@ kubectl describe deployment nanoclaw-orchestrator -n <namespace>
 
 - Check `REDIS_POD_STATUS` and `REDIS_POD_EVENTS`.
 - If pod is in `Pending`: likely a storage or scheduling issue — check node resources (`kubectl describe nodes`).
-- If pod is in `CrashLoopBackOff`: check pod logs (`kubectl logs nanoclaw-redis-0 -n nanoclaw`).
+- If pod is in `CrashLoopBackOff`: check pod logs (`kubectl logs kubeclaw-redis-0 -n kubeclaw`).
 
 **Orchestrator rollout timeout:**
 
 - Check `DEPLOYMENT_EVENTS` and `POD_EVENTS`.
-- Common causes: image pull failure (check `imagePullPolicy` and registry access), missing secrets (check `nanoclaw-secrets` exists), resource limits exceeded (check node capacity).
+- Common causes: image pull failure (check `imagePullPolicy` and registry access), missing secrets (check `kubeclaw-secrets` exists), resource limits exceeded (check node capacity).
 - If image pull error: guide user to push images to registry or load into cluster (`kind load docker-image ...`).
 
 ## 4. Claude Authentication (No Script)
@@ -154,29 +154,29 @@ AskUserQuestion: Agent access to external directories?
 Run `npx tsx setup/index.ts --step verify` and parse the status block.
 
 - KUBERNETES_DEPLOYMENT=running → Service is up
-- KUBERNETES_DEPLOYMENT=deployed_not_ready → Check pod logs: `kubectl logs -n nanoclaw deployment/nanoclaw-orchestrator`
+- KUBERNETES_DEPLOYMENT=deployed_not_ready → Check pod logs: `kubectl logs -n kubeclaw deployment/kubeclaw-orchestrator`
 - KUBERNETES_DEPLOYMENT=not_deployed → Re-run step 3
 - KUBERNETES_DEPLOYMENT=not_found → kubectl not connected to cluster
 
 If STATUS=failed, fix each:
 
-- SERVICE=stopped → Restart deployment: `kubectl rollout restart deployment/nanoclaw-orchestrator -n nanoclaw`
+- SERVICE=stopped → Restart deployment: `kubectl rollout restart deployment/kubeclaw-orchestrator -n kubeclaw`
 - SERVICE=not_found → re-run step 3
 - CREDENTIALS=missing → re-run step 4
 - CHANNEL_AUTH shows `not_found` for any channel → re-invoke that channel's skill (e.g. `/add-telegram`)
 - REGISTERED_GROUPS=0 → re-invoke the channel skills from step 5
 - MOUNT_ALLOWLIST=missing → `npx tsx setup/index.ts --step mounts -- --empty`
 
-Tell user to test: send a message in their registered chat. Show: `kubectl logs -n nanoclaw deployment/nanoclaw-orchestrator -f`
+Tell user to test: send a message in their registered chat. Show: `kubectl logs -n kubeclaw deployment/kubeclaw-orchestrator -f`
 
 ## Troubleshooting
 
-**Service not starting:** Check pod logs: `kubectl logs -n nanoclaw deployment/nanoclaw-orchestrator`. Common: missing secrets (re-run step 3), missing channel credentials (re-invoke channel skill).
+**Service not starting:** Check pod logs: `kubectl logs -n kubeclaw deployment/kubeclaw-orchestrator`. Common: missing secrets (re-run step 3), missing channel credentials (re-invoke channel skill).
 
-**Container agent fails:** Check container logs: `kubectl logs -n nanoclaw deployment/nanoclaw-orchestrator`. Check agent logs in mounted volume or S3 depending on storage configuration.
+**Container agent fails:** Check container logs: `kubectl logs -n kubeclaw deployment/kubeclaw-orchestrator`. Check agent logs in mounted volume or S3 depending on storage configuration.
 
 **No response to messages:** Check trigger pattern. Main channel doesn't need prefix. Check DB: `npx tsx setup/index.ts --step verify`. Check pod logs.
 
-**Channel not connecting:** Verify the channel's credentials are set in `.env`. Channels auto-enable when their credentials are present. For WhatsApp: check `store/auth/creds.json` exists. For token-based channels: check token values in `.env`. Restart the deployment after any `.env` change: `kubectl rollout restart deployment/nanoclaw-orchestrator -n nanoclaw`
+**Channel not connecting:** Verify the channel's credentials are set in `.env`. Channels auto-enable when their credentials are present. For WhatsApp: check `store/auth/creds.json` exists. For token-based channels: check token values in `.env`. Restart the deployment after any `.env` change: `kubectl rollout restart deployment/kubeclaw-orchestrator -n kubeclaw`
 
-**Stop service:** `kubectl delete deployment nanoclaw-orchestrator -n nanoclaw`
+**Stop service:** `kubectl delete deployment kubeclaw-orchestrator -n kubeclaw`

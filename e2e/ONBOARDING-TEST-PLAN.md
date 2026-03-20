@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document describes the end-to-end tests for simulating user onboarding and initial usage of NanoClaw without requiring real credentials or external API calls.
+This document describes the end-to-end tests for simulating user onboarding and initial usage of KubeClaw without requiring real credentials or external API calls.
 
 ## Architecture
 
@@ -111,7 +111,7 @@ Located in `e2e/fixtures/mock-responses.json`:
 {
   "default": {
     "role": "assistant",
-    "content": "Hello! I'm your NanoClaw assistant."
+    "content": "Hello! I'm your KubeClaw assistant."
   },
   "greeting": {
     "role": "assistant",

@@ -1,16 +1,16 @@
-# NanoClaw HTTP Adapter
+# KubeClaw HTTP Adapter
 
-Sidecar container that enables NanoClaw to communicate with any agent container exposing an HTTP REST API. The agent container needs no knowledge of NanoClaw's internal protocol.
+Sidecar container that enables KubeClaw to communicate with any agent container exposing an HTTP REST API. The agent container needs no knowledge of KubeClaw's internal protocol.
 
 ## Architecture
 
 ```
 Kubernetes Pod
-├── nanoclaw-http-adapter (this sidecar)
-│   ├── Reads task from stdin (NanoClaw protocol)
+├── kubeclaw-http-adapter (this sidecar)
+│   ├── Reads task from stdin (KubeClaw protocol)
 │   ├── Polls GET /agent/health until ready
 │   ├── Sends POST /agent/task with task payload
-│   └── Writes result to stdout (NanoClaw markers)
+│   └── Writes result to stdout (KubeClaw markers)
 │
 └── your-agent-container
     └── Exposes REST API on port 8080
@@ -80,13 +80,13 @@ Execute a task.
 
 | Variable                        | Default                 | Description                   |
 | ------------------------------- | ----------------------- | ----------------------------- |
-| `NANOCLAW_AGENT_URL`            | `http://localhost:8080` | Base URL of the agent         |
-| `NANOCLAW_REQUEST_TIMEOUT`      | `300000`                | Request timeout in ms (5 min) |
-| `NANOCLAW_HEALTH_POLL_INTERVAL` | `1000`                  | Health poll interval in ms    |
-| `NANOCLAW_HEALTH_POLL_TIMEOUT`  | `30000`                 | Health check timeout in ms    |
-| `NANOCLAW_MAX_RETRIES`          | `3`                     | Max retry attempts            |
-| `NANOCLAW_RETRY_DELAY`          | `1000`                  | Initial retry delay in ms     |
-| `NANOCLAW_HEALTH_ENDPOINT`      | `/agent/health`         | Health check path             |
+| `KUBECLAW_AGENT_URL`            | `http://localhost:8080` | Base URL of the agent         |
+| `KUBECLAW_REQUEST_TIMEOUT`      | `300000`                | Request timeout in ms (5 min) |
+| `KUBECLAW_HEALTH_POLL_INTERVAL` | `1000`                  | Health poll interval in ms    |
+| `KUBECLAW_HEALTH_POLL_TIMEOUT`  | `30000`                 | Health check timeout in ms    |
+| `KUBECLAW_MAX_RETRIES`          | `3`                     | Max retry attempts            |
+| `KUBECLAW_RETRY_DELAY`          | `1000`                  | Initial retry delay in ms     |
+| `KUBECLAW_HEALTH_ENDPOINT`      | `/agent/health`         | Health check path             |
 
 ## Examples
 

@@ -1,6 +1,6 @@
-# NanoClaw E2E Testing
+# KubeClaw E2E Testing
 
-End-to-end testing suite for NanoClaw Kubernetes deployment.
+End-to-end testing suite for KubeClaw Kubernetes deployment.
 
 ## Prerequisites
 
@@ -20,17 +20,17 @@ minikube start --driver=docker --cpus=4 --memory=8192 --disk-size=40g
 
 ```bash
 # Build agent image
-docker build -t nanoclaw-agent:latest -f container/Dockerfile .
+docker build -t kubeclaw-agent:latest -f container/Dockerfile .
 
 # Build orchestrator image
-docker build -t nanoclaw-orchestrator:latest -f Dockerfile .
+docker build -t kubeclaw-orchestrator:latest -f Dockerfile .
 
 # Load into minikube
-minikube image load nanoclaw-agent:latest
-minikube image load nanoclaw-orchestrator:latest
+minikube image load kubeclaw-agent:latest
+minikube image load kubeclaw-orchestrator:latest
 ```
 
-### 3. Deploy NanoClaw
+### 3. Deploy KubeClaw
 
 ```bash
 kubectl apply -f k8s/00-namespace.yaml
@@ -50,10 +50,10 @@ kubectl apply -f e2e/manifests/test-jobs.yaml
 kubectl apply -f e2e/manifests/network-test.yaml
 
 # Watch test jobs
-kubectl get jobs -n nanoclaw -l test=e2e -w
+kubectl get jobs -n kubeclaw -l test=e2e -w
 
 # Check logs
-kubectl logs -n nanoclaw job/simple-job
+kubectl logs -n kubeclaw job/simple-job
 ```
 
 ### 5. Cleanup
@@ -62,15 +62,15 @@ kubectl logs -n nanoclaw job/simple-job
 # Remove test resources only
 kubectl delete -f e2e/manifests/ --ignore-not-found=true
 
-# Remove all nanoclaw resources
-kubectl delete namespace nanoclaw
+# Remove all kubeclaw resources
+kubectl delete namespace kubeclaw
 ```
 
 ## Test Manifests
 
 ### test-namespace.yaml
 
-Defines the nanoclaw namespace with resource quotas and limit ranges for testing.
+Defines the kubeclaw namespace with resource quotas and limit ranges for testing.
 
 ### test-pvc.yaml
 
@@ -86,7 +86,7 @@ Collection of test jobs:
 - `resource-test-job`: Job with specific resource requests/limits
 - `write-test-job`: Writes data to PVC
 - `read-test-job`: Reads data from PVC
-- `agent-like-job`: Mock agent job with NanoClaw environment variables
+- `agent-like-job`: Mock agent job with KubeClaw environment variables
 
 ### network-test.yaml
 
@@ -125,7 +125,7 @@ set +a
 Check resource quotas:
 
 ```bash
-kubectl describe resourcequota -n nanoclaw
+kubectl describe resourcequota -n kubeclaw
 ```
 
 ### PVC not binding
@@ -134,7 +134,7 @@ Check storage class:
 
 ```bash
 kubectl get storageclass
-kubectl describe pvc -n nanoclaw
+kubectl describe pvc -n kubeclaw
 ```
 
 ### Network tests failing
@@ -142,8 +142,8 @@ kubectl describe pvc -n nanoclaw
 Verify network policies:
 
 ```bash
-kubectl get networkpolicies -n nanoclaw
-kubectl describe networkpolicy nanoclaw-agent-policy -n nanoclaw
+kubectl get networkpolicies -n kubeclaw
+kubectl describe networkpolicy kubeclaw-agent-policy -n kubeclaw
 ```
 
 ### Redis connection refused
@@ -151,7 +151,7 @@ kubectl describe networkpolicy nanoclaw-agent-policy -n nanoclaw
 Wait for Redis to be ready:
 
 ```bash
-kubectl wait --for=condition=ready pod -l app=nanoclaw-redis -n nanoclaw --timeout=120s
+kubectl wait --for=condition=ready pod -l app=kubeclaw-redis -n kubeclaw --timeout=120s
 ```
 
 ### Images not found
@@ -159,7 +159,7 @@ kubectl wait --for=condition=ready pod -l app=nanoclaw-redis -n nanoclaw --timeo
 Ensure images are loaded in minikube:
 
 ```bash
-minikube image list | grep nanoclaw
+minikube image list | grep kubeclaw
 ```
 
 ## CI/CD Integration
@@ -174,10 +174,10 @@ Example GitHub Actions workflow:
     cpus: 4
     memory: 8192
 
-- name: Deploy NanoClaw
+- name: Deploy KubeClaw
   run: |
     kubectl apply -f k8s/
-    kubectl wait --for=condition=ready pod -l app=nanoclaw-redis -n nanoclaw
+    kubectl wait --for=condition=ready pod -l app=kubeclaw-redis -n kubeclaw
 
 - name: Run E2E Tests
   run: |
@@ -191,16 +191,16 @@ All test resources have labels for easy filtering:
 
 ```bash
 # List all test resources
-kubectl get all -n nanoclaw -l test=e2e
+kubectl get all -n kubeclaw -l test=e2e
 
 # List test jobs
-kubectl get jobs -n nanoclaw -l test=e2e
+kubectl get jobs -n kubeclaw -l test=e2e
 
 # List network test pods
-kubectl get pods -n nanoclaw -l test-type=network
+kubectl get pods -n kubeclaw -l test-type=network
 
 # Cleanup only test resources
-kubectl delete all -n nanoclaw -l test=e2e
+kubectl delete all -n kubeclaw -l test=e2e
 ```
 
 ## Resource Limits

@@ -1,6 +1,6 @@
 # E2E Test Containers
 
-This directory contains minimal test containers for end-to-end testing of the NanoClaw sidecar system.
+This directory contains minimal test containers for end-to-end testing of the KubeClaw sidecar system.
 
 ## Containers
 
@@ -68,8 +68,8 @@ Or manually:
 
 ```bash
 # Build file-echo
-docker build -t nanoclaw-test-file-echo:latest e2e/test-containers/file-echo/
+docker build -t kubeclaw-test-file-echo:latest e2e/test-containers/file-echo/
 
 # Build http-echo
-docker build -t nanoclaw-test-http-echo:latest e2e/test-containers/http-echo/
+docker build -t kubeclaw-test-http-echo:latest e2e/test-containers/http-echo/
 ```

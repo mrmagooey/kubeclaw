@@ -1,6 +1,6 @@
-# OpenRouter Support for NanoClaw
+# OpenRouter Support for KubeClaw
 
-NanoClaw supports dual LLM providers: **Claude** (Anthropic's Claude via Claude Code) and **OpenRouter** (unified API for multiple models).
+KubeClaw supports dual LLM providers: **Claude** (Anthropic's Claude via Claude Code) and **OpenRouter** (unified API for multiple models).
 
 ## Overview
 
@@ -54,10 +54,10 @@ OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 OPENROUTER_HTTP_REFERER=https://yourdomain.com
 
 # Optional: App title (shown in OpenRouter dashboard)
-OPENROUTER_X_TITLE=My NanoClaw Instance
+OPENROUTER_X_TITLE=My KubeClaw Instance
 
 # Optional: Container image for OpenRouter agents
-OPENROUTER_CONTAINER_IMAGE=nanoclaw-agent:openrouter
+OPENROUTER_CONTAINER_IMAGE=kubeclaw-agent:openrouter
 
 # Optional: Default LLM provider for all groups
 DEFAULT_LLM_PROVIDER=openrouter
@@ -88,7 +88,7 @@ Or for new groups via natural language:
 
 If not specified, groups use the default provider (configured via `DEFAULT_LLM_PROVIDER` environment variable, defaults to `claude`).
 
-Existing groups continue using their current provider when you upgrade NanoClaw.
+Existing groups continue using their current provider when you upgrade KubeClaw.
 
 ## Model Selection Guide
 
@@ -234,7 +234,7 @@ If you encounter issues not covered here:
 1. Check the OpenRouter documentation: https://openrouter.ai/docs
 2. Review container logs: `groups/{folder}/logs/container-*.log`
 3. Run the test script: `./scripts/test-openrouter.sh`
-4. Ask in the NanoClaw Discord: https://discord.gg/VDdww8qS42
+4. Ask in the KubeClaw Discord: https://discord.gg/VDdww8qS42
 
 ## Performance Considerations
 

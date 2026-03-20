@@ -1,10 +1,10 @@
-# NanoClaw Sidecar Adapter
+# KubeClaw Sidecar Adapter
 
-A lightweight sidecar container for Kubernetes that enables NanoClaw to run arbitrary user containers using file-based IPC.
+A lightweight sidecar container for Kubernetes that enables KubeClaw to run arbitrary user containers using file-based IPC.
 
 ## Overview
 
-The sidecar adapter bridges the gap between NanoClaw's stdin/stdout protocol and user containers that don't have HTTP interfaces. It runs as a sidecar in a Kubernetes Pod alongside the user's container.
+The sidecar adapter bridges the gap between KubeClaw's stdin/stdout protocol and user containers that don't have HTTP interfaces. It runs as a sidecar in a Kubernetes Pod alongside the user's container.
 
 ## Architecture
 
@@ -13,7 +13,7 @@ The sidecar adapter bridges the gap between NanoClaw's stdin/stdout protocol and
 │                    Kubernetes Pod                            │
 │                                                              │
 │  ┌──────────────────┐        ┌──────────────────────┐      │
-│  │ nanoclaw-adapter │        │   user-container     │      │
+│  │ kubeclaw-adapter │        │   user-container     │      │
 │  │                  │        │                      │      │
 │  │  Reads stdin     │        │  Reads /workspace/   │      │
 │  │  → /workspace/   │◄──────►│  input/task.json    │      │
@@ -76,12 +76,12 @@ Or on error:
 
 ### Stdout Protocol
 
-The sidecar adapter wraps all output in NanoClaw markers:
+The sidecar adapter wraps all output in KubeClaw markers:
 
 ```
----NANOCLAW_OUTPUT_START---
+---KUBECLAW_OUTPUT_START---
 {"status": "success", "result": "..."}
----NANOCLAW_OUTPUT_END---
+---KUBECLAW_OUTPUT_END---
 ```
 
 ## Configuration
@@ -90,10 +90,10 @@ Environment variables:
 
 | Variable                 | Default             | Description                            |
 | ------------------------ | ------------------- | -------------------------------------- |
-| `NANOCLAW_INPUT_DIR`     | `/workspace/input`  | Input directory for task files         |
-| `NANOCLAW_OUTPUT_DIR`    | `/workspace/output` | Output directory for result files      |
-| `NANOCLAW_POLL_INTERVAL` | `1000`              | File polling interval in milliseconds  |
-| `NANOCLAW_TIMEOUT`       | `1800000`           | Timeout for waiting for output (30min) |
+| `KUBECLAW_INPUT_DIR`     | `/workspace/input`  | Input directory for task files         |
+| `KUBECLAW_OUTPUT_DIR`    | `/workspace/output` | Output directory for result files      |
+| `KUBECLAW_POLL_INTERVAL` | `1000`              | File polling interval in milliseconds  |
+| `KUBECLAW_TIMEOUT`       | `1800000`           | Timeout for waiting for output (30min) |
 
 ## Usage
 
@@ -102,17 +102,17 @@ Environment variables:
 ```bash
 # Build the image
 cd container/sidecar-adapter
-docker build -t nanoclaw-sidecar-adapter:latest .
+docker build -t kubeclaw-sidecar-adapter:latest .
 
 # Test with a simple task
 echo '{"prompt":"Hello","groupFolder":"test","chatJid":"test@g.us","isMain":false}' | docker run -i --rm \
   -v /tmp/workspace:/workspace \
-  nanoclaw-sidecar-adapter:latest
+  kubeclaw-sidecar-adapter:latest
 ```
 
 ### In Kubernetes
 
-The sidecar is automatically deployed by the `SidecarJobRunner` in NanoClaw. See `src/k8s/sidecar-job-runner.ts` for details.
+The sidecar is automatically deployed by the `SidecarJobRunner` in KubeClaw. See `src/k8s/sidecar-job-runner.ts` for details.
 
 ## User Container Integration
 

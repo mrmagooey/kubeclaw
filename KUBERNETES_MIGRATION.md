@@ -1,6 +1,6 @@
-# NanoClaw Kubernetes Migration
+# KubeClaw Kubernetes Migration
 
-This document describes the Kubernetes-based runtime for NanoClaw, replacing Docker containers with Kubernetes Jobs and Redis-based communication.
+This document describes the Kubernetes-based runtime for KubeClaw, replacing Docker containers with Kubernetes Jobs and Redis-based communication.
 
 ## Architecture Overview
 
@@ -9,7 +9,7 @@ This document describes the Kubernetes-based runtime for NanoClaw, replacing Doc
 │                         Kubernetes Cluster                          │
 │                                                                     │
 │  ┌─────────────────────┐  ┌─────────────────────┐                  │
-│  │  nanoclaw-redis     │  │ nanoclaw-orchestrator│                  │
+│  │  kubeclaw-redis     │  │ kubeclaw-orchestrator│                  │
 │  │  (StatefulSet)      │  │  (Deployment)        │                  │
 │  │  - AOF persistence  │  │  - Message loop      │                  │
 │  │  - Pub/Sub          │  │  - Job scheduling    │                  │
@@ -20,7 +20,7 @@ This document describes the Kubernetes-based runtime for NanoClaw, replacing Doc
 │             │ & Streams              │ Jobs                        │
 │             ▼                        ▼                             │
 │  ┌─────────────────────────────────────────────────┐              │
-│  │        nanoclaw-agent Jobs (Batch)              │              │
+│  │        kubeclaw-agent Jobs (Batch)              │              │
 │  │  ┌──────────────┐  ┌──────────────┐             │              │
 │  │  │ Agent Job 1  │  │ Agent Job 2  │  ...        │              │
 │  │  │ - Claude SDK │  │ - Claude SDK │             │              │
@@ -29,7 +29,7 @@ This document describes the Kubernetes-based runtime for NanoClaw, replacing Doc
 │  └─────────────────────────────────────────────────┘              │
 │                                                                     │
 │  ┌──────────────────────┐  ┌──────────────────────┐               │
-│  │ PVC: nanoclaw-groups │  │ PVC: nanoclaw-sessions│               │
+│  │ PVC: kubeclaw-groups │  │ PVC: kubeclaw-sessions│               │
 │  │ (ReadWriteMany)      │  │ (ReadWriteOnce)      │               │
 │  └──────────────────────┘  └──────────────────────┘               │
 │                                                                     │
@@ -42,7 +42,7 @@ This document describes the Kubernetes-based runtime for NanoClaw, replacing Doc
 
 | File                         | Purpose                                                 |
 | ---------------------------- | ------------------------------------------------------- |
-| `00-namespace.yaml`          | Creates the `nanoclaw` namespace with security policies |
+| `00-namespace.yaml`          | Creates the `kubeclaw` namespace with security policies |
 | `01-network-policy.yaml`     | Restricts agent egress to DNS, Redis, and HTTPS only    |
 | `05-secrets.yaml`            | Template for Kubernetes secrets (API keys, tokens)      |
 | `10-redis.yaml`              | Redis StatefulSet with AOF persistence                  |
@@ -75,7 +75,7 @@ This document describes the Kubernetes-based runtime for NanoClaw, replacing Doc
 ### Agent Output (Agent → Orchestrator)
 
 ```
-1. Agent publishes to Redis channel: `nanoclaw:messages:${groupFolder}`
+1. Agent publishes to Redis channel: `kubeclaw:messages:${groupFolder}`
 2. Orchestrator subscribes to channel and receives messages
 3. Messages parsed and sent to user via channel (WhatsApp, etc.)
 ```
@@ -83,7 +83,7 @@ This document describes the Kubernetes-based runtime for NanoClaw, replacing Doc
 ### Agent Input (Orchestrator → Agent)
 
 ```
-1. Orchestrator writes to Redis stream: `nanoclaw:input:${jobId}`
+1. Orchestrator writes to Redis stream: `kubeclaw:input:${jobId}`
 2. Agent reads from stream using XREAD (blocking)
 3. Agent processes message and continues conversation
 ```
@@ -91,7 +91,7 @@ This document describes the Kubernetes-based runtime for NanoClaw, replacing Doc
 ### Task Requests (Agent → Orchestrator)
 
 ```
-1. Agent publishes to Redis channel: `nanoclaw:tasks:${groupFolder}`
+1. Agent publishes to Redis channel: `kubeclaw:tasks:${groupFolder}`
 2. Orchestrator processes task CRUD operations
 3. Task stored in SQLite database
 ```
@@ -102,13 +102,13 @@ This document describes the Kubernetes-based runtime for NanoClaw, replacing Doc
 
 ```bash
 # Runtime selection
-NANOCLAW_RUNTIME=kubernetes  # 'docker' or 'kubernetes'
+KUBECLAW_RUNTIME=kubernetes  # 'docker' or 'kubernetes'
 
 # Redis connection
-REDIS_URL=redis://nanoclaw-redis:6379
+REDIS_URL=redis://kubeclaw-redis:6379
 
 # Kubernetes settings
-NANOCLAW_NAMESPACE=nanoclaw
+KUBECLAW_NAMESPACE=kubeclaw
 MAX_CONCURRENT_JOBS=10
 
 # Job resource limits
@@ -122,8 +122,8 @@ AGENT_JOB_CPU_LIMIT=2000m
 
 The system supports dual-mode operation:
 
-- Set `NANOCLAW_RUNTIME=docker` (default) for existing Docker behavior
-- Set `NANOCLAW_RUNTIME=kubernetes` for K8s Jobs
+- Set `KUBECLAW_RUNTIME=docker` (default) for existing Docker behavior
+- Set `KUBECLAW_RUNTIME=kubernetes` for K8s Jobs
 
 No code changes required - the runtime factory selects the appropriate implementation.
 
@@ -143,9 +143,9 @@ kubectl apply -f k8s/00-namespace.yaml
 kubectl apply -f k8s/01-network-policy.yaml
 
 # Create Redis secret first (required for Redis ACL authentication)
-kubectl create secret generic nanoclaw-redis \
+kubectl create secret generic kubeclaw-redis \
   --from-literal=admin-password=$(openssl rand -base64 32) \
-  -n nanoclaw
+  -n kubeclaw
 
 # Deploy Redis (requires Redis 7+ for ACL support)
 kubectl apply -f k8s/10-redis.yaml
@@ -157,10 +157,10 @@ kubectl apply -f k8s/20-storage-minikube.yaml
 # kubectl apply -f k8s/20-storage-production.yaml
 
 # Create secrets (Option A - Recommended for production)
-kubectl create secret generic nanoclaw-secrets \
+kubectl create secret generic kubeclaw-secrets \
   --from-literal=anthropic-api-key=$ANTHROPIC_API_KEY \
   --from-literal=claude-code-oauth-token=$CLAUDE_CODE_OAUTH_TOKEN \
-  -n nanoclaw
+  -n kubeclaw
 
 # Create secrets (Option B - Using template file)
 # Edit k8s/05-secrets.yaml with your values, then:
@@ -174,15 +174,15 @@ kubectl create secret generic nanoclaw-secrets \
 ./container/build.sh --all
 
 # Build orchestrator image
-docker build -t nanoclaw-orchestrator:latest .
+docker build -t kubeclaw-orchestrator:latest .
 
 # Push to registry (or load into cluster)
-kind load docker-image nanoclaw-agent:claude
-kind load docker-image nanoclaw-agent:openrouter
-kind load docker-image nanoclaw-browser-sidecar:latest
-kind load docker-image nanoclaw-file-adapter:latest
-kind load docker-image nanoclaw-http-adapter:latest
-kind load docker-image nanoclaw-orchestrator:latest
+kind load docker-image kubeclaw-agent:claude
+kind load docker-image kubeclaw-agent:openrouter
+kind load docker-image kubeclaw-browser-sidecar:latest
+kind load docker-image kubeclaw-file-adapter:latest
+kind load docker-image kubeclaw-http-adapter:latest
+kind load docker-image kubeclaw-orchestrator:latest
 
 # Deploy orchestrator
 kubectl apply -f k8s/30-orchestrator.yaml
@@ -190,16 +190,16 @@ kubectl apply -f k8s/30-orchestrator.yaml
 
 The `--all` flag builds:
 
-- `nanoclaw-agent:claude` — main agent image (Claude SDK variant)
-- `nanoclaw-agent:openrouter` — OpenRouter variant
-- `nanoclaw-browser-sidecar:latest` — required for groups with `browserSidecar: true`
-- `nanoclaw-file-adapter:latest` and `nanoclaw-http-adapter:latest` — sidecar adapters
+- `kubeclaw-agent:claude` — main agent image (Claude SDK variant)
+- `kubeclaw-agent:openrouter` — OpenRouter variant
+- `kubeclaw-browser-sidecar:latest` — required for groups with `browserSidecar: true`
+- `kubeclaw-file-adapter:latest` and `kubeclaw-http-adapter:latest` — sidecar adapters
 
 For minimal K8s deployments that only need the Claude agent and browser sidecar, use `./container/build.sh --claude-only --browser` instead.
 
 ## Storage Configuration
 
-NanoClaw requires persistent storage for two purposes:
+KubeClaw requires persistent storage for two purposes:
 
 - **Groups**: Agent code and configuration (50Gi default)
 - **Sessions**: Claude SDK session data (20Gi default)
@@ -295,7 +295,7 @@ EOF
 
 ```bash
 # Check PVC status
-kubectl describe pvc nanoclaw-groups -n nanoclaw
+kubectl describe pvc kubeclaw-groups -n kubeclaw
 
 # Common causes:
 # 1. No storage class supports RWX - use minikube config instead
@@ -355,20 +355,20 @@ kubectl describe pvc nanoclaw-groups -n nanoclaw
 ### Check Job Status
 
 ```bash
-kubectl get jobs -n nanoclaw
-kubectl describe job nanoclaw-agent-{folder}-{timestamp} -n nanoclaw
-kubectl logs job/nanoclaw-agent-{folder}-{timestamp} -n nanoclaw
+kubectl get jobs -n kubeclaw
+kubectl describe job kubeclaw-agent-{folder}-{timestamp} -n kubeclaw
+kubectl logs job/kubeclaw-agent-{folder}-{timestamp} -n kubeclaw
 ```
 
 ### Check Redis
 
 ```bash
 # Connect with admin authentication (ACL required)
-kubectl exec -it nanoclaw-redis-0 -n nanoclaw -- redis-cli -a $(kubectl get secret nanoclaw-redis -n nanoclaw -o jsonpath='{.data.admin-password}' | base64 -d)
+kubectl exec -it kubeclaw-redis-0 -n kubeclaw -- redis-cli -a $(kubectl get secret kubeclaw-redis -n kubeclaw -o jsonpath='{.data.admin-password}' | base64 -d)
 
 # Test pub/sub
-> PUBLISH nanoclaw:messages:main '{"type":"test","message":"hello"}'
-> XADD nanoclaw:input:job-123 * text "Hello agent"
+> PUBLISH kubeclaw:messages:main '{"type":"test","message":"hello"}'
+> XADD kubeclaw:input:job-123 * text "Hello agent"
 
 # Check ACL status
 > ACL LIST
@@ -380,7 +380,7 @@ kubectl exec -it nanoclaw-redis-0 -n nanoclaw -- redis-cli -a $(kubectl get secr
 ### Orchestrator Logs
 
 ```bash
-kubectl logs -f deployment/nanoclaw-orchestrator -n nanoclaw
+kubectl logs -f deployment/kubeclaw-orchestrator -n kubeclaw
 ```
 
 ## Migration from Docker
@@ -393,19 +393,19 @@ kubectl logs -f deployment/nanoclaw-orchestrator -n nanoclaw
 
 ### Jobs stuck in Pending
 
-- Check PVC status: `kubectl get pvc -n nanoclaw`
+- Check PVC status: `kubectl get pvc -n kubeclaw`
 - Check node resources: `kubectl describe nodes`
 - Check storage class supports RWX
 
 ### Redis connection errors
 
-- Verify Redis is running: `kubectl get pods -n nanoclaw`
+- Verify Redis is running: `kubectl get pods -n kubeclaw`
 - Check REDIS_URL environment variable
 - Test connection from orchestrator pod
 
 ### Agent output not streaming
 
-- Check Redis pub/sub: `kubectl exec nanoclaw-redis-0 -- redis-cli pubsub channels`
+- Check Redis pub/sub: `kubectl exec kubeclaw-redis-0 -- redis-cli pubsub channels`
 - Verify agent is publishing to correct channel
 - Check orchestrator logs for IPC errors
 

@@ -55,16 +55,16 @@ Implemented bidirectional Redis-based communication for file-adapter and http-ad
 ### Environment Variables Required
 
 ```
-REDIS_URL=redis://nanoclaw-redis:6379
+REDIS_URL=redis://kubeclaw-redis:6379
 REDIS_USERNAME=sidecar-{jobId}
 REDIS_PASSWORD={generated-password}
-NANOCLAW_JOB_ID={jobId}
+KUBECLAW_JOB_ID={jobId}
 ```
 
 ### Redis Streams Usage
 
-- **Input Stream:** `nanoclaw:input:{jobId}` - Follow-up messages from orchestrator
-- **Output Channel:** `nanoclaw:output:{jobId}` - Results from sidecar to orchestrator
+- **Input Stream:** `kubeclaw:input:{jobId}` - Follow-up messages from orchestrator
+- **Output Channel:** `kubeclaw:output:{jobId}` - Results from sidecar to orchestrator
 
 ### Message Format
 
@@ -110,13 +110,13 @@ Output messages (via PUBLISH):
 cd container/file-adapter
 npm install
 npm run build
-REDIS_URL=redis://localhost:6379 REDIS_USERNAME=default REDIS_PASSWORD=pass NANOCLAW_JOB_ID=test-job npx tsx tests/test-redis.ts
+REDIS_URL=redis://localhost:6379 REDIS_USERNAME=default REDIS_PASSWORD=pass KUBECLAW_JOB_ID=test-job npx tsx tests/test-redis.ts
 
 # HTTP Adapter
 cd container/http-adapter
 npm install
 npm run build
-REDIS_URL=redis://localhost:6379 REDIS_USERNAME=default REDIS_PASSWORD=pass NANOCLAW_JOB_ID=test-job npx tsx tests/test-redis.ts
+REDIS_URL=redis://localhost:6379 REDIS_USERNAME=default REDIS_PASSWORD=pass KUBECLAW_JOB_ID=test-job npx tsx tests/test-redis.ts
 ```
 
 ### Integration Testing
@@ -124,13 +124,13 @@ REDIS_URL=redis://localhost:6379 REDIS_USERNAME=default REDIS_PASSWORD=pass NANO
 To test with a running Redis instance:
 
 1. Start Redis with ACL enabled
-2. Create ACL user: `ACL SETUSER sidecar-test on >password ~nanoclaw:* +@all`
+2. Create ACL user: `ACL SETUSER sidecar-test on >password ~kubeclaw:* +@all`
 3. Run adapter with env vars pointing to test Redis
 4. Use `redis-cli` to send follow-up messages:
    ```bash
-   XADD nanoclaw:input:test-job * type followup prompt "Hello followup"
+   XADD kubeclaw:input:test-job * type followup prompt "Hello followup"
    ```
-5. Verify output received on: `SUBSCRIBE nanoclaw:output:test-job`
+5. Verify output received on: `SUBSCRIBE kubeclaw:output:test-job`
 
 ## Build Instructions
 
@@ -156,8 +156,8 @@ cd container
 ./build.sh
 
 # Or individually:
-docker build -t nanoclaw-file-adapter:latest -f file-adapter/Dockerfile .
-docker build -t nanoclaw-http-adapter:latest -f http-adapter/Dockerfile .
+docker build -t kubeclaw-file-adapter:latest -f file-adapter/Dockerfile .
+docker build -t kubeclaw-http-adapter:latest -f http-adapter/Dockerfile .
 ```
 
 ## Challenges Encountered

@@ -672,7 +672,7 @@ function createSdkMcpServer(options: {
 
 # OpenRouter Agent Runner Architecture
 
-NanoClaw supports dual LLM providers: Claude (via the Claude Agent SDK) and OpenRouter (via the OpenAI SDK with OpenRouter's unified API). This section documents the OpenRouter implementation.
+KubeClaw supports dual LLM providers: Claude (via the Claude Agent SDK) and OpenRouter (via the OpenAI SDK with OpenRouter's unified API). This section documents the OpenRouter implementation.
 
 ## Architecture Overview
 
@@ -867,9 +867,9 @@ interface ContainerInput {
 Output uses the same sentinel markers as Claude:
 
 ```
----NANOCLAW_OUTPUT_START---
+---KUBECLAW_OUTPUT_START---
 {"status": "success", "result": "Hello!", "newSessionId": "..."}
----NANOCLAW_OUTPUT_END---
+---KUBECLAW_OUTPUT_END---
 ```
 
 Multiple outputs may be emitted during a conversation (one per tool result or user-facing response).
@@ -885,8 +885,8 @@ The OpenRouter runner reads these from the environment:
 | `OPENROUTER_API_KEY`      | OpenRouter API key | (required)                     |
 | `OPENROUTER_MODEL`        | Model ID           | `openai/gpt-4o`                |
 | `OPENROUTER_BASE_URL`     | API base URL       | `https://openrouter.ai/api/v1` |
-| `OPENROUTER_HTTP_REFERER` | Referer header     | `https://nanoclaw.local`       |
-| `OPENROUTER_X_TITLE`      | App title header   | `NanoClaw`                     |
+| `OPENROUTER_HTTP_REFERER` | Referer header     | `https://kubeclaw.local`       |
+| `OPENROUTER_X_TITLE`      | App title header   | `KubeClaw`                     |
 
 ### Model Selection
 
@@ -1002,8 +1002,8 @@ function getGroupProvider(group: RegisteredGroup): LLMProvider {
 
 function getContainerImage(provider: LLMProvider): string {
   return provider === 'openrouter'
-    ? 'nanoclaw-agent:openrouter'
-    : 'nanoclaw-agent:claude';
+    ? 'kubeclaw-agent:openrouter'
+    : 'kubeclaw-agent:claude';
 }
 ```
 

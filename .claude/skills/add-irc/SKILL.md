@@ -1,12 +1,12 @@
 # Add IRC Channel
 
-This skill adds IRC (Internet Relay Chat) support to NanoClaw using the skills engine for deterministic code changes, then walks through interactive setup.
+This skill adds IRC (Internet Relay Chat) support to KubeClaw using the skills engine for deterministic code changes, then walks through interactive setup.
 
 ## Phase 1: Pre-flight
 
 ### Check if already applied
 
-Read `.nanoclaw/state.yaml`. If `irc` is in `applied_skills`, skip to Phase 3 (Setup). The code changes are already in place.
+Read `.kubeclaw/state.yaml`. If `irc` is in `applied_skills`, skip to Phase 3 (Setup). The code changes are already in place.
 
 ### Ask the user
 
@@ -22,7 +22,7 @@ Run the skills engine to apply this skill's code package. The package files are 
 
 ### Initialize skills system (if needed)
 
-If `.nanoclaw/` directory doesn't exist yet:
+If `.kubeclaw/` directory doesn't exist yet:
 
 ```bash
 npx tsx scripts/apply-skill.ts --init
@@ -42,7 +42,7 @@ This deterministically:
 - Adds `src/channels/irc.test.ts` (unit tests with irc-upd mock)
 - Appends `import './irc.js'` to the channel barrel file `src/channels/index.ts`
 - Installs the `irc-upd` npm dependency
-- Records the application in `.nanoclaw/state.yaml`
+- Records the application in `.kubeclaw/state.yaml`
 
 If the apply reports merge conflicts, read the intent file:
 
@@ -86,7 +86,7 @@ The container reads environment from `data/env/env`, not `.env` directly.
 
 ```bash
 npm run build
-launchctl kickstart -k gui/$(id -u)/com.nanoclaw
+launchctl kickstart -k gui/$(id -u)/com.kubeclaw
 ```
 
 ## Phase 4: Registration
@@ -151,7 +151,7 @@ Tell the user:
 ### Check logs if needed
 
 ```bash
-tail -f logs/nanoclaw.log
+tail -f logs/kubeclaw.log
 ```
 
 ## Troubleshooting
@@ -161,7 +161,7 @@ tail -f logs/nanoclaw.log
 1. Check `IRC_SERVER`, `IRC_PORT`, `IRC_NICK`, `IRC_CHANNELS` are set in `.env` AND synced to `data/env/env`
 2. Check channel is registered: `sqlite3 store/messages.db "SELECT * FROM registered_groups WHERE jid LIKE 'irc:%'"`
 3. For non-main channels: message must include @mention of the bot's nick
-4. Service is running: `launchctl list | grep nanoclaw`
+4. Service is running: `launchctl list | grep kubeclaw`
 5. Verify the bot connected to the server (check logs)
 
 ### Connection refused
@@ -186,7 +186,7 @@ This is the default behavior for non-main channels (`requiresTrigger: true`). To
 The IRC bot supports:
 
 - Text messages in registered channels
-- @mention translation (IRC @nickname → NanoClaw trigger format)
+- @mention translation (IRC @nickname → KubeClaw trigger format)
 - Message splitting for responses over 480 characters
 - Auto-reconnect on disconnect
 - SSL/TLS connections (port 6697)

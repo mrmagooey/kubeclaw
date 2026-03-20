@@ -1,6 +1,6 @@
-# NanoClaw File Adapter
+# KubeClaw File Adapter
 
-A file-based sidecar adapter that enables NanoClaw to run arbitrary containers without HTTP interfaces. This adapter uses shared volumes and file watching for IPC between NanoClaw and user containers.
+A file-based sidecar adapter that enables KubeClaw to run arbitrary containers without HTTP interfaces. This adapter uses shared volumes and file watching for IPC between KubeClaw and user containers.
 
 ## Architecture
 
@@ -8,14 +8,14 @@ A file-based sidecar adapter that enables NanoClaw to run arbitrary containers w
 ┌─────────────────────────────────────────────────────────────┐
 │                     Kubernetes Pod                          │
 │  ┌──────────────────────┐    ┌──────────────────────────┐  │
-│  │ nanoclaw-file-adapter│    │      user-agent          │  │
+│  │ kubeclaw-file-adapter│    │      user-agent          │  │
 │  │  (this container)    │    │  (arbitrary user image)  │  │
 │  │                      │    │                          │  │
 │  │  Reads stdin from    │    │  Runs wrapper script     │  │
 │  │  orchestrator        │    │  that watches files      │  │
 │  │                      │◄──►│                          │  │
 │  │  Writes output with  │    │  Processes tasks         │  │
-│  │  NanoClaw markers    │    │  Writes results          │  │
+│  │  KubeClaw markers    │    │  Writes results          │  │
 │  │                      │    │                          │  │
 │  └──────────┬───────────┘    └────────────┬─────────────┘  │
 │             │                              │               │
@@ -31,7 +31,7 @@ A file-based sidecar adapter that enables NanoClaw to run arbitrary containers w
 
 ## How It Works
 
-1. **Sidecar Container** (`nanoclaw-file-adapter`): Handles the NanoClaw protocol (stdin/stdout with markers)
+1. **Sidecar Container** (`kubeclaw-file-adapter`): Handles the KubeClaw protocol (stdin/stdout with markers)
 2. **Main Container** (user's arbitrary image): Reads/writes files, no HTTP needed
 3. **Shared Volume** (`emptyDir`): File-based IPC at `/workspace/input/` and `/workspace/output/`
 
@@ -55,9 +55,9 @@ A file-based sidecar adapter that enables NanoClaw to run arbitrary containers w
 ### Output to Orchestrator (stdout with markers)
 
 ```
----NANOCLAW_OUTPUT_START---
+---KUBECLAW_OUTPUT_START---
 {"status":"success","result":"response text","newSessionId":"session-id"}
----NANOCLAW_OUTPUT_END---
+---KUBECLAW_OUTPUT_END---
 ```
 
 ### File Protocol
@@ -89,21 +89,21 @@ Or for errors:
 
 ### Environment Variables
 
-- `NANOCLAW_INPUT_DIR`: Input directory (default: `/workspace/input`)
-- `NANOCLAW_OUTPUT_DIR`: Output directory (default: `/workspace/output`)
-- `NANOCLAW_POLL_INTERVAL`: Poll interval in ms (default: `1000`)
-- `NANOCLAW_TIMEOUT`: Timeout for waiting on output in ms (default: `300000`)
+- `KUBECLAW_INPUT_DIR`: Input directory (default: `/workspace/input`)
+- `KUBECLAW_OUTPUT_DIR`: Output directory (default: `/workspace/output`)
+- `KUBECLAW_POLL_INTERVAL`: Poll interval in ms (default: `1000`)
+- `KUBECLAW_TIMEOUT`: Timeout for waiting on output in ms (default: `300000`)
 - `IDLE_TIMEOUT`: Idle timeout for follow-up messages (default: `1800000`)
 
 ### Running Locally
 
 ```bash
 # Build the container
-docker build -t nanoclaw-file-adapter:latest .
+docker build -t kubeclaw-file-adapter:latest .
 
 # Run with test input
 echo '{"prompt":"Hello","groupFolder":"test","chatJid":"test@g.us","isMain":false}' | \
-  docker run -i nanoclaw-file-adapter:latest
+  docker run -i kubeclaw-file-adapter:latest
 ```
 
 ### In Kubernetes
