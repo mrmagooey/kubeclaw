@@ -9,14 +9,14 @@ export function createTempDir(): string {
 }
 
 export function setupNanoclawDir(tmpDir: string): void {
-  fs.mkdirSync(path.join(tmpDir, '.nanoclaw', 'base', 'src'), {
+  fs.mkdirSync(path.join(tmpDir, '.kubeclaw', 'base', 'src'), {
     recursive: true,
   });
-  fs.mkdirSync(path.join(tmpDir, '.nanoclaw', 'backup'), { recursive: true });
+  fs.mkdirSync(path.join(tmpDir, '.kubeclaw', 'backup'), { recursive: true });
 }
 
 export function writeState(tmpDir: string, state: any): void {
-  const statePath = path.join(tmpDir, '.nanoclaw', 'state.yaml');
+  const statePath = path.join(tmpDir, '.kubeclaw', 'state.yaml');
   fs.writeFileSync(statePath, stringify(state), 'utf-8');
 }
 
