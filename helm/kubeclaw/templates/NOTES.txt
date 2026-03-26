@@ -1,0 +1,46 @@
+KubeClaw has been deployed to namespace "{{ .Values.namespace }}".
+
+=== Next Step: Add a Channel ===
+
+Open the admin shell to connect a messaging channel.
+
+Exec (interactive terminal inside the pod):
+
+  kubectl exec -it deployment/kubeclaw-orchestrator -n {{ .Values.namespace }} -- node dist/admin-shell.js
+
+HTTP browser UI — set these env vars in the orchestrator Deployment and expose via Service + Ingress:
+
+  ADMIN_HTTP_PORT=9090
+  ADMIN_HTTP_USERNAME=admin
+  ADMIN_HTTP_PASSWORD=<your-password>
+
+Tell it in plain English: "set up Telegram", "add Discord", etc.
+It will ask for credentials, create the channel pod, and register your first group.
+
+=== Status ===
+
+  kubectl get pods -n {{ .Values.namespace }}
+  kubectl logs -f deployment/kubeclaw-orchestrator -n {{ .Values.namespace }}
+
+=== Agent Jobs ===
+
+  kubectl get jobs -n {{ .Values.namespace }}
+  kubectl logs job/<job-name> -n {{ .Values.namespace }}
+
+{{- if not .Values.secrets.anthropicApiKey }}
+
+WARNING: No API credentials configured. The orchestrator is running but
+agent jobs will fail. Add credentials:
+
+  helm upgrade kubeclaw ./helm/kubeclaw \
+    --set secrets.anthropicApiKey=YOUR_KEY \
+    --set secrets.claudeCodeOauthToken=YOUR_TOKEN \
+    -n {{ .Values.namespace }}
+{{- end }}
+
+{{- if eq .Values.storage.accessMode "ReadWriteOnce" }}
+
+NOTE: storage.accessMode is ReadWriteOnce. Concurrent agent jobs may fail
+on multi-node clusters. For production use ReadWriteMany with a compatible
+CSI driver (EFS, Azure Files, NFS, Ceph).
+{{- end }}

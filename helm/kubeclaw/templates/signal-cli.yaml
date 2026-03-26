@@ -1,0 +1,78 @@
+{{- if .Values.signalCli.enabled }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kubeclaw-signal-cli
+  namespace: {{ .Values.namespace }}
+spec:
+  serviceName: kubeclaw-signal-cli
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kubeclaw-signal-cli
+  template:
+    metadata:
+      labels:
+        app: kubeclaw-signal-cli
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: signal-cli
+          image: bbernhard/signal-cli-rest-api:{{ .Values.signalCli.imageTag }}
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: MODE
+              value: {{ .Values.signalCli.mode | quote }}
+          volumeMounts:
+            - name: data
+              mountPath: /home/.local/share/signal-cli
+          resources:
+            requests:
+              memory: 256Mi
+              cpu: 100m
+            limits:
+              memory: {{ .Values.signalCli.resources.limits.memory }}
+              cpu: {{ .Values.signalCli.resources.limits.cpu | quote }}
+          readinessProbe:
+            httpGet:
+              path: /v1/health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          livenessProbe:
+            httpGet:
+              path: /v1/health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 30
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        {{- include "kubeclaw.storageClassName" . | nindent 8 }}
+        resources:
+          requests:
+            storage: {{ .Values.signalCli.storage }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kubeclaw-signal-cli
+  namespace: {{ .Values.namespace }}
+spec:
+  selector:
+    app: kubeclaw-signal-cli
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+{{- end }}

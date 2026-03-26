@@ -312,6 +312,7 @@ describe('Timeout and Retry Behavior', () => {
     });
 
     it('should apply exponential backoff to Redis retry strategy', async () => {
+      if (!getSharedRedis()) return;
       const retryDelays: number[] = [];
 
       const Redis = (await import('ioredis')).default;
@@ -418,6 +419,7 @@ describe('Timeout and Retry Behavior', () => {
     });
 
     it('should track retry count in Redis', async () => {
+      if (!redis) return;
       const retryKey = `${NAMESPACE}:retry-count:${testGroup}`;
 
       await redis.set(retryKey, '0');
@@ -443,6 +445,7 @@ describe('Timeout and Retry Behavior', () => {
     });
 
     it('should store failure state until max retries reached', async () => {
+      if (!redis) return;
       const stateKey = `${NAMESPACE}:failure-state:${testGroup}`;
 
       for (let i = 1; i <= MAX_RETRIES; i++) {
@@ -459,6 +462,7 @@ describe('Timeout and Retry Behavior', () => {
 
   describe('Retry State Cleanup After Success', () => {
     it('should reset retry count after successful operation', async () => {
+      if (!redis) return;
       const stateKey = `${NAMESPACE}:retry-state:${testGroup}`;
 
       await redis.hset(stateKey, 'retryCount', '3');
@@ -479,6 +483,7 @@ describe('Timeout and Retry Behavior', () => {
     });
 
     it('should clean up temporary retry data after success', async () => {
+      if (!redis) return;
       const tempRetryKey = `${NAMESPACE}:temp-retry:${testGroup}`;
 
       await redis.set(
@@ -500,6 +505,7 @@ describe('Timeout and Retry Behavior', () => {
     });
 
     it('should preserve successful operation results', async () => {
+      if (!redis) return;
       const resultKey = `${NAMESPACE}:result:${testGroup}`;
       const retryKey = `${NAMESPACE}:retry-tracker:${testGroup}`;
 
@@ -522,6 +528,7 @@ describe('Timeout and Retry Behavior', () => {
     });
 
     it('should handle concurrent success and cleanup', async () => {
+      if (!redis) return;
       const keys = Array.from(
         { length: 10 },
         (_, i) => `${NAMESPACE}:concurrent-${i}:${testGroup}`,

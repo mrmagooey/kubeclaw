@@ -1,0 +1,17 @@
+skill: signal
+version: 1.0.0
+description: "Signal messaging channel via signal-cli-rest-api (no extra npm dependency)"
+core_version: 0.1.0
+adds:
+  - src/channels/signal.ts
+  - src/channels/signal.test.ts
+modifies:
+  - src/channels/index.ts
+structured:
+  npm_dependencies: {}
+  env_additions:
+    - SIGNAL_PHONE_NUMBER
+    - SIGNAL_CLI_URL
+conflicts: []
+depends: []
+test: "npx vitest run src/channels/signal.test.ts"

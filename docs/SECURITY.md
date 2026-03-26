@@ -11,13 +11,14 @@
 
 ## Security Boundaries
 
-### 1. Container Isolation (Primary Boundary)
+### 1. Agent Job Isolation (Primary Boundary)
 
-Agents execute in containers (lightweight Linux VMs), providing:
-- **Process isolation** - Container processes cannot affect the host
-- **Filesystem isolation** - Only explicitly mounted directories are visible
+Agents execute as Kubernetes Jobs, providing:
+- **Process isolation** - Job processes cannot affect the host or other jobs
+- **Filesystem isolation** - Only explicitly mounted PVC subPaths are visible
 - **Non-root execution** - Runs as unprivileged `node` user (uid 1000)
-- **Ephemeral containers** - Fresh environment per invocation (`--rm`)
+- **Ephemeral jobs** - Fresh environment per invocation; Jobs auto-delete after 1 hour (TTL)
+- **Network policy** - Agents can only reach DNS, Redis (in-namespace), and HTTPS endpoints
 
 This is the primary security boundary. Rather than relying on application-level permission checks, the attack surface is limited by what's mounted.
 
@@ -113,7 +114,7 @@ const allowedVars = ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY'];
                                  │
                                  ▼ Explicit mounts only
 ┌──────────────────────────────────────────────────────────────────┐
-│                CONTAINER (ISOLATED/SANDBOXED)                     │
+│              KUBERNETES JOB (ISOLATED/SANDBOXED)                  │
 │  • Agent execution                                                │
 │  • Bash commands (sandboxed)                                      │
 │  • File operations (limited to mounts)                            │

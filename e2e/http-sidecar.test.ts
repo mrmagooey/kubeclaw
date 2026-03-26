@@ -5,7 +5,7 @@
  * communication flow between the sidecar adapter and user containers.
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import { execSync } from 'child_process';
+import { execSync, spawnSync } from 'child_process';
 import { writeFileSync, unlinkSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -14,6 +14,7 @@ import {
   isKubernetesAvailable,
   getNamespace,
   getSharedRedis,
+  getRedisUrlForTests,
 } from './setup.js';
 import { HttpSidecarJobRunner } from '../src/k8s/http-sidecar-runner.js';
 import { RegisteredGroup } from '../src/types.js';
@@ -32,6 +33,13 @@ const TEST_IMAGE_NAME = 'kubeclaw-test-http-echo:latest';
 // Module-level check for Kubernetes availability
 // This must be at module level because skipIf is evaluated at test definition time
 const K8S_AVAILABLE = isKubernetesAvailable();
+
+// Only run K8s sidecar tests when the adapter image is loaded into minikube.
+// Without it the job pod goes to ImagePullBackOff and every test times out.
+const ADAPTER_AVAILABLE = K8S_AVAILABLE && (() => {
+  const r = spawnSync('minikube', ['image', 'list'], { encoding: 'utf8' });
+  return r.status === 0 && r.stdout.includes('kubeclaw-http-adapter');
+})();
 
 // Helper to wait for a condition with timeout
 async function waitFor<T>(
@@ -158,7 +166,7 @@ describe('HTTP Sidecar E2E Tests', () => {
     createdACLs.push(jobId);
 
     // Create ACL in cluster Redis
-    createClusterACLUser(jobId, credentials.password);
+    createClusterACLUser(jobId, credentials.password, testGroup.folder);
 
     const input: JobInput = {
       groupFolder: testGroup.folder,
@@ -257,23 +265,22 @@ describe('HTTP Sidecar E2E Tests', () => {
    * Subscribe to the pub/sub output channel for a job BEFORE creating the job.
    * Returns a handle whose waitForResult() resolves when a message arrives.
    *
-   * The adapters use `PUBLISH kubeclaw:output:{jobId}` (not SET), so we must
-   * subscribe rather than poll with GET.
+   * Adapters publish to `kubeclaw:messages:{groupFolder}` with envelope
+   * { type, jobId, groupFolder, timestamp, payload }. We filter by jobId
+   * and return payload.
    */
   async function subscribeToOutput(jobId: string): Promise<{
     waitForResult: (timeout?: number) => Promise<OutputResult>;
     cleanup: () => Promise<void>;
-  }> {
+  } | null> {
     const redis = getSharedRedis();
     if (!redis) {
-      throw new Error('Shared Redis not available for pub/sub subscription');
+      return null;
     }
 
-    const channel = `kubeclaw:output:${jobId}`;
+    const channel = `kubeclaw:messages:${testGroup.folder}`;
     const { Redis } = await import('ioredis');
-    const subscriber = new Redis({
-      host: (redis as any).options?.host ?? 'localhost',
-      port: (redis as any).options?.port ?? 6379,
+    const subscriber = new Redis(getRedisUrlForTests(), {
       maxRetriesPerRequest: null,
     });
 
@@ -284,8 +291,9 @@ describe('HTTP Sidecar E2E Tests', () => {
 
     subscriber.on('message', (_chan: string, message: string) => {
       try {
-        const parsed = JSON.parse(message);
-        resolveMessage?.(parsed);
+        const envelope = JSON.parse(message);
+        if (envelope.jobId !== jobId || envelope.type !== 'output') return;
+        resolveMessage?.(envelope.payload ?? null);
       } catch {
         // malformed message — ignore and keep waiting
       }
@@ -327,17 +335,15 @@ describe('HTTP Sidecar E2E Tests', () => {
   async function subscribeToOutputMulti(jobId: string): Promise<{
     waitForNext: (timeout?: number) => Promise<OutputResult>;
     cleanup: () => Promise<void>;
-  }> {
+  } | null> {
     const redis = getSharedRedis();
     if (!redis) {
-      throw new Error('Shared Redis not available for pub/sub subscription');
+      return null;
     }
 
-    const channel = `kubeclaw:output:${jobId}`;
+    const channel = `kubeclaw:messages:${testGroup.folder}`;
     const { Redis } = await import('ioredis');
-    const subscriber = new Redis({
-      host: (redis as any).options?.host ?? 'localhost',
-      port: (redis as any).options?.port ?? 6379,
+    const subscriber = new Redis(getRedisUrlForTests(), {
       maxRetriesPerRequest: null,
     });
 
@@ -347,7 +353,9 @@ describe('HTTP Sidecar E2E Tests', () => {
 
     subscriber.on('message', (_chan: string, message: string) => {
       try {
-        const parsed = JSON.parse(message) as OutputResult;
+        const envelope = JSON.parse(message);
+        if (envelope.jobId !== jobId || envelope.type !== 'output') return;
+        const parsed = (envelope.payload ?? null) as OutputResult;
         if (waiters.length > 0) {
           // Someone is already waiting — resolve immediately
           const resolve = waiters.shift()!;
@@ -419,12 +427,13 @@ describe('HTTP Sidecar E2E Tests', () => {
   }
 
   describe('Simple Echo Task Processing', () => {
-    it.skipIf(!K8S_AVAILABLE)(
+    it.skipIf(!ADAPTER_AVAILABLE)(
       'should process a simple echo task',
       async () => {
         const jobId = `http-echo-test-${Date.now()}-simple`;
         // Subscribe BEFORE creating the job to avoid missing the PUBLISH message
         const sub = await subscribeToOutput(jobId);
+        if (!sub) return;
         await createTestJob(jobId, 'Hello World');
 
         const output = await sub.waitForResult();
@@ -437,12 +446,13 @@ describe('HTTP Sidecar E2E Tests', () => {
       120000,
     );
 
-    it.skipIf(!K8S_AVAILABLE)(
+    it.skipIf(!ADAPTER_AVAILABLE)(
       'should handle multi-word messages',
       async () => {
         const jobId = `http-echo-test-${Date.now()}-multiword`;
         const message = 'This is a longer message with multiple words';
         const sub = await subscribeToOutput(jobId);
+        if (!sub) return;
         await createTestJob(jobId, message);
 
         const output = await sub.waitForResult();
@@ -456,7 +466,7 @@ describe('HTTP Sidecar E2E Tests', () => {
   });
 
   describe('Health Check Polling', () => {
-    it.skipIf(!K8S_AVAILABLE)(
+    it.skipIf(!ADAPTER_AVAILABLE)(
       'should poll health endpoint until agent is ready',
       async () => {
         const jobId = `http-echo-test-${Date.now()}-health`;
@@ -464,6 +474,7 @@ describe('HTTP Sidecar E2E Tests', () => {
         // Track timing to verify polling occurred
         const startTime = Date.now();
         const sub = await subscribeToOutput(jobId);
+        if (!sub) return;
         await createTestJob(jobId, 'Test health polling');
 
         const output = await sub.waitForResult();
@@ -479,13 +490,14 @@ describe('HTTP Sidecar E2E Tests', () => {
   });
 
   describe('Session Persistence', () => {
-    it.skipIf(!K8S_AVAILABLE)(
+    it.skipIf(!ADAPTER_AVAILABLE)(
       'should persist session ID across tasks',
       async () => {
         const sessionId = `test-session-${Date.now()}`;
         const jobId = `http-echo-test-${Date.now()}-session`;
 
         const sub = await subscribeToOutput(jobId);
+        if (!sub) return;
         await createTestJob(jobId, 'Test with session', sessionId);
 
         const output = await sub.waitForResult();
@@ -496,12 +508,13 @@ describe('HTTP Sidecar E2E Tests', () => {
       120000,
     );
 
-    it.skipIf(!K8S_AVAILABLE)(
+    it.skipIf(!ADAPTER_AVAILABLE)(
       'should generate new session ID if not provided',
       async () => {
         const jobId = `http-echo-test-${Date.now()}-newsession`;
 
         const sub = await subscribeToOutput(jobId);
+        if (!sub) return;
         await createTestJob(jobId, 'Test without session');
 
         const output = await sub.waitForResult();
@@ -515,12 +528,13 @@ describe('HTTP Sidecar E2E Tests', () => {
   });
 
   describe('Error Handling', () => {
-    it.skipIf(!K8S_AVAILABLE)(
+    it.skipIf(!ADAPTER_AVAILABLE)(
       'should handle HTTP 500 error',
       async () => {
         const jobId = `http-echo-test-${Date.now()}-error`;
 
         const sub = await subscribeToOutput(jobId);
+        if (!sub) return;
         await createTestJob(jobId, 'CRASH', undefined, 30000);
 
         // The job should fail
@@ -535,12 +549,13 @@ describe('HTTP Sidecar E2E Tests', () => {
       60000,
     );
 
-    it.skipIf(!K8S_AVAILABLE)(
+    it.skipIf(!ADAPTER_AVAILABLE)(
       'should handle timeout scenarios',
       async () => {
         const jobId = `http-echo-test-${Date.now()}-timeout`;
 
         const sub = await subscribeToOutput(jobId);
+        if (!sub) return;
         // Use short timeout
         await createTestJob(jobId, 'TIMEOUT', undefined, 5000);
 
@@ -555,13 +570,14 @@ describe('HTTP Sidecar E2E Tests', () => {
   });
 
   describe('Large Payload Handling', () => {
-    it.skipIf(!K8S_AVAILABLE)(
+    it.skipIf(!ADAPTER_AVAILABLE)(
       'should handle large messages',
       async () => {
         const jobId = `http-echo-test-${Date.now()}-large`;
         const largeMessage = 'A'.repeat(10000);
 
         const sub = await subscribeToOutput(jobId);
+        if (!sub) return;
         await createTestJob(jobId, largeMessage);
 
         const output = await sub.waitForResult();
@@ -575,7 +591,7 @@ describe('HTTP Sidecar E2E Tests', () => {
   });
 
   describe('Multiple Sequential Tasks', () => {
-    it.skipIf(!K8S_AVAILABLE)(
+    it.skipIf(!ADAPTER_AVAILABLE)(
       'should handle multiple sequential tasks',
       async () => {
         const messages = ['First message', 'Second message', 'Third message'];
@@ -584,6 +600,7 @@ describe('HTTP Sidecar E2E Tests', () => {
         for (let i = 0; i < messages.length; i++) {
           const jobId = `http-echo-test-${Date.now()}-seq-${i}`;
           const sub = await subscribeToOutput(jobId);
+          if (!sub) return;
           await createTestJob(jobId, messages[i]);
 
           const output = await sub.waitForResult();
@@ -603,13 +620,14 @@ describe('HTTP Sidecar E2E Tests', () => {
   });
 
   describe('Follow-up Message Flow', () => {
-    it.skipIf(!K8S_AVAILABLE)(
+    it.skipIf(!ADAPTER_AVAILABLE)(
       'should process a follow-up message after the initial task',
       async () => {
         const jobId = `http-echo-test-${Date.now()}-followup`;
 
         // Subscribe BEFORE creating the job to capture both responses
         const sub = await subscribeToOutputMulti(jobId);
+        if (!sub) return;
 
         try {
           await createTestJob(jobId, 'Initial prompt');
@@ -637,13 +655,14 @@ describe('HTTP Sidecar E2E Tests', () => {
       180000,
     );
 
-    it.skipIf(!K8S_AVAILABLE)(
+    it.skipIf(!ADAPTER_AVAILABLE)(
       'should preserve session ID across follow-up messages',
       async () => {
         const sessionId = `test-session-followup-${Date.now()}`;
         const jobId = `http-echo-test-${Date.now()}-followup-session`;
 
         const sub = await subscribeToOutputMulti(jobId);
+        if (!sub) return;
 
         try {
           await createTestJob(jobId, 'Session initial', sessionId);
@@ -669,12 +688,13 @@ describe('HTTP Sidecar E2E Tests', () => {
       180000,
     );
 
-    it.skipIf(!K8S_AVAILABLE)(
+    it.skipIf(!ADAPTER_AVAILABLE)(
       'should handle multiple follow-up messages in sequence',
       async () => {
         const jobId = `http-echo-test-${Date.now()}-multi-followup`;
 
         const sub = await subscribeToOutputMulti(jobId);
+        if (!sub) return;
 
         try {
           await createTestJob(jobId, 'Message 1');
@@ -699,12 +719,13 @@ describe('HTTP Sidecar E2E Tests', () => {
       240000,
     );
 
-    it.skipIf(!K8S_AVAILABLE)(
+    it.skipIf(!ADAPTER_AVAILABLE)(
       'should shut down cleanly after a close message',
       async () => {
         const jobId = `http-echo-test-${Date.now()}-close`;
 
         const sub = await subscribeToOutputMulti(jobId);
+        if (!sub) return;
 
         try {
           await createTestJob(jobId, 'Pre-close prompt');

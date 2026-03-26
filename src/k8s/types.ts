@@ -8,10 +8,13 @@ import {
   K8sToleration,
   K8sAffinity,
   ContainerSecurityContext,
+  ToolSpec,
 } from '../types.js';
 
 export interface JobInput extends ContainerInput {
   jobId?: string;
+  groupsPvc?: string;    // override PVC name for channel pod agent jobs
+  sessionsPvc?: string;  // override PVC name for channel pod agent jobs
 }
 
 export interface JobOutput extends ContainerOutput {
@@ -35,7 +38,7 @@ export interface AgentJobSpec {
   sessionId?: string;
   assistantName?: string;
   timeout?: number;
-  provider?: 'claude' | 'openrouter';
+  provider?: string;
   browserSidecar?: boolean;
   // Node scheduling
   nodeSelector?: Record<string, string>;
@@ -50,6 +53,11 @@ export interface AgentJobSpec {
   securityContext?: ContainerSecurityContext;
   // Additional volumes
   additionalMounts?: AdditionalMount[];
+  // PVC override — used when agent job runs on behalf of a channel pod
+  groupsPvc?: string;    // defaults to 'kubeclaw-groups'
+  sessionsPvc?: string;  // defaults to 'kubeclaw-sessions'
+  // Superuser mode: grants direct local tool access in the agent container
+  superuser?: boolean;
 }
 
 export interface SidecarJobSpec extends AgentJobSpec {
@@ -128,8 +136,10 @@ export interface TaskRequest {
     | 'update_task'
     | 'register_group'
     | 'refresh_groups'
-    | 'tool_pod_request';
+    | 'tool_pod_request'
+    | 'deploy_channel';
   taskId?: string;
+  yaml?: string;  // deploy_channel: Kubernetes YAML to apply
   prompt?: string;
   schedule_type?: 'cron' | 'interval' | 'once';
   schedule_value?: string;
@@ -152,7 +162,22 @@ export interface ToolPodJobSpec {
   groupFolder: string;
   category: 'execution' | 'browser';
   timeout: number;
+  provider?: string;     // inherit parent agent's provider for image selection
+  groupsPvc?: string;    // defaults to 'kubeclaw-groups'
+  sessionsPvc?: string;  // defaults to 'kubeclaw-sessions'
 }
+
+export interface SidecarToolPodJobSpec {
+  agentJobId: string;
+  groupFolder: string;
+  toolName: string;       // used as Redis stream "category" key
+  toolSpec: ToolSpec;
+  timeout: number;
+  groupsPvc?: string;
+  sessionsPvc?: string;
+}
+
+export { ToolSpec };
 
 export interface StatusUpdate {
   status: 'running' | 'completed' | 'failed' | 'timeout';

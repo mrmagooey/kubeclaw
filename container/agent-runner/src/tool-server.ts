@@ -14,9 +14,12 @@ import { createClient, RedisClientType } from 'redis';
 const execFileAsync = promisify(execFile);
 
 const agentJobId = process.env.KUBECLAW_AGENT_JOB_ID!;
-const category = process.env.KUBECLAW_CATEGORY as 'execution' | 'browser';
+const category = process.env.KUBECLAW_CATEGORY as 'execution' | 'browser' | string;
 const redisUrl = process.env.REDIS_URL || 'redis://kubeclaw-redis:6379';
 const idleTimeout = parseInt(process.env.IDLE_TIMEOUT || '1800000', 10);
+const toolMode = process.env.KUBECLAW_TOOL_MODE as 'http-bridge' | 'file-bridge' | undefined;
+const toolPort = parseInt(process.env.KUBECLAW_TOOL_PORT || '8080', 10);
+const SHARED_DIR = process.env.KUBECLAW_SHARED_DIR || '/shared';
 
 const TOOLCALLS_STREAM = `kubeclaw:toolcalls:${agentJobId}:${category}`;
 const TOOLRESULTS_STREAM = `kubeclaw:toolresults:${agentJobId}:${category}`;
@@ -161,9 +164,46 @@ async function getRedisForTask(): Promise<RedisClientType> {
   return taskRedis;
 }
 
+// --- Bridge modes ---
+
+async function executeToolBridgeHttp(tool: string, input: Record<string, unknown>): Promise<unknown> {
+  const res = await fetch(`http://localhost:${toolPort}/invoke`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tool, input }),
+  });
+  if (!res.ok) throw new Error(`Bridge HTTP error: ${res.status} ${await res.text()}`);
+  const data = await res.json() as { result?: unknown; error?: string };
+  if (data.error) throw new Error(data.error);
+  return data.result ?? null;
+}
+
+async function executeToolBridgeFile(tool: string, input: Record<string, unknown>, requestId: string): Promise<unknown> {
+  const reqPath = path.join(SHARED_DIR, `${requestId}.request.json`);
+  const resPath = path.join(SHARED_DIR, `${requestId}.response.json`);
+  fs.writeFileSync(reqPath, JSON.stringify({ requestId, tool, input }));
+  const deadline = Date.now() + idleTimeout;
+  while (Date.now() < deadline) {
+    if (fs.existsSync(resPath)) {
+      const data = JSON.parse(fs.readFileSync(resPath, 'utf-8')) as { result?: unknown; error?: string };
+      fs.unlinkSync(resPath);
+      if (data.error) throw new Error(data.error);
+      return data.result ?? null;
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  throw new Error('File bridge timeout');
+}
+
 // --- Tool dispatch ---
 
-async function executeTool(tool: string, input: Record<string, unknown>): Promise<unknown> {
+async function executeTool(tool: string, input: Record<string, unknown>, requestId: string): Promise<unknown> {
+  if (toolMode === 'http-bridge') return executeToolBridgeHttp(tool, input);
+  if (toolMode === 'file-bridge') return executeToolBridgeFile(tool, input, requestId);
+  return executeToolLocal(tool, input);
+}
+
+async function executeToolLocal(tool: string, input: Record<string, unknown>): Promise<unknown> {
   switch (tool) {
     // execution
     case 'bash': return toolBash(input as any);
@@ -189,19 +229,19 @@ async function executeTool(tool: string, input: Record<string, unknown>): Promis
 // --- Main loop ---
 
 async function main(): Promise<void> {
-  if (!agentJobId || !category) {
-    log('KUBECLAW_AGENT_JOB_ID and KUBECLAW_CATEGORY are required');
+  if (!agentJobId || (!category && !toolMode)) {
+    log('KUBECLAW_AGENT_JOB_ID and either KUBECLAW_CATEGORY or KUBECLAW_TOOL_MODE are required');
     process.exit(1);
   }
 
-  log(`Starting. agentJobId=${agentJobId} category=${category}`);
+  log(`Starting. agentJobId=${agentJobId} category=${category} toolMode=${toolMode ?? 'none'}`);
 
   const redis = createClient({ url: redisUrl }) as RedisClientType;
   redis.on('error', (err) => log(`Redis error: ${err.message}`));
   await redis.connect();
   log('Connected to Redis');
 
-  let lastId = '$'; // only new messages
+  let lastId = '0-0'; // process from beginning so pre-spawned calls are picked up
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
 
   function resetIdleTimer(): void {
@@ -245,7 +285,7 @@ async function main(): Promise<void> {
         let result: unknown;
         let error: string | undefined;
         try {
-          result = await executeTool(tool, input);
+          result = await executeTool(tool, input, requestId);
         } catch (err) {
           error = err instanceof Error ? err.message : String(err);
           log(`Tool error: ${error}`);

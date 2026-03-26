@@ -41,22 +41,29 @@ const {
   return { mockRunAgent, mockWriteTasksSnapshot, mockWriteGroupsSnapshot, mockGetACLManager };
 });
 
-vi.mock('../src/runtime/index.js', () => ({
-  getAgentRunner: vi.fn().mockReturnValue({
+vi.mock('../src/runtime/index.js', () => {
+  const mockRunner = {
     runAgent: mockRunAgent,
     writeTasksSnapshot: mockWriteTasksSnapshot,
     writeGroupsSnapshot: mockWriteGroupsSnapshot,
     shutdown: vi.fn().mockResolvedValue(undefined),
-  }),
-  resetAgentRunner: vi.fn(),
-  getACLManager: mockGetACLManager,
-  RedisACLManager: class {},
-  createAgentRunner: vi.fn(),
-}));
+  };
+  return {
+    getAgentRunner: vi.fn().mockReturnValue(mockRunner),
+    getRunnerForGroup: vi.fn().mockReturnValue(mockRunner),
+    shutdownAllRunners: vi.fn().mockResolvedValue(undefined),
+    resetAgentRunner: vi.fn(),
+    getACLManager: mockGetACLManager,
+    RedisACLManager: class {},
+    createAgentRunner: vi.fn(),
+  };
+});
 
 // Mock the Redis IPC watcher (not needed for unit-style e2e tests)
 vi.mock('../src/k8s/ipc-redis.js', () => ({
   startIpcWatcher: vi.fn(),
+  startToolPodSpawnWatcher: vi.fn().mockResolvedValue(undefined),
+  startAgentJobSpawnWatcher: vi.fn().mockResolvedValue(undefined),
 }));
 
 // Mock the Redis-based distributed job queue to avoid Redis dependency

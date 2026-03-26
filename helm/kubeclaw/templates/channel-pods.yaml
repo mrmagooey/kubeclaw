@@ -1,0 +1,169 @@
+{{- range $name, $cfg := .Values.channels }}
+{{- if $cfg.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kubeclaw-channel-{{ $name }}
+  namespace: {{ $.Values.namespace }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kubeclaw-channel-{{ $name }}
+  template:
+    metadata:
+      labels:
+        app: kubeclaw-channel-{{ $name }}
+        kubeclaw/channel: {{ $name }}
+    spec:
+      # No K8s API access — channel pods delegate all K8s operations to the orchestrator
+      automountServiceAccountToken: false
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: fix-permissions
+          image: busybox:latest
+          command:
+            - sh
+            - -c
+            - chown -R 1000:1000 /app/groups /app/store /data/sessions
+          securityContext:
+            runAsUser: 0
+          volumeMounts:
+            - name: groups
+              mountPath: /app/groups
+            - name: store
+              mountPath: /app/store
+            - name: sessions
+              mountPath: /data/sessions
+      containers:
+        - name: channel
+          image: {{ include "kubeclaw.image" (dict "root" $ "name" "kubeclaw-orchestrator") }}
+          imagePullPolicy: {{ include "kubeclaw.pullPolicy" $ }}
+          command: ["node", "dist/channel-runner.js"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          env:
+            - name: KUBECLAW_MODE
+              value: channel
+            - name: KUBECLAW_CHANNEL
+              value: {{ $name }}
+            - name: REDIS_URL
+              value: redis://kubeclaw-redis:6379
+            - name: REDIS_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: kubeclaw-redis
+                  key: admin-password
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "kubeclaw.secretName" $ }}
+                  key: openai-api-key
+                  optional: true
+            - name: OPENAI_BASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "kubeclaw.secretName" $ }}
+                  key: openai-base-url
+                  optional: true
+            - name: DIRECT_LLM_MODEL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "kubeclaw.secretName" $ }}
+                  key: direct-llm-model
+                  optional: true
+            {{- range $cfg.envVars }}
+            - name: {{ .name }}
+              valueFrom:
+                secretKeyRef:
+                  name: kubeclaw-channel-{{ $name }}
+                  key: {{ .key }}
+                  optional: {{ default false .optional }}
+            {{- end }}
+          {{- if $cfg.httpPort }}
+          ports:
+            - name: http
+              containerPort: {{ $cfg.httpPort }}
+              protocol: TCP
+          {{- end }}
+          volumeMounts:
+            - name: groups
+              mountPath: /app/groups
+            - name: store
+              mountPath: /app/store
+            - name: sessions
+              mountPath: /data/sessions
+          resources:
+            {{- toYaml $.Values.channelPod.resources | nindent 12 }}
+      volumes:
+        - name: groups
+          persistentVolumeClaim:
+            claimName: kubeclaw-channel-{{ $name }}-groups
+        - name: store
+          persistentVolumeClaim:
+            claimName: kubeclaw-channel-{{ $name }}-store
+        - name: sessions
+          persistentVolumeClaim:
+            claimName: kubeclaw-channel-{{ $name }}-sessions
+{{- if $cfg.httpPort }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kubeclaw-channel-{{ $name }}
+  namespace: {{ $.Values.namespace }}
+spec:
+  selector:
+    app: kubeclaw-channel-{{ $name }}
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+  type: ClusterIP
+{{- if $cfg.ingress }}
+{{- if $cfg.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: kubeclaw-channel-{{ $name }}
+  namespace: {{ $.Values.namespace }}
+  {{- if $cfg.ingress.annotations }}
+  annotations:
+    {{- toYaml $cfg.ingress.annotations | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if $cfg.ingress.className }}
+  ingressClassName: {{ $cfg.ingress.className }}
+  {{- end }}
+  {{- if $cfg.ingress.tls }}
+  tls:
+    {{- toYaml $cfg.ingress.tls | nindent 4 }}
+  {{- end }}
+  rules:
+    - host: {{ $cfg.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: kubeclaw-channel-{{ $name }}
+                port:
+                  name: http
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}

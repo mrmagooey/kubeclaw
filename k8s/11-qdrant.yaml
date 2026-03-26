@@ -1,0 +1,76 @@
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kubeclaw-qdrant
+  namespace: kubeclaw
+spec:
+  serviceName: kubeclaw-qdrant
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kubeclaw-qdrant
+  template:
+    metadata:
+      labels:
+        app: kubeclaw-qdrant
+    spec:
+      securityContext:
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: qdrant
+          image: qdrant/qdrant:latest
+          ports:
+            - name: http
+              containerPort: 6333
+            - name: grpc
+              containerPort: 6334
+          volumeMounts:
+            - name: data
+              mountPath: /qdrant/storage
+          resources:
+            requests:
+              memory: 256Mi
+              cpu: 100m
+            limits:
+              memory: 1Gi
+              cpu: '1'
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 6333
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 6333
+            initialDelaySeconds: 15
+            periodSeconds: 30
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 20Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kubeclaw-qdrant
+  namespace: kubeclaw
+spec:
+  selector:
+    app: kubeclaw-qdrant
+  ports:
+    - name: http
+      port: 6333
+      targetPort: 6333
+    - name: grpc
+      port: 6334
+      targetPort: 6334

@@ -285,8 +285,19 @@ export async function startMockLLMServer(
       }
     });
 
-    server.on('error', (err) => {
-      reject(err);
+    server.on('error', async (err: NodeJS.ErrnoException) => {
+      if (err.code === 'EADDRINUSE') {
+        // Another fork won the race and is already listening; reuse it
+        server = null;
+        serverRunning = true;
+        usageCount = 1;
+        console.log(
+          `[Mock LLM] Port ${port} already in use (race), reusing`,
+        );
+        resolve(port);
+      } else {
+        reject(err);
+      }
     });
 
     const port = config?.port || 11434;

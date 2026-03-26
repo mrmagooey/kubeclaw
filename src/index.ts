@@ -3,7 +3,7 @@ import path from 'path';
 
 import {
   ASSISTANT_NAME,
-  IDLE_TIMEOUT,
+  KUBECLAW_MODE,
   POLL_INTERVAL,
   TIMEZONE,
   TRIGGER_PATTERN,
@@ -13,10 +13,13 @@ import {
   getChannelFactory,
   getRegisteredChannelNames,
 } from './channels/registry.js';
+import { loadChannelPlugins } from './channels/plugin-loader.js';
 import {
   AvailableGroup,
   ContainerOutput,
   getAgentRunner,
+  getRunnerForGroup,
+  shutdownAllRunners,
 } from './runtime/index.js';
 import {
   getAllChats,
@@ -36,7 +39,8 @@ import {
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
-import { startIpcWatcher as startRedisIpcWatcher } from './k8s/ipc-redis.js';
+import { startIpcWatcher as startRedisIpcWatcher, startToolPodSpawnWatcher, startAgentJobSpawnWatcher } from './k8s/ipc-redis.js';
+import { getOutputChannel, getRedisClient } from './k8s/redis-client.js';
 import { findChannel, formatMessages, formatOutbound } from './router.js';
 import {
   isSenderAllowed,
@@ -48,6 +52,8 @@ import { startSchedulerLoop } from './task-scheduler.js';
 import { detectMentionedSpecialists, loadSpecialists } from './specialists.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
+import { augmentPrompt } from './rag/retriever.js';
+import { indexConversationTurn } from './rag/indexer.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -154,6 +160,72 @@ export function _resetState(): void {
   registeredGroups = {};
 }
 
+export { recoverPendingMessages as _recoverPendingMessages };
+
+// ---- Skill invocation ----
+
+function loadSkillPrompt(name: string): string | null {
+  for (const p of [
+    path.join(process.cwd(), '.claude', 'skills', name, 'SKILL.md'),
+    `/app/.claude/skills/${name}/SKILL.md`,
+  ]) {
+    try { return fs.readFileSync(p, 'utf-8'); } catch { /* not found */ }
+  }
+  return null;
+}
+
+function buildSkillPrompt(skillName: string, skillMd: string, extraArgs: string): string {
+  return `You are applying the skill "${skillName}".
+
+The pre-compiled plugin has already been copied to /workspace/plugins/ by the orchestrator.
+Call deploy_channel with the Kubernetes YAML for the new channel pod when ready.
+
+TOOL MAPPING:
+- Edit tool → local_edit  |  Write tool → local_write
+- Read tool → local_read  |  Bash / run → local_bash
+${extraArgs ? `\nUser arguments: ${extraArgs}\n` : ''}
+---
+
+${skillMd}`;
+}
+
+async function handleSkillInvocation(
+  skillName: string,
+  skillMd: string,
+  extraArgs: string,
+  chatJid: string,
+  group: RegisteredGroup,
+  channel: Channel,
+): Promise<void> {
+  // Copy pre-compiled plugin to PVC — orchestrator has direct fs access
+  for (const srcBase of [
+    path.join(process.cwd(), '.claude', 'skills', skillName, 'plugins'),
+    `/app/.claude/skills/${skillName}/plugins`,
+  ]) {
+    if (fs.existsSync(srcBase)) {
+      fs.mkdirSync('/workspace/plugins', { recursive: true });
+      for (const f of fs.readdirSync(srcBase).filter((f) => f.endsWith('.js'))) {
+        fs.copyFileSync(path.join(srcBase, f), path.join('/workspace/plugins', f));
+        logger.info({ plugin: f, skillName }, 'Copied skill plugin to PVC');
+      }
+      break;
+    }
+  }
+
+  // Spawn agent job with superuser=true for remaining SKILL.md steps
+  const skillGroup: RegisteredGroup = {
+    ...group,
+    containerConfig: { ...group.containerConfig, superuser: true },
+  };
+  await runAgent(skillGroup, buildSkillPrompt(skillName, skillMd, extraArgs), chatJid, async (result) => {
+    if (result.result) {
+      const raw = typeof result.result === 'string' ? result.result : JSON.stringify(result.result);
+      const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
+      if (text) await channel.sendMessage(chatJid, text);
+    }
+  });
+}
+
 /**
  * Process all pending messages for a group.
  * Called by the GroupQueue when it's this group's turn.
@@ -190,6 +262,22 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     if (!hasTrigger) return true;
   }
 
+  // Check for skill command (main group only): message starting with /skill-name
+  if (isMainGroup) {
+    const lastMsg = missedMessages[missedMessages.length - 1];
+    const content = lastMsg.content.trim();
+    if (content.startsWith('/')) {
+      const [skillName, ...rest] = content.slice(1).split(/\s+/);
+      const skillMd = loadSkillPrompt(skillName);
+      if (skillMd) {
+        lastAgentTimestamp[chatJid] = lastMsg.timestamp;
+        saveState();
+        await handleSkillInvocation(skillName, skillMd, rest.join(' '), chatJid, group, channel);
+        return true;
+      }
+    }
+  }
+
   const prompt = formatMessages(missedMessages, TIMEZONE);
 
   // Load specialist agents for this group (if any defined)
@@ -220,20 +308,6 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     'Processing messages',
   );
 
-  // Track idle timer for closing stdin when agent is idle
-  let idleTimer: ReturnType<typeof setTimeout> | null = null;
-
-  const resetIdleTimer = () => {
-    if (idleTimer) clearTimeout(idleTimer);
-    idleTimer = setTimeout(() => {
-      logger.debug(
-        { group: group.name },
-        'Idle timeout, closing container stdin',
-      );
-      queue.closeStdin(chatJid);
-    }, IDLE_TIMEOUT);
-  };
-
   await channel.setTyping?.(chatJid, true);
   let hadError = false;
   let outputSentToUser = false;
@@ -253,8 +327,6 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           await channel.sendMessage(chatJid, text);
           outputSentToUser = true;
         }
-        // Only reset idle timer on actual results, not session-update markers (result: null)
-        resetIdleTimer();
       }
 
       if (result.status === 'success') {
@@ -266,11 +338,13 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       }
     });
 
-    if (output === 'error' || hadError) break;
+    if (output === 'error' || hadError) {
+      hadError = true;
+      break;
+    }
   }
 
   await channel.setTyping?.(chatJid, false);
-  if (idleTimer) clearTimeout(idleTimer);
 
   if (hadError) {
     // If we already sent output to the user, don't roll back the cursor —
@@ -312,7 +386,7 @@ async function runAgent(
     'Running agent with LLM provider',
   );
 
-  const agentRunner = getAgentRunner();
+  const agentRunner = getRunnerForGroup(group);
 
   // Update tasks snapshot for container to read (filtered by group)
   const tasks = getAllTasks();
@@ -350,11 +424,14 @@ async function runAgent(
       }
     : undefined;
 
+  // Prepend retrieved context from vector store (no-op when RAG is not configured).
+  const augmentedPrompt = await augmentPrompt(group.folder, prompt);
+
   try {
     const output = await agentRunner.runAgent(
       group,
       {
-        prompt,
+        prompt: augmentedPrompt,
         sessionId,
         groupFolder: group.folder,
         chatJid,
@@ -376,6 +453,11 @@ async function runAgent(
         'Container agent error',
       );
       return 'error';
+    }
+
+    // Index the conversation turn for future retrieval (non-blocking, non-fatal).
+    if (output.result) {
+      void indexConversationTurn(group.folder, prompt, output.result);
     }
 
     return 'success';
@@ -450,33 +532,7 @@ async function startMessageLoop(): Promise<void> {
 
           // Pull all messages since lastAgentTimestamp so non-trigger
           // context that accumulated between triggers is included.
-          const allPending = getMessagesSince(
-            chatJid,
-            lastAgentTimestamp[chatJid] || '',
-            ASSISTANT_NAME,
-          );
-          const messagesToSend =
-            allPending.length > 0 ? allPending : groupMessages;
-          const formatted = formatMessages(messagesToSend, TIMEZONE);
-
-          if (queue.sendMessage(chatJid, formatted)) {
-            logger.debug(
-              { chatJid, count: messagesToSend.length },
-              'Piped messages to active container',
-            );
-            lastAgentTimestamp[chatJid] =
-              messagesToSend[messagesToSend.length - 1].timestamp;
-            saveState();
-            // Show typing indicator while the container processes the piped message
-            channel
-              .setTyping?.(chatJid, true)
-              ?.catch((err) =>
-                logger.warn({ chatJid, err }, 'Failed to set typing indicator'),
-              );
-          } else {
-            // No active container — enqueue for a new one
-            queue.enqueueMessageCheck(chatJid);
-          }
+          queue.enqueueMessageCheck(chatJid);
         }
       }
     } catch (err) {
@@ -508,12 +564,13 @@ async function main(): Promise<void> {
   await initDatabase();
   logger.info('Database initialized');
   loadState();
+  await loadChannelPlugins('/workspace/plugins');
 
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
     await queue.shutdown(10000);
-    await getAgentRunner().shutdown();
+    await shutdownAllRunners();
     for (const ch of channels) await ch.disconnect();
     process.exit(0);
   };
@@ -551,37 +608,28 @@ async function main(): Promise<void> {
     registeredGroups: () => registeredGroups,
   };
 
-  // Create and connect all registered channels.
-  // Each channel self-registers via the barrel import above.
-  // Factories return null when credentials are missing, so unconfigured channels are skipped.
-  const registeredChannelNames = getRegisteredChannelNames();
-  logger.info(
-    { channels: registeredChannelNames },
-    'Registered channel factories',
-  );
+  // In orchestrator mode, channels run in dedicated channel pods — skip inline loading.
+  if (KUBECLAW_MODE !== 'orchestrator') {
+    const registeredChannelNames = getRegisteredChannelNames();
+    logger.info({ channels: registeredChannelNames }, 'Registered channel factories');
 
-  for (const channelName of registeredChannelNames) {
-    logger.info({ channel: channelName }, 'Creating channel');
-    const factory = getChannelFactory(channelName)!;
-    const channel = factory(channelOpts);
-    if (!channel) {
-      logger.warn(
-        { channel: channelName },
-        'Channel installed but credentials missing — skipping. Check .env or re-run the channel skill.',
-      );
-      continue;
+    for (const channelName of registeredChannelNames) {
+      logger.info({ channel: channelName }, 'Creating channel');
+      const factory = getChannelFactory(channelName)!;
+      const channel = factory(channelOpts);
+      if (!channel) {
+        logger.warn(
+          { channel: channelName },
+          'Channel installed but credentials missing — skipping.',
+        );
+        continue;
+      }
+      channels.push(channel);
+      await channel.connect();
+      logger.info({ channel: channelName }, 'Channel connected successfully');
     }
-    logger.info(
-      { channel: channelName, channelType: channel.name },
-      'Channel created, connecting...',
-    );
-    channels.push(channel);
-    await channel.connect();
-    logger.info({ channel: channelName }, 'Channel connected successfully');
-  }
-  if (channels.length === 0) {
-    logger.fatal('No channels connected');
-    process.exit(1);
+  } else {
+    logger.info('Orchestrator mode: channels run in dedicated pods, skipping inline channel init');
   }
 
   // Start subsystems (independently of connection handler)
@@ -591,13 +639,27 @@ async function main(): Promise<void> {
     queue,
     onProcess: () => {},
     sendMessage: async (jid, rawText) => {
-      const channel = findChannel(channels, jid);
-      if (!channel) {
-        logger.warn({ jid }, 'No channel owns JID, cannot send message');
-        return;
-      }
       const text = formatOutbound(rawText);
-      if (text) await channel.sendMessage(jid, text);
+      if (!text) return;
+      if (KUBECLAW_MODE === 'orchestrator') {
+        // Channels run in separate pods — route via Redis pub/sub to the channel pod
+        const group = registeredGroups[jid];
+        if (!group) {
+          logger.warn({ jid }, 'No registered group for JID, cannot route scheduled message');
+          return;
+        }
+        await getRedisClient().publish(
+          getOutputChannel(group.folder),
+          JSON.stringify({ type: 'message', chatJid: jid, text }),
+        );
+      } else {
+        const channel = findChannel(channels, jid);
+        if (!channel) {
+          logger.warn({ jid }, 'No channel owns JID, cannot send message');
+          return;
+        }
+        await channel.sendMessage(jid, text);
+      }
     },
   });
 
@@ -625,6 +687,12 @@ async function main(): Promise<void> {
     ) => getAgentRunner().writeGroupsSnapshot(gf, im, ag, rj),
   };
   startRedisIpcWatcher(ipcDeps);
+  startToolPodSpawnWatcher().catch((err) =>
+    logger.error({ err }, 'Tool pod spawn watcher crashed'),
+  );
+  startAgentJobSpawnWatcher().catch((err) =>
+    logger.error({ err }, 'Agent job spawn watcher crashed'),
+  );
   queue.setProcessMessagesFn(processGroupMessages);
   recoverPendingMessages();
   startMessageLoop().catch((err) => {

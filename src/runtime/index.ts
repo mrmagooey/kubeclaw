@@ -10,6 +10,7 @@ import { JobRunner, buildJobName } from '../k8s/job-runner.js';
 import { SidecarJobRunner } from '../k8s/sidecar-job-runner.js';
 import { FileSidecarJobRunner } from '../k8s/file-sidecar-runner.js';
 import { HttpSidecarJobRunner } from '../k8s/http-sidecar-runner.js';
+import { DirectLLMRunner } from './direct-llm-runner.js';
 import {
   ContainerInput,
   ContainerOutput,
@@ -755,31 +756,85 @@ export interface SidecarRunner {
   sendMessage(groupFolder: string, text: string): Promise<boolean>;
 }
 
-/**
- * Factory function to create the appropriate AgentRunner
- */
-export function createAgentRunner(): AgentRunner {
-  logger.info('Creating Kubernetes Agent Runner');
-  return new KubernetesAgentRunner();
+// Four lazy singletons — one per runner type
+let k8sRunner: KubernetesAgentRunner | null = null;
+let fileSidecarRunner: FileSidecarAgentRunner | null = null;
+let httpSidecarRunner: HttpSidecarAgentRunner | null = null;
+let directLLMRunner: DirectLLMRunner | null = null;
+
+function getK8sRunner(): KubernetesAgentRunner {
+  if (!k8sRunner) k8sRunner = new KubernetesAgentRunner();
+  return k8sRunner;
+}
+
+function getFileSidecarRunner(): FileSidecarAgentRunner {
+  if (!fileSidecarRunner) fileSidecarRunner = new FileSidecarAgentRunner();
+  return fileSidecarRunner;
+}
+
+function getHttpSidecarRunner(): HttpSidecarAgentRunner {
+  if (!httpSidecarRunner) httpSidecarRunner = new HttpSidecarAgentRunner();
+  return httpSidecarRunner;
+}
+
+export function getDirectLLMRunner(): DirectLLMRunner {
+  if (!directLLMRunner) directLLMRunner = new DirectLLMRunner();
+  return directLLMRunner;
 }
 
 /**
- * Singleton instance for convenience
+ * Select the correct runner for a group based on its containerConfig.
+ *
+ * Routing rules (checked in order):
+ *   userImage + userPort → HttpSidecarAgentRunner  (user container exposes HTTP API)
+ *   userImage only       → FileSidecarAgentRunner  (user container reads/writes files)
+ *   direct               → DirectLLMRunner         (in-process Anthropic SDK, no K8s job)
+ *   neither              → KubernetesAgentRunner   (built-in Claude / OpenRouter image)
  */
-let agentRunnerInstance: AgentRunner | null = null;
-
-export function getAgentRunner(): AgentRunner {
-  if (!agentRunnerInstance) {
-    agentRunnerInstance = createAgentRunner();
+export function getRunnerForGroup(group: RegisteredGroup): AgentRunner {
+  const { userImage, userPort, direct } = group.containerConfig ?? {};
+  if (userImage && userPort) {
+    logger.debug({ group: group.name }, 'Using HTTP sidecar runner');
+    return getHttpSidecarRunner();
   }
-  return agentRunnerInstance;
+  if (userImage) {
+    logger.debug({ group: group.name }, 'Using file sidecar runner');
+    return getFileSidecarRunner();
+  }
+  if (direct) {
+    logger.debug({ group: group.name }, 'Using direct LLM runner');
+    return getDirectLLMRunner();
+  }
+  logger.debug({ group: group.name }, 'Using Kubernetes agent runner');
+  return getK8sRunner();
 }
 
 /**
- * Reset the singleton instance (useful for testing)
+ * Returns the K8s runner — for call sites that have no group context.
+ * @deprecated Prefer getRunnerForGroup(group) when a group is available.
+ */
+export function getAgentRunner(): AgentRunner {
+  return getK8sRunner();
+}
+
+/**
+ * Shut down all active runner instances.
+ */
+export async function shutdownAllRunners(): Promise<void> {
+  await Promise.all([
+    k8sRunner?.shutdown(),
+    fileSidecarRunner?.shutdown(),
+    httpSidecarRunner?.shutdown(),
+    directLLMRunner?.shutdown(),
+  ]);
+  k8sRunner = fileSidecarRunner = httpSidecarRunner = directLLMRunner = null;
+}
+
+/**
+ * Reset all singleton instances (for testing).
  */
 export function resetAgentRunner(): void {
-  agentRunnerInstance = null;
+  k8sRunner = fileSidecarRunner = httpSidecarRunner = directLLMRunner = null;
 }
 
 // Re-export ACL manager for orchestrator integration

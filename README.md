@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  An AI assistant that runs agents securely in their own containers. Lightweight, built to be easily understood and completely customized for your needs.
+  An AI assistant that runs agents securely as Kubernetes Jobs. Lightweight, built to be easily understood and completely customized for your needs.
 </p>
 
 <p align="center">
@@ -16,29 +16,35 @@ Using Claude Code, KubeClaw can dynamically rewrite its code to customize its fe
 
 **New:** First AI assistant to support [Agent Swarms](https://code.claude.com/docs/en/agent-teams). Spin up teams of agents that collaborate in your chat.
 
-## Why I Built KubeClaw
-
-[OpenClaw](https://github.com/openclaw/openclaw) is an impressive project, but I wouldn't have been able to sleep if I had given complex software I didn't understand full access to my life. OpenClaw has nearly half a million lines of code, 53 config files, and 70+ dependencies. Its security is at the application level (allowlists, pairing codes) rather than true OS-level isolation. Everything runs in one Node process with shared memory.
-
-KubeClaw provides that same core functionality, but in a codebase small enough to understand: one process and a handful of files. Claude agents run in their own Linux containers with filesystem isolation, not merely behind permission checks.
-
 ## Quick Start
 
 ```bash
 git clone https://github.com/qwibitai/kubeclaw.git
 cd kubeclaw
-claude
+
+# Build images (for local clusters, load instead of push)
+./container/build.sh
+docker build -t kubeclaw-orchestrator:latest .
+
+# Install with Helm
+helm install kubeclaw ./helm/kubeclaw \
+  --set secrets.anthropicApiKey=sk-ant-... \
+  --namespace kubeclaw --create-namespace
 ```
 
-Then run `/setup`. Claude Code handles everything: dependencies, authentication, container setup and service configuration.
+Then open the admin shell to add a channel:
 
-> **Note:** Commands prefixed with `/` (like `/setup`, `/add-whatsapp`) are [Claude Code skills](https://code.claude.com/docs/en/skills). Type them inside the `claude` CLI prompt, not in your regular terminal.
+```bash
+kubectl exec -it deployment/kubeclaw-orchestrator -n kubeclaw -- node dist/admin-shell.js
+```
+
+Tell it in plain English: `"set up Telegram"` — it will ask for your credentials, create the channel pod, and register your first group.
 
 ## Philosophy
 
 **Small enough to understand.** One process, a few source files and no microservices. If you want to understand the full KubeClaw codebase, just ask Claude Code to walk you through it.
 
-**Secure by isolation.** Agents run in Linux containers (Apple Container on macOS, or Docker) and they can only see what's explicitly mounted. Bash access is safe because commands run inside the container, not on your host.
+**Secure by isolation.** Agents run as Kubernetes Jobs with filesystem isolation and can only see what's explicitly mounted. Bash access is safe because commands run inside the job, not on your host.
 
 **Built for the individual user.** KubeClaw isn't a monolithic framework; it's software that fits each user's exact needs. Instead of becoming bloatware, KubeClaw is designed to be bespoke. You make your own fork and have Claude Code modify it to match your needs.
 
@@ -57,11 +63,10 @@ Then run `/setup`. Claude Code handles everything: dependencies, authentication,
 ## What It Supports
 
 - **Multi-channel messaging** - Talk to your assistant from WhatsApp, Telegram, Discord, Slack, or Gmail. Add channels with skills like `/add-whatsapp` or `/add-telegram`. Run one or many at the same time.
-- **Isolated group context** - Each group has its own `CLAUDE.md` memory, isolated filesystem, and runs in its own container sandbox with only that filesystem mounted to it.
+- **Isolated group context** - Each group has its own `CLAUDE.md` memory, isolated filesystem, and runs in its own Kubernetes Job sandbox with only that filesystem mounted to it.
 - **Main channel** - Your private channel (self-chat) for admin control; every group is completely isolated
 - **Scheduled tasks** - Recurring jobs that run Claude and can message you back
 - **Web access** - Search and fetch content from the Web
-- **Container isolation** - Agents are sandboxed in Apple Container (macOS) or Docker (macOS/Linux)
 - **Agent Swarms** - Spin up teams of specialized agents that collaborate on complex tasks. KubeClaw is the first personal AI assistant to support agent swarms.
 - **Dual LLM provider support** - Use Claude (via Claude Code) or OpenRouter (access to 100+ models including GPT-4o, Llama, and more)
 - **Optional integrations** - Add Gmail (`/add-gmail`) and more via skills
@@ -119,121 +124,49 @@ Skills we'd like to see:
 
 ## Requirements
 
-- macOS or Linux
-- Node.js 20+
-- [Claude Code](https://claude.ai/download)
-- [Apple Container](https://github.com/apple/container) (macOS) or [Docker](https://docker.com/products/docker-desktop) (macOS/Linux)
+- Kubernetes cluster (v1.24+)
+- `kubectl` and `helm` configured for your cluster
+- Storage class supporting `ReadWriteMany` (e.g., AWS EFS, NFS) for multi-node clusters
+- [Claude Code](https://claude.ai/download) (for channel skills and customization)
 
 ## Architecture
 
 ```
-Channels --> SQLite --> Polling loop --> Container (Claude Agent SDK) --> Response
+Channels → SQLite → Polling loop → Kubernetes Job (Claude Agent SDK) → Redis IPC → Response
 ```
 
-Single Node.js process. Channels are added via skills and self-register at startup — the orchestrator connects whichever ones have credentials present. Agents execute in isolated Linux containers with filesystem isolation. Only mounted directories are accessible. Per-group message queue with concurrency control. IPC via filesystem.
+Single Node.js process. Channels are added via skills and self-register at startup — the orchestrator connects whichever ones have credentials present. Agents execute as Kubernetes Jobs with filesystem isolation and network policies. Only mounted directories are accessible. Per-group message queue with concurrency control. IPC via Redis Pub/Sub + Streams.
 
 For the full architecture details, see [docs/SPEC.md](docs/SPEC.md).
 
 Key files:
 
-- `src/index.ts` - Orchestrator: state, message loop, agent invocation
-- `src/channels/registry.ts` - Channel registry (self-registration at startup)
-- `src/ipc.ts` - IPC watcher and task processing
-- `src/router.ts` - Message formatting and outbound routing
-- `src/group-queue.ts` - Per-group queue with global concurrency limit
-- `src/container-runner.ts` - Spawns streaming agent containers
-- `src/task-scheduler.ts` - Runs scheduled tasks
-- `src/db.ts` - SQLite operations (messages, groups, sessions, state)
-- `groups/*/CLAUDE.md` - Per-group memory
+- `src/index.ts` — Orchestrator
+- `src/channels/registry.ts` — Channel registry
+- `src/k8s/ipc-redis.ts` — Redis IPC watcher
+- `src/k8s/job-runner.ts` — Spawns Kubernetes Jobs
+- `src/runtime/index.ts` — Agent runner abstraction
+- `src/router.ts` — Message formatting and outbound routing
+- `src/group-queue.ts` — Per-group queue with global concurrency limit
+- `src/task-scheduler.ts` — Runs scheduled tasks
+- `src/db.ts` — SQLite operations
+- `groups/*/CLAUDE.md` — Per-group memory
 
-## Kubernetes Runtime
-
-KubeClaw supports running agents as Kubernetes Jobs instead of Docker containers. This enables better scalability, resource management, and cloud-native operation.
-
-### When to Use Kubernetes
-
-- You want to run KubeClaw on a Kubernetes cluster
-- You need better resource limits and isolation per agent
-- You want horizontal scaling across multiple nodes
-- You're deploying to a cloud environment (EKS, GKE, AKS)
-
-### Prerequisites
-
-- Kubernetes cluster (v1.24+)
-- `kubectl` configured with cluster access
-- Storage class supporting `ReadWriteMany` (e.g., AWS EFS, NFS)
-- Redis (deployed as part of the manifests)
-
-### Quick Deploy
+## Quick Deploy
 
 ```bash
-# Deploy infrastructure
-kubectl apply -f k8s/00-namespace.yaml
-kubectl apply -f k8s/01-network-policy.yaml
-kubectl apply -f k8s/10-redis.yaml
-kubectl apply -f k8s/20-storage.yaml
-
-# Create secrets (Redis 7+ required for ACL support)
-kubectl create secret generic kubeclaw-redis \
-  --from-literal=admin-password=$(openssl rand -base64 32) \
-  -n kubeclaw
-
-kubectl create secret generic kubeclaw-secrets \
-  --from-literal=anthropic-api-key=$ANTHROPIC_API_KEY \
-  --from-literal=claude-code-oauth-token=$CLAUDE_CODE_OAUTH_TOKEN \
-  -n kubeclaw
-
-# Build and push images
-docker build -t your-registry/kubeclaw-agent:latest -f container/Dockerfile .
+# Build images
+./container/build.sh
 docker build -t your-registry/kubeclaw-orchestrator:latest .
 docker push your-registry/kubeclaw-agent:latest
 docker push your-registry/kubeclaw-orchestrator:latest
 
-# Update image references in orchestrator manifest, then deploy
-kubectl apply -f k8s/30-orchestrator.yaml
+# Install with Helm
+helm install kubeclaw ./helm/kubeclaw \
+  --set image.registry=your-registry \
+  --set secrets.anthropicApiKey=$ANTHROPIC_API_KEY \
+  --namespace kubeclaw --create-namespace
 ```
-
-### Configuration
-
-Set these environment variables in the orchestrator deployment:
-
-```yaml
-env:
-  - name: KUBECLAW_RUNTIME
-    value: kubernetes
-  - name: REDIS_URL
-    value: redis://kubeclaw-redis:6379
-  - name: KUBECLAW_NAMESPACE
-    value: kubeclaw
-  - name: MAX_CONCURRENT_JOBS
-    value: '10'
-```
-
-Or use Docker mode (default) for local development:
-
-```bash
-KUBECLAW_RUNTIME=docker  # or omit (docker is default)
-```
-
-### Architecture Differences
-
-| Feature             | Docker              | Kubernetes                     |
-| ------------------- | ------------------- | ------------------------------ |
-| **Agent execution** | Docker containers   | Kubernetes Jobs                |
-| **Communication**   | Filesystem IPC      | Redis Pub/Sub + Streams        |
-| **Concurrency**     | Local process limit | Distributed via Redis          |
-| **Storage**         | Bind mounts         | PersistentVolumeClaims         |
-| **Networking**      | Docker bridge       | Kubernetes CNI + NetworkPolicy |
-| **Secrets**         | Stdin injection     | Kubernetes Secrets             |
-
-### Security
-
-The Kubernetes runtime includes additional security features:
-
-- **Network isolation**: Agents can only reach DNS, Redis, and HTTPS endpoints
-- **RBAC**: Minimal permissions for job management
-- **Resource limits**: CPU/memory limits per agent job
-- **TTL cleanup**: Jobs auto-delete after 1 hour
 
 ### Monitoring
 
@@ -255,17 +188,13 @@ See [KUBERNETES_MIGRATION.md](KUBERNETES_MIGRATION.md) for detailed documentatio
 
 ## FAQ
 
-**Why Docker?**
+**Why Kubernetes?**
 
-Docker provides cross-platform support (macOS, Linux and even Windows via WSL2) and a mature ecosystem. On macOS, you can optionally switch to Apple Container via `/convert-to-apple-container` for a lighter-weight native runtime.
-
-**Can I run this on Linux?**
-
-Yes. Docker is the default runtime and works on both macOS and Linux. Just run `/setup`.
+Kubernetes provides better isolation, resource limits per agent, scalability across multiple nodes, and cloud-native operation. It's the standard for container orchestration and works well in both local development (minikube, kind) and production cloud environments (EKS, GKE, AKS).
 
 **Is this secure?**
 
-Agents run in containers, not behind application-level permission checks. They can only access explicitly mounted directories. You should still review what you're running, but the codebase is small enough that you actually can. See [docs/SECURITY.md](docs/SECURITY.md) for the full security model.
+Agents run as Kubernetes Jobs, not behind application-level permission checks. They can only access explicitly mounted directories. Network policies restrict agents to DNS, Redis, and HTTPS endpoints only. Jobs auto-delete after completion with TTL cleanup. You should still review what you're running, but the codebase is small enough that you actually can. See [docs/SECURITY.md](docs/SECURITY.md) for the full security model.
 
 **Why no configuration files?**
 
@@ -305,9 +234,9 @@ This allows you to use:
 
 Ask Claude Code. "Why isn't the scheduler running?" "What's in the recent logs?" "Why did this message not get a response?" That's the AI-native approach that underlies KubeClaw.
 
-**Why isn't the setup working for me?**
+**Having trouble?**
 
-If you have issues, during setup, Claude will try to dynamically fix them. If that doesn't work, run `claude`, then run `/debug`. If Claude finds an issue that is likely affecting other users, open a PR to modify the setup SKILL.md.
+Run `claude`, then `/debug`. Claude will diagnose and fix the issue. If it's a bug affecting other users, open a PR.
 
 **What changes will be accepted into the codebase?**
 

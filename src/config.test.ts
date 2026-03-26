@@ -79,9 +79,9 @@ describe('validateProvider', () => {
     expect(result).toBeNull();
   });
 
-  it('returns null for invalid provider value', () => {
+  it('returns the provider for any non-empty string', () => {
     const result = validateProvider('invalid');
-    expect(result).toBeNull();
+    expect(result).toBe('invalid');
   });
 });
 
@@ -164,28 +164,28 @@ describe('sanitizeProvider', () => {
 
   it('returns default for null input', () => {
     const result = sanitizeProvider(null);
-    expect(result).toBe('claude');
+    expect(result).toBe('openai');
   });
 
   it('returns default for undefined input', () => {
     const result = sanitizeProvider(undefined);
-    expect(result).toBe('claude');
+    expect(result).toBe('openai');
   });
 
   it('returns default for empty string', () => {
     const result = sanitizeProvider('');
-    expect(result).toBe('claude');
+    expect(result).toBe('openai');
   });
 
-  it('logs warning and returns default for invalid provider', () => {
+  it('returns any non-empty string as-is (open provider)', () => {
     vi.mocked(logger.warn).mockClear();
     const result = sanitizeProvider('invalid-provider');
-    expect(result).toBe('claude');
-    expect(logger.warn).toHaveBeenCalled();
+    expect(result).toBe('invalid-provider');
+    expect(logger.warn).not.toHaveBeenCalled();
   });
 
-  it('uses custom default provider when specified', () => {
-    const result = sanitizeProvider('invalid', 'openrouter');
-    expect(result).toBe('openrouter');
+  it('returns non-empty string unchanged regardless of default', () => {
+    const result = sanitizeProvider('custom-llm', 'openrouter');
+    expect(result).toBe('custom-llm');
   });
 });

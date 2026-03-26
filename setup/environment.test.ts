@@ -96,7 +96,7 @@ describe('credentials detection', () => {
   });
 });
 
-describe('Docker detection logic', () => {
+describe('command detection', () => {
   it('commandExists returns boolean', async () => {
     const { commandExists } = await import('./platform.js');
     expect(typeof commandExists('docker')).toBe('boolean');

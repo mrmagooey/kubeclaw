@@ -10,7 +10,6 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import {
-  requireKubernetes,
   isKubernetesAvailable,
   getSharedRedis,
   getNamespace,
@@ -36,23 +35,20 @@ async function waitFor(
 
 describe('Sidecar ACL E2E Tests', () => {
   let redis: Awaited<ReturnType<typeof getSharedRedis>> | null = null;
-  let k8sAvailable = false;
 
   beforeAll(async () => {
     try {
-      k8sAvailable = isKubernetesAvailable();
-      if (k8sAvailable) {
-        requireKubernetes();
-        redis = await getSharedRedis();
+      if (isKubernetesAvailable()) {
+        redis = getSharedRedis();
       }
     } catch {
-      k8sAvailable = false;
+      // redis stays null
     }
   });
 
   afterAll(async () => {
     // Cleanup test ACLs
-    if (k8sAvailable && redis) {
+    if (redis) {
       try {
         // Clean up any test ACL users
         const testUsers = ['sidecar-test-job-123', 'sidecar-test-job-456'];
@@ -76,7 +72,7 @@ describe('Sidecar ACL E2E Tests', () => {
   });
 
   describe('Redis ACL Infrastructure', () => {
-    it.skipIf(!k8sAvailable)(
+    it(
       'should have Redis 7+ available in cluster',
       async () => {
         if (!redis) return;
@@ -89,7 +85,7 @@ describe('Sidecar ACL E2E Tests', () => {
       },
     );
 
-    it.skipIf(!k8sAvailable)('should support ACL commands', async () => {
+    it('should support ACL commands', async () => {
       if (!redis) return;
       // Test that ACL commands work
       const testUser = 'sidecar-test-acl-user';
@@ -111,7 +107,7 @@ describe('Sidecar ACL E2E Tests', () => {
       await redis.acl('DELUSER', testUser);
     });
 
-    it.skipIf(!k8sAvailable)(
+    it(
       'should enforce key patterns for ACL users',
       async () => {
         if (!redis) return;
@@ -159,7 +155,7 @@ describe('Sidecar ACL E2E Tests', () => {
   });
 
   describe('ACL Lifecycle', () => {
-    it.skipIf(!k8sAvailable)('should create and revoke ACL users', async () => {
+    it('should create and revoke ACL users', async () => {
       if (!redis) return;
       const jobId = 'test-job-123';
       const username = `sidecar-${jobId}`;
@@ -210,7 +206,7 @@ describe('Sidecar ACL E2E Tests', () => {
       expect(usersAfter.some((u: string) => u.includes(username))).toBe(false);
     });
 
-    it.skipIf(!k8sAvailable)(
+    it(
       'should prevent admin commands for sidecar users',
       async () => {
         if (!redis) return;
@@ -254,7 +250,7 @@ describe('Sidecar ACL E2E Tests', () => {
   });
 
   describe('Follow-up Message Flow', () => {
-    it.skipIf(!k8sAvailable)(
+    it(
       'should support pub/sub for follow-up messages',
       async () => {
         if (!redis) return;
@@ -264,12 +260,14 @@ describe('Sidecar ACL E2E Tests', () => {
         const password = 'testpass';
 
         // Create ACL user for this job
+        // In Redis 7+, pub/sub channel access requires a separate &<pattern> grant.
         await redis.acl(
           'SETUSER',
           username,
           'on',
           `>${password}`,
           `~kubeclaw:*:${jobId}`,
+          `&kubeclaw:*:${jobId}`,
           '+@read',
           '+@write',
           '+@pubsub',
@@ -323,7 +321,7 @@ describe('Sidecar ACL E2E Tests', () => {
       },
     );
 
-    it.skipIf(!k8sAvailable)(
+    it(
       'should support stream-based message passing',
       async () => {
         if (!redis) return;
@@ -390,7 +388,7 @@ describe('Sidecar ACL E2E Tests', () => {
   });
 
   describe('Key Isolation', () => {
-    it.skipIf(!k8sAvailable)(
+    it(
       'should isolate keys between different jobs',
       async () => {
         if (!redis) return;

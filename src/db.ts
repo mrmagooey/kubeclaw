@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-import { ASSISTANT_NAME, DATA_DIR, STORE_DIR } from './config.js';
+import { ASSISTANT_NAME, DATA_DIR, KUBECLAW_CHANNEL, KUBECLAW_MODE, STORE_DIR } from './config.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
 import {
@@ -129,6 +129,20 @@ function createSchema(database: SqlJsDatabase): void {
     `CREATE INDEX IF NOT EXISTS idx_job_acls_expires ON job_acls(expires_at, status)`,
   );
 
+  database.run(`
+    CREATE TABLE IF NOT EXISTS conversation_history (
+      id        TEXT PRIMARY KEY,
+      group_folder TEXT NOT NULL,
+      role      TEXT NOT NULL,
+      content   TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )
+  `);
+  database.run(`
+    CREATE INDEX IF NOT EXISTS idx_conversation_history_group
+    ON conversation_history(group_folder, created_at)
+  `);
+
   try {
     database.run(
       `ALTER TABLE scheduled_tasks ADD COLUMN context_mode TEXT DEFAULT 'isolated'`,
@@ -174,7 +188,10 @@ function saveDatabase(): void {
 }
 
 export async function initDatabase(): Promise<void> {
-  dbPath = path.join(STORE_DIR, 'messages.db');
+  const dbFile = KUBECLAW_MODE === 'channel' && KUBECLAW_CHANNEL
+    ? `messages-${KUBECLAW_CHANNEL}.db`
+    : 'messages.db';
+  dbPath = path.join(STORE_DIR, dbFile);
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 
   const wasmPath = path.join(
@@ -578,6 +595,17 @@ export function deleteTask(id: string): void {
   saveDatabase();
 }
 
+export function getAllScheduledTasks(): ScheduledTask[] {
+  const result = db.exec('SELECT * FROM scheduled_tasks ORDER BY created_at DESC');
+  if (result.length === 0) return [];
+  return result[0].values.map((row: unknown[]) => {
+    const cols = result[0].columns;
+    const obj: Record<string, unknown> = {};
+    cols.forEach((col: string, i: number) => (obj[col] = row[i]));
+    return obj as unknown as ScheduledTask;
+  });
+}
+
 export function getDueTasks(): ScheduledTask[] {
   const now = new Date().toISOString();
   const stmt = db.prepare(`
@@ -793,6 +821,11 @@ export function clearInvalidProviders(): number {
   return beforeCount;
 }
 
+export function deleteRegisteredGroup(jid: string): void {
+  db.run('DELETE FROM registered_groups WHERE jid = ?', [jid]);
+  saveDatabase();
+}
+
 export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
   const result = db.exec('SELECT * FROM registered_groups');
   if (result.length === 0) return {};
@@ -896,6 +929,47 @@ function migrateJsonState(): void {
       }
     }
   }
+}
+
+// --- Conversation History Functions ---
+
+export function getConversationHistory(
+  groupFolder: string,
+): { role: 'user' | 'assistant'; content: string }[] {
+  const result = db.exec(
+    'SELECT role, content FROM conversation_history WHERE group_folder = ? ORDER BY created_at ASC',
+    [groupFolder],
+  );
+  if (result.length === 0) return [];
+  return result[0].values.map((row: unknown[]) => ({
+    role: row[0] as 'user' | 'assistant',
+    content: row[1] as string,
+  }));
+}
+
+export function appendConversationMessage(
+  groupFolder: string,
+  role: 'user' | 'assistant',
+  content: string,
+): void {
+  const id =
+    groupFolder +
+    '-' +
+    Date.now() +
+    '-' +
+    Math.random().toString(36).slice(2, 8);
+  db.run(
+    'INSERT INTO conversation_history (id, group_folder, role, content, created_at) VALUES (?, ?, ?, ?, ?)',
+    [id, groupFolder, role, content, new Date().toISOString()],
+  );
+  saveDatabase();
+}
+
+export function clearConversationHistory(groupFolder: string): void {
+  db.run('DELETE FROM conversation_history WHERE group_folder = ?', [
+    groupFolder,
+  ]);
+  saveDatabase();
 }
 
 // --- Job ACL Functions ---

@@ -124,7 +124,7 @@ describe('RedisACLManager', () => {
         expect.stringContaining('sidecar-test-job-123'),
         'on',
         expect.stringMatching(/^>.+/), // password starts with >
-        expect.stringContaining('nanoclaw:*:test-job-123'), // key pattern
+        expect.stringContaining('kubeclaw:*:test-job-123'), // key pattern
         '+@read',
         '+@write',
         '+@stream',

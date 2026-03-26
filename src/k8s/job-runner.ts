@@ -6,7 +6,9 @@ import {
   V1Job,
   CoreV1Api,
   BatchV1Api,
+  AppsV1Api,
   KubeConfig,
+  loadAllYaml,
 } from '@kubernetes/client-node';
 
 import { RegisteredGroup } from '../types.js';
@@ -35,6 +37,7 @@ import {
   AgentJobSpec,
   AgentOutputMessage,
   ToolPodJobSpec,
+  SidecarToolPodJobSpec,
 } from './types.js';
 import { ContainerOutput } from '../runtime/types.js';
 import {
@@ -87,6 +90,7 @@ const NAMESPACE = KUBECLAW_NAMESPACE;
 export class JobRunner {
   private coreApi: CoreV1Api;
   private batchApi: BatchV1Api;
+  private appsApi: AppsV1Api;
   private namespace: string;
   private activeSubscriptions: Map<string, () => void>;
 
@@ -95,8 +99,49 @@ export class JobRunner {
     kc.loadFromDefault();
     this.coreApi = kc.makeApiClient(CoreV1Api);
     this.batchApi = kc.makeApiClient(BatchV1Api);
+    this.appsApi = kc.makeApiClient(AppsV1Api);
     this.namespace = NAMESPACE;
     this.activeSubscriptions = new Map();
+  }
+
+  /**
+   * Apply multi-document YAML to Kubernetes (create or update).
+   * Supports Deployment, Service, and PersistentVolumeClaim resources.
+   */
+  async applyYamlToK8s(yamlContent: string): Promise<void> {
+    const docs = (loadAllYaml(yamlContent) as any[]).filter((d) => d?.kind && d?.metadata?.name);
+    for (const doc of docs) {
+      const ns = doc.metadata?.namespace || this.namespace;
+      const name = doc.metadata?.name;
+      switch (doc.kind) {
+        case 'Deployment':
+          try {
+            await this.appsApi.createNamespacedDeployment({ namespace: ns, body: doc });
+          } catch {
+            await this.appsApi.replaceNamespacedDeployment({ name, namespace: ns, body: doc });
+          }
+          logger.info({ kind: 'Deployment', name, namespace: ns }, 'Applied K8s resource');
+          break;
+        case 'PersistentVolumeClaim':
+          try {
+            await this.coreApi.createNamespacedPersistentVolumeClaim({ namespace: ns, body: doc });
+            logger.info({ kind: 'PersistentVolumeClaim', name, namespace: ns }, 'Applied K8s resource');
+          } catch {
+            logger.debug({ kind: 'PersistentVolumeClaim', name }, 'PVC already exists, skipping');
+          }
+          break;
+        case 'Service':
+          try {
+            await this.coreApi.createNamespacedService({ namespace: ns, body: doc });
+          } catch {
+            await this.coreApi.replaceNamespacedService({ name, namespace: ns, body: doc });
+          }
+          logger.info({ kind: 'Service', name, namespace: ns }, 'Applied K8s resource');
+          break;
+        default:
+          logger.warn({ kind: doc.kind, name }, 'Unsupported resource kind in applyYamlToK8s');
+      }
+    }
   }
 
   /**
@@ -232,7 +277,8 @@ export class JobRunner {
       sessionId: input.sessionId,
       assistantName: input.assistantName,
       timeout: Math.max(configTimeout, IDLE_TIMEOUT + 30_000),
-      provider: group.llmProvider || 'claude',
+      provider: group.llmProvider || 'openai',
+      superuser: group.containerConfig?.superuser,
       browserSidecar: group.containerConfig?.browserSidecar,
       nodeSelector: group.containerConfig?.nodeSelector,
       tolerations: group.containerConfig?.tolerations,
@@ -242,6 +288,8 @@ export class JobRunner {
       imagePullSecrets: group.containerConfig?.imagePullSecrets,
       securityContext: group.containerConfig?.securityContext,
       additionalMounts: group.containerConfig?.additionalMounts,
+      groupsPvc: input.groupsPvc,
+      sessionsPvc: input.sessionsPvc,
     };
   }
 
@@ -263,6 +311,7 @@ export class JobRunner {
       { name: 'KUBECLAW_SESSION_ID', value: spec.sessionId || '' },
       { name: 'KUBECLAW_ASSISTANT_NAME', value: spec.assistantName || 'Andy' },
       { name: 'KUBECLAW_JOB_ID', value: spec.name },
+      { name: 'KUBECLAW_LLM_PROVIDER', value: spec.provider || 'openai' },
       {
         name: 'CONTAINER_MAX_OUTPUT_SIZE',
         value: String(CONTAINER_MAX_OUTPUT_SIZE),
@@ -281,41 +330,31 @@ export class JobRunner {
       // Credentials from kubeclaw-secrets — key names use hyphens to match the
       // secret template in k8s/05-secrets.yaml.
       {
-        name: 'CLAUDE_CODE_OAUTH_TOKEN',
+        name: 'OPENAI_API_KEY',
         valueFrom: {
           secretKeyRef: {
             name: 'kubeclaw-secrets',
-            key: 'claude-code-oauth-token',
+            key: 'openai-api-key',
             optional: true,
           },
         },
       },
       {
-        name: 'ANTHROPIC_API_KEY',
+        name: 'OPENAI_BASE_URL',
         valueFrom: {
           secretKeyRef: {
             name: 'kubeclaw-secrets',
-            key: 'anthropic-api-key',
+            key: 'openai-base-url',
             optional: true,
           },
         },
       },
       {
-        name: 'ANTHROPIC_BASE_URL',
+        name: 'OPENAI_MODEL',
         valueFrom: {
           secretKeyRef: {
             name: 'kubeclaw-secrets',
-            key: 'anthropic-base-url',
-            optional: true,
-          },
-        },
-      },
-      {
-        name: 'ANTHROPIC_AUTH_TOKEN',
-        valueFrom: {
-          secretKeyRef: {
-            name: 'kubeclaw-secrets',
-            key: 'anthropic-auth-token',
+            key: 'openai-model',
             optional: true,
           },
         },
@@ -350,10 +389,55 @@ export class JobRunner {
           },
         },
       },
+      // Claude-specific credentials (only injected when provider is claude)
+      ...(spec.provider === 'claude' ? [
+        {
+          name: 'CLAUDE_CODE_OAUTH_TOKEN',
+          valueFrom: {
+            secretKeyRef: {
+              name: 'kubeclaw-secrets',
+              key: 'claude-code-oauth-token',
+              optional: true,
+            },
+          },
+        },
+        {
+          name: 'ANTHROPIC_API_KEY',
+          valueFrom: {
+            secretKeyRef: {
+              name: 'kubeclaw-secrets',
+              key: 'anthropic-api-key',
+              optional: true,
+            },
+          },
+        },
+        {
+          name: 'ANTHROPIC_BASE_URL',
+          valueFrom: {
+            secretKeyRef: {
+              name: 'kubeclaw-secrets',
+              key: 'anthropic-base-url',
+              optional: true,
+            },
+          },
+        },
+        {
+          name: 'ANTHROPIC_AUTH_TOKEN',
+          valueFrom: {
+            secretKeyRef: {
+              name: 'kubeclaw-secrets',
+              key: 'anthropic-auth-token',
+              optional: true,
+            },
+          },
+        },
+      ] : []),
+      // Superuser mode — only injected when explicitly granted by orchestrator
+      ...(spec.superuser ? [{ name: 'KUBECLAW_SUPERUSER', value: 'true' }] : []),
     ];
 
     // Volume mounts using PVCs
-    const volumeMounts = [
+    const volumeMounts: Array<{ name: string; mountPath: string; subPath?: string; readOnly?: boolean }> = [
       {
         name: 'groups-pvc',
         mountPath: '/workspace/group',
@@ -361,20 +445,19 @@ export class JobRunner {
       },
       {
         name: 'sessions-pvc',
-        mountPath: '/home/node/.claude',
-        subPath: `${spec.groupFolder}/.claude`,
-      },
-      {
-        name: 'sessions-pvc',
-        mountPath: '/workspace/ipc',
-        subPath: `${spec.groupFolder}/ipc`,
-      },
-      {
-        name: 'sessions-pvc',
         mountPath: '/app/src',
         subPath: `${spec.groupFolder}/agent-runner-src`,
       },
     ];
+
+    // Claude SDK stores session state in /home/node/.claude — only mount for claude provider
+    if (spec.provider === 'claude') {
+      volumeMounts.push({
+        name: 'sessions-pvc',
+        mountPath: '/home/node/.claude',
+        subPath: `${spec.groupFolder}/.claude`,
+      });
+    }
 
     // Add main project mount if this is the main group
     if (spec.isMain) {
@@ -385,18 +468,31 @@ export class JobRunner {
       } as any);
     }
 
+    // Plugins PVC mount — writable for superuser (skill) jobs, read-only otherwise
+    volumeMounts.push({
+      name: 'plugins-pvc',
+      mountPath: '/workspace/plugins',
+      readOnly: !spec.superuser,
+    });
+
     // Volumes
     const volumes = [
       {
         name: 'groups-pvc',
         persistentVolumeClaim: {
-          claimName: 'kubeclaw-groups',
+          claimName: spec.groupsPvc ?? 'kubeclaw-groups',
         },
       },
       {
         name: 'sessions-pvc',
         persistentVolumeClaim: {
-          claimName: 'kubeclaw-sessions',
+          claimName: spec.sessionsPvc ?? 'kubeclaw-sessions',
+        },
+      },
+      {
+        name: 'plugins-pvc',
+        persistentVolumeClaim: {
+          claimName: 'kubeclaw-plugins',
         },
       },
     ];
@@ -478,6 +574,7 @@ export class JobRunner {
     const agentContainer = {
       name: 'agent',
       image: getContainerImage(spec.provider || 'claude'),
+      imagePullPolicy: 'IfNotPresent',
       env: envVars,
       volumeMounts,
       resources: {
@@ -540,6 +637,8 @@ export class JobRunner {
           },
           spec: {
             restartPolicy: 'Never',
+            serviceAccountName: '',
+            automountServiceAccountToken: false,
             ...(initContainers && { initContainers }),
             containers: [agentContainer],
             volumes,
@@ -562,7 +661,7 @@ export class JobRunner {
 
   /**
    * Stream output from Redis pub/sub channel
-   * Subscribes to nanoclaw:messages:${groupFolder} and calls callback for each message
+   * Subscribes to kubeclaw:messages:${groupFolder} and calls callback for each message
    */
   async streamOutput(
     jobName: string,
@@ -856,26 +955,6 @@ export class JobRunner {
           ),
         },
         { name: 'IDLE_TIMEOUT', value: String(spec.timeout) },
-        {
-          name: 'ANTHROPIC_API_KEY',
-          valueFrom: {
-            secretKeyRef: {
-              name: 'kubeclaw-secrets',
-              key: 'anthropic-api-key',
-              optional: true,
-            },
-          },
-        },
-        {
-          name: 'CLAUDE_CODE_OAUTH_TOKEN',
-          valueFrom: {
-            secretKeyRef: {
-              name: 'kubeclaw-secrets',
-              key: 'claude-code-oauth-token',
-              optional: true,
-            },
-          },
-        },
       ];
 
     const volumeMounts: Array<{
@@ -892,20 +971,15 @@ export class JobRunner {
           mountPath: '/workspace/group',
           subPath: spec.groupFolder,
         },
-        {
-          name: 'sessions-pvc',
-          mountPath: '/home/node/.claude',
-          subPath: `${spec.groupFolder}/.claude`,
-        },
       );
       volumes.push(
         {
           name: 'groups-pvc',
-          persistentVolumeClaim: { claimName: 'kubeclaw-groups' },
+          persistentVolumeClaim: { claimName: spec.groupsPvc ?? 'kubeclaw-groups' },
         },
         {
           name: 'sessions-pvc',
-          persistentVolumeClaim: { claimName: 'kubeclaw-sessions' },
+          persistentVolumeClaim: { claimName: spec.sessionsPvc ?? 'kubeclaw-sessions' },
         },
       );
     }
@@ -934,8 +1008,9 @@ export class JobRunner {
             containers: [
               {
                 name: 'tool-server',
-                image: getContainerImage('claude'),
-                command: ['node', '/app/src/tool-server.js'],
+                image: getContainerImage((spec.provider as any) || 'openai'),
+                imagePullPolicy: 'IfNotPresent',
+                command: ['node', '/app/dist/tool-server.js'],
                 env: envVars,
                 volumeMounts,
                 resources: {
@@ -963,6 +1038,117 @@ export class JobRunner {
     logger.info(
       { jobName, category: spec.category, agentJobId: spec.agentJobId },
       'Tool pod job created',
+    );
+    return jobName;
+  }
+
+  /**
+   * Create a sidecar tool pod job: two-container K8s job with a tool-bridge
+   * container (tool-server in http-bridge or file-bridge mode) and the user's
+   * custom tool container sharing localhost (http) or an emptyDir (file).
+   * Returns the K8s job name.
+   */
+  async createSidecarToolPodJob(spec: SidecarToolPodJobSpec): Promise<string> {
+    const { toolSpec } = spec;
+    const port = toolSpec.port ?? 8080;
+    const isFileBridge = toolSpec.pattern === 'file';
+    const toolMode = isFileBridge ? 'file-bridge' : 'http-bridge';
+
+    // Keep job name under 63 chars: "kubeclaw-stool-" (15) + 8-char suffix + "-" + toolName (truncated)
+    const agentSuffix = spec.agentJobId.slice(-8).replace(/[^a-z0-9]/gi, '').toLowerCase();
+    const safeTool = spec.toolName.toLowerCase().replace(/[^a-z0-9]/g, '-').slice(0, 35);
+    const jobName = `kubeclaw-stool-${agentSuffix}-${safeTool}`;
+
+    const timeoutSeconds = Math.floor(spec.timeout / 1000);
+    const redisUrl = buildRedisUrl(
+      process.env.REDIS_URL || 'redis://kubeclaw-redis:6379',
+      process.env.REDIS_ADMIN_PASSWORD,
+    );
+
+    const bridgeEnv = [
+      { name: 'TZ', value: TIMEZONE },
+      { name: 'KUBECLAW_AGENT_JOB_ID', value: spec.agentJobId },
+      { name: 'KUBECLAW_CATEGORY', value: spec.toolName },
+      { name: 'KUBECLAW_GROUP_FOLDER', value: spec.groupFolder },
+      { name: 'KUBECLAW_TOOL_MODE', value: toolMode },
+      { name: 'KUBECLAW_TOOL_PORT', value: String(port) },
+      { name: 'IDLE_TIMEOUT', value: String(spec.timeout) },
+      { name: 'REDIS_URL', value: redisUrl },
+    ];
+
+    const userEnv = [{ name: 'PORT', value: String(port) }];
+
+    const volumeMounts: Array<{ name: string; mountPath: string }> = [];
+    const volumes: Array<any> = [];
+
+    if (isFileBridge) {
+      volumeMounts.push({ name: 'shared', mountPath: '/shared' });
+      volumes.push({ name: 'shared', emptyDir: {} });
+    }
+
+    const job: V1Job = {
+      apiVersion: 'batch/v1',
+      kind: 'Job',
+      metadata: {
+        name: jobName,
+        namespace: this.namespace,
+        labels: {
+          app: 'kubeclaw-sidecar-tool',
+          'nanoclaw/group': spec.groupFolder,
+          'nanoclaw/tool': spec.toolName,
+          'nanoclaw/agent-job': spec.agentJobId,
+        },
+      },
+      spec: {
+        ttlSecondsAfterFinished: JOB_TTL_SECONDS_AFTER_FINISHED,
+        activeDeadlineSeconds: timeoutSeconds,
+        backoffLimit: 0,
+        template: {
+          metadata: { labels: { app: 'kubeclaw-sidecar-tool' } },
+          spec: {
+            restartPolicy: 'Never',
+            containers: [
+              {
+                name: 'kubeclaw-tool-bridge',
+                image: getContainerImage('openai'),
+                imagePullPolicy: 'IfNotPresent',
+                command: ['node', '/app/dist/tool-server.js'],
+                env: bridgeEnv,
+                volumeMounts,
+                resources: {
+                  requests: { memory: '64Mi', cpu: '50m' },
+                  limits: { memory: '128Mi', cpu: '200m' },
+                },
+              } as any,
+              {
+                name: 'user-tool',
+                image: toolSpec.image,
+                imagePullPolicy: toolSpec.pullPolicy ?? 'IfNotPresent',
+                ...(toolSpec.command ? { command: toolSpec.command } : {}),
+                env: userEnv,
+                volumeMounts,
+                resources: {
+                  requests: {
+                    memory: toolSpec.memoryRequest ?? AGENT_JOB_MEMORY_REQUEST,
+                    cpu: toolSpec.cpuRequest ?? AGENT_JOB_CPU_REQUEST,
+                  },
+                  limits: {
+                    memory: toolSpec.memoryLimit ?? AGENT_JOB_MEMORY_LIMIT,
+                    cpu: toolSpec.cpuLimit ?? AGENT_JOB_CPU_LIMIT,
+                  },
+                },
+              } as any,
+            ],
+            volumes,
+          },
+        },
+      },
+    };
+
+    await this.batchApi.createNamespacedJob({ namespace: this.namespace, body: job });
+    logger.info(
+      { jobName, toolName: spec.toolName, toolMode, agentJobId: spec.agentJobId },
+      'Sidecar tool pod job created',
     );
     return jobName;
   }

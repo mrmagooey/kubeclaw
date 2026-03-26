@@ -17,6 +17,12 @@ import { readEnvFile } from '../src/env.js';
 import { logger } from '../src/logger.js';
 import { emitStatus } from './status.js';
 
+// Namespace from env — validated to prevent command injection.
+// KUBECLAW_NAMESPACE is set by the Helm chart or the k8s manifest; it is not
+// user-supplied at runtime, but we validate it here for defence in depth.
+const rawNs = process.env.KUBECLAW_NAMESPACE || 'kubeclaw';
+const NAMESPACE = /^[a-z0-9-]+$/.test(rawNs) ? rawNs : 'kubeclaw';
+
 // Helper to get a value from K8s Secret
 function getK8sSecretValue(key: string): string | undefined {
   // Validate key against allowlist to prevent command injection
@@ -26,7 +32,9 @@ function getK8sSecretValue(key: string): string | undefined {
   }
   try {
     const output = execSync(
-      `kubectl get secret kubeclaw-secrets -n kubeclaw -o jsonpath={.data.${key}}`,
+      // NAMESPACE and key are both validated above
+      // eslint-disable-next-line no-restricted-syntax
+      `kubectl get secret kubeclaw-secrets -n ${NAMESPACE} -o jsonpath={.data.${key}}`,
       { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
     );
     const encoded = output.trim();
@@ -52,7 +60,9 @@ export async function run(_args: string[]): Promise<void> {
     | 'not_found' = 'not_found';
   try {
     const output = execSync(
-      'kubectl get deployment kubeclaw-orchestrator -n kubeclaw -o jsonpath={.status.readyReplicas}',
+      'kubectl get deployment kubeclaw-orchestrator -n ' +
+        NAMESPACE +
+        ' -o jsonpath={.status.readyReplicas}',
       { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
     );
     const readyReplicas = parseInt(output.trim(), 10);
@@ -64,9 +74,10 @@ export async function run(_args: string[]): Promise<void> {
   } catch (error: unknown) {
     // Check if the error is because deployment doesn't exist vs kubectl not available
     try {
-      execSync('kubectl get deployment kubeclaw-orchestrator -n kubeclaw', {
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
+      execSync(
+        'kubectl get deployment kubeclaw-orchestrator -n ' + NAMESPACE,
+        { stdio: ['pipe', 'pipe', 'pipe'] },
+      );
       // Deployment exists but readyReplicas check failed
       orchestrator = 'deployed_not_ready';
     } catch {
@@ -85,7 +96,9 @@ export async function run(_args: string[]): Promise<void> {
   let redis: 'running' | 'not_ready' | 'not_found' = 'not_found';
   try {
     const output = execSync(
-      'kubectl get pods -n kubeclaw -l app=kubeclaw-redis -o jsonpath={.items[0].status.phase}',
+      'kubectl get pods -n ' +
+        NAMESPACE +
+        ' -l app=kubeclaw-redis -o jsonpath={.items[0].status.phase}',
       { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
     );
     const phase = output.trim();
@@ -102,7 +115,7 @@ export async function run(_args: string[]): Promise<void> {
   // 3. Check Kubernetes Secrets for credentials
   let credentials: 'configured' | 'missing' = 'missing';
   try {
-    execSync('kubectl get secret kubeclaw-secrets -n kubeclaw', {
+    execSync('kubectl get secret kubeclaw-secrets -n ' + NAMESPACE, {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     credentials = 'configured';

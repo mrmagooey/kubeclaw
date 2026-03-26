@@ -123,7 +123,7 @@ export class RedisACLManager {
     const redis = await this.ensureConnection();
 
     // Build ACL rules - job-specific keys only
-    const keyPattern = `nanoclaw:*:${jobId}`;
+    const keyPattern = `kubeclaw:*:${jobId}`;
     const aclRules = [
       `~${keyPattern}`,
       '+@read',

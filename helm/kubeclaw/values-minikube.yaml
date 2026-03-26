@@ -1,0 +1,58 @@
+# Laptop-optimised overrides for minikube deployment.
+# Applied on top of values.yaml:
+#   helm upgrade --install kubeclaw ./helm/kubeclaw -f ./helm/kubeclaw/values-minikube.yaml
+#
+# To also enable Cilium FQDN egress policies (requires Cilium CNI), add:
+#   -f ./helm/kubeclaw/values-cilium.yaml
+#
+# Resources are sized for a ~6 GB minikube node (4 CPUs, 6144 MiB).
+# Peak usage: orchestrator (256Mi) + Redis (512Mi) + Falco (512Mi) + one agent job (2Gi) ≈ 3.3 Gi
+
+orchestrator:
+  maxConcurrentJobs: 3
+  resources:
+    requests:
+      memory: 128Mi
+      cpu: 50m
+    limits:
+      memory: 256Mi
+      cpu: 250m
+
+redis:
+  storage: 2Gi
+  maxmemory: 512mb
+  resources:
+    requests:
+      memory: 64Mi
+      cpu: 50m
+    limits:
+      memory: 512Mi
+      cpu: 250m
+
+storage:
+  accessMode: ReadWriteOnce
+  storageClass: standard  # minikube default StorageClass
+  sizes:
+    groups: 10Gi
+    sessions: 5Gi
+    project: 5Gi
+    store: 1Gi
+
+agent:
+  timeoutSeconds: 1800  # 30 min (halved from production default)
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 250m
+    limits:
+      memory: 2Gi
+      cpu: "1"
+
+channelPod:
+  resources:
+    requests:
+      memory: 64Mi
+      cpu: 25m
+    limits:
+      memory: 128Mi
+      cpu: 100m

@@ -8,7 +8,7 @@ export default defineConfig({
     include: ['e2e/**/*.test.ts', 'e2e/**/*.spec.ts'],
     exclude: ['node_modules', 'dist', 'e2e/ci', 'e2e/results'],
     testTimeout: 120000, // 2 minutes for e2e tests
-    hookTimeout: 60000,
+    hookTimeout: 120000,
     teardownTimeout: 30000,
     reporters: ['verbose', 'json'],
     outputFile: {
@@ -31,7 +31,7 @@ export default defineConfig({
         singleFork: process.env.CI === 'true',
       },
     },
-    bail: process.env.CI === 'true' ? 0 : 5,
+    bail: 0,
     retry: process.env.CI === 'true' ? 2 : 0,
   },
 });

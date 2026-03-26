@@ -12,15 +12,18 @@ import { isValidGroupFolder } from '../group-folder.js';
 import { logger } from '../logger.js';
 import { RegisteredGroup } from '../types.js';
 import {
+  getAgentJobResultStream,
   getInputStream,
   getOutputChannel,
   getRedisClient,
   getRedisSubscriber,
+  getSpawnAgentJobStream,
+  getSpawnToolPodStream,
   getTaskChannel,
 } from './redis-client.js';
 import { TaskRequest } from './types.js';
 import { jobRunner } from './job-runner.js';
-import { CONTAINER_TIMEOUT, IDLE_TIMEOUT } from '../config.js';
+import { ASSISTANT_NAME, CONTAINER_TIMEOUT, IDLE_TIMEOUT } from '../config.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
@@ -38,6 +41,14 @@ export interface IpcDeps {
 
 let ipcWatcherRunning = false;
 let subscribers: Redis[] = [];
+
+function channelPvcNames(channel: string): { groupsPvc: string; sessionsPvc: string } {
+  if (!channel) return { groupsPvc: 'kubeclaw-groups', sessionsPvc: 'kubeclaw-sessions' };
+  return {
+    groupsPvc: `kubeclaw-channel-${channel}-groups`,
+    sessionsPvc: `kubeclaw-channel-${channel}-sessions`,
+  };
+}
 
 // Track tool pod jobs per agent job for cleanup
 const toolPodsByAgent = new Map<string, Set<string>>();
@@ -137,8 +148,8 @@ export function startIpcWatcher(deps: IpcDeps): void {
 
   // Handle incoming messages
   subscriber.on('message', (channel, message) => {
-    // Extract group folder from channel name (e.g., nanoclaw:messages:mygroup -> mygroup)
-    const match = channel.match(/^nanoclaw:(messages|tasks):(.+)$/);
+    // Extract group folder from channel name (e.g., kubeclaw:messages:mygroup -> mygroup)
+    const match = channel.match(/^kubeclaw:(messages|tasks):(.+)$/);
     if (!match) {
       logger.warn({ channel }, 'Received message on unknown channel');
       return;
@@ -523,6 +534,21 @@ export async function processTaskIpc(
       }
       break;
 
+    case 'deploy_channel':
+      if (!isMain) {
+        logger.warn({ sourceGroup }, 'Unauthorized deploy_channel attempt blocked');
+        break;
+      }
+      if (data.yaml) {
+        try {
+          await jobRunner.applyYamlToK8s(data.yaml);
+          logger.info({ sourceGroup }, 'Channel deployment applied');
+        } catch (err) {
+          logger.error({ err }, 'Failed to apply channel deployment');
+        }
+      }
+      break;
+
     default:
       logger.warn({ type: data.type }, 'Unknown Redis IPC task type');
   }
@@ -578,6 +604,151 @@ export async function sendCloseSignal(jobId: string): Promise<void> {
   } catch (err) {
     logger.error({ jobId, err }, 'Failed to send close signal to agent');
     throw err;
+  }
+}
+
+/**
+ * Watch the kubeclaw:spawn-tool-pod stream and create K8s tool pod jobs on
+ * behalf of channel pods, which have no K8s RBAC.
+ * Called by the orchestrator at startup.
+ */
+export async function startToolPodSpawnWatcher(): Promise<void> {
+  const redis = getRedisClient();
+  const stream = getSpawnToolPodStream();
+  // Use '$' so orchestrator restarts don't replay stale requests.
+  // If the orchestrator missed a request, the channel pod's tool call will
+  // time out (TOOL_TIMEOUT_MS) and the user gets a graceful error.
+  let lastId = '$';
+
+  logger.info('Tool pod spawn watcher started');
+
+  while (ipcWatcherRunning) {
+    try {
+      const resp = await redis.xread('COUNT', 10, 'BLOCK', 5000, 'STREAMS', stream, lastId);
+      if (!resp) continue;
+
+      for (const [, messages] of resp as [string, [string, string[]][]][]) {
+        for (const [id, fields] of messages) {
+          lastId = id;
+          const obj: Record<string, string> = {};
+          for (let i = 0; i < fields.length; i += 2) obj[fields[i]] = fields[i + 1];
+
+          const { agentJobId, groupFolder, category, timeout, channel, toolImage, toolPattern, toolPort } = obj;
+          if (!agentJobId || !groupFolder || !category) continue;
+
+          const { groupsPvc, sessionsPvc } = channelPvcNames(channel ?? '');
+          const timeoutMs = Number(timeout) || 60_000;
+
+          try {
+            if (toolImage) {
+              await jobRunner.createSidecarToolPodJob({
+                agentJobId,
+                groupFolder,
+                toolName: category,
+                toolSpec: {
+                  name: category,
+                  description: '',
+                  parameters: {},
+                  image: toolImage,
+                  pattern: (toolPattern as 'http' | 'file') || 'http',
+                  port: toolPort ? Number(toolPort) : 8080,
+                },
+                timeout: timeoutMs,
+                groupsPvc,
+                sessionsPvc,
+              });
+              logger.debug({ agentJobId, category, toolImage }, 'Spawned sidecar tool pod for channel pod');
+            } else {
+              await jobRunner.createToolPodJob({
+                agentJobId,
+                groupFolder,
+                category: category as 'browser' | 'execution',
+                timeout: timeoutMs,
+                groupsPvc,
+                sessionsPvc,
+              });
+              logger.debug({ agentJobId, category }, 'Spawned tool pod for channel pod');
+            }
+          } catch (err) {
+            logger.error({ agentJobId, category, err }, 'Failed to spawn tool pod for channel pod');
+          }
+        }
+      }
+    } catch (err) {
+      if (ipcWatcherRunning) {
+        logger.error({ err }, 'Tool pod spawn watcher error');
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+    }
+  }
+}
+
+/**
+ * Watch the kubeclaw:spawn-agent-job stream and run full K8s agent jobs on
+ * behalf of channel pods. Writes the final result to
+ * kubeclaw:agent-job-result:{agentJobId} so the channel pod can return it.
+ */
+export async function startAgentJobSpawnWatcher(): Promise<void> {
+  const redis = getRedisClient();
+  const stream = getSpawnAgentJobStream();
+  let lastId = '$';
+
+  logger.info('Agent job spawn watcher started');
+
+  while (ipcWatcherRunning) {
+    try {
+      const resp = await redis.xread('COUNT', 5, 'BLOCK', 5000, 'STREAMS', stream, lastId);
+      if (!resp) continue;
+
+      for (const [, messages] of resp as [string, [string, string[]][]][]) {
+        for (const [id, fields] of messages) {
+          lastId = id;
+          const obj: Record<string, string> = {};
+          for (let i = 0; i < fields.length; i += 2) obj[fields[i]] = fields[i + 1];
+
+          const { agentJobId, groupFolder, chatJid, prompt, channel } = obj;
+          if (!agentJobId || !groupFolder || !chatJid || !prompt) continue;
+
+          const resultStream = getAgentJobResultStream(agentJobId);
+          const { groupsPvc, sessionsPvc } = channelPvcNames(channel ?? '');
+
+          // Fire-and-forget: run the agent job and write result when done
+          const group = {
+            name: groupFolder,
+            folder: groupFolder,
+            trigger: '',
+            added_at: new Date().toISOString(),
+          };
+
+          jobRunner
+            .runAgentJob(group, {
+              groupFolder,
+              chatJid,
+              isMain: false,
+              prompt,
+              assistantName: ASSISTANT_NAME,
+              groupsPvc,
+              sessionsPvc,
+            })
+            .then(async (output) => {
+              const result = output.result ?? output.error ?? 'Agent job completed';
+              await redis.xadd(resultStream, '*', 'result', String(result), 'status', output.status);
+              logger.debug({ agentJobId }, 'Agent job result written to stream');
+            })
+            .catch(async (err) => {
+              logger.error({ agentJobId, err }, 'Agent job failed');
+              await redis.xadd(resultStream, '*', 'result', String(err), 'status', 'error');
+            });
+
+          logger.debug({ agentJobId, groupFolder }, 'Spawned agent job for channel pod');
+        }
+      }
+    } catch (err) {
+      if (ipcWatcherRunning) {
+        logger.error({ err }, 'Agent job spawn watcher error');
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+    }
   }
 }
 

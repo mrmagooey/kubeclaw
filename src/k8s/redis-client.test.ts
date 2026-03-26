@@ -137,49 +137,49 @@ describe('closeRedisConnections', () => {
 describe('Channel key generators', () => {
   describe('getOutputChannel', () => {
     it('generates correct output channel key', () => {
-      expect(getOutputChannel('my-group')).toBe('nanoclaw:messages:my-group');
+      expect(getOutputChannel('my-group')).toBe('kubeclaw:messages:my-group');
     });
   });
 
   describe('getTaskChannel', () => {
     it('generates correct task channel key', () => {
-      expect(getTaskChannel('my-group')).toBe('nanoclaw:tasks:my-group');
+      expect(getTaskChannel('my-group')).toBe('kubeclaw:tasks:my-group');
     });
   });
 
   describe('getInputStream', () => {
     it('generates correct input stream key', () => {
-      expect(getInputStream('job-123')).toBe('nanoclaw:input:job-123');
+      expect(getInputStream('job-123')).toBe('kubeclaw:input:job-123');
     });
   });
 
   describe('getJobStatusKey', () => {
     it('generates correct job status key', () => {
-      expect(getJobStatusKey('job-456')).toBe('nanoclaw:job:job-456:status');
+      expect(getJobStatusKey('job-456')).toBe('kubeclaw:job:job-456:status');
     });
   });
 
   describe('getJobOutputKey', () => {
     it('generates correct job output key', () => {
-      expect(getJobOutputKey('job-789')).toBe('nanoclaw:job:job-789:output');
+      expect(getJobOutputKey('job-789')).toBe('kubeclaw:job:job-789:output');
     });
   });
 
   describe('getConcurrencyKey', () => {
     it('returns static concurrency key', () => {
-      expect(getConcurrencyKey()).toBe('nanoclaw:concurrency');
+      expect(getConcurrencyKey()).toBe('kubeclaw:concurrency');
     });
   });
 
   describe('getQueueKey', () => {
     it('returns static queue key', () => {
-      expect(getQueueKey()).toBe('nanoclaw:job-queue');
+      expect(getQueueKey()).toBe('kubeclaw:job-queue');
     });
   });
 
   describe('getSessionKey', () => {
     it('generates correct session key', () => {
-      expect(getSessionKey('my-group')).toBe('nanoclaw:sessions:my-group');
+      expect(getSessionKey('my-group')).toBe('kubeclaw:sessions:my-group');
     });
   });
 });

@@ -25,6 +25,18 @@ const mocks = vi.hoisted(() => ({
   mockGetJobCredentials: vi.fn(),
 }));
 
+// Mock job-runner
+vi.mock('./job-runner.js', () => ({
+  jobRunner: {
+    streamOutput: vi.fn().mockResolvedValue(undefined),
+    unsubscribeFromOutput: vi.fn(),
+  },
+}));
+
+vi.mock('./sidecar-log-parser.js', () => ({
+  parseSidecarLogBuffer: vi.fn(() => ({ extracted: [], remaining: '' })),
+}));
+
 // Mock the Kubernetes client-node module
 vi.mock('@kubernetes/client-node', () => {
   return {
@@ -455,6 +467,139 @@ describe('FileSidecarJobRunner', () => {
       expect(labels?.['nanoclaw/group']).toBe('test-group');
       expect(labels?.['nanoclaw/type']).toBe('file-sidecar');
       expect(labels?.['nanoclaw/chat-jid']).toBe('test-g-us');
+    });
+  });
+
+  describe('runAgentJob', () => {
+    const input: JobInput = {
+      groupFolder: 'test-group',
+      chatJid: 'test@g.us',
+      isMain: false,
+      prompt: 'Test prompt',
+      jobId: 'run-job-123',
+    };
+
+    const spec: SidecarFileJobSpec = {
+      name: 'test-job',
+      groupFolder: 'test-group',
+      chatJid: 'test@g.us',
+      isMain: false,
+      prompt: 'Test prompt',
+      userImage: 'user-image:latest',
+    };
+
+    it('returns success when job is created and completes', async () => {
+      mocks.mockCreateNamespacedJob.mockResolvedValue({
+        metadata: { name: 'run-job-123' },
+      });
+      // waitForJobCompletion: first poll returns succeeded
+      mocks.mockReadNamespacedJob.mockResolvedValue({
+        status: { succeeded: 1 },
+      });
+
+      const result = await runner.runAgentJob(testGroup, input, spec);
+      expect(result.status).toBe('success');
+      expect(result.jobId).toBe('run-job-123');
+    });
+
+    it('calls onProcess callback with job name', async () => {
+      mocks.mockCreateNamespacedJob.mockResolvedValue({
+        metadata: { name: 'run-job-123' },
+      });
+      mocks.mockReadNamespacedJob.mockResolvedValue({
+        status: { succeeded: 1 },
+      });
+
+      const onProcess = vi.fn();
+      await runner.runAgentJob(testGroup, input, spec, onProcess);
+      expect(onProcess).toHaveBeenCalledWith('run-job-123');
+    });
+
+    it('returns error when createNamespacedJob throws', async () => {
+      mocks.mockCreateNamespacedJob.mockRejectedValue(
+        new Error('K8s API unavailable'),
+      );
+
+      const result = await runner.runAgentJob(testGroup, input, spec);
+      expect(result.status).toBe('error');
+      expect(result.error).toContain('K8s API unavailable');
+    });
+  });
+
+  describe('stopJob', () => {
+    it('resolves without error when job is deleted', async () => {
+      mocks.mockDeleteNamespacedJob.mockResolvedValue({});
+      await expect(runner.stopJob('some-job')).resolves.toBeUndefined();
+    });
+
+    it('resolves without error when job is already deleted (NotFound)', async () => {
+      mocks.mockDeleteNamespacedJob.mockRejectedValue(
+        new Error('NotFound: job not found'),
+      );
+      await expect(runner.stopJob('some-job')).resolves.toBeUndefined();
+    });
+
+    it('throws when deletion fails with non-NotFound error', async () => {
+      mocks.mockDeleteNamespacedJob.mockRejectedValue(
+        new Error('Forbidden: access denied'),
+      );
+      await expect(runner.stopJob('some-job')).rejects.toThrow(
+        'Forbidden: access denied',
+      );
+    });
+  });
+
+  describe('streamSidecarLogs', () => {
+    it('returns immediately when no onOutput callback is provided', async () => {
+      await expect(
+        runner.streamSidecarLogs('some-job', 'some-group'),
+      ).resolves.toBeUndefined();
+      // Should not call any K8s API
+      expect(mocks.mockListNamespacedPod).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('getJobLogs', () => {
+    it('returns no-pods message when no pods exist', async () => {
+      mocks.mockListNamespacedPod.mockResolvedValue({ items: [] });
+      const result = await runner.getJobLogs('some-job');
+      expect(result.adapter).toBe('No pods found');
+      expect(result.user).toBe('No pods found');
+    });
+
+    it('returns pod-name-not-found message when pod has no name', async () => {
+      mocks.mockListNamespacedPod.mockResolvedValue({
+        items: [{ metadata: {} }],
+      });
+      const result = await runner.getJobLogs('some-job');
+      expect(result.adapter).toBe('Pod name not found');
+      expect(result.user).toBe('Pod name not found');
+    });
+
+    it('returns logs when pod exists', async () => {
+      mocks.mockListNamespacedPod.mockResolvedValue({
+        items: [{ metadata: { name: 'test-pod' } }],
+      });
+      mocks.mockReadNamespacedPodLog
+        .mockResolvedValueOnce('adapter-logs')
+        .mockResolvedValueOnce('user-logs');
+
+      const result = await runner.getJobLogs('some-job');
+      expect(result.adapter).toBe('adapter-logs');
+      expect(result.user).toBe('user-logs');
+    });
+
+    it('handles log read errors gracefully', async () => {
+      mocks.mockListNamespacedPod.mockResolvedValue({
+        items: [{ metadata: { name: 'test-pod' } }],
+      });
+      mocks.mockReadNamespacedPodLog.mockRejectedValue(
+        new Error('log read failed'),
+      );
+
+      const result = await runner.getJobLogs('some-job');
+      expect(result.adapter).toContain('Error getting adapter logs');
+      expect(result.user).toContain('Error getting user logs');
     });
   });
 });

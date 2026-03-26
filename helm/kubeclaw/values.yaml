@@ -1,0 +1,180 @@
+# Default values for kubeclaw.
+
+# Kubernetes namespace to install into.
+namespace: kubeclaw
+
+image:
+  # Container registry prefix. Empty = use local images (imagePullPolicy: Never).
+  # Example: "registry.example.com/myorg"
+  registry: ""
+  # Tag applied to all kubeclaw images.
+  tag: latest
+  # Override pull policy. Defaults to Never (local images) when registry is
+  # empty, and Always when a registry is set.
+  pullPolicy: ""
+
+orchestrator:
+  replicas: 1
+  # Maximum number of agent Jobs that can run concurrently.
+  maxConcurrentJobs: 10
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 100m
+    limits:
+      memory: 512Mi
+      cpu: 500m
+
+redis:
+  # Redis admin password. Auto-generated on first install if left empty.
+  # Once set, the generated value is preserved across upgrades via Secret lookup.
+  password: ""
+  # Persistent volume size for Redis data.
+  storage: 10Gi
+  # Redis maxmemory limit in Redis-compatible units (mb/gb). Must match resources.limits.memory.
+  maxmemory: 2gb
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 100m
+    limits:
+      memory: 2Gi
+      cpu: "1"
+
+storage:
+  # ReadWriteOnce: suitable for single-node / minikube (no concurrent agents).
+  # ReadWriteMany: required for production with concurrent agent jobs.
+  #   Needs a CSI driver that supports RWX (e.g. EFS, Azure Files, NFS, Ceph).
+  accessMode: ReadWriteOnce
+  # Storage class name. Empty = use the cluster default.
+  storageClass: ""
+  sizes:
+    groups: 50Gi
+    sessions: 20Gi
+    project: 10Gi
+    store: 1Gi
+
+# Application credentials.
+secrets:
+  # Your Anthropic API key (https://console.anthropic.com/) — for K8s agent Jobs
+  anthropicApiKey: ""
+  # OAuth token for Claude Code (required for agent Jobs)
+  claudeCodeOauthToken: ""
+  # OpenAI-compatible API key — for DirectLLMRunner and AdminShell.
+  # Works with OpenAI, OpenRouter, Groq, Mistral, Ollama, and any compatible endpoint.
+  openaiApiKey: ""
+  # Optional: override the API base URL (e.g. https://openrouter.ai/api/v1)
+  openaiBaseUrl: ""
+  # Optional: default model for DirectLLMRunner / AdminShell (e.g. gpt-4o, openai/gpt-4o)
+  directLlmModel: ""
+  # Voyage AI API key — required when rag.provider=voyage.
+  voyageApiKey: ""
+  # Set to use an existing Secret instead of creating one from the values above.
+  # The Secret must contain keys: anthropic-api-key, claude-code-oauth-token,
+  # openai-api-key (optional), openai-base-url (optional), voyage-api-key (optional)
+  existingSecret: ""
+
+agent:
+  # How long (seconds) an agent Job may run before being killed.
+  timeoutSeconds: 3600
+  resources:
+    requests:
+      memory: 512Mi
+      cpu: 500m
+    limits:
+      memory: 4Gi
+      cpu: "2"
+
+networkPolicy:
+  # Disable to troubleshoot connectivity issues; re-enable in production.
+  enabled: true
+
+# Channel pods — one Deployment per channel type.
+# Each channel pod runs the same orchestrator image with KUBECLAW_MODE=channel.
+# Channel pods have no Kubernetes RBAC (automountServiceAccountToken: false).
+# Tool pod spawning is delegated to the orchestrator via Redis.
+#
+# Example:
+#   channels:
+#     telegram:
+#       enabled: true
+#       envVars:
+#         - name: TELEGRAM_BOT_TOKEN
+#           key: bot-token    # key in Secret kubeclaw-channel-telegram
+#
+#     http:
+#       enabled: true
+#       httpPort: 4080           # exposes a ClusterIP Service on port 80 → 4080
+#       envVars:
+#         - name: HTTP_CHANNEL_USERS
+#           key: users           # "alice:secret,bob:pass" in Secret kubeclaw-channel-http
+#         - name: HTTP_CHANNEL_PORT
+#           key: port
+#           optional: true
+#       ingress:
+#         enabled: true
+#         className: nginx
+#         host: chat.example.com
+#         annotations:
+#           nginx.ingress.kubernetes.io/ssl-redirect: "true"
+#         tls:
+#           - hosts: [chat.example.com]
+#             secretName: kubeclaw-chat-tls
+channels: {}
+
+# Default resource limits for channel pods.
+channelPod:
+  resources:
+    requests:
+      memory: 128Mi
+      cpu: 50m
+    limits:
+      memory: 256Mi
+      cpu: 200m
+
+# RAG (Retrieval-Augmented Generation) — vector memory for agents.
+# Deploys a Qdrant StatefulSet and wires the orchestrator to embed + retrieve
+# context before each agent invocation.
+#
+# Providers:
+#   openai  — text-embedding-3-small. Reuses OPENAI_API_KEY. No new secrets.
+#   voyage  — voyage-3. Requires VOYAGE_API_KEY in secrets.
+rag:
+  enabled: false
+  provider: openai           # "openai" | "voyage"
+  model: ""                  # uses provider default if empty
+  storage: 20Gi              # Qdrant PVC size
+  qdrantVersion: latest
+  topK: 5                    # chunks injected per message
+  scoreThreshold: "0.5"      # minimum cosine similarity (0–1)
+  resources:
+    limits:
+      memory: 1Gi
+      cpu: "1"
+
+# CiliumNetworkPolicy — FQDN-based egress control for agent jobs and orchestrator.
+# Requires Cilium as the cluster CNI. Disabled by default (uses standard NetworkPolicy).
+# Enable in values-minikube.yaml or any Cilium-enabled environment.
+ciliumNetworkPolicy:
+  enabled: false
+  agent:
+    # FQDNs agent jobs may contact externally (port 443 only).
+    # Use matchName for exact hostnames; see values-minikube.yaml for examples.
+    allowedFQDNs: []
+  orchestrator:
+    # FQDNs the orchestrator may contact externally (ports 443 and 80).
+    allowedFQDNs: []
+
+# Signal messaging channel — deploys signal-cli-rest-api as a StatefulSet.
+# Enable alongside channels.signal.enabled to use Signal as a channel.
+# After deploying, register your number via the signal-cli REST API (see /add-signal skill).
+signalCli:
+  enabled: false
+  imageTag: latest
+  # "native" uses the native signal-cli binary (recommended); "json-rpc" for older versions
+  mode: native
+  storage: 5Gi
+  resources:
+    limits:
+      memory: 512Mi
+      cpu: "1"

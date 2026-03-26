@@ -9,37 +9,7 @@ import path from 'path';
 
 import { logger } from '../src/logger.js';
 import { emitStatus } from './status.js';
-
-/**
- * Run a kubectl command and return output, or undefined if it fails.
- * Output is truncated to maxLines to avoid flooding logs.
- */
-function runKubectl(args: string[], maxLines = 50): string | undefined {
-  try {
-    const result = spawnSync('kubectl', args, {
-      encoding: 'utf8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-    if (result.status !== 0) {
-      return undefined;
-    }
-    const lines = result.stdout.split('\n');
-    if (lines.length > maxLines) {
-      return lines.slice(0, maxLines).join('\n') + '\n... (truncated)';
-    }
-    return result.stdout;
-  } catch {
-    return undefined;
-  }
-}
-
-/**
- * Truncate text to maxChars to avoid flooding status blocks.
- */
-function truncateText(text: string, maxChars = 2000): string {
-  if (text.length <= maxChars) return text;
-  return text.slice(0, maxChars) + '\n... (truncated)';
-}
+import { runKubectl, truncateText } from './k8s-utils.js';
 
 function parseArgs(args: string[]): {
   namespace: string;
@@ -495,44 +465,8 @@ async function buildAndPushImages(
   }
 }
 
-/**
- * Poll for Redis readiness.
- * Returns true if Redis pod reaches Running phase within timeout.
- */
-async function waitForRedis(
-  namespace: string,
-  timeoutMs = 60000,
-  intervalMs = 5000,
-): Promise<boolean> {
-  const startTime = Date.now();
-
-  while (Date.now() - startTime < timeoutMs) {
-    try {
-      const result = spawnSync(
-        'kubectl',
-        [
-          'get',
-          'pods',
-          '-n',
-          namespace,
-          '-l',
-          'app=kubeclaw-redis',
-          '-o',
-          'jsonpath={.items[0].status.phase}',
-        ],
-        {
-          encoding: 'utf8',
-          stdio: ['pipe', 'pipe', 'pipe'],
-        },
-      );
-      if (result.status === 0 && result.stdout.trim() === 'Running') {
-        return true;
-      }
-    } catch {
-      // Ignore errors during polling
-    }
-    await new Promise((resolve) => setTimeout(resolve, intervalMs));
-  }
-
-  return false;
+/** Poll for Redis readiness. */
+async function waitForRedis(namespace: string): Promise<boolean> {
+  const { waitForPodRunning } = await import('./k8s-utils.js');
+  return waitForPodRunning(namespace, 'app=kubeclaw-redis', 60_000);
 }

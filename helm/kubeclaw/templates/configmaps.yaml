@@ -1,0 +1,124 @@
+---
+# Runner wrapper used by sidecar-job-runner (mounted at /scripts).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kubeclaw-runner-wrapper
+  namespace: {{ .Values.namespace }}
+data:
+  runner-wrapper.sh: |
+    #!/bin/sh
+    set -e
+
+    INPUT_DIR="${NANOCLAW_INPUT_DIR:-/workspace/input}"
+    OUTPUT_DIR="${NANOCLAW_OUTPUT_DIR:-/workspace/output}"
+    POLL_INTERVAL="${NANOCLAW_POLL_INTERVAL:-1}"
+
+    log() { echo "[runner-wrapper] $*" >&2; }
+
+    log "Runner wrapper starting. Input: $INPUT_DIR Output: $OUTPUT_DIR"
+    mkdir -p "$INPUT_DIR" "$OUTPUT_DIR"
+
+    process_task() {
+      local task_file="$1"
+      log "Processing task: $task_file"
+      local prompt
+      prompt=$(cat "$task_file" | jq -r '.prompt // empty')
+      if [ -z "$prompt" ]; then
+        log "No prompt found in task file"
+        write_error "No prompt in task file"
+        return 1
+      fi
+      if [ -n "$NANOCLAW_USER_COMMAND" ]; then
+        local result
+        if result=$(echo "$prompt" | eval "$NANOCLAW_USER_COMMAND" 2>&1); then
+          write_output "$result"
+        else
+          write_error "$result"
+        fi
+      else
+        write_output "$prompt"
+      fi
+    }
+
+    write_output() {
+      cat > "$OUTPUT_DIR/result.json" <<EOF
+    {"status":"success","result":$(echo "$1" | jq -Rs '.')}
+    EOF
+    }
+
+    write_error() {
+      cat > "$OUTPUT_DIR/result.json" <<EOF
+    {"status":"error","error":$(echo "$1" | jq -Rs '.')}
+    EOF
+    }
+
+    while true; do
+      for task_file in "$INPUT_DIR"/task*.json; do
+        if [ -f "$task_file" ]; then
+          process_task "$task_file"
+          rm -f "$task_file"
+        fi
+      done
+      sleep "$POLL_INTERVAL"
+    done
+---
+# Same script, mounted by file-sidecar-runner (at /workspace/runner-wrapper.sh).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kubeclaw-wrapper-script
+  namespace: {{ .Values.namespace }}
+data:
+  runner-wrapper.sh: |
+    #!/bin/sh
+    set -e
+
+    INPUT_DIR="${NANOCLAW_INPUT_DIR:-/workspace/input}"
+    OUTPUT_DIR="${NANOCLAW_OUTPUT_DIR:-/workspace/output}"
+    POLL_INTERVAL="${NANOCLAW_POLL_INTERVAL:-1}"
+
+    log() { echo "[runner-wrapper] $*" >&2; }
+
+    log "Runner wrapper starting. Input: $INPUT_DIR Output: $OUTPUT_DIR"
+    mkdir -p "$INPUT_DIR" "$OUTPUT_DIR"
+
+    process_task() {
+      local task_file="$1"
+      log "Processing task: $task_file"
+      local prompt
+      prompt=$(cat "$task_file" | jq -r '.prompt // empty')
+      if [ -z "$prompt" ]; then
+        write_error "No prompt in task file"
+        return 1
+      fi
+      if [ -n "$NANOCLAW_USER_COMMAND" ]; then
+        local result
+        if result=$(echo "$prompt" | eval "$NANOCLAW_USER_COMMAND" 2>&1); then
+          write_output "$result"
+        else
+          write_error "$result"
+        fi
+      else
+        write_output "$prompt"
+      fi
+    }
+
+    write_output() {
+      cat > "$OUTPUT_DIR/result.json" <<EOF
+    {"status":"success","result":$(echo "$1" | jq -Rs '.')}
+    EOF
+    }
+
+    write_error() {
+      cat > "$OUTPUT_DIR/result.json" <<EOF
+    {"status":"error","error":$(echo "$1" | jq -Rs '.')}
+    EOF
+    }
+
+    while true; do
+      for task_file in "$INPUT_DIR"/task*.json; do
+        [ -f "$task_file" ] && process_task "$task_file" && rm -f "$task_file"
+      done
+      sleep "$POLL_INTERVAL"
+    done

@@ -172,15 +172,15 @@ vi.mock('./redis-client.js', () => ({
     quit: vi.fn(),
     on: vi.fn(),
   })),
-  getOutputStream: vi.fn((f: string) => `nanoclaw:messages:${f}`),
-  getOutputChannel: vi.fn((f: string) => `nanoclaw:messages:${f}`),
-  getTaskChannel: vi.fn((f: string) => `nanoclaw:tasks:${f}`),
-  getInputStream: vi.fn((jobId: string) => `nanoclaw:input:${jobId}`),
+  getOutputStream: vi.fn((f: string) => `kubeclaw:messages:${f}`),
+  getOutputChannel: vi.fn((f: string) => `kubeclaw:messages:${f}`),
+  getTaskChannel: vi.fn((f: string) => `kubeclaw:tasks:${f}`),
+  getInputStream: vi.fn((jobId: string) => `kubeclaw:input:${jobId}`),
   getToolCallsStream: vi.fn(
-    (jobId: string, cat: string) => `nanoclaw:toolcalls:${jobId}:${cat}`,
+    (jobId: string, cat: string) => `kubeclaw:toolcalls:${jobId}:${cat}`,
   ),
   getToolResultsStream: vi.fn(
-    (jobId: string, cat: string) => `nanoclaw:toolresults:${jobId}:${cat}`,
+    (jobId: string, cat: string) => `kubeclaw:toolresults:${jobId}:${cat}`,
   ),
 }));
 
@@ -243,7 +243,7 @@ describe('Tool Call Round-Trip', () => {
       // Ack was sent to the agent's input stream
       expect(mockXadd).toHaveBeenCalledOnce();
       const [stream, , ...fieldPairs] = mockXadd.mock.calls[0];
-      expect(stream).toBe('nanoclaw:input:agent-job-123');
+      expect(stream).toBe('kubeclaw:input:agent-job-123');
       const fields = Object.fromEntries(
         Array.from({ length: fieldPairs.length / 2 }, (_, i) => [
           fieldPairs[i * 2],
@@ -437,8 +437,8 @@ describe('Tool Call Round-Trip', () => {
       const store = new MemoryStreamStore();
       const agentJobId = 'agent-rt-001';
       const category = 'execution';
-      const callsStream = `nanoclaw:toolcalls:${agentJobId}:${category}`;
-      const resultsStream = `nanoclaw:toolresults:${agentJobId}:${category}`;
+      const callsStream = `kubeclaw:toolcalls:${agentJobId}:${category}`;
+      const resultsStream = `kubeclaw:toolresults:${agentJobId}:${category}`;
 
       // Tool server: reads one call, executes tool, writes result
       const serverDone = (async () => {
@@ -476,8 +476,8 @@ describe('Tool Call Round-Trip', () => {
       const store = new MemoryStreamStore();
       const agentJobId = 'agent-rt-002';
       const category = 'browser';
-      const callsStream = `nanoclaw:toolcalls:${agentJobId}:${category}`;
-      const resultsStream = `nanoclaw:toolresults:${agentJobId}:${category}`;
+      const callsStream = `kubeclaw:toolcalls:${agentJobId}:${category}`;
+      const resultsStream = `kubeclaw:toolresults:${agentJobId}:${category}`;
 
       // Pre-populate results stream with a result for a *different* request
       store.xadd(resultsStream, {
@@ -520,8 +520,8 @@ describe('Tool Call Round-Trip', () => {
       const store = new MemoryStreamStore();
       const agentJobId = 'agent-rt-003';
       const category = 'execution';
-      const callsStream = `nanoclaw:toolcalls:${agentJobId}:${category}`;
-      const resultsStream = `nanoclaw:toolresults:${agentJobId}:${category}`;
+      const callsStream = `kubeclaw:toolcalls:${agentJobId}:${category}`;
+      const resultsStream = `kubeclaw:toolresults:${agentJobId}:${category}`;
 
       const serverDone = (async () => {
         const entry = await store.xreadBlockNext(callsStream, 5000);
@@ -553,8 +553,8 @@ describe('Tool Call Round-Trip', () => {
       const store = new MemoryStreamStore();
       const agentJobId = 'agent-rt-004';
       const category = 'execution';
-      const callsStream = `nanoclaw:toolcalls:${agentJobId}:${category}`;
-      const resultsStream = `nanoclaw:toolresults:${agentJobId}:${category}`;
+      const callsStream = `kubeclaw:toolcalls:${agentJobId}:${category}`;
+      const resultsStream = `kubeclaw:toolresults:${agentJobId}:${category}`;
 
       // Caller sends 3 calls up front
       store.xadd(callsStream, {
@@ -600,7 +600,7 @@ describe('Tool Call Round-Trip', () => {
     it('pod_ack is detected on agent input stream after pod creation', async () => {
       const store = new MemoryStreamStore();
       const agentJobId = 'agent-ack-001';
-      const inputStream = `nanoclaw:input:${agentJobId}`;
+      const inputStream = `kubeclaw:input:${agentJobId}`;
 
       // Simulate orchestrator writing the ack (what processTaskIpc does)
       store.xadd(inputStream, {

@@ -82,7 +82,7 @@ describe('Message Queue Integration', () => {
       expect(JSON.parse(popped!)).toEqual(message);
     });
 
-    it('should publish messages to kubeclaw:messages queue', async () => {
+    it('should publish messages to group-scoped messages queue', async () => {
       if (!redis) {
         console.warn('⚠️  Redis not available, skipping test');
         return;

@@ -4,33 +4,33 @@ Personal Claude assistant. See [README.md](README.md) for philosophy and setup. 
 
 ## Quick Context
 
-Single Node.js process with skill-based channel system. Channels (WhatsApp, Telegram, Slack, Discord, Gmail) are skills that self-register at startup. Messages route to Claude Agent SDK running in containers (Linux VMs). Each group has isolated filesystem and memory.
+Single Node.js process with skill-based channel system. Channels (WhatsApp, Telegram, Slack, Discord, Gmail) are skills that self-register at startup. Messages route to Claude Agent SDK running as Kubernetes Jobs. Each group has isolated filesystem and memory.
 
 ## Key Files
 
-| File | Purpose |
-|------|---------|
-| `src/index.ts` | Orchestrator: state, message loop, agent invocation |
-| `src/channels/registry.ts` | Channel registry (self-registration at startup) |
-| `src/ipc.ts` | IPC watcher and task processing |
-| `src/router.ts` | Message formatting and outbound routing |
-| `src/config.ts` | Trigger pattern, paths, intervals |
-| `src/container-runner.ts` | Spawns agent containers with mounts |
-| `src/task-scheduler.ts` | Runs scheduled tasks |
-| `src/db.ts` | SQLite operations |
-| `groups/{name}/CLAUDE.md` | Per-group memory (isolated) |
+| File                                | Purpose                                                    |
+| ----------------------------------- | ---------------------------------------------------------- |
+| `src/index.ts`                      | Orchestrator: state, message loop, agent invocation        |
+| `src/channels/registry.ts`          | Channel registry (self-registration at startup)            |
+| `src/k8s/ipc-redis.ts`              | Redis IPC watcher and task processing                      |
+| `src/k8s/job-runner.ts`             | Spawns Kubernetes Jobs for agent execution                 |
+| `src/runtime/index.ts`              | Agent runner abstraction                                   |
+| `src/router.ts`                     | Message formatting and outbound routing                    |
+| `src/config.ts`                     | Trigger pattern, paths, intervals                          |
+| `src/task-scheduler.ts`             | Runs scheduled tasks                                       |
+| `src/db.ts`                         | SQLite operations                                          |
+| `groups/{name}/CLAUDE.md`           | Per-group memory (isolated)                                |
 | `container/skills/agent-browser.md` | Browser automation tool (available to all agents via Bash) |
 
 ## Skills
 
-| Skill | When to Use |
-|-------|-------------|
-| `/setup` | First-time installation, authentication, service configuration |
-| `/customize` | Adding channels, integrations, changing behavior |
-| `/debug` | Container issues, logs, troubleshooting |
-| `/update-kubeclaw` | Bring upstream KubeClaw updates into a customized install |
-| `/qodo-pr-resolver` | Fetch and fix Qodo PR review issues interactively or in batch |
-| `/get-qodo-rules` | Load org- and repo-level coding rules from Qodo before code tasks |
+| Skill               | When to Use                                                       |
+| ------------------- | ----------------------------------------------------------------- |
+| `/customize`        | Adding channels, integrations, changing behavior                  |
+| `/debug`            | Container issues, logs, troubleshooting                           |
+| `/update-kubeclaw`  | Bring upstream KubeClaw updates into a customized install         |
+| `/qodo-pr-resolver` | Fetch and fix Qodo PR review issues interactively or in batch     |
+| `/get-qodo-rules`   | Load org- and repo-level coding rules from Qodo before code tasks |
 
 ## Development
 
@@ -43,22 +43,35 @@ npm run build        # Compile TypeScript
 ```
 
 Service management:
-```bash
-# macOS (launchd)
-launchctl load ~/Library/LaunchAgents/com.kubeclaw.plist
-launchctl unload ~/Library/LaunchAgents/com.kubeclaw.plist
-launchctl kickstart -k gui/$(id -u)/com.kubeclaw  # restart
 
-# Linux (systemd)
-systemctl --user start kubeclaw
-systemctl --user stop kubeclaw
-systemctl --user restart kubeclaw
+```bash
+# Check orchestrator status
+kubectl get pods -n kubeclaw
+
+# View logs
+kubectl logs -f deployment/kubeclaw-orchestrator -n kubeclaw
+
+# Restart orchestrator
+kubectl rollout restart deployment/kubeclaw-orchestrator -n kubeclaw
+
+# Stop orchestrator
+kubectl scale deployment kubeclaw-orchestrator --replicas=0 -n kubeclaw
+
+# Start orchestrator
+kubectl scale deployment kubeclaw-orchestrator --replicas=1 -n kubeclaw
 ```
 
 ## Troubleshooting
 
-**WhatsApp not connecting after upgrade:** WhatsApp is now a separate skill, not bundled in core. Run `/add-whatsapp` (or `npx tsx scripts/apply-skill.ts .claude/skills/add-whatsapp && npm run build`) to install it. Existing auth credentials and groups are preserved.
+Run `/debug` for guided troubleshooting. For quick checks:
 
-## Container Build Cache
+```bash
+# Orchestrator status
+kubectl get pods -n kubeclaw
 
-The container buildkit caches the build context aggressively. `--no-cache` alone does NOT invalidate COPY steps — the builder's volume retains stale files. To force a truly clean rebuild, prune the builder then re-run `./container/build.sh`.
+# Recent agent jobs
+kubectl get jobs -n kubeclaw --sort-by=.metadata.creationTimestamp | tail -10
+
+# Orchestrator errors
+kubectl logs deployment/kubeclaw-orchestrator -n kubeclaw --tail=100 | grep -E '"level":5[0-9]|"level":4[0-9]'
+```

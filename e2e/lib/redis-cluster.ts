@@ -11,12 +11,24 @@ const NAMESPACE = getNamespace();
 const REDIS_POD = 'kubeclaw-redis-0';
 
 /**
- * Execute a Redis CLI command inside the minikube Redis pod
+ * Read the Redis admin password from KUBECLAW_REDIS_URL set by global-setup.
+ * Format: redis://:password@host:port
+ */
+function getAdminPassword(): string {
+  const url = process.env.KUBECLAW_REDIS_URL || process.env.REDIS_URL || '';
+  const match = url.match(/redis:\/\/:([^@]+)@/);
+  return match ? match[1] : '';
+}
+
+/**
+ * Execute a Redis CLI command inside the minikube Redis pod (authenticated).
  */
 export function execRedisCommand(command: string): string {
+  const password = getAdminPassword();
+  const authFlag = password ? `-a ${password}` : '';
   try {
     const result = execSync(
-      `kubectl exec -n ${NAMESPACE} ${REDIS_POD} -- redis-cli ${command}`,
+      `kubectl exec -n ${NAMESPACE} ${REDIS_POD} -- redis-cli ${authFlag} ${command}`,
       { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] },
     );
     return result.trim();
@@ -56,13 +68,17 @@ export function execRedisCommandAuth(
 /**
  * Create an ACL user for a job in the cluster Redis
  */
-export function createClusterACLUser(jobId: string, password: string): void {
+export function createClusterACLUser(
+  jobId: string,
+  password: string,
+  groupFolder: string,
+): void {
   const username = `sidecar-${jobId}`;
   const keyPattern = `kubeclaw:*:${jobId}`;
   // In Redis 7+, channel access is controlled separately from key access.
-  // resetchannels (applied by default via -@all) revokes all channel perms.
-  // We must explicitly grant access to the output pub/sub channel using &<pattern>.
-  const channelPattern = `kubeclaw:output:${jobId}`;
+  // Adapters publish job output to kubeclaw:messages:{groupFolder} so we
+  // must grant access to that channel (not a job-id-specific channel).
+  const channelPattern = `kubeclaw:messages:${groupFolder}`;
 
   // Build ACL SETUSER command - password must be quoted to prevent shell interpretation
   const aclCommand = `ACL SETUSER ${username} on ">${password}" "~${keyPattern}" "&${channelPattern}" +@read +@write +@stream +@pubsub -@admin -@dangerous`;

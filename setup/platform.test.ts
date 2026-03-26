@@ -118,3 +118,15 @@ describe('getNodeMajorVersion', () => {
     expect(major!).toBeGreaterThanOrEqual(20);
   });
 });
+
+// --- getNodePath ---
+
+import { getNodePath } from './platform.js';
+
+describe('getNodePath', () => {
+  it('returns a non-empty string path to node', () => {
+    const result = getNodePath();
+    expect(typeof result).toBe('string');
+    expect(result.length).toBeGreaterThan(0);
+  });
+});

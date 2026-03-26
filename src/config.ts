@@ -5,7 +5,8 @@ import { logger } from './logger.js';
 import { readEnvFile } from './env.js';
 
 // --- LLM Provider Configuration ---
-export type LLMProvider = 'claude' | 'openrouter';
+export type KnownLLMProvider = 'claude' | 'openrouter';
+export type LLMProvider = string; // open for extension; KnownLLMProvider for built-in dispatch
 
 export interface LLMConfig {
   defaultProvider: LLMProvider;
@@ -49,6 +50,9 @@ export const STORE_DIR = path.resolve(PROJECT_ROOT, 'store');
 export const GROUPS_DIR = path.resolve(PROJECT_ROOT, 'groups');
 export const DATA_DIR = path.resolve(PROJECT_ROOT, 'data');
 
+export const KUBECLAW_MODE = (process.env.KUBECLAW_MODE || 'orchestrator') as 'orchestrator' | 'channel';
+export const KUBECLAW_CHANNEL = process.env.KUBECLAW_CHANNEL || '';
+
 export const CONTAINER_TIMEOUT = parseInt(
   process.env.CONTAINER_TIMEOUT || '1800000',
   10,
@@ -70,7 +74,7 @@ export const TRIGGER_PATTERN = new RegExp(
 
 // --- LLM Provider Configuration ---
 export const DEFAULT_LLM_PROVIDER: LLMProvider =
-  (process.env.DEFAULT_LLM_PROVIDER as LLMProvider) || 'claude';
+  (process.env.DEFAULT_LLM_PROVIDER as LLMProvider) || 'openai';
 
 export const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'openai/gpt-4o';
 export const OPENROUTER_BASE_URL =
@@ -84,28 +88,32 @@ export const defaultLLMConfig: LLMConfig = {
   },
 };
 
-// Container image selection based on LLM provider
+// Container image selection based on LLM provider.
+// Built-in providers map to known images; unknown providers look for a
+// KUBECLAW_CONTAINER_IMAGE_<PROVIDER> env var and fall back to the claude image.
 export function getContainerImage(provider: LLMProvider): string {
-  return provider === 'openrouter'
-    ? process.env.OPENROUTER_CONTAINER_IMAGE || 'kubeclaw-agent:openrouter'
-    : process.env.CLAUDE_CONTAINER_IMAGE || 'kubeclaw-agent:claude';
+  if (provider === 'openrouter')
+    return process.env.OPENROUTER_CONTAINER_IMAGE || 'kubeclaw-agent:openrouter';
+  if (provider === 'claude')
+    return process.env.CLAUDE_CONTAINER_IMAGE || 'kubeclaw-agent:claude';
+  if (provider === 'openai')
+    return process.env.OPENAI_CONTAINER_IMAGE || 'kubeclaw-agent:latest';
+  const envKey = `KUBECLAW_CONTAINER_IMAGE_${provider.toUpperCase().replace(/[^A-Z0-9]/g, '_')}`;
+  return (
+    process.env[envKey] ??
+    process.env.KUBECLAW_CONTAINER_IMAGE ??
+    'kubeclaw-agent:latest'
+  );
 }
-
-// Valid LLM providers
-const VALID_PROVIDERS: LLMProvider[] = ['claude', 'openrouter'];
 
 /**
  * Validate if a provider string is a valid LLMProvider.
- * Returns the provider if valid, null otherwise.
+ * Returns the provider if valid (any non-empty string), null otherwise.
  */
 export function validateProvider(
   provider: string | undefined | null,
 ): LLMProvider | null {
-  if (!provider) return null;
-  if (VALID_PROVIDERS.includes(provider as LLMProvider)) {
-    return provider as LLMProvider;
-  }
-  return null;
+  return provider?.trim() || null;
 }
 
 /**

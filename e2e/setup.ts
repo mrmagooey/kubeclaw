@@ -1,5 +1,5 @@
 import { beforeAll, afterAll, beforeEach, afterEach, test } from 'vitest';
-import { execSync } from 'child_process';
+import { execSync, spawnSync } from 'child_process';
 import {
   startMockLLMServer,
   stopMockLLMServer,
@@ -63,21 +63,18 @@ beforeAll(async () => {
   try {
     await sharedRedis.ping();
     console.log('✅ Redis connected successfully\n');
+
+    // Initialize test database (only when Redis is available)
+    console.log('🗄️ Initializing test database...');
+    await _initTestDatabase();
+    console.log('✅ Test database initialized\n');
   } catch (error) {
-    console.error('❌ Failed to connect to Redis:', error);
+    console.warn(`⚠️  Redis not available at ${redisUrl} — tests that require Redis will be skipped\n`);
     sharedRedis = null;
-    throw new Error(
-      `Redis is not available at ${redisUrl}. Please ensure Redis is running or set REDIS_URL environment variable.`,
-    );
   }
 
-  // Initialize test database
-  console.log('🗄️ Initializing test database...');
-  await _initTestDatabase();
-  console.log('✅ Test database initialized\n');
-
   testNamespace = `test-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-}, 30000);
+}, 60000);
 
 afterAll(async () => {
   if (mockLlmPort) {
@@ -174,6 +171,20 @@ export function isKubernetesAvailable(): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Helper function to check if kubeclaw is fully deployed (helm install complete).
+ * Checks for the Redis service rather than just the namespace, since the namespace
+ * is pre-created before helm runs and would give a false positive.
+ */
+export function isKubeclawDeployed(): boolean {
+  const result = spawnSync(
+    'kubectl',
+    ['get', 'service', 'kubeclaw-redis', '-n', 'kubeclaw'],
+    { stdio: 'pipe', timeout: 5000 },
+  );
+  return result.status === 0;
 }
 
 /**

@@ -1,0 +1,102 @@
+{{- if .Values.ciliumNetworkPolicy.enabled }}
+---
+# CiliumNetworkPolicy for agent jobs: locks external egress to specific FQDNs.
+# Requires Cilium CNI. Replaces the broad port-443 allowance in the standard
+# NetworkPolicy with an FQDN allowlist (api.anthropic.com etc.).
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: kubeclaw-agent-egress
+  namespace: {{ .Values.namespace }}
+spec:
+  endpointSelector:
+    matchLabels:
+      app: kubeclaw-agent
+  egress:
+  # DNS — listed first so FQDN resolution works before any toFQDNs rule fires.
+  - toEndpoints:
+    - matchLabels:
+        "k8s:io.kubernetes.pod.namespace": kube-system
+        k8s-app: kube-dns
+    toPorts:
+    - ports:
+      - port: "53"
+        protocol: UDP
+      - port: "53"
+        protocol: TCP
+  # Redis — in-namespace only.
+  - toEndpoints:
+    - matchLabels:
+        "k8s:io.kubernetes.pod.namespace": {{ .Values.namespace }}
+        app: kubeclaw-redis
+    toPorts:
+    - ports:
+      - port: "6379"
+        protocol: TCP
+  {{- if .Values.ciliumNetworkPolicy.agent.allowedFQDNs }}
+  # External HTTPS — restricted to the configured FQDN allowlist.
+  - toFQDNs:
+    {{- range .Values.ciliumNetworkPolicy.agent.allowedFQDNs }}
+    - matchName: {{ . | quote }}
+    {{- end }}
+    toPorts:
+    - ports:
+      - port: "443"
+        protocol: TCP
+  {{- end }}
+---
+# CiliumNetworkPolicy for the orchestrator: LLM provider + channel APIs + K8s API.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: kubeclaw-orchestrator-egress
+  namespace: {{ .Values.namespace }}
+spec:
+  endpointSelector:
+    matchLabels:
+      app: kubeclaw-orchestrator
+  egress:
+  # DNS
+  - toEndpoints:
+    - matchLabels:
+        "k8s:io.kubernetes.pod.namespace": kube-system
+        k8s-app: kube-dns
+    toPorts:
+    - ports:
+      - port: "53"
+        protocol: UDP
+      - port: "53"
+        protocol: TCP
+  # Redis
+  - toEndpoints:
+    - matchLabels:
+        "k8s:io.kubernetes.pod.namespace": {{ .Values.namespace }}
+        app: kubeclaw-redis
+    toPorts:
+    - ports:
+      - port: "6379"
+        protocol: TCP
+  # Kubernetes API server (needed for Job management and pod log streaming).
+  - toEntities:
+    - kube-apiserver
+    toPorts:
+    - ports:
+      - port: "443"
+        protocol: TCP
+      - port: "6443"
+        protocol: TCP
+  {{- if .Values.ciliumNetworkPolicy.orchestrator.allowedFQDNs }}
+  # External HTTPS/HTTP — restricted to the configured FQDN allowlist.
+  # Add channel-specific FQDNs here (api.telegram.org, slack.com, etc.).
+  - toFQDNs:
+    {{- range .Values.ciliumNetworkPolicy.orchestrator.allowedFQDNs }}
+    - matchName: {{ . | quote }}
+    {{- end }}
+    toPorts:
+    - ports:
+      - port: "443"
+        protocol: TCP
+      - port: "80"
+        protocol: TCP
+  {{- end }}
+{{- end }}

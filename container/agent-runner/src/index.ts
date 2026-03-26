@@ -1,26 +1,43 @@
 /**
- * NanoClaw Agent Runner
- * Runs inside a container, receives config via stdin or env vars, outputs result.
+ * KubeClaw Agent Runner
+ * OpenAI-compatible agentic loop. No Claude SDK dependency.
  *
  * Input protocol:
- *   Docker mode: Full ContainerInput JSON piped to stdin
- *   K8s mode:   Task fields passed as env vars (KUBECLAW_PROMPT etc.),
- *               entrypoint.sh builds the JSON before starting this process
- *   IPC:        Follow-up messages written as JSON files to /workspace/ipc/input/
- *               Files: {type:"message", text:"..."}.json — polled and consumed
- *               Sentinel: /workspace/ipc/input/_close — signals session end
+ *   ContainerInput JSON piped to stdin (built by entrypoint.sh from env vars)
  *
  * Output protocol:
- *   Docker mode: Each result wrapped in OUTPUT_START_MARKER / OUTPUT_END_MARKER pairs on stdout
- *   K8s mode:    Same stdout output PLUS published to Redis kubeclaw:messages:${groupFolder}
- *                so KubernetesJobRunner.streamOutput() can receive it without reading pod logs
+ *   Each result wrapped in OUTPUT_START_MARKER / OUTPUT_END_MARKER pairs on stdout
+ *   In K8s mode: also published to Redis kubeclaw:messages:${groupFolder}
+ *
+ * Tool calls: all routed via Redis streams to tool pods.
+ *   Execution tools (bash, read, write, edit, glob, grep):
+ *     → kubeclaw:toolcalls:{jobId}:execution → tool pod → kubeclaw:toolresults:{jobId}:execution
+ *   Browser tools (web_fetch, web_search, agent_browser):
+ *     → kubeclaw:toolcalls:{jobId}:browser → tool pod → kubeclaw:toolresults:{jobId}:browser
+ *   IPC tools (send_message, schedule_task, …):
+ *     → Redis pub/sub directly, no tool pod needed
+ *
+ * Superuser mode (KUBECLAW_SUPERUSER=true):
+ *   Adds local_bash, local_read, local_write, local_edit tools that run directly
+ *   in this process. Only set by the orchestrator for privileged groups.
+ *
+ * Follow-up messages: read from kubeclaw:input:{jobId} Redis stream.
+ *   No filesystem IPC polling.
  */
 
 import fs from 'fs';
 import path from 'path';
-import { query, HookCallback, PreCompactHookInput } from '@anthropic-ai/claude-agent-sdk';
-import { fileURLToPath } from 'url';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+import { randomUUID } from 'crypto';
+import OpenAI from 'openai';
+import { createClient, RedisClientType } from 'redis';
+import { CronExpressionParser } from 'cron-parser';
 import { RedisIPCClient } from './redis/ipc-client.js';
+
+const execFileAsync = promisify(execFile);
+
+// ---- Input / Output protocol ----
 
 interface ContainerInput {
   prompt: string;
@@ -40,577 +57,1146 @@ interface ContainerOutput {
   error?: string;
 }
 
-interface SessionEntry {
-  sessionId: string;
-  fullPath: string;
-  summary: string;
-  firstPrompt: string;
-}
-
-interface SessionsIndex {
-  entries: SessionEntry[];
-}
-
-interface SDKUserMessage {
-  type: 'user';
-  message: { role: 'user'; content: string };
-  parent_tool_use_id: null;
-  session_id: string;
-}
-
-const IPC_INPUT_DIR = '/workspace/ipc/input';
-const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, '_close');
-const IPC_POLL_MS = 500;
-
-/**
- * Push-based async iterable for streaming user messages to the SDK.
- * Keeps the iterable alive until end() is called, preventing isSingleUserTurn.
- */
-class MessageStream {
-  private queue: SDKUserMessage[] = [];
-  private waiting: (() => void) | null = null;
-  private done = false;
-
-  push(text: string): void {
-    this.queue.push({
-      type: 'user',
-      message: { role: 'user', content: text },
-      parent_tool_use_id: null,
-      session_id: '',
-    });
-    this.waiting?.();
-  }
-
-  end(): void {
-    this.done = true;
-    this.waiting?.();
-  }
-
-  async *[Symbol.asyncIterator](): AsyncGenerator<SDKUserMessage> {
-    while (true) {
-      while (this.queue.length > 0) {
-        yield this.queue.shift()!;
-      }
-      if (this.done) return;
-      await new Promise<void>(r => { this.waiting = r; });
-      this.waiting = null;
-    }
-  }
-}
-
-async function readStdin(): Promise<string> {
-  return new Promise((resolve, reject) => {
-    let data = '';
-    process.stdin.setEncoding('utf8');
-    process.stdin.on('data', chunk => { data += chunk; });
-    process.stdin.on('end', () => resolve(data));
-    process.stdin.on('error', reject);
-  });
-}
-
 const OUTPUT_START_MARKER = '---KUBECLAW_OUTPUT_START---';
 const OUTPUT_END_MARKER = '---KUBECLAW_OUTPUT_END---';
 
-// Shared Redis client — set in main() when REDIS_URL is available (K8s mode).
-// Kept module-level so writeOutput can publish without threading it through every call.
-let redisClient: RedisIPCClient | null = null;
+let redisIpcClient: RedisIPCClient | null = null;
 
 function writeOutput(output: ContainerOutput): void {
-  // Always write to stdout (Docker mode reads this; K8s logs still capture it).
   console.log(OUTPUT_START_MARKER);
   console.log(JSON.stringify(output));
   console.log(OUTPUT_END_MARKER);
-
-  // In K8s mode, also publish to Redis so KubernetesJobRunner.streamOutput() receives it.
-  if (redisClient) {
-    redisClient.sendOutput(output).catch((err) => {
+  if (redisIpcClient) {
+    redisIpcClient.sendOutput(output).catch((err) => {
       log(`Warning: failed to publish output to Redis: ${err instanceof Error ? err.message : String(err)}`);
     });
   }
 }
 
-function log(message: string): void {
-  console.error(`[agent-runner] ${message}`);
+function log(msg: string): void {
+  console.error(`[agent-runner] ${msg}`);
 }
 
-function getSessionSummary(sessionId: string, transcriptPath: string): string | null {
-  const projectDir = path.dirname(transcriptPath);
-  const indexPath = path.join(projectDir, 'sessions-index.json');
+// ---- Stdin ----
 
-  if (!fs.existsSync(indexPath)) {
-    log(`Sessions index not found at ${indexPath}`);
-    return null;
-  }
-
-  try {
-    const index: SessionsIndex = JSON.parse(fs.readFileSync(indexPath, 'utf-8'));
-    const entry = index.entries.find(e => e.sessionId === sessionId);
-    if (entry?.summary) {
-      return entry.summary;
-    }
-  } catch (err) {
-    log(`Failed to read sessions index: ${err instanceof Error ? err.message : String(err)}`);
-  }
-
-  return null;
-}
-
-/**
- * Archive the full transcript to conversations/ before compaction.
- */
-function createPreCompactHook(assistantName?: string): HookCallback {
-  return async (input, _toolUseId, _context) => {
-    const preCompact = input as PreCompactHookInput;
-    const transcriptPath = preCompact.transcript_path;
-    const sessionId = preCompact.session_id;
-
-    if (!transcriptPath || !fs.existsSync(transcriptPath)) {
-      log('No transcript found for archiving');
-      return {};
-    }
-
-    try {
-      const content = fs.readFileSync(transcriptPath, 'utf-8');
-      const messages = parseTranscript(content);
-
-      if (messages.length === 0) {
-        log('No messages to archive');
-        return {};
-      }
-
-      const summary = getSessionSummary(sessionId, transcriptPath);
-      const name = summary ? sanitizeFilename(summary) : generateFallbackName();
-
-      const conversationsDir = '/workspace/group/conversations';
-      fs.mkdirSync(conversationsDir, { recursive: true });
-
-      const date = new Date().toISOString().split('T')[0];
-      const filename = `${date}-${name}.md`;
-      const filePath = path.join(conversationsDir, filename);
-
-      const markdown = formatTranscriptMarkdown(messages, summary, assistantName);
-      fs.writeFileSync(filePath, markdown);
-
-      log(`Archived conversation to ${filePath}`);
-    } catch (err) {
-      log(`Failed to archive transcript: ${err instanceof Error ? err.message : String(err)}`);
-    }
-
-    return {};
-  };
-}
-
-
-function sanitizeFilename(summary: string): string {
-  return summary
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 50);
-}
-
-function generateFallbackName(): string {
-  const time = new Date();
-  return `conversation-${time.getHours().toString().padStart(2, '0')}${time.getMinutes().toString().padStart(2, '0')}`;
-}
-
-interface ParsedMessage {
-  role: 'user' | 'assistant';
-  content: string;
-}
-
-function parseTranscript(content: string): ParsedMessage[] {
-  const messages: ParsedMessage[] = [];
-
-  for (const line of content.split('\n')) {
-    if (!line.trim()) continue;
-    try {
-      const entry = JSON.parse(line);
-      if (entry.type === 'user' && entry.message?.content) {
-        const text = typeof entry.message.content === 'string'
-          ? entry.message.content
-          : entry.message.content.map((c: { text?: string }) => c.text || '').join('');
-        if (text) messages.push({ role: 'user', content: text });
-      } else if (entry.type === 'assistant' && entry.message?.content) {
-        const textParts = entry.message.content
-          .filter((c: { type: string }) => c.type === 'text')
-          .map((c: { text: string }) => c.text);
-        const text = textParts.join('');
-        if (text) messages.push({ role: 'assistant', content: text });
-      }
-    } catch {
-    }
-  }
-
-  return messages;
-}
-
-function formatTranscriptMarkdown(messages: ParsedMessage[], title?: string | null, assistantName?: string): string {
-  const now = new Date();
-  const formatDateTime = (d: Date) => d.toLocaleString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-    hour12: true
+async function readStdin(): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let data = '';
+    process.stdin.setEncoding('utf8');
+    process.stdin.on('data', (chunk) => { data += chunk; });
+    process.stdin.on('end', () => resolve(data));
+    process.stdin.on('error', reject);
   });
-
-  const lines: string[] = [];
-  lines.push(`# ${title || 'Conversation'}`);
-  lines.push('');
-  lines.push(`Archived: ${formatDateTime(now)}`);
-  lines.push('');
-  lines.push('---');
-  lines.push('');
-
-  for (const msg of messages) {
-    const sender = msg.role === 'user' ? 'User' : (assistantName || 'Assistant');
-    const content = msg.content.length > 2000
-      ? msg.content.slice(0, 2000) + '...'
-      : msg.content;
-    lines.push(`**${sender}**: ${content}`);
-    lines.push('');
-  }
-
-  return lines.join('\n');
 }
 
-/**
- * Check for _close sentinel.
- */
-function shouldClose(): boolean {
-  if (fs.existsSync(IPC_INPUT_CLOSE_SENTINEL)) {
-    try { fs.unlinkSync(IPC_INPUT_CLOSE_SENTINEL); } catch { /* ignore */ }
-    return true;
-  }
-  return false;
+// ---- Conversation history ----
+
+const HISTORY_FILE = '/workspace/group/.conversation.json';
+const MAX_HISTORY_MESSAGES = parseInt(process.env.KUBECLAW_HISTORY_MAX || '100', 10);
+
+interface ConversationHistory {
+  messages: OpenAI.ChatCompletionMessageParam[];
+  updatedAt: string;
 }
 
-/**
- * Drain all pending IPC input messages.
- * Returns messages found, or empty array.
- */
-function drainIpcInput(): string[] {
+function loadHistory(): OpenAI.ChatCompletionMessageParam[] {
   try {
-    fs.mkdirSync(IPC_INPUT_DIR, { recursive: true });
-    const files = fs.readdirSync(IPC_INPUT_DIR)
-      .filter(f => f.endsWith('.json'))
-      .sort();
-
-    const messages: string[] = [];
-    for (const file of files) {
-      const filePath = path.join(IPC_INPUT_DIR, file);
-      try {
-        const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-        fs.unlinkSync(filePath);
-        if (data.type === 'message' && data.text) {
-          messages.push(data.text);
-        }
-      } catch (err) {
-        log(`Failed to process input file ${file}: ${err instanceof Error ? err.message : String(err)}`);
-        try { fs.unlinkSync(filePath); } catch { /* ignore */ }
-      }
-    }
-    return messages;
-  } catch (err) {
-    log(`IPC drain error: ${err instanceof Error ? err.message : String(err)}`);
+    if (!fs.existsSync(HISTORY_FILE)) return [];
+    const raw: ConversationHistory = JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf-8'));
+    return raw.messages ?? [];
+  } catch {
     return [];
   }
 }
 
-/**
- * Wait for a new IPC message or _close sentinel.
- * Returns the messages as a single string, or null if _close.
- */
-function waitForIpcMessage(): Promise<string | null> {
-  return new Promise((resolve) => {
-    const poll = () => {
-      if (shouldClose()) {
-        resolve(null);
-        return;
+function saveHistory(messages: OpenAI.ChatCompletionMessageParam[]): void {
+  try {
+    const capped = messages.slice(-MAX_HISTORY_MESSAGES);
+    const data: ConversationHistory = { messages: capped, updatedAt: new Date().toISOString() };
+    fs.writeFileSync(HISTORY_FILE, JSON.stringify(data, null, 2));
+  } catch (err) {
+    log(`Warning: failed to save history: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+// ---- System prompt ----
+
+const DEFAULT_SYSTEM_PROMPT = 'You are a helpful assistant. Be concise and direct.';
+
+function loadSystemPrompt(assistantName?: string): string {
+  const parts: string[] = [];
+
+  // Per-group instructions
+  try {
+    const groupMd = fs.readFileSync('/workspace/group/CLAUDE.md', 'utf-8').trim();
+    if (groupMd) parts.push(groupMd);
+  } catch { /* not present */ }
+
+  // Global instructions
+  try {
+    if (!parts.length) { // only load global when group has no own CLAUDE.md
+      const globalMd = fs.readFileSync('/workspace/global/CLAUDE.md', 'utf-8').trim();
+      if (globalMd) parts.push(globalMd);
+    }
+  } catch { /* not present */ }
+
+  if (parts.length === 0) {
+    const name = assistantName || 'the assistant';
+    return `You are ${name}, a helpful assistant. Be concise and direct.`;
+  }
+
+  return parts.join('\n\n');
+}
+
+// ---- Input stream manager ----
+// Reads from kubeclaw:input:{jobId} Redis stream, routes messages by type.
+// tool_pod_ack messages are queued for ensurePodReady; user messages and
+// close signals are queued for the main loop.
+
+interface InputEntry {
+  type: string;
+  text?: string;
+  category?: string;
+  podJobId?: string;
+}
+
+class InputStreamManager {
+  private lastId = '0-0';
+  private queue: InputEntry[] = [];
+  private redis: RedisClientType;
+  private streamKey: string;
+
+  constructor(redis: RedisClientType, jobId: string) {
+    this.redis = redis;
+    this.streamKey = `kubeclaw:input:${jobId}`;
+  }
+
+  // Non-blocking read: enqueue any available messages
+  async poll(): Promise<void> {
+    try {
+      const response = await (this.redis as any).xRead(
+        [{ key: this.streamKey, id: this.lastId }],
+        { COUNT: 100 },
+      );
+      this._enqueue(response);
+    } catch { /* ignore */ }
+  }
+
+  // Blocking read with timeout
+  async blockPoll(timeoutMs: number): Promise<void> {
+    try {
+      const response = await (this.redis as any).xRead(
+        [{ key: this.streamKey, id: this.lastId }],
+        { BLOCK: Math.max(100, timeoutMs), COUNT: 100 },
+      );
+      this._enqueue(response);
+    } catch { /* ignore */ }
+  }
+
+  // Drain queued user messages; leaves acks and close signals in queue
+  drainUserMessages(): string[] {
+    const msgs: string[] = [];
+    const remaining: InputEntry[] = [];
+    for (const entry of this.queue) {
+      if (entry.type === 'message' && entry.text) msgs.push(entry.text);
+      else remaining.push(entry);
+    }
+    this.queue = remaining;
+    return msgs;
+  }
+
+  // Check for close signal (does not consume it)
+  hasCloseSignal(): boolean {
+    return this.queue.some((e) => e.type === 'close');
+  }
+
+  // Wait until a tool_pod_ack for category arrives or timeout
+  async waitForToolPodAck(category: string, timeoutMs: number): Promise<string> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const idx = this.queue.findIndex(
+        (e) => e.type === 'tool_pod_ack' && e.category === category,
+      );
+      if (idx >= 0) {
+        const [ack] = this.queue.splice(idx, 1);
+        return ack.podJobId ?? '';
       }
-      const messages = drainIpcInput();
-      if (messages.length > 0) {
-        resolve(messages.join('\n'));
-        return;
+      const blockMs = Math.min(deadline - Date.now(), 5000);
+      if (blockMs <= 0) break;
+      await this.blockPoll(blockMs);
+    }
+    throw new Error(`Timeout waiting for tool_pod_ack for category=${category}`);
+  }
+
+  private _enqueue(response: any): void {
+    if (!response?.length) return;
+    for (const stream of response) {
+      for (const msg of (stream as any).messages ?? []) {
+        this.lastId = msg.id;
+        const f = msg.message as Record<string, string>;
+        this.queue.push({
+          type: f.type || '',
+          text: f.text,
+          category: f.category,
+          podJobId: f.podJobId,
+        });
       }
-      setTimeout(poll, IPC_POLL_MS);
-    };
-    poll();
+    }
+  }
+}
+
+// ---- Tool pod dispatch ----
+
+const TOOL_CATEGORY: Record<string, 'execution' | 'browser'> = {
+  bash: 'execution',
+  read: 'execution',
+  write: 'execution',
+  edit: 'execution',
+  glob: 'execution',
+  grep: 'execution',
+  web_fetch: 'browser',
+  web_search: 'browser',
+  agent_browser: 'browser',
+};
+
+// Server-side name (what tool-server.ts expects)
+const TOOL_SERVER_NAME: Record<string, string> = {
+  web_fetch: 'webFetch',
+  web_search: 'webSearch',
+  agent_browser: 'agentBrowser',
+};
+
+const TOOL_CALL_TIMEOUT = 120_000;
+const POD_ACK_TIMEOUT = 60_000;
+
+async function callToolViaRedis(
+  redis: RedisClientType,
+  inputStream: InputStreamManager,
+  agentJobId: string,
+  groupFolder: string,
+  toolName: string,
+  args: Record<string, unknown>,
+  podReadyMap: Map<string, boolean>,
+): Promise<string> {
+  const category = TOOL_CATEGORY[toolName];
+  if (!category) return `Unknown tool: ${toolName}`;
+
+  const serverName = TOOL_SERVER_NAME[toolName] ?? toolName;
+
+  // Request tool pod if not yet ready for this category
+  if (!podReadyMap.get(category)) {
+    const taskChannel = `kubeclaw:tasks:${groupFolder}`;
+    await (redis as any).publish(taskChannel, JSON.stringify({
+      type: 'tool_pod_request',
+      agentJobId,
+      category,
+      groupFolder,
+    }));
+    log(`Requested ${category} tool pod`);
+    await inputStream.waitForToolPodAck(category, POD_ACK_TIMEOUT);
+    podReadyMap.set(category, true);
+    log(`${category} tool pod ready`);
+  }
+
+  const requestId = randomUUID();
+  const callsStream = `kubeclaw:toolcalls:${agentJobId}:${category}`;
+  const resultsStream = `kubeclaw:toolresults:${agentJobId}:${category}`;
+
+  await (redis as any).xAdd(callsStream, '*', {
+    requestId,
+    tool: serverName,
+    input: JSON.stringify(args),
   });
-}
 
-/**
- * Run a single query and stream results via writeOutput.
- * Uses MessageStream (AsyncIterable) to keep isSingleUserTurn=false,
- * allowing agent teams subagents to run to completion.
- * Also pipes IPC messages into the stream during the query.
- */
-async function runQuery(
-  prompt: string,
-  sessionId: string | undefined,
-  mcpServerPath: string,
-  toolRouterMcpPath: string,
-  containerInput: ContainerInput,
-  sdkEnv: Record<string, string | undefined>,
-  resumeAt?: string,
-): Promise<{ newSessionId?: string; lastAssistantUuid?: string; closedDuringQuery: boolean }> {
-  const stream = new MessageStream();
-  stream.push(prompt);
+  // Block-read results stream for matching requestId
+  const deadline = Date.now() + TOOL_CALL_TIMEOUT;
+  let lastId = '$';
 
-  // Poll IPC for follow-up messages and _close sentinel during the query
-  let ipcPolling = true;
-  let closedDuringQuery = false;
-  const pollIpcDuringQuery = () => {
-    if (!ipcPolling) return;
-    if (shouldClose()) {
-      log('Close sentinel detected during query, ending stream');
-      closedDuringQuery = true;
-      stream.end();
-      ipcPolling = false;
-      return;
-    }
-    const messages = drainIpcInput();
-    for (const text of messages) {
-      log(`Piping IPC message into active query (${text.length} chars)`);
-      stream.push(text);
-    }
-    setTimeout(pollIpcDuringQuery, IPC_POLL_MS);
-  };
-  setTimeout(pollIpcDuringQuery, IPC_POLL_MS);
-
-  let newSessionId: string | undefined;
-  let lastAssistantUuid: string | undefined;
-  let messageCount = 0;
-  let resultCount = 0;
-
-  // Load global CLAUDE.md as additional system context (shared across all groups)
-  const globalClaudeMdPath = '/workspace/global/CLAUDE.md';
-  let globalClaudeMd: string | undefined;
-  if (!containerInput.isMain && fs.existsSync(globalClaudeMdPath)) {
-    globalClaudeMd = fs.readFileSync(globalClaudeMdPath, 'utf-8');
-  }
-
-  // Discover additional directories mounted at /workspace/extra/*
-  // These are passed to the SDK so their CLAUDE.md files are loaded automatically
-  const extraDirs: string[] = [];
-  const extraBase = '/workspace/extra';
-  if (fs.existsSync(extraBase)) {
-    for (const entry of fs.readdirSync(extraBase)) {
-      const fullPath = path.join(extraBase, entry);
-      if (fs.statSync(fullPath).isDirectory()) {
-        extraDirs.push(fullPath);
+  while (Date.now() < deadline) {
+    const blockMs = Math.min(deadline - Date.now(), 5000);
+    const response = await (redis as any).xRead(
+      [{ key: resultsStream, id: lastId }],
+      { BLOCK: blockMs, COUNT: 10 },
+    );
+    if (!response?.length) continue;
+    for (const stream of response) {
+      for (const msg of (stream as any).messages ?? []) {
+        lastId = msg.id;
+        const f = msg.message as Record<string, string>;
+        if (f.requestId !== requestId) continue;
+        if (f.error) return `Tool error: ${f.error}`;
+        try {
+          const parsed = JSON.parse(f.result ?? 'null');
+          return typeof parsed === 'string' ? parsed : JSON.stringify(parsed, null, 2);
+        } catch {
+          return f.result ?? '';
+        }
       }
     }
   }
-  if (extraDirs.length > 0) {
-    log(`Additional directories: ${extraDirs.join(', ')}`);
-  }
-
-  for await (const message of query({
-    prompt: stream,
-    options: {
-      cwd: '/workspace/group',
-      additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
-      resume: sessionId,
-      resumeSessionAt: resumeAt,
-      systemPrompt: globalClaudeMd
-        ? { type: 'preset' as const, preset: 'claude_code' as const, append: globalClaudeMd }
-        : undefined,
-      allowedTools: [
-        'mcp__toolrouter__bash',
-        'mcp__toolrouter__read', 'mcp__toolrouter__write', 'mcp__toolrouter__edit',
-        'mcp__toolrouter__glob', 'mcp__toolrouter__grep',
-        'mcp__toolrouter__webSearch', 'mcp__toolrouter__webFetch',
-        'mcp__toolrouter__agentBrowser',
-        'mcp__toolrouter__task', 'mcp__toolrouter__taskOutput', 'mcp__toolrouter__taskStop',
-        'mcp__toolrouter__todoWrite', 'mcp__toolrouter__notebookEdit',
-        'TeamCreate', 'TeamDelete', 'SendMessage',
-        'ToolSearch', 'Skill',
-        'mcp__nanoclaw__*',
-      ],
-      env: sdkEnv,
-      permissionMode: 'bypassPermissions',
-      allowDangerouslySkipPermissions: true,
-      settingSources: ['project', 'user'],
-      mcpServers: {
-        kubeclaw: {
-          command: 'node',
-          args: [mcpServerPath],
-          env: {
-            KUBECLAW_CHAT_JID: containerInput.chatJid,
-            KUBECLAW_GROUP_FOLDER: containerInput.groupFolder,
-            KUBECLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
-          },
-        },
-        toolrouter: {
-          command: 'node',
-          args: [toolRouterMcpPath],
-          env: {
-            KUBECLAW_JOB_ID: process.env.KUBECLAW_JOB_ID,
-            KUBECLAW_GROUP_FOLDER: containerInput.groupFolder,
-            REDIS_URL: process.env.REDIS_URL,
-          },
-        },
-      },
-      hooks: {
-        PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],
-      },
-    }
-  })) {
-    messageCount++;
-    const msgType = message.type === 'system' ? `system/${(message as { subtype?: string }).subtype}` : message.type;
-    log(`[msg #${messageCount}] type=${msgType}`);
-
-    if (message.type === 'assistant' && 'uuid' in message) {
-      lastAssistantUuid = (message as { uuid: string }).uuid;
-    }
-
-    if (message.type === 'system' && message.subtype === 'init') {
-      newSessionId = message.session_id;
-      log(`Session initialized: ${newSessionId}`);
-    }
-
-    if (message.type === 'system' && (message as { subtype?: string }).subtype === 'task_notification') {
-      const tn = message as { task_id: string; status: string; summary: string };
-      log(`Task notification: task=${tn.task_id} status=${tn.status} summary=${tn.summary}`);
-    }
-
-    if (message.type === 'result') {
-      resultCount++;
-      const textResult = 'result' in message ? (message as { result?: string }).result : null;
-      log(`Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}`);
-      writeOutput({
-        status: 'success',
-        result: textResult || null,
-        newSessionId
-      });
-    }
-  }
-
-  ipcPolling = false;
-  log(`Query done. Messages: ${messageCount}, results: ${resultCount}, lastAssistantUuid: ${lastAssistantUuid || 'none'}, closedDuringQuery: ${closedDuringQuery}`);
-  return { newSessionId, lastAssistantUuid, closedDuringQuery };
+  return `Tool timed out after ${TOOL_CALL_TIMEOUT / 1000}s`;
 }
+
+// ---- IPC tool handlers ----
+
+async function handleSendMessage(
+  redis: RedisClientType,
+  groupFolder: string,
+  chatJid: string,
+  args: Record<string, unknown>,
+): Promise<string> {
+  const text = String(args.text ?? '');
+  const sender = args.sender ? String(args.sender) : undefined;
+  await (redis as any).publish(
+    `kubeclaw:messages:${groupFolder}`,
+    JSON.stringify({ type: 'message', chatJid, text, sender, groupFolder, timestamp: new Date().toISOString() }),
+  );
+  return 'Message sent.';
+}
+
+async function handleScheduleTask(
+  redis: RedisClientType,
+  groupFolder: string,
+  chatJid: string,
+  isMain: boolean,
+  args: Record<string, unknown>,
+): Promise<string> {
+  const scheduleType = String(args.schedule_type ?? 'once') as 'cron' | 'interval' | 'once';
+  const scheduleValue = String(args.schedule_value ?? '');
+
+  if (scheduleType === 'cron') {
+    try { CronExpressionParser.parse(scheduleValue); }
+    catch { return `Invalid cron: "${scheduleValue}". Use format like "0 9 * * *".`; }
+  } else if (scheduleType === 'interval') {
+    const ms = parseInt(scheduleValue, 10);
+    if (isNaN(ms) || ms <= 0) return `Invalid interval: "${scheduleValue}". Must be positive milliseconds.`;
+  } else if (scheduleType === 'once') {
+    if (/[Zz]$/.test(scheduleValue) || /[+-]\d{2}:\d{2}$/.test(scheduleValue)) {
+      return `Timestamp must be local time without timezone suffix. Got "${scheduleValue}".`;
+    }
+    if (isNaN(new Date(scheduleValue).getTime())) {
+      return `Invalid timestamp: "${scheduleValue}". Use local time like "2026-02-01T15:30:00".`;
+    }
+  }
+
+  const targetJid = isMain && args.target_group_jid ? String(args.target_group_jid) : chatJid;
+  const taskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+  await (redis as any).publish(
+    `kubeclaw:tasks:${groupFolder}`,
+    JSON.stringify({
+      type: 'schedule_task',
+      taskId,
+      prompt: String(args.prompt ?? ''),
+      schedule_type: scheduleType,
+      schedule_value: scheduleValue,
+      context_mode: String(args.context_mode ?? 'group'),
+      targetJid,
+      groupFolder,
+      isMain,
+    }),
+  );
+  return `Task ${taskId} scheduled: ${scheduleType} - ${scheduleValue}`;
+}
+
+function handleListTasks(groupFolder: string, isMain: boolean): string {
+  const tasksFile = '/workspace/ipc/current_tasks.json';
+  try {
+    if (!fs.existsSync(tasksFile)) return 'No scheduled tasks found.';
+    const all: any[] = JSON.parse(fs.readFileSync(tasksFile, 'utf-8'));
+    const tasks = isMain ? all : all.filter((t) => t.groupFolder === groupFolder);
+    if (tasks.length === 0) return 'No scheduled tasks found.';
+    return 'Scheduled tasks:\n' + tasks.map((t) =>
+      `- [${t.id}] ${String(t.prompt).slice(0, 50)}... (${t.schedule_type}: ${t.schedule_value}) - ${t.status}, next: ${t.next_run || 'N/A'}`,
+    ).join('\n');
+  } catch (err) {
+    return `Error reading tasks: ${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+
+async function handleTaskLifecycle(
+  redis: RedisClientType,
+  groupFolder: string,
+  isMain: boolean,
+  type: string,
+  args: Record<string, unknown>,
+): Promise<string> {
+  await (redis as any).publish(
+    `kubeclaw:tasks:${groupFolder}`,
+    JSON.stringify({ type, taskId: String(args.task_id ?? ''), groupFolder, isMain }),
+  );
+  return `Task ${args.task_id} ${type.replace('_task', '')} requested.`;
+}
+
+async function handleUpdateTask(
+  redis: RedisClientType,
+  groupFolder: string,
+  isMain: boolean,
+  args: Record<string, unknown>,
+): Promise<string> {
+  const payload: Record<string, unknown> = {
+    type: 'update_task',
+    taskId: String(args.task_id ?? ''),
+    groupFolder,
+    isMain,
+  };
+  if (args.prompt !== undefined) payload.prompt = args.prompt;
+  if (args.schedule_type !== undefined) payload.schedule_type = args.schedule_type;
+  if (args.schedule_value !== undefined) payload.schedule_value = args.schedule_value;
+
+  await (redis as any).publish(`kubeclaw:tasks:${groupFolder}`, JSON.stringify(payload));
+  return `Task ${args.task_id} update requested.`;
+}
+
+async function handleRegisterGroup(
+  redis: RedisClientType,
+  groupFolder: string,
+  isMain: boolean,
+  args: Record<string, unknown>,
+): Promise<string> {
+  if (!isMain) return 'Only the main group can register new groups.';
+  await (redis as any).publish(
+    `kubeclaw:tasks:${groupFolder}`,
+    JSON.stringify({
+      type: 'register_group',
+      jid: String(args.jid ?? ''),
+      name: String(args.name ?? ''),
+      folder: String(args.folder ?? ''),
+      trigger: String(args.trigger ?? ''),
+      groupFolder,
+      isMain,
+    }),
+  );
+  return `Group "${args.name}" registered.`;
+}
+
+// ---- Superuser local tools ----
+
+async function localBash(args: Record<string, unknown>): Promise<string> {
+  const command = String(args.command ?? '');
+  const timeout = typeof args.timeout === 'number' ? args.timeout : 30_000;
+  try {
+    const { stdout, stderr } = await execFileAsync('bash', ['-c', command], {
+      timeout,
+      maxBuffer: 10 * 1024 * 1024,
+    });
+    return (stdout + (stderr ? `\nSTDERR:\n${stderr}` : '')).trim();
+  } catch (err: any) {
+    return `Error: ${err.message}\n${err.stdout ?? ''}\n${err.stderr ?? ''}`.trim();
+  }
+}
+
+function localRead(args: Record<string, unknown>): string {
+  const filePath = String(args.file_path ?? '');
+  const offset = typeof args.offset === 'number' ? args.offset : 0;
+  const limit = typeof args.limit === 'number' ? args.limit : undefined;
+  try {
+    const lines = fs.readFileSync(filePath, 'utf-8').split('\n');
+    const slice = limit !== undefined ? lines.slice(offset, offset + limit) : lines.slice(offset);
+    return slice.map((l, i) => `${offset + i + 1}\t${l}`).join('\n');
+  } catch (err) {
+    return `Error: ${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+
+function localWrite(args: Record<string, unknown>): string {
+  const filePath = String(args.file_path ?? '');
+  const content = String(args.content ?? '');
+  try {
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, content);
+    return `Written ${content.length} bytes to ${filePath}`;
+  } catch (err) {
+    return `Error: ${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+
+function localEdit(args: Record<string, unknown>): string {
+  const filePath = String(args.file_path ?? '');
+  const oldStr = String(args.old_string ?? '');
+  const newStr = String(args.new_string ?? '');
+  const replaceAll = args.replace_all === true;
+  try {
+    let content = fs.readFileSync(filePath, 'utf-8');
+    if (!content.includes(oldStr)) return `old_string not found in ${filePath}`;
+    content = replaceAll ? content.split(oldStr).join(newStr) : content.replace(oldStr, newStr);
+    fs.writeFileSync(filePath, content);
+    return `Edited ${filePath}`;
+  } catch (err) {
+    return `Error: ${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+
+// ---- Tool definitions ----
+
+function buildToolDefinitions(isSuperuser: boolean, isMain: boolean): OpenAI.ChatCompletionTool[] {
+  const tools: OpenAI.ChatCompletionTool[] = [
+    // Execution tools
+    {
+      type: 'function',
+      function: {
+        name: 'bash',
+        description: 'Run a bash command in the execution environment.',
+        parameters: {
+          type: 'object',
+          properties: {
+            command: { type: 'string', description: 'The bash command to run' },
+            timeout: { type: 'number', description: 'Timeout in milliseconds (optional)' },
+          },
+          required: ['command'],
+        },
+      },
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'read',
+        description: 'Read a file from the workspace.',
+        parameters: {
+          type: 'object',
+          properties: {
+            file_path: { type: 'string' },
+            offset: { type: 'number', description: 'Line number to start reading from (0-based)' },
+            limit: { type: 'number', description: 'Number of lines to read' },
+          },
+          required: ['file_path'],
+        },
+      },
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'write',
+        description: 'Write content to a file in the workspace.',
+        parameters: {
+          type: 'object',
+          properties: {
+            file_path: { type: 'string' },
+            content: { type: 'string' },
+          },
+          required: ['file_path', 'content'],
+        },
+      },
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'edit',
+        description: 'Replace a string in a file.',
+        parameters: {
+          type: 'object',
+          properties: {
+            file_path: { type: 'string' },
+            old_string: { type: 'string' },
+            new_string: { type: 'string' },
+            replace_all: { type: 'boolean' },
+          },
+          required: ['file_path', 'old_string', 'new_string'],
+        },
+      },
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'glob',
+        description: 'Find files by glob pattern.',
+        parameters: {
+          type: 'object',
+          properties: {
+            pattern: { type: 'string' },
+            path: { type: 'string', description: 'Directory to search in (optional)' },
+          },
+          required: ['pattern'],
+        },
+      },
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'grep',
+        description: 'Search file contents with regex.',
+        parameters: {
+          type: 'object',
+          properties: {
+            pattern: { type: 'string' },
+            path: { type: 'string' },
+            glob: { type: 'string' },
+            output_mode: { type: 'string', enum: ['content', 'files_with_matches', 'count'] },
+          },
+          required: ['pattern'],
+        },
+      },
+    },
+    // Browser tools
+    {
+      type: 'function',
+      function: {
+        name: 'web_fetch',
+        description: 'Fetch the content of a URL.',
+        parameters: {
+          type: 'object',
+          properties: {
+            url: { type: 'string' },
+            prompt: { type: 'string', description: 'Optional focus prompt' },
+          },
+          required: ['url'],
+        },
+      },
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'web_search',
+        description: 'Search the web.',
+        parameters: {
+          type: 'object',
+          properties: { query: { type: 'string' } },
+          required: ['query'],
+        },
+      },
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'agent_browser',
+        description: 'Run browser automation with Playwright.',
+        parameters: {
+          type: 'object',
+          properties: { command: { type: 'string' } },
+          required: ['command'],
+        },
+      },
+    },
+    // IPC tools
+    {
+      type: 'function',
+      function: {
+        name: 'send_message',
+        description: "Send a message to the user immediately while still running. Use for progress updates.",
+        parameters: {
+          type: 'object',
+          properties: {
+            text: { type: 'string' },
+            sender: { type: 'string', description: 'Role/identity name (optional)' },
+          },
+          required: ['text'],
+        },
+      },
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'schedule_task',
+        description: 'Schedule a recurring or one-time task.',
+        parameters: {
+          type: 'object',
+          properties: {
+            prompt: { type: 'string' },
+            schedule_type: { type: 'string', enum: ['cron', 'interval', 'once'] },
+            schedule_value: { type: 'string' },
+            context_mode: { type: 'string', enum: ['group', 'isolated'] },
+            target_group_jid: { type: 'string' },
+          },
+          required: ['prompt', 'schedule_type', 'schedule_value'],
+        },
+      },
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'list_tasks',
+        description: 'List scheduled tasks.',
+        parameters: { type: 'object', properties: {} },
+      },
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'pause_task',
+        description: 'Pause a scheduled task.',
+        parameters: { type: 'object', properties: { task_id: { type: 'string' } }, required: ['task_id'] },
+      },
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'resume_task',
+        description: 'Resume a paused task.',
+        parameters: { type: 'object', properties: { task_id: { type: 'string' } }, required: ['task_id'] },
+      },
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'cancel_task',
+        description: 'Cancel and delete a scheduled task.',
+        parameters: { type: 'object', properties: { task_id: { type: 'string' } }, required: ['task_id'] },
+      },
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'update_task',
+        description: 'Update an existing scheduled task.',
+        parameters: {
+          type: 'object',
+          properties: {
+            task_id: { type: 'string' },
+            prompt: { type: 'string' },
+            schedule_type: { type: 'string', enum: ['cron', 'interval', 'once'] },
+            schedule_value: { type: 'string' },
+          },
+          required: ['task_id'],
+        },
+      },
+    },
+  ];
+
+  if (isMain) {
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'register_group',
+        description: 'Register a new chat/group. Main group only.',
+        parameters: {
+          type: 'object',
+          properties: {
+            jid: { type: 'string' },
+            name: { type: 'string' },
+            folder: { type: 'string' },
+            trigger: { type: 'string' },
+          },
+          required: ['jid', 'name', 'folder', 'trigger'],
+        },
+      },
+    });
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'deploy_channel',
+        description: 'Ask the orchestrator to create Kubernetes resources for a new channel pod. Pass the full multi-document YAML. Main group only.',
+        parameters: {
+          type: 'object',
+          properties: {
+            yamlContent: { type: 'string', description: 'Multi-document Kubernetes YAML to apply (Deployment, PVC, Service)' },
+          },
+          required: ['yamlContent'],
+        },
+      },
+    });
+  }
+
+  if (isSuperuser) {
+    tools.push(
+      {
+        type: 'function',
+        function: {
+          name: 'local_bash',
+          description: 'Run a bash command directly in this container (superuser mode). Use to install packages, modify agent code, or perform system-level setup.',
+          parameters: {
+            type: 'object',
+            properties: {
+              command: { type: 'string' },
+              timeout: { type: 'number' },
+            },
+            required: ['command'],
+          },
+        },
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'local_read',
+          description: 'Read a file from this container\'s filesystem (superuser mode).',
+          parameters: {
+            type: 'object',
+            properties: {
+              file_path: { type: 'string' },
+              offset: { type: 'number' },
+              limit: { type: 'number' },
+            },
+            required: ['file_path'],
+          },
+        },
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'local_write',
+          description: 'Write a file in this container (superuser mode).',
+          parameters: {
+            type: 'object',
+            properties: {
+              file_path: { type: 'string' },
+              content: { type: 'string' },
+            },
+            required: ['file_path', 'content'],
+          },
+        },
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'local_edit',
+          description: 'Edit a file in this container (superuser mode).',
+          parameters: {
+            type: 'object',
+            properties: {
+              file_path: { type: 'string' },
+              old_string: { type: 'string' },
+              new_string: { type: 'string' },
+              replace_all: { type: 'boolean' },
+            },
+            required: ['file_path', 'old_string', 'new_string'],
+          },
+        },
+      },
+    );
+  }
+
+  return tools;
+}
+
+// ---- LLM client factory ----
+
+function createLLMClient(input: ContainerInput): { client: OpenAI; model: string } {
+  const provider = process.env.KUBECLAW_LLM_PROVIDER || 'openai';
+
+  if (provider === 'openrouter') {
+    return {
+      client: new OpenAI({
+        apiKey: process.env.OPENROUTER_API_KEY || 'no-key',
+        baseURL: process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1',
+      }),
+      model: process.env.OPENROUTER_MODEL || 'openai/gpt-4o',
+    };
+  }
+
+  // Default: OpenAI-compatible (openai, or any provider with OPENAI_* vars)
+  return {
+    client: new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY || 'no-key',
+      baseURL: process.env.OPENAI_BASE_URL || undefined,
+    }),
+    model: process.env.OPENAI_MODEL || process.env.DIRECT_LLM_MODEL || 'gpt-4o',
+  };
+}
+
+// ---- Agentic loop ----
+
+const MAX_TOOL_ROUNDS = 20;
+
+async function runAgentLoop(
+  input: ContainerInput,
+  redis: RedisClientType,
+  inputStream: InputStreamManager,
+  jobId: string,
+): Promise<void> {
+  const isSuperuser = process.env.KUBECLAW_SUPERUSER === 'true';
+  const { client, model } = createLLMClient(input);
+  const tools = buildToolDefinitions(isSuperuser, input.isMain);
+  const podReadyMap = new Map<string, boolean>();
+
+  const systemPrompt = loadSystemPrompt(input.assistantName);
+  const history = loadHistory();
+
+  let prompt = input.prompt;
+  if (input.isScheduledTask) {
+    prompt = `[SCHEDULED TASK - sent automatically, not directly from a user]\n\n${prompt}`;
+  }
+
+  // Drain any pending IPC messages into initial prompt
+  await inputStream.poll();
+  const pending = inputStream.drainUserMessages();
+  if (pending.length > 0) {
+    prompt += '\n' + pending.join('\n');
+  }
+
+  const messages: OpenAI.ChatCompletionMessageParam[] = [
+    { role: 'system', content: systemPrompt },
+    ...history,
+    { role: 'user', content: prompt },
+  ];
+
+  let finalResponse = '';
+  let sessionId = input.sessionId || randomUUID();
+
+  try {
+    let toolRounds = 0;
+    while (toolRounds <= MAX_TOOL_ROUNDS) {
+      log(`LLM call round ${toolRounds} (${messages.length} messages)`);
+
+      const response = await client.chat.completions.create({
+        model,
+        messages,
+        tools: tools.length > 0 ? tools : undefined,
+        tool_choice: tools.length > 0 ? 'auto' : undefined,
+      });
+
+      const msg = response.choices[0].message;
+      messages.push(msg);
+
+      const toolCalls = msg.tool_calls?.filter((c) => c.type === 'function') ?? [];
+
+      if (toolCalls.length === 0) {
+        finalResponse = msg.content ?? '';
+        break;
+      }
+
+      log(`Executing ${toolCalls.length} tool call(s)`);
+
+      for (const call of toolCalls) {
+        const name = call.function.name;
+        let args: Record<string, unknown> = {};
+        try { args = JSON.parse(call.function.arguments); } catch { /* use empty */ }
+
+        log(`Tool call: ${name}`);
+        let result: string;
+
+        if (TOOL_CATEGORY[name]) {
+          // Redis-routed tool
+          result = await callToolViaRedis(redis, inputStream, jobId, input.groupFolder, name, args, podReadyMap);
+        } else if (name.startsWith('local_') && isSuperuser) {
+          // Local superuser tool
+          switch (name) {
+            case 'local_bash': result = await localBash(args); break;
+            case 'local_read': result = localRead(args); break;
+            case 'local_write': result = localWrite(args); break;
+            case 'local_edit': result = localEdit(args); break;
+            default: result = `Unknown local tool: ${name}`;
+          }
+        } else {
+          // IPC tool
+          switch (name) {
+            case 'send_message':
+              result = await handleSendMessage(redis, input.groupFolder, input.chatJid, args);
+              break;
+            case 'schedule_task':
+              result = await handleScheduleTask(redis, input.groupFolder, input.chatJid, input.isMain, args);
+              break;
+            case 'list_tasks':
+              result = handleListTasks(input.groupFolder, input.isMain);
+              break;
+            case 'pause_task':
+            case 'resume_task':
+            case 'cancel_task':
+              result = await handleTaskLifecycle(redis, input.groupFolder, input.isMain, name, args);
+              break;
+            case 'update_task':
+              result = await handleUpdateTask(redis, input.groupFolder, input.isMain, args);
+              break;
+            case 'register_group':
+              result = await handleRegisterGroup(redis, input.groupFolder, input.isMain, args);
+              break;
+            case 'deploy_channel':
+              if (!input.isMain) { result = 'deploy_channel is only available to the main group.'; break; }
+              await (redis as any).publish(
+                `kubeclaw:tasks:${input.groupFolder}`,
+                JSON.stringify({ type: 'deploy_channel', yaml: String(args.yamlContent || ''), groupFolder: input.groupFolder }),
+              );
+              result = 'Deployment request sent to orchestrator.';
+              break;
+            default:
+              result = `Unknown tool: ${name}`;
+          }
+        }
+
+        messages.push({
+          role: 'tool',
+          tool_call_id: call.id,
+          content: result,
+        });
+      }
+
+      toolRounds++;
+
+      // Check input stream for follow-up messages or close signal after each round
+      await inputStream.poll();
+      if (inputStream.hasCloseSignal()) {
+        log('Close signal received mid-loop');
+        break;
+      }
+      const followUps = inputStream.drainUserMessages();
+      if (followUps.length > 0) {
+        log(`Received ${followUps.length} follow-up message(s) mid-loop`);
+        messages.push({ role: 'user', content: followUps.join('\n') });
+      }
+    }
+
+    // Emit result
+    writeOutput({ status: 'success', result: finalResponse, newSessionId: sessionId });
+
+    // Persist conversation history (exclude system message)
+    const toSave = messages.filter((m) => m.role !== 'system');
+    saveHistory(toSave);
+
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    log(`Agent error: ${errorMsg}`);
+    writeOutput({ status: 'error', result: null, newSessionId: sessionId, error: errorMsg });
+  }
+
+  // Wait for follow-up messages or close signal
+  log('Waiting for follow-up messages...');
+  while (true) {
+    await inputStream.blockPoll(5000);
+
+    if (inputStream.hasCloseSignal()) {
+      log('Close signal received, exiting');
+      break;
+    }
+
+    const followUps = inputStream.drainUserMessages();
+    if (followUps.length === 0) continue;
+
+    log(`Processing ${followUps.length} follow-up message(s)`);
+    const followUpPrompt = followUps.join('\n');
+
+    // Load latest history and run another loop iteration
+    const updatedHistory = loadHistory();
+    const followUpMessages: OpenAI.ChatCompletionMessageParam[] = [
+      { role: 'system', content: systemPrompt },
+      ...updatedHistory,
+      { role: 'user', content: followUpPrompt },
+    ];
+
+    try {
+      let toolRounds = 0;
+      let followUpResponse = '';
+
+      while (toolRounds <= MAX_TOOL_ROUNDS) {
+        const response = await client.chat.completions.create({
+          model,
+          messages: followUpMessages,
+          tools: tools.length > 0 ? tools : undefined,
+          tool_choice: tools.length > 0 ? 'auto' : undefined,
+        });
+
+        const msg = response.choices[0].message;
+        followUpMessages.push(msg);
+
+        const toolCalls = msg.tool_calls?.filter((c) => c.type === 'function') ?? [];
+        if (toolCalls.length === 0) {
+          followUpResponse = msg.content ?? '';
+          break;
+        }
+
+        for (const call of toolCalls) {
+          const name = call.function.name;
+          let args: Record<string, unknown> = {};
+          try { args = JSON.parse(call.function.arguments); } catch { /* use empty */ }
+
+          let result: string;
+          if (TOOL_CATEGORY[name]) {
+            result = await callToolViaRedis(redis, inputStream, jobId, input.groupFolder, name, args, podReadyMap);
+          } else if (name.startsWith('local_') && isSuperuser) {
+            switch (name) {
+              case 'local_bash': result = await localBash(args); break;
+              case 'local_read': result = localRead(args); break;
+              case 'local_write': result = localWrite(args); break;
+              case 'local_edit': result = localEdit(args); break;
+              default: result = `Unknown local tool: ${name}`;
+            }
+          } else {
+            switch (name) {
+              case 'send_message': result = await handleSendMessage(redis, input.groupFolder, input.chatJid, args); break;
+              case 'schedule_task': result = await handleScheduleTask(redis, input.groupFolder, input.chatJid, input.isMain, args); break;
+              case 'list_tasks': result = handleListTasks(input.groupFolder, input.isMain); break;
+              case 'pause_task': case 'resume_task': case 'cancel_task': result = await handleTaskLifecycle(redis, input.groupFolder, input.isMain, name, args); break;
+              case 'update_task': result = await handleUpdateTask(redis, input.groupFolder, input.isMain, args); break;
+              case 'register_group': result = await handleRegisterGroup(redis, input.groupFolder, input.isMain, args); break;
+              default: result = `Unknown tool: ${name}`;
+            }
+          }
+          followUpMessages.push({ role: 'tool', tool_call_id: call.id, content: result });
+        }
+        toolRounds++;
+
+        await inputStream.poll();
+        if (inputStream.hasCloseSignal()) break;
+      }
+
+      writeOutput({ status: 'success', result: followUpResponse, newSessionId: sessionId });
+
+      const toSave = followUpMessages.filter((m) => m.role !== 'system');
+      saveHistory(toSave);
+
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      log(`Follow-up error: ${errorMsg}`);
+      writeOutput({ status: 'error', result: null, error: errorMsg });
+    }
+
+    // Check for close signal after follow-up
+    await inputStream.poll();
+    if (inputStream.hasCloseSignal()) {
+      log('Close signal received after follow-up, exiting');
+      break;
+    }
+  }
+}
+
+// ---- Main ----
 
 async function main(): Promise<void> {
   let containerInput: ContainerInput;
-
   try {
     const stdinData = await readStdin();
     containerInput = JSON.parse(stdinData);
-    // Delete the temp file the entrypoint wrote — it contains secrets
     try { fs.unlinkSync('/tmp/input.json'); } catch { /* may not exist */ }
     log(`Received input for group: ${containerInput.groupFolder}`);
   } catch (err) {
     writeOutput({
       status: 'error',
       result: null,
-      error: `Failed to parse input: ${err instanceof Error ? err.message : String(err)}`
+      error: `Failed to parse input: ${err instanceof Error ? err.message : String(err)}`,
     });
     process.exit(1);
   }
 
-  // In K8s mode, connect to Redis for output publishing.
-  // REDIS_URL and KUBECLAW_JOB_ID are injected by KubernetesJobRunner.
-  const redisUrl = process.env.REDIS_URL;
+  // Merge secrets into process.env for the OpenAI client
+  for (const [key, value] of Object.entries(containerInput.secrets || {})) {
+    process.env[key] = value;
+  }
+
+  // Connect Redis
+  const redisUrl = process.env.REDIS_URL || 'redis://kubeclaw-redis:6379';
   const jobId = process.env.KUBECLAW_JOB_ID || '';
-  if (redisUrl && jobId) {
+
+  const redis = createClient({ url: redisUrl }) as RedisClientType;
+  redis.on('error', (err) => log(`Redis error: ${err.message}`));
+  await redis.connect();
+  log('Redis connected');
+
+  // Connect RedisIPCClient for output publishing (K8s mode)
+  if (jobId) {
     try {
-      redisClient = new RedisIPCClient(
+      redisIpcClient = new RedisIPCClient(
         redisUrl,
         containerInput.groupFolder,
         containerInput.chatJid,
         containerInput.isMain,
         jobId,
       );
-      await redisClient.connect();
-      log('Redis IPC connected (K8s output mode)');
+      await redisIpcClient.connect();
+      log('Redis IPC output connected');
     } catch (err) {
-      log(`Warning: failed to connect Redis IPC, falling back to stdout-only: ${err instanceof Error ? err.message : String(err)}`);
-      redisClient = null;
+      log(`Warning: failed to connect Redis IPC output: ${err instanceof Error ? err.message : String(err)}`);
+      redisIpcClient = null;
     }
   }
 
-  // Build SDK env: merge secrets into process.env for the SDK only.
-  // Secrets never touch process.env itself, so Bash subprocesses can't see them.
-  const sdkEnv: Record<string, string | undefined> = { ...process.env };
-  for (const [key, value] of Object.entries(containerInput.secrets || {})) {
-    sdkEnv[key] = value;
-  }
+  const inputStream = new InputStreamManager(redis, jobId || 'local');
 
-  const __dirname = path.dirname(fileURLToPath(import.meta.url));
-  const mcpServerPath = path.join(__dirname, 'ipc-mcp-stdio.js');
-  const toolRouterMcpPath = path.join(__dirname, 'tool-router-mcp.js');
-
-  let sessionId = containerInput.sessionId;
-  fs.mkdirSync(IPC_INPUT_DIR, { recursive: true });
-
-  // Clean up stale _close sentinel from previous container runs
-  try { fs.unlinkSync(IPC_INPUT_CLOSE_SENTINEL); } catch { /* ignore */ }
-
-  // Build initial prompt (drain any pending IPC messages too)
-  let prompt = containerInput.prompt;
-  if (containerInput.isScheduledTask) {
-    prompt = `[SCHEDULED TASK - The following message was sent automatically and is not coming directly from the user or group.]\n\n${prompt}`;
-  }
-  const pending = drainIpcInput();
-  if (pending.length > 0) {
-    log(`Draining ${pending.length} pending IPC messages into initial prompt`);
-    prompt += '\n' + pending.join('\n');
-  }
-
-  // Query loop: run query → wait for IPC message → run new query → repeat
-  let resumeAt: string | undefined;
   try {
-    while (true) {
-      log(`Starting query (session: ${sessionId || 'new'}, resumeAt: ${resumeAt || 'latest'})...`);
-
-      const queryResult = await runQuery(prompt, sessionId, mcpServerPath, toolRouterMcpPath, containerInput, sdkEnv, resumeAt);
-      if (queryResult.newSessionId) {
-        sessionId = queryResult.newSessionId;
-      }
-      if (queryResult.lastAssistantUuid) {
-        resumeAt = queryResult.lastAssistantUuid;
-      }
-
-      // If _close was consumed during the query, exit immediately.
-      // Don't emit a session-update marker (it would reset the host's
-      // idle timer and cause a 30-min delay before the next _close).
-      if (queryResult.closedDuringQuery) {
-        log('Close sentinel consumed during query, exiting');
-        break;
-      }
-
-      // Emit session update so host can track it
-      writeOutput({ status: 'success', result: null, newSessionId: sessionId });
-
-      log('Query ended, waiting for next IPC message...');
-
-      // Wait for the next message or _close sentinel
-      const nextMessage = await waitForIpcMessage();
-      if (nextMessage === null) {
-        log('Close sentinel received, exiting');
-        break;
-      }
-
-      log(`Got new message (${nextMessage.length} chars), starting new query`);
-      prompt = nextMessage;
-    }
-  } catch (err) {
-    const errorMessage = err instanceof Error ? err.message : String(err);
-    log(`Agent error: ${errorMessage}`);
-    writeOutput({
-      status: 'error',
-      result: null,
-      newSessionId: sessionId,
-      error: errorMessage
-    });
-    await redisClient?.disconnect().catch(() => {});
-    process.exit(1);
+    await runAgentLoop(containerInput, redis, inputStream, jobId);
+  } finally {
+    await redisIpcClient?.disconnect().catch(() => {});
+    await redis.disconnect().catch(() => {});
   }
-
-  await redisClient?.disconnect().catch(() => {});
 }
 
-main();
+main().catch((err) => {
+  console.error('[agent-runner] Fatal error:', err);
+  process.exit(1);
+});

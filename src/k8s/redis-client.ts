@@ -83,47 +83,59 @@ export async function closeRedisConnections(): Promise<void> {
 
 // Channel name generators
 export function getOutputChannel(groupFolder: string): string {
-  return `nanoclaw:messages:${groupFolder}`;
+  return `kubeclaw:messages:${groupFolder}`;
 }
 
 export function getTaskChannel(groupFolder: string): string {
-  return `nanoclaw:tasks:${groupFolder}`;
+  return `kubeclaw:tasks:${groupFolder}`;
 }
 
 export function getInputStream(jobId: string): string {
-  return `nanoclaw:input:${jobId}`;
+  return `kubeclaw:input:${jobId}`;
 }
 
 export function getJobStatusKey(jobId: string): string {
-  return `nanoclaw:job:${jobId}:status`;
+  return `kubeclaw:job:${jobId}:status`;
 }
 
 export function getJobOutputKey(jobId: string): string {
-  return `nanoclaw:job:${jobId}:output`;
+  return `kubeclaw:job:${jobId}:output`;
 }
 
 export function getConcurrencyKey(): string {
-  return 'nanoclaw:concurrency';
+  return 'kubeclaw:concurrency';
 }
 
 export function getQueueKey(): string {
-  return 'nanoclaw:job-queue';
+  return 'kubeclaw:job-queue';
 }
 
 export function getSessionKey(groupFolder: string): string {
-  return `nanoclaw:sessions:${groupFolder}`;
+  return `kubeclaw:sessions:${groupFolder}`;
 }
 
 export function getToolCallsStream(
   agentJobId: string,
   category: string,
 ): string {
-  return `nanoclaw:toolcalls:${agentJobId}:${category}`;
+  return `kubeclaw:toolcalls:${agentJobId}:${category}`;
 }
 
 export function getToolResultsStream(
   agentJobId: string,
   category: string,
 ): string {
-  return `nanoclaw:toolresults:${agentJobId}:${category}`;
+  return `kubeclaw:toolresults:${agentJobId}:${category}`;
+}
+
+export function getSpawnToolPodStream(): string {
+  return 'kubeclaw:spawn-tool-pod';
+}
+
+export function getSpawnAgentJobStream(): string {
+  return 'kubeclaw:spawn-agent-job';
+}
+
+export function getAgentJobResultStream(agentJobId: string): string {
+  return `kubeclaw:agent-job-result:${agentJobId}`;
 }

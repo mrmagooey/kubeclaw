@@ -11,6 +11,7 @@ const STEPS: Record<
 > = {
   environment: () => import('./environment.js'),
   kubernetes: () => import('./kubernetes.js'),
+  minikube: () => import('./minikube.js'),
   groups: () => import('./groups.js'),
   register: () => import('./register.js'),
   mounts: () => import('./mounts.js'),

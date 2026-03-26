@@ -1,0 +1,48 @@
+# Optional Cilium egress overlay for the KubeClaw Helm chart.
+#
+# Locks external connections to specific FQDNs instead of allowing all
+# port-443 traffic. Requires Cilium as the cluster CNI.
+#
+# Apply alongside your main values file:
+#   helm upgrade --install kubeclaw ./helm/kubeclaw \
+#     -f ./helm/kubeclaw/values-minikube.yaml \
+#     -f ./helm/kubeclaw/values-cilium.yaml
+#
+# ── Strict mode (default) ────────────────────────────────────────────────────
+# Only the LLM provider endpoints are reachable from agent jobs.
+# The browser tool and arbitrary curl/git will be blocked.
+# Recommended for laptops that also hold SSH keys, cloud credentials, etc.
+#
+# ── Tool-friendly mode ───────────────────────────────────────────────────────
+# Uncomment the matchPattern entry under agent.allowedFQDNs to allow arbitrary
+# HTTPS. Non-HTTPS ports remain blocked; Falco still logs all connections.
+#
+# ── Adding channel FQDNs ─────────────────────────────────────────────────────
+# As you enable channels, add their API hostnames to orchestrator.allowedFQDNs:
+#   Telegram : api.telegram.org
+#   Slack    : slack.com, wss-primary.slack.com
+#   Discord  : discord.com, gateway.discord.gg
+#   Gmail    : oauth2.googleapis.com, www.googleapis.com
+#   OpenRouter: openrouter.ai
+
+ciliumNetworkPolicy:
+  enabled: true
+
+  agent:
+    allowedFQDNs:
+      - api.anthropic.com      # Claude Agent SDK — required
+      - statsig.anthropic.com  # Claude Code feature flags — required by SDK
+      # Tool-friendly mode: uncomment to allow arbitrary HTTPS for browser/curl/git:
+      # - matchPattern: "*"
+
+  orchestrator:
+    allowedFQDNs:
+      - api.anthropic.com      # Claude Code OAuth / direct API
+      - statsig.anthropic.com  # Claude Code feature flags
+      # RAG embedding providers (add whichever you use):
+      # - api.openai.com         # rag.provider=openai
+      # - api.voyageai.com       # rag.provider=voyage
+      # Channel and LLM provider FQDNs:
+      # - openrouter.ai
+      # - api.telegram.org
+      # - slack.com

@@ -1,0 +1,90 @@
+{{- if .Values.networkPolicy.enabled }}
+---
+# Agents may only reach: DNS (UDP 53), Redis (TCP 6379), and HTTPS (TCP 443).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kubeclaw-agent-policy
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app: kubeclaw-agent
+  policyTypes:
+    - Egress
+  egress:
+    - to: []
+      ports:
+        - protocol: UDP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              app: kubeclaw-redis
+      ports:
+        - protocol: TCP
+          port: 6379
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 443
+---
+# Orchestrator: unrestricted egress (needs to create Jobs, call APIs, reach Redis).
+# Ingress restricted to port 8080 (health/metrics).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kubeclaw-orchestrator-policy
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app: kubeclaw-orchestrator
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from: []
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    - to: []
+---
+# Channel pods: egress to Redis, DNS, and the internet (channel APIs).
+# No K8s API access — automountServiceAccountToken is false on these pods.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kubeclaw-channel-policy
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      kubeclaw/channel: ""
+    matchExpressions:
+      - key: kubeclaw/channel
+        operator: Exists
+  policyTypes:
+    - Egress
+  egress:
+    - to: []
+      ports:
+        - protocol: UDP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              app: kubeclaw-redis
+      ports:
+        - protocol: TCP
+          port: 6379
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 443
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 80
+{{- end }}

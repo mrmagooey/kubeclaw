@@ -1,4 +1,4 @@
-import { execSync, spawn } from 'child_process';
+import { execSync, spawn, spawnSync } from 'child_process';
 import { existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 
@@ -6,8 +6,38 @@ import { join } from 'path';
 // We use a non-standard port to avoid colliding with any host-local Redis.
 export const KUBECLAW_REDIS_LOCAL_PORT = 16379;
 
+const CHART_DIR = './helm/kubeclaw';
+const RELEASE = 'kubeclaw';
+const NAMESPACE = 'kubeclaw';
+const E2E_REDIS_PASSWORD = 'kubeclaw-e2e-redis-pass';
+const REDIS_READY_TIMEOUT = 90_000;
+
 // Keep a reference so teardown can kill the port-forward process
 let portForwardProcess: ReturnType<typeof spawn> | null = null;
+
+function sleep(ms: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForRedisPod(): Promise<void> {
+  console.log('⏳ Waiting for Redis pod to be Running...');
+  const deadline = Date.now() + REDIS_READY_TIMEOUT;
+  while (Date.now() < deadline) {
+    const result = spawnSync(
+      'kubectl',
+      [
+        'get', 'pods',
+        '-n', NAMESPACE,
+        '-l', 'app=kubeclaw-redis',
+        '-o', 'jsonpath={.items[0].status.phase}',
+      ],
+      { encoding: 'utf8' },
+    );
+    if (result.stdout === 'Running') return;
+    await sleep(3000);
+  }
+  throw new Error(`Redis pod not Running after ${REDIS_READY_TIMEOUT}ms`);
+}
 
 /**
  * E2E Global Setup
@@ -97,46 +127,137 @@ export default async function setup() {
     );
   }
 
+  // ── Build agent container image into minikube Docker daemon ─────────────
+  // The tool-server and agent runner are both served from kubeclaw-agent:latest.
+  // We skip the build if the image already exists in the minikube daemon.
+  console.log('🐳 Checking for kubeclaw-agent:latest in minikube...');
+  try {
+    const checkResult = spawnSync(
+      'bash',
+      ['-c', 'eval $(minikube docker-env) && docker image inspect kubeclaw-agent:latest -f "{{.Id}}" 2>/dev/null'],
+      { encoding: 'utf8', stdio: 'pipe' },
+    );
+    if (checkResult.status === 0 && checkResult.stdout.trim()) {
+      console.log('✅ kubeclaw-agent:latest already present, skipping build\n');
+    } else {
+      console.log('🔨 Building kubeclaw-agent:latest inside minikube Docker daemon...');
+      const buildResult = spawnSync(
+        'bash',
+        ['-c', 'eval $(minikube docker-env) && docker build -t kubeclaw-agent:latest -f container/Dockerfile .'],
+        { encoding: 'utf8', stdio: 'inherit', timeout: 300_000 },
+      );
+      if (buildResult.status !== 0) {
+        throw new Error(`Agent image build failed with exit code ${buildResult.status}`);
+      }
+      console.log('✅ kubeclaw-agent:latest built\n');
+    }
+  } catch (err) {
+    console.warn(`⚠️  Could not build agent image: ${err}\n`);
+    // Non-fatal — tests that spawn agent jobs will skip or fail gracefully
+  }
+
+  // ── Install kubeclaw via Helm ────────────────────────────────────────────
+  // Pre-create the namespace with Helm ownership metadata so that helm can
+  // manage it (the chart's namespace.yaml PATCHes it with pod-security labels).
+  console.log('📦 Installing kubeclaw helm chart into kubeclaw namespace...');
+  spawnSync('kubectl', ['create', 'namespace', NAMESPACE], { encoding: 'utf8' });
+  spawnSync('kubectl', ['label', 'namespace', NAMESPACE,
+    'app.kubernetes.io/managed-by=Helm',
+  ], { encoding: 'utf8' });
+  spawnSync('kubectl', ['annotate', 'namespace', NAMESPACE,
+    `meta.helm.sh/release-name=${RELEASE}`,
+    `meta.helm.sh/release-namespace=${NAMESPACE}`,
+  ], { encoding: 'utf8' });
+
+  const installResult = spawnSync(
+    'helm',
+    [
+      'upgrade', '--install',
+      RELEASE,
+      CHART_DIR,
+      '--namespace', NAMESPACE,
+      '--timeout', '120s',
+      '--set', `namespace=${NAMESPACE}`,
+      '--set', 'secrets.anthropicApiKey=test-key',
+      '--set', 'secrets.claudeCodeOauthToken=test-token',
+      '--set', `redis.password=${E2E_REDIS_PASSWORD}`,
+    ],
+    { encoding: 'utf8', stdio: 'pipe' },
+  );
+
+  if (installResult.status !== 0) {
+    console.error('helm install stderr:', installResult.stderr);
+    throw new Error(`helm install failed with exit code ${installResult.status}`);
+  }
+  console.log('✅ kubeclaw helm chart installed\n');
+
+  // Wait for Redis pod to be ready before attempting port-forward
+  await waitForRedisPod();
+  console.log('✅ Redis pod running\n');
+
+  // Configure Redis default user with the admin password.
+  // Redis 7.2+ ignores --requirepass when --aclfile is set; the empty ACL
+  // file wins and makes the default user "nopass", which causes AUTH to fail.
+  // We set the password explicitly here so the orchestrator can authenticate.
+  console.log('🔑 Configuring Redis ACL default user password...');
+  try {
+    spawnSync(
+      'kubectl',
+      [
+        'exec', '-n', NAMESPACE, 'kubeclaw-redis-0', '--',
+        'redis-cli', 'ACL', 'SETUSER', 'default', 'on',
+        `>${E2E_REDIS_PASSWORD}`, '~*', '&*', '+@all',
+      ],
+      { encoding: 'utf8', stdio: 'pipe' },
+    );
+    spawnSync(
+      'kubectl',
+      ['exec', '-n', NAMESPACE, 'kubeclaw-redis-0', '--', 'redis-cli', '-a', E2E_REDIS_PASSWORD, 'ACL', 'SAVE'],
+      { encoding: 'utf8', stdio: 'pipe' },
+    );
+    console.log('✅ Redis ACL configured\n');
+  } catch (err) {
+    console.warn(`⚠️  Could not configure Redis ACL: ${err}\n`);
+  }
+
   // Set up a port-forward so e2e tests can subscribe/publish to the SAME
   // Redis that the in-cluster adapter containers use (kubeclaw-redis).
   // Without this, host-side subscribers connect to a host-local Redis while
   // adapter pods publish to the in-cluster Redis, so pub/sub never matches.
-  if (minikubeRunning) {
-    try {
-      console.log(
-        `🔌 Starting kubectl port-forward kubeclaw-redis → localhost:${KUBECLAW_REDIS_LOCAL_PORT}`,
-      );
-      portForwardProcess = spawn(
-        'kubectl',
-        [
-          'port-forward',
-          '-n',
-          'kubeclaw',
-          'svc/kubeclaw-redis',
-          `${KUBECLAW_REDIS_LOCAL_PORT}:6379`,
-        ],
-        { stdio: 'ignore', detached: false },
-      );
+  try {
+    console.log(
+      `🔌 Starting kubectl port-forward kubeclaw-redis → localhost:${KUBECLAW_REDIS_LOCAL_PORT}`,
+    );
+    portForwardProcess = spawn(
+      'kubectl',
+      [
+        'port-forward',
+        '-n',
+        NAMESPACE,
+        'svc/kubeclaw-redis',
+        `${KUBECLAW_REDIS_LOCAL_PORT}:6379`,
+      ],
+      { stdio: 'ignore', detached: false },
+    );
 
-      // Give it a moment to establish
-      await new Promise((resolve) => setTimeout(resolve, 2000));
+    // Give it a moment to establish
+    await sleep(2000);
 
-      // Verify the port is open
-      execSync(`nc -z localhost ${KUBECLAW_REDIS_LOCAL_PORT}`, {
-        stdio: 'pipe',
-      });
-      console.log(
-        `✅ kubeclaw-redis port-forward active on localhost:${KUBECLAW_REDIS_LOCAL_PORT}\n`,
-      );
+    // Verify the port is open
+    execSync(`nc -z localhost ${KUBECLAW_REDIS_LOCAL_PORT}`, { stdio: 'pipe' });
+    console.log(
+      `✅ kubeclaw-redis port-forward active on localhost:${KUBECLAW_REDIS_LOCAL_PORT}\n`,
+    );
 
-      // Tell all test files to use this forwarded Redis
-      process.env.KUBECLAW_REDIS_URL = `redis://localhost:${KUBECLAW_REDIS_LOCAL_PORT}`;
-    } catch (err) {
-      console.warn(
-        `⚠️  Could not set up kubeclaw-redis port-forward: ${err}\n`,
-      );
-      // Non-fatal — tests that need it will still run but pub/sub tests may fail
-    }
+    // Tell all test files to use this forwarded Redis (password included)
+    process.env.KUBECLAW_REDIS_URL = `redis://:${E2E_REDIS_PASSWORD}@localhost:${KUBECLAW_REDIS_LOCAL_PORT}`;
+    // Also set REDIS_URL so tests that use process.env.REDIS_URL pick up the same instance
+    process.env.REDIS_URL = process.env.KUBECLAW_REDIS_URL;
+  } catch (err) {
+    console.warn(
+      `⚠️  Could not set up kubeclaw-redis port-forward: ${err}\n`,
+    );
+    // Non-fatal — tests that need it will still run but pub/sub tests may fail
   }
 
   console.log('✅ E2E Global Setup complete\n');
@@ -150,4 +271,14 @@ export async function teardown() {
     portForwardProcess.kill();
     portForwardProcess = null;
   }
+
+  spawnSync('helm', ['uninstall', RELEASE, '--namespace', NAMESPACE], {
+    encoding: 'utf8',
+    stdio: 'pipe',
+  });
+  spawnSync(
+    'kubectl',
+    ['delete', 'namespace', NAMESPACE, '--ignore-not-found', '--timeout=60s'],
+    { encoding: 'utf8', stdio: 'pipe' },
+  );
 }

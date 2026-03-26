@@ -222,6 +222,7 @@ export class HttpSidecarJobRunner {
         value: healthEndpoint,
       },
       { name: 'KUBECLAW_JOB_ID', value: jobId },
+      { name: 'KUBECLAW_GROUP_FOLDER', value: input.groupFolder },
       // Redis ACL credentials for follow-up support
       { name: 'REDIS_URL', value: REDIS_URL },
       ...(spec.credentials

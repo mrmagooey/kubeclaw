@@ -1,349 +1,354 @@
 ---
 name: debug
-description: Debug container agent issues. Use when things aren't working, container fails, authentication problems, or to understand how the container system works. Covers logs, environment variables, mounts, and common issues.
+description: Debug Kubernetes agent issues. Use when things aren't working, agent jobs fail, authentication problems, or to understand how the Kubernetes system works. Covers logs, kubectl commands, PVCs, and common issues.
 ---
 
-# KubeClaw Container Debugging
+# KubeClaw Kubernetes Debugging
 
-This guide covers debugging the containerized agent execution system.
+This guide covers debugging the Kubernetes-based agent execution system.
 
 ## Architecture Overview
 
 ```
-Host (macOS)                          Container (Linux VM)
+Kubernetes Cluster
 ─────────────────────────────────────────────────────────────
-src/container-runner.ts               container/agent-runner/
+deployment/kubeclaw-orchestrator      batch/Job: kubeclaw-agent-*
     │                                      │
-    │ spawns container                      │ runs Claude Agent SDK
-    │ with volume mounts                   │ with MCP servers
+    │ creates Job                          │ runs Claude Agent SDK
+    │ via src/k8s/job-runner.ts            │ with MCP servers
     │                                      │
-    ├── data/env/env ──────────────> /workspace/env-dir/env
-    ├── groups/{folder} ───────────> /workspace/group
-    ├── data/ipc/{folder} ────────> /workspace/ipc
-    ├── data/sessions/{folder}/.claude/ ──> /home/node/.claude/ (isolated per-group)
-    └── (main only) project root ──> /workspace/project
+    ├── Redis Pub/Sub ─────────────────────► agent output stream
+    ├── Redis Streams ────────────────────► agent input
+    │
+    PVC: kubeclaw-groups  → /workspace/group  (subPath: groupFolder)
+    PVC: kubeclaw-sessions → /home/node/.claude (subPath: groupFolder)
 ```
 
-**Important:** The container runs as user `node` with `HOME=/home/node`. Session files must be mounted to `/home/node/.claude/` (not `/root/.claude/`) for session resumption to work.
+**Important:** Agent Jobs run as user `node` with `HOME=/home/node`. Session files must be mounted to `/home/node/.claude/` (not `/root/.claude/`) for session resumption to work.
 
 ## Log Locations
 
-| Log | Location | Content |
-|-----|----------|---------|
-| **Main app logs** | `logs/kubeclaw.log` | Host-side WhatsApp, routing, container spawning |
-| **Main app errors** | `logs/kubeclaw.error.log` | Host-side errors |
-| **Container run logs** | `groups/{folder}/logs/container-*.log` | Per-run: input, mounts, stderr, stdout |
-| **Claude sessions** | `~/.claude/projects/` | Claude Code session history |
+| Log               | Command                                                              | Content                            |
+| ----------------- | -------------------------------------------------------------------- | ---------------------------------- |
+| Orchestrator logs | `kubectl logs -f deployment/kubeclaw-orchestrator -n kubeclaw`       | Message routing, job creation, IPC |
+| Agent job logs    | `kubectl logs job/<job-name> -n kubeclaw`                            | Claude SDK output, tool calls      |
+| Recent jobs       | `kubectl get jobs -n kubeclaw --sort-by=.metadata.creationTimestamp` | Job history                        |
 
 ## Enabling Debug Logging
 
 Set `LOG_LEVEL=debug` for verbose output:
 
 ```bash
-# For development
-LOG_LEVEL=debug npm run dev
+# Check current log level
+kubectl get deployment kubeclaw-orchestrator -n kubeclaw -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="LOG_LEVEL")].value}'
 
-# For launchd service (macOS), add to plist EnvironmentVariables:
-<key>LOG_LEVEL</key>
-<string>debug</string>
-# For systemd service (Linux), add to unit [Service] section:
-# Environment=LOG_LEVEL=debug
+# To enable debug, edit the deployment and set LOG_LEVEL=debug
+kubectl edit deployment kubeclaw-orchestrator -n kubeclaw
+# Add/modify the LOG_LEVEL environment variable
 ```
 
 Debug level shows:
-- Full mount configurations
-- Container command arguments
-- Real-time container stderr
+
+- Full job specifications
+- Redis IPC operations
+- Real-time agent output
 
 ## Common Issues
 
-### 1. "Claude Code process exited with code 1"
+### 1. "Agent not responding"
 
-**Check the container log file** in `groups/{folder}/logs/container-*.log`
+**Check the orchestrator logs:**
+
+```bash
+kubectl logs deployment/kubeclaw-orchestrator -n kubeclaw --tail=100
+```
 
 Common causes:
 
-#### Missing Authentication
+#### Job Creation Failed
+
 ```
-Invalid API key · Please run /login
+Error creating job: ...
 ```
-**Fix:** Ensure `.env` file exists with either OAuth token or API key:
+
+**Fix:** Check orchestrator has proper RBAC permissions to create Jobs:
+
 ```bash
-cat .env  # Should show one of:
-# CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-...  (subscription)
-# ANTHROPIC_API_KEY=sk-ant-api03-...        (pay-per-use)
+kubectl get role kubeclaw-orchestrator -n kubeclaw
 ```
 
-#### Root User Restriction
+#### Redis Connection Issues
+
 ```
---dangerously-skip-permissions cannot be used with root/sudo privileges
+Error connecting to Redis: ...
 ```
-**Fix:** Container must run as non-root user. Check Dockerfile has `USER node`.
 
-### 2. Environment Variables Not Passing
+**Fix:** Verify Redis is running and `REDIS_URL` env var is set:
 
-**Runtime note:** Environment variables passed via `-e` may be lost when using `-i` (interactive/piped stdin).
-
-**Workaround:** The system extracts only authentication variables (`CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`) from `.env` and mounts them for sourcing inside the container. Other env vars are not exposed.
-
-To verify env vars are reaching the container:
 ```bash
-echo '{}' | docker run -i \
-  -v $(pwd)/data/env:/workspace/env-dir:ro \
-  --entrypoint /bin/bash kubeclaw-agent:latest \
-  -c 'export $(cat /workspace/env-dir/env | xargs); echo "OAuth: ${#CLAUDE_CODE_OAUTH_TOKEN} chars, API: ${#ANTHROPIC_API_KEY} chars"'
+kubectl get pods -n kubeclaw -l app=kubeclaw-redis
+kubectl get deployment kubeclaw-orchestrator -n kubeclaw -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="REDIS_URL")].value}'
 ```
 
-### 3. Mount Issues
+### 2. Job Stuck in Pending
 
-**Container mount notes:**
-- Docker supports both `-v` and `--mount` syntax
-- Use `:ro` suffix for readonly mounts:
-  ```bash
-  # Readonly
-  -v /path:/container/path:ro
+**Check job status:**
 
-  # Read-write
-  -v /path:/container/path
-  ```
-
-To check what's mounted inside a container:
 ```bash
-docker run --rm --entrypoint /bin/bash kubeclaw-agent:latest -c 'ls -la /workspace/'
+kubectl describe job <job-name> -n kubeclaw
 ```
 
-Expected structure:
+Common causes:
+
+#### PVC Not Bound
+
 ```
-/workspace/
-├── env-dir/env           # Environment file (CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY)
-├── group/                # Current group folder (cwd)
-├── project/              # Project root (main channel only)
-├── global/               # Global CLAUDE.md (non-main only)
-├── ipc/                  # Inter-process communication
-│   ├── messages/         # Outgoing WhatsApp messages
-│   ├── tasks/            # Scheduled task commands
-│   ├── current_tasks.json    # Read-only: scheduled tasks visible to this group
-│   └── available_groups.json # Read-only: WhatsApp groups for activation (main only)
-└── extra/                # Additional custom mounts
+Warning  FailedMount  ...  kubelet  Unable to attach or mount volumes
 ```
 
-### 4. Permission Issues
+**Fix:** Check PVC status:
 
-The container runs as user `node` (uid 1000). Check ownership:
 ```bash
-docker run --rm --entrypoint /bin/bash kubeclaw-agent:latest -c '
-  whoami
-  ls -la /workspace/
-  ls -la /app/
-'
+kubectl get pvc -n kubeclaw
 ```
 
-All of `/workspace/` and `/app/` should be owned by `node`.
+#### Insufficient Resources
 
-### 5. Session Not Resuming / "Claude Code process exited with code 1"
+```
+Warning  FailedScheduling  ...  insufficient cpu/memory
+```
 
-If sessions aren't being resumed (new session ID every time), or Claude Code exits with code 1 when resuming:
+**Fix:** Check node resources:
 
-**Root cause:** The SDK looks for sessions at `$HOME/.claude/projects/`. Inside the container, `HOME=/home/node`, so it looks at `/home/node/.claude/projects/`.
-
-**Check the mount path:**
 ```bash
-# In container-runner.ts, verify mount is to /home/node/.claude/, NOT /root/.claude/
-grep -A3 "Claude sessions" src/container-runner.ts
+kubectl top nodes
+kubectl describe nodes
+```
+
+### 3. Redis Connection Errors
+
+**Check Redis health:**
+
+```bash
+kubectl get pods -n kubeclaw -l app=kubeclaw-redis
+kubectl logs statefulset/kubeclaw-redis -n kubeclaw --tail=50
+```
+
+**Verify REDIS_URL is configured:**
+
+```bash
+kubectl get secret kubeclaw-redis -n kubeclaw -o jsonpath='{.data.admin-password}' | base64 -d
+```
+
+### 4. Session Not Resuming
+
+If sessions aren't being resumed (new session ID every time):
+
+**Root cause:** The SDK looks for sessions at `$HOME/.claude/projects/`. Inside the job, `HOME=/home/node`, so it looks at `/home/node/.claude/projects/`.
+
+**Check the PVC mount:**
+
+```bash
+# Verify the sessions PVC is mounted correctly
+kubectl get job <job-name> -n kubeclaw -o jsonpath='{.spec.template.spec.volumes}'
 ```
 
 **Verify sessions are accessible:**
+
 ```bash
-docker run --rm --entrypoint /bin/bash \
-  -v ~/.claude:/home/node/.claude \
-  kubeclaw-agent:latest -c '
-echo "HOME=$HOME"
-ls -la $HOME/.claude/projects/ 2>&1 | head -5
-'
+# Check what's in the sessions PVC from the orchestrator
+kubectl exec -it deployment/kubeclaw-orchestrator -n kubeclaw -- \
+  ls -la /app/groups/<groupFolder>/.claude/projects/ 2>/dev/null || echo "No sessions found"
 ```
 
-**Fix:** Ensure `container-runner.ts` mounts to `/home/node/.claude/`:
-```typescript
-mounts.push({
-  hostPath: claudeDir,
-  containerPath: '/home/node/.claude',  // NOT /root/.claude
-  readonly: false
-});
-```
-
-### 6. MCP Server Failures
-
-If an MCP server fails to start, the agent may exit. Check the container logs for MCP initialization errors.
-
-## Manual Container Testing
-
-### Test the full agent flow:
-```bash
-# Set up env file
-mkdir -p data/env groups/test
-cp .env data/env/env
-
-# Run test query
-echo '{"prompt":"What is 2+2?","groupFolder":"test","chatJid":"test@g.us","isMain":false}' | \
-  docker run -i \
-  -v $(pwd)/data/env:/workspace/env-dir:ro \
-  -v $(pwd)/groups/test:/workspace/group \
-  -v $(pwd)/data/ipc:/workspace/ipc \
-  kubeclaw-agent:latest
-```
-
-### Test Claude Code directly:
-```bash
-docker run --rm --entrypoint /bin/bash \
-  -v $(pwd)/data/env:/workspace/env-dir:ro \
-  kubeclaw-agent:latest -c '
-  export $(cat /workspace/env-dir/env | xargs)
-  claude -p "Say hello" --dangerously-skip-permissions --allowedTools ""
-'
-```
-
-### Interactive shell in container:
-```bash
-docker run --rm -it --entrypoint /bin/bash kubeclaw-agent:latest
-```
-
-## SDK Options Reference
-
-The agent-runner uses these Claude Agent SDK options:
+**Fix:** Ensure `src/k8s/job-runner.ts` mounts the sessions PVC with correct subPath:
 
 ```typescript
-query({
-  prompt: input.prompt,
-  options: {
-    cwd: '/workspace/group',
-    allowedTools: ['Bash', 'Read', 'Write', ...],
-    permissionMode: 'bypassPermissions',
-    allowDangerouslySkipPermissions: true,  // Required with bypassPermissions
-    settingSources: ['project'],
-    mcpServers: { ... }
-  }
-})
+{
+  name: 'sessions',
+  persistentVolumeClaim: { claimName: 'kubeclaw-sessions' }
+}
+// ...
+{
+  name: 'sessions',
+  mountPath: '/home/node/.claude',  // NOT /root/.claude
+  subPath: groupFolder
+}
 ```
 
-**Important:** `allowDangerouslySkipPermissions: true` is required when using `permissionMode: 'bypassPermissions'`. Without it, Claude Code exits with code 1.
+### 5. Authentication Errors
 
-## Rebuilding After Changes
+If the agent fails with authentication errors:
+
+**Check the secrets exist:**
 
 ```bash
-# Rebuild main app
-npm run build
-
-# Rebuild container (use --no-cache for clean rebuild)
-./container/build.sh
-
-# Or force full rebuild
-docker builder prune -af
-./container/build.sh
+kubectl get secret kubeclaw-secrets -n kubeclaw
 ```
 
-## Checking Container Image
+**Verify secret keys:**
 
 ```bash
-# List images
-docker images
-
-# Check what's in the image
-docker run --rm --entrypoint /bin/bash kubeclaw-agent:latest -c '
-  echo "=== Node version ==="
-  node --version
-
-  echo "=== Claude Code version ==="
-  claude --version
-
-  echo "=== Installed packages ==="
-  ls /app/node_modules/
-'
+kubectl get secret kubeclaw-secrets -n kubeclaw -o jsonpath='{.data}' | jq keys
 ```
+
+Should contain one of:
+
+- `CLAUDE_CODE_OAUTH_TOKEN` (subscription)
+- `ANTHROPIC_API_KEY` (pay-per-use)
+
+## Manual Testing
+
+### Check orchestrator is running:
+
+```bash
+kubectl get pods -n kubeclaw
+```
+
+### Check recent agent jobs:
+
+```bash
+kubectl get jobs -n kubeclaw --sort-by=.metadata.creationTimestamp | tail -10
+```
+
+### View logs for a specific agent job:
+
+```bash
+kubectl logs job/<job-name> -n kubeclaw
+```
+
+### Check Redis connectivity from orchestrator:
+
+```bash
+kubectl exec -it deployment/kubeclaw-orchestrator -n kubeclaw -- \
+  node -e "const r=require('ioredis'); const c=new r(process.env.REDIS_URL); c.ping().then(console.log)"
+```
+
+### Inspect PVC usage:
+
+```bash
+kubectl exec -it deployment/kubeclaw-orchestrator -n kubeclaw -- \
+  du -sh /app/groups/* 2>/dev/null | head -20
+```
+
+## IPC Debugging
+
+The orchestrator communicates with agents via Redis Pub/Sub and Streams:
+
+### Check Redis pub/sub channels (active agent output streams):
+
+```bash
+kubectl exec -it statefulset/kubeclaw-redis -n kubeclaw -- \
+  redis-cli -a $(kubectl get secret kubeclaw-redis -n kubeclaw \
+    -o jsonpath='{.data.admin-password}' | base64 -d) \
+  pubsub channels 'kubeclaw:*'
+```
+
+### Monitor all kubeclaw Redis traffic:
+
+```bash
+kubectl exec -it statefulset/kubeclaw-redis -n kubeclaw -- \
+  redis-cli -a <password> monitor | grep kubeclaw
+```
+
+### Check pending input streams (messages queued for agent):
+
+```bash
+kubectl exec -it statefulset/kubeclaw-redis -n kubeclaw -- \
+  redis-cli -a <password> keys 'kubeclaw:input:*'
+```
+
+**Redis channel types:**
+
+- `kubeclaw:output:<job-name>` - Agent publishes output chunks
+- `kubeclaw:input:<job-name>` - Stream for agent input
+- `kubeclaw:done:<job-name>` - Agent signals completion
 
 ## Session Persistence
 
-Claude sessions are stored per-group in `data/sessions/{group}/.claude/` for security isolation. Each group has its own session directory, preventing cross-group access to conversation history.
+Claude sessions are stored per-group in the `kubeclaw-sessions` PVC at subPath matching the group folder. Each group has its own session directory, preventing cross-group access to conversation history.
 
-**Critical:** The mount path must match the container user's HOME directory:
-- Container user: `node`
-- Container HOME: `/home/node`
+**Critical:** The mount path must match the job user's HOME directory:
+
+- Job user: `node`
+- Job HOME: `/home/node`
 - Mount target: `/home/node/.claude/` (NOT `/root/.claude/`)
 
 To clear sessions:
 
 ```bash
-# Clear all sessions for all groups
-rm -rf data/sessions/
+# Clear all sessions for all groups (WARNING: destructive)
+kubectl exec -it deployment/kubeclaw-orchestrator -n kubeclaw -- \
+  rm -rf /app/groups/*/.claude/
 
 # Clear sessions for a specific group
-rm -rf data/sessions/{groupFolder}/.claude/
+kubectl exec -it deployment/kubeclaw-orchestrator -n kubeclaw -- \
+  rm -rf /app/groups/<groupFolder>/.claude/
 
 # Also clear the session ID from KubeClaw's tracking (stored in SQLite)
-sqlite3 store/messages.db "DELETE FROM sessions WHERE group_folder = '{groupFolder}'"
+kubectl exec -it deployment/kubeclaw-orchestrator -n kubeclaw -- \
+  sqlite3 /app/store/messages.db "DELETE FROM sessions WHERE group_folder = '<groupFolder>'"
 ```
 
 To verify session resumption is working, check the logs for the same session ID across messages:
+
 ```bash
-grep "Session initialized" logs/kubeclaw.log | tail -5
+kubectl logs deployment/kubeclaw-orchestrator -n kubeclaw | grep "Session initialized" | tail -5
 # Should show the SAME session ID for consecutive messages in the same group
 ```
 
-## IPC Debugging
-
-The container communicates back to the host via files in `/workspace/ipc/`:
+## Rebuilding After Changes
 
 ```bash
-# Check pending messages
-ls -la data/ipc/messages/
+# Rebuild main app and roll out
+npm run build
+docker build -t kubeclaw-orchestrator:latest .
+kind load docker-image kubeclaw-orchestrator:latest  # or push to registry
+kubectl rollout restart deployment/kubeclaw-orchestrator -n kubeclaw
 
-# Check pending task operations
-ls -la data/ipc/tasks/
-
-# Read a specific IPC file
-cat data/ipc/messages/*.json
-
-# Check available groups (main channel only)
-cat data/ipc/main/available_groups.json
-
-# Check current tasks snapshot
-cat data/ipc/{groupFolder}/current_tasks.json
+# Rebuild agent container
+./container/build.sh
+kind load docker-image kubeclaw-agent:claude  # or push to registry
+# New jobs will pick up the new image automatically
 ```
 
-**IPC file types:**
-- `messages/*.json` - Agent writes: outgoing WhatsApp messages
-- `tasks/*.json` - Agent writes: task operations (schedule, pause, resume, cancel, refresh_groups)
-- `current_tasks.json` - Host writes: read-only snapshot of scheduled tasks
-- `available_groups.json` - Host writes: read-only list of WhatsApp groups (main only)
-
-## Quick Diagnostic Script
-
-Run this to check common issues:
+## Checking Agent Image
 
 ```bash
-echo "=== Checking KubeClaw Container Setup ==="
+# List images in cluster (if using local registry)
+docker images | grep kubeclaw-agent
 
-echo -e "\n1. Authentication configured?"
-[ -f .env ] && (grep -q "CLAUDE_CODE_OAUTH_TOKEN=sk-" .env || grep -q "ANTHROPIC_API_KEY=sk-" .env) && echo "OK" || echo "MISSING - add CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY to .env"
+# Check what's in the image by running a test job
+cat <<EOF | kubectl apply -f -
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: agent-info
+  namespace: kubeclaw
+spec:
+  template:
+    spec:
+      containers:
+      - name: agent
+        image: kubeclaw-agent:claude
+        command:
+        - /bin/sh
+        - -c
+        - |
+          echo "=== Node version ==="
+          node --version
+          echo "=== Claude Code version ==="
+          claude --version
+          echo "=== Home directory ==="
+          echo "HOME=$HOME"
+          echo "=== Workspace ==="
+          ls -la /workspace/
+      restartPolicy: Never
+  backoffLimit: 0
+EOF
 
-echo -e "\n2. Env file copied for container?"
-[ -f data/env/env ] && echo "OK" || echo "MISSING - will be created on first run"
-
-echo -e "\n3. Container runtime running?"
-docker info &>/dev/null && echo "OK" || echo "NOT RUNNING - start Docker Desktop (macOS) or sudo systemctl start docker (Linux)"
-
-echo -e "\n4. Container image exists?"
-echo '{}' | docker run -i --entrypoint /bin/echo kubeclaw-agent:latest "OK" 2>/dev/null || echo "MISSING - run ./container/build.sh"
-
-echo -e "\n5. Session mount path correct?"
-grep -q "/home/node/.claude" src/container-runner.ts 2>/dev/null && echo "OK" || echo "WRONG - should mount to /home/node/.claude/, not /root/.claude/"
-
-echo -e "\n6. Groups directory?"
-ls -la groups/ 2>/dev/null || echo "MISSING - run setup"
-
-echo -e "\n7. Recent container logs?"
-ls -t groups/*/logs/container-*.log 2>/dev/null | head -3 || echo "No container logs yet"
-
-echo -e "\n8. Session continuity working?"
-SESSIONS=$(grep "Session initialized" logs/kubeclaw.log 2>/dev/null | tail -5 | awk '{print $NF}' | sort -u | wc -l)
-[ "$SESSIONS" -le 2 ] && echo "OK (recent sessions reusing IDs)" || echo "CHECK - multiple different session IDs, may indicate resumption issues"
+# Wait and check logs
+kubectl wait --for=condition=complete job/agent-info -n kubeclaw --timeout=30s
+kubectl logs job/agent-info -n kubeclaw
+kubectl delete job agent-info -n kubeclaw
 ```

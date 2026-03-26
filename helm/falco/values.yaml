@@ -1,0 +1,100 @@
+# Falco Helm values for KubeClaw minikube deployment.
+# Install: helm upgrade --install falco falcosecurity/falco -n falco --create-namespace -f helm/falco/values.yaml
+
+driver:
+  # modern_ebpf uses CO-RE eBPF — no kernel headers or /sys/kernel/debug needed.
+  # Works inside minikube's Docker-in-Docker node without extra host configuration.
+  kind: modern_ebpf
+
+falcosidekick:
+  # Disabled for minimal laptop footprint. Enable to route alerts to Slack/webhook.
+  enabled: false
+
+tty: true
+
+resources:
+  requests:
+    memory: 128Mi
+    cpu: 100m
+  limits:
+    memory: 512Mi
+    cpu: 500m
+
+customRules:
+  kubeclaw_rules.yaml: |-
+    # KubeClaw agent job security rules.
+    # Alerts appear in: kubectl logs -n falco daemonset/falco
+
+    - rule: KubeClaw agent unexpected outbound port
+      desc: >
+        A kubeclaw-agent pod opened an outbound connection to a port other than
+        DNS (53), Redis (6379), or HTTPS (443). This may indicate a compromised
+        agent or misconfigured tool.
+      condition: >
+        outbound
+        and container.label.app = "kubeclaw-agent"
+        and not fd.sport in (53, 443, 6379)
+      output: >
+        KubeClaw agent unexpected outbound connection
+        (pod=%k8s.pod.name namespace=%k8s.ns.name
+         dst=%fd.rip port=%fd.sport proc=%proc.name)
+      priority: WARNING
+      tags: [kubeclaw, network]
+
+    - rule: KubeClaw agent privilege escalation attempt
+      desc: >
+        A kubeclaw-agent pod executed a privilege-escalation binary (su, sudo,
+        newgrp, newuidmap, newgidmap). Agent containers run as UID 1000 and
+        should never need elevated privileges.
+      condition: >
+        spawned_process
+        and container.label.app = "kubeclaw-agent"
+        and proc.name in (su, sudo, newgrp, newuidmap, newgidmap)
+      output: >
+        KubeClaw agent privilege escalation attempt
+        (pod=%k8s.pod.name namespace=%k8s.ns.name
+         proc=%proc.name user=%user.name parent=%proc.pname)
+      priority: CRITICAL
+      tags: [kubeclaw, privilege_escalation]
+
+    - rule: KubeClaw agent sensitive file read
+      desc: >
+        A kubeclaw-agent pod opened a sensitive credential or key file.
+        Agent mounts are restricted by the mount allowlist, but this rule
+        catches any attempt that bypasses it at the filesystem level.
+      condition: >
+        open_read
+        and container.label.app = "kubeclaw-agent"
+        and (
+          fd.name startswith "/root/.ssh"
+          or fd.name contains "/id_rsa"
+          or fd.name contains "/id_ed25519"
+          or fd.name = "/etc/shadow"
+          or fd.name contains "/.aws/credentials"
+          or fd.name contains "/.kube/config"
+          or fd.name contains "/.docker/config.json"
+        )
+      output: >
+        KubeClaw agent sensitive file access
+        (pod=%k8s.pod.name namespace=%k8s.ns.name
+         file=%fd.name proc=%proc.name user=%user.name)
+      priority: ERROR
+      tags: [kubeclaw, sensitive_files]
+
+    - rule: KubeClaw agent unexpected shell spawn
+      desc: >
+        A shell process was spawned inside a kubeclaw-agent pod from an
+        unexpected parent process. The agent entrypoint launches node, which
+        may legitimately spawn shells for bash tool use — flag anything
+        spawned from outside those expected parents.
+      condition: >
+        spawned_process
+        and container.label.app = "kubeclaw-agent"
+        and proc.name in (sh, bash, zsh, dash, fish)
+        and not proc.pname in (node, entrypoint.sh, sh, bash)
+      output: >
+        KubeClaw agent unexpected shell spawn
+        (pod=%k8s.pod.name namespace=%k8s.ns.name
+         shell=%proc.name parent=%proc.pname user=%user.name)
+      priority: WARNING
+      tags: [kubeclaw, shell]

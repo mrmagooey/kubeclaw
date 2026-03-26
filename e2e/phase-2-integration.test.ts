@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { requireKubernetes } from './setup.js';
+import { requireKubernetes, isKubeclawDeployed } from './setup.js';
 
 /**
  * Phase 2: Integration Tests
@@ -23,6 +23,7 @@ describe('Phase 2: Integration', () => {
 
   describe('Orchestrator', () => {
     it('should have orchestrator deployment', async () => {
+      if (!isKubeclawDeployed()) return;
       const { execSync } = await import('child_process');
 
       try {
@@ -40,6 +41,7 @@ describe('Phase 2: Integration', () => {
     });
 
     it('should have orchestrator pods (may not be Running without channels configured)', async () => {
+      if (!isKubeclawDeployed()) return;
       const { execSync } = await import('child_process');
 
       try {
@@ -57,6 +59,7 @@ describe('Phase 2: Integration', () => {
 
   describe('Redis Integration', () => {
     it('should have Redis deployment', async () => {
+      if (!isKubeclawDeployed()) return;
       const { execSync } = await import('child_process');
 
       try {
@@ -72,6 +75,7 @@ describe('Phase 2: Integration', () => {
     });
 
     it('should have Redis service', async () => {
+      if (!isKubeclawDeployed()) return;
       const { execSync } = await import('child_process');
 
       try {
@@ -89,6 +93,7 @@ describe('Phase 2: Integration', () => {
 
   describe('Storage', () => {
     it('should have PersistentVolumeClaims', async () => {
+      if (!isKubeclawDeployed()) return;
       const { execSync } = await import('child_process');
 
       try {

@@ -289,25 +289,34 @@ describe('Error Handling', () => {
       const configRedis = new Redis(REDIS_URL, { connectTimeout: 5000 });
       let requiresAuth = false;
       try {
-        const requirepass = await configRedis.config('GET', 'requirepass');
-        requiresAuth =
-          Array.isArray(requirepass) &&
-          requirepass[1] &&
-          requirepass[1].length > 0;
+        // Check the ACL default user — if it has "nopass", any password is
+        // accepted and we cannot meaningfully test auth failure for the
+        // default user. This happens when Redis uses ACL-based per-user auth
+        // (e.g. via --requirepass + --aclfile where the file overrides nopass).
+        const aclList = (await configRedis.acl('LIST')) as string[];
+        const defaultEntry = aclList.find((u) => u.startsWith('user default '));
+        requiresAuth = defaultEntry
+          ? !defaultEntry.includes(' nopass ')
+          : false;
       } catch {
-        // If CONFIG GET fails, auth is likely not required
+        // If ACL LIST fails, auth is likely not required
       } finally {
         await configRedis.quit().catch(() => {});
       }
 
       if (!requiresAuth) {
         console.warn(
-          '⚠️  Redis does not require authentication, skipping auth failure test',
+          '⚠️  Redis default user has nopass — auth failure test not applicable',
         );
         return;
       }
 
-      const authRedis = new Redis(REDIS_URL, {
+      // Use host/port directly (not the full URL) so the wrong password
+      // is not overridden by the password embedded in REDIS_URL.
+      const parsedUrl = new URL(REDIS_URL.replace(/^redis:/, 'http:'));
+      const authRedis = new Redis({
+        host: parsedUrl.hostname,
+        port: parseInt(parsedUrl.port || '6379', 10),
         password: 'wrong-password-that-does-not-exist',
         connectTimeout: 5000,
         maxRetriesPerRequest: 1,

@@ -154,4 +154,43 @@ describe('apply', () => {
       fs.rmSync(outsideDir, { recursive: true, force: true });
     }
   });
+
+  it('applies structured env_additions to .env.example', async () => {
+    const skillDir = createSkillPackage(tmpDir, {
+      skill: 'env-skill',
+      version: '1.0.0',
+      core_version: '1.0.0',
+      adds: [],
+      modifies: [],
+      structured: { env_additions: ['MY_VAR', 'OTHER_VAR'] },
+    });
+
+    const result = await applySkill(skillDir);
+    expect(result.success).toBe(true);
+
+    const envPath = path.join(tmpDir, '.env.example');
+    expect(fs.existsSync(envPath)).toBe(true);
+    const content = fs.readFileSync(envPath, 'utf-8');
+    expect(content).toContain('MY_VAR=');
+    expect(content).toContain('OTHER_VAR=');
+  });
+
+  it('applies structured npm_dependencies to package.json without npm install when empty', async () => {
+    fs.writeFileSync(
+      path.join(tmpDir, 'package.json'),
+      JSON.stringify({ name: 'test', version: '1.0.0', dependencies: {} }, null, 2) + '\n',
+    );
+
+    const skillDir = createSkillPackage(tmpDir, {
+      skill: 'npm-skill',
+      version: '1.0.0',
+      core_version: '1.0.0',
+      adds: [],
+      modifies: [],
+      structured: { npm_dependencies: {} },
+    });
+
+    const result = await applySkill(skillDir);
+    expect(result.success).toBe(true);
+  });
 });

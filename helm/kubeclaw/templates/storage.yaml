@@ -1,0 +1,100 @@
+---
+# Groups: per-group agent filesystems. Requires ReadWriteMany for concurrent agents.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: kubeclaw-groups
+  namespace: {{ .Values.namespace }}
+spec:
+  accessModes:
+    - {{ .Values.storage.accessMode }}
+  {{- include "kubeclaw.storageClassName" . | nindent 2 }}
+  resources:
+    requests:
+      storage: {{ .Values.storage.sizes.groups }}
+---
+# Sessions: per-group Claude Code session state (~/.claude).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: kubeclaw-sessions
+  namespace: {{ .Values.namespace }}
+spec:
+  accessModes:
+    - {{ .Values.storage.accessMode }}
+  {{- include "kubeclaw.storageClassName" . | nindent 2 }}
+  resources:
+    requests:
+      storage: {{ .Values.storage.sizes.sessions }}
+---
+# Project: orchestrator project directory mount.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: kubeclaw-project
+  namespace: {{ .Values.namespace }}
+spec:
+  accessModes:
+    - {{ .Values.storage.accessMode }}
+  {{- include "kubeclaw.storageClassName" . | nindent 2 }}
+  resources:
+    requests:
+      storage: {{ .Values.storage.sizes.project }}
+---
+# Store: SQLite database and orchestrator state.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: kubeclaw-store
+  namespace: {{ .Values.namespace }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- include "kubeclaw.storageClassName" . | nindent 2 }}
+  resources:
+    requests:
+      storage: {{ .Values.storage.sizes.store }}
+{{- range $name, $cfg := .Values.channels }}
+{{- if $cfg.enabled }}
+---
+# Per-channel storage: groups, store, sessions (ReadWriteOnce — each channel pod owns its own PVCs)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: kubeclaw-channel-{{ $name }}-groups
+  namespace: {{ $.Values.namespace }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- include "kubeclaw.storageClassName" $ | nindent 2 }}
+  resources:
+    requests:
+      storage: {{ $.Values.storage.sizes.groups }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: kubeclaw-channel-{{ $name }}-store
+  namespace: {{ $.Values.namespace }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- include "kubeclaw.storageClassName" $ | nindent 2 }}
+  resources:
+    requests:
+      storage: {{ $.Values.storage.sizes.store }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: kubeclaw-channel-{{ $name }}-sessions
+  namespace: {{ $.Values.namespace }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- include "kubeclaw.storageClassName" $ | nindent 2 }}
+  resources:
+    requests:
+      storage: {{ $.Values.storage.sizes.sessions }}
+{{- end }}
+{{- end }}

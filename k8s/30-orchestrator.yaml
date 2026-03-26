@@ -34,6 +34,37 @@ rules:
       - pods/log
     verbs:
       - get
+  - apiGroups:
+      - ''
+    resources:
+      - persistentvolumeclaims
+    verbs:
+      - create
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - apps
+    resources:
+      - deployments
+    verbs:
+      - create
+      - get
+      - list
+      - watch
+      - update
+      - patch
+  - apiGroups:
+      - ''
+    resources:
+      - services
+    verbs:
+      - create
+      - get
+      - list
+      - watch
+      - update
+      - patch
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -66,8 +97,8 @@ spec:
     spec:
       serviceAccountName: kubeclaw-orchestrator
       securityContext:
-        runAsUser: 0
-        runAsNonRoot: false
+        runAsUser: 1000
+        runAsGroup: 1000
         seccompProfile:
           type: RuntimeDefault
       initContainers:
@@ -91,8 +122,8 @@ spec:
           image: kubeclaw-orchestrator:latest
           imagePullPolicy: Never
           securityContext:
-            runAsUser: 0
-            runAsGroup: 0
+            runAsUser: 1000
+            runAsGroup: 1000
             allowPrivilegeEscalation: false
             capabilities:
               drop:
@@ -110,7 +141,7 @@ spec:
             - name: NANOCLAW_RUNTIME
               value: kubernetes
             - name: NANOCLAW_NAMESPACE
-              value: nanoclaw
+              value: kubeclaw
             - name: NANOCLAW_IPC_BASE
               value: /data/sessions
             - name: MAX_CONCURRENT_JOBS
@@ -142,6 +173,8 @@ spec:
               mountPath: /app/store
             - name: sessions
               mountPath: /data/sessions
+            - name: plugins
+              mountPath: /workspace/plugins
           resources:
             requests:
               memory: 256Mi
@@ -159,3 +192,6 @@ spec:
         - name: sessions
           persistentVolumeClaim:
             claimName: kubeclaw-sessions
+        - name: plugins
+          persistentVolumeClaim:
+            claimName: kubeclaw-plugins

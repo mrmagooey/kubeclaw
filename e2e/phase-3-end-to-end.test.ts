@@ -14,7 +14,7 @@ import {
   getIRCServer,
 } from './lib/irc-server.js';
 import { IRCChannel, IRCChannelOpts } from '../src/channels/irc.js';
-import { execSync } from 'child_process';
+import { execSync, spawnSync } from 'child_process';
 
 const NAMESPACE = getNamespace();
 
@@ -311,6 +311,12 @@ describe('Phase 3: End-to-End', () => {
       };
     }
 
+    /** Run kubectl without throwing; returns stdout and exit code. */
+    function kcSafe(args: string[]): { stdout: string; exitCode: number } {
+      const result = spawnSync('kubectl', args, { encoding: 'utf8' });
+      return { stdout: (result.stdout ?? '').trim(), exitCode: result.status ?? 1 };
+    }
+
     async function getOrchestratorPodLogs(
       namespace: string,
       tail: number = 100,
@@ -437,28 +443,22 @@ describe('Phase 3: End-to-End', () => {
         await new Promise((r) => setTimeout(r, 30000));
 
         try {
-          const jobOutput = execSync(
-            `kubectl get jobs -n ${NAMESPACE} -o json`,
-            {
-              encoding: 'utf8',
-            },
-          );
-          const jobList: { items: any[] } = JSON.parse(jobOutput);
+          // Use --no-headers to avoid ENOBUFS from large JSON payloads
+          // when many test jobs have accumulated in the namespace.
+          const jobNames = kcSafe([
+            'get', 'jobs', '-n', NAMESPACE, '--no-headers',
+            '-o', 'custom-columns=NAME:.metadata.name',
+          ]);
+          const names = jobNames.stdout
+            .split('\n')
+            .map((l) => l.trim())
+            .filter(Boolean);
 
-          if (jobList.items.length > 0) {
-            const recentJobs = jobList.items
-              .sort(
-                (a, b) =>
-                  new Date(b.metadata.creationTimestamp).getTime() -
-                  new Date(a.metadata.creationTimestamp).getTime(),
-              )
-              .slice(0, 5);
+          if (names.length > 0) {
+            const recentJobs = names.slice(-5);
 
-            console.log(`✅ Found ${jobList.items.length} total jobs`);
-            console.log(
-              '📦 Recent jobs:',
-              recentJobs.map((j) => j.metadata.name),
-            );
+            console.log(`✅ Found ${names.length} total jobs`);
+            console.log('📦 Recent jobs:', recentJobs);
 
             expect(recentJobs.length).toBeGreaterThan(0);
             console.log('✅ Kubernetes job was created by orchestrator');

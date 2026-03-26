@@ -9,7 +9,6 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import {
-  requireKubernetes,
   isKubernetesAvailable,
   getSharedRedis,
   getNamespace,
@@ -19,22 +18,19 @@ const NAMESPACE = getNamespace();
 
 describe('Sidecar Security Tests', () => {
   let redis: Awaited<ReturnType<typeof getSharedRedis>> | null = null;
-  let k8sAvailable = false;
 
   beforeAll(async () => {
     try {
-      k8sAvailable = isKubernetesAvailable();
-      if (k8sAvailable) {
-        requireKubernetes();
-        redis = await getSharedRedis();
+      if (isKubernetesAvailable()) {
+        redis = getSharedRedis();
       }
     } catch {
-      k8sAvailable = false;
+      // redis stays null
     }
   });
 
   afterAll(async () => {
-    if (k8sAvailable && redis) {
+    if (redis) {
       try {
         // Clean up any test ACL users
         const allUsers = await redis.acl('LIST');
@@ -62,7 +58,7 @@ describe('Sidecar Security Tests', () => {
   });
 
   describe('Key Isolation Between Sidecars', () => {
-    it.skipIf(!k8sAvailable)(
+    it(
       'should prevent sidecar A from accessing sidecar B keys',
       async () => {
         if (!redis) return;
@@ -158,7 +154,7 @@ describe('Sidecar Security Tests', () => {
       },
     );
 
-    it.skipIf(!k8sAvailable)(
+    it(
       'should prevent wildcard access to other job keys',
       async () => {
         if (!redis) return;
@@ -221,7 +217,7 @@ describe('Sidecar Security Tests', () => {
   });
 
   describe('Admin Command Restrictions', () => {
-    it.skipIf(!k8sAvailable)(
+    it(
       'should block FLUSHDB command for sidecars',
       async () => {
         if (!redis) return;
@@ -266,7 +262,7 @@ describe('Sidecar Security Tests', () => {
       },
     );
 
-    it.skipIf(!k8sAvailable)(
+    it(
       'should block CONFIG command for sidecars',
       async () => {
         if (!redis) return;
@@ -310,7 +306,7 @@ describe('Sidecar Security Tests', () => {
       },
     );
 
-    it.skipIf(!k8sAvailable)(
+    it(
       'should block ACL manipulation commands',
       async () => {
         if (!redis) return;
@@ -354,7 +350,7 @@ describe('Sidecar Security Tests', () => {
       },
     );
 
-    it.skipIf(!k8sAvailable)('should block dangerous commands', async () => {
+    it('should block dangerous commands', async () => {
       if (!redis) return;
       const { Redis } = await import('ioredis');
 
@@ -399,7 +395,7 @@ describe('Sidecar Security Tests', () => {
   });
 
   describe('Authentication', () => {
-    it.skipIf(!k8sAvailable)('should reject invalid credentials', async () => {
+    it('should reject invalid credentials', async () => {
       if (!redis) return;
       const { Redis } = await import('ioredis');
 
@@ -423,18 +419,22 @@ describe('Sidecar Security Tests', () => {
         port: redis.options.port,
         username: `sidecar-${jobId}`,
         password: 'wrong-password',
-        maxRetriesPerRequest: 1,
+        maxRetriesPerRequest: 0,
+        retryStrategy: () => null,
       });
+      // Suppress unhandled error events — ioredis emits auth failures as both
+      // error events and rejected promises; we capture the rejection below.
+      wrongPasswordRedis.on('error', () => {});
 
       try {
         await expect(wrongPasswordRedis.ping()).rejects.toThrow();
       } finally {
-        await wrongPasswordRedis.quit();
+        await wrongPasswordRedis.quit().catch(() => {});
         await redis.acl('DELUSER', `sidecar-${jobId}`);
       }
     });
 
-    it.skipIf(!k8sAvailable)('should reject non-existent users', async () => {
+    it('should reject non-existent users', async () => {
       if (!redis) return;
       const { Redis } = await import('ioredis');
 
@@ -444,17 +444,19 @@ describe('Sidecar Security Tests', () => {
         port: redis.options.port,
         username: 'sidecar-non-existent-user',
         password: 'some-password',
-        maxRetriesPerRequest: 1,
+        maxRetriesPerRequest: 0,
+        retryStrategy: () => null,
       });
+      nonExistentRedis.on('error', () => {});
 
       try {
         await expect(nonExistentRedis.ping()).rejects.toThrow();
       } finally {
-        await nonExistentRedis.quit();
+        await nonExistentRedis.quit().catch(() => {});
       }
     });
 
-    it.skipIf(!k8sAvailable)('should reject expired credentials', async () => {
+    it('should reject expired credentials', async () => {
       if (!redis) return;
       const { Redis } = await import('ioredis');
 
@@ -464,6 +466,8 @@ describe('Sidecar Security Tests', () => {
       // Create ACL user with noexpire flag (simulating expired)
       // Note: Redis ACL doesn't have built-in expiration, but we can simulate
       // by creating then immediately deleting the user
+      // +ping is in @connection, not @read/@write — grant it explicitly so the
+      // "valid" connection test succeeds before we simulate expiration.
       await redis.acl(
         'SETUSER',
         `sidecar-${jobId}`,
@@ -472,6 +476,7 @@ describe('Sidecar Security Tests', () => {
         `~kubeclaw:*:${jobId}`,
         '+@read',
         '+@write',
+        '+ping',
       );
 
       // Verify user works
@@ -499,19 +504,21 @@ describe('Sidecar Security Tests', () => {
         port: redis.options.port,
         username: `sidecar-${jobId}`,
         password: password,
-        maxRetriesPerRequest: 1,
+        maxRetriesPerRequest: 0,
+        retryStrategy: () => null,
       });
+      expiredRedis.on('error', () => {});
 
       try {
         await expect(expiredRedis.ping()).rejects.toThrow();
       } finally {
-        await expiredRedis.quit();
+        await expiredRedis.quit().catch(() => {});
       }
     });
   });
 
   describe('Command Whitelist', () => {
-    it.skipIf(!k8sAvailable)(
+    it(
       'should only allow explicitly permitted commands',
       async () => {
         if (!redis) return;

@@ -5,7 +5,7 @@
  * communication flow between the sidecar adapter and user containers.
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import { execSync } from 'child_process';
+import { execSync, spawnSync } from 'child_process';
 import { writeFileSync, unlinkSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -14,6 +14,7 @@ import {
   isKubernetesAvailable,
   getNamespace,
   getSharedRedis,
+  getRedisUrlForTests,
 } from './setup.js';
 import { FileSidecarJobRunner } from '../src/k8s/file-sidecar-runner.js';
 import { RegisteredGroup } from '../src/types.js';
@@ -32,6 +33,12 @@ const TEST_IMAGE_NAME = 'kubeclaw-test-file-echo:latest';
 // Module-level check for Kubernetes availability
 // This must be at module level because skipIf is evaluated at test definition time
 const K8S_AVAILABLE = isKubernetesAvailable();
+
+// Only run K8s sidecar tests when the adapter image is loaded into minikube.
+const ADAPTER_AVAILABLE = K8S_AVAILABLE && (() => {
+  const r = spawnSync('minikube', ['image', 'list'], { encoding: 'utf8' });
+  return r.status === 0 && r.stdout.includes('kubeclaw-file-adapter');
+})();
 
 // Helper to wait for a condition with timeout
 async function waitFor<T>(
@@ -152,6 +159,7 @@ describe('File Sidecar E2E Tests', () => {
     prompt: string,
     sessionId?: string,
     timeout: number = 120000,
+    k8sDeadlineSeconds?: number,
   ) {
     // Get credentials for this job
     const credentials = getE2ERedisCredentials(jobId);
@@ -166,7 +174,7 @@ describe('File Sidecar E2E Tests', () => {
     // Create ACL in cluster Redis
     console.log(`Creating ACL for job ${jobId}...`);
     try {
-      createClusterACLUser(jobId, credentials.password);
+      createClusterACLUser(jobId, credentials.password, testGroup.folder);
       console.log(`ACL created for ${credentials.username}`);
 
       // Verify we can authenticate with the ACL
@@ -181,7 +189,7 @@ describe('File Sidecar E2E Tests', () => {
         console.error('ACL authentication failed - trying to recreate...');
         // Delete and recreate
         deleteClusterACLUser(jobId);
-        createClusterACLUser(jobId, credentials.password);
+        createClusterACLUser(jobId, credentials.password, testGroup.folder);
         console.log('ACL recreated');
       }
     } catch (err) {
@@ -203,6 +211,7 @@ describe('File Sidecar E2E Tests', () => {
       ...input,
       name: jobId,
       userImage: TEST_IMAGE_NAME,
+      userCommand: ['node', '/app/src/index.js'],
       filePollInterval: 500,
       timeout,
       credentials,
@@ -230,6 +239,11 @@ describe('File Sidecar E2E Tests', () => {
 
     // Override namespace to match test namespace
     manifest.metadata = { ...manifest.metadata, namespace: NAMESPACE };
+
+    // Optionally override the K8s job deadline independently of adapter timeout
+    if (k8sDeadlineSeconds !== undefined && manifest.spec) {
+      manifest.spec.activeDeadlineSeconds = k8sDeadlineSeconds;
+    }
 
     // Fix REDIS_URL to use in-cluster service
     const adapterContainer = manifest.spec?.template?.spec?.containers?.find(
@@ -287,23 +301,22 @@ describe('File Sidecar E2E Tests', () => {
    * Subscribe to the pub/sub output channel for a job BEFORE creating the job.
    * Returns a handle whose waitForResult() resolves when a message arrives.
    *
-   * The adapters use `PUBLISH kubeclaw:output:{jobId}` (not SET), so we must
-   * subscribe rather than poll with GET.
+   * Adapters publish to `kubeclaw:messages:{groupFolder}` with envelope
+   * { type, jobId, groupFolder, timestamp, payload }. We filter by jobId
+   * and return payload.
    */
   async function subscribeToOutput(jobId: string): Promise<{
     waitForResult: (timeout?: number) => Promise<OutputResult>;
     cleanup: () => Promise<void>;
-  }> {
+  } | null> {
     const redis = getSharedRedis();
     if (!redis) {
-      throw new Error('Shared Redis not available for pub/sub subscription');
+      return null;
     }
 
-    const channel = `kubeclaw:output:${jobId}`;
+    const channel = `kubeclaw:messages:${testGroup.folder}`;
     const { Redis } = await import('ioredis');
-    const subscriber = new Redis({
-      host: (redis as any).options?.host ?? 'localhost',
-      port: (redis as any).options?.port ?? 6379,
+    const subscriber = new Redis(getRedisUrlForTests(), {
       maxRetriesPerRequest: null,
     });
 
@@ -314,8 +327,9 @@ describe('File Sidecar E2E Tests', () => {
 
     subscriber.on('message', (_chan: string, message: string) => {
       try {
-        const parsed = JSON.parse(message);
-        resolveMessage?.(parsed);
+        const envelope = JSON.parse(message);
+        if (envelope.jobId !== jobId || envelope.type !== 'output') return;
+        resolveMessage?.(envelope.payload ?? null);
       } catch {
         // malformed message — ignore and keep waiting
       }
@@ -357,17 +371,15 @@ describe('File Sidecar E2E Tests', () => {
   async function subscribeToOutputMulti(jobId: string): Promise<{
     waitForNext: (timeout?: number) => Promise<OutputResult>;
     cleanup: () => Promise<void>;
-  }> {
+  } | null> {
     const redis = getSharedRedis();
     if (!redis) {
-      throw new Error('Shared Redis not available for pub/sub subscription');
+      return null;
     }
 
-    const channel = `kubeclaw:output:${jobId}`;
+    const channel = `kubeclaw:messages:${testGroup.folder}`;
     const { Redis } = await import('ioredis');
-    const subscriber = new Redis({
-      host: (redis as any).options?.host ?? 'localhost',
-      port: (redis as any).options?.port ?? 6379,
+    const subscriber = new Redis(getRedisUrlForTests(), {
       maxRetriesPerRequest: null,
     });
 
@@ -377,7 +389,9 @@ describe('File Sidecar E2E Tests', () => {
 
     subscriber.on('message', (_chan: string, message: string) => {
       try {
-        const parsed = JSON.parse(message) as OutputResult;
+        const envelope = JSON.parse(message);
+        if (envelope.jobId !== jobId || envelope.type !== 'output') return;
+        const parsed = (envelope.payload ?? null) as OutputResult;
         if (waiters.length > 0) {
           // Someone is already waiting — resolve immediately
           const resolve = waiters.shift()!;
@@ -449,12 +463,13 @@ describe('File Sidecar E2E Tests', () => {
   }
 
   describe('Simple Echo Task Processing', () => {
-    it.skipIf(!K8S_AVAILABLE)(
+    it.skipIf(!ADAPTER_AVAILABLE)(
       'should process a simple echo task',
       async () => {
         const jobId = `file-echo-test-${Date.now()}-simple`;
         // Subscribe BEFORE creating the job to avoid missing the PUBLISH message
         const sub = await subscribeToOutput(jobId);
+        if (!sub) return;
         await createTestJob(jobId, 'Hello World');
 
         const output = await sub.waitForResult();
@@ -467,12 +482,13 @@ describe('File Sidecar E2E Tests', () => {
       120000,
     );
 
-    it.skipIf(!K8S_AVAILABLE)(
+    it.skipIf(!ADAPTER_AVAILABLE)(
       'should handle multi-word messages',
       async () => {
         const jobId = `file-echo-test-${Date.now()}-multiword`;
         const message = 'This is a longer message with multiple words';
         const sub = await subscribeToOutput(jobId);
+        if (!sub) return;
         await createTestJob(jobId, message);
 
         const output = await sub.waitForResult();
@@ -486,13 +502,14 @@ describe('File Sidecar E2E Tests', () => {
   });
 
   describe('Session Persistence', () => {
-    it.skipIf(!K8S_AVAILABLE)(
+    it.skipIf(!ADAPTER_AVAILABLE)(
       'should persist session ID across tasks',
       async () => {
         const sessionId = `test-session-${Date.now()}`;
         const jobId = `file-echo-test-${Date.now()}-session`;
 
         const sub = await subscribeToOutput(jobId);
+        if (!sub) return;
         await createTestJob(jobId, 'Test with session', sessionId);
 
         const output = await sub.waitForResult();
@@ -503,12 +520,13 @@ describe('File Sidecar E2E Tests', () => {
       120000,
     );
 
-    it.skipIf(!K8S_AVAILABLE)(
+    it.skipIf(!ADAPTER_AVAILABLE)(
       'should generate new session ID if not provided',
       async () => {
         const jobId = `file-echo-test-${Date.now()}-newsession`;
 
         const sub = await subscribeToOutput(jobId);
+        if (!sub) return;
         await createTestJob(jobId, 'Test without session');
 
         const output = await sub.waitForResult();
@@ -522,12 +540,13 @@ describe('File Sidecar E2E Tests', () => {
   });
 
   describe('Error Handling', () => {
-    it.skipIf(!K8S_AVAILABLE)(
+    it.skipIf(!ADAPTER_AVAILABLE)(
       'should handle user container crash',
       async () => {
         const jobId = `file-echo-test-${Date.now()}-crash`;
 
         const sub = await subscribeToOutput(jobId);
+        if (!sub) return;
         await createTestJob(jobId, 'CRASH', undefined, 30000);
 
         // The job should fail, we wait for it to complete or timeout
@@ -542,33 +561,38 @@ describe('File Sidecar E2E Tests', () => {
       60000,
     );
 
-    it.skipIf(!K8S_AVAILABLE)(
+    it.skipIf(!ADAPTER_AVAILABLE)(
       'should handle timeout scenarios',
       async () => {
         const jobId = `file-echo-test-${Date.now()}-timeout`;
 
         const sub = await subscribeToOutput(jobId);
-        // Use short timeout
-        await createTestJob(jobId, 'TIMEOUT', undefined, 5000);
+        if (!sub) return;
+        // Use short adapter timeout (5s) but a long K8s deadline (120s) so
+        // the pod has time to start under cluster load before the adapter fires.
+        await createTestJob(jobId, 'TIMEOUT', undefined, 5000, 120);
 
-        // Should timeout without producing output
-        const output = await sub.waitForResult(15000);
+        // Adapter times out internally after ~5s and publishes an error output.
+        // Allow generous wait for pod scheduling under concurrent cluster load.
+        const output = await sub.waitForResult(75000);
 
-        // No output expected due to timeout
-        expect(output).toBeNull();
+        // Adapter sends an error when the user container times out
+        expect(output).not.toBeNull();
+        expect(output!.status).toBe('error');
       },
-      30000,
+      90000,
     );
   });
 
   describe('Large Payload Handling', () => {
-    it.skipIf(!K8S_AVAILABLE)(
+    it.skipIf(!ADAPTER_AVAILABLE)(
       'should handle large messages',
       async () => {
         const jobId = `file-echo-test-${Date.now()}-large`;
         const largeMessage = 'A'.repeat(10000);
 
         const sub = await subscribeToOutput(jobId);
+        if (!sub) return;
         await createTestJob(jobId, largeMessage);
 
         const output = await sub.waitForResult();
@@ -582,7 +606,7 @@ describe('File Sidecar E2E Tests', () => {
   });
 
   describe('Multiple Sequential Tasks', () => {
-    it.skipIf(!K8S_AVAILABLE)(
+    it.skipIf(!ADAPTER_AVAILABLE)(
       'should handle multiple sequential tasks',
       async () => {
         const messages = ['First message', 'Second message', 'Third message'];
@@ -591,6 +615,7 @@ describe('File Sidecar E2E Tests', () => {
         for (let i = 0; i < messages.length; i++) {
           const jobId = `file-echo-test-${Date.now()}-seq-${i}`;
           const sub = await subscribeToOutput(jobId);
+          if (!sub) return;
           await createTestJob(jobId, messages[i]);
 
           const output = await sub.waitForResult();
@@ -610,13 +635,14 @@ describe('File Sidecar E2E Tests', () => {
   });
 
   describe('Follow-up Message Flow', () => {
-    it.skipIf(!K8S_AVAILABLE)(
+    it.skipIf(!ADAPTER_AVAILABLE)(
       'should process a follow-up message after the initial task',
       async () => {
         const jobId = `file-echo-test-${Date.now()}-followup`;
 
         // Subscribe BEFORE creating the job to capture both responses
         const sub = await subscribeToOutputMulti(jobId);
+        if (!sub) return;
 
         try {
           await createTestJob(jobId, 'Initial prompt');
@@ -644,13 +670,14 @@ describe('File Sidecar E2E Tests', () => {
       180000,
     );
 
-    it.skipIf(!K8S_AVAILABLE)(
+    it.skipIf(!ADAPTER_AVAILABLE)(
       'should preserve session ID across follow-up messages',
       async () => {
         const sessionId = `test-session-followup-${Date.now()}`;
         const jobId = `file-echo-test-${Date.now()}-followup-session`;
 
         const sub = await subscribeToOutputMulti(jobId);
+        if (!sub) return;
 
         try {
           await createTestJob(jobId, 'Session initial', sessionId);
@@ -676,12 +703,13 @@ describe('File Sidecar E2E Tests', () => {
       180000,
     );
 
-    it.skipIf(!K8S_AVAILABLE)(
+    it.skipIf(!ADAPTER_AVAILABLE)(
       'should handle multiple follow-up messages in sequence',
       async () => {
         const jobId = `file-echo-test-${Date.now()}-multi-followup`;
 
         const sub = await subscribeToOutputMulti(jobId);
+        if (!sub) return;
 
         try {
           await createTestJob(jobId, 'Message 1');
@@ -706,12 +734,13 @@ describe('File Sidecar E2E Tests', () => {
       240000,
     );
 
-    it.skipIf(!K8S_AVAILABLE)(
+    it.skipIf(!ADAPTER_AVAILABLE)(
       'should shut down cleanly after a close message',
       async () => {
         const jobId = `file-echo-test-${Date.now()}-close`;
 
         const sub = await subscribeToOutputMulti(jobId);
+        if (!sub) return;
 
         try {
           await createTestJob(jobId, 'Pre-close prompt');

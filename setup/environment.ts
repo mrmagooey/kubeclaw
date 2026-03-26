@@ -21,16 +21,37 @@ export async function run(_args: string[]): Promise<void> {
   const wsl = isWSL();
   const headless = isHeadless();
 
+  const { execSync } = await import('child_process');
+
   // Check Kubernetes (kubectl)
   let kubernetes: 'connected' | 'installed_no_cluster' | 'not_found' =
     'not_found';
   if (commandExists('kubectl')) {
     try {
-      const { execSync } = await import('child_process');
       execSync('kubectl cluster-info', { stdio: 'ignore' });
       kubernetes = 'connected';
     } catch {
       kubernetes = 'installed_no_cluster';
+    }
+  }
+
+  // Check for existing Helm release
+  let helmRelease = '';
+  if (commandExists('helm') && kubernetes === 'connected') {
+    try {
+      const out = execSync(
+        'helm list --all-namespaces --filter kubeclaw --output json',
+        { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
+      );
+      const releases = JSON.parse(out.trim() || '[]') as Array<{
+        name: string;
+        namespace: string;
+      }>;
+      if (releases.length > 0) {
+        helmRelease = releases[0].name;
+      }
+    } catch {
+      // helm unavailable or parse error
     }
   }
 
@@ -66,6 +87,7 @@ export async function run(_args: string[]): Promise<void> {
       platform,
       wsl,
       kubernetes,
+      helmRelease,
       hasEnv,
       hasAuth,
       hasRegisteredGroups,
@@ -78,6 +100,7 @@ export async function run(_args: string[]): Promise<void> {
     IS_WSL: wsl,
     IS_HEADLESS: headless,
     KUBERNETES: kubernetes,
+    HELM_RELEASE: helmRelease,
     HAS_ENV: hasEnv,
     HAS_AUTH: hasAuth,
     HAS_REGISTERED_GROUPS: hasRegisteredGroups,

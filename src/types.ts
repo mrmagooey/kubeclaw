@@ -60,19 +60,38 @@ export interface AllowedRoot {
   description?: string;
 }
 
+export interface ToolSpec {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>; // JSON Schema object
+  image: string;
+  pattern: 'http' | 'file';
+  port?: number;           // http: port the user container listens on (default 8080)
+  command?: string[];      // optional entrypoint override for user container
+  pullPolicy?: 'Always' | 'IfNotPresent' | 'Never';
+  memoryRequest?: string;
+  memoryLimit?: string;
+  cpuRequest?: string;
+  cpuLimit?: string;
+}
+
 export interface ContainerConfig {
   additionalMounts?: AdditionalMount[];
   timeout?: number; // Default: 300000 (5 minutes)
+  tools?: ToolSpec[]; // Custom tool containers spawned on demand as sidecar tool pods
   // File sidecar configuration
   userImage?: string; // Container image for file-based sidecar mode
   userCommand?: string[]; // Command to run in user container
   userArgs?: string[]; // Arguments for user container command
   filePollInterval?: number; // Poll interval in ms (default: 1000)
+  userPort?: number; // HTTP sidecar: port the user container listens on
+  healthEndpoint?: string; // HTTP sidecar: health check path (default /agent/health)
   memoryRequest?: string; // K8s memory request (e.g., "512Mi")
   memoryLimit?: string; // K8s memory limit (e.g., "4Gi")
   cpuRequest?: string; // K8s CPU request (e.g., "250m")
   cpuLimit?: string; // K8s CPU limit (e.g., "2000m")
   browserSidecar?: boolean; // Run Chromium as a sidecar container (Kubernetes only)
+  direct?: boolean; // Use in-process LLM — orchestrator calls API directly, no K8s job
   // Node scheduling
   nodeSelector?: Record<string, string>; // e.g. { "nvidia.com/gpu.present": "true" }
   tolerations?: K8sToleration[]; // For tainted nodes (spot, GPU, etc.)
@@ -85,9 +104,12 @@ export interface ContainerConfig {
   imagePullPolicy?: 'Always' | 'IfNotPresent' | 'Never'; // For user images
   // Security context
   securityContext?: ContainerSecurityContext;
+  // Superuser mode: grants agent direct local tool access (orchestrator use only)
+  superuser?: boolean;
 }
 
-export type LLMProvider = 'claude' | 'openrouter';
+import type { LLMProvider } from './config.js';
+export type { LLMProvider };
 
 export interface RegisteredGroup {
   name: string;

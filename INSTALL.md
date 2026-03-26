@@ -1,5 +1,7 @@
 # KubeClaw — Kubernetes Installation Guide
 
+> **Running on a laptop?** See [docs/MINIKUBE.md](docs/MINIKUBE.md) for a single-command local setup using minikube with Cilium CNI and Falco runtime security.
+
 ## Overview
 
 KubeClaw runs as two persistent services on Kubernetes:
@@ -26,8 +28,8 @@ Claude response → back through channel
 
 - Kubernetes 1.24+ with `batch/v1` Job support
 - `kubectl` configured for your cluster
-- Redis 7+ (provided via `k8s/10-redis.yaml`)
-- Container runtime that can pull or load the KubeClaw images
+- `helm` 3.x
+- Container runtime (Docker or compatible)
 - Persistent storage with **ReadWriteMany** (RWX) for multi-node clusters, or ReadWriteOnce (RWO) for single-node
 
 ## Quick Start
@@ -52,61 +54,25 @@ minikube image load kubeclaw-agent:latest
 minikube image load kubeclaw-orchestrator:latest
 ```
 
-For remote clusters, push to a registry and update `image:` fields in `k8s/30-orchestrator.yaml` and `k8s/40-agent-job-template.yaml`.
+For remote clusters, push to a registry and set `image.registry` in your values.
 
-### 2. Create Namespace
-
-```bash
-kubectl apply -f k8s/00-namespace.yaml
-kubectl apply -f k8s/01-network-policy.yaml
-```
-
-### 3. Create Secrets
+### 2. Install with Helm
 
 ```bash
-# Redis admin password (required for ACL auth)
-kubectl create secret generic kubeclaw-redis \
-  --from-literal=admin-password=$(openssl rand -base64 32) \
-  -n kubeclaw
+# Single-node / local cluster (default values use ReadWriteOnce)
+helm install kubeclaw ./helm/kubeclaw \
+  --set secrets.anthropicApiKey=sk-ant-... \
+  --namespace kubeclaw --create-namespace
 
-# Application secrets — use one of ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN
-kubectl create secret generic kubeclaw-secrets \
-  --from-literal=anthropic-api-key=sk-ant-... \
-  --from-literal=claude-code-oauth-token=... \
-  -n kubeclaw
+# Multi-node production cluster (RWX storage required)
+helm install kubeclaw ./helm/kubeclaw \
+  --set secrets.anthropicApiKey=sk-ant-... \
+  --set storage.accessMode=ReadWriteMany \
+  --set storage.storageClass=efs-csi \
+  --namespace kubeclaw --create-namespace
 ```
 
-### 4. Deploy Redis
-
-```bash
-kubectl apply -f k8s/10-redis.yaml
-kubectl rollout status statefulset/kubeclaw-redis -n kubeclaw
-```
-
-### 5. Create Storage
-
-**Single-node cluster (minikube, kind, single bare-metal node):**
-
-```bash
-kubectl apply -f k8s/20-storage-minikube.yaml
-```
-
-**Multi-node production cluster (requires RWX storage class, e.g. EFS, NFS, Azure Files):**
-
-```bash
-# Edit 20-storage-production.yaml to set the correct storageClassName first
-kubectl apply -f k8s/20-storage-production.yaml
-```
-
-### 6. Deploy Orchestrator
-
-```bash
-kubectl apply -f k8s/35-configmaps.yaml
-kubectl apply -f k8s/30-orchestrator.yaml
-kubectl rollout status deployment/kubeclaw-orchestrator -n kubeclaw
-```
-
-### 7. Verify
+### 3. Verify
 
 ```bash
 kubectl get pods -n kubeclaw
@@ -117,104 +83,114 @@ kubectl get pods -n kubeclaw
 kubectl logs -f deployment/kubeclaw-orchestrator -n kubeclaw
 ```
 
+### 4. Add a Channel
+
+Open the admin shell inside the orchestrator pod:
+
+```bash
+kubectl exec -it deployment/kubeclaw-orchestrator -n kubeclaw -- node dist/admin-shell.js
+```
+
+Tell it in plain English what you want, e.g. `"set up Telegram"`. It will ask for your credentials, create the channel pod, and register your first group.
+
 ---
 
 ## Configuration Reference
 
-All configuration is via environment variables. For Docker-mode development, copy `.env.example` to `.env`. For Kubernetes, set these as env vars in `k8s/30-orchestrator.yaml` or via additional Secrets/ConfigMaps.
+All configuration is via Helm values. Pass overrides with `--set key=value` or a custom values file (`-f myvalues.yaml`). See `helm/kubeclaw/values.yaml` for all available options.
 
 ### Core
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `ASSISTANT_NAME` | `Andy` | Name used for trigger mentions (e.g. `@Andy`) |
+| Variable                   | Default | Description                                              |
+| -------------------------- | ------- | -------------------------------------------------------- |
+| `ASSISTANT_NAME`           | `Andy`  | Name used for trigger mentions (e.g. `@Andy`)            |
 | `ASSISTANT_HAS_OWN_NUMBER` | `false` | WhatsApp: whether the assistant has its own phone number |
-| `LOG_LEVEL` | `info` | Log verbosity: `debug`, `info`, `warn`, `error`, `fatal` |
-| `TZ` | system | Timezone for scheduled tasks (e.g. `America/New_York`) |
+| `LOG_LEVEL`                | `info`  | Log verbosity: `debug`, `info`, `warn`, `error`, `fatal` |
+| `TZ`                       | system  | Timezone for scheduled tasks (e.g. `America/New_York`)   |
 
 ### LLM Provider
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `DEFAULT_LLM_PROVIDER` | `claude` | `claude` or `openrouter` |
-| `ANTHROPIC_API_KEY` | — | Anthropic API key (required if using Claude) |
-| `CLAUDE_CODE_OAUTH_TOKEN` | — | Claude Code OAuth token (alternative to API key) |
-| `ANTHROPIC_BASE_URL` | — | Custom Claude API endpoint (optional) |
-| `OPENROUTER_API_KEY` | — | OpenRouter API key (required if using OpenRouter) |
-| `OPENROUTER_MODEL` | `openai/gpt-4o` | Model identifier for OpenRouter |
-| `OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | OpenRouter API base URL |
-| `OPENROUTER_HTTP_REFERER` | — | Your domain, for OpenRouter rankings (optional) |
-| `OPENROUTER_X_TITLE` | `KubeClaw` | App name for OpenRouter rankings (optional) |
+| Variable                  | Default                        | Description                                       |
+| ------------------------- | ------------------------------ | ------------------------------------------------- |
+| `DEFAULT_LLM_PROVIDER`    | `claude`                       | `claude` or `openrouter`                          |
+| `ANTHROPIC_API_KEY`       | —                              | Anthropic API key (required if using Claude)      |
+| `CLAUDE_CODE_OAUTH_TOKEN` | —                              | Claude Code OAuth token (alternative to API key)  |
+| `ANTHROPIC_BASE_URL`      | —                              | Custom Claude API endpoint (optional)             |
+| `OPENROUTER_API_KEY`      | —                              | OpenRouter API key (required if using OpenRouter) |
+| `OPENROUTER_MODEL`        | `openai/gpt-4o`                | Model identifier for OpenRouter                   |
+| `OPENROUTER_BASE_URL`     | `https://openrouter.ai/api/v1` | OpenRouter API base URL                           |
+| `OPENROUTER_HTTP_REFERER` | —                              | Your domain, for OpenRouter rankings (optional)   |
+| `OPENROUTER_X_TITLE`      | `KubeClaw`                     | App name for OpenRouter rankings (optional)       |
 
 ### Kubernetes Runtime
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `KUBECLAW_RUNTIME` | `docker` | Set to `kubernetes` to enable K8s mode |
-| `KUBECLAW_NAMESPACE` | `kubeclaw` | Kubernetes namespace for agent Jobs |
-| `KUBECLAW_IPC_BASE` | `/data/sessions` | Mount path for the sessions PVC (must match orchestrator volumeMount) |
-| `MAX_CONCURRENT_JOBS` | `10` | Maximum parallel agent Jobs |
-| `REDIS_URL` | `redis://kubeclaw-redis:6379` | Redis connection URL |
-| `REDIS_ADMIN_PASSWORD` | — | Redis ACL admin password (from `kubeclaw-redis` secret) |
-| `ACL_ENCRYPTION_KEY` | — | 32-byte key to encrypt ACL credentials at rest. If unset, a derived key is used (insecure — dev only) |
+| Variable               | Default                       | Description                                                                                           |
+| ---------------------- | ----------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `KUBECLAW_RUNTIME`     | `kubernetes`                  | Kubernetes namespace runtime identifier                                                               |
+| `KUBECLAW_NAMESPACE`   | `kubeclaw`                    | Kubernetes namespace for agent Jobs                                                                   |
+| `KUBECLAW_IPC_BASE`    | `/data/sessions`              | Mount path for the sessions PVC (must match orchestrator volumeMount)                                 |
+| `MAX_CONCURRENT_JOBS`  | `10`                          | Maximum parallel agent Jobs                                                                           |
+| `REDIS_URL`            | `redis://kubeclaw-redis:6379` | Redis connection URL                                                                                  |
+| `REDIS_ADMIN_PASSWORD` | —                             | Redis ACL admin password (from `kubeclaw-redis` secret)                                               |
+| `ACL_ENCRYPTION_KEY`   | —                             | 32-byte key to encrypt ACL credentials at rest. If unset, a derived key is used (insecure — dev only) |
 
 ### Agent Job Resources
 
 These control the resource requests/limits for each agent Job pod.
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable                   | Default | Description                  |
+| -------------------------- | ------- | ---------------------------- |
 | `AGENT_JOB_MEMORY_REQUEST` | `512Mi` | Memory request per agent Job |
-| `AGENT_JOB_MEMORY_LIMIT` | `4Gi` | Memory limit per agent Job |
-| `AGENT_JOB_CPU_REQUEST` | `250m` | CPU request per agent Job |
-| `AGENT_JOB_CPU_LIMIT` | `2000m` | CPU limit per agent Job |
+| `AGENT_JOB_MEMORY_LIMIT`   | `4Gi`   | Memory limit per agent Job   |
+| `AGENT_JOB_CPU_REQUEST`    | `250m`  | CPU request per agent Job    |
+| `AGENT_JOB_CPU_LIMIT`      | `2000m` | CPU limit per agent Job      |
 
 ### Container Behaviour
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `CONTAINER_TIMEOUT` | `1800000` | Max agent runtime in ms (30 min) |
-| `CONTAINER_MAX_OUTPUT_SIZE` | `10485760` | Max agent output in bytes (10 MB) |
-| `IDLE_TIMEOUT` | `1800000` | Idle timeout after last result in ms (30 min) |
-| `CLAUDE_CONTAINER_IMAGE` | `kubeclaw-agent:claude` | Image for Claude-backed agents |
-| `OPENROUTER_CONTAINER_IMAGE` | `kubeclaw-agent:openrouter` | Image for OpenRouter-backed agents |
+| Variable                     | Default                     | Description                                   |
+| ---------------------------- | --------------------------- | --------------------------------------------- |
+| `CONTAINER_TIMEOUT`          | `1800000`                   | Max agent runtime in ms (30 min)              |
+| `CONTAINER_MAX_OUTPUT_SIZE`  | `10485760`                  | Max agent output in bytes (10 MB)             |
+| `IDLE_TIMEOUT`               | `1800000`                   | Idle timeout after last result in ms (30 min) |
+| `CLAUDE_CONTAINER_IMAGE`     | `kubeclaw-agent:claude`     | Image for Claude-backed agents                |
+| `OPENROUTER_CONTAINER_IMAGE` | `kubeclaw-agent:openrouter` | Image for OpenRouter-backed agents            |
 
 ### Channel Integrations
 
 Add secrets for any channels you use. See the `/add-telegram`, `/add-slack`, `/add-discord`, `/add-whatsapp` skills for guided setup.
 
-| Variable | Channel | Description |
-|----------|---------|-------------|
-| `TELEGRAM_BOT_TOKEN` | Telegram | Bot token from @BotFather |
-| `SLACK_BOT_TOKEN` | Slack | `xoxb-...` bot token |
-| `SLACK_SIGNING_SECRET` | Slack | Webhook signature verification secret |
-| `SLACK_APP_TOKEN` | Slack | `xapp-...` token for Socket Mode |
-| `WHATSAPP_SESSION_PATH` | WhatsApp | Path to WhatsApp session directory |
-| `IRC_SERVER` | IRC | IRC server hostname |
-| `IRC_PORT` | IRC | IRC server port |
-| `IRC_NICK` | IRC | Bot nickname |
-| `IRC_CHANNELS` | IRC | Comma-separated channels to join |
+| Variable                | Channel  | Description                           |
+| ----------------------- | -------- | ------------------------------------- |
+| `TELEGRAM_BOT_TOKEN`    | Telegram | Bot token from @BotFather             |
+| `SLACK_BOT_TOKEN`       | Slack    | `xoxb-...` bot token                  |
+| `SLACK_SIGNING_SECRET`  | Slack    | Webhook signature verification secret |
+| `SLACK_APP_TOKEN`       | Slack    | `xapp-...` token for Socket Mode      |
+| `WHATSAPP_SESSION_PATH` | WhatsApp | Path to WhatsApp session directory    |
+| `IRC_SERVER`            | IRC      | IRC server hostname                   |
+| `IRC_PORT`              | IRC      | IRC server port                       |
+| `IRC_NICK`              | IRC      | Bot nickname                          |
+| `IRC_CHANNELS`          | IRC      | Comma-separated channels to join      |
 
 ---
 
 ## Persistent Storage
 
-| PVC | Size | Access | Purpose |
-|-----|------|--------|---------|
-| `kubeclaw-redis` | 10 Gi | RWO | Redis AOF persistence |
-| `kubeclaw-groups` | 50 Gi | RWX* | Group folders and `CLAUDE.md` memory files |
-| `kubeclaw-sessions` | 20 Gi | RWX* | Claude SDK session state |
+| PVC                 | Size  | Access | Purpose                                    |
+| ------------------- | ----- | ------ | ------------------------------------------ |
+| `kubeclaw-redis`    | 10 Gi | RWO    | Redis AOF persistence                      |
+| `kubeclaw-groups`   | 50 Gi | RWX\*  | Group folders and `CLAUDE.md` memory files |
+| `kubeclaw-sessions` | 20 Gi | RWX\*  | Claude SDK session state                   |
 
-*`kubeclaw-groups` and `kubeclaw-sessions` need RWX on multi-node clusters because both the orchestrator and agent Jobs mount them simultaneously. RWO works on single-node clusters where all pods schedule on the same node.
+\*`kubeclaw-groups` and `kubeclaw-sessions` need RWX on multi-node clusters because both the orchestrator and agent Jobs mount them simultaneously. RWO works on single-node clusters where all pods schedule on the same node.
 
 **Recommended storage classes by provider:**
 
-| Provider | Storage Class |
-|----------|---------------|
-| AWS | EFS CSI driver (`efs.csi.aws.com`) |
-| Azure | Azure Files (`azurefile-csi`) |
-| GCP | Filestore (`filestore.csi.storage.gke.io`) |
-| On-prem | NFS provisioner or Longhorn |
+| Provider    | Storage Class                              |
+| ----------- | ------------------------------------------ |
+| AWS         | EFS CSI driver (`efs.csi.aws.com`)         |
+| Azure       | Azure Files (`azurefile-csi`)              |
+| GCP         | Filestore (`filestore.csi.storage.gke.io`) |
+| On-prem     | NFS provisioner or Longhorn                |
 | Single-node | `standard` (minikube), `local-path` (kind) |
 
 ---
@@ -223,20 +199,20 @@ Add secrets for any channels you use. See the `/add-telegram`, `/add-slack`, `/a
 
 ### Required
 
-| Secret | Key | Description |
-|--------|-----|-------------|
-| `kubeclaw-redis` | `admin-password` | Redis ACL admin password |
-| `kubeclaw-secrets` | `anthropic-api-key` | Anthropic API key |
-| `kubeclaw-secrets` | `claude-code-oauth-token` | Claude Code OAuth token |
+| Secret             | Key                       | Description              |
+| ------------------ | ------------------------- | ------------------------ |
+| `kubeclaw-redis`   | `admin-password`          | Redis ACL admin password |
+| `kubeclaw-secrets` | `anthropic-api-key`       | Anthropic API key        |
+| `kubeclaw-secrets` | `claude-code-oauth-token` | Claude Code OAuth token  |
 
 You need at least one of `anthropic-api-key` or `claude-code-oauth-token`.
 
 ### Optional (add to `kubeclaw-secrets`)
 
-| Key | Description |
-|-----|-------------|
+| Key                  | Description        |
+| -------------------- | ------------------ |
 | `openrouter-api-key` | OpenRouter API key |
-| `slack-bot-token` | Slack bot token |
+| `slack-bot-token`    | Slack bot token    |
 | `telegram-bot-token` | Telegram bot token |
 
 ---
