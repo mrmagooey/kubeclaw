@@ -198,7 +198,49 @@ export const MAX_CONCURRENT_JOBS = Math.max(
 
 // --- Redis ACL Configuration ---
 export const REDIS_ADMIN_PASSWORD = process.env.REDIS_ADMIN_PASSWORD || '';
+export const REDIS_USERNAME = process.env.REDIS_USERNAME || '';
+export const REDIS_AGENT_PASSWORD = process.env.REDIS_AGENT_PASSWORD || '';
+export const REDIS_TOOL_SERVER_PASSWORD = process.env.REDIS_TOOL_SERVER_PASSWORD || '';
+export const REDIS_ADAPTER_PASSWORD = process.env.REDIS_ADAPTER_PASSWORD || '';
 export const ACL_ENCRYPTION_KEY = process.env.ACL_ENCRYPTION_KEY || '';
+
+// --- Tool Image Allowlist ---
+// Comma-separated glob patterns for permitted sidecar tool pod images.
+// Supports '*' wildcards (e.g. "kubeclaw-*:*,registry.example.com/*").
+// If empty, any image is permitted (log a warning).
+export const TOOL_IMAGE_ALLOWLIST: string[] =
+  (process.env.TOOL_IMAGE_ALLOWLIST || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+/**
+ * Returns true if `image` matches `pattern`, where `*` is a wildcard for
+ * any sequence of characters (including slashes and colons).
+ */
+function imageMatchesPattern(image: string, pattern: string): boolean {
+  // Escape regex special chars except '*', then replace '*' with '.*'
+  const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
+  return new RegExp(`^${escaped}$`).test(image);
+}
+
+/**
+ * Throws if `image` is not permitted by TOOL_IMAGE_ALLOWLIST.
+ * A no-op (with a warning) when the allowlist is empty.
+ */
+export function assertToolImageAllowed(image: string): void {
+  if (TOOL_IMAGE_ALLOWLIST.length === 0) {
+    // No restriction configured — all images permitted.
+    return;
+  }
+  const allowed = TOOL_IMAGE_ALLOWLIST.some((pattern) => imageMatchesPattern(image, pattern));
+  if (!allowed) {
+    throw new Error(
+      `Tool image '${image}' is not in TOOL_IMAGE_ALLOWLIST. ` +
+        `Permitted patterns: ${TOOL_IMAGE_ALLOWLIST.join(', ')}`,
+    );
+  }
+}
 
 // --- Agent Job Resource Limits (Kubernetes) ---
 export const AGENT_JOB_MEMORY_REQUEST =

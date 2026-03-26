@@ -79,6 +79,7 @@ vi.mock('../config.js', () => ({
   TIMEZONE: 'UTC',
   REDIS_URL: 'redis://localhost:6379',
   REDIS_ADMIN_PASSWORD: undefined,
+  REDIS_ADAPTER_PASSWORD: undefined,
 }));
 
 // Mock logger

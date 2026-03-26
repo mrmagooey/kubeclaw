@@ -48,3 +48,102 @@ spec:
           port: 8080
   egress:
     - to: []
+---
+# Channel pods: egress to Redis, DNS, and external channel APIs.
+# Ingress denied from all cluster pods; kubelet health probes bypass NetworkPolicy.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kubeclaw-channel-policy
+  namespace: kubeclaw
+spec:
+  podSelector:
+    matchExpressions:
+      - key: kubeclaw/channel
+        operator: Exists
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress: []
+  egress:
+    - to: []
+      ports:
+        - protocol: UDP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              app: kubeclaw-redis
+      ports:
+        - protocol: TCP
+          port: 6379
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 443
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 80
+---
+# Tool pods (execution/browser): DNS + Redis IPC + HTTP/HTTPS for web tasks.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kubeclaw-tool-pod-policy
+  namespace: kubeclaw
+spec:
+  podSelector:
+    matchLabels:
+      app: kubeclaw-tool-pod
+  policyTypes:
+    - Egress
+  egress:
+    - to: []
+      ports:
+        - protocol: UDP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              app: kubeclaw-redis
+      ports:
+        - protocol: TCP
+          port: 6379
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 80
+        - protocol: TCP
+          port: 443
+---
+# Sidecar tool pods (custom user containers): same egress profile as tool pods.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kubeclaw-sidecar-tool-policy
+  namespace: kubeclaw
+spec:
+  podSelector:
+    matchLabels:
+      app: kubeclaw-sidecar-tool
+  policyTypes:
+    - Egress
+  egress:
+    - to: []
+      ports:
+        - protocol: UDP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              app: kubeclaw-redis
+      ports:
+        - protocol: TCP
+          port: 6379
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 80
+        - protocol: TCP
+          port: 443

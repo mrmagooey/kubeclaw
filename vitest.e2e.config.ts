@@ -20,6 +20,9 @@ export default defineConfig({
       reportsDirectory: 'e2e/results/coverage',
       exclude: ['node_modules/', 'e2e/', '**/.*.test.ts', '**/*.d.ts'],
     },
+    env: {
+      KUBECLAW_NAMESPACE: process.env.NAMESPACE || 'kubeclaw',
+    },
     setupFiles: ['./e2e/setup.ts'],
     globalSetup: './e2e/global-setup.ts',
     sequence: {

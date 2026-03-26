@@ -30,6 +30,10 @@ import {
   BROWSER_SIDECAR_MEMORY_LIMIT,
   BROWSER_SIDECAR_CPU_REQUEST,
   BROWSER_SIDECAR_CPU_LIMIT,
+  assertToolImageAllowed,
+  REDIS_AGENT_PASSWORD,
+  REDIS_TOOL_SERVER_PASSWORD,
+  REDIS_ADAPTER_PASSWORD,
 } from '../config.js';
 import {
   JobInput,
@@ -47,19 +51,18 @@ import {
 } from './redis-client.js';
 
 /**
- * Build Redis URL with embedded password if password is provided and URL
- * doesn't already contain credentials.
- * - redis://host:port + password → redis://:password@host:port
- * - redis://:existing@host:port + password → leave unchanged (already has auth)
+ * Build Redis URL with embedded ACL credentials if provided and URL doesn't
+ * already contain credentials.
+ * - redis://host:port + username + password → redis://username:password@host:port
+ * - redis://host:port + no username + password → redis://:password@host:port
+ * - redis://:existing@host:port + any → leave unchanged (already has auth)
  * - any URL + no password → return URL unchanged
  */
-function buildRedisUrl(base: string, password?: string): string {
+function buildRedisUrl(base: string, username?: string, password?: string): string {
   if (!password) return base;
-  // Check if URL already contains credentials (look for @ in authority part)
-  // redis://host:port has no @, redis://:pass@host:port has @
   if (base.includes('@')) return base;
-  // Embed password: redis://host:port → redis://:password@host:port
-  return base.replace(/^(redis:\/\/)/, `$1:${encodeURIComponent(password)}@`);
+  const userPart = username ? encodeURIComponent(username) : '';
+  return base.replace(/^(redis:\/\/)/, `$1${userPart}:${encodeURIComponent(password)}@`);
 }
 
 /**
@@ -317,14 +320,13 @@ export class JobRunner {
         value: String(CONTAINER_MAX_OUTPUT_SIZE),
       },
       { name: 'IDLE_TIMEOUT', value: String(IDLE_TIMEOUT) },
-      // Redis URL is not secret — pass directly from orchestrator's env so agents
-      // can connect for IPC output. No secret key needed.
-      // Password is embedded when available for node-redis URL-based auth.
+      // Agent jobs authenticate as the 'agent' ACL user for least-privilege access.
       {
         name: 'REDIS_URL',
         value: buildRedisUrl(
           process.env.REDIS_URL || 'redis://kubeclaw-redis:6379',
-          process.env.REDIS_ADMIN_PASSWORD,
+          'agent',
+          REDIS_AGENT_PASSWORD || process.env.REDIS_ADMIN_PASSWORD,
         ),
       },
       // Credentials from kubeclaw-secrets — key names use hyphens to match the
@@ -947,11 +949,13 @@ export class JobRunner {
         { name: 'KUBECLAW_AGENT_JOB_ID', value: spec.agentJobId },
         { name: 'KUBECLAW_CATEGORY', value: spec.category },
         { name: 'KUBECLAW_GROUP_FOLDER', value: spec.groupFolder },
+        // Tool server pods authenticate as the 'tool-server' ACL user.
         {
           name: 'REDIS_URL',
           value: buildRedisUrl(
             process.env.REDIS_URL || 'redis://kubeclaw-redis:6379',
-            process.env.REDIS_ADMIN_PASSWORD,
+            'tool-server',
+            REDIS_TOOL_SERVER_PASSWORD || process.env.REDIS_ADMIN_PASSWORD,
           ),
         },
         { name: 'IDLE_TIMEOUT', value: String(spec.timeout) },
@@ -1050,6 +1054,7 @@ export class JobRunner {
    */
   async createSidecarToolPodJob(spec: SidecarToolPodJobSpec): Promise<string> {
     const { toolSpec } = spec;
+    assertToolImageAllowed(toolSpec.image);
     const port = toolSpec.port ?? 8080;
     const isFileBridge = toolSpec.pattern === 'file';
     const toolMode = isFileBridge ? 'file-bridge' : 'http-bridge';
@@ -1060,9 +1065,11 @@ export class JobRunner {
     const jobName = `kubeclaw-stool-${agentSuffix}-${safeTool}`;
 
     const timeoutSeconds = Math.floor(spec.timeout / 1000);
+    // Sidecar tool pods (file-bridge) use the 'adapter' ACL user.
     const redisUrl = buildRedisUrl(
       process.env.REDIS_URL || 'redis://kubeclaw-redis:6379',
-      process.env.REDIS_ADMIN_PASSWORD,
+      'adapter',
+      REDIS_ADAPTER_PASSWORD || process.env.REDIS_ADMIN_PASSWORD,
     );
 
     const bridgeEnv = [

@@ -79,6 +79,7 @@ vi.mock('../config.js', () => ({
   TIMEZONE: 'UTC',
   REDIS_URL: 'redis://localhost:6379',
   REDIS_ADMIN_PASSWORD: 'admin-secret',
+  REDIS_ADAPTER_PASSWORD: 'admin-secret',
 }));
 
 // Mock logger
@@ -674,10 +675,10 @@ describe('HttpSidecarJobRunner', () => {
       );
 
       const adapterEnv = manifest.spec?.template?.spec?.containers?.[0].env;
-      // REDIS_ADMIN_PASSWORD is 'admin-secret' in the mock, so fallback kicks in
+      // REDIS_ADAPTER_PASSWORD is 'admin-secret' in the mock, so fallback kicks in
       expect(adapterEnv).toContainEqual({
         name: 'REDIS_USERNAME',
-        value: 'default',
+        value: 'adapter',
       });
       expect(adapterEnv).toContainEqual({
         name: 'REDIS_PASSWORD',

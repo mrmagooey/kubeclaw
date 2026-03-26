@@ -33,7 +33,7 @@ const TEST_REDIS_PASSWORD = 'test-redis-password-e2e';
 
 // Timeouts (ms) — allow time for image pulls on fresh clusters
 const REDIS_READY_TIMEOUT = 60_000;
-const DEPLOYMENT_READY_TIMEOUT = 60_000;
+const DEPLOYMENT_READY_TIMEOUT = 120_000;
 const PVC_BIND_TIMEOUT = 60_000;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────

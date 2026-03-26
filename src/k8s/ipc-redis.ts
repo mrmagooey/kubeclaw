@@ -13,6 +13,7 @@ import { logger } from '../logger.js';
 import { RegisteredGroup } from '../types.js';
 import {
   getAgentJobResultStream,
+  getControlChannel,
   getInputStream,
   getOutputChannel,
   getRedisClient,
@@ -549,6 +550,25 @@ export async function processTaskIpc(
       }
       break;
 
+    case 'control_channel':
+      if (!isMain) {
+        logger.warn({ sourceGroup }, 'Unauthorized control_channel attempt blocked');
+        break;
+      }
+      if (data.channelName && data.command) {
+        try {
+          const client = getRedisClient();
+          await client.publish(
+            getControlChannel(data.channelName),
+            JSON.stringify({ command: data.command }),
+          );
+          logger.info({ sourceGroup, channelName: data.channelName, command: data.command }, 'Control command sent to channel pod');
+        } catch (err) {
+          logger.error({ err }, 'Failed to send control command');
+        }
+      }
+      break;
+
     default:
       logger.warn({ type: data.type }, 'Unknown Redis IPC task type');
   }
@@ -633,11 +653,20 @@ export async function startToolPodSpawnWatcher(): Promise<void> {
           const obj: Record<string, string> = {};
           for (let i = 0; i < fields.length; i += 2) obj[fields[i]] = fields[i + 1];
 
-          const { agentJobId, groupFolder, category, timeout, channel, toolImage, toolPattern, toolPort } = obj;
+          const { agentJobId, groupFolder, category, timeout, channel, toolImage, toolPattern, toolPort, toolCommand } = obj;
           if (!agentJobId || !groupFolder || !category) continue;
 
           const { groupsPvc, sessionsPvc } = channelPvcNames(channel ?? '');
           const timeoutMs = Number(timeout) || 60_000;
+
+          let parsedCommand: string[] | undefined;
+          if (toolCommand) {
+            try {
+              parsedCommand = JSON.parse(toolCommand) as string[];
+            } catch {
+              logger.warn({ agentJobId, toolCommand }, 'Failed to parse toolCommand JSON, ignoring');
+            }
+          }
 
           try {
             if (toolImage) {
@@ -652,6 +681,7 @@ export async function startToolPodSpawnWatcher(): Promise<void> {
                   image: toolImage,
                   pattern: (toolPattern as 'http' | 'file') || 'http',
                   port: toolPort ? Number(toolPort) : 8080,
+                  ...(parsedCommand ? { command: parsedCommand } : {}),
                 },
                 timeout: timeoutMs,
                 groupsPvc,
@@ -750,6 +780,36 @@ export async function startAgentJobSpawnWatcher(): Promise<void> {
       }
     }
   }
+}
+
+/**
+ * Subscribe to the control channel for a channel pod and invoke onCommand
+ * when a control message arrives (e.g. { command: 'reload' }).
+ * Called by channel-runner.ts after startIpcWatcher().
+ */
+export function startControlChannelWatcher(
+  channelName: string,
+  onCommand: (msg: { command: string }) => Promise<void>,
+): void {
+  const subscriber = getRedisSubscriber();
+  const channel = getControlChannel(channelName);
+  subscriber.subscribe(channel, (err) => {
+    if (err) logger.error({ err, channel }, 'Failed to subscribe to control channel');
+    else logger.info({ channel }, 'Subscribed to control channel');
+  });
+  subscriber.on('message', (ch, message) => {
+    if (ch !== channel) return;
+    try {
+      const data = JSON.parse(message) as { command: string };
+      if (data.command) {
+        onCommand(data).catch((err) =>
+          logger.error({ err, command: data.command }, 'Error handling control command'),
+        );
+      }
+    } catch (err) {
+      logger.error({ err }, 'Failed to parse control channel message');
+    }
+  });
 }
 
 /**

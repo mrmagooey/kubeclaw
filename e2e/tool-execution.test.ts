@@ -51,26 +51,37 @@ function pollToolResult(
 describe('Tool Execution Round-Trip', () => {
   let orchestratorRunning = false;
 
-  beforeAll(() => {
+  beforeAll(async () => {
     requireKubernetes();
-    try {
-      const result = spawnSync(
-        'kubectl',
-        ['get', 'pods', '-n', NAMESPACE, '-l', 'app=kubeclaw-orchestrator', '-o', 'json'],
-        { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] },
-      );
-      if (result.status === 0) {
-        const pods = JSON.parse(result.stdout).items as Array<{
-          status: { phase: string; containerStatuses?: Array<{ ready: boolean }> };
-        }>;
-        if (pods.length > 0 && pods[0].status.phase === 'Running') {
-          orchestratorRunning = pods[0].status.containerStatuses?.every((c) => c.ready) ?? false;
+    // Wait up to 90s for orchestrator to be Running and Ready
+    const deadline = Date.now() + 90_000;
+    while (Date.now() < deadline) {
+      try {
+        const result = spawnSync(
+          'kubectl',
+          ['get', 'pods', '-n', NAMESPACE, '-l', 'app=kubeclaw-orchestrator', '-o', 'json'],
+          { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] },
+        );
+        if (result.status === 0) {
+          const pods = JSON.parse(result.stdout).items as Array<{
+            status: { phase: string; containerStatuses?: Array<{ ready: boolean }> };
+          }>;
+          const ready = pods.some(
+            (p) =>
+              p.status.phase === 'Running' &&
+              p.status.containerStatuses?.every((c) => c.ready),
+          );
+          if (ready) {
+            orchestratorRunning = true;
+            break;
+          }
         }
+      } catch {
+        // orchestrator not deployed
       }
-    } catch {
-      // orchestrator not deployed
+      await new Promise((r) => setTimeout(r, 3000));
     }
-  });
+  }, 100_000);
 
   it('bash tool call returns expected output via Redis streams', async (ctx) => {
     if (!orchestratorRunning) ctx.skip();

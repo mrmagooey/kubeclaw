@@ -17,6 +17,10 @@ orchestrator:
   replicas: 1
   # Maximum number of agent Jobs that can run concurrently.
   maxConcurrentJobs: 10
+  # Comma-separated glob patterns for permitted sidecar tool pod images.
+  # Supports '*' wildcards, e.g. "kubeclaw-*:*,registry.example.com/*".
+  # Empty (default) permits any image — set this in production to lock down tool containers.
+  toolImageAllowlist: ""
   resources:
     requests:
       memory: 256Mi
@@ -53,6 +57,7 @@ storage:
     sessions: 20Gi
     project: 10Gi
     store: 1Gi
+    plugins: 1Gi
 
 # Application credentials.
 secrets:
@@ -163,6 +168,16 @@ ciliumNetworkPolicy:
     allowedFQDNs: []
   orchestrator:
     # FQDNs the orchestrator may contact externally (ports 443 and 80).
+    allowedFQDNs: []
+  channel:
+    # FQDNs channel pods may contact externally (ports 443 and 80).
+    # Add channel-specific APIs here, e.g. api.telegram.org, discord.com, slack.com.
+    # If empty, falls back to broad port-based egress in the standard NetworkPolicy.
+    allowedFQDNs: []
+  toolPod:
+    # FQDNs tool pods may contact externally (ports 443 and 80).
+    # Tool pods handle web_fetch, browser, and bash with curl — they need internet access.
+    # If empty, all HTTP/HTTPS egress is allowed (standard NetworkPolicy behaviour).
     allowedFQDNs: []
 
 # Signal messaging channel — deploys signal-cli-rest-api as a StatefulSet.

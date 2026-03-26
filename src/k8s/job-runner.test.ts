@@ -19,6 +19,10 @@ vi.mock('../config.js', () => ({
   AGENT_JOB_MEMORY_LIMIT: '4Gi',
   AGENT_JOB_CPU_REQUEST: '250m',
   AGENT_JOB_CPU_LIMIT: '2000m',
+  REDIS_AGENT_PASSWORD: '',
+  REDIS_TOOL_SERVER_PASSWORD: '',
+  REDIS_ADAPTER_PASSWORD: '',
+  assertToolImageAllowed: vi.fn(),
   getContainerImage: vi.fn((provider: string) => {
     if (provider === 'openrouter') {
       return 'kubeclaw-agent:openrouter';
@@ -306,7 +310,7 @@ describe('JobRunner', () => {
       const envVars = manifest.spec?.template?.spec?.containers?.[0]?.env || [];
       const redisUrl = envVars.find((e) => e.name === 'REDIS_URL')?.value;
 
-      expect(redisUrl).toBe('redis://:secretpassword@kubeclaw-redis:6379');
+      expect(redisUrl).toBe('redis://agent:secretpassword@kubeclaw-redis:6379');
     });
 
     it('should not double-embed password when URL already contains @', () => {
@@ -349,8 +353,8 @@ describe('JobRunner', () => {
       const envVars = manifest.spec?.template?.spec?.containers?.[0]?.env || [];
       const redisUrl = envVars.find((e) => e.name === 'REDIS_URL')?.value;
 
-      // @ becomes %40, # becomes %23
-      expect(redisUrl).toBe('redis://:p%40ss%23@kubeclaw-redis:6379');
+      // @ becomes %40, # becomes %23; agent username prepended
+      expect(redisUrl).toBe('redis://agent:p%40ss%23@kubeclaw-redis:6379');
     });
   });
 
@@ -893,7 +897,7 @@ describe('JobRunner', () => {
       expect(labels?.['nanoclaw/agent-job']).toBe('agent-job-123');
     });
 
-    it('should run container with node /app/src/tool-server.js command', async () => {
+    it('should run container with node /app/dist/tool-server.js command', async () => {
       mockBatchApi.createNamespacedJob.mockResolvedValue({});
 
       const spec: ToolPodJobSpec = {
@@ -908,7 +912,7 @@ describe('JobRunner', () => {
       const callArgs = mockBatchApi.createNamespacedJob.mock.calls[0][0];
       const container = callArgs.body.spec?.template?.spec?.containers?.[0];
 
-      expect(container?.command).toEqual(['node', '/app/src/tool-server.js']);
+      expect(container?.command).toEqual(['node', '/app/dist/tool-server.js']);
     });
 
     it('should set KUBECLAW_AGENT_JOB_ID and KUBECLAW_CATEGORY env vars', async () => {
@@ -983,7 +987,7 @@ describe('JobRunner', () => {
 
       expect(
         envVars.find((e: { name: string }) => e.name === 'REDIS_URL')?.value,
-      ).toBe('redis://:toolpassword@kubeclaw-redis:6379');
+      ).toBe('redis://tool-server:toolpassword@kubeclaw-redis:6379');
     });
 
     it('should return the job name string on success', async () => {

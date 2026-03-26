@@ -99,4 +99,107 @@ spec:
       - port: "80"
         protocol: TCP
   {{- end }}
+---
+# CiliumNetworkPolicy for channel pods: DNS + Redis + external channel APIs.
+# No K8s API access (automountServiceAccountToken is false, defence in depth).
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: kubeclaw-channel-egress
+  namespace: {{ .Values.namespace }}
+spec:
+  endpointSelector:
+    matchExpressions:
+      - key: kubeclaw/channel
+        operator: Exists
+  egress:
+  # DNS
+  - toEndpoints:
+    - matchLabels:
+        "k8s:io.kubernetes.pod.namespace": kube-system
+        k8s-app: kube-dns
+    toPorts:
+    - ports:
+      - port: "53"
+        protocol: UDP
+      - port: "53"
+        protocol: TCP
+  # Redis
+  - toEndpoints:
+    - matchLabels:
+        "k8s:io.kubernetes.pod.namespace": {{ .Values.namespace }}
+        app: kubeclaw-redis
+    toPorts:
+    - ports:
+      - port: "6379"
+        protocol: TCP
+  {{- if .Values.ciliumNetworkPolicy.channel.allowedFQDNs }}
+  # External HTTPS/HTTP — restricted to the configured FQDN allowlist.
+  - toFQDNs:
+    {{- range .Values.ciliumNetworkPolicy.channel.allowedFQDNs }}
+    - matchName: {{ . | quote }}
+    {{- end }}
+    toPorts:
+    - ports:
+      - port: "443"
+        protocol: TCP
+      - port: "80"
+        protocol: TCP
+  {{- end }}
+---
+# CiliumNetworkPolicy for tool pods (execution/browser): DNS + Redis + web access.
+# Broader than agents: HTTP (80) + HTTPS (443). No K8s API, no ingress.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: kubeclaw-tool-pod-egress
+  namespace: {{ .Values.namespace }}
+spec:
+  endpointSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values: [kubeclaw-tool-pod, kubeclaw-sidecar-tool]
+  egress:
+  # DNS
+  - toEndpoints:
+    - matchLabels:
+        "k8s:io.kubernetes.pod.namespace": kube-system
+        k8s-app: kube-dns
+    toPorts:
+    - ports:
+      - port: "53"
+        protocol: UDP
+      - port: "53"
+        protocol: TCP
+  # Redis
+  - toEndpoints:
+    - matchLabels:
+        "k8s:io.kubernetes.pod.namespace": {{ .Values.namespace }}
+        app: kubeclaw-redis
+    toPorts:
+    - ports:
+      - port: "6379"
+        protocol: TCP
+  {{- if .Values.ciliumNetworkPolicy.toolPod.allowedFQDNs }}
+  # External access — restricted to the configured FQDN allowlist.
+  - toFQDNs:
+    {{- range .Values.ciliumNetworkPolicy.toolPod.allowedFQDNs }}
+    - matchName: {{ . | quote }}
+    {{- end }}
+    toPorts:
+    - ports:
+      - port: "443"
+        protocol: TCP
+      - port: "80"
+        protocol: TCP
+  {{- else }}
+  # No FQDN allowlist configured — allow all HTTP/HTTPS.
+  - toPorts:
+    - ports:
+      - port: "443"
+        protocol: TCP
+      - port: "80"
+        protocol: TCP
+  {{- end }}
 {{- end }}

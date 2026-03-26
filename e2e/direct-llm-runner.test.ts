@@ -19,7 +19,7 @@ describe('DirectLLMRunner', () => {
     if (!port) return;
     // Point the LLM client at the mock server before any runner is constructed.
     // createLLMClient() reads these env vars at construction time.
-    process.env.OPENAI_BASE_URL = `http://localhost:${port}`;
+    process.env.OPENAI_BASE_URL = `http://localhost:${port}/v1`;
     process.env.OPENAI_API_KEY = 'test-key';
     process.env.DIRECT_LLM_MODEL = 'test/model';
   });

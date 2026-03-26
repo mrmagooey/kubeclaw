@@ -59,11 +59,13 @@ spec:
               value: {{ $name }}
             - name: REDIS_URL
               value: redis://kubeclaw-redis:6379
+            - name: REDIS_USERNAME
+              value: channel
             - name: REDIS_ADMIN_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: kubeclaw-redis
-                  key: admin-password
+                  key: channel-password
             - name: OPENAI_API_KEY
               valueFrom:
                 secretKeyRef:
@@ -90,12 +92,31 @@ spec:
                   key: {{ .key }}
                   optional: {{ default false .optional }}
             {{- end }}
-          {{- if $cfg.httpPort }}
           ports:
+            {{- if $cfg.httpPort }}
             - name: http
               containerPort: {{ $cfg.httpPort }}
               protocol: TCP
-          {{- end }}
+            {{- end }}
+            - name: health
+              containerPort: 9090
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /liveness
+              port: health
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            failureThreshold: 3
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: health
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+            timeoutSeconds: 5
           volumeMounts:
             - name: groups
               mountPath: /app/groups
@@ -116,6 +137,26 @@ spec:
           persistentVolumeClaim:
             claimName: kubeclaw-channel-{{ $name }}-sessions
 {{- if $cfg.httpPort }}
+---
+# Allow ingress on the HTTP port — the global channel policy denies all pod-to-pod
+# ingress, so channels with httpPort need an explicit per-channel exception for the
+# ingress controller to reach them.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kubeclaw-channel-{{ $name }}-ingress
+  namespace: {{ $.Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app: kubeclaw-channel-{{ $name }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from: []
+      ports:
+        - protocol: TCP
+          port: {{ $cfg.httpPort }}
 ---
 apiVersion: v1
 kind: Service

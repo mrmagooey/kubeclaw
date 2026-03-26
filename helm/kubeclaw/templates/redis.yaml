@@ -20,11 +20,49 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       initContainers:
-        - name: fix-permissions
+        - name: init-acl
           image: busybox:latest
-          command: ["sh", "-c", "chown -R 999:999 /data && touch /data/redis-acl.conf && chown 999:999 /data/redis-acl.conf"]
+          command:
+            - sh
+            - -c
+            - |
+              {
+                echo "user default off nopass ~* &* +@none"
+                echo "user orchestrator on >$REDIS_ADMIN_PASSWORD ~* &* +@all"
+                echo "user channel on >$REDIS_CHANNEL_PASSWORD ~kubeclaw:* resetchannels &kubeclaw:* +subscribe +unsubscribe +psubscribe +punsubscribe +publish +xadd +xread +xrange +ping +reset +quit"
+                echo "user agent on >$REDIS_AGENT_PASSWORD ~kubeclaw:input:* ~kubeclaw:toolresults:* ~kubeclaw:toolcalls:* ~kubeclaw:spawn-tool-pod resetchannels &kubeclaw:messages:* &kubeclaw:tasks:* +xread +xadd +xrange +publish +ping +reset +quit"
+                echo "user tool-server on >$REDIS_TOOL_SERVER_PASSWORD ~kubeclaw:toolcalls:* ~kubeclaw:toolresults:* resetchannels &kubeclaw:tasks:* &kubeclaw:messages:* +xread +xadd +xrange +publish +ping +reset +quit"
+                echo "user adapter on >$REDIS_ADAPTER_PASSWORD %R~kubeclaw:input:* resetchannels &kubeclaw:messages:* +xread +xrange +publish +ping +reset +quit"
+              } > /data/redis-acl.conf
+              chown -R 999:999 /data
           securityContext:
             runAsUser: 0
+          env:
+            - name: REDIS_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: kubeclaw-redis
+                  key: admin-password
+            - name: REDIS_CHANNEL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: kubeclaw-redis
+                  key: channel-password
+            - name: REDIS_AGENT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: kubeclaw-redis
+                  key: agent-password
+            - name: REDIS_TOOL_SERVER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: kubeclaw-redis
+                  key: tool-server-password
+            - name: REDIS_ADAPTER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: kubeclaw-redis
+                  key: adapter-password
           volumeMounts:
             - name: data
               mountPath: /data
@@ -43,14 +81,7 @@ spec:
             - allkeys-lru
             - --aclfile
             - /data/redis-acl.conf
-            - --requirepass
-            - "$(REDIS_ADMIN_PASSWORD)"
-          env:
-            - name: REDIS_ADMIN_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: kubeclaw-redis
-                  key: admin-password
+          env: []
           ports:
             - containerPort: 6379
           volumeMounts:

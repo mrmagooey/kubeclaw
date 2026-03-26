@@ -74,7 +74,7 @@ spec:
           command:
             - sh
             - -c
-            - chown -R 1000:1000 /app/groups /app/store /data/sessions
+            - chown -R 1000:1000 /app/groups /app/store /data/sessions /workspace/plugins
           securityContext:
             runAsUser: 0
           volumeMounts:
@@ -84,6 +84,8 @@ spec:
               mountPath: /app/store
             - name: sessions
               mountPath: /data/sessions
+            - name: plugins
+              mountPath: /workspace/plugins
       containers:
         - name: orchestrator
           image: {{ include "kubeclaw.image" (dict "root" . "name" "kubeclaw-orchestrator") }}
@@ -99,11 +101,28 @@ spec:
           env:
             - name: REDIS_URL
               value: redis://kubeclaw-redis:6379
+            - name: REDIS_USERNAME
+              value: orchestrator
             - name: REDIS_ADMIN_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: kubeclaw-redis
                   key: admin-password
+            - name: REDIS_AGENT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: kubeclaw-redis
+                  key: agent-password
+            - name: REDIS_TOOL_SERVER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: kubeclaw-redis
+                  key: tool-server-password
+            - name: REDIS_ADAPTER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: kubeclaw-redis
+                  key: adapter-password
             - name: KUBECLAW_MODE
               value: orchestrator
             - name: KUBECLAW_RUNTIME
@@ -114,6 +133,10 @@ spec:
               value: /data/sessions
             - name: MAX_CONCURRENT_JOBS
               value: {{ .Values.orchestrator.maxConcurrentJobs | quote }}
+            {{- if .Values.orchestrator.toolImageAllowlist }}
+            - name: TOOL_IMAGE_ALLOWLIST
+              value: {{ .Values.orchestrator.toolImageAllowlist | quote }}
+            {{- end }}
             - name: ANTHROPIC_API_KEY
               valueFrom:
                 secretKeyRef:
@@ -165,6 +188,26 @@ spec:
                   key: voyage-api-key
             {{- end }}
             {{- end }}
+          ports:
+            - name: health
+              containerPort: 8080
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /liveness
+              port: health
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            failureThreshold: 3
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: health
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 3
+            timeoutSeconds: 5
           volumeMounts:
             - name: groups
               mountPath: /app/groups
@@ -172,6 +215,8 @@ spec:
               mountPath: /app/store
             - name: sessions
               mountPath: /data/sessions
+            - name: plugins
+              mountPath: /workspace/plugins
           resources:
             {{- toYaml .Values.orchestrator.resources | nindent 12 }}
       volumes:
@@ -184,3 +229,6 @@ spec:
         - name: sessions
           persistentVolumeClaim:
             claimName: kubeclaw-sessions
+        - name: plugins
+          persistentVolumeClaim:
+            claimName: kubeclaw-plugins

@@ -15,6 +15,7 @@ import {
 import { JobACL } from '../types.js';
 import {
   REDIS_ADMIN_PASSWORD,
+  REDIS_USERNAME,
   ACL_ENCRYPTION_KEY,
   REDIS_URL,
 } from '../config.js';
@@ -44,6 +45,7 @@ export class RedisACLManager {
     this.redis = new Redis({
       host,
       port,
+      ...(REDIS_USERNAME ? { username: REDIS_USERNAME } : {}),
       password: REDIS_ADMIN_PASSWORD || undefined,
       maxRetriesPerRequest: 3,
       enableReadyCheck: true,
@@ -122,16 +124,20 @@ export class RedisACLManager {
 
     const redis = await this.ensureConnection();
 
-    // Build ACL rules - job-specific keys only
-    const keyPattern = `kubeclaw:*:${jobId}`;
+    // Build ACL rules: read-only access to job input stream, publish-only to
+    // group output channel. No cross-job or cross-group key/channel access.
+    const inputKeyPattern = `kubeclaw:input:${jobId}`;
+    const outputChannel = `kubeclaw:messages:${groupFolder}`;
     const aclRules = [
-      `~${keyPattern}`,
-      '+@read',
-      '+@write',
-      '+@stream',
-      '+@pubsub',
-      '-@admin',
-      '-@dangerous',
+      `%R~${inputKeyPattern}`,   // read-only: XREAD from this job's input stream
+      'resetchannels',           // clear all channel access first
+      `&${outputChannel}`,       // pub/sub: PUBLISH to this group's output channel
+      '+xread',
+      '+xrange',
+      '+publish',
+      '+ping',
+      '+reset',
+      '+quit',
     ];
 
     try {

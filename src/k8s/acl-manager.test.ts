@@ -40,6 +40,7 @@ vi.mock('ioredis', () => {
 // Mock config
 vi.mock('../config.js', () => ({
   REDIS_ADMIN_PASSWORD: 'admin-password',
+  REDIS_USERNAME: 'orchestrator',
   ACL_ENCRYPTION_KEY: 'test-encryption-key-32bytes-long!!!',
   REDIS_URL: 'redis://localhost:6379',
 }));
@@ -124,13 +125,15 @@ describe('RedisACLManager', () => {
         expect.stringContaining('sidecar-test-job-123'),
         'on',
         expect.stringMatching(/^>.+/), // password starts with >
-        expect.stringContaining('kubeclaw:*:test-job-123'), // key pattern
-        '+@read',
-        '+@write',
-        '+@stream',
-        '+@pubsub',
-        '-@admin',
-        '-@dangerous',
+        '%R~kubeclaw:input:test-job-123',
+        'resetchannels',
+        '&kubeclaw:messages:test-group',
+        '+xread',
+        '+xrange',
+        '+publish',
+        '+ping',
+        '+reset',
+        '+quit',
       );
     });
 

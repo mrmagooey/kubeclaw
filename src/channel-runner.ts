@@ -11,6 +11,7 @@
  */
 
 import fs from 'fs';
+import http from 'http';
 import path from 'path';
 
 import {
@@ -49,7 +50,7 @@ import {
   shouldDropMessage,
 } from './sender-allowlist.js';
 import { detectMentionedSpecialists, loadSpecialists } from './specialists.js';
-import { startIpcWatcher } from './k8s/ipc-redis.js';
+import { startIpcWatcher, startControlChannelWatcher } from './k8s/ipc-redis.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { AvailableGroup, ContainerOutput } from './runtime/types.js';
 import { logger } from './logger.js';
@@ -82,6 +83,53 @@ function jidToFolder(channelType: string, jid: string): string {
 if (!KUBECLAW_CHANNEL) {
   logger.error('KUBECLAW_CHANNEL env var is required for channel pod mode');
   process.exit(1);
+}
+
+// ── Health server state ───────────────────────────────────────────────────────
+let channelConnected = false;
+let channelReconnecting = false;
+
+function startHealthServer(): void {
+  const port = parseInt(process.env.HEALTH_PORT || '9090', 10);
+  http
+    .createServer((req, res) => {
+      if (req.url === '/liveness' && req.method === 'GET') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ status: 'alive', uptime: process.uptime() }));
+      } else if (req.url === '/health' && req.method === 'GET') {
+        const ok = channelConnected;
+        const status = ok ? 'ok' : channelReconnecting ? 'reconnecting' : 'starting';
+        res.writeHead(ok ? 200 : 503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ status, channel: KUBECLAW_CHANNEL, connected: channelConnected, uptime: process.uptime() }));
+      } else {
+        res.writeHead(404);
+        res.end();
+      }
+    })
+    .listen(port, '0.0.0.0', () => {
+      logger.info({ port }, 'Health server started');
+    });
+}
+
+async function connectWithRetry(channel: Channel): Promise<void> {
+  const maxRetries = parseInt(process.env.CHANNEL_CONNECT_MAX_RETRIES || '10', 10);
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      await channel.connect();
+      channelConnected = true;
+      channelReconnecting = false;
+      return;
+    } catch (err) {
+      if (attempt >= maxRetries) {
+        logger.fatal({ err, attempt }, 'Channel connection failed after max retries');
+        process.exit(1);
+      }
+      const delayMs = Math.min(1000 * Math.pow(2, attempt - 1), 60_000);
+      logger.warn({ err, attempt, delayMs }, 'Channel connect failed, retrying');
+      channelReconnecting = true;
+      await new Promise((r) => setTimeout(r, delayMs));
+    }
+  }
 }
 
 let lastTimestamp = '';
@@ -362,6 +410,7 @@ function recoverPendingMessages(): void {
 }
 
 async function main(): Promise<void> {
+  startHealthServer();
   await initDatabase();
   logger.info(`Database initialized (channel: ${KUBECLAW_CHANNEL})`);
   loadState();
@@ -369,6 +418,7 @@ async function main(): Promise<void> {
 
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
+    channelConnected = false;
     await queue.shutdown(10000);
     await shutdownAllRunners();
     for (const ch of channels) await ch.disconnect();
@@ -429,7 +479,7 @@ async function main(): Promise<void> {
   }
 
   logger.info({ channel: KUBECLAW_CHANNEL }, 'Connecting channel...');
-  await channel.connect();
+  await connectWithRetry(channel);
   logger.info({ channel: KUBECLAW_CHANNEL }, 'Channel connected');
   channels.push(channel);
 
@@ -456,6 +506,29 @@ async function main(): Promise<void> {
       ag: AvailableGroup[],
       rj: Set<string>,
     ) => getDirectLLMRunner().writeGroupsSnapshot(gf, im, ag, rj),
+  });
+
+  // Subscribe to orchestrator control commands (e.g. reload).
+  startControlChannelWatcher(KUBECLAW_CHANNEL, async (msg) => {
+    if (msg.command === 'reload') {
+      logger.info('Reload command received, reconnecting channel...');
+      channelConnected = false;
+      channelReconnecting = true;
+      for (const ch of channels) {
+        try { await ch.disconnect(); } catch (err) { logger.warn({ err }, 'Error disconnecting channel during reload'); }
+      }
+      channels.length = 0;
+      const newChannel = factory!(channelOpts);
+      if (!newChannel) {
+        logger.error({ channel: KUBECLAW_CHANNEL }, 'Channel factory returned null during reload');
+        return;
+      }
+      await connectWithRetry(newChannel);
+      channels.push(newChannel);
+      logger.info('Channel reloaded successfully');
+    } else {
+      logger.warn({ command: msg.command }, 'Unknown control command');
+    }
   });
 
   queue.setProcessMessagesFn(processGroupMessages);

@@ -3,7 +3,7 @@
  * Manages connections for pub/sub and stream operations
  */
 import { Redis } from 'ioredis';
-import { REDIS_ADMIN_PASSWORD } from '../config.js';
+import { REDIS_ADMIN_PASSWORD, REDIS_USERNAME } from '../config.js';
 import { logger } from '../logger.js';
 import { RedisConfig } from './types.js';
 
@@ -24,6 +24,7 @@ export function createRedisClient(): Redis {
   const client = new Redis(config.url, {
     maxRetriesPerRequest: config.maxRetriesPerRequest,
     enableReadyCheck: config.enableReadyCheck,
+    ...(REDIS_USERNAME ? { username: REDIS_USERNAME } : {}),
     ...(REDIS_ADMIN_PASSWORD ? { password: REDIS_ADMIN_PASSWORD } : {}),
     retryStrategy: (times) => {
       const delay = Math.min(times * 50, 2000);
@@ -138,4 +139,8 @@ export function getSpawnAgentJobStream(): string {
 
 export function getAgentJobResultStream(agentJobId: string): string {
   return `kubeclaw:agent-job-result:${agentJobId}`;
+}
+
+export function getControlChannel(channelName: string): string {
+  return `kubeclaw:control:${channelName}`;
 }

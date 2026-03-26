@@ -137,9 +137,12 @@ export interface TaskRequest {
     | 'register_group'
     | 'refresh_groups'
     | 'tool_pod_request'
-    | 'deploy_channel';
+    | 'deploy_channel'
+    | 'control_channel';
   taskId?: string;
   yaml?: string;  // deploy_channel: Kubernetes YAML to apply
+  channelName?: string;  // control_channel: target channel pod name (e.g. 'telegram')
+  command?: 'reload';    // control_channel: command to send
   prompt?: string;
   schedule_type?: 'cron' | 'interval' | 'once';
   schedule_value?: string;

@@ -51,7 +51,9 @@ spec:
   egress:
     - to: []
 ---
-# Channel pods: egress to Redis, DNS, and the internet (channel APIs).
+# Channel pods: egress to Redis, DNS, and external channel APIs (HTTP + HTTPS).
+# Ingress is denied from all cluster pods — kubelet health probes bypass NetworkPolicy.
+# For channels with httpPort, channel-pods.yaml adds a per-channel ingress policy.
 # No K8s API access — automountServiceAccountToken is false on these pods.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -60,13 +62,13 @@ metadata:
   namespace: {{ .Values.namespace }}
 spec:
   podSelector:
-    matchLabels:
-      kubeclaw/channel: ""
     matchExpressions:
       - key: kubeclaw/channel
         operator: Exists
   policyTypes:
+    - Ingress
     - Egress
+  ingress: []
   egress:
     - to: []
       ports:
@@ -87,4 +89,67 @@ spec:
       ports:
         - protocol: TCP
           port: 80
+---
+# Tool pods (execution/browser): DNS + Redis IPC + HTTP/HTTPS for web tasks.
+# Broader egress than agents (adds port 80) but no K8s API access, no ingress.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kubeclaw-tool-pod-policy
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app: kubeclaw-tool-pod
+  policyTypes:
+    - Egress
+  egress:
+    - to: []
+      ports:
+        - protocol: UDP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              app: kubeclaw-redis
+      ports:
+        - protocol: TCP
+          port: 6379
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 80
+        - protocol: TCP
+          port: 443
+---
+# Sidecar tool pods (custom user containers): same egress profile as tool pods.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kubeclaw-sidecar-tool-policy
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app: kubeclaw-sidecar-tool
+  policyTypes:
+    - Egress
+  egress:
+    - to: []
+      ports:
+        - protocol: UDP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              app: kubeclaw-redis
+      ports:
+        - protocol: TCP
+          port: 6379
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 80
+        - protocol: TCP
+          port: 443
 {{- end }}

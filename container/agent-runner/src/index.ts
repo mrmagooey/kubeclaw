@@ -784,6 +784,21 @@ function buildToolDefinitions(isSuperuser: boolean, isMain: boolean): OpenAI.Cha
         },
       },
     });
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'control_channel',
+        description: 'Send a control command to a running channel pod (e.g. reload to force reconnect). Main group only.',
+        parameters: {
+          type: 'object',
+          properties: {
+            channelName: { type: 'string', description: 'Channel pod name to control (e.g. telegram, irc, discord)' },
+            command: { type: 'string', enum: ['reload'], description: 'reload: disconnect and reconnect the channel' },
+          },
+          required: ['channelName', 'command'],
+        },
+      },
+    });
   }
 
   if (isSuperuser) {
@@ -995,6 +1010,14 @@ async function runAgentLoop(
                 JSON.stringify({ type: 'deploy_channel', yaml: String(args.yamlContent || ''), groupFolder: input.groupFolder }),
               );
               result = 'Deployment request sent to orchestrator.';
+              break;
+            case 'control_channel':
+              if (!input.isMain) { result = 'control_channel is only available to the main group.'; break; }
+              await (redis as any).publish(
+                `kubeclaw:tasks:${input.groupFolder}`,
+                JSON.stringify({ type: 'control_channel', channelName: String(args.channelName || ''), command: String(args.command || ''), groupFolder: input.groupFolder }),
+              );
+              result = `Control command '${args.command}' sent to channel '${args.channelName}'.`;
               break;
             default:
               result = `Unknown tool: ${name}`;

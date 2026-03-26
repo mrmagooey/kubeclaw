@@ -269,11 +269,16 @@ export class GroupQueue {
     }
   }
 
-  async shutdown(_gracePeriodMs: number): Promise<void> {
+  async shutdown(gracePeriodMs: number): Promise<void> {
     this.shuttingDown = true;
-    logger.info(
-      { activeCount: this.activeCount },
-      'GroupQueue shutting down',
-    );
+    logger.info({ activeCount: this.activeCount }, 'GroupQueue shutting down');
+    if (this.activeCount === 0) return;
+    const deadline = Date.now() + gracePeriodMs;
+    while (this.activeCount > 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    if (this.activeCount > 0) {
+      logger.warn({ activeCount: this.activeCount }, 'Grace period expired with active jobs');
+    }
   }
 }

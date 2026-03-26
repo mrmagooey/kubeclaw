@@ -29,7 +29,7 @@ import {
   AGENT_JOB_CPU_LIMIT,
   TIMEZONE,
   REDIS_URL,
-  REDIS_ADMIN_PASSWORD,
+  REDIS_ADAPTER_PASSWORD,
 } from '../config.js';
 import { JobInput, JobOutput, SidecarFileJobSpec } from './types.js';
 import { jobRunner } from './job-runner.js';
@@ -229,10 +229,10 @@ export class FileSidecarJobRunner {
             { name: 'REDIS_USERNAME', value: spec.credentials.username },
             { name: 'REDIS_PASSWORD', value: spec.credentials.password },
           ]
-        : REDIS_ADMIN_PASSWORD
+        : REDIS_ADAPTER_PASSWORD
           ? [
-              { name: 'REDIS_USERNAME', value: 'default' },
-              { name: 'REDIS_PASSWORD', value: REDIS_ADMIN_PASSWORD },
+              { name: 'REDIS_USERNAME', value: 'adapter' },
+              { name: 'REDIS_PASSWORD', value: REDIS_ADAPTER_PASSWORD },
             ]
           : []),
     ];

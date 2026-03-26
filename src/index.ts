@@ -1,4 +1,5 @@
 import fs from 'fs';
+import http from 'http';
 import path from 'path';
 
 import {
@@ -66,6 +67,39 @@ let messageLoopRunning = false;
 
 const channels: Channel[] = [];
 const queue = new GroupQueue();
+
+// ── Orchestrator health server ────────────────────────────────────────────────
+let healthRedisReady = false;
+let healthGroupsLoaded = false;
+
+function startOrchestratorHealthServer(): void {
+  const port = parseInt(process.env.HEALTH_PORT || '8080', 10);
+  http
+    .createServer((req, res) => {
+      if (req.url === '/liveness' && req.method === 'GET') {
+        // Liveness: just checks the process is responsive (never fails unless hung)
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ status: 'alive', uptime: process.uptime() }));
+      } else if (req.url === '/health' && req.method === 'GET') {
+        // Readiness: checks full startup (Redis connected, groups loaded)
+        const ok = healthRedisReady && healthGroupsLoaded;
+        res.writeHead(ok ? 200 : 503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          status: ok ? 'ok' : 'starting',
+          redis: healthRedisReady,
+          groups: healthGroupsLoaded,
+          groupCount: Object.keys(registeredGroups).length,
+          uptime: process.uptime(),
+        }));
+      } else {
+        res.writeHead(404);
+        res.end();
+      }
+    })
+    .listen(port, '0.0.0.0', () => {
+      logger.info({ port }, 'Orchestrator health server started');
+    });
+}
 
 /** @internal - exported for testing */
 export function loadState(): void {
@@ -561,10 +595,19 @@ function recoverPendingMessages(): void {
 }
 
 async function main(): Promise<void> {
+  startOrchestratorHealthServer();
   await initDatabase();
   logger.info('Database initialized');
   loadState();
+  healthGroupsLoaded = true;
   await loadChannelPlugins('/workspace/plugins');
+
+  // Track Redis readiness for health probe
+  const redisClient = getRedisClient();
+  if (redisClient.status === 'ready') healthRedisReady = true;
+  redisClient.on('ready', () => { healthRedisReady = true; });
+  redisClient.on('close', () => { healthRedisReady = false; });
+  redisClient.on('error', () => { healthRedisReady = false; });
 
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
