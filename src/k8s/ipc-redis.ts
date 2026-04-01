@@ -7,7 +7,7 @@ import { Redis } from 'ioredis';
 
 import { SIDECAR_POLL_INTERVAL, TIMEZONE } from '../config.js';
 import { AvailableGroup } from '../runtime/types.js';
-import { createTask, deleteTask, getTaskById, updateTask } from '../db.js';
+import { createTask, deleteTask, getTaskById, getTasksForGroup, updateTask } from '../db.js';
 import { isValidGroupFolder } from '../group-folder.js';
 import { logger } from '../logger.js';
 import { RegisteredGroup } from '../types.js';
@@ -21,10 +21,12 @@ import {
   getSpawnAgentJobStream,
   getSpawnToolPodStream,
   getTaskChannel,
+  getTaskRequestStream,
 } from './redis-client.js';
 import { TaskRequest } from './types.js';
 import { jobRunner } from './job-runner.js';
 import { ASSISTANT_NAME, CONTAINER_TIMEOUT, IDLE_TIMEOUT } from '../config.js';
+import { deployMcpServer, removeMcpServer, listMcpServers } from '../mcp-registry.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
@@ -569,6 +571,63 @@ export async function processTaskIpc(
       }
       break;
 
+    case 'deploy_mcp_server':
+      if (!isMain) {
+        logger.warn({ sourceGroup }, 'Unauthorized deploy_mcp_server attempt blocked');
+        break;
+      }
+      if (data.name && data.image) {
+        try {
+          await deployMcpServer({
+            name: data.name,
+            image: data.image,
+            port: data.port ? Number(data.port) : undefined,
+            path: data.path || undefined,
+            command: data.command ? JSON.parse(data.command as string) : undefined,
+            env: data.env ? JSON.parse(data.env) : undefined,
+            channels: data.channels ? JSON.parse(data.channels) : undefined,
+            allowedTools: data.allowedTools ? JSON.parse(data.allowedTools) : undefined,
+            resources: data.resources ? JSON.parse(data.resources) : undefined,
+          });
+          logger.info({ sourceGroup, name: data.name }, 'MCP server deployed via IPC');
+        } catch (err) {
+          logger.error({ err, name: data.name }, 'Failed to deploy MCP server');
+        }
+      }
+      break;
+
+    case 'remove_mcp_server':
+      if (!isMain) {
+        logger.warn({ sourceGroup }, 'Unauthorized remove_mcp_server attempt blocked');
+        break;
+      }
+      if (data.name) {
+        try {
+          await removeMcpServer(data.name);
+          logger.info({ sourceGroup, name: data.name }, 'MCP server removed via IPC');
+        } catch (err) {
+          logger.error({ err, name: data.name }, 'Failed to remove MCP server');
+        }
+      }
+      break;
+
+    case 'list_mcp_servers':
+      try {
+        const servers = listMcpServers();
+        const resultStream = data.resultStream;
+        if (resultStream) {
+          const client = getRedisClient();
+          await client.xadd(
+            resultStream, '*',
+            'result', JSON.stringify(servers),
+            'status', 'success',
+          );
+        }
+      } catch (err) {
+        logger.error({ err }, 'Failed to list MCP servers');
+      }
+      break;
+
     default:
       logger.warn({ type: data.type }, 'Unknown Redis IPC task type');
   }
@@ -679,9 +738,11 @@ export async function startToolPodSpawnWatcher(): Promise<void> {
                   description: '',
                   parameters: {},
                   image: toolImage,
-                  pattern: (toolPattern as 'http' | 'file') || 'http',
+                  pattern: (toolPattern as 'http' | 'file' | 'acp') || 'http',
                   port: toolPort ? Number(toolPort) : 8080,
                   ...(parsedCommand ? { command: parsedCommand } : {}),
+                  ...(obj.toolAcpAgentName ? { acpAgentName: obj.toolAcpAgentName } : {}),
+                  ...(obj.toolAcpMode ? { acpMode: obj.toolAcpMode as 'sync' | 'async' } : {}),
                 },
                 timeout: timeoutMs,
                 groupsPvc,
@@ -783,13 +844,194 @@ export async function startAgentJobSpawnWatcher(): Promise<void> {
 }
 
 /**
+ * Watch the kubeclaw:task-requests stream for task creation requests from
+ * channel pods (via DirectLLMRunner). Unlike the per-group pub/sub task
+ * channels, this stream is always watched regardless of which groups the
+ * orchestrator knows about.
+ */
+export async function startTaskRequestWatcher(): Promise<void> {
+  const redis = getRedisClient();
+  const stream = getTaskRequestStream();
+  let lastId = '$';
+
+  logger.info('Task request stream watcher started');
+
+  while (ipcWatcherRunning) {
+    try {
+      const resp = await redis.xread('COUNT', 10, 'BLOCK', 5000, 'STREAMS', stream, lastId);
+      if (!resp) continue;
+
+      for (const [, messages] of resp as [string, [string, string[]][]][]) {
+        for (const [id, fields] of messages) {
+          lastId = id;
+          const obj: Record<string, string> = {};
+          for (let i = 0; i < fields.length; i += 2) obj[fields[i]] = fields[i + 1];
+
+          const { type, groupFolder } = obj;
+          if (!type || !groupFolder) continue;
+
+          if (type === 'schedule_task') {
+            const { taskId, chatJid, prompt, schedule_type, schedule_value, context_mode, resultStream } = obj;
+            if (!prompt || !schedule_type || !schedule_value || !chatJid) continue;
+
+            const existingTasks = getTasksForGroup(groupFolder);
+            const activeTasks = existingTasks.filter(t => t.status === 'active' || t.status === 'paused');
+
+            // Per-group task limit (default 3, configurable via MAX_TASKS_PER_GROUP env var)
+            const maxTasks = parseInt(process.env.MAX_TASKS_PER_GROUP || '3', 10);
+            if (activeTasks.length >= maxTasks) {
+              logger.warn({ groupFolder, count: activeTasks.length, maxTasks }, 'Task limit reached');
+              if (resultStream) await redis.xadd(resultStream, '*', 'result', `Task limit reached (${maxTasks} active tasks). Cancel an existing task first.`);
+              continue;
+            }
+
+            // Deduplication: reject if an active task with the same prompt and schedule already exists
+            const duplicate = activeTasks.find(t =>
+              t.prompt.trim() === prompt.trim() &&
+              t.schedule_type === schedule_type &&
+              t.schedule_value === schedule_value,
+            );
+            if (duplicate) {
+              logger.info({ groupFolder, duplicateId: duplicate.id }, 'Duplicate task rejected');
+              if (resultStream) await redis.xadd(resultStream, '*', 'result', `A task with the same prompt and schedule already exists (ID: ${duplicate.id}).`);
+              continue;
+            }
+
+            const scheduleType = schedule_type as 'cron' | 'interval' | 'once';
+            let nextRun: string | null = null;
+
+            try {
+              if (scheduleType === 'cron') {
+                const interval = CronExpressionParser.parse(schedule_value, { tz: TIMEZONE });
+                nextRun = interval.next().toISOString();
+              } else if (scheduleType === 'interval') {
+                const ms = parseInt(schedule_value, 10);
+                if (isNaN(ms) || ms <= 0) { logger.warn({ schedule_value }, 'Invalid interval in task request'); continue; }
+                nextRun = new Date(Date.now() + ms).toISOString();
+              } else if (scheduleType === 'once') {
+                const date = new Date(schedule_value);
+                if (isNaN(date.getTime())) { logger.warn({ schedule_value }, 'Invalid timestamp in task request'); continue; }
+                nextRun = date.toISOString();
+              }
+            } catch (err) {
+              logger.warn({ schedule_value, err }, 'Failed to parse schedule in task request');
+              continue;
+            }
+
+            const finalTaskId = taskId || `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+            createTask({
+              id: finalTaskId,
+              group_folder: groupFolder,
+              chat_jid: chatJid,
+              prompt,
+              schedule_type: scheduleType,
+              schedule_value,
+              context_mode: context_mode === 'group' ? 'group' : 'isolated',
+              next_run: nextRun,
+              status: 'active',
+              created_at: new Date().toISOString(),
+            });
+            logger.info({ taskId: finalTaskId, groupFolder, scheduleType }, 'Task created via task-request stream');
+            if (resultStream) await redis.xadd(resultStream, '*', 'result', `Scheduled task "${finalTaskId}" (${scheduleType}: ${schedule_value}). It will run automatically.`);
+
+          } else if (type === 'list_tasks') {
+            const tasks = getTasksForGroup(groupFolder);
+            const resultStream = obj.resultStream;
+            if (resultStream) {
+              const summary = tasks.length === 0
+                ? 'No scheduled tasks.'
+                : tasks.map(t =>
+                    `ID: ${t.id} | ${t.schedule_type} ${t.schedule_value} | status: ${t.status} | next: ${t.next_run || 'N/A'} | prompt: ${t.prompt.slice(0, 80)}`
+                  ).join('\n');
+              await redis.xadd(resultStream, '*', 'result', summary);
+            }
+
+          } else if (type === 'cancel_task') {
+            const taskId = obj.taskId;
+            const resultStream = obj.resultStream;
+            if (taskId) {
+              const task = getTaskById(taskId);
+              if (task && task.group_folder === groupFolder) {
+                deleteTask(taskId);
+                logger.info({ taskId, groupFolder }, 'Task cancelled via task-request stream');
+                if (resultStream) await redis.xadd(resultStream, '*', 'result', `Task "${taskId}" cancelled.`);
+              } else {
+                if (resultStream) await redis.xadd(resultStream, '*', 'result', `Task "${taskId}" not found or does not belong to this group.`);
+              }
+            }
+
+          } else if (type === 'pause_task') {
+            const taskId = obj.taskId;
+            const action = obj.action as 'pause' | 'resume';
+            const resultStream = obj.resultStream;
+            if (taskId && (action === 'pause' || action === 'resume')) {
+              const task = getTaskById(taskId);
+              if (task && task.group_folder === groupFolder) {
+                const newStatus = action === 'pause' ? 'paused' : 'active';
+                updateTask(taskId, { status: newStatus });
+                logger.info({ taskId, groupFolder, action }, 'Task status updated via task-request stream');
+                if (resultStream) await redis.xadd(resultStream, '*', 'result', `Task "${taskId}" ${action}d.`);
+              } else {
+                if (resultStream) await redis.xadd(resultStream, '*', 'result', `Task "${taskId}" not found or does not belong to this group.`);
+              }
+            }
+
+          } else if (type === 'deploy_mcp_server') {
+            if (obj.isMain !== 'true') { logger.warn({ groupFolder }, 'Unauthorized deploy_mcp_server'); continue; }
+            if (obj.name && obj.image) {
+              try {
+                await deployMcpServer({
+                  name: obj.name, image: obj.image,
+                  port: obj.port ? Number(obj.port) : undefined,
+                  path: obj.path || undefined,
+                  command: obj.command ? JSON.parse(obj.command) : undefined,
+                  env: obj.env ? JSON.parse(obj.env) : undefined,
+                  channels: obj.channels ? JSON.parse(obj.channels) : undefined,
+                  allowedTools: obj.allowedTools ? JSON.parse(obj.allowedTools) : undefined,
+                  resources: obj.resources ? JSON.parse(obj.resources) : undefined,
+                });
+                logger.info({ name: obj.name }, 'MCP server deployed via stream');
+              } catch (err) { logger.error({ err, name: obj.name }, 'Failed to deploy MCP server'); }
+            }
+
+          } else if (type === 'remove_mcp_server') {
+            if (obj.isMain !== 'true') { logger.warn({ groupFolder }, 'Unauthorized remove_mcp_server'); continue; }
+            if (obj.name) {
+              try { await removeMcpServer(obj.name); logger.info({ name: obj.name }, 'MCP server removed via stream'); }
+              catch (err) { logger.error({ err, name: obj.name }, 'Failed to remove MCP server'); }
+            }
+
+          } else if (type === 'list_mcp_servers') {
+            try {
+              const servers = listMcpServers();
+              if (obj.resultStream) await redis.xadd(obj.resultStream, '*', 'result', JSON.stringify(servers), 'status', 'success');
+            } catch (err) { logger.error({ err }, 'Failed to list MCP servers'); }
+          }
+        }
+      }
+    } catch (err) {
+      if (ipcWatcherRunning) {
+        logger.error({ err }, 'Task request watcher error');
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+    }
+  }
+}
+
+/**
  * Subscribe to the control channel for a channel pod and invoke onCommand
  * when a control message arrives (e.g. { command: 'reload' }).
  * Called by channel-runner.ts after startIpcWatcher().
  */
+export interface ControlMessage {
+  command: string;
+  servers?: string; // JSON-encoded McpServerStatus[] for mcp_update
+  [key: string]: unknown;
+}
+
 export function startControlChannelWatcher(
   channelName: string,
-  onCommand: (msg: { command: string }) => Promise<void>,
+  onCommand: (msg: ControlMessage) => Promise<void>,
 ): void {
   const subscriber = getRedisSubscriber();
   const channel = getControlChannel(channelName);
@@ -800,7 +1042,7 @@ export function startControlChannelWatcher(
   subscriber.on('message', (ch, message) => {
     if (ch !== channel) return;
     try {
-      const data = JSON.parse(message) as { command: string };
+      const data = JSON.parse(message) as ControlMessage;
       if (data.command) {
         onCommand(data).catch((err) =>
           logger.error({ err, command: data.command }, 'Error handling control command'),

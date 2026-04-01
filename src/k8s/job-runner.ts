@@ -1057,7 +1057,8 @@ export class JobRunner {
     assertToolImageAllowed(toolSpec.image);
     const port = toolSpec.port ?? 8080;
     const isFileBridge = toolSpec.pattern === 'file';
-    const toolMode = isFileBridge ? 'file-bridge' : 'http-bridge';
+    const isAcpBridge = toolSpec.pattern === 'acp';
+    const toolMode = isFileBridge ? 'file-bridge' : isAcpBridge ? 'acp-bridge' : 'http-bridge';
 
     // Keep job name under 63 chars: "kubeclaw-stool-" (15) + 8-char suffix + "-" + toolName (truncated)
     const agentSuffix = spec.agentJobId.slice(-8).replace(/[^a-z0-9]/gi, '').toLowerCase();
@@ -1082,6 +1083,13 @@ export class JobRunner {
       { name: 'IDLE_TIMEOUT', value: String(spec.timeout) },
       { name: 'REDIS_URL', value: redisUrl },
     ];
+
+    if (isAcpBridge) {
+      bridgeEnv.push(
+        { name: 'KUBECLAW_ACP_AGENT_NAME', value: toolSpec.acpAgentName || spec.toolName },
+        { name: 'KUBECLAW_ACP_MODE', value: toolSpec.acpMode || 'sync' },
+      );
+    }
 
     const userEnv = [{ name: 'PORT', value: String(port) }];
 
@@ -1158,6 +1166,41 @@ export class JobRunner {
       'Sidecar tool pod job created',
     );
     return jobName;
+  }
+  /**
+   * Delete a Deployment by name.
+   */
+  async deleteDeployment(name: string, namespace?: string): Promise<void> {
+    const ns = namespace || this.namespace;
+    try {
+      await this.appsApi.deleteNamespacedDeployment({ name, namespace: ns });
+      logger.info({ kind: 'Deployment', name, namespace: ns }, 'Deleted K8s resource');
+    } catch (err: unknown) {
+      const status = (err as { response?: { statusCode?: number } })?.response?.statusCode;
+      if (status === 404) {
+        logger.debug({ kind: 'Deployment', name }, 'Resource not found, nothing to delete');
+      } else {
+        throw err;
+      }
+    }
+  }
+
+  /**
+   * Delete a Service by name.
+   */
+  async deleteService(name: string, namespace?: string): Promise<void> {
+    const ns = namespace || this.namespace;
+    try {
+      await this.coreApi.deleteNamespacedService({ name, namespace: ns });
+      logger.info({ kind: 'Service', name, namespace: ns }, 'Deleted K8s resource');
+    } catch (err: unknown) {
+      const status = (err as { response?: { statusCode?: number } })?.response?.statusCode;
+      if (status === 404) {
+        logger.debug({ kind: 'Service', name }, 'Resource not found, nothing to delete');
+      } else {
+        throw err;
+      }
+    }
   }
 }
 

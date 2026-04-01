@@ -138,7 +138,10 @@ export interface TaskRequest {
     | 'refresh_groups'
     | 'tool_pod_request'
     | 'deploy_channel'
-    | 'control_channel';
+    | 'control_channel'
+    | 'deploy_mcp_server'
+    | 'remove_mcp_server'
+    | 'list_mcp_servers';
   taskId?: string;
   yaml?: string;  // deploy_channel: Kubernetes YAML to apply
   channelName?: string;  // control_channel: target channel pod name (e.g. 'telegram')
@@ -158,6 +161,15 @@ export interface TaskRequest {
   // Tool pod request fields
   category?: 'execution' | 'browser';
   agentJobId?: string;
+  // MCP server fields
+  image?: string;
+  port?: string;
+  path?: string;
+  env?: string;        // JSON-encoded Record<string, string>
+  channels?: string;   // JSON-encoded string[]
+  allowedTools?: string; // JSON-encoded string[]
+  resources?: string;    // JSON-encoded resource limits
+  resultStream?: string; // for list_mcp_servers result
 }
 
 export interface ToolPodJobSpec {

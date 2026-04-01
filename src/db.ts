@@ -13,6 +13,7 @@ import {
   ScheduledTask,
   TaskRunLog,
   JobACL,
+  McpServerSpec,
 } from './types.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -128,6 +129,15 @@ function createSchema(database: SqlJsDatabase): void {
   database.run(
     `CREATE INDEX IF NOT EXISTS idx_job_acls_expires ON job_acls(expires_at, status)`,
   );
+
+  database.run(`
+    CREATE TABLE IF NOT EXISTS mcp_servers (
+      name TEXT PRIMARY KEY,
+      spec TEXT NOT NULL,
+      status TEXT DEFAULT 'active',
+      created_at TEXT NOT NULL
+    )
+  `);
 
   database.run(`
     CREATE TABLE IF NOT EXISTS conversation_history (
@@ -933,18 +943,31 @@ function migrateJsonState(): void {
 
 // --- Conversation History Functions ---
 
+/**
+ * Return the most recent conversation messages for a group.
+ * Older context is available via RAG retrieval when configured.
+ *
+ * @param limit  Max messages to return (default: 20). Set to 0 for unlimited.
+ *               Configurable via MAX_CONVERSATION_HISTORY env var.
+ */
 export function getConversationHistory(
   groupFolder: string,
+  limit?: number,
 ): { role: 'user' | 'assistant'; content: string }[] {
-  const result = db.exec(
-    'SELECT role, content FROM conversation_history WHERE group_folder = ? ORDER BY created_at ASC',
-    [groupFolder],
-  );
+  const maxMessages = limit ?? (parseInt(process.env.MAX_CONVERSATION_HISTORY || '20', 10) || 0);
+  const query = maxMessages > 0
+    ? 'SELECT role, content FROM conversation_history WHERE group_folder = ? ORDER BY created_at DESC LIMIT ?'
+    : 'SELECT role, content FROM conversation_history WHERE group_folder = ? ORDER BY created_at ASC';
+  const params = maxMessages > 0 ? [groupFolder, maxMessages] : [groupFolder];
+  const result = db.exec(query, params);
   if (result.length === 0) return [];
-  return result[0].values.map((row: unknown[]) => ({
+  const rows = result[0].values.map((row: unknown[]) => ({
     role: row[0] as 'user' | 'assistant',
     content: row[1] as string,
   }));
+  // DESC query returns newest-first; reverse to chronological order
+  if (maxMessages > 0) rows.reverse();
+  return rows;
 }
 
 export function appendConversationMessage(
@@ -1053,6 +1076,47 @@ export function getJobACLByGroup(groupFolder: string): JobACL | undefined {
 
 export function revokeJobACL(jobId: string): void {
   db.run(`UPDATE job_acls SET status = 'revoked' WHERE job_id = ?`, [jobId]);
+  saveDatabase();
+}
+
+// --- MCP Server Functions ---
+
+export function setMcpServer(spec: McpServerSpec): void {
+  db.run(
+    `INSERT OR REPLACE INTO mcp_servers (name, spec, status, created_at)
+     VALUES (?, ?, 'active', COALESCE((SELECT created_at FROM mcp_servers WHERE name = ?), ?))`,
+    [spec.name, JSON.stringify(spec), spec.name, new Date().toISOString()],
+  );
+  saveDatabase();
+}
+
+export function getMcpServer(name: string): McpServerSpec | undefined {
+  const stmt = db.prepare(
+    `SELECT spec FROM mcp_servers WHERE name = ? AND status = 'active'`,
+  );
+  stmt.bind([name]);
+
+  if (stmt.step()) {
+    const row = stmt.getAsObject() as { spec: string };
+    stmt.free();
+    return JSON.parse(row.spec) as McpServerSpec;
+  }
+  stmt.free();
+  return undefined;
+}
+
+export function getAllMcpServers(): McpServerSpec[] {
+  const result = db.exec(
+    `SELECT spec FROM mcp_servers WHERE status = 'active' ORDER BY created_at`,
+  );
+  if (result.length === 0) return [];
+  return result[0].values.map(
+    (row: unknown[]) => JSON.parse(row[0] as string) as McpServerSpec,
+  );
+}
+
+export function deleteMcpServer(name: string): void {
+  db.run(`DELETE FROM mcp_servers WHERE name = ?`, [name]);
   saveDatabase();
 }
 

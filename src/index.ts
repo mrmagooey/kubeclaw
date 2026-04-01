@@ -40,7 +40,7 @@ import {
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
-import { startIpcWatcher as startRedisIpcWatcher, startToolPodSpawnWatcher, startAgentJobSpawnWatcher } from './k8s/ipc-redis.js';
+import { startIpcWatcher as startRedisIpcWatcher, startToolPodSpawnWatcher, startAgentJobSpawnWatcher, startTaskRequestWatcher } from './k8s/ipc-redis.js';
 import { getOutputChannel, getRedisClient } from './k8s/redis-client.js';
 import { findChannel, formatMessages, formatOutbound } from './router.js';
 import {
@@ -736,6 +736,25 @@ async function main(): Promise<void> {
   startAgentJobSpawnWatcher().catch((err) =>
     logger.error({ err }, 'Agent job spawn watcher crashed'),
   );
+  startTaskRequestWatcher().catch((err) =>
+    logger.error({ err }, 'Task request watcher crashed'),
+  );
+
+  // Sync MCP servers from values.yaml (MCP_SERVERS_VALUES env var) and notify channel pods
+  try {
+    const { syncFromValues, notifyAllChannels } = await import('./mcp-registry.js');
+    const mcpValuesJson = process.env.MCP_SERVERS_VALUES;
+    if (mcpValuesJson) {
+      const mcpSpecs = JSON.parse(mcpValuesJson);
+      await syncFromValues(mcpSpecs);
+      logger.info({ count: mcpSpecs.length }, 'Synced MCP servers from values.yaml');
+    }
+    // Always notify channels on startup (covers servers already in DB from previous runs)
+    await notifyAllChannels();
+  } catch (err) {
+    logger.error({ err }, 'Failed to sync MCP servers on startup');
+  }
+
   queue.setProcessMessagesFn(processGroupMessages);
   recoverPendingMessages();
   startMessageLoop().catch((err) => {

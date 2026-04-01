@@ -27,7 +27,11 @@ rules:
     verbs: ["get", "create", "patch"]
   - apiGroups: ["apps"]
     resources: ["deployments"]
-    verbs: ["get", "create", "patch", "replace"]
+    verbs: ["get", "create", "patch", "replace", "delete"]
+  # MCP server lifecycle: create/delete services
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "create", "replace", "delete"]
   # Admin shell: create per-channel PVCs
   - apiGroups: [""]
     resources: ["persistentvolumeclaims"]
@@ -137,6 +141,10 @@ spec:
             - name: TOOL_IMAGE_ALLOWLIST
               value: {{ .Values.orchestrator.toolImageAllowlist | quote }}
             {{- end }}
+            {{- if .Values.mcpServers }}
+            - name: MCP_SERVERS_VALUES
+              value: {{ .Values.mcpServers | toJson | quote }}
+            {{- end }}
             - name: ANTHROPIC_API_KEY
               valueFrom:
                 secretKeyRef:
@@ -219,6 +227,72 @@ spec:
               mountPath: /workspace/plugins
           resources:
             {{- toYaml .Values.orchestrator.resources | nindent 12 }}
+        {{- if .Values.orchestrator.admin.enabled }}
+        - name: admin
+          image: {{ include "kubeclaw.image" (dict "root" . "name" "kubeclaw-orchestrator") }}
+          imagePullPolicy: {{ include "kubeclaw.pullPolicy" . }}
+          command: ["node", "dist/admin-shell.js"]
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          env:
+            - name: ADMIN_HTTP_PORT
+              value: {{ .Values.orchestrator.admin.port | quote }}
+            - name: ADMIN_HTTP_USERNAME
+              value: {{ .Values.orchestrator.admin.username | quote }}
+            - name: ADMIN_HTTP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "kubeclaw.secretName" . }}
+                  key: admin-http-password
+            - name: KUBECLAW_NAMESPACE
+              value: {{ .Values.namespace }}
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "kubeclaw.secretName" . }}
+                  key: openai-api-key
+                  optional: true
+            - name: OPENAI_BASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "kubeclaw.secretName" . }}
+                  key: openai-base-url
+                  optional: true
+            - name: DIRECT_LLM_MODEL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "kubeclaw.secretName" . }}
+                  key: direct-llm-model
+                  optional: true
+          ports:
+            - name: admin
+              containerPort: {{ .Values.orchestrator.admin.port }}
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /
+              port: admin
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            failureThreshold: 3
+            timeoutSeconds: 5
+          volumeMounts:
+            - name: store
+              mountPath: /app/store
+          resources:
+            requests:
+              memory: 64Mi
+              cpu: 25m
+            limits:
+              memory: 128Mi
+              cpu: 100m
+        {{- end }}
       volumes:
         - name: groups
           persistentVolumeClaim:
@@ -232,3 +306,20 @@ spec:
         - name: plugins
           persistentVolumeClaim:
             claimName: kubeclaw-plugins
+{{- if .Values.orchestrator.admin.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kubeclaw-admin
+  namespace: {{ .Values.namespace }}
+spec:
+  selector:
+    app: kubeclaw-orchestrator
+  ports:
+    - name: admin
+      port: {{ .Values.orchestrator.admin.port }}
+      targetPort: admin
+      protocol: TCP
+  type: ClusterIP
+{{- end }}

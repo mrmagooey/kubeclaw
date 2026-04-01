@@ -526,6 +526,14 @@ async function main(): Promise<void> {
       await connectWithRetry(newChannel);
       channels.push(newChannel);
       logger.info('Channel reloaded successfully');
+    } else if (msg.command === 'mcp_update') {
+      try {
+        const servers = JSON.parse(msg.servers || '[]');
+        await getDirectLLMRunner().configureMcp(servers);
+        logger.info({ count: servers.length }, 'MCP servers reconfigured');
+      } catch (err) {
+        logger.error({ err }, 'Failed to reconfigure MCP servers');
+      }
     } else {
       logger.warn({ command: msg.command }, 'Unknown control command');
     }

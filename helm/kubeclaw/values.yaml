@@ -17,6 +17,13 @@ orchestrator:
   replicas: 1
   # Maximum number of agent Jobs that can run concurrently.
   maxConcurrentJobs: 10
+  # Admin HTTP interface — LLM-powered admin shell served as a sidecar.
+  # Enabled by default on port 9090 with auto-generated credentials.
+  admin:
+    enabled: true
+    port: 9090
+    # Basic Auth username. Password is stored in secrets.adminHttpPassword.
+    username: admin
   # Comma-separated glob patterns for permitted sidecar tool pod images.
   # Supports '*' wildcards, e.g. "kubeclaw-*:*,registry.example.com/*".
   # Empty (default) permits any image — set this in production to lock down tool containers.
@@ -74,6 +81,11 @@ secrets:
   directLlmModel: ""
   # Voyage AI API key — required when rag.provider=voyage.
   voyageApiKey: ""
+  # Admin HTTP interface password. Auto-generated on first install if left empty.
+  adminHttpPassword: ""
+  # HTTP channel users (format: "user1:pass1,user2:pass2").
+  # Auto-generates "admin:<random>" on first install if left empty.
+  httpChannelUsers: ""
   # Set to use an existing Secret instead of creating one from the values above.
   # The Secret must contain keys: anthropic-api-key, claude-code-oauth-token,
   # openai-api-key (optional), openai-base-url (optional), voyage-api-key (optional)
@@ -125,7 +137,16 @@ networkPolicy:
 #         tls:
 #           - hosts: [chat.example.com]
 #             secretName: kubeclaw-chat-tls
-channels: {}
+channels:
+  http:
+    enabled: true
+    httpPort: 4080
+    envVars:
+      - name: HTTP_CHANNEL_USERS
+        key: users
+      - name: HTTP_CHANNEL_PORT
+        key: port
+        optional: true
 
 # Default resource limits for channel pods.
 channelPod:
@@ -137,6 +158,24 @@ channelPod:
       memory: 256Mi
       cpu: 200m
 
+# MCP (Model Context Protocol) servers — deployed as separate pods.
+# Each server runs a container image that exposes MCP tools over HTTP.
+# Channel pods connect and discover tools automatically.
+#
+# Example:
+#   mcpServers:
+#     weather:
+#       image: mcp/weather-server:latest
+#       port: 3000             # container port (default 3000)
+#       path: /mcp             # MCP endpoint path (default /mcp)
+#       channels: [telegram, http]   # restrict access (empty = all channels)
+#       env:
+#         API_KEY: "your-key"
+#       resources:
+#         memoryRequest: 128Mi
+#         memoryLimit: 256Mi
+mcpServers: {}
+
 # RAG (Retrieval-Augmented Generation) — vector memory for agents.
 # Deploys a Qdrant StatefulSet and wires the orchestrator to embed + retrieve
 # context before each agent invocation.
@@ -145,7 +184,7 @@ channelPod:
 #   openai  — text-embedding-3-small. Reuses OPENAI_API_KEY. No new secrets.
 #   voyage  — voyage-3. Requires VOYAGE_API_KEY in secrets.
 rag:
-  enabled: false
+  enabled: true
   provider: openai           # "openai" | "voyage"
   model: ""                  # uses provider default if empty
   storage: 20Gi              # Qdrant PVC size
