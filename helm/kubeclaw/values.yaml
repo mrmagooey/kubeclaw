@@ -106,41 +106,51 @@ networkPolicy:
   # Disable to troubleshoot connectivity issues; re-enable in production.
   enabled: true
 
-# Channel pods — one Deployment per channel type.
+# Channel pods — one Deployment per channel instance.
 # Each channel pod runs the same orchestrator image with KUBECLAW_MODE=channel.
 # Channel pods have no Kubernetes RBAC (automountServiceAccountToken: false).
 # Tool pod spawning is delegated to the orchestrator via Redis.
 #
+# The key is the channel instance name (used for K8s resource naming).
+# The optional "type" field selects the channel factory (defaults to the key name).
+# This allows multiple instances of the same type (e.g. two HTTP channels).
+#
 # Example:
 #   channels:
-#     telegram:
+#     telegram:              # type defaults to "telegram"
 #       enabled: true
 #       envVars:
 #         - name: TELEGRAM_BOT_TOKEN
-#           key: bot-token    # key in Secret kubeclaw-channel-telegram
+#           key: bot-token   # key in Secret kubeclaw-channel-telegram
 #
 #     http:
 #       enabled: true
-#       httpPort: 4080           # exposes a ClusterIP Service on port 80 → 4080
+#       httpPort: 4080
 #       envVars:
 #         - name: HTTP_CHANNEL_USERS
-#           key: users           # "alice:secret,bob:pass" in Secret kubeclaw-channel-http
+#           key: users
 #         - name: HTTP_CHANNEL_PORT
 #           key: port
 #           optional: true
-#       ingress:
-#         enabled: true
-#         className: nginx
-#         host: chat.example.com
-#         annotations:
-#           nginx.ingress.kubernetes.io/ssl-redirect: "true"
-#         tls:
-#           - hosts: [chat.example.com]
-#             secretName: kubeclaw-chat-tls
+#
+#     http-staging:          # second HTTP channel instance
+#       type: http           # uses the "http" factory
+#       enabled: true
+#       httpPort: 4081
+#       envVars:
+#         - name: HTTP_CHANNEL_USERS
+#           key: users       # from Secret kubeclaw-channel-http-staging
+#         - name: HTTP_CHANNEL_PORT
+#           key: port
+#           optional: true
 channels:
   http:
     enabled: true
     httpPort: 4080
+    ingress:
+      enabled: true
+      className: nginx
+      host: chat.kubeclaw.local
     envVars:
       - name: HTTP_CHANNEL_USERS
         key: users

@@ -2,7 +2,7 @@ import { CronExpressionParser } from 'cron-parser';
 import fs from 'fs';
 
 import { ASSISTANT_NAME, SCHEDULER_POLL_INTERVAL, TIMEZONE } from './config.js';
-import { ContainerOutput, getAgentRunner } from './runtime/index.js';
+import { ContainerOutput, getAgentRunner, getRunnerForGroup } from './runtime/index.js';
 import {
   getAllTasks,
   getDueTasks,
@@ -127,7 +127,7 @@ async function runTask(
   // Update tasks snapshot for container to read (filtered by group)
   const isMain = group.isMain === true;
   const tasks = getAllTasks();
-  getAgentRunner().writeTasksSnapshot(
+  getRunnerForGroup(group).writeTasksSnapshot(
     task.group_folder,
     isMain,
     tasks.map((t) => ({
@@ -150,7 +150,7 @@ async function runTask(
     task.context_mode === 'group' ? sessions[task.group_folder] : undefined;
 
   try {
-    const output = await getAgentRunner().runAgent(
+    const output = await getRunnerForGroup(group).runAgent(
       group,
       {
         prompt: task.prompt,

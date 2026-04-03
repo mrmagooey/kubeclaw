@@ -832,6 +832,12 @@ export function clearInvalidProviders(): number {
 }
 
 export function deleteRegisteredGroup(jid: string): void {
+  // Clean up scheduled tasks for this group before removing the registration
+  const group = getRegisteredGroup(jid);
+  if (group) {
+    db.run('DELETE FROM task_run_logs WHERE task_id IN (SELECT id FROM scheduled_tasks WHERE group_folder = ?)', [group.folder]);
+    db.run('DELETE FROM scheduled_tasks WHERE group_folder = ?', [group.folder]);
+  }
   db.run('DELETE FROM registered_groups WHERE jid = ?', [jid]);
   saveDatabase();
 }

@@ -691,13 +691,21 @@ export async function sendCloseSignal(jobId: string): Promise<void> {
  * behalf of channel pods, which have no K8s RBAC.
  * Called by the orchestrator at startup.
  */
+/** Resolve '$' to the actual current last-entry ID so XREAD doesn't miss messages
+ *  added between two consecutive blocking calls (race condition with '$'). */
+async function resolveStreamTip(redis: Redis, stream: string): Promise<string> {
+  const entries = (await redis.xrevrange(stream, '+', '-', 'COUNT', '1')) as [string, string[]][];
+  return entries.length > 0 ? entries[0][0] : '0-0';
+}
+
 export async function startToolPodSpawnWatcher(): Promise<void> {
   const redis = getRedisClient();
   const stream = getSpawnToolPodStream();
-  // Use '$' so orchestrator restarts don't replay stale requests.
-  // If the orchestrator missed a request, the channel pod's tool call will
-  // time out (TOOL_TIMEOUT_MS) and the user gets a graceful error.
-  let lastId = '$';
+  // Resolve to the actual last-entry ID before entering the loop.
+  // Using '$' raw would cause a race condition: if a message is added between
+  // two consecutive XREAD calls, '$' re-evaluates to the new tip and the
+  // message is silently skipped forever.
+  let lastId = await resolveStreamTip(redis, stream);
 
   logger.info('Tool pod spawn watcher started');
 
@@ -782,7 +790,7 @@ export async function startToolPodSpawnWatcher(): Promise<void> {
 export async function startAgentJobSpawnWatcher(): Promise<void> {
   const redis = getRedisClient();
   const stream = getSpawnAgentJobStream();
-  let lastId = '$';
+  let lastId = await resolveStreamTip(redis, stream);
 
   logger.info('Agent job spawn watcher started');
 
@@ -852,7 +860,7 @@ export async function startAgentJobSpawnWatcher(): Promise<void> {
 export async function startTaskRequestWatcher(): Promise<void> {
   const redis = getRedisClient();
   const stream = getTaskRequestStream();
-  let lastId = '$';
+  let lastId = await resolveStreamTip(redis, stream);
 
   logger.info('Task request stream watcher started');
 

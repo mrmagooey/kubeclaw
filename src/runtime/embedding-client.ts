@@ -38,7 +38,10 @@ export const RAG_ENABLED = !!(process.env.QDRANT_URL && process.env.EMBEDDING_PR
 let _openaiClient: OpenAI | undefined;
 function getOpenAIClient(): OpenAI {
   if (!_openaiClient) {
-    _openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'no-key' });
+    _openaiClient = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY || 'no-key',
+      ...(process.env.OPENAI_BASE_URL ? { baseURL: process.env.OPENAI_BASE_URL } : {}),
+    });
   }
   return _openaiClient;
 }

@@ -55,6 +55,7 @@ import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
 import { augmentPrompt } from './rag/retriever.js';
 import { indexConversationTurn } from './rag/indexer.js';
+import { startHttpAdminServer } from './admin-shell.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -598,6 +599,12 @@ async function main(): Promise<void> {
   startOrchestratorHealthServer();
   await initDatabase();
   logger.info('Database initialized');
+
+  // Start admin HTTP interface if configured (runs in-process, no sidecar needed)
+  if (process.env.ADMIN_HTTP_PORT) {
+    startHttpAdminServer();
+  }
+
   loadState();
   healthGroupsLoaded = true;
   await loadChannelPlugins('/workspace/plugins');

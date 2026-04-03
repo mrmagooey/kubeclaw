@@ -17,7 +17,7 @@ const agentJobId = process.env.KUBECLAW_AGENT_JOB_ID!;
 const category = process.env.KUBECLAW_CATEGORY as 'execution' | 'browser' | string;
 const redisUrl = process.env.REDIS_URL || 'redis://kubeclaw-redis:6379';
 const idleTimeout = parseInt(process.env.IDLE_TIMEOUT || '1800000', 10);
-const toolMode = process.env.KUBECLAW_TOOL_MODE as 'http-bridge' | 'file-bridge' | undefined;
+const toolMode = process.env.KUBECLAW_TOOL_MODE as 'http-bridge' | 'file-bridge' | 'acp-bridge' | undefined;
 const toolPort = parseInt(process.env.KUBECLAW_TOOL_PORT || '8080', 10);
 const SHARED_DIR = process.env.KUBECLAW_SHARED_DIR || '/shared';
 
@@ -195,9 +195,83 @@ async function executeToolBridgeFile(tool: string, input: Record<string, unknown
   throw new Error('File bridge timeout');
 }
 
+// --- ACP bridge mode ---
+
+const acpAgentName = process.env.KUBECLAW_ACP_AGENT_NAME;
+const acpMode = process.env.KUBECLAW_ACP_MODE || 'sync';
+
+async function executeToolBridgeAcp(
+  tool: string,
+  input: Record<string, unknown>,
+): Promise<unknown> {
+  const acpBaseUrl = `http://localhost:${toolPort}`;
+  const agentName = acpAgentName || tool;
+
+  // Convert tool input to ACP message format
+  const taskText = (input.task as string) ?? JSON.stringify(input);
+  const acpInput = [{
+    role: 'user',
+    parts: [{ content: taskText, content_type: 'text/plain' }],
+  }];
+
+  if (acpMode === 'sync') {
+    const res = await fetch(`${acpBaseUrl}/runs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ agent_name: agentName, input: acpInput, mode: 'synchronous' }),
+      signal: AbortSignal.timeout(idleTimeout),
+    });
+    if (!res.ok) throw new Error(`ACP error: ${res.status} ${await res.text()}`);
+    return extractACPResult(await res.json());
+  }
+
+  // Async: POST /runs returns run_id, poll for result
+  const createRes = await fetch(`${acpBaseUrl}/runs`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ agent_name: agentName, input: acpInput }),
+  });
+  if (!createRes.ok) throw new Error(`ACP error: ${createRes.status} ${await createRes.text()}`);
+  const run = await createRes.json() as { run_id: string; status: string };
+
+  // Poll with exponential backoff
+  let delay = 500;
+  const deadline = Date.now() + idleTimeout;
+  while (Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, delay));
+    delay = Math.min(delay * 1.5, 5000);
+
+    const pollRes = await fetch(`${acpBaseUrl}/runs/${run.run_id}`);
+    if (!pollRes.ok) throw new Error(`ACP poll error: ${pollRes.status}`);
+    const state = await pollRes.json() as { status: string; output?: unknown };
+
+    if (state.status === 'completed') return extractACPResult(state);
+    if (state.status === 'failed') throw new Error('ACP agent run failed');
+    if (state.status === 'cancelled') throw new Error('ACP agent run cancelled');
+    if (state.status === 'awaiting') {
+      return `ACP agent is awaiting input: ${JSON.stringify(state.output ?? 'additional information needed')}`;
+    }
+  }
+  throw new Error('ACP agent timed out');
+}
+
+function extractACPResult(response: any): string {
+  const output = response.output ?? response.result ?? [];
+  if (typeof output === 'string') return output;
+  if (Array.isArray(output)) {
+    return output
+      .flatMap((msg: any) => (msg.parts ?? [])
+        .filter((p: any) => !p.content_type || p.content_type === 'text/plain')
+        .map((p: any) => p.content))
+      .join('\n');
+  }
+  return JSON.stringify(output);
+}
+
 // --- Tool dispatch ---
 
 async function executeTool(tool: string, input: Record<string, unknown>, requestId: string): Promise<unknown> {
+  if (toolMode === 'acp-bridge') return executeToolBridgeAcp(tool, input);
   if (toolMode === 'http-bridge') return executeToolBridgeHttp(tool, input);
   if (toolMode === 'file-bridge') return executeToolBridgeFile(tool, input, requestId);
   return executeToolLocal(tool, input);

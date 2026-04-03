@@ -141,6 +141,10 @@ export function getAgentJobResultStream(agentJobId: string): string {
   return `kubeclaw:agent-job-result:${agentJobId}`;
 }
 
+export function getTaskRequestStream(): string {
+  return 'kubeclaw:task-requests';
+}
+
 export function getControlChannel(channelName: string): string {
   return `kubeclaw:control:${channelName}`;
 }

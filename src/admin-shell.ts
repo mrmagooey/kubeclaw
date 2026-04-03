@@ -32,20 +32,13 @@ const appsV1 = kc.makeApiClient(k8s.AppsV1Api);
 const NAMESPACE = process.env.KUBECLAW_NAMESPACE || 'kubeclaw';
 const ORCHESTRATOR_DEPLOYMENT = 'kubeclaw-orchestrator';
 
-// Guard: admin shell only runs inside a Kubernetes pod
-if (!process.env.KUBERNETES_SERVICE_HOST) {
-  console.error('Error: The admin shell can only be run inside the orchestrator pod.');
-  console.error(
-    'Use: kubectl exec -it deployment/kubeclaw-orchestrator -n kubeclaw -- node dist/admin-shell.js',
-  );
-  process.exit(1);
-}
+// Guard moved to main() so this module can be imported without side effects.
 
 const MODEL = process.env.ADMIN_SHELL_MODEL || DEFAULT_DIRECT_MODEL;
 
 // ---- Tool definitions ----
 
-const TOOLS: OpenAI.ChatCompletionTool[] = [
+export const TOOLS: OpenAI.ChatCompletionTool[] = [
   {
     type: 'function',
     function: {
@@ -150,6 +143,10 @@ const TOOLS: OpenAI.ChatCompletionTool[] = [
             type: 'string',
             enum: ['telegram', 'discord', 'slack', 'whatsapp', 'irc', 'http'],
             description: 'Channel type',
+          },
+          instanceName: {
+            type: 'string',
+            description: 'Unique instance name (defaults to the type). Use to create multiple channels of the same type, e.g. "http-staging".',
           },
           token: {
             type: 'string',
@@ -357,7 +354,8 @@ async function validateChannelCredentials(
 
 async function handleSetupChannel(input: ToolInput): Promise<string> {
   const type = input.type as string;
-  const secretName = `kubeclaw-${type}-secrets`;
+  const instanceName = (input.instanceName as string) || type;
+  const secretName = `kubeclaw-${instanceName}-secrets`;
   const log: string[] = [];
 
   // Build secret data from input fields
@@ -409,10 +407,11 @@ async function handleSetupChannel(input: ToolInput): Promise<string> {
   }
 
   // Create or patch a dedicated channel pod Deployment
-  const channelDeploymentName = `kubeclaw-channel-${type}`;
+  const channelDeploymentName = `kubeclaw-channel-${instanceName}`;
   const channelEnvVars: k8s.V1EnvVar[] = [
     { name: 'KUBECLAW_MODE', value: 'channel' },
-    { name: 'KUBECLAW_CHANNEL', value: type },
+    { name: 'KUBECLAW_CHANNEL', value: instanceName },
+    { name: 'KUBECLAW_CHANNEL_TYPE', value: type },
     { name: 'REDIS_URL', value: process.env.REDIS_URL || 'redis://kubeclaw-redis:6379' },
     { name: 'REDIS_ADMIN_PASSWORD', valueFrom: { secretKeyRef: { name: 'kubeclaw-redis', key: 'admin-password' } } },
     { name: 'OPENAI_API_KEY', valueFrom: { secretKeyRef: { name: 'kubeclaw-secrets', key: 'openai-api-key', optional: true } } },
@@ -462,9 +461,9 @@ async function handleSetupChannel(input: ToolInput): Promise<string> {
             },
           }],
           volumes: [
-            { name: 'groups', persistentVolumeClaim: { claimName: `kubeclaw-channel-${type}-groups` } },
-            { name: 'store', persistentVolumeClaim: { claimName: `kubeclaw-channel-${type}-store` } },
-            { name: 'sessions', persistentVolumeClaim: { claimName: `kubeclaw-channel-${type}-sessions` } },
+            { name: 'groups', persistentVolumeClaim: { claimName: `kubeclaw-channel-${instanceName}-groups` } },
+            { name: 'store', persistentVolumeClaim: { claimName: `kubeclaw-channel-${instanceName}-store` } },
+            { name: 'sessions', persistentVolumeClaim: { claimName: `kubeclaw-channel-${instanceName}-sessions` } },
           ],
         },
       },
@@ -474,7 +473,7 @@ async function handleSetupChannel(input: ToolInput): Promise<string> {
   // Create per-channel PVCs if they don't exist
   const pvcSizes: Record<string, string> = { groups: '2Gi', store: '1Gi', sessions: '1Gi' };
   for (const [suffix, size] of Object.entries(pvcSizes)) {
-    const pvcName = `kubeclaw-channel-${type}-${suffix}`;
+    const pvcName = `kubeclaw-channel-${instanceName}-${suffix}`;
     try {
       await coreV1.readNamespacedPersistentVolumeClaim({ name: pvcName, namespace: NAMESPACE });
       log.push(`PVC ${pvcName} already exists`);
@@ -575,7 +574,7 @@ async function handleRestartOrchestrator(): Promise<string> {
   return 'Rolling restart triggered. The orchestrator will be back in ~30 seconds.';
 }
 
-async function executeTool(name: string, input: ToolInput): Promise<string> {
+export async function executeTool(name: string, input: ToolInput): Promise<string> {
   switch (name) {
     case 'list_groups':            return handleListGroups();
     case 'register_group':         return handleRegisterGroup(input);
@@ -750,7 +749,8 @@ interface SseAdminClient {
   res: http.ServerResponse;
 }
 
-function startHttpAdminServer(client: OpenAI): void {
+export function startHttpAdminServer(client?: OpenAI): void {
+  if (!client) client = createLLMClient();
   const port = parseInt(process.env.ADMIN_HTTP_PORT!, 10);
   const username = process.env.ADMIN_HTTP_USERNAME || 'admin';
   const password = process.env.ADMIN_HTTP_PASSWORD || '';
@@ -903,6 +903,14 @@ async function runRepl(client: OpenAI): Promise<void> {
 // ---- Main ----
 
 async function main() {
+  if (!process.env.KUBERNETES_SERVICE_HOST) {
+    console.error('Error: The admin shell can only be run inside the orchestrator pod.');
+    console.error(
+      'Use: kubectl exec -it deployment/kubeclaw-orchestrator -n kubeclaw -- node dist/admin-shell.js',
+    );
+    process.exit(1);
+  }
+
   await initDatabase();
 
   const client: OpenAI = createLLMClient();
@@ -923,8 +931,15 @@ async function main() {
   // HTTP-only mode: process stays alive as long as the server is running
 }
 
-main().catch((err) => {
-  logger.error({ err }, 'Admin shell error');
-  console.error('Fatal error:', (err as Error).message);
-  process.exit(1);
-});
+const isDirectRun =
+  process.argv[1] &&
+  new URL(import.meta.url).pathname ===
+    new URL(`file://${process.argv[1]}`).pathname;
+
+if (isDirectRun) {
+  main().catch((err) => {
+    logger.error({ err }, 'Admin shell error');
+    console.error('Fatal error:', (err as Error).message);
+    process.exit(1);
+  });
+}

@@ -20,9 +20,8 @@ spec:
       # No K8s API access — channel pods delegate all K8s operations to the orchestrator
       automountServiceAccountToken: false
       securityContext:
-        runAsUser: 1000
-        runAsGroup: 1000
-        runAsNonRoot: true
+        runAsUser: 0
+        runAsNonRoot: false
         seccompProfile:
           type: RuntimeDefault
       initContainers:
@@ -47,6 +46,8 @@ spec:
           imagePullPolicy: {{ include "kubeclaw.pullPolicy" $ }}
           command: ["node", "dist/channel-runner.js"]
           securityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
@@ -57,6 +58,8 @@ spec:
               value: channel
             - name: KUBECLAW_CHANNEL
               value: {{ $name }}
+            - name: KUBECLAW_CHANNEL_TYPE
+              value: {{ $cfg.type | default $name }}
             - name: REDIS_URL
               value: redis://kubeclaw-redis:6379
             - name: REDIS_USERNAME
@@ -84,6 +87,27 @@ spec:
                   name: {{ include "kubeclaw.secretName" $ }}
                   key: direct-llm-model
                   optional: true
+            {{- if $.Values.rag.enabled }}
+            - name: QDRANT_URL
+              value: "http://kubeclaw-qdrant:6333"
+            - name: EMBEDDING_PROVIDER
+              value: {{ $.Values.rag.provider | quote }}
+            {{- if $.Values.rag.model }}
+            - name: EMBEDDING_MODEL
+              value: {{ $.Values.rag.model | quote }}
+            {{- end }}
+            - name: RAG_TOP_K
+              value: {{ $.Values.rag.topK | quote }}
+            - name: RAG_SCORE_THRESHOLD
+              value: {{ $.Values.rag.scoreThreshold | quote }}
+            {{- if eq $.Values.rag.provider "voyage" }}
+            - name: VOYAGE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "kubeclaw.secretName" $ }}
+                  key: voyage-api-key
+            {{- end }}
+            {{- end }}
             {{- range $cfg.envVars }}
             - name: {{ .name }}
               valueFrom:

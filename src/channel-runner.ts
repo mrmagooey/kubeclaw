@@ -17,6 +17,7 @@ import path from 'path';
 import {
   ASSISTANT_NAME,
   KUBECLAW_CHANNEL,
+  KUBECLAW_CHANNEL_TYPE,
   POLL_INTERVAL,
   TIMEZONE,
   TRIGGER_PATTERN,
@@ -447,7 +448,7 @@ async function main(): Promise<void> {
       storeChatMetadata(chatJid, timestamp, name, channel, isGroup);
       // Auto-register new chats so the bot responds immediately without a manual register_group step
       if (!registeredGroups[chatJid]) {
-        const folder = jidToFolder(channel ?? KUBECLAW_CHANNEL, chatJid);
+        const folder = jidToFolder(channel ?? KUBECLAW_CHANNEL_TYPE, chatJid);
         registerGroup(chatJid, {
           name: name || chatJid,
           folder,
@@ -462,10 +463,11 @@ async function main(): Promise<void> {
     registeredGroups: () => registeredGroups,
   };
 
-  // Load only the channel matching KUBECLAW_CHANNEL
-  const factory = getChannelFactory(KUBECLAW_CHANNEL);
+  // Load the channel factory by type (KUBECLAW_CHANNEL_TYPE), not instance name (KUBECLAW_CHANNEL).
+  // This allows multiple instances of the same type (e.g. "http-dev" and "http-prod" both using "http" factory).
+  const factory = getChannelFactory(KUBECLAW_CHANNEL_TYPE);
   if (!factory) {
-    logger.error({ channel: KUBECLAW_CHANNEL }, 'Unknown channel type — no factory registered');
+    logger.error({ channel: KUBECLAW_CHANNEL, type: KUBECLAW_CHANNEL_TYPE }, 'Unknown channel type — no factory registered');
     process.exit(1);
   }
 

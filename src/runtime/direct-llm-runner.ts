@@ -599,8 +599,8 @@ export class DirectLLMRunner implements AgentRunner {
   private client: OpenAI;
   private mcpManager: McpManager | null = null;
 
-  constructor() {
-    this.client = createLLMClient();
+  constructor(client?: OpenAI) {
+    this.client = client ?? createLLMClient();
   }
 
   /**
