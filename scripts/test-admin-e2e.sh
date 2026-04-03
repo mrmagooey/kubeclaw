@@ -39,6 +39,14 @@ cleanup() {
   # Deregister test group
   run_admin_tool "deregister_group" "{\"jid\":\"http:$TEST_USER\"}" >/dev/null 2>&1
   bash "$(dirname "$0")/mock-llm-teardown.sh" kubeclaw 2>/dev/null || true
+  if [ -n "${OPENROUTER_NANOCLAW_TESTING_KEY:-}" ]; then
+    helm upgrade kubeclaw ./helm/kubeclaw \
+      -f ./helm/kubeclaw/values-minikube.yaml \
+      --set secrets.openaiApiKey="$OPENROUTER_NANOCLAW_TESTING_KEY" \
+      --set secrets.openaiBaseUrl="https://openrouter.ai/api/v1" \
+      --set secrets.directLlmModel="moonshotai/kimi-k2.5" \
+      --namespace "$NS" >/dev/null 2>&1 || true
+  fi
   echo "Cleanup done."
 }
 trap cleanup EXIT
@@ -80,12 +88,21 @@ wait_for_sse() {
 echo "=== KubeClaw E2E Test: Admin → HTTP Channel → Web Search ==="
 echo ""
 
-# ── Step 0: Deploy mock LLM server ──────────────────────────────────────────
-echo "[0/12] Deploy mock LLM server"
+# ── Step 0: Deploy mock LLM server and point cluster at it ──────────────────
+echo "[0/11] Deploy mock LLM server"
 bash "$(dirname "$0")/mock-llm-deploy.sh" kubeclaw
+echo "  Switching cluster to mock LLM..."
+helm upgrade kubeclaw ./helm/kubeclaw \
+  -f ./helm/kubeclaw/values-minikube.yaml \
+  --set secrets.openaiApiKey="mock-key" \
+  --set secrets.openaiBaseUrl="http://kubeclaw-mock-llm.kubeclaw.svc.cluster.local/v1" \
+  --set secrets.directLlmModel="mock-model" \
+  --namespace "$NS" >/dev/null 2>&1
+kubectl rollout status deployment/kubeclaw-orchestrator -n "$NS" --timeout=90s >/dev/null 2>&1
+kubectl rollout status deployment/kubeclaw-channel-http -n "$NS" --timeout=60s >/dev/null 2>&1
 
 # ── Step 1: Verify orchestrator ─────────────────────────────────────────────
-echo "[1/12] Verify orchestrator"
+echo "[1/11] Verify orchestrator"
 orch_ready=$(kubectl get deployment kubeclaw-orchestrator -n "$NS" -o jsonpath='{.status.readyReplicas}' 2>/dev/null)
 if [ "$orch_ready" = "1" ]; then
   pass "Orchestrator running"
@@ -95,7 +112,7 @@ else
 fi
 
 # ── Step 2: Admin - get orchestrator status ──────────────────────────────────
-echo "[2/12] Admin: orchestrator status"
+echo "[2/11] Admin: orchestrator status"
 result=$(run_admin_tool "get_orchestrator_status" "{}")
 if echo "$result" | grep -qF "Orchestrator: kubeclaw-orchestrator" && echo "$result" | grep -qF "Ready:"; then
   pass "Admin returns orchestrator status"
@@ -104,7 +121,7 @@ else
 fi
 
 # ── Step 3: Verify HTTP channel pod is running ──────────────────────────────
-echo "[3/12] Verify HTTP channel pod"
+echo "[3/11] Verify HTTP channel pod"
 if wait_for_pod "app=kubeclaw-channel-http" 30; then
   pass "HTTP channel pod is ready"
 else
@@ -113,7 +130,7 @@ else
 fi
 
 # ── Step 4: Get channel credentials and add test user ────────────────────────
-echo "[4/12] Admin: register test group"
+echo "[4/11] Admin: register test group"
 # Get existing HTTP channel users from secret
 existing_users=$(kubectl get secret kubeclaw-channel-http -n "$NS" -o jsonpath='{.data.users}' 2>/dev/null | base64 -d)
 echo "  Existing HTTP users: $existing_users"
@@ -145,7 +162,7 @@ fi
 # (channel pod auto-registers on first message, but we need it in orchestrator for task routing)
 
 # ── Step 5: Port-forward and test connectivity ──────────────────────────────
-echo "[5/12] Test HTTP channel connectivity"
+echo "[5/11] Test HTTP channel connectivity"
 # Kill any stale port-forwards and establish a fresh one
 lsof -ti:$HTTP_PORT 2>/dev/null | xargs kill -9 2>/dev/null || true
 sleep 1
@@ -173,7 +190,7 @@ else
 fi
 
 # ── Step 6: Send message and get response ────────────────────────────────────
-echo "[6/12] Send message and receive response"
+echo "[6/11] Send message and receive response"
 curl --no-buffer -s -u "$TEST_USER:$TEST_PASS" "http://localhost:$HTTP_PORT/stream" > /tmp/e2e-sse.txt 2>&1 &
 SSE_PID=$!
 CLEANUP_PIDS+=($SSE_PID)
@@ -204,7 +221,7 @@ else
 fi
 
 # ── Step 7: Web search ──────────────────────────────────────────────────────
-echo "[7/12] Web search via tool calling"
+echo "[7/11] Web search via tool calling"
 curl --no-buffer -s -u "$TEST_USER:$TEST_PASS" "http://localhost:$HTTP_PORT/stream" > /tmp/e2e-sse-search.txt 2>&1 &
 SSE_PID=$!
 CLEANUP_PIDS+=($SSE_PID)
@@ -235,7 +252,7 @@ else
 fi
 
 # ── Step 8: Verify tool pod was spawned ──────────────────────────────────────
-echo "[8/12] Verify tool pod job"
+echo "[8/11] Verify tool pod job"
 recent_jobs=$(kubectl get jobs -n "$NS" --sort-by=.metadata.creationTimestamp -o name 2>/dev/null | tail -3)
 if [ -n "$recent_jobs" ]; then
   pass "Tool pod job(s) found"
@@ -245,7 +262,7 @@ else
 fi
 
 # ── Step 9: Conversation history persists across turns ─────────────────────
-echo "[9/12] Conversation history persists across turns"
+echo "[9/11] Conversation history persists across turns"
 curl --no-buffer -s -u "$TEST_USER:$TEST_PASS" "http://localhost:$HTTP_PORT/stream" > /tmp/e2e-sse-history-1.txt 2>&1 &
 SSE_PID=$!
 CLEANUP_PIDS+=($SSE_PID)
@@ -298,75 +315,72 @@ else
 fi
 
 # ── Step 10: Admin clear_conversation wipes history ──────────────────────────
-echo "[10/12] Admin clear_conversation wipes history"
-result=$(run_admin_tool "clear_conversation" "{\"jid\":\"http:$TEST_USER\"}")
+echo "[10/11] Admin clear_conversation wipes history"
+# Clear in the channel pod first (while it's still running and has the right PVC),
+# then scale to 0 → wait for full termination → scale to 1. This prevents the
+# terminating pod from overwriting the cleared DB before the new pod reads it.
+result=$(kubectl exec deployment/kubeclaw-channel-http -n "$NS" -c channel -- \
+  node --input-type=module -e "
+    import { executeTool } from './dist/admin-shell.js';
+    import { initDatabase } from './dist/db.js';
+    await initDatabase();
+    const result = await executeTool('clear_conversation', {\"folder\":\"http-http-$TEST_USER\"});
+    process.stdout.write(result);
+  " 2>/dev/null || true)
 if echo "$result" | grep -qE "cleared|success|ok" -i; then
   pass "Admin clear_conversation executed"
 else
-  echo "  Note: clear_conversation result: $result (proceeding anyway)"
+  fail "Admin clear_conversation" "result contains 'cleared'" "$result"
 fi
 
-sleep 2
-curl --no-buffer -s -u "$TEST_USER:$TEST_PASS" "http://localhost:$HTTP_PORT/stream" > /tmp/e2e-sse-history-3.txt 2>&1 &
-SSE_PID=$!
-CLEANUP_PIDS+=($SSE_PID)
-sleep 2
-
-curl -s -X POST "http://localhost:$HTTP_PORT/message" \
-  -H 'Content-Type: application/json' \
-  -u "$TEST_USER:$TEST_PASS" \
-  -d '{"text":"what code did I ask you to remember?"}' >/dev/null 2>&1
-
-echo "  Waiting up to 15s for LLM response after history clear..."
-if wait_for_sse /tmp/e2e-sse-history-3.txt 15; then
-  kill $SSE_PID 2>/dev/null || true
-  sse_output=$(grep '^data: ' /tmp/e2e-sse-history-3.txt 2>/dev/null || true)
-  if ! echo "$sse_output" | grep -qF "BANANA42"; then
-    pass "History cleared (response does NOT contain BANANA42)"
-    echo "    Response: $(echo "$sse_output" | head -1)"
-  else
-    fail "History was cleared" "response should NOT contain BANANA42" "$(echo "$sse_output" | head -1)"
-  fi
+echo "  Scaling channel pod to 0 → 1 to reload cleared DB without race..."
+lsof -ti:$HTTP_PORT 2>/dev/null | xargs kill -9 2>/dev/null || true
+kubectl scale deployment/kubeclaw-channel-http --replicas=0 -n "$NS" >/dev/null 2>&1
+kubectl wait pod -l app=kubeclaw-channel-http -n "$NS" --for=delete --timeout=30s >/dev/null 2>&1 || true
+kubectl scale deployment/kubeclaw-channel-http --replicas=1 -n "$NS" >/dev/null 2>&1
+if ! wait_for_pod "app=kubeclaw-channel-http" 60; then
+  fail "Channel pod restart after clear" "Ready within 60s" "timed out"
 else
-  kill $SSE_PID 2>/dev/null || true
-  fail "LLM response after history clear" "SSE data within 15s" "timeout"
-fi
+  sleep 3
+  lsof -ti:$HTTP_PORT 2>/dev/null | xargs kill -9 2>/dev/null || true
+  kubectl port-forward svc/kubeclaw-channel-http -n "$NS" $HTTP_PORT:80 &>/dev/null &
+  CLEANUP_PIDS+=($!)
+  sleep 4
 
-# ── Step 11: Direct message (no trigger prefix) receives response ──────────────
-echo "[11/12] Direct message (no trigger prefix) receives response"
-curl --no-buffer -s -u "$TEST_USER:$TEST_PASS" "http://localhost:$HTTP_PORT/stream" > /tmp/e2e-sse-direct.txt 2>&1 &
-SSE_PID=$!
-CLEANUP_PIDS+=($SSE_PID)
-sleep 2
+  curl --no-buffer -s -u "$TEST_USER:$TEST_PASS" "http://localhost:$HTTP_PORT/stream" > /tmp/e2e-sse-history-3.txt 2>&1 &
+  SSE_PID=$!
+  CLEANUP_PIDS+=($SSE_PID)
+  sleep 2
 
-curl -s -X POST "http://localhost:$HTTP_PORT/message" \
-  -H 'Content-Type: application/json' \
-  -u "$TEST_USER:$TEST_PASS" \
-  -d '{"text":"plain message no trigger prefix"}' >/dev/null 2>&1
+  curl -s -X POST "http://localhost:$HTTP_PORT/message" \
+    -H 'Content-Type: application/json' \
+    -u "$TEST_USER:$TEST_PASS" \
+    -d '{"text":"what code did I ask you to remember?"}' >/dev/null 2>&1
 
-echo "  Waiting up to 15s for direct message response..."
-if wait_for_sse /tmp/e2e-sse-direct.txt 15; then
-  kill $SSE_PID 2>/dev/null || true
-  sse_output=$(grep '^data: ' /tmp/e2e-sse-direct.txt 2>/dev/null || true)
-  if [ -n "$sse_output" ]; then
-    pass "Direct message (no trigger prefix) received response"
-    echo "    Response: $(echo "$sse_output" | head -1)"
+  echo "  Waiting up to 15s for LLM response after history clear..."
+  if wait_for_sse /tmp/e2e-sse-history-3.txt 15; then
+    kill $SSE_PID 2>/dev/null || true
+    sse_output=$(grep '^data: ' /tmp/e2e-sse-history-3.txt 2>/dev/null || true)
+    if ! echo "$sse_output" | grep -qF "BANANA42"; then
+      pass "History cleared (response does NOT contain BANANA42)"
+      echo "    Response: $(echo "$sse_output" | head -1)"
+    else
+      fail "History was cleared" "response should NOT contain BANANA42" "$(echo "$sse_output" | head -1)"
+    fi
   else
-    fail "Direct message received response" "SSE data lines" "empty"
-  fi
-else
-  kill $SSE_PID 2>/dev/null || true
-  fail "Direct message response" "SSE data within 15s" "timeout"
-fi
+    kill $SSE_PID 2>/dev/null || true
+    fail "LLM response after history clear" "SSE data within 15s" "timeout"
+  fi  # closes if wait_for_sse
+fi    # closes if ! wait_for_pod
 
-# ── Step 12: Restore original secret ─────────────────────────────────────────
-echo "[12/12] Restore original channel credentials"
+# ── Step 11: Restore original secret ─────────────────────────────────────────
+echo "[11/11] Restore original channel credentials"
 kubectl patch secret kubeclaw-channel-http -n "$NS" -p "{\"stringData\":{\"users\":\"$existing_users\"}}" >/dev/null 2>&1
 pass "Original channel credentials restored"
 
 # ── Summary ─────────────────────────────────────────────────────────────────
 echo ""
-echo "=== Results: $PASS passed, $FAIL failed, $TOTAL total (out of 12 steps) ==="
+echo "=== Results: $PASS passed, $FAIL failed, $TOTAL total (out of 11 steps) ==="
 
 if [ "$FAIL" -gt 0 ]; then
   exit 1

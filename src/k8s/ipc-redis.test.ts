@@ -97,6 +97,7 @@ vi.mock('./redis-client.js', () => ({
   getRedisClient: vi.fn(() => ({
     xadd: mockXadd,
     xread: mockXread,
+    xrevrange: vi.fn().mockResolvedValue([]),
   })),
   getRedisSubscriber: vi.fn(() => ({
     subscribe: mockSubscribe,

@@ -210,6 +210,27 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // POST /v1/embeddings — return zero-vector embeddings for RAG compatibility
+  if (method === 'POST' && url === '/v1/embeddings') {
+    let body = '';
+    try { body = await readBody(req); } catch { /* ignore */ }
+    let inputs = [];
+    try {
+      const parsed = JSON.parse(body);
+      inputs = Array.isArray(parsed.input) ? parsed.input : [parsed.input];
+    } catch { inputs = ['']; }
+    const zeroVec = new Array(1536).fill(0);
+    const data = inputs.map((_, i) => ({ object: 'embedding', embedding: zeroVec, index: i }));
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      object: 'list',
+      data,
+      model: 'text-embedding-3-small',
+      usage: { prompt_tokens: inputs.length * 4, total_tokens: inputs.length * 4 },
+    }));
+    return;
+  }
+
   // POST /v1/chat/completions
   if (method === 'POST' && url === '/v1/chat/completions') {
     let body = '';

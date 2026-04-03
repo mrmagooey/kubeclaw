@@ -1,10 +1,11 @@
 #!/bin/bash
 # Integration test for admin shell tools against a live kubeclaw instance.
-# Run from host: kubectl exec deployment/kubeclaw-orchestrator -n kubeclaw -- bash scripts/test-admin.sh
-# Or:            cat scripts/test-admin.sh | kubectl exec -i deployment/kubeclaw-orchestrator -n kubeclaw -- bash
+# Run from host:
+#   bash scripts/test-admin.sh
 
 set -uo pipefail
 
+NS="kubeclaw"
 PASS=0
 FAIL=0
 TOTAL=0
@@ -14,13 +15,14 @@ fail() { ((FAIL++)); ((TOTAL++)); echo "  FAIL: $1"; echo "    Expected: $2"; ec
 
 run_tool() {
   local tool="$1" args="$2"
-  node --input-type=module -e "
-    import { executeTool } from './dist/admin-shell.js';
-    import { initDatabase } from './dist/db.js';
-    await initDatabase();
-    const result = await executeTool('$tool', $args);
-    process.stdout.write(result);
-  " 2>/dev/null || true
+  kubectl exec deployment/kubeclaw-orchestrator -n "$NS" -- \
+    node --input-type=module -e "
+      import { executeTool } from './dist/admin-shell.js';
+      import { initDatabase } from './dist/db.js';
+      await initDatabase();
+      const result = await executeTool('$tool', $args);
+      process.stdout.write(result);
+    " 2>/dev/null || true
 }
 
 assert_contains() {
