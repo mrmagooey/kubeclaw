@@ -1,6 +1,6 @@
 /**
  * KubeClaw Agent Runner
- * OpenAI-compatible agentic loop. No Claude SDK dependency.
+ * Uses pi-agent-core for the agentic loop. No hand-rolled tool dispatch.
  *
  * Input protocol:
  *   ContainerInput JSON piped to stdin (built by entrypoint.sh from env vars)
@@ -30,7 +30,10 @@ import path from 'path';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { randomUUID } from 'crypto';
-import OpenAI from 'openai';
+import { Agent } from '@mariozechner/pi-agent-core';
+import type { AgentTool, AgentEvent, AgentMessage } from '@mariozechner/pi-agent-core';
+import { Type, streamSimple } from '@mariozechner/pi-ai';
+import type { Model, Api } from '@mariozechner/pi-ai';
 import { createClient, RedisClientType } from 'redis';
 import { CronExpressionParser } from 'cron-parser';
 import { RedisIPCClient } from './redis/ipc-client.js';
@@ -95,23 +98,108 @@ const HISTORY_FILE = '/workspace/group/.conversation.json';
 const MAX_HISTORY_MESSAGES = parseInt(process.env.KUBECLAW_HISTORY_MAX || '100', 10);
 
 interface ConversationHistory {
-  messages: OpenAI.ChatCompletionMessageParam[];
+  messages: AgentMessage[];
   updatedAt: string;
 }
 
-function loadHistory(): OpenAI.ChatCompletionMessageParam[] {
+/**
+ * Load conversation history, migrating from OpenAI format if needed.
+ * OpenAI format uses role: 'user'|'assistant'|'system'|'tool' with string content.
+ * AgentMessage uses role: 'user'|'assistant'|'toolResult' with structured content.
+ */
+function loadHistory(): AgentMessage[] {
   try {
     if (!fs.existsSync(HISTORY_FILE)) return [];
-    const raw: ConversationHistory = JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf-8'));
-    return raw.messages ?? [];
+    const raw = JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf-8'));
+    const messages: unknown[] = raw.messages ?? [];
+    if (messages.length === 0) return [];
+
+    // Detect OpenAI format: first non-system message has string content or role 'tool'
+    const first = messages.find((m: any) => m.role !== 'system') as any;
+    if (first && (typeof first.content === 'string' || first.role === 'tool')) {
+      return migrateOpenAIHistory(messages as OpenAIMessage[]);
+    }
+
+    return messages as AgentMessage[];
   } catch {
     return [];
   }
 }
 
-function saveHistory(messages: OpenAI.ChatCompletionMessageParam[]): void {
+interface OpenAIMessage {
+  role: string;
+  content: string | null;
+  tool_calls?: Array<{
+    id: string;
+    type: string;
+    function: { name: string; arguments: string };
+  }>;
+  tool_call_id?: string;
+}
+
+function migrateOpenAIHistory(messages: OpenAIMessage[]): AgentMessage[] {
+  const result: AgentMessage[] = [];
+  const now = Date.now();
+
+  for (const msg of messages) {
+    if (msg.role === 'system') continue; // system prompts are not stored in AgentMessage history
+
+    if (msg.role === 'user') {
+      result.push({
+        role: 'user',
+        content: typeof msg.content === 'string'
+          ? [{ type: 'text', text: msg.content }]
+          : msg.content || '',
+        timestamp: now,
+      });
+    } else if (msg.role === 'assistant') {
+      const content: Array<{ type: 'text'; text: string } | { type: 'toolCall'; id: string; name: string; arguments: Record<string, any> }> = [];
+      if (msg.content) {
+        content.push({ type: 'text', text: msg.content });
+      }
+      if (msg.tool_calls) {
+        for (const tc of msg.tool_calls) {
+          let args: Record<string, any> = {};
+          try { args = JSON.parse(tc.function.arguments); } catch { /* empty */ }
+          content.push({
+            type: 'toolCall',
+            id: tc.id,
+            name: tc.function.name,
+            arguments: args,
+          });
+        }
+      }
+      result.push({
+        role: 'assistant',
+        content,
+        api: 'openai-completions' as Api,
+        provider: 'openai',
+        model: 'unknown',
+        usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+        stopReason: msg.tool_calls?.length ? 'toolUse' : 'stop',
+        timestamp: now,
+      });
+    } else if (msg.role === 'tool') {
+      result.push({
+        role: 'toolResult',
+        toolCallId: msg.tool_call_id || '',
+        toolName: 'unknown',
+        content: [{ type: 'text', text: msg.content || '' }],
+        isError: false,
+        timestamp: now,
+      });
+    }
+  }
+  return result;
+}
+
+function saveHistory(messages: AgentMessage[]): void {
   try {
-    const capped = messages.slice(-MAX_HISTORY_MESSAGES);
+    // Filter out system-level or non-standard messages, keep user/assistant/toolResult
+    const saveable = messages.filter((m) =>
+      m.role === 'user' || m.role === 'assistant' || m.role === 'toolResult'
+    );
+    const capped = saveable.slice(-MAX_HISTORY_MESSAGES);
     const data: ConversationHistory = { messages: capped, updatedAt: new Date().toISOString() };
     fs.writeFileSync(HISTORY_FILE, JSON.stringify(data, null, 2));
   } catch (err) {
@@ -120,8 +208,6 @@ function saveHistory(messages: OpenAI.ChatCompletionMessageParam[]): void {
 }
 
 // ---- System prompt ----
-
-const DEFAULT_SYSTEM_PROMPT = 'You are a helpful assistant. Be concise and direct.';
 
 function loadSystemPrompt(assistantName?: string): string {
   const parts: string[] = [];
@@ -134,7 +220,7 @@ function loadSystemPrompt(assistantName?: string): string {
 
   // Global instructions
   try {
-    if (!parts.length) { // only load global when group has no own CLAUDE.md
+    if (!parts.length) {
       const globalMd = fs.readFileSync('/workspace/global/CLAUDE.md', 'utf-8').trim();
       if (globalMd) parts.push(globalMd);
     }
@@ -149,9 +235,6 @@ function loadSystemPrompt(assistantName?: string): string {
 }
 
 // ---- Input stream manager ----
-// Reads from kubeclaw:input:{jobId} Redis stream, routes messages by type.
-// tool_pod_ack messages are queued for ensurePodReady; user messages and
-// close signals are queued for the main loop.
 
 interface InputEntry {
   type: string;
@@ -171,7 +254,6 @@ class InputStreamManager {
     this.streamKey = `kubeclaw:input:${jobId}`;
   }
 
-  // Non-blocking read: enqueue any available messages
   async poll(): Promise<void> {
     try {
       const response = await (this.redis as any).xRead(
@@ -182,7 +264,6 @@ class InputStreamManager {
     } catch { /* ignore */ }
   }
 
-  // Blocking read with timeout
   async blockPoll(timeoutMs: number): Promise<void> {
     try {
       const response = await (this.redis as any).xRead(
@@ -193,7 +274,6 @@ class InputStreamManager {
     } catch { /* ignore */ }
   }
 
-  // Drain queued user messages; leaves acks and close signals in queue
   drainUserMessages(): string[] {
     const msgs: string[] = [];
     const remaining: InputEntry[] = [];
@@ -205,12 +285,10 @@ class InputStreamManager {
     return msgs;
   }
 
-  // Check for close signal (does not consume it)
   hasCloseSignal(): boolean {
     return this.queue.some((e) => e.type === 'close');
   }
 
-  // Wait until a tool_pod_ack for category arrives or timeout
   async waitForToolPodAck(category: string, timeoutMs: number): Promise<string> {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
@@ -259,7 +337,6 @@ const TOOL_CATEGORY: Record<string, 'execution' | 'browser'> = {
   agent_browser: 'browser',
 };
 
-// Server-side name (what tool-server.ts expects)
 const TOOL_SERVER_NAME: Record<string, string> = {
   web_fetch: 'webFetch',
   web_search: 'webSearch',
@@ -283,7 +360,6 @@ async function callToolViaRedis(
 
   const serverName = TOOL_SERVER_NAME[toolName] ?? toolName;
 
-  // Request tool pod if not yet ready for this category
   if (!podReadyMap.get(category)) {
     const taskChannel = `kubeclaw:tasks:${groupFolder}`;
     await (redis as any).publish(taskChannel, JSON.stringify({
@@ -308,7 +384,6 @@ async function callToolViaRedis(
     input: JSON.stringify(args),
   });
 
-  // Block-read results stream for matching requestId
   const deadline = Date.now() + TOOL_CALL_TIMEOUT;
   let lastId = '$';
 
@@ -527,261 +602,276 @@ function localEdit(args: Record<string, unknown>): string {
   }
 }
 
-// ---- Tool definitions ----
+// ---- AgentTool helpers ----
 
-function buildToolDefinitions(isSuperuser: boolean, isMain: boolean): OpenAI.ChatCompletionTool[] {
-  const tools: OpenAI.ChatCompletionTool[] = [
-    // Execution tools
+/** Create an AgentToolResult from a string. */
+function textResult(text: string) {
+  return {
+    content: [{ type: 'text' as const, text }],
+    details: undefined,
+  };
+}
+
+// ---- Tool definitions (pi-agent-core AgentTool format) ----
+
+function buildToolDefinitions(
+  isSuperuser: boolean,
+  isMain: boolean,
+  redis: RedisClientType,
+  inputStream: InputStreamManager,
+  agentJobId: string,
+  groupFolder: string,
+  chatJid: string,
+  podReadyMap: Map<string, boolean>,
+): AgentTool<any>[] {
+  const tools: AgentTool<any>[] = [
+    // Execution tools (Redis-routed)
     {
-      type: 'function',
-      function: {
-        name: 'bash',
-        description: 'Run a bash command in the execution environment.',
-        parameters: {
-          type: 'object',
-          properties: {
-            command: { type: 'string', description: 'The bash command to run' },
-            timeout: { type: 'number', description: 'Timeout in milliseconds (optional)' },
-          },
-          required: ['command'],
-        },
-      },
+      name: 'bash',
+      label: 'Bash',
+      description: 'Run a bash command in the execution environment.',
+      parameters: Type.Object({
+        command: Type.String({ description: 'The bash command to run' }),
+        timeout: Type.Optional(Type.Number({ description: 'Timeout in milliseconds (optional)' })),
+      }),
+      execute: async (_id, params) => textResult(
+        await callToolViaRedis(redis, inputStream, agentJobId, groupFolder, 'bash', params as Record<string, unknown>, podReadyMap),
+      ),
     },
     {
-      type: 'function',
-      function: {
-        name: 'read',
-        description: 'Read a file from the workspace.',
-        parameters: {
-          type: 'object',
-          properties: {
-            file_path: { type: 'string' },
-            offset: { type: 'number', description: 'Line number to start reading from (0-based)' },
-            limit: { type: 'number', description: 'Number of lines to read' },
-          },
-          required: ['file_path'],
-        },
-      },
+      name: 'read',
+      label: 'Read',
+      description: 'Read a file from the workspace.',
+      parameters: Type.Object({
+        file_path: Type.String(),
+        offset: Type.Optional(Type.Number({ description: 'Line number to start reading from (0-based)' })),
+        limit: Type.Optional(Type.Number({ description: 'Number of lines to read' })),
+      }),
+      execute: async (_id, params) => textResult(
+        await callToolViaRedis(redis, inputStream, agentJobId, groupFolder, 'read', params as Record<string, unknown>, podReadyMap),
+      ),
     },
     {
-      type: 'function',
-      function: {
-        name: 'write',
-        description: 'Write content to a file in the workspace.',
-        parameters: {
-          type: 'object',
-          properties: {
-            file_path: { type: 'string' },
-            content: { type: 'string' },
-          },
-          required: ['file_path', 'content'],
-        },
-      },
+      name: 'write',
+      label: 'Write',
+      description: 'Write content to a file in the workspace.',
+      parameters: Type.Object({
+        file_path: Type.String(),
+        content: Type.String(),
+      }),
+      execute: async (_id, params) => textResult(
+        await callToolViaRedis(redis, inputStream, agentJobId, groupFolder, 'write', params as Record<string, unknown>, podReadyMap),
+      ),
     },
     {
-      type: 'function',
-      function: {
-        name: 'edit',
-        description: 'Replace a string in a file.',
-        parameters: {
-          type: 'object',
-          properties: {
-            file_path: { type: 'string' },
-            old_string: { type: 'string' },
-            new_string: { type: 'string' },
-            replace_all: { type: 'boolean' },
-          },
-          required: ['file_path', 'old_string', 'new_string'],
-        },
-      },
+      name: 'edit',
+      label: 'Edit',
+      description: 'Replace a string in a file.',
+      parameters: Type.Object({
+        file_path: Type.String(),
+        old_string: Type.String(),
+        new_string: Type.String(),
+        replace_all: Type.Optional(Type.Boolean()),
+      }),
+      execute: async (_id, params) => textResult(
+        await callToolViaRedis(redis, inputStream, agentJobId, groupFolder, 'edit', params as Record<string, unknown>, podReadyMap),
+      ),
     },
     {
-      type: 'function',
-      function: {
-        name: 'glob',
-        description: 'Find files by glob pattern.',
-        parameters: {
-          type: 'object',
-          properties: {
-            pattern: { type: 'string' },
-            path: { type: 'string', description: 'Directory to search in (optional)' },
-          },
-          required: ['pattern'],
-        },
-      },
+      name: 'glob',
+      label: 'Glob',
+      description: 'Find files by glob pattern.',
+      parameters: Type.Object({
+        pattern: Type.String(),
+        path: Type.Optional(Type.String({ description: 'Directory to search in (optional)' })),
+      }),
+      execute: async (_id, params) => textResult(
+        await callToolViaRedis(redis, inputStream, agentJobId, groupFolder, 'glob', params as Record<string, unknown>, podReadyMap),
+      ),
     },
     {
-      type: 'function',
-      function: {
-        name: 'grep',
-        description: 'Search file contents with regex.',
-        parameters: {
-          type: 'object',
-          properties: {
-            pattern: { type: 'string' },
-            path: { type: 'string' },
-            glob: { type: 'string' },
-            output_mode: { type: 'string', enum: ['content', 'files_with_matches', 'count'] },
-          },
-          required: ['pattern'],
-        },
-      },
+      name: 'grep',
+      label: 'Grep',
+      description: 'Search file contents with regex.',
+      parameters: Type.Object({
+        pattern: Type.String(),
+        path: Type.Optional(Type.String()),
+        glob: Type.Optional(Type.String()),
+        output_mode: Type.Optional(Type.Union([
+          Type.Literal('content'),
+          Type.Literal('files_with_matches'),
+          Type.Literal('count'),
+        ])),
+      }),
+      execute: async (_id, params) => textResult(
+        await callToolViaRedis(redis, inputStream, agentJobId, groupFolder, 'grep', params as Record<string, unknown>, podReadyMap),
+      ),
     },
-    // Browser tools
+    // Browser tools (Redis-routed)
     {
-      type: 'function',
-      function: {
-        name: 'web_fetch',
-        description: 'Fetch the content of a URL.',
-        parameters: {
-          type: 'object',
-          properties: {
-            url: { type: 'string' },
-            prompt: { type: 'string', description: 'Optional focus prompt' },
-          },
-          required: ['url'],
-        },
-      },
+      name: 'web_fetch',
+      label: 'Web Fetch',
+      description: 'Fetch the content of a URL.',
+      parameters: Type.Object({
+        url: Type.String(),
+        prompt: Type.Optional(Type.String({ description: 'Optional focus prompt' })),
+      }),
+      execute: async (_id, params) => textResult(
+        await callToolViaRedis(redis, inputStream, agentJobId, groupFolder, 'web_fetch', params as Record<string, unknown>, podReadyMap),
+      ),
     },
     {
-      type: 'function',
-      function: {
-        name: 'web_search',
-        description: 'Search the web.',
-        parameters: {
-          type: 'object',
-          properties: { query: { type: 'string' } },
-          required: ['query'],
-        },
-      },
+      name: 'web_search',
+      label: 'Web Search',
+      description: 'Search the web.',
+      parameters: Type.Object({
+        query: Type.String(),
+      }),
+      execute: async (_id, params) => textResult(
+        await callToolViaRedis(redis, inputStream, agentJobId, groupFolder, 'web_search', params as Record<string, unknown>, podReadyMap),
+      ),
     },
     {
-      type: 'function',
-      function: {
-        name: 'agent_browser',
-        description: 'Run browser automation with Playwright.',
-        parameters: {
-          type: 'object',
-          properties: { command: { type: 'string' } },
-          required: ['command'],
-        },
-      },
+      name: 'agent_browser',
+      label: 'Agent Browser',
+      description: 'Run browser automation with Playwright.',
+      parameters: Type.Object({
+        command: Type.String(),
+      }),
+      execute: async (_id, params) => textResult(
+        await callToolViaRedis(redis, inputStream, agentJobId, groupFolder, 'agent_browser', params as Record<string, unknown>, podReadyMap),
+      ),
     },
     // IPC tools
     {
-      type: 'function',
-      function: {
-        name: 'send_message',
-        description: "Send a message to the user immediately while still running. Use for progress updates.",
-        parameters: {
-          type: 'object',
-          properties: {
-            text: { type: 'string' },
-            sender: { type: 'string', description: 'Role/identity name (optional)' },
-          },
-          required: ['text'],
-        },
-      },
+      name: 'send_message',
+      label: 'Send Message',
+      description: 'Send a message to the user immediately while still running. Use for progress updates.',
+      parameters: Type.Object({
+        text: Type.String(),
+        sender: Type.Optional(Type.String({ description: 'Role/identity name (optional)' })),
+      }),
+      execute: async (_id, params) => textResult(
+        await handleSendMessage(redis, groupFolder, chatJid, params as Record<string, unknown>),
+      ),
     },
     {
-      type: 'function',
-      function: {
-        name: 'schedule_task',
-        description: 'Schedule a recurring or one-time task.',
-        parameters: {
-          type: 'object',
-          properties: {
-            prompt: { type: 'string' },
-            schedule_type: { type: 'string', enum: ['cron', 'interval', 'once'] },
-            schedule_value: { type: 'string' },
-            context_mode: { type: 'string', enum: ['group', 'isolated'] },
-            target_group_jid: { type: 'string' },
-          },
-          required: ['prompt', 'schedule_type', 'schedule_value'],
-        },
-      },
+      name: 'schedule_task',
+      label: 'Schedule Task',
+      description: 'Schedule a recurring or one-time task.',
+      parameters: Type.Object({
+        prompt: Type.String(),
+        schedule_type: Type.Union([Type.Literal('cron'), Type.Literal('interval'), Type.Literal('once')]),
+        schedule_value: Type.String(),
+        context_mode: Type.Optional(Type.Union([Type.Literal('group'), Type.Literal('isolated')])),
+        target_group_jid: Type.Optional(Type.String()),
+      }),
+      execute: async (_id, params) => textResult(
+        await handleScheduleTask(redis, groupFolder, chatJid, isMain, params as Record<string, unknown>),
+      ),
     },
     {
-      type: 'function',
-      function: {
-        name: 'list_tasks',
-        description: 'List scheduled tasks.',
-        parameters: { type: 'object', properties: {} },
-      },
+      name: 'list_tasks',
+      label: 'List Tasks',
+      description: 'List scheduled tasks.',
+      parameters: Type.Object({}),
+      execute: async () => textResult(handleListTasks(groupFolder, isMain)),
     },
     {
-      type: 'function',
-      function: {
-        name: 'pause_task',
-        description: 'Pause a scheduled task.',
-        parameters: { type: 'object', properties: { task_id: { type: 'string' } }, required: ['task_id'] },
-      },
+      name: 'pause_task',
+      label: 'Pause Task',
+      description: 'Pause a scheduled task.',
+      parameters: Type.Object({
+        task_id: Type.String(),
+      }),
+      execute: async (_id, params) => textResult(
+        await handleTaskLifecycle(redis, groupFolder, isMain, 'pause_task', params as Record<string, unknown>),
+      ),
     },
     {
-      type: 'function',
-      function: {
-        name: 'resume_task',
-        description: 'Resume a paused task.',
-        parameters: { type: 'object', properties: { task_id: { type: 'string' } }, required: ['task_id'] },
-      },
+      name: 'resume_task',
+      label: 'Resume Task',
+      description: 'Resume a paused task.',
+      parameters: Type.Object({
+        task_id: Type.String(),
+      }),
+      execute: async (_id, params) => textResult(
+        await handleTaskLifecycle(redis, groupFolder, isMain, 'resume_task', params as Record<string, unknown>),
+      ),
     },
     {
-      type: 'function',
-      function: {
-        name: 'cancel_task',
-        description: 'Cancel and delete a scheduled task.',
-        parameters: { type: 'object', properties: { task_id: { type: 'string' } }, required: ['task_id'] },
-      },
+      name: 'cancel_task',
+      label: 'Cancel Task',
+      description: 'Cancel and delete a scheduled task.',
+      parameters: Type.Object({
+        task_id: Type.String(),
+      }),
+      execute: async (_id, params) => textResult(
+        await handleTaskLifecycle(redis, groupFolder, isMain, 'cancel_task', params as Record<string, unknown>),
+      ),
     },
     {
-      type: 'function',
-      function: {
-        name: 'update_task',
-        description: 'Update an existing scheduled task.',
-        parameters: {
-          type: 'object',
-          properties: {
-            task_id: { type: 'string' },
-            prompt: { type: 'string' },
-            schedule_type: { type: 'string', enum: ['cron', 'interval', 'once'] },
-            schedule_value: { type: 'string' },
-          },
-          required: ['task_id'],
-        },
-      },
+      name: 'update_task',
+      label: 'Update Task',
+      description: 'Update an existing scheduled task.',
+      parameters: Type.Object({
+        task_id: Type.String(),
+        prompt: Type.Optional(Type.String()),
+        schedule_type: Type.Optional(Type.Union([Type.Literal('cron'), Type.Literal('interval'), Type.Literal('once')])),
+        schedule_value: Type.Optional(Type.String()),
+      }),
+      execute: async (_id, params) => textResult(
+        await handleUpdateTask(redis, groupFolder, isMain, params as Record<string, unknown>),
+      ),
     },
   ];
 
   if (isMain) {
     tools.push({
-      type: 'function',
-      function: {
-        name: 'register_group',
-        description: 'Register a new chat/group. Main group only.',
-        parameters: {
-          type: 'object',
-          properties: {
-            jid: { type: 'string' },
-            name: { type: 'string' },
-            folder: { type: 'string' },
-            trigger: { type: 'string' },
-          },
-          required: ['jid', 'name', 'folder', 'trigger'],
-        },
+      name: 'register_group',
+      label: 'Register Group',
+      description: 'Register a new chat/group. Main group only.',
+      parameters: Type.Object({
+        jid: Type.String(),
+        name: Type.String(),
+        folder: Type.String(),
+        trigger: Type.String(),
+      }),
+      execute: async (_id, params) => textResult(
+        await handleRegisterGroup(redis, groupFolder, isMain, params as Record<string, unknown>),
+      ),
+    });
+    tools.push({
+      name: 'deploy_channel',
+      label: 'Deploy Channel',
+      description: 'Ask the orchestrator to create Kubernetes resources for a new channel pod. Pass the full multi-document YAML. Main group only.',
+      parameters: Type.Object({
+        yamlContent: Type.String({ description: 'Multi-document Kubernetes YAML to apply (Deployment, PVC, Service)' }),
+      }),
+      execute: async (_id, params) => {
+        if (!isMain) return textResult('deploy_channel is only available to the main group.');
+        await (redis as any).publish(
+          `kubeclaw:tasks:${groupFolder}`,
+          JSON.stringify({ type: 'deploy_channel', yaml: String((params as any).yamlContent || ''), groupFolder }),
+        );
+        return textResult('Deployment request sent to orchestrator.');
       },
     });
     tools.push({
-      type: 'function',
-      function: {
-        name: 'deploy_channel',
-        description: 'Ask the orchestrator to create Kubernetes resources for a new channel pod. Pass the full multi-document YAML. Main group only.',
-        parameters: {
-          type: 'object',
-          properties: {
-            yamlContent: { type: 'string', description: 'Multi-document Kubernetes YAML to apply (Deployment, PVC, Service)' },
-          },
-          required: ['yamlContent'],
-        },
+      name: 'control_channel',
+      label: 'Control Channel',
+      description: 'Send a control command to a running channel pod (e.g. reload to force reconnect). Main group only.',
+      parameters: Type.Object({
+        channelName: Type.String({ description: 'Channel pod name to control (e.g. telegram, irc, discord)' }),
+        command: Type.Union([Type.Literal('reload')], { description: 'reload: disconnect and reconnect the channel' }),
+      }),
+      execute: async (_id, params) => {
+        if (!isMain) return textResult('control_channel is only available to the main group.');
+        await (redis as any).publish(
+          `kubeclaw:tasks:${groupFolder}`,
+          JSON.stringify({ type: 'control_channel', channelName: String((params as any).channelName || ''), command: String((params as any).command || ''), groupFolder }),
+        );
+        return textResult(`Control command '${(params as any).command}' sent to channel '${(params as any).channelName}'.`);
       },
     });
   }
@@ -789,67 +879,47 @@ function buildToolDefinitions(isSuperuser: boolean, isMain: boolean): OpenAI.Cha
   if (isSuperuser) {
     tools.push(
       {
-        type: 'function',
-        function: {
-          name: 'local_bash',
-          description: 'Run a bash command directly in this container (superuser mode). Use to install packages, modify agent code, or perform system-level setup.',
-          parameters: {
-            type: 'object',
-            properties: {
-              command: { type: 'string' },
-              timeout: { type: 'number' },
-            },
-            required: ['command'],
-          },
-        },
+        name: 'local_bash',
+        label: 'Local Bash',
+        description: 'Run a bash command directly in this container (superuser mode). Use to install packages, modify agent code, or perform system-level setup.',
+        parameters: Type.Object({
+          command: Type.String(),
+          timeout: Type.Optional(Type.Number()),
+        }),
+        execute: async (_id, params) => textResult(await localBash(params as Record<string, unknown>)),
       },
       {
-        type: 'function',
-        function: {
-          name: 'local_read',
-          description: 'Read a file from this container\'s filesystem (superuser mode).',
-          parameters: {
-            type: 'object',
-            properties: {
-              file_path: { type: 'string' },
-              offset: { type: 'number' },
-              limit: { type: 'number' },
-            },
-            required: ['file_path'],
-          },
-        },
+        name: 'local_read',
+        label: 'Local Read',
+        description: "Read a file from this container's filesystem (superuser mode).",
+        parameters: Type.Object({
+          file_path: Type.String(),
+          offset: Type.Optional(Type.Number()),
+          limit: Type.Optional(Type.Number()),
+        }),
+        execute: async (_id, params) => textResult(localRead(params as Record<string, unknown>)),
       },
       {
-        type: 'function',
-        function: {
-          name: 'local_write',
-          description: 'Write a file in this container (superuser mode).',
-          parameters: {
-            type: 'object',
-            properties: {
-              file_path: { type: 'string' },
-              content: { type: 'string' },
-            },
-            required: ['file_path', 'content'],
-          },
-        },
+        name: 'local_write',
+        label: 'Local Write',
+        description: 'Write a file in this container (superuser mode).',
+        parameters: Type.Object({
+          file_path: Type.String(),
+          content: Type.String(),
+        }),
+        execute: async (_id, params) => textResult(localWrite(params as Record<string, unknown>)),
       },
       {
-        type: 'function',
-        function: {
-          name: 'local_edit',
-          description: 'Edit a file in this container (superuser mode).',
-          parameters: {
-            type: 'object',
-            properties: {
-              file_path: { type: 'string' },
-              old_string: { type: 'string' },
-              new_string: { type: 'string' },
-              replace_all: { type: 'boolean' },
-            },
-            required: ['file_path', 'old_string', 'new_string'],
-          },
-        },
+        name: 'local_edit',
+        label: 'Local Edit',
+        description: 'Edit a file in this container (superuser mode).',
+        parameters: Type.Object({
+          file_path: Type.String(),
+          old_string: Type.String(),
+          new_string: Type.String(),
+          replace_all: Type.Optional(Type.Boolean()),
+        }),
+        execute: async (_id, params) => textResult(localEdit(params as Record<string, unknown>)),
       },
     );
   }
@@ -857,29 +927,48 @@ function buildToolDefinitions(isSuperuser: boolean, isMain: boolean): OpenAI.Cha
   return tools;
 }
 
-// ---- LLM client factory ----
+// ---- Model construction ----
 
-function createLLMClient(input: ContainerInput): { client: OpenAI; model: string } {
+function buildModel(): Model<Api> {
   const provider = process.env.KUBECLAW_LLM_PROVIDER || 'openai';
 
   if (provider === 'openrouter') {
+    const modelId = process.env.OPENROUTER_MODEL || 'openai/gpt-4o';
     return {
-      client: new OpenAI({
-        apiKey: process.env.OPENROUTER_API_KEY || 'no-key',
-        baseURL: process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1',
-      }),
-      model: process.env.OPENROUTER_MODEL || 'openai/gpt-4o',
+      id: modelId,
+      name: modelId,
+      api: 'openai-completions',
+      provider: 'openrouter',
+      baseUrl: process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1',
+      reasoning: false,
+      input: ['text'],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 128000,
+      maxTokens: 4096,
     };
   }
 
-  // Default: OpenAI-compatible (openai, or any provider with OPENAI_* vars)
+  // Default: OpenAI-compatible
+  const modelId = process.env.OPENAI_MODEL || process.env.DIRECT_LLM_MODEL || 'gpt-4o';
   return {
-    client: new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY || 'no-key',
-      baseURL: process.env.OPENAI_BASE_URL || undefined,
-    }),
-    model: process.env.OPENAI_MODEL || process.env.DIRECT_LLM_MODEL || 'gpt-4o',
+    id: modelId,
+    name: modelId,
+    api: 'openai-completions',
+    provider: 'openai',
+    baseUrl: process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1',
+    reasoning: false,
+    input: ['text'],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 128000,
+    maxTokens: 4096,
   };
+}
+
+function getApiKeyForProvider(provider: string): string | undefined {
+  if (provider === 'openrouter') {
+    return process.env.OPENROUTER_API_KEY;
+  }
+  return process.env.OPENAI_API_KEY;
 }
 
 // ---- Agentic loop ----
@@ -893,8 +982,6 @@ async function runAgentLoop(
   jobId: string,
 ): Promise<void> {
   const isSuperuser = process.env.KUBECLAW_SUPERUSER === 'true';
-  const { client, model } = createLLMClient(input);
-  const tools = buildToolDefinitions(isSuperuser, input.isMain);
   const podReadyMap = new Map<string, boolean>();
 
   const systemPrompt = loadSystemPrompt(input.assistantName);
@@ -912,123 +999,93 @@ async function runAgentLoop(
     prompt += '\n' + pending.join('\n');
   }
 
-  const messages: OpenAI.ChatCompletionMessageParam[] = [
-    { role: 'system', content: systemPrompt },
-    ...history,
-    { role: 'user', content: prompt },
-  ];
+  const model = buildModel();
+  const tools = buildToolDefinitions(
+    isSuperuser, input.isMain, redis, inputStream, jobId,
+    input.groupFolder, input.chatJid, podReadyMap,
+  );
 
+  const sessionId = input.sessionId || randomUUID();
+  let toolRounds = 0;
+
+  const agent = new Agent({
+    initialState: {
+      systemPrompt,
+      model,
+      tools,
+      messages: history,
+    },
+    getApiKey: getApiKeyForProvider,
+    streamFn: streamSimple,
+    // Steering: inject follow-up messages from Redis input stream mid-turn
+    steeringMode: 'all',
+    followUpMode: 'all',
+  });
+
+  // Track tool rounds and final response via event subscription
   let finalResponse = '';
-  let sessionId = input.sessionId || randomUUID();
+  let agentError: string | undefined;
 
-  try {
-    let toolRounds = 0;
-    while (toolRounds <= MAX_TOOL_ROUNDS) {
-      log(`LLM call round ${toolRounds} (${messages.length} messages)`);
-
-      const response = await client.chat.completions.create({
-        model,
-        messages,
-        tools: tools.length > 0 ? tools : undefined,
-        tool_choice: tools.length > 0 ? 'auto' : undefined,
-      });
-
-      const msg = response.choices[0].message;
-      messages.push(msg);
-
-      const toolCalls = msg.tool_calls?.filter((c) => c.type === 'function') ?? [];
-
-      if (toolCalls.length === 0) {
-        finalResponse = msg.content ?? '';
-        break;
-      }
-
-      log(`Executing ${toolCalls.length} tool call(s)`);
-
-      for (const call of toolCalls) {
-        const name = call.function.name;
-        let args: Record<string, unknown> = {};
-        try { args = JSON.parse(call.function.arguments); } catch { /* use empty */ }
-
-        log(`Tool call: ${name}`);
-        let result: string;
-
-        if (TOOL_CATEGORY[name]) {
-          // Redis-routed tool
-          result = await callToolViaRedis(redis, inputStream, jobId, input.groupFolder, name, args, podReadyMap);
-        } else if (name.startsWith('local_') && isSuperuser) {
-          // Local superuser tool
-          switch (name) {
-            case 'local_bash': result = await localBash(args); break;
-            case 'local_read': result = localRead(args); break;
-            case 'local_write': result = localWrite(args); break;
-            case 'local_edit': result = localEdit(args); break;
-            default: result = `Unknown local tool: ${name}`;
-          }
-        } else {
-          // IPC tool
-          switch (name) {
-            case 'send_message':
-              result = await handleSendMessage(redis, input.groupFolder, input.chatJid, args);
-              break;
-            case 'schedule_task':
-              result = await handleScheduleTask(redis, input.groupFolder, input.chatJid, input.isMain, args);
-              break;
-            case 'list_tasks':
-              result = handleListTasks(input.groupFolder, input.isMain);
-              break;
-            case 'pause_task':
-            case 'resume_task':
-            case 'cancel_task':
-              result = await handleTaskLifecycle(redis, input.groupFolder, input.isMain, name, args);
-              break;
-            case 'update_task':
-              result = await handleUpdateTask(redis, input.groupFolder, input.isMain, args);
-              break;
-            case 'register_group':
-              result = await handleRegisterGroup(redis, input.groupFolder, input.isMain, args);
-              break;
-            case 'deploy_channel':
-              if (!input.isMain) { result = 'deploy_channel is only available to the main group.'; break; }
-              await (redis as any).publish(
-                `kubeclaw:tasks:${input.groupFolder}`,
-                JSON.stringify({ type: 'deploy_channel', yaml: String(args.yamlContent || ''), groupFolder: input.groupFolder }),
-              );
-              result = 'Deployment request sent to orchestrator.';
-              break;
-            default:
-              result = `Unknown tool: ${name}`;
-          }
+  agent.subscribe(async (event: AgentEvent) => {
+    switch (event.type) {
+      case 'turn_end':
+        toolRounds++;
+        if (toolRounds >= MAX_TOOL_ROUNDS) {
+          log(`Max tool rounds (${MAX_TOOL_ROUNDS}) reached, aborting`);
+          agent.abort();
         }
 
-        messages.push({
-          role: 'tool',
-          tool_call_id: call.id,
-          content: result,
-        });
-      }
+        // Check input stream for follow-up messages or close signal after each turn
+        await inputStream.poll();
+        if (inputStream.hasCloseSignal()) {
+          log('Close signal received mid-loop');
+          agent.abort();
+          return;
+        }
+        {
+          const followUps = inputStream.drainUserMessages();
+          if (followUps.length > 0) {
+            log(`Received ${followUps.length} follow-up message(s) mid-loop`);
+            agent.steer({
+              role: 'user',
+              content: [{ type: 'text', text: followUps.join('\n') }],
+              timestamp: Date.now(),
+            });
+          }
+        }
+        break;
 
-      toolRounds++;
-
-      // Check input stream for follow-up messages or close signal after each round
-      await inputStream.poll();
-      if (inputStream.hasCloseSignal()) {
-        log('Close signal received mid-loop');
+      case 'agent_end': {
+        // Extract final text from the last assistant message
+        const endMessages = event.messages;
+        const lastAssistant = [...endMessages].reverse().find(
+          (m): m is Extract<AgentMessage, { role: 'assistant' }> => (m as any).role === 'assistant',
+        );
+        if (lastAssistant) {
+          const textParts = (lastAssistant as any).content
+            .filter((c: any) => c.type === 'text')
+            .map((c: any) => c.text);
+          finalResponse = textParts.join('');
+          if ((lastAssistant as any).errorMessage) {
+            agentError = (lastAssistant as any).errorMessage;
+          }
+        }
         break;
       }
-      const followUps = inputStream.drainUserMessages();
-      if (followUps.length > 0) {
-        log(`Received ${followUps.length} follow-up message(s) mid-loop`);
-        messages.push({ role: 'user', content: followUps.join('\n') });
-      }
+    }
+  });
+
+  try {
+    await agent.prompt(prompt);
+
+    if (agentError) {
+      writeOutput({ status: 'error', result: null, newSessionId: sessionId, error: agentError });
+    } else {
+      writeOutput({ status: 'success', result: finalResponse, newSessionId: sessionId });
     }
 
-    // Emit result
-    writeOutput({ status: 'success', result: finalResponse, newSessionId: sessionId });
-
-    // Persist conversation history (exclude system message)
-    const toSave = messages.filter((m) => m.role !== 'system');
-    saveHistory(toSave);
+    // Save conversation history (agent state has the full transcript)
+    saveHistory(agent.state.messages);
 
   } catch (err) {
     const errorMsg = err instanceof Error ? err.message : String(err);
@@ -1052,74 +1109,21 @@ async function runAgentLoop(
     log(`Processing ${followUps.length} follow-up message(s)`);
     const followUpPrompt = followUps.join('\n');
 
-    // Load latest history and run another loop iteration
-    const updatedHistory = loadHistory();
-    const followUpMessages: OpenAI.ChatCompletionMessageParam[] = [
-      { role: 'system', content: systemPrompt },
-      ...updatedHistory,
-      { role: 'user', content: followUpPrompt },
-    ];
+    // Reset tracking for the new prompt
+    toolRounds = 0;
+    finalResponse = '';
+    agentError = undefined;
 
     try {
-      let toolRounds = 0;
-      let followUpResponse = '';
+      await agent.prompt(followUpPrompt);
 
-      while (toolRounds <= MAX_TOOL_ROUNDS) {
-        const response = await client.chat.completions.create({
-          model,
-          messages: followUpMessages,
-          tools: tools.length > 0 ? tools : undefined,
-          tool_choice: tools.length > 0 ? 'auto' : undefined,
-        });
-
-        const msg = response.choices[0].message;
-        followUpMessages.push(msg);
-
-        const toolCalls = msg.tool_calls?.filter((c) => c.type === 'function') ?? [];
-        if (toolCalls.length === 0) {
-          followUpResponse = msg.content ?? '';
-          break;
-        }
-
-        for (const call of toolCalls) {
-          const name = call.function.name;
-          let args: Record<string, unknown> = {};
-          try { args = JSON.parse(call.function.arguments); } catch { /* use empty */ }
-
-          let result: string;
-          if (TOOL_CATEGORY[name]) {
-            result = await callToolViaRedis(redis, inputStream, jobId, input.groupFolder, name, args, podReadyMap);
-          } else if (name.startsWith('local_') && isSuperuser) {
-            switch (name) {
-              case 'local_bash': result = await localBash(args); break;
-              case 'local_read': result = localRead(args); break;
-              case 'local_write': result = localWrite(args); break;
-              case 'local_edit': result = localEdit(args); break;
-              default: result = `Unknown local tool: ${name}`;
-            }
-          } else {
-            switch (name) {
-              case 'send_message': result = await handleSendMessage(redis, input.groupFolder, input.chatJid, args); break;
-              case 'schedule_task': result = await handleScheduleTask(redis, input.groupFolder, input.chatJid, input.isMain, args); break;
-              case 'list_tasks': result = handleListTasks(input.groupFolder, input.isMain); break;
-              case 'pause_task': case 'resume_task': case 'cancel_task': result = await handleTaskLifecycle(redis, input.groupFolder, input.isMain, name, args); break;
-              case 'update_task': result = await handleUpdateTask(redis, input.groupFolder, input.isMain, args); break;
-              case 'register_group': result = await handleRegisterGroup(redis, input.groupFolder, input.isMain, args); break;
-              default: result = `Unknown tool: ${name}`;
-            }
-          }
-          followUpMessages.push({ role: 'tool', tool_call_id: call.id, content: result });
-        }
-        toolRounds++;
-
-        await inputStream.poll();
-        if (inputStream.hasCloseSignal()) break;
+      if (agentError) {
+        writeOutput({ status: 'error', result: null, error: agentError });
+      } else {
+        writeOutput({ status: 'success', result: finalResponse, newSessionId: sessionId });
       }
 
-      writeOutput({ status: 'success', result: followUpResponse, newSessionId: sessionId });
-
-      const toSave = followUpMessages.filter((m) => m.role !== 'system');
-      saveHistory(toSave);
+      saveHistory(agent.state.messages);
 
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
@@ -1154,7 +1158,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // Merge secrets into process.env for the OpenAI client
+  // Merge secrets into process.env for API key resolution
   for (const [key, value] of Object.entries(containerInput.secrets || {})) {
     process.env[key] = value;
   }
