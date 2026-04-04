@@ -1,19 +1,3 @@
-<p align="center">
-  <img src="assets/kubeclaw-logo.png" alt="KubeClaw" width="400">
-</p>
-
-<p align="center">
-  An AI assistant that runs agents securely as Kubernetes Jobs. Lightweight, built to be easily understood and completely customized for your needs.
-</p>
-
-<p align="center">
-  <a href="https://kubeclaw.dev">kubeclaw.dev</a>&nbsp; • &nbsp;
-  <a href="README_zh.md">中文</a>&nbsp; • &nbsp;
-  <a href="https://discord.gg/VDdww8qS42"><img src="https://img.shields.io/discord/1470188214710046894?label=Discord&logo=discord&v=2" alt="Discord" valign="middle"></a>&nbsp; • &nbsp;
-  <a href="repo-tokens"><img src="repo-tokens/badge.svg" alt="34.9k tokens, 17% of context window" valign="middle"></a>
-</p>
-Using Claude Code, KubeClaw can dynamically rewrite its code to customize its feature set for your needs.
-
 **New:** First AI assistant to support [Agent Swarms](https://code.claude.com/docs/en/agent-teams). Spin up teams of agents that collaborate in your chat.
 
 ## Quick Start
