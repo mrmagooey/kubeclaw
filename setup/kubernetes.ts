@@ -332,21 +332,6 @@ export async function run(args: string[]): Promise<void> {
 }
 
 function detectStorageManifest(k8sDir: string): string {
-  // Try to detect the right storage manifest based on environment
-  try {
-    const output = execSync(
-      'kubectl get nodes -o jsonpath={.items[0].metadata.labels}',
-      {
-        encoding: 'utf-8',
-        stdio: ['ignore', 'pipe', 'pipe'],
-      },
-    );
-    if (output.includes('minikube')) {
-      return '20-storage-minikube.yaml';
-    }
-  } catch {
-    // Fall through to default
-  }
   return '20-storage.yaml';
 }
 

@@ -7,7 +7,6 @@ import fs from 'fs';
 import path from 'path';
 
 import { JobRunner, buildJobName } from '../k8s/job-runner.js';
-import { SidecarJobRunner } from '../k8s/sidecar-job-runner.js';
 import { FileSidecarJobRunner } from '../k8s/file-sidecar-runner.js';
 import { HttpSidecarJobRunner } from '../k8s/http-sidecar-runner.js';
 import { DirectLLMRunner } from './direct-llm-runner.js';
@@ -20,7 +19,6 @@ import {
 } from './types.js';
 import { RegisteredGroup } from '../types.js';
 import { logger } from '../logger.js';
-import { SIDECAR_ENABLED } from '../config.js';
 import { getACLManager, RedisACLManager } from '../k8s/acl-manager.js';
 
 // Re-export types from runtime types for convenience

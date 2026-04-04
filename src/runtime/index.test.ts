@@ -40,10 +40,6 @@ vi.mock('../k8s/job-runner.js', () => ({
   buildJobName: vi.fn((folder: string) => `job-${folder}`),
 }));
 
-vi.mock('../k8s/sidecar-job-runner.js', () => ({
-  SidecarJobRunner: class {},
-}));
-
 vi.mock('../k8s/file-sidecar-runner.js', () => ({
   FileSidecarJobRunner: class {
     runAgentJob = mockFileSidecarRunAgentJob;
@@ -71,7 +67,6 @@ vi.mock('../k8s/acl-manager.js', () => ({
 }));
 
 vi.mock('../config.js', () => ({
-  SIDECAR_ENABLED: false,
   GROUPS_DIR: '/tmp/test-groups',
   STORE_DIR: '/tmp/test-store',
   ASSISTANT_NAME: 'TestBot',

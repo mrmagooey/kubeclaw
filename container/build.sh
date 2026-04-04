@@ -15,6 +15,7 @@ BUILD_OPENROUTER=true
 BUILD_FILE_ADAPTER=false
 BUILD_HTTP_ADAPTER=false
 BUILD_BROWSER=false
+BUILD_ORCHESTRATOR=false
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -42,17 +43,22 @@ while [[ $# -gt 0 ]]; do
       BUILD_BROWSER=true
       shift
       ;;
+    --orchestrator)
+      BUILD_ORCHESTRATOR=true
+      shift
+      ;;
     --all)
       BUILD_CLAUDE=true
       BUILD_OPENROUTER=true
       BUILD_FILE_ADAPTER=true
       BUILD_HTTP_ADAPTER=true
       BUILD_BROWSER=true
+      BUILD_ORCHESTRATOR=true
       shift
       ;;
     *)
       echo "Unknown option: $1"
-      echo "Usage: $0 [--claude-only|--openrouter-only|--file-adapter|--http-adapter|--browser|--all]"
+      echo "Usage: $0 [--claude-only|--openrouter-only|--file-adapter|--http-adapter|--browser|--orchestrator|--all]"
       exit 1
       ;;
   esac
@@ -114,13 +120,22 @@ fi
 # Build Browser Sidecar
 if [ "$BUILD_BROWSER" = true ]; then
   echo "Building Browser Sidecar..."
-  echo "Image: nanoclaw-browser-sidecar:latest"
+  echo "Image: kubeclaw-browser-sidecar:latest"
   if [ -d "browser" ]; then
-    ${CONTAINER_RUNTIME} build -f browser/Dockerfile -t nanoclaw-browser-sidecar:latest browser
+    ${CONTAINER_RUNTIME} build -f browser/Dockerfile -t kubeclaw-browser-sidecar:latest browser
     echo "Browser sidecar build complete!"
   else
     echo "WARNING: browser directory not found, skipping browser sidecar build"
   fi
+  echo ""
+fi
+
+# Build Orchestrator
+if [ "$BUILD_ORCHESTRATOR" = true ]; then
+  echo "Building Orchestrator..."
+  echo "Image: kubeclaw-orchestrator:latest"
+  ${CONTAINER_RUNTIME} build -f ../Dockerfile -t kubeclaw-orchestrator:latest ..
+  echo "Orchestrator build complete!"
   echo ""
 fi
 
@@ -140,7 +155,10 @@ if [ "$BUILD_HTTP_ADAPTER" = true ] && [ -d "http-adapter" ]; then
   echo "  HTTP adapter image: kubeclaw-http-adapter:latest"
 fi
 if [ "$BUILD_BROWSER" = true ] && [ -d "browser" ]; then
-  echo "  Browser sidecar image: nanoclaw-browser-sidecar:latest"
+  echo "  Browser sidecar image: kubeclaw-browser-sidecar:latest"
+fi
+if [ "$BUILD_ORCHESTRATOR" = true ]; then
+  echo "  Orchestrator image: kubeclaw-orchestrator:latest"
 fi
 
 echo ""

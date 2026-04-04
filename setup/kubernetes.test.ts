@@ -446,70 +446,8 @@ describe('kubernetes step', () => {
   });
 
   describe('detectStorageManifest', () => {
-    it("returns '20-storage-minikube.yaml' when node labels include minikube", async () => {
+    it("always uses '20-storage.yaml'", async () => {
       mockExecSyncResults.set('kubectl cluster-info', '');
-      mockExecSyncResults.set(
-        'kubectl get nodes -o jsonpath={.items[0].metadata.labels}',
-        '{"minikube":"true"}',
-      );
-      mockExecSyncResults.set(
-        'kubectl get secret kubeclaw-secrets -n kubeclaw',
-        new Error('secret not found'),
-      );
-
-      mockSpawnSyncResults.set('kubectl apply -f -', {
-        status: 0,
-        stdout: '',
-        stderr: '',
-      });
-      mockSpawnSyncResults.set(
-        'kubectl rollout status deployment/kubeclaw-orchestrator -n kubeclaw --timeout=120s',
-        { status: 0, stdout: '', stderr: '' },
-      );
-      mockSpawnSyncResults.set(
-        'kubectl get pods -n kubeclaw -l app=kubeclaw-redis -o jsonpath={.items[0].status.phase}',
-        { status: 0, stdout: 'Running', stderr: '' },
-      );
-
-      mockExistsSyncResults.set(
-        '/home/peter/projects/kubeclaw/k8s/00-namespace.yaml',
-        true,
-      );
-      mockExistsSyncResults.set(
-        '/home/peter/projects/kubeclaw/k8s/01-network-policy.yaml',
-        true,
-      );
-      mockExistsSyncResults.set(
-        '/home/peter/projects/kubeclaw/k8s/10-redis.yaml',
-        true,
-      );
-      mockExistsSyncResults.set(
-        '/home/peter/projects/kubeclaw/k8s/20-storage-minikube.yaml',
-        true,
-      );
-      mockExistsSyncResults.set(
-        '/home/peter/projects/kubeclaw/k8s/30-orchestrator.yaml',
-        true,
-      );
-
-      const { run } = await import('./kubernetes.js');
-      await run([]);
-
-      // Verify the minikube-specific command was called using mock.calls
-      const execSyncMock = vi.mocked(execSync);
-      const nodeLabelCalls = execSyncMock.mock.calls.filter(
-        (call) =>
-          typeof call[0] === 'string' && call[0].includes('kubectl get nodes'),
-      );
-      expect(nodeLabelCalls.length).toBeGreaterThan(0);
-    });
-
-    it("returns '20-storage.yaml' when node labels do not include minikube", async () => {
-      mockExecSyncResults.set('kubectl cluster-info', '');
-      mockExecSyncResults.set(
-        'kubectl get nodes -o jsonpath={.items[0].metadata.labels}',
-        '{"kubernetes.io/os":"linux"}',
-      );
       mockExecSyncResults.set(
         'kubectl get secret kubeclaw-secrets -n kubeclaw',
         new Error('secret not found'),
@@ -553,71 +491,12 @@ describe('kubernetes step', () => {
       const { run } = await import('./kubernetes.js');
       await run([]);
 
-      // Verify node check was made using mock.calls
-      const execSyncMock = vi.mocked(execSync);
-      const nodeLabelCalls = execSyncMock.mock.calls.filter(
-        (call) =>
-          typeof call[0] === 'string' && call[0].includes('kubectl get nodes'),
-      );
-      expect(nodeLabelCalls.length).toBeGreaterThan(0);
-    });
-
-    it("returns '20-storage.yaml' when kubectl fails", async () => {
-      mockExecSyncResults.set('kubectl cluster-info', '');
-      mockExecSyncResults.set(
-        'kubectl get nodes -o jsonpath={.items[0].metadata.labels}',
-        new Error('kubectl failed'),
-      );
-      mockExecSyncResults.set(
-        'kubectl get secret kubeclaw-secrets -n kubeclaw',
-        new Error('secret not found'),
-      );
-
-      mockSpawnSyncResults.set('kubectl apply -f -', {
-        status: 0,
-        stdout: '',
-        stderr: '',
-      });
-      mockSpawnSyncResults.set(
-        'kubectl rollout status deployment/kubeclaw-orchestrator -n kubeclaw --timeout=120s',
-        { status: 0, stdout: '', stderr: '' },
-      );
-      mockSpawnSyncResults.set(
-        'kubectl get pods -n kubeclaw -l app=kubeclaw-redis -o jsonpath={.items[0].status.phase}',
-        { status: 0, stdout: 'Running', stderr: '' },
-      );
-
-      mockExistsSyncResults.set(
-        '/home/peter/projects/kubeclaw/k8s/00-namespace.yaml',
-        true,
-      );
-      mockExistsSyncResults.set(
-        '/home/peter/projects/kubeclaw/k8s/01-network-policy.yaml',
-        true,
-      );
-      mockExistsSyncResults.set(
-        '/home/peter/projects/kubeclaw/k8s/10-redis.yaml',
-        true,
-      );
-      mockExistsSyncResults.set(
-        '/home/peter/projects/kubeclaw/k8s/20-storage.yaml',
-        true,
-      );
-      mockExistsSyncResults.set(
-        '/home/peter/projects/kubeclaw/k8s/30-orchestrator.yaml',
-        true,
-      );
-
-      const { run } = await import('./kubernetes.js');
-      await run([]);
-
-      // Should fall back to default storage - verify using mock.calls
-      const execSyncMock = vi.mocked(execSync);
-      const nodeLabelCalls = execSyncMock.mock.calls.filter(
-        (call) =>
-          typeof call[0] === 'string' && call[0].includes('kubectl get nodes'),
-      );
-      expect(nodeLabelCalls.length).toBeGreaterThan(0);
+      // Storage manifest should always be 20-storage.yaml
+      expect(
+        mockExistsSyncResults.has(
+          '/home/peter/projects/kubeclaw/k8s/20-storage.yaml',
+        ),
+      ).toBe(true);
     });
   });
 

@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
+import { ASSISTANT_NAME, TRIGGER_PATTERN } from './config.js';
 import { _initTestDatabase, getAllChats, storeChatMetadata } from './db.js';
 import { getAvailableGroups, _setRegisteredGroups } from './index.js';
 import {
@@ -455,5 +456,104 @@ describe('routeOutbound', () => {
     await expect(
       (async () => await routeOutbound([], 'any-jid@g.us', 'Hello'))(),
     ).rejects.toThrow('No channel for JID: any-jid@g.us');
+  });
+});
+
+// --- TRIGGER_PATTERN ---
+
+describe('TRIGGER_PATTERN', () => {
+  const name = ASSISTANT_NAME;
+  const lower = name.toLowerCase();
+  const upper = name.toUpperCase();
+
+  it('matches @name at start of message', () => {
+    expect(TRIGGER_PATTERN.test(`@${name} hello`)).toBe(true);
+  });
+
+  it('matches case-insensitively', () => {
+    expect(TRIGGER_PATTERN.test(`@${lower} hello`)).toBe(true);
+    expect(TRIGGER_PATTERN.test(`@${upper} hello`)).toBe(true);
+  });
+
+  it('does not match when not at start of message', () => {
+    expect(TRIGGER_PATTERN.test(`hello @${name}`)).toBe(false);
+  });
+
+  it('does not match partial name like @NameExtra (word boundary)', () => {
+    expect(TRIGGER_PATTERN.test(`@${name}extra hello`)).toBe(false);
+  });
+
+  it('matches with word boundary before apostrophe', () => {
+    expect(TRIGGER_PATTERN.test(`@${name}'s thing`)).toBe(true);
+  });
+
+  it('matches @name alone (end of string is a word boundary)', () => {
+    expect(TRIGGER_PATTERN.test(`@${name}`)).toBe(true);
+  });
+
+  it('matches with leading whitespace after trim', () => {
+    expect(TRIGGER_PATTERN.test(`@${name} hey`.trim())).toBe(true);
+  });
+});
+
+// --- Trigger gating with requiresTrigger flag ---
+
+describe('trigger gating (requiresTrigger interaction)', () => {
+  function makeMsg(overrides: Partial<NewMessage> = {}): NewMessage {
+    return {
+      id: '1',
+      chat_jid: 'group@g.us',
+      sender: '123@s.whatsapp.net',
+      sender_name: 'Alice',
+      content: 'hello',
+      timestamp: '2024-01-01T00:00:00.000Z',
+      ...overrides,
+    };
+  }
+
+  function shouldRequireTrigger(
+    isMainGroup: boolean,
+    requiresTrigger: boolean | undefined,
+  ): boolean {
+    return !isMainGroup && requiresTrigger !== false;
+  }
+
+  function shouldProcess(
+    isMainGroup: boolean,
+    requiresTrigger: boolean | undefined,
+    messages: NewMessage[],
+  ): boolean {
+    if (!shouldRequireTrigger(isMainGroup, requiresTrigger)) return true;
+    return messages.some((m) => TRIGGER_PATTERN.test(m.content.trim()));
+  }
+
+  it('main group always processes (no trigger needed)', () => {
+    const msgs = [makeMsg({ content: 'hello no trigger' })];
+    expect(shouldProcess(true, undefined, msgs)).toBe(true);
+  });
+
+  it('main group processes even with requiresTrigger=true', () => {
+    const msgs = [makeMsg({ content: 'hello no trigger' })];
+    expect(shouldProcess(true, true, msgs)).toBe(true);
+  });
+
+  it('non-main group with requiresTrigger=undefined requires trigger (defaults to true)', () => {
+    const msgs = [makeMsg({ content: 'hello no trigger' })];
+    expect(shouldProcess(false, undefined, msgs)).toBe(false);
+  });
+
+  it('non-main group with requiresTrigger=true requires trigger', () => {
+    const msgs = [makeMsg({ content: 'hello no trigger' })];
+    expect(shouldProcess(false, true, msgs)).toBe(false);
+  });
+
+  it('non-main group with requiresTrigger=true processes when trigger present', () => {
+    const msgs = [makeMsg({ content: `@${ASSISTANT_NAME} do something` })];
+    expect(shouldProcess(false, true, msgs)).toBe(true);
+  });
+
+  it('non-main group with requiresTrigger=false always processes (no trigger needed)', () => {
+    const msgs = [makeMsg({ content: 'hello no trigger' })];
+    expect(shouldProcess(false, false, msgs)).toBe(true);
   });
 });

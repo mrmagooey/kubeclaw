@@ -1,3 +1,20 @@
+# Storage Configuration
+#
+# Environment variants:
+#   Minikube / single-node: Use ReadWriteOnce (RWO) as shown below.
+#     NOTE: RWO volumes can only be mounted by ONE pod at a time,
+#     so you CANNOT run concurrent agent jobs.
+#
+#   Production (multi-node): Change accessModes to ReadWriteMany (RWX)
+#     and set an appropriate storageClassName for your provider:
+#       AWS EFS:    storageClassName: efs-sc
+#       Azure:      storageClassName: azurefile
+#       GCP:        storageClassName: filestore
+#       On-premise: storageClassName: nfs-client  (or rook-cephfs, longhorn)
+#
+# Apply with:
+#   kubectl apply -f k8s/20-storage.yaml
+
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -5,10 +22,11 @@ metadata:
   namespace: kubeclaw
 spec:
   accessModes:
-    - ReadWriteOnce
+    - ReadWriteOnce          # Change to ReadWriteMany for production
   resources:
     requests:
       storage: 50Gi
+  # storageClassName: efs-sc  # Uncomment and set for your provider
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -17,10 +35,11 @@ metadata:
   namespace: kubeclaw
 spec:
   accessModes:
-    - ReadWriteOnce
+    - ReadWriteOnce          # Change to ReadWriteMany for production
   resources:
     requests:
       storage: 20Gi
+  # storageClassName: efs-sc  # Uncomment and set for your provider
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -29,10 +48,11 @@ metadata:
   namespace: kubeclaw
 spec:
   accessModes:
-    - ReadWriteOnce
+    - ReadWriteOnce          # Change to ReadWriteMany for production
   resources:
     requests:
       storage: 10Gi
+  # storageClassName: efs-sc  # Uncomment and set for your provider
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -41,10 +61,11 @@ metadata:
   namespace: kubeclaw
 spec:
   accessModes:
-    - ReadWriteOnce
+    - ReadWriteOnce          # Change to ReadWriteMany for production
   resources:
     requests:
       storage: 1Gi
+  # storageClassName: efs-sc  # Uncomment and set for your provider
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -53,7 +74,8 @@ metadata:
   namespace: kubeclaw
 spec:
   accessModes:
-    - ReadWriteOnce
+    - ReadWriteOnce          # Change to ReadWriteMany for production
   resources:
     requests:
       storage: 1Gi
+  # storageClassName: efs-sc  # Uncomment and set for your provider

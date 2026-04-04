@@ -96,13 +96,6 @@ async function runTask(
     });
     return;
   }
-  fs.mkdirSync(groupDir, { recursive: true });
-
-  logger.info(
-    { taskId: task.id, group: task.group_folder },
-    'Running scheduled task',
-  );
-
   const groups = deps.registeredGroups();
   const group = Object.values(groups).find(
     (g) => g.folder === task.group_folder,
@@ -123,6 +116,13 @@ async function runTask(
     });
     return;
   }
+
+  fs.mkdirSync(groupDir, { recursive: true });
+
+  logger.info(
+    { taskId: task.id, group: task.group_folder },
+    'Running scheduled task',
+  );
 
   // Update tasks snapshot for container to read (filtered by group)
   const isMain = group.isMain === true;

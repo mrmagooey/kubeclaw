@@ -254,15 +254,6 @@ export const AGENT_JOB_CPU_REQUEST =
   process.env.AGENT_JOB_CPU_REQUEST || '250m';
 export const AGENT_JOB_CPU_LIMIT = process.env.AGENT_JOB_CPU_LIMIT || '2000m';
 
-// --- Sidecar Adapter Configuration ---
-export const SIDECAR_ADAPTER_IMAGE =
-  process.env.SIDECAR_ADAPTER_IMAGE || 'kubeclaw-sidecar-adapter:latest';
-export const SIDECAR_POLL_INTERVAL = parseInt(
-  process.env.SIDECAR_POLL_INTERVAL || '1000',
-  10,
-);
-export const SIDECAR_ENABLED = process.env.KUBECLAW_SIDECAR_ENABLED === 'true';
-
 // --- Sidecar HTTP Adapter Configuration ---
 export const SIDECAR_HTTP_ADAPTER_IMAGE =
   process.env.SIDECAR_HTTP_ADAPTER_IMAGE || 'kubeclaw-http-adapter:latest';
