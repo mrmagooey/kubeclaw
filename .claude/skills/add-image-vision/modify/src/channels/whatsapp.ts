@@ -20,7 +20,7 @@ import {
   STORE_DIR,
 } from '../config.js';
 import { getLastGroupSync, setLastGroupSync, updateChatName } from '../db.js';
-import { isImageMessage } from '../image.js';
+import { detectMimeType, isImageMessage } from '../image.js';
 import { logger } from '../logger.js';
 import {
   Channel,
@@ -205,19 +205,34 @@ export class WhatsAppChannel implements Channel {
               normalized.videoMessage?.caption ||
               '';
 
-            // Image attachment handling: download raw file, write to PVC,
-            // emit [RawAttachment: ...] marker for orchestrator preprocessing job
+            // Image/PDF attachment handling: download raw file, validate via magic bytes,
+            // write to PVC, emit typed marker for orchestrator preprocessing job
             if (isImageMessage(msg)) {
               try {
-                const buffer = await downloadMediaMessage(msg, 'buffer', {});
+                const buffer = await downloadMediaMessage(msg, 'buffer', {}) as Buffer;
+                const mime = detectMimeType(buffer);
+                if (!mime) {
+                  logger.debug({ jid: chatJid }, 'Attachment has unknown mime type, skipping');
+                  continue;
+                }
                 const groupDir = path.join(GROUPS_DIR, groups[chatJid].folder);
                 const rawDir = path.join(groupDir, 'attachments', 'raw');
                 fs.mkdirSync(rawDir, { recursive: true });
-                const filename = `raw-img-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.jpg`;
-                fs.writeFileSync(path.join(rawDir, filename), buffer as Buffer);
-                const caption = (normalized?.imageMessage?.caption ?? '').replace(/"/g, '\\"');
-                content = `[RawAttachment: attachments/raw/${filename} type=image/jpeg caption="${caption}"]`;
-                if (caption) content += ` ${caption.replace(/\\"/g, '"')}`;
+                if (mime.startsWith('image/')) {
+                  const ext = mime === 'image/png' ? '.png' : mime === 'image/gif' ? '.gif' : mime === 'image/webp' ? '.webp' : '.jpg';
+                  const filename = `raw-img-${Date.now()}-${Math.random().toString(36).slice(2, 6)}${ext}`;
+                  fs.writeFileSync(path.join(rawDir, filename), buffer);
+                  const caption = (normalized?.imageMessage?.caption ?? '').replace(/"/g, '\\"');
+                  content = `[ImageAttachment: attachments/raw/${filename} caption="${caption}"]`;
+                  if (caption) content += ` ${caption.replace(/\\"/g, '"')}`;
+                } else if (mime === 'application/pdf') {
+                  const filename = `raw-doc-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.pdf`;
+                  fs.writeFileSync(path.join(rawDir, filename), buffer);
+                  content = `[PdfAttachment: attachments/raw/${filename}]`;
+                } else {
+                  logger.debug({ jid: chatJid, mime }, 'Unsupported attachment mime type, skipping');
+                  continue;
+                }
               } catch (err) {
                 logger.warn({ err, jid: chatJid }, 'Image - download failed');
               }

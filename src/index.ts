@@ -41,7 +41,12 @@ import {
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
-import { startIpcWatcher as startRedisIpcWatcher, startToolPodSpawnWatcher, startAgentJobSpawnWatcher, startTaskRequestWatcher } from './k8s/ipc-redis.js';
+import {
+  startIpcWatcher as startRedisIpcWatcher,
+  startToolPodSpawnWatcher,
+  startAgentJobSpawnWatcher,
+  startTaskRequestWatcher,
+} from './k8s/ipc-redis.js';
 import { getOutputChannel, getRedisClient } from './k8s/redis-client.js';
 import { findChannel, formatMessages, formatOutbound } from './router.js';
 import {
@@ -87,13 +92,15 @@ function startOrchestratorHealthServer(): void {
         // Readiness: checks full startup (Redis connected, groups loaded)
         const ok = healthRedisReady && healthGroupsLoaded;
         res.writeHead(ok ? 200 : 503, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({
-          status: ok ? 'ok' : 'starting',
-          redis: healthRedisReady,
-          groups: healthGroupsLoaded,
-          groupCount: Object.keys(registeredGroups).length,
-          uptime: process.uptime(),
-        }));
+        res.end(
+          JSON.stringify({
+            status: ok ? 'ok' : 'starting',
+            redis: healthRedisReady,
+            groups: healthGroupsLoaded,
+            groupCount: Object.keys(registeredGroups).length,
+            uptime: process.uptime(),
+          }),
+        );
       } else {
         res.writeHead(404);
         res.end();
@@ -206,12 +213,20 @@ function loadSkillPrompt(name: string): string | null {
     path.join(process.cwd(), '.claude', 'skills', name, 'SKILL.md'),
     `/app/.claude/skills/${name}/SKILL.md`,
   ]) {
-    try { return fs.readFileSync(p, 'utf-8'); } catch { /* not found */ }
+    try {
+      return fs.readFileSync(p, 'utf-8');
+    } catch {
+      /* not found */
+    }
   }
   return null;
 }
 
-function buildSkillPrompt(skillName: string, skillMd: string, extraArgs: string): string {
+function buildSkillPrompt(
+  skillName: string,
+  skillMd: string,
+  extraArgs: string,
+): string {
   return `You are applying the skill "${skillName}".
 
 The pre-compiled plugin has already been copied to /workspace/plugins/ by the orchestrator.
@@ -241,8 +256,13 @@ async function handleSkillInvocation(
   ]) {
     if (fs.existsSync(srcBase)) {
       fs.mkdirSync('/workspace/plugins', { recursive: true });
-      for (const f of fs.readdirSync(srcBase).filter((f) => f.endsWith('.js'))) {
-        fs.copyFileSync(path.join(srcBase, f), path.join('/workspace/plugins', f));
+      for (const f of fs
+        .readdirSync(srcBase)
+        .filter((f) => f.endsWith('.js'))) {
+        fs.copyFileSync(
+          path.join(srcBase, f),
+          path.join('/workspace/plugins', f),
+        );
         logger.info({ plugin: f, skillName }, 'Copied skill plugin to PVC');
       }
       break;
@@ -254,23 +274,58 @@ async function handleSkillInvocation(
     ...group,
     containerConfig: { ...group.containerConfig, superuser: true },
   };
-  await runAgent(skillGroup, buildSkillPrompt(skillName, skillMd, extraArgs), chatJid, async (result) => {
-    if (result.result) {
-      const raw = typeof result.result === 'string' ? result.result : JSON.stringify(result.result);
-      const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
-      if (text) await channel.sendMessage(chatJid, text);
-    }
-  });
+  await runAgent(
+    skillGroup,
+    buildSkillPrompt(skillName, skillMd, extraArgs),
+    chatJid,
+    async (result) => {
+      if (result.result) {
+        const raw =
+          typeof result.result === 'string'
+            ? result.result
+            : JSON.stringify(result.result);
+        const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
+        if (text) await channel.sendMessage(chatJid, text);
+      }
+    },
+  );
 }
 
-const RAW_ATTACHMENT_RE =
-  /\[RawAttachment: (attachments\/raw\/[^\s\]]+)\s+type=([^\s\]]+)(?:\s+caption="([^"]*)")?\]/g;
+interface AttachmentMarkerHandler {
+  // regex with positional groups: group 1 = path, group 2 = caption (optional)
+  pattern: RegExp;
+  mediaType: string; // used when calling preprocessor
+  // how to rewrite after preprocessing: given the done-path content, return replacement string
+  rewrite: (outputPath: string, caption?: string) => string;
+  fallback: (filename: string) => string;
+}
 
-function extractRawAttachments(messages: Array<{ content: string }>): RawAttachment[] {
+const ATTACHMENT_HANDLERS: AttachmentMarkerHandler[] = [
+  {
+    pattern: /\[ImageAttachment: (attachments\/raw\/[^\s\]]+)(?:\s+caption="([^"]*)")?\]/g,
+    mediaType: 'image/jpeg',
+    rewrite: (outputPath) => `[Image: ${outputPath}]`,
+    fallback: (filename) => `[Image: ${filename} (processing failed)]`,
+  },
+  {
+    pattern: /\[PdfAttachment: (attachments\/raw\/[^\s\]]+)\]/g,
+    mediaType: 'application/pdf',
+    rewrite: () => '', // PDF handler reads .txt inline
+    fallback: (filename) => `[Attachment: ${filename} (processing failed)]`,
+  },
+];
+
+function extractAttachments(
+  messages: Array<{ content: string }>,
+): RawAttachment[] {
   const result: RawAttachment[] = [];
-  for (const msg of messages) {
-    for (const m of msg.content.matchAll(RAW_ATTACHMENT_RE)) {
-      result.push({ rawPath: m[1], mediaType: m[2], caption: m[3] });
+  for (const handler of ATTACHMENT_HANDLERS) {
+    for (const msg of messages) {
+      // Reset lastIndex for each message since the regex has the global flag
+      handler.pattern.lastIndex = 0;
+      for (const m of msg.content.matchAll(handler.pattern)) {
+        result.push({ rawPath: m[1], mediaType: handler.mediaType, caption: m[2] });
+      }
     }
   }
   return result;
@@ -281,24 +336,21 @@ function rewriteAttachmentMarkers<T extends { content: string }>(
   groupDir: string,
 ): T[] {
   return messages.map((msg) => {
-    const content = msg.content.replace(
-      /\[RawAttachment: (attachments\/raw\/[^\s\]]+)\s+type=([^\s\]]+)(?:\s+caption="([^"]*)")?\]/g,
-      (_match, rawPath: string, mediaType: string) => {
-        const donePath = path.join(groupDir, rawPath + '.done');
-        if (!fs.existsSync(donePath)) {
-          return `[Attachment: ${path.basename(rawPath)} (processing failed)]`;
-        }
-        const outputPath = fs.readFileSync(donePath, 'utf-8').trim();
-        if (mediaType.startsWith('image/')) {
-          return `[Image: ${outputPath}]`;
-        }
-        const txtPath = path.join(groupDir, rawPath + '.txt');
-        if (fs.existsSync(txtPath)) {
-          return fs.readFileSync(txtPath, 'utf-8').trim();
-        }
-        return `[Attachment: ${path.basename(rawPath)} (text unavailable)]`;
-      },
-    );
+    let content = msg.content;
+    for (const handler of ATTACHMENT_HANDLERS) {
+      handler.pattern.lastIndex = 0;
+      content = content.replace(
+        handler.pattern,
+        (_match: string, rawPath: string, caption?: string) => {
+          const donePath = path.join(groupDir, rawPath + '.done');
+          if (!fs.existsSync(donePath)) {
+            return handler.fallback(path.basename(rawPath));
+          }
+          const outputPath = fs.readFileSync(donePath, 'utf-8').trim();
+          return handler.rewrite(outputPath, caption);
+        },
+      );
+    }
     return { ...msg, content };
   });
 }
@@ -349,14 +401,21 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       if (skillMd) {
         lastAgentTimestamp[chatJid] = lastMsg.timestamp;
         saveState();
-        await handleSkillInvocation(skillName, skillMd, rest.join(' '), chatJid, group, channel);
+        await handleSkillInvocation(
+          skillName,
+          skillMd,
+          rest.join(' '),
+          chatJid,
+          group,
+          channel,
+        );
         return true;
       }
     }
   }
 
   // Preprocessing gate: spawn K8s job to process raw attachments before agent runs
-  const rawAttachments = extractRawAttachments(missedMessages);
+  const rawAttachments = extractAttachments(missedMessages);
   if (rawAttachments.length > 0) {
     const runner = getRunnerForGroup(group);
     if (typeof (runner as any).runPreprocessingJob === 'function') {
@@ -365,9 +424,13 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         'Spawning attachment preprocessing job',
       );
       const groupDir = path.join(GROUPS_DIR, group.folder);
-      const ok = await (runner as any).runPreprocessingJob(group, rawAttachments, {
-        groupsPvc: (group as any).groupsPvc,
-      });
+      const ok = await (runner as any).runPreprocessingJob(
+        group,
+        rawAttachments,
+        {
+          groupsPvc: (group as any).groupsPvc,
+        },
+      );
       if (!ok) {
         logger.warn(
           { group: group.name },
@@ -394,10 +457,15 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           const specialistGroup: RegisteredGroup = {
             ...group,
             // Override llmProvider if specialist specifies one
-            ...(s.llmProvider !== undefined && { llmProvider: s.llmProvider as RegisteredGroup['llmProvider'] }),
+            ...(s.llmProvider !== undefined && {
+              llmProvider: s.llmProvider as RegisteredGroup['llmProvider'],
+            }),
             // Merge containerConfig: specialist's partial overrides win
             containerConfig: s.containerConfig
-              ? { ...group.containerConfig, ...(s.containerConfig as RegisteredGroup['containerConfig']) }
+              ? {
+                  ...group.containerConfig,
+                  ...(s.containerConfig as RegisteredGroup['containerConfig']),
+                }
               : group.containerConfig,
           };
           // Isolated memory: use specialist-scoped session key
@@ -435,30 +503,41 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   let outputSentToUser = false;
 
   for (const agentRun of agentRuns) {
-    const output = await runAgent(agentRun.group, agentRun.prompt, chatJid, async (result) => {
-      // Streaming output callback — called for each agent result
-      if (result.result) {
-        const raw =
-          typeof result.result === 'string'
-            ? result.result
-            : JSON.stringify(result.result);
-        // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
-        const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
-        logger.info({ group: group.name }, `Agent output: ${raw.slice(0, 200)}`);
-        if (text) {
-          await channel.sendMessage(chatJid, text);
-          outputSentToUser = true;
+    const output = await runAgent(
+      agentRun.group,
+      agentRun.prompt,
+      chatJid,
+      async (result) => {
+        // Streaming output callback — called for each agent result
+        if (result.result) {
+          const raw =
+            typeof result.result === 'string'
+              ? result.result
+              : JSON.stringify(result.result);
+          // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
+          const text = raw
+            .replace(/<internal>[\s\S]*?<\/internal>/g, '')
+            .trim();
+          logger.info(
+            { group: group.name },
+            `Agent output: ${raw.slice(0, 200)}`,
+          );
+          if (text) {
+            await channel.sendMessage(chatJid, text);
+            outputSentToUser = true;
+          }
         }
-      }
 
-      if (result.status === 'success') {
-        queue.notifyIdle(chatJid);
-      }
+        if (result.status === 'success') {
+          queue.notifyIdle(chatJid);
+        }
 
-      if (result.status === 'error') {
-        hadError = true;
-      }
-    }, agentRun.sessionKey);
+        if (result.status === 'error') {
+          hadError = true;
+        }
+      },
+      agentRun.sessionKey,
+    );
 
     if (output === 'error' || hadError) {
       hadError = true;
@@ -702,9 +781,15 @@ async function main(): Promise<void> {
   // Track Redis readiness for health probe
   const redisClient = getRedisClient();
   if (redisClient.status === 'ready') healthRedisReady = true;
-  redisClient.on('ready', () => { healthRedisReady = true; });
-  redisClient.on('close', () => { healthRedisReady = false; });
-  redisClient.on('error', () => { healthRedisReady = false; });
+  redisClient.on('ready', () => {
+    healthRedisReady = true;
+  });
+  redisClient.on('close', () => {
+    healthRedisReady = false;
+  });
+  redisClient.on('error', () => {
+    healthRedisReady = false;
+  });
 
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
@@ -751,7 +836,10 @@ async function main(): Promise<void> {
   // In orchestrator mode, channels run in dedicated channel pods — skip inline loading.
   if (KUBECLAW_MODE !== 'orchestrator') {
     const registeredChannelNames = getRegisteredChannelNames();
-    logger.info({ channels: registeredChannelNames }, 'Registered channel factories');
+    logger.info(
+      { channels: registeredChannelNames },
+      'Registered channel factories',
+    );
 
     for (const channelName of registeredChannelNames) {
       logger.info({ channel: channelName }, 'Creating channel');
@@ -769,7 +857,9 @@ async function main(): Promise<void> {
       logger.info({ channel: channelName }, 'Channel connected successfully');
     }
   } else {
-    logger.info('Orchestrator mode: channels run in dedicated pods, skipping inline channel init');
+    logger.info(
+      'Orchestrator mode: channels run in dedicated pods, skipping inline channel init',
+    );
   }
 
   // Start subsystems (independently of connection handler)
@@ -785,7 +875,10 @@ async function main(): Promise<void> {
         // Channels run in separate pods — route via Redis pub/sub to the channel pod
         const group = registeredGroups[jid];
         if (!group) {
-          logger.warn({ jid }, 'No registered group for JID, cannot route scheduled message');
+          logger.warn(
+            { jid },
+            'No registered group for JID, cannot route scheduled message',
+          );
           return;
         }
         await getRedisClient().publish(
@@ -839,12 +932,16 @@ async function main(): Promise<void> {
 
   // Sync MCP servers from values.yaml (MCP_SERVERS_VALUES env var) and notify channel pods
   try {
-    const { syncFromValues, notifyAllChannels } = await import('./mcp-registry.js');
+    const { syncFromValues, notifyAllChannels } =
+      await import('./mcp-registry.js');
     const mcpValuesJson = process.env.MCP_SERVERS_VALUES;
     if (mcpValuesJson) {
       const mcpSpecs = JSON.parse(mcpValuesJson);
       await syncFromValues(mcpSpecs);
-      logger.info({ count: mcpSpecs.length }, 'Synced MCP servers from values.yaml');
+      logger.info(
+        { count: mcpSpecs.length },
+        'Synced MCP servers from values.yaml',
+      );
     }
     // Always notify channels on startup (covers servers already in DB from previous runs)
     await notifyAllChannels();
