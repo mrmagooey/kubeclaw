@@ -1,4 +1,4 @@
-**New:** First AI assistant to support [Agent Swarms](https://code.claude.com/docs/en/agent-teams). Spin up teams of agents that collaborate in your chat.
+
 
 ## Quick Start
 
@@ -26,19 +26,7 @@ Tell it in plain English: `"set up Telegram"` — it will ask for your credentia
 
 ## Philosophy
 
-**Small enough to understand.** One process, a few source files and no microservices. If you want to understand the full KubeClaw codebase, just ask Claude Code to walk you through it.
-
 **Secure by isolation.** Agents run as Kubernetes Jobs with filesystem isolation and can only see what's explicitly mounted. Bash access is safe because commands run inside the job, not on your host.
-
-**Built for the individual user.** KubeClaw isn't a monolithic framework; it's software that fits each user's exact needs. Instead of becoming bloatware, KubeClaw is designed to be bespoke. You make your own fork and have Claude Code modify it to match your needs.
-
-**Customization = code changes.** No configuration sprawl. Want different behavior? Modify the code. The codebase is small enough that it's safe to make changes.
-
-**AI-native.**
-
-- No installation wizard; Claude Code guides setup.
-- No monitoring dashboard; ask Claude what's happening.
-- No debugging tools; describe the problem and Claude fixes it.
 
 **Skills over features.** Instead of adding features (e.g. support for Telegram) to the codebase, contributors submit [claude code skills](https://code.claude.com/docs/en/skills) like `/add-telegram` that transform your fork. You end up with clean code that does exactly what you need.
 
@@ -47,7 +35,7 @@ Tell it in plain English: `"set up Telegram"` — it will ask for your credentia
 ## What It Supports
 
 - **Multi-channel messaging** - Talk to your assistant from WhatsApp, Telegram, Discord, Slack, or Gmail. Add channels with skills like `/add-whatsapp` or `/add-telegram`. Run one or many at the same time.
-- **Isolated group context** - Each group has its own `CLAUDE.md` memory, isolated filesystem, and runs in its own Kubernetes Job sandbox with only that filesystem mounted to it.
+- **Isolated group context** - Each group has its own memory, isolated filesystem, and runs in its own Kubernetes Job sandbox with only that filesystem mounted to it.
 - **Main channel** - Your private channel (self-chat) for admin control; every group is completely isolated
 - **Scheduled tasks** - Recurring jobs that run Claude and can message you back
 - **Web access** - Search and fetch content from the Web
