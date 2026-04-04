@@ -9,7 +9,7 @@ modifies:
   - src/channels/whatsapp.test.ts
 structured:
   npm_dependencies:
-    openai: "^4.77.0"
+    openai: "^6.0.0"
   env_additions:
     - OPENAI_API_KEY
 conflicts: []
