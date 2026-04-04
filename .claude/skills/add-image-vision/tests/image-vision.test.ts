@@ -41,7 +41,8 @@ describe('add-image-vision skill package', () => {
 
     it('does not reference dead files', () => {
       expect(content).not.toContain('src/container-runner.ts');
-      expect(content).not.toContain('src/index.ts');
+      // 'src/index.ts' alone (not as part of container/agent-runner/src/index.ts)
+      expect(content).not.toMatch(/^  - src\/index\.ts$/m);
     });
 
     it('has no channel dependencies', () => {
