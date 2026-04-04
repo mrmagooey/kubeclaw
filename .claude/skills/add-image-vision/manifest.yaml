@@ -15,6 +15,5 @@ structured:
     sharp: "^0.34.5"
   env_additions: []
 conflicts: []
-depends:
-  - add-whatsapp
+depends: []
 test: "npx vitest run --config vitest.skills.config.ts .claude/skills/add-image-vision/tests/image-vision.test.ts"
