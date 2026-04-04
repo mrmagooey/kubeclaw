@@ -43,7 +43,8 @@ export const TOOLS: OpenAI.ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'list_groups',
-      description: 'List all registered groups with their JID, name, folder, trigger, and settings.',
+      description:
+        'List all registered groups with their JID, name, folder, trigger, and settings.',
       parameters: { type: 'object', properties: {}, required: [] },
     },
   },
@@ -56,18 +57,31 @@ export const TOOLS: OpenAI.ChatCompletionTool[] = [
       parameters: {
         type: 'object',
         properties: {
-          jid: { type: 'string', description: 'Chat JID, e.g. tg:-1001234567890 or dc:123456789' },
+          jid: {
+            type: 'string',
+            description: 'Chat JID, e.g. tg:-1001234567890 or dc:123456789',
+          },
           name: { type: 'string', description: 'Human-readable group name' },
-          folder: { type: 'string', description: 'Folder name under groups/ (lowercase, hyphens OK)' },
-          trigger: { type: 'string', description: 'Trigger pattern, e.g. @Andy' },
-          isMain: { type: 'boolean', description: 'True if this is the main control group' },
+          folder: {
+            type: 'string',
+            description: 'Folder name under groups/ (lowercase, hyphens OK)',
+          },
+          trigger: {
+            type: 'string',
+            description: 'Trigger pattern, e.g. @Andy',
+          },
+          isMain: {
+            type: 'boolean',
+            description: 'True if this is the main control group',
+          },
           requiresTrigger: {
             type: 'boolean',
             description: 'If false, respond to every message. Default true.',
           },
           llmProvider: {
             type: 'string',
-            description: 'LLM provider: "claude" for K8s job, or a model ID for direct runner.',
+            description:
+              'LLM provider for K8s agent jobs: "claude", "openai", "openrouter", or "ollama". Use "ollama" to route agent jobs to a local Ollama K8s Service.',
           },
           direct: {
             type: 'boolean',
@@ -96,7 +110,8 @@ export const TOOLS: OpenAI.ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'list_channels',
-      description: 'List available channel integrations and whether their credentials are configured.',
+      description:
+        'List available channel integrations and whether their credentials are configured.',
       parameters: { type: 'object', properties: {}, required: [] },
     },
   },
@@ -104,7 +119,8 @@ export const TOOLS: OpenAI.ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'list_scheduled_tasks',
-      description: 'List all scheduled tasks with their status and next run time.',
+      description:
+        'List all scheduled tasks with their status and next run time.',
       parameters: { type: 'object', properties: {}, required: [] },
     },
   },
@@ -146,7 +162,8 @@ export const TOOLS: OpenAI.ChatCompletionTool[] = [
           },
           instanceName: {
             type: 'string',
-            description: 'Unique instance name (defaults to the type). Use to create multiple channels of the same type, e.g. "http-staging".',
+            description:
+              'Unique instance name (defaults to the type). Use to create multiple channels of the same type, e.g. "http-staging".',
           },
           token: {
             type: 'string',
@@ -156,19 +173,49 @@ export const TOOLS: OpenAI.ChatCompletionTool[] = [
             type: 'string',
             description: 'Phone number in E.164 format (WhatsApp only)',
           },
-          server: { type: 'string', description: 'IRC server hostname (IRC only)' },
+          server: {
+            type: 'string',
+            description: 'IRC server hostname (IRC only)',
+          },
           nick: { type: 'string', description: 'IRC nickname (IRC only)' },
-          channels: { type: 'string', description: 'Comma-separated IRC channels to join (IRC only)' },
-          httpUsers: { type: 'string', description: 'Comma-separated user:pass pairs for HTTP channel, e.g. "alice:secret,bob:pass" (HTTP only)' },
-          httpPort: { type: 'number', description: 'HTTP listen port, default 4080 (HTTP only)' },
+          channels: {
+            type: 'string',
+            description: 'Comma-separated IRC channels to join (IRC only)',
+          },
+          httpUsers: {
+            type: 'string',
+            description:
+              'Comma-separated user:pass pairs for HTTP channel, e.g. "alice:secret,bob:pass" (HTTP only)',
+          },
+          httpPort: {
+            type: 'number',
+            description: 'HTTP listen port, default 4080 (HTTP only)',
+          },
           registerGroup: {
             type: 'boolean',
-            description: 'If true, auto-register a default group for this channel with direct LLM mode.',
+            description:
+              'If true, auto-register a default group for this channel with direct LLM mode.',
           },
-          groupJid: { type: 'string', description: 'Chat JID to register (required if registerGroup is true)' },
-          groupName: { type: 'string', description: 'Group display name (required if registerGroup is true)' },
-          groupFolder: { type: 'string', description: 'Group folder name (required if registerGroup is true)' },
-          trigger: { type: 'string', description: 'Trigger pattern, e.g. @Andy (required if registerGroup is true)' },
+          groupJid: {
+            type: 'string',
+            description:
+              'Chat JID to register (required if registerGroup is true)',
+          },
+          groupName: {
+            type: 'string',
+            description:
+              'Group display name (required if registerGroup is true)',
+          },
+          groupFolder: {
+            type: 'string',
+            description:
+              'Group folder name (required if registerGroup is true)',
+          },
+          trigger: {
+            type: 'string',
+            description:
+              'Trigger pattern, e.g. @Andy (required if registerGroup is true)',
+          },
         },
         required: ['type'],
       },
@@ -178,7 +225,8 @@ export const TOOLS: OpenAI.ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'get_orchestrator_status',
-      description: 'Get the current status of the orchestrator Deployment: pod phase, ready replicas, and which channel env vars are set.',
+      description:
+        'Get the current status of the orchestrator Deployment: pod phase, ready replicas, and which channel env vars are set.',
       parameters: { type: 'object', properties: {}, required: [] },
     },
   },
@@ -186,7 +234,8 @@ export const TOOLS: OpenAI.ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'restart_orchestrator',
-      description: 'Trigger a rolling restart of the orchestrator Deployment so it picks up new secrets or env vars.',
+      description:
+        'Trigger a rolling restart of the orchestrator Deployment so it picks up new secrets or env vars.',
       parameters: { type: 'object', properties: {}, required: [] },
     },
   },
@@ -296,12 +345,12 @@ function handleClearConversation(input: ToolInput): string {
 // ---- K8s channel setup handlers ----
 
 const CHANNEL_ENV: Record<string, string[]> = {
-  telegram:  ['TELEGRAM_BOT_TOKEN'],
-  discord:   ['DISCORD_BOT_TOKEN'],
-  slack:     ['SLACK_BOT_TOKEN'],
-  whatsapp:  ['WHATSAPP_PHONE_NUMBER'],
-  irc:       ['IRC_SERVER', 'IRC_NICK', 'IRC_CHANNELS'],
-  http:      ['HTTP_CHANNEL_PORT', 'HTTP_CHANNEL_USERS'],
+  telegram: ['TELEGRAM_BOT_TOKEN'],
+  discord: ['DISCORD_BOT_TOKEN'],
+  slack: ['SLACK_BOT_TOKEN'],
+  whatsapp: ['WHATSAPP_PHONE_NUMBER'],
+  irc: ['IRC_SERVER', 'IRC_NICK', 'IRC_CHANNELS'],
+  http: ['HTTP_CHANNEL_PORT', 'HTTP_CHANNEL_USERS'],
 };
 
 /** Returns an error string if credentials are invalid, or null if valid. */
@@ -316,7 +365,7 @@ async function validateChannelCredentials(
       const res = await fetch(`https://api.telegram.org/bot${token}/getMe`, {
         signal: AbortSignal.timeout(10_000),
       });
-      const json = await res.json() as { ok: boolean; description?: string };
+      const json = (await res.json()) as { ok: boolean; description?: string };
       if (!json.ok) return json.description ?? 'Telegram rejected the token';
       return null;
     }
@@ -340,7 +389,7 @@ async function validateChannelCredentials(
         headers: { Authorization: `Bearer ${token}` },
         signal: AbortSignal.timeout(10_000),
       });
-      const json = await res.json() as { ok: boolean; error?: string };
+      const json = (await res.json()) as { ok: boolean; error?: string };
       if (!json.ok) return json.error ?? 'Slack rejected the token';
       return null;
     }
@@ -360,18 +409,24 @@ async function handleSetupChannel(input: ToolInput): Promise<string> {
 
   // Build secret data from input fields
   const secretData: Record<string, string> = {};
-  if (type === 'telegram' && input.token)      secretData['TELEGRAM_BOT_TOKEN'] = input.token as string;
-  if (type === 'discord'  && input.token)      secretData['DISCORD_BOT_TOKEN']  = input.token as string;
-  if (type === 'slack'    && input.token)      secretData['SLACK_BOT_TOKEN']     = input.token as string;
-  if (type === 'whatsapp' && input.phoneNumber) secretData['WHATSAPP_PHONE_NUMBER'] = input.phoneNumber as string;
+  if (type === 'telegram' && input.token)
+    secretData['TELEGRAM_BOT_TOKEN'] = input.token as string;
+  if (type === 'discord' && input.token)
+    secretData['DISCORD_BOT_TOKEN'] = input.token as string;
+  if (type === 'slack' && input.token)
+    secretData['SLACK_BOT_TOKEN'] = input.token as string;
+  if (type === 'whatsapp' && input.phoneNumber)
+    secretData['WHATSAPP_PHONE_NUMBER'] = input.phoneNumber as string;
   if (type === 'irc') {
-    if (input.server)   secretData['IRC_SERVER']   = input.server as string;
-    if (input.nick)     secretData['IRC_NICK']      = input.nick as string;
-    if (input.channels) secretData['IRC_CHANNELS']  = input.channels as string;
+    if (input.server) secretData['IRC_SERVER'] = input.server as string;
+    if (input.nick) secretData['IRC_NICK'] = input.nick as string;
+    if (input.channels) secretData['IRC_CHANNELS'] = input.channels as string;
   }
   if (type === 'http') {
-    if (input.httpUsers) secretData['HTTP_CHANNEL_USERS'] = input.httpUsers as string;
-    if (input.httpPort)  secretData['HTTP_CHANNEL_PORT']  = String(input.httpPort);
+    if (input.httpUsers)
+      secretData['HTTP_CHANNEL_USERS'] = input.httpUsers as string;
+    if (input.httpPort)
+      secretData['HTTP_CHANNEL_PORT'] = String(input.httpPort);
   }
 
   if (Object.keys(secretData).length === 0) {
@@ -380,11 +435,15 @@ async function handleSetupChannel(input: ToolInput): Promise<string> {
 
   // Validate credentials before creating any K8s resources
   const validationError = await validateChannelCredentials(type, secretData);
-  if (validationError) return `Credential validation failed: ${validationError}`;
+  if (validationError)
+    return `Credential validation failed: ${validationError}`;
 
   // Create or patch the channel secret
   try {
-    await coreV1.readNamespacedSecret({ name: secretName, namespace: NAMESPACE });
+    await coreV1.readNamespacedSecret({
+      name: secretName,
+      namespace: NAMESPACE,
+    });
     // Secret exists — patch it
     await coreV1.patchNamespacedSecret({
       name: secretName,
@@ -412,11 +471,46 @@ async function handleSetupChannel(input: ToolInput): Promise<string> {
     { name: 'KUBECLAW_MODE', value: 'channel' },
     { name: 'KUBECLAW_CHANNEL', value: instanceName },
     { name: 'KUBECLAW_CHANNEL_TYPE', value: type },
-    { name: 'REDIS_URL', value: process.env.REDIS_URL || 'redis://kubeclaw-redis:6379' },
-    { name: 'REDIS_ADMIN_PASSWORD', valueFrom: { secretKeyRef: { name: 'kubeclaw-redis', key: 'admin-password' } } },
-    { name: 'OPENAI_API_KEY', valueFrom: { secretKeyRef: { name: 'kubeclaw-secrets', key: 'openai-api-key', optional: true } } },
-    { name: 'OPENAI_BASE_URL', valueFrom: { secretKeyRef: { name: 'kubeclaw-secrets', key: 'openai-base-url', optional: true } } },
-    { name: 'DIRECT_LLM_MODEL', valueFrom: { secretKeyRef: { name: 'kubeclaw-secrets', key: 'direct-llm-model', optional: true } } },
+    {
+      name: 'REDIS_URL',
+      value: process.env.REDIS_URL || 'redis://kubeclaw-redis:6379',
+    },
+    {
+      name: 'REDIS_ADMIN_PASSWORD',
+      valueFrom: {
+        secretKeyRef: { name: 'kubeclaw-redis', key: 'admin-password' },
+      },
+    },
+    {
+      name: 'OPENAI_API_KEY',
+      valueFrom: {
+        secretKeyRef: {
+          name: 'kubeclaw-secrets',
+          key: 'openai-api-key',
+          optional: true,
+        },
+      },
+    },
+    {
+      name: 'OPENAI_BASE_URL',
+      valueFrom: {
+        secretKeyRef: {
+          name: 'kubeclaw-secrets',
+          key: 'openai-base-url',
+          optional: true,
+        },
+      },
+    },
+    {
+      name: 'DIRECT_LLM_MODEL',
+      valueFrom: {
+        secretKeyRef: {
+          name: 'kubeclaw-secrets',
+          key: 'direct-llm-model',
+          optional: true,
+        },
+      },
+    },
     // Channel-specific credentials from the channel secret
     ...Object.keys(secretData).map((key) => ({
       name: key,
@@ -429,8 +523,10 @@ async function handleSetupChannel(input: ToolInput): Promise<string> {
     name: ORCHESTRATOR_DEPLOYMENT,
     namespace: NAMESPACE,
   });
-  const orchContainer = orchDeployment.spec?.template?.spec?.containers?.find((c) => c.name === 'orchestrator')
-    ?? orchDeployment.spec?.template?.spec?.containers?.[0];
+  const orchContainer =
+    orchDeployment.spec?.template?.spec?.containers?.find(
+      (c) => c.name === 'orchestrator',
+    ) ?? orchDeployment.spec?.template?.spec?.containers?.[0];
   const channelImage = orchContainer?.image ?? 'kubeclaw-orchestrator:latest';
 
   const channelDeploymentBody: k8s.V1Deployment = {
@@ -445,25 +541,42 @@ async function handleSetupChannel(input: ToolInput): Promise<string> {
         spec: {
           automountServiceAccountToken: false,
           securityContext: { runAsUser: 1000, runAsGroup: 1000 },
-          containers: [{
-            name: 'channel',
-            image: channelImage,
-            command: ['node', 'dist/channel-runner.js'],
-            env: channelEnvVars,
-            volumeMounts: [
-              { name: 'groups', mountPath: '/app/groups' },
-              { name: 'store', mountPath: '/app/store' },
-              { name: 'sessions', mountPath: '/data/sessions' },
-            ],
-            resources: {
-              requests: { memory: '128Mi', cpu: '50m' },
-              limits: { memory: '256Mi', cpu: '200m' },
+          containers: [
+            {
+              name: 'channel',
+              image: channelImage,
+              command: ['node', 'dist/channel-runner.js'],
+              env: channelEnvVars,
+              volumeMounts: [
+                { name: 'groups', mountPath: '/app/groups' },
+                { name: 'store', mountPath: '/app/store' },
+                { name: 'sessions', mountPath: '/data/sessions' },
+              ],
+              resources: {
+                requests: { memory: '128Mi', cpu: '50m' },
+                limits: { memory: '256Mi', cpu: '200m' },
+              },
             },
-          }],
+          ],
           volumes: [
-            { name: 'groups', persistentVolumeClaim: { claimName: `kubeclaw-channel-${instanceName}-groups` } },
-            { name: 'store', persistentVolumeClaim: { claimName: `kubeclaw-channel-${instanceName}-store` } },
-            { name: 'sessions', persistentVolumeClaim: { claimName: `kubeclaw-channel-${instanceName}-sessions` } },
+            {
+              name: 'groups',
+              persistentVolumeClaim: {
+                claimName: `kubeclaw-channel-${instanceName}-groups`,
+              },
+            },
+            {
+              name: 'store',
+              persistentVolumeClaim: {
+                claimName: `kubeclaw-channel-${instanceName}-store`,
+              },
+            },
+            {
+              name: 'sessions',
+              persistentVolumeClaim: {
+                claimName: `kubeclaw-channel-${instanceName}-sessions`,
+              },
+            },
           ],
         },
       },
@@ -471,11 +584,18 @@ async function handleSetupChannel(input: ToolInput): Promise<string> {
   };
 
   // Create per-channel PVCs if they don't exist
-  const pvcSizes: Record<string, string> = { groups: '2Gi', store: '1Gi', sessions: '1Gi' };
+  const pvcSizes: Record<string, string> = {
+    groups: '2Gi',
+    store: '1Gi',
+    sessions: '1Gi',
+  };
   for (const [suffix, size] of Object.entries(pvcSizes)) {
     const pvcName = `kubeclaw-channel-${instanceName}-${suffix}`;
     try {
-      await coreV1.readNamespacedPersistentVolumeClaim({ name: pvcName, namespace: NAMESPACE });
+      await coreV1.readNamespacedPersistentVolumeClaim({
+        name: pvcName,
+        namespace: NAMESPACE,
+      });
       log.push(`PVC ${pvcName} already exists`);
     } catch {
       await coreV1.createNamespacedPersistentVolumeClaim({
@@ -495,19 +615,35 @@ async function handleSetupChannel(input: ToolInput): Promise<string> {
   }
 
   try {
-    await appsV1.readNamespacedDeployment({ name: channelDeploymentName, namespace: NAMESPACE });
+    await appsV1.readNamespacedDeployment({
+      name: channelDeploymentName,
+      namespace: NAMESPACE,
+    });
     // Deployment exists — replace it
-    await appsV1.replaceNamespacedDeployment({ name: channelDeploymentName, namespace: NAMESPACE, body: channelDeploymentBody });
+    await appsV1.replaceNamespacedDeployment({
+      name: channelDeploymentName,
+      namespace: NAMESPACE,
+      body: channelDeploymentBody,
+    });
     log.push(`Updated channel Deployment ${channelDeploymentName}`);
   } catch {
     // Deployment doesn't exist — create it
-    await appsV1.createNamespacedDeployment({ namespace: NAMESPACE, body: channelDeploymentBody });
+    await appsV1.createNamespacedDeployment({
+      namespace: NAMESPACE,
+      body: channelDeploymentBody,
+    });
     log.push(`Created channel Deployment ${channelDeploymentName}`);
   }
   log.push(`Channel pod will start shortly — no orchestrator restart needed`);
 
   // Auto-register group if requested
-  if (input.registerGroup && input.groupJid && input.groupName && input.groupFolder && input.trigger) {
+  if (
+    input.registerGroup &&
+    input.groupJid &&
+    input.groupName &&
+    input.groupFolder &&
+    input.trigger
+  ) {
     db.setRegisteredGroup(input.groupJid as string, {
       name: input.groupName as string,
       folder: input.groupFolder as string,
@@ -516,7 +652,9 @@ async function handleSetupChannel(input: ToolInput): Promise<string> {
       requiresTrigger: false,
       containerConfig: { direct: true },
     });
-    log.push(`Registered group "${input.groupName}" (${input.groupJid}) with direct LLM mode`);
+    log.push(
+      `Registered group "${input.groupName}" (${input.groupJid}) with direct LLM mode`,
+    );
   }
 
   return log.join('\n');
@@ -530,18 +668,22 @@ async function handleGetOrchestratorStatus(): Promise<string> {
   const status = deployment.status;
 
   // List channel pod deployments
-  const allDeployments = await appsV1.listNamespacedDeployment({ namespace: NAMESPACE });
+  const allDeployments = await appsV1.listNamespacedDeployment({
+    namespace: NAMESPACE,
+  });
   const channelDeployments = allDeployments.items.filter((d) =>
     d.metadata?.name?.startsWith('kubeclaw-channel-'),
   );
-  const channelLines = channelDeployments.length === 0
-    ? ['  (none)']
-    : channelDeployments.map((d) => {
-        const name = d.metadata?.name?.replace('kubeclaw-channel-', '') ?? '?';
-        const ready = d.status?.readyReplicas ?? 0;
-        const desired = d.spec?.replicas ?? 1;
-        return `  ${name}: ${ready}/${desired} ready`;
-      });
+  const channelLines =
+    channelDeployments.length === 0
+      ? ['  (none)']
+      : channelDeployments.map((d) => {
+          const name =
+            d.metadata?.name?.replace('kubeclaw-channel-', '') ?? '?';
+          const ready = d.status?.readyReplicas ?? 0;
+          const desired = d.spec?.replicas ?? 1;
+          return `  ${name}: ${ready}/${desired} ready`;
+        });
 
   return [
     `Orchestrator: ${ORCHESTRATOR_DEPLOYMENT}`,
@@ -574,19 +716,33 @@ async function handleRestartOrchestrator(): Promise<string> {
   return 'Rolling restart triggered. The orchestrator will be back in ~30 seconds.';
 }
 
-export async function executeTool(name: string, input: ToolInput): Promise<string> {
+export async function executeTool(
+  name: string,
+  input: ToolInput,
+): Promise<string> {
   switch (name) {
-    case 'list_groups':            return handleListGroups();
-    case 'register_group':         return handleRegisterGroup(input);
-    case 'deregister_group':       return handleDeregisterGroup(input);
-    case 'list_channels':          return handleListChannels();
-    case 'list_scheduled_tasks':   return handleListScheduledTasks();
-    case 'get_sessions':           return handleGetSessions();
-    case 'clear_conversation':     return handleClearConversation(input);
-    case 'setup_channel':          return handleSetupChannel(input);
-    case 'get_orchestrator_status': return handleGetOrchestratorStatus();
-    case 'restart_orchestrator':   return handleRestartOrchestrator();
-    default:                       return `Unknown tool: ${name}`;
+    case 'list_groups':
+      return handleListGroups();
+    case 'register_group':
+      return handleRegisterGroup(input);
+    case 'deregister_group':
+      return handleDeregisterGroup(input);
+    case 'list_channels':
+      return handleListChannels();
+    case 'list_scheduled_tasks':
+      return handleListScheduledTasks();
+    case 'get_sessions':
+      return handleGetSessions();
+    case 'clear_conversation':
+      return handleClearConversation(input);
+    case 'setup_channel':
+      return handleSetupChannel(input);
+    case 'get_orchestrator_status':
+      return handleGetOrchestratorStatus();
+    case 'restart_orchestrator':
+      return handleRestartOrchestrator();
+    default:
+      return `Unknown tool: ${name}`;
   }
 }
 
@@ -779,7 +935,11 @@ export function startHttpAdminServer(client?: OpenAI): void {
 
   function pushSse(user: string, type: string, text: string): void {
     const payload = JSON.stringify({ type, text });
-    const lines = payload.split('\n').map(l => `data: ${l}`).join('\n') + '\n\n';
+    const lines =
+      payload
+        .split('\n')
+        .map((l) => `data: ${l}`)
+        .join('\n') + '\n\n';
     const dead: SseAdminClient[] = [];
     for (const c of sseClients) {
       if (c.username !== user) continue;
@@ -796,10 +956,16 @@ export function startHttpAdminServer(client?: OpenAI): void {
     const url = new URL(req.url ?? '/', `http://localhost:${port}`);
     const user = checkAuth(req);
 
-    if (!user) { sendUnauthorized(res); return; }
+    if (!user) {
+      sendUnauthorized(res);
+      return;
+    }
 
     if (req.method === 'GET' && url.pathname === '/') {
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' });
+      res.writeHead(200, {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-cache',
+      });
       res.end(ADMIN_HTML);
       return;
     }
@@ -808,14 +974,15 @@ export function startHttpAdminServer(client?: OpenAI): void {
       res.writeHead(200, {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive',
+        Connection: 'keep-alive',
         'X-Accel-Buffering': 'no',
       });
       res.write(':ok\n\n');
       const c: SseAdminClient = { username: user, res };
       sseClients.push(c);
       const ping = setInterval(() => {
-        if (!res.writableEnded) res.write(': ping\n\n'); else clearInterval(ping);
+        if (!res.writableEnded) res.write(': ping\n\n');
+        else clearInterval(ping);
       }, 30_000);
       req.on('close', () => {
         clearInterval(ping);
@@ -831,28 +998,45 @@ export function startHttpAdminServer(client?: OpenAI): void {
         return;
       }
       let body = '';
-      req.on('data', (chunk: Buffer) => { body += chunk.toString(); if (body.length > 65_536) req.destroy(); });
+      req.on('data', (chunk: Buffer) => {
+        body += chunk.toString();
+        if (body.length > 65_536) req.destroy();
+      });
       req.on('end', () => {
         let text: string;
         try {
           ({ text } = JSON.parse(body) as { text: string });
           if (!text?.trim()) throw new Error('empty');
         } catch {
-          res.writeHead(400); res.end('Bad request'); return;
+          res.writeHead(400);
+          res.end('Bad request');
+          return;
         }
-        res.writeHead(202); res.end('accepted');
+        res.writeHead(202);
+        res.end('accepted');
         inProgress.add(user);
         if (!histories.has(user)) histories.set(user, []);
         const history = histories.get(user)!;
         runAgenticTurn(client, history, text.trim())
-          .then(reply => { pushSse(user, 'assistant', reply); })
-          .catch(err => { pushSse(user, 'status', `Error: ${err instanceof Error ? err.message : String(err)}`); })
-          .finally(() => { inProgress.delete(user); });
+          .then((reply) => {
+            pushSse(user, 'assistant', reply);
+          })
+          .catch((err) => {
+            pushSse(
+              user,
+              'status',
+              `Error: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          })
+          .finally(() => {
+            inProgress.delete(user);
+          });
       });
       return;
     }
 
-    res.writeHead(404); res.end('Not found');
+    res.writeHead(404);
+    res.end('Not found');
   });
 
   server.listen(port, () => {
@@ -873,10 +1057,17 @@ async function runRepl(client: OpenAI): Promise<void> {
   const history: OpenAI.ChatCompletionMessageParam[] = [];
 
   console.log('KubeClaw Admin Shell');
-  console.log(`Provider: ${process.env.OPENAI_BASE_URL || 'OpenAI'} | Model: ${MODEL}`);
-  console.log('Type your request in plain English. Type "exit" or Ctrl+C to quit.\n');
+  console.log(
+    `Provider: ${process.env.OPENAI_BASE_URL || 'OpenAI'} | Model: ${MODEL}`,
+  );
+  console.log(
+    'Type your request in plain English. Type "exit" or Ctrl+C to quit.\n',
+  );
 
-  rl.on('SIGINT', () => { console.log('\nGoodbye.'); process.exit(0); });
+  rl.on('SIGINT', () => {
+    console.log('\nGoodbye.');
+    process.exit(0);
+  });
 
   const prompt = (q: string): Promise<string> =>
     new Promise((resolve) => rl.question(q, resolve));
@@ -904,7 +1095,9 @@ async function runRepl(client: OpenAI): Promise<void> {
 
 async function main() {
   if (!process.env.KUBERNETES_SERVICE_HOST) {
-    console.error('Error: The admin shell can only be run inside the orchestrator pod.');
+    console.error(
+      'Error: The admin shell can only be run inside the orchestrator pod.',
+    );
     console.error(
       'Use: kubectl exec -it deployment/kubeclaw-orchestrator -n kubeclaw -- node dist/admin-shell.js',
     );
@@ -925,7 +1118,9 @@ async function main() {
     if (!httpPort) process.exit(0);
     // HTTP server still running — keep process alive via the server
   } else if (!httpPort) {
-    console.error('Attach a TTY (kubectl exec -it) or set ADMIN_HTTP_PORT to start the HTTP interface.');
+    console.error(
+      'Attach a TTY (kubectl exec -it) or set ADMIN_HTTP_PORT to start the HTTP interface.',
+    );
     process.exit(1);
   }
   // HTTP-only mode: process stays alive as long as the server is running

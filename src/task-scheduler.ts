@@ -2,7 +2,11 @@ import { CronExpressionParser } from 'cron-parser';
 import fs from 'fs';
 
 import { ASSISTANT_NAME, SCHEDULER_POLL_INTERVAL, TIMEZONE } from './config.js';
-import { ContainerOutput, getAgentRunner, getRunnerForGroup } from './runtime/index.js';
+import {
+  ContainerOutput,
+  getAgentRunner,
+  getRunnerForGroup,
+} from './runtime/index.js';
 import {
   getAllTasks,
   getDueTasks,
@@ -251,7 +255,9 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
     }
 
     // Re-read interval each iteration to allow tests to override via env var
-    const pollMs = parseInt(process.env.SCHEDULER_POLL_INTERVAL || '', 10) || SCHEDULER_POLL_INTERVAL;
+    const pollMs =
+      parseInt(process.env.SCHEDULER_POLL_INTERVAL || '', 10) ||
+      SCHEDULER_POLL_INTERVAL;
     setTimeout(loop, pollMs);
   };
 

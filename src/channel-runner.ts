@@ -51,7 +51,10 @@ import {
   shouldDropMessage,
 } from './sender-allowlist.js';
 import { detectMentionedSpecialists, loadSpecialists } from './specialists.js';
-import { startIpcWatcher, startControlChannelWatcher } from './k8s/ipc-redis.js';
+import {
+  startIpcWatcher,
+  startControlChannelWatcher,
+} from './k8s/ipc-redis.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { AvailableGroup, ContainerOutput } from './runtime/types.js';
 import { logger } from './logger.js';
@@ -99,9 +102,20 @@ function startHealthServer(): void {
         res.end(JSON.stringify({ status: 'alive', uptime: process.uptime() }));
       } else if (req.url === '/health' && req.method === 'GET') {
         const ok = channelConnected;
-        const status = ok ? 'ok' : channelReconnecting ? 'reconnecting' : 'starting';
+        const status = ok
+          ? 'ok'
+          : channelReconnecting
+            ? 'reconnecting'
+            : 'starting';
         res.writeHead(ok ? 200 : 503, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ status, channel: KUBECLAW_CHANNEL, connected: channelConnected, uptime: process.uptime() }));
+        res.end(
+          JSON.stringify({
+            status,
+            channel: KUBECLAW_CHANNEL,
+            connected: channelConnected,
+            uptime: process.uptime(),
+          }),
+        );
       } else {
         res.writeHead(404);
         res.end();
@@ -113,7 +127,10 @@ function startHealthServer(): void {
 }
 
 async function connectWithRetry(channel: Channel): Promise<void> {
-  const maxRetries = parseInt(process.env.CHANNEL_CONNECT_MAX_RETRIES || '10', 10);
+  const maxRetries = parseInt(
+    process.env.CHANNEL_CONNECT_MAX_RETRIES || '10',
+    10,
+  );
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       await channel.connect();
@@ -122,11 +139,17 @@ async function connectWithRetry(channel: Channel): Promise<void> {
       return;
     } catch (err) {
       if (attempt >= maxRetries) {
-        logger.fatal({ err, attempt }, 'Channel connection failed after max retries');
+        logger.fatal(
+          { err, attempt },
+          'Channel connection failed after max retries',
+        );
         process.exit(1);
       }
       const delayMs = Math.min(1000 * Math.pow(2, attempt - 1), 60_000);
-      logger.warn({ err, attempt, delayMs }, 'Channel connect failed, retrying');
+      logger.warn(
+        { err, attempt, delayMs },
+        'Channel connect failed, retrying',
+      );
       channelReconnecting = true;
       await new Promise((r) => setTimeout(r, delayMs));
     }
@@ -153,7 +176,10 @@ function loadState(): void {
   }
   sessions = getAllSessions();
   registeredGroups = getAllRegisteredGroups();
-  logger.info({ groupCount: Object.keys(registeredGroups).length }, 'State loaded');
+  logger.info(
+    { groupCount: Object.keys(registeredGroups).length },
+    'State loaded',
+  );
 }
 
 function saveState(): void {
@@ -172,7 +198,10 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
   registeredGroups[jid] = group;
   setRegisteredGroup(jid, group);
   fs.mkdirSync(path.join(groupDir, 'logs'), { recursive: true });
-  logger.info({ jid, name: group.name, folder: group.folder }, 'Group registered');
+  logger.info(
+    { jid, name: group.name, folder: group.folder },
+    'Group registered',
+  );
 }
 
 function getAvailableGroups(): AvailableGroup[] {
@@ -276,7 +305,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   const isMainGroup = group.isMain === true;
   const sinceTimestamp = lastAgentTimestamp[chatJid] || '';
-  const missedMessages = getMessagesSince(chatJid, sinceTimestamp, ASSISTANT_NAME);
+  const missedMessages = getMessagesSince(
+    chatJid,
+    sinceTimestamp,
+    ASSISTANT_NAME,
+  );
   if (missedMessages.length === 0) return true;
 
   if (!isMainGroup && group.requiresTrigger !== false) {
@@ -291,7 +324,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   const prompt = formatMessages(missedMessages, TIMEZONE);
   const specialists = loadSpecialists(group.folder);
-  const mentionedSpecialists = specialists ? detectMentionedSpecialists(prompt, specialists) : [];
+  const mentionedSpecialists = specialists
+    ? detectMentionedSpecialists(prompt, specialists)
+    : [];
 
   const agentRuns =
     mentionedSpecialists.length > 0
@@ -301,27 +336,41 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       : [{ prompt }];
 
   const previousCursor = lastAgentTimestamp[chatJid] || '';
-  lastAgentTimestamp[chatJid] = missedMessages[missedMessages.length - 1].timestamp;
+  lastAgentTimestamp[chatJid] =
+    missedMessages[missedMessages.length - 1].timestamp;
 
-  logger.info({ group: group.name, messageCount: missedMessages.length }, 'Processing messages');
+  logger.info(
+    { group: group.name, messageCount: missedMessages.length },
+    'Processing messages',
+  );
 
   await channel.setTyping?.(chatJid, true);
   let hadError = false;
   let outputSentToUser = false;
 
   for (const agentRun of agentRuns) {
-    const output = await runAgent(group, agentRun.prompt, chatJid, async (result) => {
-      if (result.result) {
-        const raw = typeof result.result === 'string' ? result.result : JSON.stringify(result.result);
-        const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
-        if (text) {
-          await channel.sendMessage(chatJid, text);
-          outputSentToUser = true;
+    const output = await runAgent(
+      group,
+      agentRun.prompt,
+      chatJid,
+      async (result) => {
+        if (result.result) {
+          const raw =
+            typeof result.result === 'string'
+              ? result.result
+              : JSON.stringify(result.result);
+          const text = raw
+            .replace(/<internal>[\s\S]*?<\/internal>/g, '')
+            .trim();
+          if (text) {
+            await channel.sendMessage(chatJid, text);
+            outputSentToUser = true;
+          }
         }
-      }
-      if (result.status === 'success') queue.notifyIdle(chatJid);
-      if (result.status === 'error') hadError = true;
-    });
+        if (result.status === 'success') queue.notifyIdle(chatJid);
+        if (result.status === 'error') hadError = true;
+      },
+    );
 
     if (output === 'error' || hadError) {
       hadError = true;
@@ -348,12 +397,18 @@ async function startMessageLoop(): Promise<void> {
   if (messageLoopRunning) return;
   messageLoopRunning = true;
 
-  logger.info(`Channel pod running (channel: ${KUBECLAW_CHANNEL}, trigger: @${ASSISTANT_NAME})`);
+  logger.info(
+    `Channel pod running (channel: ${KUBECLAW_CHANNEL}, trigger: @${ASSISTANT_NAME})`,
+  );
 
   while (true) {
     try {
       const jids = Object.keys(registeredGroups);
-      const { messages, newTimestamp } = getNewMessages(jids, lastTimestamp, ASSISTANT_NAME);
+      const { messages, newTimestamp } = getNewMessages(
+        jids,
+        lastTimestamp,
+        ASSISTANT_NAME,
+      );
 
       if (messages.length > 0) {
         lastTimestamp = newTimestamp;
@@ -381,7 +436,8 @@ async function startMessageLoop(): Promise<void> {
             const hasTrigger = groupMessages.some(
               (m) =>
                 TRIGGER_PATTERN.test(m.content.trim()) &&
-                (m.is_from_me || isTriggerAllowed(chatJid, m.sender, allowlistCfg)),
+                (m.is_from_me ||
+                  isTriggerAllowed(chatJid, m.sender, allowlistCfg)),
             );
             if (!hasTrigger) continue;
           }
@@ -432,7 +488,10 @@ async function main(): Promise<void> {
     onMessage: (chatJid: string, msg: NewMessage) => {
       if (!msg.is_from_me && !msg.is_bot_message && registeredGroups[chatJid]) {
         const cfg = loadSenderAllowlist();
-        if (shouldDropMessage(chatJid, cfg) && !isSenderAllowed(chatJid, msg.sender, cfg)) {
+        if (
+          shouldDropMessage(chatJid, cfg) &&
+          !isSenderAllowed(chatJid, msg.sender, cfg)
+        ) {
           return;
         }
       }
@@ -467,7 +526,10 @@ async function main(): Promise<void> {
   // This allows multiple instances of the same type (e.g. "http-dev" and "http-prod" both using "http" factory).
   const factory = getChannelFactory(KUBECLAW_CHANNEL_TYPE);
   if (!factory) {
-    logger.error({ channel: KUBECLAW_CHANNEL, type: KUBECLAW_CHANNEL_TYPE }, 'Unknown channel type — no factory registered');
+    logger.error(
+      { channel: KUBECLAW_CHANNEL, type: KUBECLAW_CHANNEL_TYPE },
+      'Unknown channel type — no factory registered',
+    );
     process.exit(1);
   }
 
@@ -517,12 +579,19 @@ async function main(): Promise<void> {
       channelConnected = false;
       channelReconnecting = true;
       for (const ch of channels) {
-        try { await ch.disconnect(); } catch (err) { logger.warn({ err }, 'Error disconnecting channel during reload'); }
+        try {
+          await ch.disconnect();
+        } catch (err) {
+          logger.warn({ err }, 'Error disconnecting channel during reload');
+        }
       }
       channels.length = 0;
       const newChannel = factory!(channelOpts);
       if (!newChannel) {
-        logger.error({ channel: KUBECLAW_CHANNEL }, 'Channel factory returned null during reload');
+        logger.error(
+          { channel: KUBECLAW_CHANNEL },
+          'Channel factory returned null during reload',
+        );
         return;
       }
       await connectWithRetry(newChannel);
@@ -551,7 +620,8 @@ async function main(): Promise<void> {
 
 const isDirectRun =
   process.argv[1] &&
-  new URL(import.meta.url).pathname === new URL(`file://${process.argv[1]}`).pathname;
+  new URL(import.meta.url).pathname ===
+    new URL(`file://${process.argv[1]}`).pathname;
 
 if (isDirectRun) {
   main().catch((err) => {

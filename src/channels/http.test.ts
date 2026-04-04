@@ -32,10 +32,12 @@ vi.mock('node:http', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:http')>();
   return {
     ...actual,
-    createServer: vi.fn((handler: (req: IncomingMessage, res: ServerResponse) => void) => {
-      (mockServerInstance as any)._handler = handler;
-      return mockServerInstance;
-    }),
+    createServer: vi.fn(
+      (handler: (req: IncomingMessage, res: ServerResponse) => void) => {
+        (mockServerInstance as any)._handler = handler;
+        return mockServerInstance;
+      },
+    ),
   };
 });
 
@@ -43,7 +45,10 @@ import { HttpChannel, HttpChannelOpts } from './http.js';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-function makeConfig(overrides?: { port?: number; users?: Record<string, string> }) {
+function makeConfig(overrides?: {
+  port?: number;
+  users?: Record<string, string>;
+}) {
   return {
     port: overrides?.port ?? 4080,
     users: overrides?.users ?? { alice: 'secret', bob: 'hunter2' },
@@ -101,7 +106,11 @@ function makeReq(overrides: {
   return req;
 }
 
-function makeRes(): ServerResponse & { _status: number; _headers: Record<string, string>; _body: string } {
+function makeRes(): ServerResponse & {
+  _status: number;
+  _headers: Record<string, string>;
+  _body: string;
+} {
   const res = {
     _status: 0,
     _headers: {} as Record<string, string>,
@@ -121,7 +130,11 @@ function makeRes(): ServerResponse & { _status: number; _headers: Record<string,
       res.writableEnded = true;
     }),
     on: vi.fn(),
-  } as unknown as ServerResponse & { _status: number; _headers: Record<string, string>; _body: string };
+  } as unknown as ServerResponse & {
+    _status: number;
+    _headers: Record<string, string>;
+    _body: string;
+  };
   return res;
 }
 
@@ -173,7 +186,10 @@ describe('HttpChannel', () => {
     it('listens on configured port', async () => {
       const channel = new HttpChannel(makeConfig({ port: 9999 }), makeOpts());
       await channel.connect();
-      expect(mockServerInstance.listen).toHaveBeenCalledWith(9999, expect.any(Function));
+      expect(mockServerInstance.listen).toHaveBeenCalledWith(
+        9999,
+        expect.any(Function),
+      );
       await channel.disconnect();
     });
 
@@ -251,7 +267,12 @@ describe('HttpChannel', () => {
       );
       await channel.connect();
 
-      const req = makeReq({ url: '/message', method: 'POST', auth: 'bob:hunter2', body: '{"text":"hi"}' });
+      const req = makeReq({
+        url: '/message',
+        method: 'POST',
+        auth: 'bob:hunter2',
+        body: '{"text":"hi"}',
+      });
       const res = makeRes();
       await dispatch(channel, req, res);
 
@@ -525,7 +546,9 @@ describe('HttpChannel', () => {
 
       await channel.sendMessage('http:alice', 'line one\nline two');
 
-      const dataWritten = (streamRes.write as ReturnType<typeof vi.fn>).mock.calls
+      const dataWritten = (
+        streamRes.write as ReturnType<typeof vi.fn>
+      ).mock.calls
         .map(([d]: [string]) => d)
         .join('');
       expect(dataWritten).toContain('data: line one\ndata: line two');
@@ -538,7 +561,9 @@ describe('HttpChannel', () => {
       const channel = new HttpChannel(makeConfig(), makeOpts());
       await channel.connect();
       // No SSE client registered — should not throw
-      await expect(channel.sendMessage('http:alice', 'no client')).resolves.toBeUndefined();
+      await expect(
+        channel.sendMessage('http:alice', 'no client'),
+      ).resolves.toBeUndefined();
       await channel.disconnect();
     });
 
@@ -547,8 +572,18 @@ describe('HttpChannel', () => {
         makeConfig({ users: { alice: 'secret', bob: 'hunter2' } }),
         makeOpts({
           registeredGroups: vi.fn(() => ({
-            'http:alice': { name: 'alice', folder: 'alice', trigger: '', added_at: '' },
-            'http:bob': { name: 'bob', folder: 'bob', trigger: '', added_at: '' },
+            'http:alice': {
+              name: 'alice',
+              folder: 'alice',
+              trigger: '',
+              added_at: '',
+            },
+            'http:bob': {
+              name: 'bob',
+              folder: 'bob',
+              trigger: '',
+              added_at: '',
+            },
           })),
         }),
       );

@@ -43,7 +43,7 @@ const DEFAULT_SYSTEM_PROMPT =
   'You are a helpful assistant. Be concise and direct in your responses.';
 
 const MAX_TOOL_ROUNDS = 10;
-const TOOL_TIMEOUT_MS = 60_000;       // 60 s per tool call
+const TOOL_TIMEOUT_MS = 60_000; // 60 s per tool call
 const AGENT_JOB_TIMEOUT_MS = 300_000; // 5 min for full agent jobs
 
 // ---- Tool definitions ----
@@ -90,7 +90,8 @@ const TOOLS: OpenAI.ChatCompletionTool[] = [
         properties: {
           command: {
             type: 'string',
-            description: 'Natural language instruction for what to do in the browser',
+            description:
+              'Natural language instruction for what to do in the browser',
           },
         },
         required: ['command'],
@@ -106,8 +107,14 @@ const TOOLS: OpenAI.ChatCompletionTool[] = [
       parameters: {
         type: 'object',
         properties: {
-          command: { type: 'string', description: 'The bash command to execute' },
-          timeout: { type: 'number', description: 'Timeout in seconds (default 30)' },
+          command: {
+            type: 'string',
+            description: 'The bash command to execute',
+          },
+          timeout: {
+            type: 'number',
+            description: 'Timeout in seconds (default 30)',
+          },
         },
         required: ['command'],
       },
@@ -124,7 +131,8 @@ const TOOLS: OpenAI.ChatCompletionTool[] = [
         properties: {
           task: {
             type: 'string',
-            description: 'Complete description of the task for the agent to perform',
+            description:
+              'Complete description of the task for the agent to perform',
           },
         },
         required: ['task'],
@@ -140,15 +148,20 @@ const TOOLS: OpenAI.ChatCompletionTool[] = [
       parameters: {
         type: 'object',
         properties: {
-          prompt: { type: 'string', description: 'What the task should do each time it runs' },
+          prompt: {
+            type: 'string',
+            description: 'What the task should do each time it runs',
+          },
           schedule_type: {
             type: 'string',
             enum: ['cron', 'interval', 'once'],
-            description: 'cron = cron expression, interval = repeat every N ms, once = run once at a specific time',
+            description:
+              'cron = cron expression, interval = repeat every N ms, once = run once at a specific time',
           },
           schedule_value: {
             type: 'string',
-            description: 'Cron expression (e.g. "0 9 * * 1-5"), interval in milliseconds (e.g. "300000" for 5min), or ISO datetime for once',
+            description:
+              'Cron expression (e.g. "0 9 * * 1-5"), interval in milliseconds (e.g. "300000" for 5min), or ISO datetime for once',
           },
         },
         required: ['prompt', 'schedule_type', 'schedule_value'],
@@ -189,8 +202,15 @@ const TOOLS: OpenAI.ChatCompletionTool[] = [
       parameters: {
         type: 'object',
         properties: {
-          task_id: { type: 'string', description: 'The task ID to pause or resume' },
-          action: { type: 'string', enum: ['pause', 'resume'], description: 'Whether to pause or resume the task' },
+          task_id: {
+            type: 'string',
+            description: 'The task ID to pause or resume',
+          },
+          action: {
+            type: 'string',
+            enum: ['pause', 'resume'],
+            description: 'Whether to pause or resume the task',
+          },
         },
         required: ['task_id', 'action'],
       },
@@ -205,14 +225,29 @@ const TOOLS: OpenAI.ChatCompletionTool[] = [
       parameters: {
         type: 'object',
         properties: {
-          name: { type: 'string', description: 'Unique name for this MCP server (e.g. "weather", "calendar")' },
-          image: { type: 'string', description: 'Container image for the MCP server (e.g. "mcp/weather-server:latest")' },
-          port: { type: 'number', description: 'Port the MCP server listens on (default 3000)' },
-          path: { type: 'string', description: 'MCP endpoint path (default "/mcp")' },
+          name: {
+            type: 'string',
+            description:
+              'Unique name for this MCP server (e.g. "weather", "calendar")',
+          },
+          image: {
+            type: 'string',
+            description:
+              'Container image for the MCP server (e.g. "mcp/weather-server:latest")',
+          },
+          port: {
+            type: 'number',
+            description: 'Port the MCP server listens on (default 3000)',
+          },
+          path: {
+            type: 'string',
+            description: 'MCP endpoint path (default "/mcp")',
+          },
           channels: {
             type: 'array',
             items: { type: 'string' },
-            description: 'Which channels can access this server (e.g. ["telegram", "http"]). Empty = all channels.',
+            description:
+              'Which channels can access this server (e.g. ["telegram", "http"]). Empty = all channels.',
           },
           env: {
             type: 'object',
@@ -231,7 +266,10 @@ const TOOLS: OpenAI.ChatCompletionTool[] = [
       parameters: {
         type: 'object',
         properties: {
-          name: { type: 'string', description: 'Name of the MCP server to remove' },
+          name: {
+            type: 'string',
+            description: 'Name of the MCP server to remove',
+          },
         },
         required: ['name'],
       },
@@ -287,10 +325,14 @@ async function executeToolViaK8s(
 
   // Write call BEFORE spawning pod so the pod picks it up with lastId='0-0'
   await redis.xadd(
-    callsStream, '*',
-    'requestId', requestId,
-    'tool', serverToolName,
-    'input', JSON.stringify(args),
+    callsStream,
+    '*',
+    'requestId',
+    requestId,
+    'tool',
+    serverToolName,
+    'input',
+    JSON.stringify(args),
   );
 
   // Spawn pod once per category per runAgent() invocation
@@ -302,29 +344,59 @@ async function executeToolViaK8s(
 
     if (KUBECLAW_MODE === 'channel') {
       const spawnFields: string[] = [
-        'agentJobId', agentJobId,
-        'groupFolder', groupFolder,
-        'category', category,
-        'timeout', String(TOOL_TIMEOUT_MS),
-        'channel', KUBECLAW_CHANNEL,
+        'agentJobId',
+        agentJobId,
+        'groupFolder',
+        groupFolder,
+        'category',
+        category,
+        'timeout',
+        String(TOOL_TIMEOUT_MS),
+        'channel',
+        KUBECLAW_CHANNEL,
       ];
       if (customSpec) {
         spawnFields.push(
-          'toolImage', customSpec.image,
-          'toolPattern', customSpec.pattern,
-          'toolPort', String(customSpec.port ?? 8080),
+          'toolImage',
+          customSpec.image,
+          'toolPattern',
+          customSpec.pattern,
+          'toolPort',
+          String(customSpec.port ?? 8080),
         );
-        if (customSpec.acpAgentName) spawnFields.push('toolAcpAgentName', customSpec.acpAgentName);
-        if (customSpec.acpMode) spawnFields.push('toolAcpMode', customSpec.acpMode);
+        if (customSpec.acpAgentName)
+          spawnFields.push('toolAcpAgentName', customSpec.acpAgentName);
+        if (customSpec.acpMode)
+          spawnFields.push('toolAcpMode', customSpec.acpMode);
       }
       await redis.xadd(getSpawnToolPodStream(), '*', ...spawnFields);
-      logger.debug({ agentJobId, category }, 'DirectLLMRunner: requested tool pod from orchestrator');
+      logger.debug(
+        { agentJobId, category },
+        'DirectLLMRunner: requested tool pod from orchestrator',
+      );
     } else if (customSpec) {
-      await jobRunner.createSidecarToolPodJob({ agentJobId, groupFolder, toolName, toolSpec: customSpec, timeout: TOOL_TIMEOUT_MS });
-      logger.debug({ agentJobId, toolName }, 'DirectLLMRunner: spawned sidecar tool pod');
+      await jobRunner.createSidecarToolPodJob({
+        agentJobId,
+        groupFolder,
+        toolName,
+        toolSpec: customSpec,
+        timeout: TOOL_TIMEOUT_MS,
+      });
+      logger.debug(
+        { agentJobId, toolName },
+        'DirectLLMRunner: spawned sidecar tool pod',
+      );
     } else {
-      await jobRunner.createToolPodJob({ agentJobId, groupFolder, category: category as 'browser' | 'execution', timeout: TOOL_TIMEOUT_MS });
-      logger.debug({ agentJobId, category }, 'DirectLLMRunner: spawned tool pod');
+      await jobRunner.createToolPodJob({
+        agentJobId,
+        groupFolder,
+        category: category as 'browser' | 'execution',
+        timeout: TOOL_TIMEOUT_MS,
+      });
+      logger.debug(
+        { agentJobId, category },
+        'DirectLLMRunner: spawned tool pod',
+      );
     }
   }
 
@@ -334,14 +406,23 @@ async function executeToolViaK8s(
 
   while (Date.now() < deadline) {
     const blockMs = Math.min(deadline - Date.now(), 5000);
-    const response = await redis.xread('COUNT', 10, 'BLOCK', blockMs, 'STREAMS', resultsStream, lastId);
+    const response = await redis.xread(
+      'COUNT',
+      10,
+      'BLOCK',
+      blockMs,
+      'STREAMS',
+      resultsStream,
+      lastId,
+    );
     if (!response) continue;
 
     for (const [, messages] of response as [string, [string, string[]][]][]) {
       for (const [msgId, fields] of messages) {
         lastId = msgId;
         const obj: Record<string, string> = {};
-        for (let i = 0; i < fields.length; i += 2) obj[fields[i]] = fields[i + 1];
+        for (let i = 0; i < fields.length; i += 2)
+          obj[fields[i]] = fields[i + 1];
         if (obj.requestId !== requestId) continue;
         if (obj.error) return `Tool error: ${obj.error}`;
         try {
@@ -371,15 +452,25 @@ async function executeAgentJob(
   if (KUBECLAW_MODE === 'channel') {
     // Delegate to orchestrator via Redis stream
     await redis.xadd(
-      getSpawnAgentJobStream(), '*',
-      'agentJobId', agentJobId,
-      'groupFolder', groupFolder,
-      'chatJid', chatJid,
-      'prompt', task,
-      'timeout', String(AGENT_JOB_TIMEOUT_MS),
-      'channel', KUBECLAW_CHANNEL,
+      getSpawnAgentJobStream(),
+      '*',
+      'agentJobId',
+      agentJobId,
+      'groupFolder',
+      groupFolder,
+      'chatJid',
+      chatJid,
+      'prompt',
+      task,
+      'timeout',
+      String(AGENT_JOB_TIMEOUT_MS),
+      'channel',
+      KUBECLAW_CHANNEL,
     );
-    logger.debug({ agentJobId }, 'DirectLLMRunner: requested agent job from orchestrator');
+    logger.debug(
+      { agentJobId },
+      'DirectLLMRunner: requested agent job from orchestrator',
+    );
   } else {
     // Orchestrator spawns agent job directly and writes result to Redis
     const group: RegisteredGroup = {
@@ -389,15 +480,31 @@ async function executeAgentJob(
       added_at: new Date().toISOString(),
     };
     // Run asynchronously and write result to stream when done
-    jobRunner.runAgentJob(group, { groupFolder, chatJid, isMain: false, prompt: task }).then(
-      async (output) => {
-        const result = output.result ?? output.error ?? 'Agent job completed';
-        await redis.xadd(resultStream, '*', 'result', String(result), 'status', output.status);
-      },
-      async (err) => {
-        await redis.xadd(resultStream, '*', 'result', String(err), 'status', 'error');
-      },
-    );
+    jobRunner
+      .runAgentJob(group, { groupFolder, chatJid, isMain: false, prompt: task })
+      .then(
+        async (output) => {
+          const result = output.result ?? output.error ?? 'Agent job completed';
+          await redis.xadd(
+            resultStream,
+            '*',
+            'result',
+            String(result),
+            'status',
+            output.status,
+          );
+        },
+        async (err) => {
+          await redis.xadd(
+            resultStream,
+            '*',
+            'result',
+            String(err),
+            'status',
+            'error',
+          );
+        },
+      );
   }
 
   // Block-read for the final result
@@ -406,13 +513,22 @@ async function executeAgentJob(
 
   while (Date.now() < deadline) {
     const blockMs = Math.min(deadline - Date.now(), 10_000);
-    const response = await redis.xread('COUNT', 1, 'BLOCK', blockMs, 'STREAMS', resultStream, lastId);
+    const response = await redis.xread(
+      'COUNT',
+      1,
+      'BLOCK',
+      blockMs,
+      'STREAMS',
+      resultStream,
+      lastId,
+    );
     if (!response) continue;
 
     for (const [, messages] of response as [string, [string, string[]][]][]) {
       for (const [, fields] of messages) {
         const obj: Record<string, string> = {};
-        for (let i = 0; i < fields.length; i += 2) obj[fields[i]] = fields[i + 1];
+        for (let i = 0; i < fields.length; i += 2)
+          obj[fields[i]] = fields[i + 1];
         return obj.result ?? 'Agent job completed with no output';
       }
     }
@@ -433,29 +549,49 @@ async function scheduleTaskDirect(
   const taskId = `task-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
   const resultStream = `kubeclaw:task-mgmt-result:${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
   await redis.xadd(
-    getTaskRequestStream(), '*',
-    'type', 'schedule_task',
-    'taskId', taskId,
-    'groupFolder', groupFolder,
-    'chatJid', chatJid,
-    'isMain', String(isMain),
-    'prompt', args.prompt as string,
-    'schedule_type', args.schedule_type as string,
-    'schedule_value', args.schedule_value as string,
-    'context_mode', 'isolated',
-    'resultStream', resultStream,
+    getTaskRequestStream(),
+    '*',
+    'type',
+    'schedule_task',
+    'taskId',
+    taskId,
+    'groupFolder',
+    groupFolder,
+    'chatJid',
+    chatJid,
+    'isMain',
+    String(isMain),
+    'prompt',
+    args.prompt as string,
+    'schedule_type',
+    args.schedule_type as string,
+    'schedule_value',
+    args.schedule_value as string,
+    'context_mode',
+    'isolated',
+    'resultStream',
+    resultStream,
   );
 
   // Check for rejection (limit exceeded, duplicate)
   const deadline = Date.now() + 5000;
   let lastId = '0-0';
   while (Date.now() < deadline) {
-    const response = await redis.xread('COUNT', 1, 'BLOCK', 1000, 'STREAMS', resultStream, lastId);
+    const response = await redis.xread(
+      'COUNT',
+      1,
+      'BLOCK',
+      1000,
+      'STREAMS',
+      resultStream,
+      lastId,
+    );
     if (!response) continue;
     for (const [, messages] of response as [string, [string, string[]][]][]) {
       for (const [, fields] of messages) {
         const obj: Record<string, string> = {};
-        for (let i = 0; i < fields.length; i += 2) obj[fields[i]] = fields[i + 1];
+        for (let i = 0; i < fields.length; i += 2)
+          obj[fields[i]] = fields[i + 1];
         return obj.result ?? `Scheduled task "${taskId}".`;
       }
     }
@@ -476,10 +612,14 @@ async function manageTaskDirect(
   const resultStream = `kubeclaw:task-mgmt-result:${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
 
   await redis.xadd(
-    getTaskRequestStream(), '*',
-    'type', action,
-    'groupFolder', groupFolder,
-    'resultStream', resultStream,
+    getTaskRequestStream(),
+    '*',
+    'type',
+    action,
+    'groupFolder',
+    groupFolder,
+    'resultStream',
+    resultStream,
     ...(args.task_id ? ['taskId', args.task_id as string] : []),
     ...(args.action ? ['action', args.action as string] : []),
   );
@@ -488,12 +628,21 @@ async function manageTaskDirect(
   const deadline = Date.now() + 10_000;
   let lastId = '0-0';
   while (Date.now() < deadline) {
-    const response = await redis.xread('COUNT', 1, 'BLOCK', 2000, 'STREAMS', resultStream, lastId);
+    const response = await redis.xread(
+      'COUNT',
+      1,
+      'BLOCK',
+      2000,
+      'STREAMS',
+      resultStream,
+      lastId,
+    );
     if (!response) continue;
     for (const [, messages] of response as [string, [string, string[]][]][]) {
       for (const [, fields] of messages) {
         const obj: Record<string, string> = {};
-        for (let i = 0; i < fields.length; i += 2) obj[fields[i]] = fields[i + 1];
+        for (let i = 0; i < fields.length; i += 2)
+          obj[fields[i]] = fields[i + 1];
         return obj.result ?? 'No response.';
       }
     }
@@ -517,19 +666,26 @@ async function mcpServerAction(
 
   if (action === 'deploy_mcp_server') {
     const fields: string[] = [
-      'type', 'deploy_mcp_server',
-      'groupFolder', groupFolder,
-      'isMain', String(isMain),
-      'name', args.name as string,
-      'image', args.image as string,
+      'type',
+      'deploy_mcp_server',
+      'groupFolder',
+      groupFolder,
+      'isMain',
+      String(isMain),
+      'name',
+      args.name as string,
+      'image',
+      args.image as string,
     ];
     if (args.port) fields.push('port', String(args.port));
     if (args.path) fields.push('path', args.path as string);
     if (args.command) fields.push('command', JSON.stringify(args.command));
     if (args.env) fields.push('env', JSON.stringify(args.env));
     if (args.channels) fields.push('channels', JSON.stringify(args.channels));
-    if (args.allowedTools) fields.push('allowedTools', JSON.stringify(args.allowedTools));
-    if (args.resources) fields.push('resources', JSON.stringify(args.resources));
+    if (args.allowedTools)
+      fields.push('allowedTools', JSON.stringify(args.allowedTools));
+    if (args.resources)
+      fields.push('resources', JSON.stringify(args.resources));
 
     await redis.xadd(getTaskRequestStream(), '*', ...fields);
     return `MCP server "${args.name}" deployment requested. It will be available shortly.`;
@@ -537,11 +693,16 @@ async function mcpServerAction(
 
   if (action === 'remove_mcp_server') {
     await redis.xadd(
-      getTaskRequestStream(), '*',
-      'type', 'remove_mcp_server',
-      'groupFolder', groupFolder,
-      'isMain', String(isMain),
-      'name', args.name as string,
+      getTaskRequestStream(),
+      '*',
+      'type',
+      'remove_mcp_server',
+      'groupFolder',
+      groupFolder,
+      'isMain',
+      String(isMain),
+      'name',
+      args.name as string,
     );
     return `MCP server "${args.name}" removal requested.`;
   }
@@ -549,23 +710,37 @@ async function mcpServerAction(
   if (action === 'list_mcp_servers') {
     const resultStream = `kubeclaw:mcp-list-result:${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
     await redis.xadd(
-      getTaskRequestStream(), '*',
-      'type', 'list_mcp_servers',
-      'groupFolder', groupFolder,
-      'isMain', String(isMain),
-      'resultStream', resultStream,
+      getTaskRequestStream(),
+      '*',
+      'type',
+      'list_mcp_servers',
+      'groupFolder',
+      groupFolder,
+      'isMain',
+      String(isMain),
+      'resultStream',
+      resultStream,
     );
 
     // Wait for result
     const deadline = Date.now() + 10_000;
     let lastId = '0-0';
     while (Date.now() < deadline) {
-      const response = await redis.xread('COUNT', 1, 'BLOCK', 2000, 'STREAMS', resultStream, lastId);
+      const response = await redis.xread(
+        'COUNT',
+        1,
+        'BLOCK',
+        2000,
+        'STREAMS',
+        resultStream,
+        lastId,
+      );
       if (!response) continue;
       for (const [, messages] of response as [string, [string, string[]][]][]) {
         for (const [, fields] of messages) {
           const obj: Record<string, string> = {};
-          for (let i = 0; i < fields.length; i += 2) obj[fields[i]] = fields[i + 1];
+          for (let i = 0; i < fields.length; i += 2)
+            obj[fields[i]] = fields[i + 1];
           return obj.result ?? 'No MCP servers found.';
         }
       }
@@ -626,7 +801,9 @@ export class DirectLLMRunner implements AgentRunner {
     const systemPrompt = loadSystemPrompt(input.groupFolder);
     // Isolated scheduled tasks run without conversation history to avoid
     // polluting the user's chat context and accumulating token cost.
-    const useHistory = !(input.isScheduledTask && input.sessionId === undefined);
+    const useHistory = !(
+      input.isScheduledTask && input.sessionId === undefined
+    );
     const history = useHistory ? getConversationHistory(input.groupFolder) : [];
 
     const messages: OpenAI.ChatCompletionMessageParam[] = [
@@ -638,14 +815,23 @@ export class DirectLLMRunner implements AgentRunner {
     const agentJobId = `direct-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
     const spawnedCategories = new Set<string>();
 
-    const customToolDefs: OpenAI.ChatCompletionTool[] = (group.containerConfig?.tools ?? []).map((t: ToolSpec) => ({
+    const customToolDefs: OpenAI.ChatCompletionTool[] = (
+      group.containerConfig?.tools ?? []
+    ).map((t: ToolSpec) => ({
       type: 'function' as const,
-      function: { name: t.name, description: t.description, parameters: t.parameters },
+      function: {
+        name: t.name,
+        description: t.description,
+        parameters: t.parameters,
+      },
     }));
     const mcpTools = this.mcpManager?.getTools() ?? [];
     const effectiveTools = [...TOOLS, ...customToolDefs, ...mcpTools];
 
-    logger.debug({ group: group.name, model, historyLen: history.length }, 'DirectLLMRunner: calling API');
+    logger.debug(
+      { group: group.name, model, historyLen: history.length },
+      'DirectLLMRunner: calling API',
+    );
 
     let fullResponse = '';
     let toolRounds = 0;
@@ -662,7 +848,8 @@ export class DirectLLMRunner implements AgentRunner {
         const msg = response.choices[0].message;
         messages.push(msg);
 
-        const toolCalls = msg.tool_calls?.filter((c) => c.type === 'function') ?? [];
+        const toolCalls =
+          msg.tool_calls?.filter((c) => c.type === 'function') ?? [];
 
         if (toolCalls.length === 0) {
           fullResponse = msg.content ?? '';
@@ -671,14 +858,21 @@ export class DirectLLMRunner implements AgentRunner {
 
         toolRounds++;
         logger.debug(
-          { group: group.name, toolRounds, tools: toolCalls.map((c) => c.function.name) },
+          {
+            group: group.name,
+            toolRounds,
+            tools: toolCalls.map((c) => c.function.name),
+          },
           'DirectLLMRunner: executing tools',
         );
 
         for (const call of toolCalls) {
           let args: Record<string, unknown> = {};
           try {
-            args = JSON.parse(call.function.arguments) as Record<string, unknown>;
+            args = JSON.parse(call.function.arguments) as Record<
+              string,
+              unknown
+            >;
           } catch {
             // ignore parse errors
           }
@@ -686,23 +880,60 @@ export class DirectLLMRunner implements AgentRunner {
           let result: string;
           try {
             if (call.function.name === 'schedule_task') {
-              result = await scheduleTaskDirect(input.groupFolder, input.chatJid, input.isMain, args);
-            } else if (call.function.name === 'list_tasks' || call.function.name === 'cancel_task' || call.function.name === 'pause_task') {
-              result = await manageTaskDirect(input.groupFolder, call.function.name, args);
+              result = await scheduleTaskDirect(
+                input.groupFolder,
+                input.chatJid,
+                input.isMain,
+                args,
+              );
+            } else if (
+              call.function.name === 'list_tasks' ||
+              call.function.name === 'cancel_task' ||
+              call.function.name === 'pause_task'
+            ) {
+              result = await manageTaskDirect(
+                input.groupFolder,
+                call.function.name,
+                args,
+              );
             } else if (call.function.name === 'execute_agent') {
-              result = await executeAgentJob(input.groupFolder, input.chatJid, args.task as string);
-            } else if (call.function.name === 'deploy_mcp_server' || call.function.name === 'remove_mcp_server' || call.function.name === 'list_mcp_servers') {
-              result = await mcpServerAction(input.groupFolder, input.isMain, call.function.name, args);
+              result = await executeAgentJob(
+                input.groupFolder,
+                input.chatJid,
+                args.task as string,
+              );
+            } else if (
+              call.function.name === 'deploy_mcp_server' ||
+              call.function.name === 'remove_mcp_server' ||
+              call.function.name === 'list_mcp_servers'
+            ) {
+              result = await mcpServerAction(
+                input.groupFolder,
+                input.isMain,
+                call.function.name,
+                args,
+              );
             } else if (this.mcpManager?.hasTool(call.function.name)) {
               result = await this.mcpManager.callTool(call.function.name, args);
             } else {
-              result = await executeToolViaK8s(agentJobId, input.groupFolder, call.function.name, args, spawnedCategories, group);
+              result = await executeToolViaK8s(
+                agentJobId,
+                input.groupFolder,
+                call.function.name,
+                args,
+                spawnedCategories,
+                group,
+              );
             }
           } catch (err) {
             result = `Tool error: ${err instanceof Error ? err.message : String(err)}`;
           }
 
-          messages.push({ role: 'tool', tool_call_id: call.id, content: result });
+          messages.push({
+            role: 'tool',
+            tool_call_id: call.id,
+            content: result,
+          });
         }
       }
 
@@ -712,10 +943,17 @@ export class DirectLLMRunner implements AgentRunner {
       }
 
       if (fullResponse) {
-        void indexConversationTurn(input.groupFolder, input.prompt, fullResponse);
+        void indexConversationTurn(
+          input.groupFolder,
+          input.prompt,
+          fullResponse,
+        );
       }
 
-      const result: ContainerOutput = { status: 'success', result: fullResponse };
+      const result: ContainerOutput = {
+        status: 'success',
+        result: fullResponse,
+      };
       if (onOutput) await onOutput(result);
       return result;
     } catch (err) {
@@ -727,7 +965,11 @@ export class DirectLLMRunner implements AgentRunner {
     }
   }
 
-  writeTasksSnapshot(_groupFolder: string, _isMain: boolean, _tasks: Task[]): void {
+  writeTasksSnapshot(
+    _groupFolder: string,
+    _isMain: boolean,
+    _tasks: Task[],
+  ): void {
     // No-op
   }
 

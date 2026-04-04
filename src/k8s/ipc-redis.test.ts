@@ -17,7 +17,9 @@ const {
   const mockQuit = vi.fn().mockResolvedValue('OK');
 
   // ref to capture the 'message' event handler registered by startIpcWatcher
-  const subscriberOnRef: { messageHandler: ((ch: string, msg: string) => void) | null } = {
+  const subscriberOnRef: {
+    messageHandler: ((ch: string, msg: string) => void) | null;
+  } = {
     messageHandler: null,
   };
 
@@ -27,7 +29,11 @@ const {
     unsubscribe: mockUnsubscribe,
     quit: mockQuit,
     on: vi.fn((event: string, cb: unknown) => {
-      if (event === 'message') subscriberOnRef.messageHandler = cb as (ch: string, msg: string) => void;
+      if (event === 'message')
+        subscriberOnRef.messageHandler = cb as (
+          ch: string,
+          msg: string,
+        ) => void;
     }),
   });
 
@@ -66,7 +72,9 @@ vi.mock('../config.js', () => ({
 vi.mock('./job-runner.js', () => ({
   jobRunner: {
     createToolPodJob: vi.fn().mockResolvedValue('nc-test-pod-abc123'),
-    createSidecarToolPodJob: vi.fn().mockResolvedValue('kubeclaw-stool-abc-tool'),
+    createSidecarToolPodJob: vi
+      .fn()
+      .mockResolvedValue('kubeclaw-stool-abc-tool'),
     stopJob: vi.fn().mockResolvedValue(undefined),
     runAgentJob: vi.fn().mockResolvedValue({ status: 'success', result: 'ok' }),
     applyYamlToK8s: vi.fn().mockResolvedValue(undefined),
@@ -106,7 +114,11 @@ vi.mock('./redis-client.js', () => ({
     unsubscribe: mockUnsubscribe,
     quit: mockQuit,
     on: vi.fn((event: string, cb: unknown) => {
-      if (event === 'message') subscriberOnRef.messageHandler = cb as (ch: string, msg: string) => void;
+      if (event === 'message')
+        subscriberOnRef.messageHandler = cb as (
+          ch: string,
+          msg: string,
+        ) => void;
     }),
   })),
   getOutputChannel: vi.fn((folder: string) => `kubeclaw:messages:${folder}`),
@@ -114,7 +126,9 @@ vi.mock('./redis-client.js', () => ({
   getInputStream: vi.fn((jobId: string) => `kubeclaw:input:${jobId}`),
   getSpawnToolPodStream: vi.fn(() => 'kubeclaw:spawn-tool-pod'),
   getSpawnAgentJobStream: vi.fn(() => 'kubeclaw:spawn-agent-job'),
-  getAgentJobResultStream: vi.fn((id: string) => `kubeclaw:agent-job-result:${id}`),
+  getAgentJobResultStream: vi.fn(
+    (id: string) => `kubeclaw:agent-job-result:${id}`,
+  ),
 }));
 
 vi.mock('cron-parser', () => ({
@@ -750,7 +764,10 @@ describe('processTaskIpc', () => {
       const deps = createMockDeps();
 
       await processTaskIpc(
-        { type: 'deploy_channel', yaml: 'apiVersion: apps/v1\nkind: Deployment\n' },
+        {
+          type: 'deploy_channel',
+          yaml: 'apiVersion: apps/v1\nkind: Deployment\n',
+        },
         'main',
         true,
         deps,
@@ -766,7 +783,10 @@ describe('processTaskIpc', () => {
       const deps = createMockDeps();
 
       await processTaskIpc(
-        { type: 'deploy_channel', yaml: 'apiVersion: apps/v1\nkind: Deployment\n' },
+        {
+          type: 'deploy_channel',
+          yaml: 'apiVersion: apps/v1\nkind: Deployment\n',
+        },
         'some-group',
         false,
         deps,
@@ -779,19 +799,16 @@ describe('processTaskIpc', () => {
       const { jobRunner } = await import('./job-runner.js');
       const deps = createMockDeps();
 
-      await processTaskIpc(
-        { type: 'deploy_channel' },
-        'main',
-        true,
-        deps,
-      );
+      await processTaskIpc({ type: 'deploy_channel' }, 'main', true, deps);
 
       expect(jobRunner.applyYamlToK8s).not.toHaveBeenCalled();
     });
 
     it('logs error when applyYamlToK8s throws', async () => {
       const { jobRunner } = await import('./job-runner.js');
-      vi.mocked(jobRunner.applyYamlToK8s).mockRejectedValueOnce(new Error('K8s error'));
+      vi.mocked(jobRunner.applyYamlToK8s).mockRejectedValueOnce(
+        new Error('K8s error'),
+      );
       const { logger } = await import('../logger.js');
       const deps = createMockDeps();
 
@@ -823,15 +840,26 @@ describe('processTaskIpc', () => {
     it('recomputes next_run when schedule changes to cron', async () => {
       const deps = createMockDeps();
       vi.mocked(getTaskById).mockReturnValue(
-        createMockTask({ group_folder: 'main', schedule_type: 'interval', schedule_value: '60000' }),
+        createMockTask({
+          group_folder: 'main',
+          schedule_type: 'interval',
+          schedule_value: '60000',
+        }),
       );
       // Reset to default cron parser mock
       vi.mocked(CronExpressionParser.parse).mockReturnValue({
-        next: vi.fn().mockReturnValue({ toISOString: vi.fn().mockReturnValue('2025-06-01T00:00:00.000Z') }),
+        next: vi.fn().mockReturnValue({
+          toISOString: vi.fn().mockReturnValue('2025-06-01T00:00:00.000Z'),
+        }),
       } as any);
 
       await processTaskIpc(
-        { type: 'update_task', taskId: 'task-1', schedule_type: 'cron', schedule_value: '0 9 * * *' },
+        {
+          type: 'update_task',
+          taskId: 'task-1',
+          schedule_type: 'cron',
+          schedule_value: '0 9 * * *',
+        },
         'main',
         true,
         deps,
@@ -851,7 +879,12 @@ describe('processTaskIpc', () => {
       });
 
       await processTaskIpc(
-        { type: 'update_task', taskId: 'task-1', schedule_type: 'cron', schedule_value: 'INVALID' },
+        {
+          type: 'update_task',
+          taskId: 'task-1',
+          schedule_type: 'cron',
+          schedule_value: 'INVALID',
+        },
         'main',
         true,
         deps,
@@ -879,14 +912,20 @@ describe('processTaskIpc', () => {
       );
 
       expect(jobRunner.createToolPodJob).toHaveBeenCalledWith(
-        expect.objectContaining({ agentJobId: 'agent-job-1', category: 'execution' }),
+        expect.objectContaining({
+          agentJobId: 'agent-job-1',
+          category: 'execution',
+        }),
       );
       expect(mockXadd).toHaveBeenCalledWith(
         'kubeclaw:input:agent-job-1',
         '*',
-        'type', 'tool_pod_ack',
-        'category', 'execution',
-        'podJobId', 'nc-test-pod-abc123',
+        'type',
+        'tool_pod_ack',
+        'category',
+        'execution',
+        'podJobId',
+        'nc-test-pod-abc123',
       );
     });
 
@@ -965,7 +1004,13 @@ describe('startIpcWatcher', () => {
 
   it('subscribes to channels for existing registered groups', () => {
     mockRegisteredGroups.mockReturnValue({
-      'jid@g.us': { name: 'Main', folder: 'main', isMain: true, trigger: '', added_at: '' },
+      'jid@g.us': {
+        name: 'Main',
+        folder: 'main',
+        isMain: true,
+        trigger: '',
+        added_at: '',
+      },
     });
     startIpcWatcher(createMockDeps());
     expect(mockSubscribe).toHaveBeenCalledWith(
@@ -978,7 +1023,13 @@ describe('startIpcWatcher', () => {
   it('delivers message to the correct JID via sendMessage', async () => {
     const deps = createMockDeps();
     mockRegisteredGroups.mockReturnValue({
-      'jid@g.us': { name: 'Main', folder: 'main', isMain: true, trigger: '', added_at: '' },
+      'jid@g.us': {
+        name: 'Main',
+        folder: 'main',
+        isMain: true,
+        trigger: '',
+        added_at: '',
+      },
     });
     startIpcWatcher(deps);
 
@@ -987,18 +1038,37 @@ describe('startIpcWatcher', () => {
     // Simulate an inbound Redis pub/sub message
     subscriberOnRef.messageHandler!(
       'kubeclaw:messages:main',
-      JSON.stringify({ type: 'message', chatJid: 'jid@g.us', text: 'hello from agent' }),
+      JSON.stringify({
+        type: 'message',
+        chatJid: 'jid@g.us',
+        text: 'hello from agent',
+      }),
     );
     await Promise.resolve(); // let async processMessage run
 
-    expect(mockSendMessage).toHaveBeenCalledWith('jid@g.us', 'hello from agent');
+    expect(mockSendMessage).toHaveBeenCalledWith(
+      'jid@g.us',
+      'hello from agent',
+    );
   });
 
   it('blocks unauthorized message from non-main group targeting another group', async () => {
     const deps = createMockDeps();
     mockRegisteredGroups.mockReturnValue({
-      'jid@g.us': { name: 'Main', folder: 'main', isMain: false, trigger: '', added_at: '' },
-      'other@g.us': { name: 'Other', folder: 'other', isMain: false, trigger: '', added_at: '' },
+      'jid@g.us': {
+        name: 'Main',
+        folder: 'main',
+        isMain: false,
+        trigger: '',
+        added_at: '',
+      },
+      'other@g.us': {
+        name: 'Other',
+        folder: 'other',
+        isMain: false,
+        trigger: '',
+        added_at: '',
+      },
     });
     startIpcWatcher(deps);
 
@@ -1121,7 +1191,23 @@ describe('startToolPodSpawnWatcher', () => {
         return [
           [
             'kubeclaw:spawn-tool-pod',
-            [['1-0', ['agentJobId', 'j1', 'groupFolder', 'g', 'category', 'execution', 'timeout', '60000', 'channel', 'telegram']]],
+            [
+              [
+                '1-0',
+                [
+                  'agentJobId',
+                  'j1',
+                  'groupFolder',
+                  'g',
+                  'category',
+                  'execution',
+                  'timeout',
+                  '60000',
+                  'channel',
+                  'telegram',
+                ],
+              ],
+            ],
           ],
         ];
       }
@@ -1169,7 +1255,21 @@ describe('startToolPodSpawnWatcher', () => {
         return [
           [
             'kubeclaw:spawn-tool-pod',
-            [['1-0', ['agentJobId', 'j2', 'groupFolder', 'g', 'category', 'browser', 'timeout', '30000']]],
+            [
+              [
+                '1-0',
+                [
+                  'agentJobId',
+                  'j2',
+                  'groupFolder',
+                  'g',
+                  'category',
+                  'browser',
+                  'timeout',
+                  '30000',
+                ],
+              ],
+            ],
           ],
         ];
       }
@@ -1202,16 +1302,29 @@ describe('startToolPodSpawnWatcher', () => {
         return [
           [
             'kubeclaw:spawn-tool-pod',
-            [['1-0', [
-              'agentJobId', 'j-sidecar',
-              'groupFolder', 'my-group',
-              'category', 'home_control',
-              'timeout', '60000',
-              'channel', 'telegram',
-              'toolImage', 'my-ha:latest',
-              'toolPattern', 'http',
-              'toolPort', '8080',
-            ]]],
+            [
+              [
+                '1-0',
+                [
+                  'agentJobId',
+                  'j-sidecar',
+                  'groupFolder',
+                  'my-group',
+                  'category',
+                  'home_control',
+                  'timeout',
+                  '60000',
+                  'channel',
+                  'telegram',
+                  'toolImage',
+                  'my-ha:latest',
+                  'toolPattern',
+                  'http',
+                  'toolPort',
+                  '8080',
+                ],
+              ],
+            ],
           ],
         ];
       }
@@ -1247,7 +1360,21 @@ describe('startToolPodSpawnWatcher', () => {
         return [
           [
             'kubeclaw:spawn-tool-pod',
-            [['1-0', ['agentJobId', 'j-regular', 'groupFolder', 'g', 'category', 'execution', 'timeout', '60000']]],
+            [
+              [
+                '1-0',
+                [
+                  'agentJobId',
+                  'j-regular',
+                  'groupFolder',
+                  'g',
+                  'category',
+                  'execution',
+                  'timeout',
+                  '60000',
+                ],
+              ],
+            ],
           ],
         ];
       }
@@ -1271,7 +1398,10 @@ describe('startAgentJobSpawnWatcher', () => {
     mockXadd.mockResolvedValue('mock-id');
     mockXread.mockResolvedValue(null);
     const { jobRunner } = await import('./job-runner.js');
-    vi.mocked(jobRunner.runAgentJob).mockResolvedValue({ status: 'success', result: 'ok' });
+    vi.mocked(jobRunner.runAgentJob).mockResolvedValue({
+      status: 'success',
+      result: 'ok',
+    });
   });
 
   afterEach(async () => {
@@ -1287,7 +1417,23 @@ describe('startAgentJobSpawnWatcher', () => {
         return [
           [
             'kubeclaw:spawn-agent-job',
-            [['2-0', ['agentJobId', 'aj1', 'groupFolder', 'gf', 'chatJid', 'jid@g.us', 'prompt', 'do stuff', 'channel', 'discord']]],
+            [
+              [
+                '2-0',
+                [
+                  'agentJobId',
+                  'aj1',
+                  'groupFolder',
+                  'gf',
+                  'chatJid',
+                  'jid@g.us',
+                  'prompt',
+                  'do stuff',
+                  'channel',
+                  'discord',
+                ],
+              ],
+            ],
           ],
         ];
       }
@@ -1307,8 +1453,10 @@ describe('startAgentJobSpawnWatcher', () => {
     expect(mockXadd).toHaveBeenCalledWith(
       'kubeclaw:agent-job-result:aj1',
       '*',
-      'result', 'ok',
-      'status', 'success',
+      'result',
+      'ok',
+      'status',
+      'success',
     );
   });
 

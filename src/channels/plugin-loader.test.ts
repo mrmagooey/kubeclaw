@@ -50,7 +50,10 @@ describe('loadChannelPlugins', () => {
 
     await loadChannelPlugins(tmpDir);
 
-    expect(mockRegisterChannel).toHaveBeenCalledWith('test', expect.any(Function));
+    expect(mockRegisterChannel).toHaveBeenCalledWith(
+      'test',
+      expect.any(Function),
+    );
     expect(logger.info).toHaveBeenCalledWith(
       { plugin: 'test-channel.js' },
       'Channel plugin loaded',
@@ -70,7 +73,10 @@ describe('loadChannelPlugins', () => {
   it('logs error and continues when a plugin fails to load', async () => {
     // A plugin that throws during registration
     const badPlugin = path.join(tmpDir, 'bad-plugin.js');
-    fs.writeFileSync(badPlugin, `export default function() { throw new Error('boom'); }\n`);
+    fs.writeFileSync(
+      badPlugin,
+      `export default function() { throw new Error('boom'); }\n`,
+    );
 
     // A good plugin after the bad one
     const goodPlugin = path.join(tmpDir, 'good-plugin.js');
@@ -85,7 +91,10 @@ describe('loadChannelPlugins', () => {
       expect.objectContaining({ plugin: 'bad-plugin.js' }),
       'Failed to load channel plugin',
     );
-    expect(mockRegisterChannel).toHaveBeenCalledWith('good', expect.any(Function));
+    expect(mockRegisterChannel).toHaveBeenCalledWith(
+      'good',
+      expect.any(Function),
+    );
   });
 
   it('skips plugins that have no default export', async () => {
@@ -111,7 +120,13 @@ describe('loadChannelPlugins', () => {
     await loadChannelPlugins(tmpDir);
 
     expect(mockRegisterChannel).toHaveBeenCalledTimes(2);
-    expect(mockRegisterChannel).toHaveBeenCalledWith('irc', expect.any(Function));
-    expect(mockRegisterChannel).toHaveBeenCalledWith('slack', expect.any(Function));
+    expect(mockRegisterChannel).toHaveBeenCalledWith(
+      'irc',
+      expect.any(Function),
+    );
+    expect(mockRegisterChannel).toHaveBeenCalledWith(
+      'slack',
+      expect.any(Function),
+    );
   });
 });

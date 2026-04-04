@@ -125,7 +125,6 @@ describe('validateMount', () => {
     expect(result.allowed).toBe(false);
     expect(result.reason).toContain('No mount allowlist configured');
   });
-
 });
 
 describe('validateAdditionalMounts', () => {
@@ -255,13 +254,18 @@ describe('validateMount - with allowlist configured', () => {
   it('returns blocked for invalid container path (contains ..)', async () => {
     mockRealpathSync.mockReturnValue('/projects/myapp');
     const { validateMount } = await import('./mount-security.js');
-    const result = validateMount({ hostPath: '/projects/myapp', containerPath: '../escape' }, true);
+    const result = validateMount(
+      { hostPath: '/projects/myapp', containerPath: '../escape' },
+      true,
+    );
     expect(result.allowed).toBe(false);
     expect(result.reason).toContain('Invalid container path');
   });
 
   it('returns blocked when host path does not exist', async () => {
-    mockRealpathSync.mockImplementation(() => { throw new Error('ENOENT'); });
+    mockRealpathSync.mockImplementation(() => {
+      throw new Error('ENOENT');
+    });
     const { validateMount } = await import('./mount-security.js');
     const result = validateMount({ hostPath: '/projects/missing' }, true);
     expect(result.allowed).toBe(false);
@@ -302,7 +306,10 @@ describe('validateMount - with allowlist configured', () => {
   it('allows read-write when root permits and isMain is true', async () => {
     mockRealpathSync.mockReturnValue('/projects/myapp');
     const { validateMount } = await import('./mount-security.js');
-    const result = validateMount({ hostPath: '/projects/myapp', readonly: false }, true);
+    const result = validateMount(
+      { hostPath: '/projects/myapp', readonly: false },
+      true,
+    );
     expect(result.allowed).toBe(true);
     expect(result.effectiveReadonly).toBe(false);
   });
@@ -316,7 +323,10 @@ describe('validateMount - with allowlist configured', () => {
     mockReadFileSync.mockReturnValue(nonMainAllowlist);
     mockRealpathSync.mockReturnValue('/projects/myapp');
     const { validateMount } = await import('./mount-security.js');
-    const result = validateMount({ hostPath: '/projects/myapp', readonly: false }, false);
+    const result = validateMount(
+      { hostPath: '/projects/myapp', readonly: false },
+      false,
+    );
     expect(result.allowed).toBe(true);
     expect(result.effectiveReadonly).toBe(true);
   });
@@ -330,7 +340,10 @@ describe('validateMount - with allowlist configured', () => {
     mockReadFileSync.mockReturnValue(readonlyRootAllowlist);
     mockRealpathSync.mockReturnValue('/projects/myapp');
     const { validateMount } = await import('./mount-security.js');
-    const result = validateMount({ hostPath: '/projects/myapp', readonly: false }, true);
+    const result = validateMount(
+      { hostPath: '/projects/myapp', readonly: false },
+      true,
+    );
     expect(result.allowed).toBe(true);
     expect(result.effectiveReadonly).toBe(true);
   });
@@ -341,11 +354,13 @@ describe('validateAdditionalMounts - with allowed mounts', () => {
     vi.clearAllMocks();
     vi.resetModules();
     mockExistsSync.mockReturnValue(true);
-    mockReadFileSync.mockReturnValue(JSON.stringify({
-      allowedRoots: [{ path: '/projects', allowReadWrite: true }],
-      blockedPatterns: [],
-      nonMainReadOnly: false,
-    }));
+    mockReadFileSync.mockReturnValue(
+      JSON.stringify({
+        allowedRoots: [{ path: '/projects', allowReadWrite: true }],
+        blockedPatterns: [],
+        nonMainReadOnly: false,
+      }),
+    );
     mockPathBasename.mockImplementation((p: string) => p.split('/').pop() || p);
     mockPathRelative.mockReturnValue('myapp');
     mockPathIsAbsolute.mockReturnValue(false);

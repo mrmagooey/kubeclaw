@@ -6,8 +6,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // ---- Hoisted mock state ----
 
 const mockApplyYaml = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
-const mockDeleteDeployment = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
-const mockDeleteService = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+const mockDeleteDeployment = vi.hoisted(() =>
+  vi.fn().mockResolvedValue(undefined),
+);
+const mockDeleteService = vi.hoisted(() =>
+  vi.fn().mockResolvedValue(undefined),
+);
 const mockPublish = vi.hoisted(() => vi.fn().mockResolvedValue(1));
 const mockSetMcpServer = vi.hoisted(() => vi.fn());
 const mockGetAllMcpServers = vi.hoisted(() => vi.fn().mockReturnValue([]));
@@ -145,7 +149,10 @@ describe('MCP Registry', () => {
     });
 
     it('uses default port and resources when not specified', async () => {
-      const minimalSpec: McpServerSpec = { name: 'minimal', image: 'minimal:latest' };
+      const minimalSpec: McpServerSpec = {
+        name: 'minimal',
+        image: 'minimal:latest',
+      };
       await deployMcpServer(minimalSpec);
 
       const yaml = mockApplyYaml.mock.calls[0][0] as string;
@@ -158,8 +165,14 @@ describe('MCP Registry', () => {
     it('deletes Deployment and Service from K8s', async () => {
       await removeMcpServer('weather');
 
-      expect(mockDeleteDeployment).toHaveBeenCalledWith('kubeclaw-mcp-weather', 'kubeclaw');
-      expect(mockDeleteService).toHaveBeenCalledWith('kubeclaw-mcp-weather', 'kubeclaw');
+      expect(mockDeleteDeployment).toHaveBeenCalledWith(
+        'kubeclaw-mcp-weather',
+        'kubeclaw',
+      );
+      expect(mockDeleteService).toHaveBeenCalledWith(
+        'kubeclaw-mcp-weather',
+        'kubeclaw',
+      );
     });
 
     it('deletes spec from database', async () => {
@@ -235,7 +248,10 @@ describe('MCP Registry', () => {
     });
 
     it('uses default port and path for URL', () => {
-      const minimalSpec: McpServerSpec = { name: 'minimal', image: 'img:latest' };
+      const minimalSpec: McpServerSpec = {
+        name: 'minimal',
+        image: 'img:latest',
+      };
       mockGetAllMcpServers.mockReturnValue([minimalSpec]);
 
       const servers = getServersForChannel('any');

@@ -26,18 +26,29 @@ export async function retrieveContext(
 
   try {
     const [queryVector] = await embed([query]);
-    const results = await search(groupFolder, queryVector, TOP_K, SCORE_THRESHOLD);
+    const results = await search(
+      groupFolder,
+      queryVector,
+      TOP_K,
+      SCORE_THRESHOLD,
+    );
 
     if (results.length === 0) return '';
 
     const chunks = results
-      .map((r, i) => `[${i + 1}] (${r.source}, relevance ${r.score.toFixed(2)})\n${r.text}`)
+      .map(
+        (r, i) =>
+          `[${i + 1}] (${r.source}, relevance ${r.score.toFixed(2)})\n${r.text}`,
+      )
       .join('\n\n');
 
     return `<retrieved_context>\nThe following excerpts from past conversations and documents may be relevant:\n\n${chunks}\n</retrieved_context>\n\n`;
   } catch (err) {
     // Non-fatal — if Qdrant is down, the agent runs without context
-    logger.warn({ err, groupFolder }, 'RAG retrieval failed, continuing without context');
+    logger.warn(
+      { err, groupFolder },
+      'RAG retrieval failed, continuing without context',
+    );
     return '';
   }
 }

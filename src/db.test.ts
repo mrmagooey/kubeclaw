@@ -912,7 +912,11 @@ describe('storeMessageDirect', () => {
       timestamp: '2024-01-01T00:00:01.000Z',
       is_from_me: false,
     });
-    const messages = getMessagesSince('direct@g.us', '2024-01-01T00:00:00.000Z', 'Andy');
+    const messages = getMessagesSince(
+      'direct@g.us',
+      '2024-01-01T00:00:00.000Z',
+      'Andy',
+    );
     expect(messages).toHaveLength(1);
     expect(messages[0].id).toBe('direct-1');
     expect(messages[0].content).toBe('direct message');
@@ -931,7 +935,11 @@ describe('storeMessageDirect', () => {
       is_bot_message: true,
     });
     // bot messages are excluded by getMessagesSince
-    const messages = getMessagesSince('direct@g.us', '2024-01-01T00:00:00.000Z', 'Andy');
+    const messages = getMessagesSince(
+      'direct@g.us',
+      '2024-01-01T00:00:00.000Z',
+      'Andy',
+    );
     expect(messages.find((m) => m.id === 'direct-bot')).toBeUndefined();
   });
 
@@ -955,9 +963,15 @@ describe('storeMessageDirect', () => {
       timestamp: '2024-01-01T00:00:03.000Z',
       is_from_me: false,
     });
-    const messages = getMessagesSince('direct@g.us', '2024-01-01T00:00:00.000Z', 'Andy');
+    const messages = getMessagesSince(
+      'direct@g.us',
+      '2024-01-01T00:00:00.000Z',
+      'Andy',
+    );
     expect(messages.filter((m) => m.id === 'direct-dup')).toHaveLength(1);
-    expect(messages.find((m) => m.id === 'direct-dup')?.content).toBe('replaced');
+    expect(messages.find((m) => m.id === 'direct-dup')?.content).toBe(
+      'replaced',
+    );
   });
 });
 

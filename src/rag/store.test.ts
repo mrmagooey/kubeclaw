@@ -13,13 +13,22 @@ vi.mock('../runtime/embedding-client.js', () => ({
 
 // ── Fetch stub helpers ─────────────────────────────────────────────────────
 
-type FetchResponse = { ok: boolean; status?: number; json?: () => Promise<unknown>; text?: () => Promise<string> };
+type FetchResponse = {
+  ok: boolean;
+  status?: number;
+  json?: () => Promise<unknown>;
+  text?: () => Promise<string>;
+};
 
 function stubFetch(handler: (url: string, opts: RequestInit) => FetchResponse) {
   vi.stubGlobal(
     'fetch',
     vi.fn((url: string, opts: RequestInit = {}) =>
-      Promise.resolve({ text: async () => '', json: async () => ({}), ...handler(url, opts) }),
+      Promise.resolve({
+        text: async () => '',
+        json: async () => ({}),
+        ...handler(url, opts),
+      }),
     ),
   );
 }
@@ -29,7 +38,12 @@ function qdrantOk(body: unknown = {}): FetchResponse {
 }
 
 function qdrantNotFound(): FetchResponse {
-  return { ok: false, status: 404, text: async () => 'Not found', json: async () => ({}) };
+  return {
+    ok: false,
+    status: 404,
+    text: async () => 'Not found',
+    json: async () => ({}),
+  };
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────
@@ -79,7 +93,10 @@ describe('rag/store', () => {
     it('sends correct vector config on creation', async () => {
       let created = false;
       stubFetch((_url, opts) => {
-        if (opts?.method === 'PUT') { created = true; return qdrantOk(); }
+        if (opts?.method === 'PUT') {
+          created = true;
+          return qdrantOk();
+        }
         return qdrantNotFound();
       });
 
@@ -88,8 +105,9 @@ describe('rag/store', () => {
 
       expect(created).toBe(true);
       const putBody = JSON.parse(
-        (fetch as ReturnType<typeof vi.fn>).mock.calls
-          .find(([, o]: [string, RequestInit]) => o?.method === 'PUT')[1].body as string,
+        (fetch as ReturnType<typeof vi.fn>).mock.calls.find(
+          ([, o]: [string, RequestInit]) => o?.method === 'PUT',
+        )[1].body as string,
       );
       expect(putBody.vectors.size).toBe(3); // mocked EMBEDDING_DIM
       expect(putBody.vectors.distance).toBe('Cosine');
@@ -111,7 +129,16 @@ describe('rag/store', () => {
       const { upsertPoints } = await import('./store.js');
 
       await upsertPoints('mygroup', [
-        { id: 'abc', vector: [0.1, 0.2, 0.3], payload: { text: 'hello', source: 'doc', timestamp: 1, groupFolder: 'mygroup' } },
+        {
+          id: 'abc',
+          vector: [0.1, 0.2, 0.3],
+          payload: {
+            text: 'hello',
+            source: 'doc',
+            timestamp: 1,
+            groupFolder: 'mygroup',
+          },
+        },
       ]);
 
       const putCall = (fetch as ReturnType<typeof vi.fn>).mock.calls.find(
@@ -132,7 +159,10 @@ describe('rag/store', () => {
       stubFetch(() =>
         qdrantOk({
           result: [
-            { payload: { text: 'chunk A', source: 'conversation' }, score: 0.9 },
+            {
+              payload: { text: 'chunk A', source: 'conversation' },
+              score: 0.9,
+            },
             { payload: { text: 'chunk B', source: 'document' }, score: 0.7 },
           ],
         }),
@@ -142,8 +172,16 @@ describe('rag/store', () => {
       const results = await search('g', [0.1, 0.2, 0.3], 5, 0.5);
 
       expect(results).toHaveLength(2);
-      expect(results[0]).toEqual({ text: 'chunk A', source: 'conversation', score: 0.9 });
-      expect(results[1]).toEqual({ text: 'chunk B', source: 'document', score: 0.7 });
+      expect(results[0]).toEqual({
+        text: 'chunk A',
+        source: 'conversation',
+        score: 0.9,
+      });
+      expect(results[1]).toEqual({
+        text: 'chunk B',
+        source: 'document',
+        score: 0.7,
+      });
     });
 
     it('returns empty array when collection does not exist (graceful)', async () => {
@@ -172,7 +210,8 @@ describe('rag/store', () => {
       const { search } = await import('./store.js');
       await search('family', [0.1]);
 
-      const url = (fetch as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+      const url = (fetch as ReturnType<typeof vi.fn>).mock
+        .calls[0][0] as string;
       expect(url).toContain('/collections/kubeclaw-family/');
     });
   });

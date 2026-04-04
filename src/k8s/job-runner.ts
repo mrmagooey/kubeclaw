@@ -59,11 +59,18 @@ import {
  * - redis://:existing@host:port + any → leave unchanged (already has auth)
  * - any URL + no password → return URL unchanged
  */
-function buildRedisUrl(base: string, username?: string, password?: string): string {
+function buildRedisUrl(
+  base: string,
+  username?: string,
+  password?: string,
+): string {
   if (!password) return base;
   if (base.includes('@')) return base;
   const userPart = username ? encodeURIComponent(username) : '';
-  return base.replace(/^(redis:\/\/)/, `$1${userPart}:${encodeURIComponent(password)}@`);
+  return base.replace(
+    /^(redis:\/\/)/,
+    `$1${userPart}:${encodeURIComponent(password)}@`,
+  );
 }
 
 /**
@@ -113,37 +120,71 @@ export class JobRunner {
    * Supports Deployment, Service, and PersistentVolumeClaim resources.
    */
   async applyYamlToK8s(yamlContent: string): Promise<void> {
-    const docs = (loadAllYaml(yamlContent) as any[]).filter((d) => d?.kind && d?.metadata?.name);
+    const docs = (loadAllYaml(yamlContent) as any[]).filter(
+      (d) => d?.kind && d?.metadata?.name,
+    );
     for (const doc of docs) {
       const ns = doc.metadata?.namespace || this.namespace;
       const name = doc.metadata?.name;
       switch (doc.kind) {
         case 'Deployment':
           try {
-            await this.appsApi.createNamespacedDeployment({ namespace: ns, body: doc });
+            await this.appsApi.createNamespacedDeployment({
+              namespace: ns,
+              body: doc,
+            });
           } catch {
-            await this.appsApi.replaceNamespacedDeployment({ name, namespace: ns, body: doc });
+            await this.appsApi.replaceNamespacedDeployment({
+              name,
+              namespace: ns,
+              body: doc,
+            });
           }
-          logger.info({ kind: 'Deployment', name, namespace: ns }, 'Applied K8s resource');
+          logger.info(
+            { kind: 'Deployment', name, namespace: ns },
+            'Applied K8s resource',
+          );
           break;
         case 'PersistentVolumeClaim':
           try {
-            await this.coreApi.createNamespacedPersistentVolumeClaim({ namespace: ns, body: doc });
-            logger.info({ kind: 'PersistentVolumeClaim', name, namespace: ns }, 'Applied K8s resource');
+            await this.coreApi.createNamespacedPersistentVolumeClaim({
+              namespace: ns,
+              body: doc,
+            });
+            logger.info(
+              { kind: 'PersistentVolumeClaim', name, namespace: ns },
+              'Applied K8s resource',
+            );
           } catch {
-            logger.debug({ kind: 'PersistentVolumeClaim', name }, 'PVC already exists, skipping');
+            logger.debug(
+              { kind: 'PersistentVolumeClaim', name },
+              'PVC already exists, skipping',
+            );
           }
           break;
         case 'Service':
           try {
-            await this.coreApi.createNamespacedService({ namespace: ns, body: doc });
+            await this.coreApi.createNamespacedService({
+              namespace: ns,
+              body: doc,
+            });
           } catch {
-            await this.coreApi.replaceNamespacedService({ name, namespace: ns, body: doc });
+            await this.coreApi.replaceNamespacedService({
+              name,
+              namespace: ns,
+              body: doc,
+            });
           }
-          logger.info({ kind: 'Service', name, namespace: ns }, 'Applied K8s resource');
+          logger.info(
+            { kind: 'Service', name, namespace: ns },
+            'Applied K8s resource',
+          );
           break;
         default:
-          logger.warn({ kind: doc.kind, name }, 'Unsupported resource kind in applyYamlToK8s');
+          logger.warn(
+            { kind: doc.kind, name },
+            'Unsupported resource kind in applyYamlToK8s',
+          );
       }
     }
   }
@@ -392,55 +433,71 @@ export class JobRunner {
           },
         },
       },
+      // Ollama-specific config (plain values, no credentials)
+      ...(spec.provider === 'ollama'
+        ? [
+            { name: 'OLLAMA_HOST', value: process.env.OLLAMA_HOST || 'http://ollama:11434' },
+            { name: 'OLLAMA_MODEL', value: process.env.OLLAMA_MODEL || 'llama3.2' },
+          ]
+        : []),
       // Claude-specific credentials (only injected when provider is claude)
-      ...(spec.provider === 'claude' ? [
-        {
-          name: 'CLAUDE_CODE_OAUTH_TOKEN',
-          valueFrom: {
-            secretKeyRef: {
-              name: 'kubeclaw-secrets',
-              key: 'claude-code-oauth-token',
-              optional: true,
+      ...(spec.provider === 'claude'
+        ? [
+            {
+              name: 'CLAUDE_CODE_OAUTH_TOKEN',
+              valueFrom: {
+                secretKeyRef: {
+                  name: 'kubeclaw-secrets',
+                  key: 'claude-code-oauth-token',
+                  optional: true,
+                },
+              },
             },
-          },
-        },
-        {
-          name: 'ANTHROPIC_API_KEY',
-          valueFrom: {
-            secretKeyRef: {
-              name: 'kubeclaw-secrets',
-              key: 'anthropic-api-key',
-              optional: true,
+            {
+              name: 'ANTHROPIC_API_KEY',
+              valueFrom: {
+                secretKeyRef: {
+                  name: 'kubeclaw-secrets',
+                  key: 'anthropic-api-key',
+                  optional: true,
+                },
+              },
             },
-          },
-        },
-        {
-          name: 'ANTHROPIC_BASE_URL',
-          valueFrom: {
-            secretKeyRef: {
-              name: 'kubeclaw-secrets',
-              key: 'anthropic-base-url',
-              optional: true,
+            {
+              name: 'ANTHROPIC_BASE_URL',
+              valueFrom: {
+                secretKeyRef: {
+                  name: 'kubeclaw-secrets',
+                  key: 'anthropic-base-url',
+                  optional: true,
+                },
+              },
             },
-          },
-        },
-        {
-          name: 'ANTHROPIC_AUTH_TOKEN',
-          valueFrom: {
-            secretKeyRef: {
-              name: 'kubeclaw-secrets',
-              key: 'anthropic-auth-token',
-              optional: true,
+            {
+              name: 'ANTHROPIC_AUTH_TOKEN',
+              valueFrom: {
+                secretKeyRef: {
+                  name: 'kubeclaw-secrets',
+                  key: 'anthropic-auth-token',
+                  optional: true,
+                },
+              },
             },
-          },
-        },
-      ] : []),
+          ]
+        : []),
       // Superuser mode — only injected when explicitly granted by orchestrator
-      ...(spec.superuser ? [{ name: 'KUBECLAW_SUPERUSER', value: 'true' }] : []),
+      ...(spec.superuser
+        ? [{ name: 'KUBECLAW_SUPERUSER', value: 'true' }]
+        : []),
     ];
 
     // Volume mounts using PVCs
-    const volumeMounts: Array<{ name: string; mountPath: string; subPath?: string; readOnly?: boolean }> = [
+    const volumeMounts: Array<{
+      name: string;
+      mountPath: string;
+      subPath?: string;
+      readOnly?: boolean;
+    }> = [
       {
         name: 'groups-pvc',
         mountPath: '/workspace/group',
@@ -953,7 +1010,10 @@ export class JobRunner {
                 env: [
                   { name: 'TZ', value: TIMEZONE },
                   { name: 'KUBECLAW_GROUP_FOLDER', value: group.folder },
-                  { name: 'KUBECLAW_ATTACHMENTS', value: JSON.stringify(attachments) },
+                  {
+                    name: 'KUBECLAW_ATTACHMENTS',
+                    value: JSON.stringify(attachments),
+                  },
                 ],
                 volumeMounts: [
                   {
@@ -979,13 +1039,19 @@ export class JobRunner {
       },
     };
 
-    await this.batchApi.createNamespacedJob({ namespace: this.namespace, body: job });
+    await this.batchApi.createNamespacedJob({
+      namespace: this.namespace,
+      body: job,
+    });
 
     try {
       await this.waitForJobCompletion(jobName, 120_000);
       return true;
     } catch (err) {
-      logger.warn({ jobName, group: group.folder, err }, 'Preprocessing job failed');
+      logger.warn(
+        { jobName, group: group.folder, err },
+        'Preprocessing job failed',
+      );
       return false;
     }
   }
@@ -1041,21 +1107,23 @@ export class JobRunner {
     const volumes: Array<any> = [];
 
     if (spec.category === 'execution') {
-      volumeMounts.push(
-        {
-          name: 'groups-pvc',
-          mountPath: '/workspace/group',
-          subPath: spec.groupFolder,
-        },
-      );
+      volumeMounts.push({
+        name: 'groups-pvc',
+        mountPath: '/workspace/group',
+        subPath: spec.groupFolder,
+      });
       volumes.push(
         {
           name: 'groups-pvc',
-          persistentVolumeClaim: { claimName: spec.groupsPvc ?? 'kubeclaw-groups' },
+          persistentVolumeClaim: {
+            claimName: spec.groupsPvc ?? 'kubeclaw-groups',
+          },
         },
         {
           name: 'sessions-pvc',
-          persistentVolumeClaim: { claimName: spec.sessionsPvc ?? 'kubeclaw-sessions' },
+          persistentVolumeClaim: {
+            claimName: spec.sessionsPvc ?? 'kubeclaw-sessions',
+          },
         },
       );
     }
@@ -1130,11 +1198,21 @@ export class JobRunner {
     const port = toolSpec.port ?? 8080;
     const isFileBridge = toolSpec.pattern === 'file';
     const isAcpBridge = toolSpec.pattern === 'acp';
-    const toolMode = isFileBridge ? 'file-bridge' : isAcpBridge ? 'acp-bridge' : 'http-bridge';
+    const toolMode = isFileBridge
+      ? 'file-bridge'
+      : isAcpBridge
+        ? 'acp-bridge'
+        : 'http-bridge';
 
     // Keep job name under 63 chars: "kubeclaw-stool-" (15) + 8-char suffix + "-" + toolName (truncated)
-    const agentSuffix = spec.agentJobId.slice(-8).replace(/[^a-z0-9]/gi, '').toLowerCase();
-    const safeTool = spec.toolName.toLowerCase().replace(/[^a-z0-9]/g, '-').slice(0, 35);
+    const agentSuffix = spec.agentJobId
+      .slice(-8)
+      .replace(/[^a-z0-9]/gi, '')
+      .toLowerCase();
+    const safeTool = spec.toolName
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, '-')
+      .slice(0, 35);
     const jobName = `kubeclaw-stool-${agentSuffix}-${safeTool}`;
 
     const timeoutSeconds = Math.floor(spec.timeout / 1000);
@@ -1158,7 +1236,10 @@ export class JobRunner {
 
     if (isAcpBridge) {
       bridgeEnv.push(
-        { name: 'KUBECLAW_ACP_AGENT_NAME', value: toolSpec.acpAgentName || spec.toolName },
+        {
+          name: 'KUBECLAW_ACP_AGENT_NAME',
+          value: toolSpec.acpAgentName || spec.toolName,
+        },
         { name: 'KUBECLAW_ACP_MODE', value: toolSpec.acpMode || 'sync' },
       );
     }
@@ -1232,9 +1313,17 @@ export class JobRunner {
       },
     };
 
-    await this.batchApi.createNamespacedJob({ namespace: this.namespace, body: job });
+    await this.batchApi.createNamespacedJob({
+      namespace: this.namespace,
+      body: job,
+    });
     logger.info(
-      { jobName, toolName: spec.toolName, toolMode, agentJobId: spec.agentJobId },
+      {
+        jobName,
+        toolName: spec.toolName,
+        toolMode,
+        agentJobId: spec.agentJobId,
+      },
       'Sidecar tool pod job created',
     );
     return jobName;
@@ -1246,11 +1335,18 @@ export class JobRunner {
     const ns = namespace || this.namespace;
     try {
       await this.appsApi.deleteNamespacedDeployment({ name, namespace: ns });
-      logger.info({ kind: 'Deployment', name, namespace: ns }, 'Deleted K8s resource');
+      logger.info(
+        { kind: 'Deployment', name, namespace: ns },
+        'Deleted K8s resource',
+      );
     } catch (err: unknown) {
-      const status = (err as { response?: { statusCode?: number } })?.response?.statusCode;
+      const status = (err as { response?: { statusCode?: number } })?.response
+        ?.statusCode;
       if (status === 404) {
-        logger.debug({ kind: 'Deployment', name }, 'Resource not found, nothing to delete');
+        logger.debug(
+          { kind: 'Deployment', name },
+          'Resource not found, nothing to delete',
+        );
       } else {
         throw err;
       }
@@ -1264,11 +1360,18 @@ export class JobRunner {
     const ns = namespace || this.namespace;
     try {
       await this.coreApi.deleteNamespacedService({ name, namespace: ns });
-      logger.info({ kind: 'Service', name, namespace: ns }, 'Deleted K8s resource');
+      logger.info(
+        { kind: 'Service', name, namespace: ns },
+        'Deleted K8s resource',
+      );
     } catch (err: unknown) {
-      const status = (err as { response?: { statusCode?: number } })?.response?.statusCode;
+      const status = (err as { response?: { statusCode?: number } })?.response
+        ?.statusCode;
       if (status === 404) {
-        logger.debug({ kind: 'Service', name }, 'Resource not found, nothing to delete');
+        logger.debug(
+          { kind: 'Service', name },
+          'Resource not found, nothing to delete',
+        );
       } else {
         throw err;
       }

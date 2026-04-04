@@ -64,30 +64,32 @@ vi.mock('./redis-client.js', () => {
 });
 
 // Mock Kubernetes client - use vi.hoisted to access mocks after setup
-const { mockBatchApi, mockCoreApi, mockAppsApi, mockLoadAllYaml } = vi.hoisted(() => {
-  const mockBatchApi = {
-    createNamespacedJob: vi.fn(),
-    readNamespacedJob: vi.fn(),
-    deleteNamespacedJob: vi.fn(),
-  };
+const { mockBatchApi, mockCoreApi, mockAppsApi, mockLoadAllYaml } = vi.hoisted(
+  () => {
+    const mockBatchApi = {
+      createNamespacedJob: vi.fn(),
+      readNamespacedJob: vi.fn(),
+      deleteNamespacedJob: vi.fn(),
+    };
 
-  const mockCoreApi = {
-    listNamespacedPod: vi.fn(),
-    readNamespacedPodLog: vi.fn(),
-    createNamespacedPersistentVolumeClaim: vi.fn(),
-    createNamespacedService: vi.fn(),
-    replaceNamespacedService: vi.fn(),
-  };
+    const mockCoreApi = {
+      listNamespacedPod: vi.fn(),
+      readNamespacedPodLog: vi.fn(),
+      createNamespacedPersistentVolumeClaim: vi.fn(),
+      createNamespacedService: vi.fn(),
+      replaceNamespacedService: vi.fn(),
+    };
 
-  const mockAppsApi = {
-    createNamespacedDeployment: vi.fn(),
-    replaceNamespacedDeployment: vi.fn(),
-  };
+    const mockAppsApi = {
+      createNamespacedDeployment: vi.fn(),
+      replaceNamespacedDeployment: vi.fn(),
+    };
 
-  const mockLoadAllYaml = vi.fn(() => []);
+    const mockLoadAllYaml = vi.fn(() => []);
 
-  return { mockBatchApi, mockCoreApi, mockAppsApi, mockLoadAllYaml };
-});
+    return { mockBatchApi, mockCoreApi, mockAppsApi, mockLoadAllYaml };
+  },
+);
 
 vi.mock('@kubernetes/client-node', () => {
   return {
@@ -1115,8 +1117,11 @@ describe('JobRunner', () => {
         provider: 'openai',
       });
 
-      const volumeMounts = manifest.spec?.template?.spec?.containers?.[0]?.volumeMounts as any[];
-      const pluginsMount = volumeMounts?.find((m: any) => m.mountPath === '/workspace/plugins');
+      const volumeMounts = manifest.spec?.template?.spec?.containers?.[0]
+        ?.volumeMounts as any[];
+      const pluginsMount = volumeMounts?.find(
+        (m: any) => m.mountPath === '/workspace/plugins',
+      );
       expect(pluginsMount).toBeDefined();
       expect(pluginsMount.readOnly).toBe(true);
     });
@@ -1132,8 +1137,11 @@ describe('JobRunner', () => {
         superuser: true,
       });
 
-      const volumeMounts = manifest.spec?.template?.spec?.containers?.[0]?.volumeMounts as any[];
-      const pluginsMount = volumeMounts?.find((m: any) => m.mountPath === '/workspace/plugins');
+      const volumeMounts = manifest.spec?.template?.spec?.containers?.[0]
+        ?.volumeMounts as any[];
+      const pluginsMount = volumeMounts?.find(
+        (m: any) => m.mountPath === '/workspace/plugins',
+      );
       expect(pluginsMount).toBeDefined();
       expect(pluginsMount.readOnly).toBe(false);
     });
@@ -1160,7 +1168,10 @@ describe('JobRunner', () => {
 
     it('creates a Deployment', async () => {
       mockLoadAllYaml.mockReturnValue([
-        { kind: 'Deployment', metadata: { name: 'my-deploy', namespace: 'kubeclaw' } },
+        {
+          kind: 'Deployment',
+          metadata: { name: 'my-deploy', namespace: 'kubeclaw' },
+        },
       ]);
       mockAppsApi.createNamespacedDeployment.mockResolvedValue({});
 
@@ -1174,9 +1185,14 @@ describe('JobRunner', () => {
 
     it('replaces a Deployment when it already exists', async () => {
       mockLoadAllYaml.mockReturnValue([
-        { kind: 'Deployment', metadata: { name: 'my-deploy', namespace: 'kubeclaw' } },
+        {
+          kind: 'Deployment',
+          metadata: { name: 'my-deploy', namespace: 'kubeclaw' },
+        },
       ]);
-      mockAppsApi.createNamespacedDeployment.mockRejectedValue(new Error('AlreadyExists'));
+      mockAppsApi.createNamespacedDeployment.mockRejectedValue(
+        new Error('AlreadyExists'),
+      );
       mockAppsApi.replaceNamespacedDeployment.mockResolvedValue({});
 
       await jobRunner.applyYamlToK8s('kind: Deployment');
@@ -1190,17 +1206,27 @@ describe('JobRunner', () => {
 
     it('creates a PVC and skips replace if already exists', async () => {
       mockLoadAllYaml.mockReturnValue([
-        { kind: 'PersistentVolumeClaim', metadata: { name: 'my-pvc', namespace: 'kubeclaw' } },
+        {
+          kind: 'PersistentVolumeClaim',
+          metadata: { name: 'my-pvc', namespace: 'kubeclaw' },
+        },
       ]);
-      mockCoreApi.createNamespacedPersistentVolumeClaim.mockRejectedValue(new Error('AlreadyExists'));
+      mockCoreApi.createNamespacedPersistentVolumeClaim.mockRejectedValue(
+        new Error('AlreadyExists'),
+      );
 
       // Should not throw
-      await expect(jobRunner.applyYamlToK8s('kind: PVC')).resolves.toBeUndefined();
+      await expect(
+        jobRunner.applyYamlToK8s('kind: PVC'),
+      ).resolves.toBeUndefined();
     });
 
     it('creates a Service', async () => {
       mockLoadAllYaml.mockReturnValue([
-        { kind: 'Service', metadata: { name: 'my-svc', namespace: 'kubeclaw' } },
+        {
+          kind: 'Service',
+          metadata: { name: 'my-svc', namespace: 'kubeclaw' },
+        },
       ]);
       mockCoreApi.createNamespacedService.mockResolvedValue({});
 
@@ -1214,9 +1240,14 @@ describe('JobRunner', () => {
 
     it('replaces a Service when it already exists', async () => {
       mockLoadAllYaml.mockReturnValue([
-        { kind: 'Service', metadata: { name: 'my-svc', namespace: 'kubeclaw' } },
+        {
+          kind: 'Service',
+          metadata: { name: 'my-svc', namespace: 'kubeclaw' },
+        },
       ]);
-      mockCoreApi.createNamespacedService.mockRejectedValue(new Error('AlreadyExists'));
+      mockCoreApi.createNamespacedService.mockRejectedValue(
+        new Error('AlreadyExists'),
+      );
       mockCoreApi.replaceNamespacedService.mockResolvedValue({});
 
       await jobRunner.applyYamlToK8s('kind: Service');
@@ -1226,7 +1257,10 @@ describe('JobRunner', () => {
 
     it('handles multi-document YAML', async () => {
       mockLoadAllYaml.mockReturnValue([
-        { kind: 'Deployment', metadata: { name: 'deploy', namespace: 'kubeclaw' } },
+        {
+          kind: 'Deployment',
+          metadata: { name: 'deploy', namespace: 'kubeclaw' },
+        },
         { kind: 'Service', metadata: { name: 'svc', namespace: 'kubeclaw' } },
       ]);
       mockAppsApi.createNamespacedDeployment.mockResolvedValue({});
@@ -1242,7 +1276,10 @@ describe('JobRunner', () => {
       mockLoadAllYaml.mockReturnValue([
         null,
         { metadata: { name: 'no-kind' } },
-        { kind: 'Deployment', metadata: { name: 'valid', namespace: 'kubeclaw' } },
+        {
+          kind: 'Deployment',
+          metadata: { name: 'valid', namespace: 'kubeclaw' },
+        },
       ]);
       mockAppsApi.createNamespacedDeployment.mockResolvedValue({});
 
@@ -1300,11 +1337,19 @@ describe('JobRunner', () => {
     it('sets KUBECLAW_TOOL_MODE=http-bridge env on bridge container', async () => {
       await jobRunner.createSidecarToolPodJob(baseSpec);
 
-      const containers = mockBatchApi.createNamespacedJob.mock.calls[0][0].body.spec?.template?.spec?.containers;
+      const containers =
+        mockBatchApi.createNamespacedJob.mock.calls[0][0].body.spec?.template
+          ?.spec?.containers;
       const bridgeEnv: { name: string; value: string }[] = containers[0].env;
-      expect(bridgeEnv.find((e) => e.name === 'KUBECLAW_TOOL_MODE')?.value).toBe('http-bridge');
-      expect(bridgeEnv.find((e) => e.name === 'KUBECLAW_TOOL_PORT')?.value).toBe('8080');
-      expect(bridgeEnv.find((e) => e.name === 'KUBECLAW_CATEGORY')?.value).toBe('home_control');
+      expect(
+        bridgeEnv.find((e) => e.name === 'KUBECLAW_TOOL_MODE')?.value,
+      ).toBe('http-bridge');
+      expect(
+        bridgeEnv.find((e) => e.name === 'KUBECLAW_TOOL_PORT')?.value,
+      ).toBe('8080');
+      expect(bridgeEnv.find((e) => e.name === 'KUBECLAW_CATEGORY')?.value).toBe(
+        'home_control',
+      );
     });
 
     it('uses file-bridge mode and adds shared emptyDir for file pattern', async () => {
@@ -1317,14 +1362,22 @@ describe('JobRunner', () => {
       const callArgs = mockBatchApi.createNamespacedJob.mock.calls[0][0];
       const containers = callArgs.body.spec?.template?.spec?.containers;
       const bridgeEnv: { name: string; value: string }[] = containers[0].env;
-      expect(bridgeEnv.find((e) => e.name === 'KUBECLAW_TOOL_MODE')?.value).toBe('file-bridge');
+      expect(
+        bridgeEnv.find((e) => e.name === 'KUBECLAW_TOOL_MODE')?.value,
+      ).toBe('file-bridge');
 
       const volumes = callArgs.body.spec?.template?.spec?.volumes;
-      expect(volumes?.some((v: any) => v.name === 'shared' && v.emptyDir)).toBe(true);
+      expect(volumes?.some((v: any) => v.name === 'shared' && v.emptyDir)).toBe(
+        true,
+      );
 
       // Both containers share the volume
-      expect(containers[0].volumeMounts?.some((m: any) => m.mountPath === '/shared')).toBe(true);
-      expect(containers[1].volumeMounts?.some((m: any) => m.mountPath === '/shared')).toBe(true);
+      expect(
+        containers[0].volumeMounts?.some((m: any) => m.mountPath === '/shared'),
+      ).toBe(true);
+      expect(
+        containers[1].volumeMounts?.some((m: any) => m.mountPath === '/shared'),
+      ).toBe(true);
     });
 
     it('no shared volume for http pattern', async () => {
@@ -1338,7 +1391,8 @@ describe('JobRunner', () => {
     it('job name is within 63 chars', async () => {
       await jobRunner.createSidecarToolPodJob(baseSpec);
 
-      const jobName = mockBatchApi.createNamespacedJob.mock.calls[0][0].body.metadata?.name as string;
+      const jobName = mockBatchApi.createNamespacedJob.mock.calls[0][0].body
+        .metadata?.name as string;
       expect(jobName.length).toBeLessThanOrEqual(63);
       expect(jobName).toContain('stool');
     });

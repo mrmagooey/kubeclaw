@@ -22,10 +22,22 @@ const {
     close: vi.fn().mockResolvedValue(undefined),
   };
   return {
-    mockJobRunAgentJob: vi.fn().mockResolvedValue({ status: 'success', result: 'ok', newSessionId: 'sess-1' }),
+    mockJobRunAgentJob: vi.fn().mockResolvedValue({
+      status: 'success',
+      result: 'ok',
+      newSessionId: 'sess-1',
+    }),
     mockJobCleanup: vi.fn().mockResolvedValue(undefined),
-    mockFileSidecarRunAgentJob: vi.fn().mockResolvedValue({ status: 'success', result: 'file-ok', newSessionId: 'sess-2' }),
-    mockHttpSidecarRunAgentJob: vi.fn().mockResolvedValue({ status: 'success', result: 'http-ok', newSessionId: 'sess-3' }),
+    mockFileSidecarRunAgentJob: vi.fn().mockResolvedValue({
+      status: 'success',
+      result: 'file-ok',
+      newSessionId: 'sess-2',
+    }),
+    mockHttpSidecarRunAgentJob: vi.fn().mockResolvedValue({
+      status: 'success',
+      result: 'http-ok',
+      newSessionId: 'sess-3',
+    }),
     mockAclManager,
   };
 });
@@ -54,7 +66,9 @@ vi.mock('../k8s/http-sidecar-runner.js', () => ({
 
 vi.mock('./direct-llm-runner.js', () => ({
   DirectLLMRunner: class {
-    runAgent = vi.fn().mockResolvedValue({ status: 'success', result: 'direct' });
+    runAgent = vi
+      .fn()
+      .mockResolvedValue({ status: 'success', result: 'direct' });
     writeTasksSnapshot = vi.fn();
     writeGroupsSnapshot = vi.fn();
     shutdown = vi.fn().mockResolvedValue(undefined);
@@ -248,12 +262,7 @@ describe('runtime/index', () => {
 
       const groupFolder = 'main-group';
       const groups = [{ name: 'group-a', folder: 'group-a' }];
-      runner.writeGroupsSnapshot(
-        groupFolder,
-        true,
-        groups as never,
-        new Set(),
-      );
+      runner.writeGroupsSnapshot(groupFolder, true, groups as never, new Set());
 
       const expectedFile = path.join(
         tmpDir,
@@ -314,7 +323,12 @@ describe('runtime/index', () => {
       const tasks = [{ id: '1', name: 'Task', status: 'pending' }];
       runner.writeTasksSnapshot('sidecar-group', true, tasks as never);
 
-      const file = path.join(tmpDir, 'sidecar-group', 'ipc', 'current_tasks.json');
+      const file = path.join(
+        tmpDir,
+        'sidecar-group',
+        'ipc',
+        'current_tasks.json',
+      );
       expect(fs.existsSync(file)).toBe(true);
       expect(JSON.parse(fs.readFileSync(file, 'utf-8'))).toEqual(tasks);
     });
@@ -323,9 +337,19 @@ describe('runtime/index', () => {
       const { getRunnerForGroup } = await import('./index.js');
       const runner = getRunnerForGroup(fileSidecarGroup);
       const groups = [{ name: 'g1', folder: 'g1' }];
-      runner.writeGroupsSnapshot('sidecar-group', true, groups as never, new Set());
+      runner.writeGroupsSnapshot(
+        'sidecar-group',
+        true,
+        groups as never,
+        new Set(),
+      );
 
-      const file = path.join(tmpDir, 'sidecar-group', 'ipc', 'available_groups.json');
+      const file = path.join(
+        tmpDir,
+        'sidecar-group',
+        'ipc',
+        'available_groups.json',
+      );
       const written = JSON.parse(fs.readFileSync(file, 'utf-8'));
       expect(written.groups).toEqual(groups);
     });
@@ -334,9 +358,19 @@ describe('runtime/index', () => {
       const { getRunnerForGroup } = await import('./index.js');
       const runner = getRunnerForGroup(fileSidecarGroup);
       const groups = [{ name: 'g1', folder: 'g1' }];
-      runner.writeGroupsSnapshot('sidecar-group', false, groups as never, new Set());
+      runner.writeGroupsSnapshot(
+        'sidecar-group',
+        false,
+        groups as never,
+        new Set(),
+      );
 
-      const file = path.join(tmpDir, 'sidecar-group', 'ipc', 'available_groups.json');
+      const file = path.join(
+        tmpDir,
+        'sidecar-group',
+        'ipc',
+        'available_groups.json',
+      );
       const written = JSON.parse(fs.readFileSync(file, 'utf-8'));
       expect(written.groups).toEqual([]);
     });
@@ -344,7 +378,9 @@ describe('runtime/index', () => {
     it('sendMessage returns false when no active job', async () => {
       const { getRunnerForGroup } = await import('./index.js');
       // Access sendMessage via type cast to SidecarRunner
-      const runner = getRunnerForGroup(fileSidecarGroup) as unknown as { sendMessage: (g: string, t: string) => Promise<boolean> };
+      const runner = getRunnerForGroup(fileSidecarGroup) as unknown as {
+        sendMessage: (g: string, t: string) => Promise<boolean>;
+      };
       const result = await runner.sendMessage('sidecar-group', 'hello');
       expect(result).toBe(false);
     });
@@ -352,7 +388,9 @@ describe('runtime/index', () => {
     it('setSendMessageHandler registers a handler', async () => {
       const { getRunnerForGroup } = await import('./index.js');
       const runner = getRunnerForGroup(fileSidecarGroup) as unknown as {
-        setSendMessageHandler: (h: (g: string, t: string) => Promise<boolean>) => void;
+        setSendMessageHandler: (
+          h: (g: string, t: string) => Promise<boolean>,
+        ) => void;
         sendMessage: (g: string, t: string) => Promise<boolean>;
       };
       const handler = vi.fn().mockResolvedValue(true);
@@ -384,7 +422,12 @@ describe('runtime/index', () => {
       const tasks = [{ id: '2', name: 'HTTP Task', status: 'done' }];
       runner.writeTasksSnapshot('http-sidecar-group', true, tasks as never);
 
-      const file = path.join(tmpDir, 'http-sidecar-group', 'ipc', 'current_tasks.json');
+      const file = path.join(
+        tmpDir,
+        'http-sidecar-group',
+        'ipc',
+        'current_tasks.json',
+      );
       expect(fs.existsSync(file)).toBe(true);
       expect(JSON.parse(fs.readFileSync(file, 'utf-8'))).toEqual(tasks);
     });
@@ -393,9 +436,19 @@ describe('runtime/index', () => {
       const { getRunnerForGroup } = await import('./index.js');
       const runner = getRunnerForGroup(httpSidecarGroup);
       const groups = [{ name: 'g2', folder: 'g2' }];
-      runner.writeGroupsSnapshot('http-sidecar-group', true, groups as never, new Set());
+      runner.writeGroupsSnapshot(
+        'http-sidecar-group',
+        true,
+        groups as never,
+        new Set(),
+      );
 
-      const file = path.join(tmpDir, 'http-sidecar-group', 'ipc', 'available_groups.json');
+      const file = path.join(
+        tmpDir,
+        'http-sidecar-group',
+        'ipc',
+        'available_groups.json',
+      );
       const written = JSON.parse(fs.readFileSync(file, 'utf-8'));
       expect(written.groups).toEqual(groups);
     });
@@ -404,16 +457,28 @@ describe('runtime/index', () => {
       const { getRunnerForGroup } = await import('./index.js');
       const runner = getRunnerForGroup(httpSidecarGroup);
       const groups = [{ name: 'g2', folder: 'g2' }];
-      runner.writeGroupsSnapshot('http-sidecar-group', false, groups as never, new Set());
+      runner.writeGroupsSnapshot(
+        'http-sidecar-group',
+        false,
+        groups as never,
+        new Set(),
+      );
 
-      const file = path.join(tmpDir, 'http-sidecar-group', 'ipc', 'available_groups.json');
+      const file = path.join(
+        tmpDir,
+        'http-sidecar-group',
+        'ipc',
+        'available_groups.json',
+      );
       const written = JSON.parse(fs.readFileSync(file, 'utf-8'));
       expect(written.groups).toEqual([]);
     });
 
     it('sendMessage returns false when no active job', async () => {
       const { getRunnerForGroup } = await import('./index.js');
-      const runner = getRunnerForGroup(httpSidecarGroup) as unknown as { sendMessage: (g: string, t: string) => Promise<boolean> };
+      const runner = getRunnerForGroup(httpSidecarGroup) as unknown as {
+        sendMessage: (g: string, t: string) => Promise<boolean>;
+      };
       const result = await runner.sendMessage('http-sidecar-group', 'hello');
       expect(result).toBe(false);
     });
@@ -421,7 +486,9 @@ describe('runtime/index', () => {
     it('setSendMessageHandler registers a handler', async () => {
       const { getRunnerForGroup } = await import('./index.js');
       const runner = getRunnerForGroup(httpSidecarGroup) as unknown as {
-        setSendMessageHandler: (h: (g: string, t: string) => Promise<boolean>) => void;
+        setSendMessageHandler: (
+          h: (g: string, t: string) => Promise<boolean>,
+        ) => void;
         sendMessage: (g: string, t: string) => Promise<boolean>;
       };
       const handler = vi.fn().mockResolvedValue(true);
@@ -439,17 +506,27 @@ describe('runtime/index', () => {
 
   describe('shutdownAllRunners - comprehensive', () => {
     it('shuts down all four runner types when all are active', async () => {
-      const { getAgentRunner, getRunnerForGroup, getDirectLLMRunner, shutdownAllRunners } =
-        await import('./index.js');
+      const {
+        getAgentRunner,
+        getRunnerForGroup,
+        getDirectLLMRunner,
+        shutdownAllRunners,
+      } = await import('./index.js');
 
       getAgentRunner();
       getDirectLLMRunner();
       getRunnerForGroup({
-        name: 'fs', folder: 'fs', trigger: '', added_at: '',
+        name: 'fs',
+        folder: 'fs',
+        trigger: '',
+        added_at: '',
         containerConfig: { userImage: 'img' },
       });
       getRunnerForGroup({
-        name: 'http', folder: 'http', trigger: '', added_at: '',
+        name: 'http',
+        folder: 'http',
+        trigger: '',
+        added_at: '',
         containerConfig: { userImage: 'img', userPort: 80 },
       });
 
@@ -472,8 +549,15 @@ describe('runtime/index', () => {
 
     it('returns success output', async () => {
       const { getAgentRunner } = await import('./index.js');
-      mockJobRunAgentJob.mockResolvedValueOnce({ status: 'success', result: 'done', newSessionId: 'ns' });
-      const result = await getAgentRunner().runAgent(k8sGroup, { ...baseInput, groupFolder: 'k8s' });
+      mockJobRunAgentJob.mockResolvedValueOnce({
+        status: 'success',
+        result: 'done',
+        newSessionId: 'ns',
+      });
+      const result = await getAgentRunner().runAgent(k8sGroup, {
+        ...baseInput,
+        groupFolder: 'k8s',
+      });
       expect(result.status).toBe('success');
       expect(result.result).toBe('done');
       expect(result.newSessionId).toBe('ns');
@@ -481,8 +565,15 @@ describe('runtime/index', () => {
 
     it('returns error output when jobRunner returns error status', async () => {
       const { getAgentRunner } = await import('./index.js');
-      mockJobRunAgentJob.mockResolvedValueOnce({ status: 'error', result: null, error: 'job failed' });
-      const result = await getAgentRunner().runAgent(k8sGroup, { ...baseInput, groupFolder: 'k8s' });
+      mockJobRunAgentJob.mockResolvedValueOnce({
+        status: 'error',
+        result: null,
+        error: 'job failed',
+      });
+      const result = await getAgentRunner().runAgent(k8sGroup, {
+        ...baseInput,
+        groupFolder: 'k8s',
+      });
       expect(result.status).toBe('error');
       expect(result.error).toBe('job failed');
     });
@@ -490,16 +581,26 @@ describe('runtime/index', () => {
     it('returns error when jobRunner throws', async () => {
       const { getAgentRunner } = await import('./index.js');
       mockJobRunAgentJob.mockRejectedValueOnce(new Error('k8s crash'));
-      const result = await getAgentRunner().runAgent(k8sGroup, { ...baseInput, groupFolder: 'k8s' });
+      const result = await getAgentRunner().runAgent(k8sGroup, {
+        ...baseInput,
+        groupFolder: 'k8s',
+      });
       expect(result.status).toBe('error');
       expect(result.error).toBe('k8s crash');
     });
 
     it('calls onProcess callback when provided', async () => {
       const { getAgentRunner } = await import('./index.js');
-      mockJobRunAgentJob.mockResolvedValueOnce({ status: 'success', result: 'ok' });
+      mockJobRunAgentJob.mockResolvedValueOnce({
+        status: 'success',
+        result: 'ok',
+      });
       const onProcess = vi.fn();
-      await getAgentRunner().runAgent(k8sGroup, { ...baseInput, groupFolder: 'k8s' }, onProcess);
+      await getAgentRunner().runAgent(
+        k8sGroup,
+        { ...baseInput, groupFolder: 'k8s' },
+        onProcess,
+      );
       // onProcess is forwarded; K8s runner wraps it — just confirm no crash
       expect(mockJobRunAgentJob).toHaveBeenCalled();
     });
@@ -507,12 +608,24 @@ describe('runtime/index', () => {
     it('calls onOutput callback when provided', async () => {
       const { getAgentRunner } = await import('./index.js');
       const output = { status: 'success' as const, result: 'streamed' };
-      mockJobRunAgentJob.mockImplementationOnce(async (_g: unknown, _i: unknown, _onProc: unknown, onOutput: ((o: unknown) => Promise<void>) | undefined) => {
-        if (onOutput) await onOutput(output);
-        return output;
-      });
+      mockJobRunAgentJob.mockImplementationOnce(
+        async (
+          _g: unknown,
+          _i: unknown,
+          _onProc: unknown,
+          onOutput: ((o: unknown) => Promise<void>) | undefined,
+        ) => {
+          if (onOutput) await onOutput(output);
+          return output;
+        },
+      );
       const onOutput = vi.fn().mockResolvedValue(undefined);
-      await getAgentRunner().runAgent(k8sGroup, { ...baseInput, groupFolder: 'k8s' }, undefined, onOutput);
+      await getAgentRunner().runAgent(
+        k8sGroup,
+        { ...baseInput, groupFolder: 'k8s' },
+        undefined,
+        onOutput,
+      );
       expect(onOutput).toHaveBeenCalledWith(output);
     });
 
@@ -522,22 +635,40 @@ describe('runtime/index', () => {
       const tasks: never[] = [];
       runner.writeTasksSnapshot('cached-group', false, tasks);
       runner.writeTasksSnapshot('cached-group', false, tasks); // second call uses cached path
-      const file = path.join(tmpDir, 'cached-group', 'ipc', 'current_tasks.json');
+      const file = path.join(
+        tmpDir,
+        'cached-group',
+        'ipc',
+        'current_tasks.json',
+      );
       expect(JSON.parse(fs.readFileSync(file, 'utf-8'))).toEqual([]);
     });
   });
 
   describe('FileSidecarAgentRunner.runAgent', () => {
     const fsGroup = {
-      name: 'fs', folder: 'fs', trigger: '', added_at: '',
+      name: 'fs',
+      folder: 'fs',
+      trigger: '',
+      added_at: '',
       containerConfig: { userImage: 'img:latest' },
     };
 
     it('returns error when userImage is missing', async () => {
       const { getRunnerForGroup } = await import('./index.js');
-      const noImageGroup = { name: 'g', folder: 'g', trigger: '', added_at: '', containerConfig: {} };
+      const noImageGroup = {
+        name: 'g',
+        folder: 'g',
+        trigger: '',
+        added_at: '',
+        containerConfig: {},
+      };
       // Use userImage group to get FileSidecarRunner, then test missing image via type override
-      const runner = getRunnerForGroup(fsGroup) as unknown as { runAgent: (...a: unknown[]) => Promise<{ status: string; error: string }> };
+      const runner = getRunnerForGroup(fsGroup) as unknown as {
+        runAgent: (
+          ...a: unknown[]
+        ) => Promise<{ status: string; error: string }>;
+      };
       // Call with a group that has no userImage
       const result = await runner.runAgent(
         { ...fsGroup, containerConfig: {} },
@@ -549,8 +680,15 @@ describe('runtime/index', () => {
 
     it('returns success output', async () => {
       const { getRunnerForGroup } = await import('./index.js');
-      mockFileSidecarRunAgentJob.mockResolvedValueOnce({ status: 'success', result: 'fs-done', newSessionId: 'fs-sess' });
-      const result = await getRunnerForGroup(fsGroup).runAgent(fsGroup, { ...baseInput, groupFolder: 'fs' });
+      mockFileSidecarRunAgentJob.mockResolvedValueOnce({
+        status: 'success',
+        result: 'fs-done',
+        newSessionId: 'fs-sess',
+      });
+      const result = await getRunnerForGroup(fsGroup).runAgent(fsGroup, {
+        ...baseInput,
+        groupFolder: 'fs',
+      });
       expect(result.status).toBe('success');
       expect(result.result).toBe('fs-done');
     });
@@ -558,7 +696,10 @@ describe('runtime/index', () => {
     it('returns error when jobRunner throws', async () => {
       const { getRunnerForGroup } = await import('./index.js');
       mockFileSidecarRunAgentJob.mockRejectedValueOnce(new Error('fs crash'));
-      const result = await getRunnerForGroup(fsGroup).runAgent(fsGroup, { ...baseInput, groupFolder: 'fs' });
+      const result = await getRunnerForGroup(fsGroup).runAgent(fsGroup, {
+        ...baseInput,
+        groupFolder: 'fs',
+      });
       expect(result.status).toBe('error');
       expect(result.error).toBe('fs crash');
     });
@@ -566,28 +707,46 @@ describe('runtime/index', () => {
     it('continues when ACL creation fails', async () => {
       const { getRunnerForGroup } = await import('./index.js');
       mockAclManager.createJobACL.mockRejectedValueOnce(new Error('acl error'));
-      mockFileSidecarRunAgentJob.mockResolvedValueOnce({ status: 'success', result: 'ok' });
-      const result = await getRunnerForGroup(fsGroup).runAgent(fsGroup, { ...baseInput, groupFolder: 'fs' });
+      mockFileSidecarRunAgentJob.mockResolvedValueOnce({
+        status: 'success',
+        result: 'ok',
+      });
+      const result = await getRunnerForGroup(fsGroup).runAgent(fsGroup, {
+        ...baseInput,
+        groupFolder: 'fs',
+      });
       expect(result.status).toBe('success');
     });
 
     it('sendMessage returns true via handler when active job has credentials', async () => {
       const { getRunnerForGroup } = await import('./index.js');
-      mockAclManager.getJobCredentials.mockReturnValue({ username: 'u', password: 'p' });
+      mockAclManager.getJobCredentials.mockReturnValue({
+        username: 'u',
+        password: 'p',
+      });
 
       // suspend the job so activeJobs stays populated
       let resolveJob!: (v: unknown) => void;
-      mockFileSidecarRunAgentJob.mockReturnValueOnce(new Promise((r) => { resolveJob = r; }));
+      mockFileSidecarRunAgentJob.mockReturnValueOnce(
+        new Promise((r) => {
+          resolveJob = r;
+        }),
+      );
 
       const runner = getRunnerForGroup(fsGroup) as unknown as {
         runAgent: (...a: unknown[]) => Promise<unknown>;
-        setSendMessageHandler: (h: (g: string, t: string) => Promise<boolean>) => void;
+        setSendMessageHandler: (
+          h: (g: string, t: string) => Promise<boolean>,
+        ) => void;
         sendMessage: (g: string, t: string) => Promise<boolean>;
       };
       const handler = vi.fn().mockResolvedValue(true);
       runner.setSendMessageHandler(handler);
 
-      const runPromise = runner.runAgent(fsGroup, { ...baseInput, groupFolder: 'fs' });
+      const runPromise = runner.runAgent(fsGroup, {
+        ...baseInput,
+        groupFolder: 'fs',
+      });
       // yield microtasks so createJobACL resolves and activeJobs gets populated
       await Promise.resolve();
       await Promise.resolve();
@@ -605,10 +764,17 @@ describe('runtime/index', () => {
     it('shutdown revokes ACLs for active jobs', async () => {
       const { getRunnerForGroup } = await import('./index.js');
       let resolveJob!: (v: unknown) => void;
-      mockFileSidecarRunAgentJob.mockReturnValueOnce(new Promise((r) => { resolveJob = r; }));
+      mockFileSidecarRunAgentJob.mockReturnValueOnce(
+        new Promise((r) => {
+          resolveJob = r;
+        }),
+      );
 
       const runner = getRunnerForGroup(fsGroup);
-      const runPromise = runner.runAgent(fsGroup, { ...baseInput, groupFolder: 'fs' });
+      const runPromise = runner.runAgent(fsGroup, {
+        ...baseInput,
+        groupFolder: 'fs',
+      });
       await Promise.resolve();
       await Promise.resolve();
       await Promise.resolve();
@@ -623,13 +789,20 @@ describe('runtime/index', () => {
 
   describe('HttpSidecarAgentRunner.runAgent', () => {
     const httpGroup = {
-      name: 'http', folder: 'http', trigger: '', added_at: '',
+      name: 'http',
+      folder: 'http',
+      trigger: '',
+      added_at: '',
       containerConfig: { userImage: 'img:latest', userPort: 9090 },
     };
 
     it('returns error when userImage is missing', async () => {
       const { getRunnerForGroup } = await import('./index.js');
-      const runner = getRunnerForGroup(httpGroup) as unknown as { runAgent: (...a: unknown[]) => Promise<{ status: string; error: string }> };
+      const runner = getRunnerForGroup(httpGroup) as unknown as {
+        runAgent: (
+          ...a: unknown[]
+        ) => Promise<{ status: string; error: string }>;
+      };
       const result = await runner.runAgent(
         { ...httpGroup, containerConfig: { userPort: 9090 } },
         { ...baseInput, groupFolder: 'http' },
@@ -640,8 +813,15 @@ describe('runtime/index', () => {
 
     it('returns success output', async () => {
       const { getRunnerForGroup } = await import('./index.js');
-      mockHttpSidecarRunAgentJob.mockResolvedValueOnce({ status: 'success', result: 'http-done', newSessionId: 'http-sess' });
-      const result = await getRunnerForGroup(httpGroup).runAgent(httpGroup, { ...baseInput, groupFolder: 'http' });
+      mockHttpSidecarRunAgentJob.mockResolvedValueOnce({
+        status: 'success',
+        result: 'http-done',
+        newSessionId: 'http-sess',
+      });
+      const result = await getRunnerForGroup(httpGroup).runAgent(httpGroup, {
+        ...baseInput,
+        groupFolder: 'http',
+      });
       expect(result.status).toBe('success');
       expect(result.result).toBe('http-done');
     });
@@ -649,7 +829,10 @@ describe('runtime/index', () => {
     it('returns error when jobRunner throws', async () => {
       const { getRunnerForGroup } = await import('./index.js');
       mockHttpSidecarRunAgentJob.mockRejectedValueOnce(new Error('http crash'));
-      const result = await getRunnerForGroup(httpGroup).runAgent(httpGroup, { ...baseInput, groupFolder: 'http' });
+      const result = await getRunnerForGroup(httpGroup).runAgent(httpGroup, {
+        ...baseInput,
+        groupFolder: 'http',
+      });
       expect(result.status).toBe('error');
       expect(result.error).toBe('http crash');
     });
@@ -657,18 +840,31 @@ describe('runtime/index', () => {
     it('continues when ACL creation fails', async () => {
       const { getRunnerForGroup } = await import('./index.js');
       mockAclManager.createJobACL.mockRejectedValueOnce(new Error('acl error'));
-      mockHttpSidecarRunAgentJob.mockResolvedValueOnce({ status: 'success', result: 'ok' });
-      const result = await getRunnerForGroup(httpGroup).runAgent(httpGroup, { ...baseInput, groupFolder: 'http' });
+      mockHttpSidecarRunAgentJob.mockResolvedValueOnce({
+        status: 'success',
+        result: 'ok',
+      });
+      const result = await getRunnerForGroup(httpGroup).runAgent(httpGroup, {
+        ...baseInput,
+        groupFolder: 'http',
+      });
       expect(result.status).toBe('success');
     });
 
     it('shutdown revokes ACLs for active jobs', async () => {
       const { getRunnerForGroup } = await import('./index.js');
       let resolveJob!: (v: unknown) => void;
-      mockHttpSidecarRunAgentJob.mockReturnValueOnce(new Promise((r) => { resolveJob = r; }));
+      mockHttpSidecarRunAgentJob.mockReturnValueOnce(
+        new Promise((r) => {
+          resolveJob = r;
+        }),
+      );
 
       const runner = getRunnerForGroup(httpGroup);
-      const runPromise = runner.runAgent(httpGroup, { ...baseInput, groupFolder: 'http' });
+      const runPromise = runner.runAgent(httpGroup, {
+        ...baseInput,
+        groupFolder: 'http',
+      });
       await Promise.resolve();
       await Promise.resolve();
       await Promise.resolve();

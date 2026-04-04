@@ -17,8 +17,7 @@
 
 import OpenAI from 'openai';
 
-export const DEFAULT_DIRECT_MODEL =
-  process.env.DIRECT_LLM_MODEL || 'gpt-4o';
+export const DEFAULT_DIRECT_MODEL = process.env.DIRECT_LLM_MODEL || 'gpt-4o';
 
 export function createLLMClient(): OpenAI {
   return new OpenAI({

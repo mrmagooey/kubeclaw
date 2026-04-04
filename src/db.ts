@@ -3,7 +3,13 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-import { ASSISTANT_NAME, DATA_DIR, KUBECLAW_CHANNEL, KUBECLAW_MODE, STORE_DIR } from './config.js';
+import {
+  ASSISTANT_NAME,
+  DATA_DIR,
+  KUBECLAW_CHANNEL,
+  KUBECLAW_MODE,
+  STORE_DIR,
+} from './config.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
 import {
@@ -198,9 +204,10 @@ function saveDatabase(): void {
 }
 
 export async function initDatabase(): Promise<void> {
-  const dbFile = KUBECLAW_MODE === 'channel' && KUBECLAW_CHANNEL
-    ? `messages-${KUBECLAW_CHANNEL}.db`
-    : 'messages.db';
+  const dbFile =
+    KUBECLAW_MODE === 'channel' && KUBECLAW_CHANNEL
+      ? `messages-${KUBECLAW_CHANNEL}.db`
+      : 'messages.db';
   dbPath = path.join(STORE_DIR, dbFile);
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 
@@ -561,7 +568,12 @@ export function updateTask(
   updates: Partial<
     Pick<
       ScheduledTask,
-      'prompt' | 'schedule_type' | 'schedule_value' | 'next_run' | 'status' | 'last_result'
+      | 'prompt'
+      | 'schedule_type'
+      | 'schedule_value'
+      | 'next_run'
+      | 'status'
+      | 'last_result'
     >
   >,
 ): void {
@@ -610,7 +622,9 @@ export function deleteTask(id: string): void {
 }
 
 export function getAllScheduledTasks(): ScheduledTask[] {
-  const result = db.exec('SELECT * FROM scheduled_tasks ORDER BY created_at DESC');
+  const result = db.exec(
+    'SELECT * FROM scheduled_tasks ORDER BY created_at DESC',
+  );
   if (result.length === 0) return [];
   return result[0].values.map((row: unknown[]) => {
     const cols = result[0].columns;
@@ -839,8 +853,13 @@ export function deleteRegisteredGroup(jid: string): void {
   // Clean up scheduled tasks for this group before removing the registration
   const group = getRegisteredGroup(jid);
   if (group) {
-    db.run('DELETE FROM task_run_logs WHERE task_id IN (SELECT id FROM scheduled_tasks WHERE group_folder = ?)', [group.folder]);
-    db.run('DELETE FROM scheduled_tasks WHERE group_folder = ?', [group.folder]);
+    db.run(
+      'DELETE FROM task_run_logs WHERE task_id IN (SELECT id FROM scheduled_tasks WHERE group_folder = ?)',
+      [group.folder],
+    );
+    db.run('DELETE FROM scheduled_tasks WHERE group_folder = ?', [
+      group.folder,
+    ]);
   }
   db.run('DELETE FROM registered_groups WHERE jid = ?', [jid]);
   saveDatabase();
@@ -964,10 +983,12 @@ export function getConversationHistory(
   groupFolder: string,
   limit?: number,
 ): { role: 'user' | 'assistant'; content: string }[] {
-  const maxMessages = limit ?? (parseInt(process.env.MAX_CONVERSATION_HISTORY || '20', 10) || 0);
-  const query = maxMessages > 0
-    ? 'SELECT role, content FROM conversation_history WHERE group_folder = ? ORDER BY created_at DESC LIMIT ?'
-    : 'SELECT role, content FROM conversation_history WHERE group_folder = ? ORDER BY created_at ASC';
+  const maxMessages =
+    limit ?? (parseInt(process.env.MAX_CONVERSATION_HISTORY || '20', 10) || 0);
+  const query =
+    maxMessages > 0
+      ? 'SELECT role, content FROM conversation_history WHERE group_folder = ? ORDER BY created_at DESC LIMIT ?'
+      : 'SELECT role, content FROM conversation_history WHERE group_folder = ? ORDER BY created_at ASC';
   const params = maxMessages > 0 ? [groupFolder, maxMessages] : [groupFolder];
   const result = db.exec(query, params);
   if (result.length === 0) return [];

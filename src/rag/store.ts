@@ -13,14 +13,15 @@
 import { EMBEDDING_DIM } from '../runtime/embedding-client.js';
 import { logger } from '../logger.js';
 
-const QDRANT_URL = () => process.env.QDRANT_URL ?? 'http://kubeclaw-qdrant:6333';
+const QDRANT_URL = () =>
+  process.env.QDRANT_URL ?? 'http://kubeclaw-qdrant:6333';
 
 export interface QdrantPoint {
-  id: string;         // deterministic UUID derived from content hash
+  id: string; // deterministic UUID derived from content hash
   vector: number[];
   payload: {
     text: string;
-    source: string;   // e.g. "conversation", "document", "session"
+    source: string; // e.g. "conversation", "document", "session"
     timestamp: number;
     groupFolder: string;
   };
@@ -36,7 +37,10 @@ function collectionName(groupFolder: string): string {
   return `kubeclaw-${groupFolder}`;
 }
 
-async function qdrantFetch(path: string, opts: RequestInit = {}): Promise<unknown> {
+async function qdrantFetch(
+  path: string,
+  opts: RequestInit = {},
+): Promise<unknown> {
   const url = `${QDRANT_URL()}${path}`;
   const res = await fetch(url, {
     headers: { 'Content-Type': 'application/json' },
@@ -44,7 +48,9 @@ async function qdrantFetch(path: string, opts: RequestInit = {}): Promise<unknow
   });
   if (!res.ok) {
     const body = await res.text().catch(() => '');
-    throw new Error(`Qdrant ${opts.method ?? 'GET'} ${path} → ${res.status}: ${body}`);
+    throw new Error(
+      `Qdrant ${opts.method ?? 'GET'} ${path} → ${res.status}: ${body}`,
+    );
   }
   return res.json();
 }
@@ -73,7 +79,10 @@ export async function ensureCollection(groupFolder: string): Promise<void> {
 /**
  * Upsert a batch of points. Creates the collection if it doesn't exist.
  */
-export async function upsertPoints(groupFolder: string, points: QdrantPoint[]): Promise<void> {
+export async function upsertPoints(
+  groupFolder: string,
+  points: QdrantPoint[],
+): Promise<void> {
   if (points.length === 0) return;
   await ensureCollection(groupFolder);
   await qdrantFetch(`/collections/${collectionName(groupFolder)}/points`, {
@@ -109,7 +118,9 @@ export async function search(
     return [];
   }
 
-  const result = raw as { result: { payload: { text: string; source: string }; score: number }[] };
+  const result = raw as {
+    result: { payload: { text: string; source: string }; score: number }[];
+  };
   return (result.result ?? []).map((r) => ({
     text: r.payload.text,
     source: r.payload.source,

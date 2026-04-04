@@ -278,7 +278,10 @@ export class GroupQueue {
       await new Promise((resolve) => setTimeout(resolve, 200));
     }
     if (this.activeCount > 0) {
-      logger.warn({ activeCount: this.activeCount }, 'Grace period expired with active jobs');
+      logger.warn(
+        { activeCount: this.activeCount },
+        'Grace period expired with active jobs',
+      );
     }
   }
 }

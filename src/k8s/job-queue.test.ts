@@ -294,7 +294,11 @@ describe('DistributedJobQueue', () => {
       await queue.registerProcess('group1@g.us', 'messages', '/groups/group1');
       const firstSetexCall = mockRedis.setex.mock.calls.length;
 
-      await queue.registerProcess('group1@g.us', 'messages-2', '/groups/group1');
+      await queue.registerProcess(
+        'group1@g.us',
+        'messages-2',
+        '/groups/group1',
+      );
 
       expect(mockRedis.setex.mock.calls.length).toBeGreaterThan(firstSetexCall);
       // Group is still active after the second registration

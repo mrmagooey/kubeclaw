@@ -91,6 +91,12 @@ secrets:
   # openai-api-key (optional), openai-base-url (optional), voyage-api-key (optional)
   existingSecret: ""
 
+ollama:
+  # Kubernetes Service URL for Ollama. For cross-namespace: http://<svc>.<namespace>:11434
+  # The Ollama Deployment should carry label app: ollama for NetworkPolicy egress to work.
+  host: "http://ollama:11434"
+  model: "llama3.2"
+
 agent:
   # How long (seconds) an agent Job may run before being killed.
   timeoutSeconds: 3600

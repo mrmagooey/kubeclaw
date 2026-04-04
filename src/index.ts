@@ -302,7 +302,8 @@ interface AttachmentMarkerHandler {
 
 const ATTACHMENT_HANDLERS: AttachmentMarkerHandler[] = [
   {
-    pattern: /\[ImageAttachment: (attachments\/raw\/[^\s\]]+)(?:\s+caption="([^"]*)")?\]/g,
+    pattern:
+      /\[ImageAttachment: (attachments\/raw\/[^\s\]]+)(?:\s+caption="([^"]*)")?\]/g,
     mediaType: 'image/jpeg',
     rewrite: (outputPath) => `[Image: ${outputPath}]`,
     fallback: (filename) => `[Image: ${filename} (processing failed)]`,
@@ -324,7 +325,11 @@ function extractAttachments(
       // Reset lastIndex for each message since the regex has the global flag
       handler.pattern.lastIndex = 0;
       for (const m of msg.content.matchAll(handler.pattern)) {
-        result.push({ rawPath: m[1], mediaType: handler.mediaType, caption: m[2] });
+        result.push({
+          rawPath: m[1],
+          mediaType: handler.mediaType,
+          caption: m[2],
+        });
       }
     }
   }

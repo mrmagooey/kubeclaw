@@ -119,7 +119,9 @@ describe('McpManager', () => {
       const tools = manager.getTools();
       expect(tools).toHaveLength(1);
       expect(tools[0].function.name).toBe('get_weather');
-      expect(tools[0].function.description).toBe('Get current weather for a location');
+      expect(tools[0].function.description).toBe(
+        'Get current weather for a location',
+      );
       expect(tools[0].type).toBe('function');
     });
 
@@ -137,14 +139,28 @@ describe('McpManager', () => {
       // First server connect + tools
       mockConnect.mockResolvedValueOnce(undefined);
       mockListTools.mockResolvedValueOnce({
-        tools: [{ name: 'get_weather', description: 'Get weather', inputSchema: { type: 'object', properties: {} } }],
+        tools: [
+          {
+            name: 'get_weather',
+            description: 'Get weather',
+            inputSchema: { type: 'object', properties: {} },
+          },
+        ],
       });
       // Second server connect + tools
       mockConnect.mockResolvedValueOnce(undefined);
       mockListTools.mockResolvedValueOnce({
         tools: [
-          { name: 'list_events', description: 'List calendar events', inputSchema: { type: 'object', properties: {} } },
-          { name: 'create_event', description: 'Create event', inputSchema: { type: 'object', properties: {} } },
+          {
+            name: 'list_events',
+            description: 'List calendar events',
+            inputSchema: { type: 'object', properties: {} },
+          },
+          {
+            name: 'create_event',
+            description: 'Create event',
+            inputSchema: { type: 'object', properties: {} },
+          },
         ],
       });
 
@@ -163,9 +179,21 @@ describe('McpManager', () => {
       mockConnect.mockResolvedValueOnce(undefined);
       mockListTools.mockResolvedValueOnce({
         tools: [
-          { name: 'list_events', description: 'List events', inputSchema: { type: 'object', properties: {} } },
-          { name: 'create_event', description: 'Create event', inputSchema: { type: 'object', properties: {} } },
-          { name: 'delete_event', description: 'Delete event', inputSchema: { type: 'object', properties: {} } },
+          {
+            name: 'list_events',
+            description: 'List events',
+            inputSchema: { type: 'object', properties: {} },
+          },
+          {
+            name: 'create_event',
+            description: 'Create event',
+            inputSchema: { type: 'object', properties: {} },
+          },
+          {
+            name: 'delete_event',
+            description: 'Delete event',
+            inputSchema: { type: 'object', properties: {} },
+          },
         ],
       });
 
@@ -178,16 +206,34 @@ describe('McpManager', () => {
     });
 
     it('handles tool name collisions (first server wins)', async () => {
-      const server1: McpServerStatus = { name: 'server1', url: 'http://s1:3000/mcp' };
-      const server2: McpServerStatus = { name: 'server2', url: 'http://s2:3000/mcp' };
+      const server1: McpServerStatus = {
+        name: 'server1',
+        url: 'http://s1:3000/mcp',
+      };
+      const server2: McpServerStatus = {
+        name: 'server2',
+        url: 'http://s2:3000/mcp',
+      };
 
       mockConnect.mockResolvedValue(undefined);
       mockListTools
         .mockResolvedValueOnce({
-          tools: [{ name: 'shared_tool', description: 'From server1', inputSchema: { type: 'object', properties: {} } }],
+          tools: [
+            {
+              name: 'shared_tool',
+              description: 'From server1',
+              inputSchema: { type: 'object', properties: {} },
+            },
+          ],
         })
         .mockResolvedValueOnce({
-          tools: [{ name: 'shared_tool', description: 'From server2', inputSchema: { type: 'object', properties: {} } }],
+          tools: [
+            {
+              name: 'shared_tool',
+              description: 'From server2',
+              inputSchema: { type: 'object', properties: {} },
+            },
+          ],
         });
 
       const manager = new McpManager();
@@ -299,7 +345,13 @@ describe('McpManager', () => {
 
       mockConnect.mockResolvedValueOnce(undefined);
       mockListTools.mockResolvedValueOnce({
-        tools: [{ name: 'list_events', description: 'List events', inputSchema: { type: 'object', properties: {} } }],
+        tools: [
+          {
+            name: 'list_events',
+            description: 'List events',
+            inputSchema: { type: 'object', properties: {} },
+          },
+        ],
       });
 
       await manager.reconfigure([weatherServer, calendarServer]);
@@ -378,7 +430,9 @@ describe('McpManager', () => {
 
     it('uses default description when tool has none', async () => {
       mockListTools.mockResolvedValueOnce({
-        tools: [{ name: 'my_tool', inputSchema: { type: 'object', properties: {} } }],
+        tools: [
+          { name: 'my_tool', inputSchema: { type: 'object', properties: {} } },
+        ],
       });
 
       const manager = new McpManager();

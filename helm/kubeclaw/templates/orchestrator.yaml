@@ -200,6 +200,10 @@ spec:
                   key: voyage-api-key
             {{- end }}
             {{- end }}
+            - name: OLLAMA_HOST
+              value: {{ .Values.ollama.host | quote }}
+            - name: OLLAMA_MODEL
+              value: {{ .Values.ollama.model | quote }}
             {{- if .Values.orchestrator.admin.enabled }}
             - name: ADMIN_HTTP_PORT
               value: {{ .Values.orchestrator.admin.port | quote }}

@@ -11,7 +11,7 @@ import { z } from 'zod';
 import fs from 'fs';
 import path from 'path';
 
-const OLLAMA_HOST = process.env.OLLAMA_HOST || 'http://host.docker.internal:11434';
+const OLLAMA_HOST = process.env.OLLAMA_HOST || 'http://ollama:11434';
 const OLLAMA_STATUS_FILE = '/workspace/ipc/ollama_status.json';
 
 function log(msg: string): void {
@@ -30,16 +30,7 @@ function writeStatus(status: string, detail?: string): void {
 
 async function ollamaFetch(path: string, options?: RequestInit): Promise<Response> {
   const url = `${OLLAMA_HOST}${path}`;
-  try {
-    return await fetch(url, options);
-  } catch (err) {
-    // Fallback to localhost if host.docker.internal fails
-    if (OLLAMA_HOST.includes('host.docker.internal')) {
-      const fallbackUrl = url.replace('host.docker.internal', 'localhost');
-      return await fetch(fallbackUrl, options);
-    }
-    throw err;
-  }
+  return await fetch(url, options);
 }
 
 const server = new McpServer({

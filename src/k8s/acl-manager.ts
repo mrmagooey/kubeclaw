@@ -129,9 +129,9 @@ export class RedisACLManager {
     const inputKeyPattern = `kubeclaw:input:${jobId}`;
     const outputChannel = `kubeclaw:messages:${groupFolder}`;
     const aclRules = [
-      `%R~${inputKeyPattern}`,   // read-only: XREAD from this job's input stream
-      'resetchannels',           // clear all channel access first
-      `&${outputChannel}`,       // pub/sub: PUBLISH to this group's output channel
+      `%R~${inputKeyPattern}`, // read-only: XREAD from this job's input stream
+      'resetchannels', // clear all channel access first
+      `&${outputChannel}`, // pub/sub: PUBLISH to this group's output channel
       '+xread',
       '+xrange',
       '+publish',

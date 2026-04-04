@@ -10,7 +10,7 @@ import { embed } from '../runtime/embedding-client.js';
 import { upsertPoints, QdrantPoint } from './store.js';
 import { logger } from '../logger.js';
 
-const CHUNK_SIZE = 1800;   // characters (~450 tokens for English text)
+const CHUNK_SIZE = 1800; // characters (~450 tokens for English text)
 const CHUNK_OVERLAP = 200; // characters of overlap between consecutive chunks
 
 /**
@@ -33,7 +33,10 @@ function chunk(text: string): string[] {
  * Derive a stable UUID-like ID from content so re-indexing is idempotent.
  */
 function chunkId(groupFolder: string, text: string): string {
-  const hash = crypto.createHash('sha256').update(groupFolder + text).digest('hex');
+  const hash = crypto
+    .createHash('sha256')
+    .update(groupFolder + text)
+    .digest('hex');
   // Format as UUID v4 shape for Qdrant (expects UUID or uint64)
   return [
     hash.slice(0, 8),
@@ -70,7 +73,10 @@ export async function indexText(
   }));
 
   await upsertPoints(groupFolder, points);
-  logger.debug({ groupFolder, source, chunks: chunks.length }, 'Indexed text chunks');
+  logger.debug(
+    { groupFolder, source, chunks: chunks.length },
+    'Indexed text chunks',
+  );
 }
 
 /**

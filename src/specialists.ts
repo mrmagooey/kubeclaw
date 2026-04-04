@@ -128,7 +128,9 @@ export function loadSpecialists(groupFolder: string): SpecialistDef[] | null {
         : undefined;
 
     const llmProvider =
-      typeof entryObj.llmProvider === 'string' ? entryObj.llmProvider : undefined;
+      typeof entryObj.llmProvider === 'string'
+        ? entryObj.llmProvider
+        : undefined;
 
     const containerConfig =
       typeof entryObj.containerConfig === 'object' &&
@@ -141,7 +143,10 @@ export function loadSpecialists(groupFolder: string): SpecialistDef[] | null {
       typeof entryObj.memory === 'object' &&
       entryObj.memory !== null &&
       typeof (entryObj.memory as Record<string, unknown>).isolated === 'boolean'
-        ? { isolated: (entryObj.memory as Record<string, unknown>).isolated as boolean }
+        ? {
+            isolated: (entryObj.memory as Record<string, unknown>)
+              .isolated as boolean,
+          }
         : undefined;
 
     const claudemd =

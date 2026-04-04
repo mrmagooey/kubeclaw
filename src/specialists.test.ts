@@ -28,7 +28,9 @@ describe('loadSpecialists', () => {
 
   it('returns null when agents.json does not exist (ENOENT)', () => {
     const err = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
-    mockFs.readFileSync = vi.fn().mockImplementation(() => { throw err; });
+    mockFs.readFileSync = vi.fn().mockImplementation(() => {
+      throw err;
+    });
 
     const result = loadSpecialists('my-group');
 
@@ -49,7 +51,9 @@ describe('loadSpecialists', () => {
   });
 
   it('returns null when specialists key is missing', () => {
-    mockFs.readFileSync = vi.fn().mockReturnValue(JSON.stringify({ other: [] }));
+    mockFs.readFileSync = vi
+      .fn()
+      .mockReturnValue(JSON.stringify({ other: [] }));
 
     const result = loadSpecialists('my-group');
 
@@ -61,7 +65,9 @@ describe('loadSpecialists', () => {
   });
 
   it('returns null when specialists is not an array', () => {
-    mockFs.readFileSync = vi.fn().mockReturnValue(JSON.stringify({ specialists: 'oops' }));
+    mockFs.readFileSync = vi
+      .fn()
+      .mockReturnValue(JSON.stringify({ specialists: 'oops' }));
 
     const result = loadSpecialists('my-group');
 
@@ -73,7 +79,9 @@ describe('loadSpecialists', () => {
   });
 
   it('returns null when specialists array is empty', () => {
-    mockFs.readFileSync = vi.fn().mockReturnValue(JSON.stringify({ specialists: [] }));
+    mockFs.readFileSync = vi
+      .fn()
+      .mockReturnValue(JSON.stringify({ specialists: [] }));
 
     const result = loadSpecialists('my-group');
 
@@ -85,9 +93,11 @@ describe('loadSpecialists', () => {
   });
 
   it('returns null when an entry is missing name', () => {
-    mockFs.readFileSync = vi.fn().mockReturnValue(
-      JSON.stringify({ specialists: [{ prompt: 'Do stuff' }] }),
-    );
+    mockFs.readFileSync = vi
+      .fn()
+      .mockReturnValue(
+        JSON.stringify({ specialists: [{ prompt: 'Do stuff' }] }),
+      );
 
     const result = loadSpecialists('my-group');
 
@@ -99,9 +109,9 @@ describe('loadSpecialists', () => {
   });
 
   it('returns null when an entry is missing prompt', () => {
-    mockFs.readFileSync = vi.fn().mockReturnValue(
-      JSON.stringify({ specialists: [{ name: 'Research' }] }),
-    );
+    mockFs.readFileSync = vi
+      .fn()
+      .mockReturnValue(JSON.stringify({ specialists: [{ name: 'Research' }] }));
 
     const result = loadSpecialists('my-group');
 
@@ -113,9 +123,11 @@ describe('loadSpecialists', () => {
   });
 
   it('returns null when name is empty string', () => {
-    mockFs.readFileSync = vi.fn().mockReturnValue(
-      JSON.stringify({ specialists: [{ name: '', prompt: 'Do stuff' }] }),
-    );
+    mockFs.readFileSync = vi
+      .fn()
+      .mockReturnValue(
+        JSON.stringify({ specialists: [{ name: '', prompt: 'Do stuff' }] }),
+      );
 
     const result = loadSpecialists('my-group');
 
@@ -127,9 +139,11 @@ describe('loadSpecialists', () => {
   });
 
   it('returns null when prompt is empty string', () => {
-    mockFs.readFileSync = vi.fn().mockReturnValue(
-      JSON.stringify({ specialists: [{ name: 'Research', prompt: '' }] }),
-    );
+    mockFs.readFileSync = vi
+      .fn()
+      .mockReturnValue(
+        JSON.stringify({ specialists: [{ name: 'Research', prompt: '' }] }),
+      );
 
     const result = loadSpecialists('my-group');
 
@@ -181,7 +195,9 @@ describe('loadSpecialists', () => {
 
   it('logs a warning for non-ENOENT read errors', () => {
     const err = Object.assign(new Error('EPERM'), { code: 'EPERM' });
-    mockFs.readFileSync = vi.fn().mockImplementation(() => { throw err; });
+    mockFs.readFileSync = vi.fn().mockImplementation(() => {
+      throw err;
+    });
 
     const result = loadSpecialists('my-group');
 
@@ -205,16 +221,26 @@ describe('detectMentionedSpecialists', () => {
   });
 
   it('returns empty array when mentioned name is not in available', () => {
-    expect(detectMentionedSpecialists('Hey @Unknown help me', available)).toEqual([]);
+    expect(
+      detectMentionedSpecialists('Hey @Unknown help me', available),
+    ).toEqual([]);
   });
 
   it('matches case-insensitively', () => {
-    const result = detectMentionedSpecialists('@research do some analysis', available);
-    expect(result).toEqual([{ name: 'Research', prompt: 'You are a researcher.' }]);
+    const result = detectMentionedSpecialists(
+      '@research do some analysis',
+      available,
+    );
+    expect(result).toEqual([
+      { name: 'Research', prompt: 'You are a researcher.' },
+    ]);
   });
 
   it('returns matched specialists in available order', () => {
-    const result = detectMentionedSpecialists('@Writer and @Research please help', available);
+    const result = detectMentionedSpecialists(
+      '@Writer and @Research please help',
+      available,
+    );
     // Should be in available order: Research first, then Writer
     expect(result).toEqual([
       { name: 'Research', prompt: 'You are a researcher.' },
@@ -223,13 +249,19 @@ describe('detectMentionedSpecialists', () => {
   });
 
   it('deduplicates repeated mentions of the same specialist', () => {
-    const result = detectMentionedSpecialists('@Research @research please help', available);
+    const result = detectMentionedSpecialists(
+      '@Research @research please help',
+      available,
+    );
     expect(result).toHaveLength(1);
     expect(result[0].name).toBe('Research');
   });
 
   it('returns multiple different matched specialists', () => {
-    const result = detectMentionedSpecialists('@Research @Coder both help', available);
+    const result = detectMentionedSpecialists(
+      '@Research @Coder both help',
+      available,
+    );
     expect(result).toEqual([
       { name: 'Research', prompt: 'You are a researcher.' },
       { name: 'Coder', prompt: 'You are a coder.' },
@@ -238,11 +270,16 @@ describe('detectMentionedSpecialists', () => {
 
   it('does not match partial word: @ResearchExtra does not match Research', () => {
     // /@(\w+)/g captures the full word "ResearchExtra", which doesn't match "research"
-    const result = detectMentionedSpecialists('@ResearchExtra please help', available);
+    const result = detectMentionedSpecialists(
+      '@ResearchExtra please help',
+      available,
+    );
     expect(result).toEqual([]);
   });
 
   it('returns empty array when no @ mentions present', () => {
-    expect(detectMentionedSpecialists('Just a regular message', available)).toEqual([]);
+    expect(
+      detectMentionedSpecialists('Just a regular message', available),
+    ).toEqual([]);
   });
 });

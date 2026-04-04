@@ -57,7 +57,10 @@ describe('embedding-client', () => {
 
     it('embeds multiple texts in one call', async () => {
       mockEmbeddingsCreate.mockResolvedValueOnce(
-        makeOpenAIResponse([[0.1, 0.2], [0.3, 0.4]]),
+        makeOpenAIResponse([
+          [0.1, 0.2],
+          [0.3, 0.4],
+        ]),
       );
       process.env.EMBEDDING_PROVIDER = 'openai';
 
@@ -159,7 +162,10 @@ describe('embedding-client', () => {
       const { embed } = await import('./embedding-client.js');
       const result = await embed(['a', 'b']);
 
-      expect(result).toEqual([[0.1, 0.2], [0.3, 0.4]]);
+      expect(result).toEqual([
+        [0.1, 0.2],
+        [0.3, 0.4],
+      ]);
     });
 
     it('uses voyage-3 as default model', async () => {

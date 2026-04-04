@@ -98,7 +98,9 @@ vi.mock('./k8s/redis-client.js', () => ({
 }));
 
 vi.mock('./rag/retriever.js', () => ({
-  augmentPrompt: vi.fn((_folder: string, prompt: string) => Promise.resolve(prompt)),
+  augmentPrompt: vi.fn((_folder: string, prompt: string) =>
+    Promise.resolve(prompt),
+  ),
 }));
 
 vi.mock('./rag/indexer.js', () => ({
@@ -414,7 +416,9 @@ describe('index.ts internal functions', () => {
     });
 
     it('returns false when agent returns error and no output was sent', async () => {
-      const mockRunAgent = vi.fn().mockResolvedValue({ status: 'error', result: null });
+      const mockRunAgent = vi
+        .fn()
+        .mockResolvedValue({ status: 'error', result: null });
       const mockAgentRunner = {
         runAgent: mockRunAgent,
         writeTasksSnapshot: vi.fn(),
@@ -452,7 +456,9 @@ describe('index.ts internal functions', () => {
     });
 
     it('handles runAgent throwing an exception (returns false)', async () => {
-      const mockRunAgent = vi.fn().mockRejectedValue(new Error('Agent crashed'));
+      const mockRunAgent = vi
+        .fn()
+        .mockRejectedValue(new Error('Agent crashed'));
       const mockAgentRunner = {
         runAgent: mockRunAgent,
         writeTasksSnapshot: vi.fn(),
@@ -539,7 +545,13 @@ describe('index.ts internal functions', () => {
             _group: unknown,
             _input: unknown,
             _spec: unknown,
-            onOutput: ((r: { status: string; result: string | null; newSessionId?: string }) => Promise<void>) | undefined,
+            onOutput:
+              | ((r: {
+                  status: string;
+                  result: string | null;
+                  newSessionId?: string;
+                }) => Promise<void>)
+              | undefined,
           ) => {
             if (onOutput) {
               await onOutput({
@@ -599,13 +611,22 @@ describe('index.ts internal functions', () => {
             _group: unknown,
             _input: unknown,
             _spec: unknown,
-            onOutput: ((r: { status: string; result: string | null }) => Promise<void>) | undefined,
+            onOutput:
+              | ((r: {
+                  status: string;
+                  result: string | null;
+                }) => Promise<void>)
+              | undefined,
           ) => {
             if (onOutput) {
               // Stream a result to the user
               await onOutput({ status: 'success', result: 'Partial response' });
             }
-            return { status: 'error', result: null, error: 'Agent crashed mid-stream' };
+            return {
+              status: 'error',
+              result: null,
+              error: 'Agent crashed mid-stream',
+            };
           },
         );
       const mockAgentRunner = {
@@ -660,7 +681,9 @@ describe('index.ts internal functions', () => {
       };
       mockGetAllTasks.mockReturnValue([mockTask]);
 
-      const mockRunAgent = vi.fn().mockResolvedValue({ status: 'success', result: null });
+      const mockRunAgent = vi
+        .fn()
+        .mockResolvedValue({ status: 'success', result: null });
       const writeTasksSnapshot = vi.fn();
       const mockAgentRunner = {
         runAgent: mockRunAgent,
@@ -699,9 +722,7 @@ describe('index.ts internal functions', () => {
       expect(writeTasksSnapshot).toHaveBeenCalledWith(
         'test-group',
         true,
-        expect.arrayContaining([
-          expect.objectContaining({ id: 'task-1' }),
-        ]),
+        expect.arrayContaining([expect.objectContaining({ id: 'task-1' })]),
       );
     });
 
@@ -714,7 +735,12 @@ describe('index.ts internal functions', () => {
             _group: unknown,
             _input: unknown,
             _spec: unknown,
-            onOutput: ((r: { status: string; result: string | null }) => Promise<void>) | undefined,
+            onOutput:
+              | ((r: {
+                  status: string;
+                  result: string | null;
+                }) => Promise<void>)
+              | undefined,
           ) => {
             if (onOutput) {
               await onOutput({ status: 'error', result: null });
@@ -861,7 +887,9 @@ describe('index.ts internal functions', () => {
     });
 
     it('calls runAgent once with original prompt when no specialists are mentioned', async () => {
-      const specialists = [{ name: 'Research', prompt: 'You are a researcher.' }];
+      const specialists = [
+        { name: 'Research', prompt: 'You are a researcher.' },
+      ];
       mockLoadSpecialists.mockReturnValue(specialists);
       mockDetectMentionedSpecialists.mockReturnValue([]);
 
@@ -873,7 +901,9 @@ describe('index.ts internal functions', () => {
     });
 
     it('calls runAgent once with specialist-prefixed prompt when one specialist is mentioned', async () => {
-      const specialists = [{ name: 'Research', prompt: 'You are a researcher.' }];
+      const specialists = [
+        { name: 'Research', prompt: 'You are a researcher.' },
+      ];
       mockLoadSpecialists.mockReturnValue(specialists);
       mockDetectMentionedSpecialists.mockReturnValue([specialists[0]]);
 
@@ -931,7 +961,11 @@ describe('index.ts internal functions', () => {
       _setRegisteredGroups({ [chatJid]: group });
       mockGetMessagesSince.mockReturnValue([]);
       expect(() => _recoverPendingMessages()).not.toThrow();
-      expect(mockGetMessagesSince).toHaveBeenCalledWith(chatJid, '', expect.any(String));
+      expect(mockGetMessagesSince).toHaveBeenCalledWith(
+        chatJid,
+        '',
+        expect.any(String),
+      );
     });
 
     it('enqueues message check when pending messages exist', () => {
@@ -949,7 +983,11 @@ describe('index.ts internal functions', () => {
       ]);
       // Should not throw - queue.enqueueMessageCheck runs internally
       expect(() => _recoverPendingMessages()).not.toThrow();
-      expect(mockGetMessagesSince).toHaveBeenCalledWith(chatJid, '', expect.any(String));
+      expect(mockGetMessagesSince).toHaveBeenCalledWith(
+        chatJid,
+        '',
+        expect.any(String),
+      );
     });
   });
 });

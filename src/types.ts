@@ -66,16 +66,16 @@ export interface ToolSpec {
   parameters: Record<string, unknown>; // JSON Schema object
   image: string;
   pattern: 'http' | 'file' | 'acp';
-  port?: number;           // http/acp: port the user container listens on (default 8080)
-  command?: string[];      // optional entrypoint override for user container
+  port?: number; // http/acp: port the user container listens on (default 8080)
+  command?: string[]; // optional entrypoint override for user container
   pullPolicy?: 'Always' | 'IfNotPresent' | 'Never';
   memoryRequest?: string;
   memoryLimit?: string;
   cpuRequest?: string;
   cpuLimit?: string;
   // ACP-specific (only when pattern = 'acp')
-  acpAgentName?: string;   // Agent name on multi-agent ACP servers (defaults to tool name)
-  acpMode?: 'sync' | 'async';  // ACP execution mode (default: sync)
+  acpAgentName?: string; // Agent name on multi-agent ACP servers (defaults to tool name)
+  acpMode?: 'sync' | 'async'; // ACP execution mode (default: sync)
 }
 
 export interface ContainerConfig {
@@ -194,12 +194,12 @@ export type OnChatMetadata = (
 export interface McpServerSpec {
   name: string;
   image: string;
-  port?: number;                     // default 3000
-  path?: string;                     // MCP endpoint path, default "/mcp"
-  command?: string[];                // optional entrypoint override
-  env?: Record<string, string>;      // env vars for the server container
-  channels?: string[];               // which channels can access (empty = all)
-  allowedTools?: string[];           // tool name whitelist/globs (empty = all)
+  port?: number; // default 3000
+  path?: string; // MCP endpoint path, default "/mcp"
+  command?: string[]; // optional entrypoint override
+  env?: Record<string, string>; // env vars for the server container
+  channels?: string[]; // which channels can access (empty = all)
+  allowedTools?: string[]; // tool name whitelist/globs (empty = all)
   resources?: {
     memoryRequest?: string;
     memoryLimit?: string;
@@ -210,7 +210,7 @@ export interface McpServerSpec {
 
 export interface McpServerStatus {
   name: string;
-  url: string;                       // e.g. http://kubeclaw-mcp-weather:3000/mcp
+  url: string; // e.g. http://kubeclaw-mcp-weather:3000/mcp
   allowedTools?: string[];
 }
 

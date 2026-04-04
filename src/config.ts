@@ -5,7 +5,7 @@ import { logger } from './logger.js';
 import { readEnvFile } from './env.js';
 
 // --- LLM Provider Configuration ---
-export type KnownLLMProvider = 'claude' | 'openrouter';
+export type KnownLLMProvider = 'claude' | 'openrouter' | 'ollama';
 export type LLMProvider = string; // open for extension; KnownLLMProvider for built-in dispatch
 
 export interface LLMConfig {
@@ -27,7 +27,10 @@ export const ASSISTANT_HAS_OWN_NUMBER =
   (process.env.ASSISTANT_HAS_OWN_NUMBER ||
     envConfig.ASSISTANT_HAS_OWN_NUMBER) === 'true';
 export const POLL_INTERVAL = 2000;
-export const SCHEDULER_POLL_INTERVAL = parseInt(process.env.SCHEDULER_POLL_INTERVAL || '60000', 10);
+export const SCHEDULER_POLL_INTERVAL = parseInt(
+  process.env.SCHEDULER_POLL_INTERVAL || '60000',
+  10,
+);
 
 // Absolute paths needed for container mounts
 const PROJECT_ROOT = process.cwd();
@@ -50,11 +53,14 @@ export const STORE_DIR = path.resolve(PROJECT_ROOT, 'store');
 export const GROUPS_DIR = path.resolve(PROJECT_ROOT, 'groups');
 export const DATA_DIR = path.resolve(PROJECT_ROOT, 'data');
 
-export const KUBECLAW_MODE = (process.env.KUBECLAW_MODE || 'orchestrator') as 'orchestrator' | 'channel';
+export const KUBECLAW_MODE = (process.env.KUBECLAW_MODE || 'orchestrator') as
+  | 'orchestrator'
+  | 'channel';
 export const KUBECLAW_CHANNEL = process.env.KUBECLAW_CHANNEL || '';
 // Channel type for factory lookup — defaults to KUBECLAW_CHANNEL for backwards compat.
 // Set explicitly when the instance name differs from the type (e.g. "http-staging" instance, "http" type).
-export const KUBECLAW_CHANNEL_TYPE = process.env.KUBECLAW_CHANNEL_TYPE || KUBECLAW_CHANNEL;
+export const KUBECLAW_CHANNEL_TYPE =
+  process.env.KUBECLAW_CHANNEL_TYPE || KUBECLAW_CHANNEL;
 
 export const CONTAINER_TIMEOUT = parseInt(
   process.env.CONTAINER_TIMEOUT || '1800000',
@@ -83,6 +89,9 @@ export const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'openai/gpt-4o';
 export const OPENROUTER_BASE_URL =
   process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1';
 
+export const OLLAMA_HOST = process.env.OLLAMA_HOST || 'http://ollama:11434';
+export const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llama3.2';
+
 export const defaultLLMConfig: LLMConfig = {
   defaultProvider: DEFAULT_LLM_PROVIDER,
   openrouter: {
@@ -96,11 +105,14 @@ export const defaultLLMConfig: LLMConfig = {
 // KUBECLAW_CONTAINER_IMAGE_<PROVIDER> env var and fall back to the claude image.
 export function getContainerImage(provider: LLMProvider): string {
   if (provider === 'openrouter')
-    return process.env.OPENROUTER_CONTAINER_IMAGE || 'kubeclaw-agent:openrouter';
+    return (
+      process.env.OPENROUTER_CONTAINER_IMAGE || 'kubeclaw-agent:openrouter'
+    );
   if (provider === 'claude')
     return process.env.CLAUDE_CONTAINER_IMAGE || 'kubeclaw-agent:claude';
   if (provider === 'openai')
     return process.env.OPENAI_CONTAINER_IMAGE || 'kubeclaw-agent:latest';
+  if (provider === 'ollama') return process.env.OLLAMA_CONTAINER_IMAGE || 'kubeclaw-agent:latest';
   const envKey = `KUBECLAW_CONTAINER_IMAGE_${provider.toUpperCase().replace(/[^A-Z0-9]/g, '_')}`;
   return (
     process.env[envKey] ??
@@ -203,7 +215,8 @@ export const MAX_CONCURRENT_JOBS = Math.max(
 export const REDIS_ADMIN_PASSWORD = process.env.REDIS_ADMIN_PASSWORD || '';
 export const REDIS_USERNAME = process.env.REDIS_USERNAME || '';
 export const REDIS_AGENT_PASSWORD = process.env.REDIS_AGENT_PASSWORD || '';
-export const REDIS_TOOL_SERVER_PASSWORD = process.env.REDIS_TOOL_SERVER_PASSWORD || '';
+export const REDIS_TOOL_SERVER_PASSWORD =
+  process.env.REDIS_TOOL_SERVER_PASSWORD || '';
 export const REDIS_ADAPTER_PASSWORD = process.env.REDIS_ADAPTER_PASSWORD || '';
 export const ACL_ENCRYPTION_KEY = process.env.ACL_ENCRYPTION_KEY || '';
 
@@ -211,11 +224,12 @@ export const ACL_ENCRYPTION_KEY = process.env.ACL_ENCRYPTION_KEY || '';
 // Comma-separated glob patterns for permitted sidecar tool pod images.
 // Supports '*' wildcards (e.g. "kubeclaw-*:*,registry.example.com/*").
 // If empty, any image is permitted (log a warning).
-export const TOOL_IMAGE_ALLOWLIST: string[] =
-  (process.env.TOOL_IMAGE_ALLOWLIST || '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
+export const TOOL_IMAGE_ALLOWLIST: string[] = (
+  process.env.TOOL_IMAGE_ALLOWLIST || ''
+)
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
 
 /**
  * Returns true if `image` matches `pattern`, where `*` is a wildcard for
@@ -223,7 +237,9 @@ export const TOOL_IMAGE_ALLOWLIST: string[] =
  */
 function imageMatchesPattern(image: string, pattern: string): boolean {
   // Escape regex special chars except '*', then replace '*' with '.*'
-  const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
+  const escaped = pattern
+    .replace(/[.+?^${}()|[\]\\]/g, '\\$&')
+    .replace(/\*/g, '.*');
   return new RegExp(`^${escaped}$`).test(image);
 }
 
@@ -236,7 +252,9 @@ export function assertToolImageAllowed(image: string): void {
     // No restriction configured — all images permitted.
     return;
   }
-  const allowed = TOOL_IMAGE_ALLOWLIST.some((pattern) => imageMatchesPattern(image, pattern));
+  const allowed = TOOL_IMAGE_ALLOWLIST.some((pattern) =>
+    imageMatchesPattern(image, pattern),
+  );
   if (!allowed) {
     throw new Error(
       `Tool image '${image}' is not in TOOL_IMAGE_ALLOWLIST. ` +

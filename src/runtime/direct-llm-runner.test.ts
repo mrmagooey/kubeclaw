@@ -30,7 +30,9 @@ vi.mock('../k8s/job-runner.js', () => ({
   JobRunner: class {
     createToolPodJob = vi.fn().mockResolvedValue(undefined);
     createSidecarToolPodJob = vi.fn().mockResolvedValue(undefined);
-    runAgentJob = vi.fn().mockResolvedValue({ status: 'success', result: 'ok' });
+    runAgentJob = vi
+      .fn()
+      .mockResolvedValue({ status: 'success', result: 'ok' });
     cleanup = vi.fn().mockResolvedValue(undefined);
   },
   buildJobName: vi.fn((folder: string) => `job-${folder}`),
@@ -38,8 +40,12 @@ vi.mock('../k8s/job-runner.js', () => ({
 
 vi.mock('../k8s/redis-client.js', () => ({
   getRedisClient: vi.fn(() => mockRedisInstance),
-  getToolCallsStream: vi.fn((id: string, cat: string) => `tool-calls:${id}:${cat}`),
-  getToolResultsStream: vi.fn((id: string, cat: string) => `tool-results:${id}:${cat}`),
+  getToolCallsStream: vi.fn(
+    (id: string, cat: string) => `tool-calls:${id}:${cat}`,
+  ),
+  getToolResultsStream: vi.fn(
+    (id: string, cat: string) => `tool-results:${id}:${cat}`,
+  ),
   getSpawnToolPodStream: vi.fn(() => 'spawn-tool-pod'),
   getSpawnAgentJobStream: vi.fn(() => 'spawn-agent-job'),
   getAgentJobResultStream: vi.fn((id: string) => `agent-job-result:${id}`),
@@ -179,7 +185,12 @@ describe('DirectLLMRunner', () => {
     const { DirectLLMRunner } = await import('./direct-llm-runner.js');
     const runner = new DirectLLMRunner();
     const onOutput = vi.fn().mockResolvedValue(undefined);
-    const result = await runner.runAgent(baseGroup, baseInput, undefined, onOutput);
+    const result = await runner.runAgent(
+      baseGroup,
+      baseInput,
+      undefined,
+      onOutput,
+    );
 
     expect(onOutput).toHaveBeenCalledOnce();
     expect(onOutput).toHaveBeenCalledWith(
@@ -273,7 +284,10 @@ describe('DirectLLMRunner', () => {
 
     // Mock xread to return agent job result immediately (no requestId check for agent jobs)
     mockRedisInstance.xread.mockResolvedValue([
-      ['agent-result-stream', [['1-0', ['result', 'Agent completed the task', 'status', 'success']]]],
+      [
+        'agent-result-stream',
+        [['1-0', ['result', 'Agent completed the task', 'status', 'success']]],
+      ],
     ]);
 
     const { DirectLLMRunner } = await import('./direct-llm-runner.js');
@@ -288,7 +302,9 @@ describe('DirectLLMRunner', () => {
 
   it('runAgent includes custom tools from group containerConfig in LLM call', async () => {
     mockCreate.mockResolvedValueOnce({
-      choices: [{ message: { role: 'assistant', content: 'OK', tool_calls: [] } }],
+      choices: [
+        { message: { role: 'assistant', content: 'OK', tool_calls: [] } },
+      ],
     });
 
     const { DirectLLMRunner } = await import('./direct-llm-runner.js');
@@ -296,14 +312,20 @@ describe('DirectLLMRunner', () => {
     const groupWithTools = {
       ...baseGroup,
       containerConfig: {
-        tools: [{
-          name: 'home_control',
-          description: 'Control smart home devices',
-          parameters: { type: 'object', properties: { command: { type: 'string' } }, required: ['command'] },
-          image: 'my-ha:latest',
-          pattern: 'http' as const,
-          port: 8080,
-        }],
+        tools: [
+          {
+            name: 'home_control',
+            description: 'Control smart home devices',
+            parameters: {
+              type: 'object',
+              properties: { command: { type: 'string' } },
+              required: ['command'],
+            },
+            image: 'my-ha:latest',
+            pattern: 'http' as const,
+            port: 8080,
+          },
+        ],
       },
     };
 
@@ -320,21 +342,32 @@ describe('DirectLLMRunner', () => {
   it('runAgent spawns createSidecarToolPodJob when custom tool is called (standalone mode)', async () => {
     // First response: call custom tool
     mockCreate.mockResolvedValueOnce({
-      choices: [{
-        message: {
-          role: 'assistant',
-          content: null,
-          tool_calls: [{
-            id: 'call-custom',
-            type: 'function',
-            function: { name: 'home_control', arguments: '{"command":"turn on lights"}' },
-          }],
+      choices: [
+        {
+          message: {
+            role: 'assistant',
+            content: null,
+            tool_calls: [
+              {
+                id: 'call-custom',
+                type: 'function',
+                function: {
+                  name: 'home_control',
+                  arguments: '{"command":"turn on lights"}',
+                },
+              },
+            ],
+          },
         },
-      }],
+      ],
     });
     // Second response: final answer
     mockCreate.mockResolvedValueOnce({
-      choices: [{ message: { role: 'assistant', content: 'Lights on.', tool_calls: [] } }],
+      choices: [
+        {
+          message: { role: 'assistant', content: 'Lights on.', tool_calls: [] },
+        },
+      ],
     });
 
     // Capture the requestId from xadd so xread can return a matching result
@@ -347,7 +380,17 @@ describe('DirectLLMRunner', () => {
     });
     mockRedisInstance.xread.mockImplementation(async () => {
       if (!capturedRequestId) return null;
-      return [['stream', [['1-0', ['requestId', capturedRequestId, 'result', '"Lights turned on"']]]]];
+      return [
+        [
+          'stream',
+          [
+            [
+              '1-0',
+              ['requestId', capturedRequestId, 'result', '"Lights turned on"'],
+            ],
+          ],
+        ],
+      ];
     });
 
     const { DirectLLMRunner } = await import('./direct-llm-runner.js');
@@ -356,14 +399,16 @@ describe('DirectLLMRunner', () => {
     const groupWithTools = {
       ...baseGroup,
       containerConfig: {
-        tools: [{
-          name: 'home_control',
-          description: 'Control',
-          parameters: {},
-          image: 'my-ha:latest',
-          pattern: 'http' as const,
-          port: 8080,
-        }],
+        tools: [
+          {
+            name: 'home_control',
+            description: 'Control',
+            parameters: {},
+            image: 'my-ha:latest',
+            pattern: 'http' as const,
+            port: 8080,
+          },
+        ],
       },
     };
 
@@ -372,7 +417,10 @@ describe('DirectLLMRunner', () => {
     expect(jobRunner.createSidecarToolPodJob).toHaveBeenCalledWith(
       expect.objectContaining({
         toolName: 'home_control',
-        toolSpec: expect.objectContaining({ image: 'my-ha:latest', pattern: 'http' }),
+        toolSpec: expect.objectContaining({
+          image: 'my-ha:latest',
+          pattern: 'http',
+        }),
       }),
     );
     expect(jobRunner.createToolPodJob).not.toHaveBeenCalled();

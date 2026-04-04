@@ -28,6 +28,13 @@ spec:
       ports:
         - protocol: TCP
           port: 443
+    - to:
+        - podSelector:
+            matchLabels:
+              app: ollama
+      ports:
+        - protocol: TCP
+          port: 11434
 ---
 # Orchestrator: unrestricted egress (needs to create Jobs, call APIs, reach Redis).
 # Ingress restricted to port 8080 (health/metrics).

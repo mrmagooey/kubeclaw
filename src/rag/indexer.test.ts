@@ -35,7 +35,8 @@ describe('rag/indexer', () => {
   describe('indexText', () => {
     it('embeds and upserts text as a single chunk', async () => {
       const { indexText } = await import('./indexer.js');
-      const text = 'Hello world! This is a test sentence that is long enough to pass the chunk minimum length filter.';
+      const text =
+        'Hello world! This is a test sentence that is long enough to pass the chunk minimum length filter.';
       await indexText('mygroup', text, 'conversation');
 
       expect(mockEmbed).toHaveBeenCalledTimes(1);
@@ -61,12 +62,15 @@ describe('rag/indexer', () => {
 
     it('generates stable deterministic IDs for the same content', async () => {
       const { indexText } = await import('./indexer.js');
-      const text = 'same text that is definitely long enough to be indexed by the chunker correctly';
+      const text =
+        'same text that is definitely long enough to be indexed by the chunker correctly';
       await indexText('g', text, 'doc');
       const id1 = mockUpsertPoints.mock.calls[0][1][0].id;
 
       vi.clearAllMocks();
-      mockEmbed.mockImplementation(async (texts: string[]) => texts.map(() => [0.1, 0.2, 0.3]));
+      mockEmbed.mockImplementation(async (texts: string[]) =>
+        texts.map(() => [0.1, 0.2, 0.3]),
+      );
       await indexText('g', text, 'doc');
       const id2 = mockUpsertPoints.mock.calls[0][1][0].id;
 
@@ -75,12 +79,15 @@ describe('rag/indexer', () => {
 
     it('generates different IDs for different groups with same text', async () => {
       const { indexText } = await import('./indexer.js');
-      const text = 'same text that is definitely long enough to be indexed by the chunker correctly';
+      const text =
+        'same text that is definitely long enough to be indexed by the chunker correctly';
       await indexText('group-a', text, 'doc');
       const idA = mockUpsertPoints.mock.calls[0][1][0].id;
 
       vi.clearAllMocks();
-      mockEmbed.mockImplementation(async (texts: string[]) => texts.map(() => [0.1, 0.2, 0.3]));
+      mockEmbed.mockImplementation(async (texts: string[]) =>
+        texts.map(() => [0.1, 0.2, 0.3]),
+      );
       await indexText('group-b', text, 'doc');
       const idB = mockUpsertPoints.mock.calls[0][1][0].id;
 
@@ -97,7 +104,11 @@ describe('rag/indexer', () => {
     it('includes a timestamp in point payload', async () => {
       const before = Date.now();
       const { indexText } = await import('./indexer.js');
-      await indexText('g', 'some text that is long enough for the chunk filter minimum length requirement', 'doc');
+      await indexText(
+        'g',
+        'some text that is long enough for the chunk filter minimum length requirement',
+        'doc',
+      );
       const after = Date.now();
 
       const [, points] = mockUpsertPoints.mock.calls[0];

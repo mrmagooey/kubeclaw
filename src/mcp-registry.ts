@@ -31,7 +31,10 @@ function buildYaml(spec: McpServerSpec): string {
 
   const envBlock = spec.env
     ? Object.entries(spec.env)
-        .map(([k, v]) => `            - name: ${k}\n              value: ${JSON.stringify(v)}`)
+        .map(
+          ([k, v]) =>
+            `            - name: ${k}\n              value: ${JSON.stringify(v)}`,
+        )
         .join('\n')
     : '';
 
@@ -154,7 +157,10 @@ export async function removeMcpServer(name: string): Promise<void> {
     await jobRunner.deleteDeployment(depName, ns);
     await jobRunner.deleteService(depName, ns);
   } catch (err) {
-    logger.warn({ name, err }, 'Error deleting MCP server K8s resources (may already be gone)');
+    logger.warn(
+      { name, err },
+      'Error deleting MCP server K8s resources (may already be gone)',
+    );
   }
 
   dbDeleteMcpServer(name);
@@ -200,16 +206,31 @@ export async function notifyAllChannels(): Promise<void> {
   const hasUnrestricted = specs.some((s) => !s.channels?.length);
   if (hasUnrestricted) {
     // Add common channel names - channel pods that don't exist will just ignore it
-    for (const ch of ['http', 'telegram', 'discord', 'slack', 'whatsapp', 'irc', 'signal', 'gmail']) {
+    for (const ch of [
+      'http',
+      'telegram',
+      'discord',
+      'slack',
+      'whatsapp',
+      'irc',
+      'signal',
+      'gmail',
+    ]) {
       allChannels.add(ch);
     }
   }
 
   for (const channelName of allChannels) {
     const servers = getServersForChannel(channelName);
-    const msg = JSON.stringify({ command: 'mcp_update', servers: JSON.stringify(servers) });
+    const msg = JSON.stringify({
+      command: 'mcp_update',
+      servers: JSON.stringify(servers),
+    });
     await redis.publish(getControlChannel(channelName), msg);
-    logger.debug({ channel: channelName, serverCount: servers.length }, 'Published mcp_update');
+    logger.debug(
+      { channel: channelName, serverCount: servers.length },
+      'Published mcp_update',
+    );
   }
 }
 
@@ -227,7 +248,10 @@ export async function syncFromValues(specs: McpServerSpec[]): Promise<void> {
     } else {
       // Update spec in DB (image/config may have changed)
       setMcpServer(spec);
-      logger.debug({ name: spec.name }, 'Updated MCP server spec from values.yaml');
+      logger.debug(
+        { name: spec.name },
+        'Updated MCP server spec from values.yaml',
+      );
     }
   }
 }

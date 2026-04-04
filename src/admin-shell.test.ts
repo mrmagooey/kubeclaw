@@ -59,8 +59,10 @@ vi.mock('@kubernetes/client-node', () => {
     readNamespacedSecret: mockReadNamespacedSecret,
     createNamespacedSecret: mockCreateNamespacedSecret,
     patchNamespacedSecret: mockPatchNamespacedSecret,
-    readNamespacedPersistentVolumeClaim: mockReadNamespacedPersistentVolumeClaim,
-    createNamespacedPersistentVolumeClaim: mockCreateNamespacedPersistentVolumeClaim,
+    readNamespacedPersistentVolumeClaim:
+      mockReadNamespacedPersistentVolumeClaim,
+    createNamespacedPersistentVolumeClaim:
+      mockCreateNamespacedPersistentVolumeClaim,
   };
   const mockAppsV1 = {
     readNamespacedDeployment: mockReadNamespacedDeployment,
@@ -72,7 +74,9 @@ vi.mock('@kubernetes/client-node', () => {
   let callCount = 0;
   class MockKubeConfig {
     loadFromCluster() {}
-    makeApiClient() { return ++callCount === 1 ? mockCoreV1 : mockAppsV1; }
+    makeApiClient() {
+      return ++callCount === 1 ? mockCoreV1 : mockAppsV1;
+    }
   }
   return {
     KubeConfig: MockKubeConfig,
@@ -177,11 +181,14 @@ describe('executeTool', () => {
       expect(result).toContain('Registered group "New Group"');
       expect(result).toContain('tg:99999');
       expect(result).toContain('folder: new-group');
-      expect(mockSetRegisteredGroup).toHaveBeenCalledWith('tg:99999', expect.objectContaining({
-        name: 'New Group',
-        folder: 'new-group',
-        trigger: '@Bot',
-      }));
+      expect(mockSetRegisteredGroup).toHaveBeenCalledWith(
+        'tg:99999',
+        expect.objectContaining({
+          name: 'New Group',
+          folder: 'new-group',
+          trigger: '@Bot',
+        }),
+      );
     });
   });
 
@@ -225,15 +232,17 @@ describe('executeTool', () => {
     });
 
     it('returns formatted task list when populated', async () => {
-      mockGetAllScheduledTasks.mockReturnValue([{
-        id: 'task-abc',
-        group_folder: 'my-group',
-        status: 'active',
-        schedule_type: 'cron',
-        schedule_value: '0 9 * * *',
-        next_run: '2026-04-01T09:00:00.000Z',
-        last_run: null,
-      }]);
+      mockGetAllScheduledTasks.mockReturnValue([
+        {
+          id: 'task-abc',
+          group_folder: 'my-group',
+          status: 'active',
+          schedule_type: 'cron',
+          schedule_value: '0 9 * * *',
+          next_run: '2026-04-01T09:00:00.000Z',
+          last_run: null,
+        },
+      ]);
       const result = await executeTool('list_scheduled_tasks', {});
       expect(result).toContain('ID: task-abc');
       expect(result).toContain('Group: my-group');
@@ -262,8 +271,12 @@ describe('executeTool', () => {
 
   describe('clear_conversation', () => {
     it('clears history and returns confirmation', async () => {
-      const result = await executeTool('clear_conversation', { folder: 'test-group' });
-      expect(result).toContain('Cleared conversation history for group folder: test-group');
+      const result = await executeTool('clear_conversation', {
+        folder: 'test-group',
+      });
+      expect(result).toContain(
+        'Cleared conversation history for group folder: test-group',
+      );
       expect(mockClearConversationHistory).toHaveBeenCalledWith('test-group');
     });
   });
@@ -277,7 +290,11 @@ describe('executeTool', () => {
       });
       mockListNamespacedDeployment.mockResolvedValue({
         items: [
-          { metadata: { name: 'kubeclaw-channel-http' }, spec: { replicas: 1 }, status: { readyReplicas: 1 } },
+          {
+            metadata: { name: 'kubeclaw-channel-http' },
+            spec: { replicas: 1 },
+            status: { readyReplicas: 1 },
+          },
         ],
       });
       const result = await executeTool('get_orchestrator_status', {});
@@ -318,7 +335,10 @@ describe('executeTool', () => {
     it('tool definition includes instanceName parameter', () => {
       const setupTool = TOOLS.find((t) => t.function.name === 'setup_channel');
       expect(setupTool).toBeDefined();
-      const props = setupTool!.function.parameters?.properties as Record<string, unknown>;
+      const props = setupTool!.function.parameters?.properties as Record<
+        string,
+        unknown
+      >;
       expect(props.instanceName).toBeDefined();
     });
 
@@ -326,10 +346,25 @@ describe('executeTool', () => {
       // Mock K8s APIs for the full setup flow
       mockReadNamespacedSecret.mockRejectedValue(new Error('not found'));
       mockCreateNamespacedSecret.mockResolvedValue({});
-      mockReadNamespacedPersistentVolumeClaim.mockRejectedValue(new Error('not found'));
+      mockReadNamespacedPersistentVolumeClaim.mockRejectedValue(
+        new Error('not found'),
+      );
       mockCreateNamespacedPersistentVolumeClaim.mockResolvedValue({});
       mockReadNamespacedDeployment
-        .mockResolvedValueOnce({ spec: { template: { spec: { containers: [{ name: 'orchestrator', image: 'kubeclaw-orchestrator:latest' }] } } } }) // orchestrator lookup
+        .mockResolvedValueOnce({
+          spec: {
+            template: {
+              spec: {
+                containers: [
+                  {
+                    name: 'orchestrator',
+                    image: 'kubeclaw-orchestrator:latest',
+                  },
+                ],
+              },
+            },
+          },
+        }) // orchestrator lookup
         .mockRejectedValueOnce(new Error('not found')); // channel deployment doesn't exist
       mockCreateNamespacedDeployment.mockResolvedValue({});
 
@@ -340,31 +375,47 @@ describe('executeTool', () => {
       });
 
       // Verify secret uses instanceName
-      expect(mockCreateNamespacedSecret).toHaveBeenCalledWith(expect.objectContaining({
-        body: expect.objectContaining({
-          metadata: expect.objectContaining({ name: 'kubeclaw-http-staging-secrets' }),
+      expect(mockCreateNamespacedSecret).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: expect.objectContaining({
+            metadata: expect.objectContaining({
+              name: 'kubeclaw-http-staging-secrets',
+            }),
+          }),
         }),
-      }));
+      );
 
       // Verify PVCs use instanceName
-      expect(mockCreateNamespacedPersistentVolumeClaim).toHaveBeenCalledWith(expect.objectContaining({
-        body: expect.objectContaining({
-          metadata: expect.objectContaining({ name: 'kubeclaw-channel-http-staging-groups' }),
+      expect(mockCreateNamespacedPersistentVolumeClaim).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: expect.objectContaining({
+            metadata: expect.objectContaining({
+              name: 'kubeclaw-channel-http-staging-groups',
+            }),
+          }),
         }),
-      }));
+      );
 
       // Verify deployment uses instanceName
-      expect(mockCreateNamespacedDeployment).toHaveBeenCalledWith(expect.objectContaining({
-        body: expect.objectContaining({
-          metadata: expect.objectContaining({ name: 'kubeclaw-channel-http-staging' }),
+      expect(mockCreateNamespacedDeployment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: expect.objectContaining({
+            metadata: expect.objectContaining({
+              name: 'kubeclaw-channel-http-staging',
+            }),
+          }),
         }),
-      }));
+      );
 
       // Verify deployment env vars have both KUBECLAW_CHANNEL and KUBECLAW_CHANNEL_TYPE
       const deployCall = mockCreateNamespacedDeployment.mock.calls[0][0];
       const envVars = deployCall.body.spec.template.spec.containers[0].env;
-      const channelEnv = envVars.find((e: { name: string }) => e.name === 'KUBECLAW_CHANNEL');
-      const typeEnv = envVars.find((e: { name: string }) => e.name === 'KUBECLAW_CHANNEL_TYPE');
+      const channelEnv = envVars.find(
+        (e: { name: string }) => e.name === 'KUBECLAW_CHANNEL',
+      );
+      const typeEnv = envVars.find(
+        (e: { name: string }) => e.name === 'KUBECLAW_CHANNEL_TYPE',
+      );
       expect(channelEnv.value).toBe('http-staging');
       expect(typeEnv.value).toBe('http');
     });
@@ -372,26 +423,52 @@ describe('executeTool', () => {
     it('defaults instanceName to type when not provided', async () => {
       mockReadNamespacedSecret.mockRejectedValue(new Error('not found'));
       mockCreateNamespacedSecret.mockResolvedValue({});
-      mockReadNamespacedPersistentVolumeClaim.mockRejectedValue(new Error('not found'));
+      mockReadNamespacedPersistentVolumeClaim.mockRejectedValue(
+        new Error('not found'),
+      );
       mockCreateNamespacedPersistentVolumeClaim.mockResolvedValue({});
       mockReadNamespacedDeployment
-        .mockResolvedValueOnce({ spec: { template: { spec: { containers: [{ name: 'orchestrator', image: 'kubeclaw-orchestrator:latest' }] } } } })
+        .mockResolvedValueOnce({
+          spec: {
+            template: {
+              spec: {
+                containers: [
+                  {
+                    name: 'orchestrator',
+                    image: 'kubeclaw-orchestrator:latest',
+                  },
+                ],
+              },
+            },
+          },
+        })
         .mockRejectedValueOnce(new Error('not found'));
       mockCreateNamespacedDeployment.mockResolvedValue({});
 
-      await executeTool('setup_channel', { type: 'http', httpUsers: 'bob:pass' });
+      await executeTool('setup_channel', {
+        type: 'http',
+        httpUsers: 'bob:pass',
+      });
 
       // Without instanceName, should use type as the name
-      expect(mockCreateNamespacedSecret).toHaveBeenCalledWith(expect.objectContaining({
-        body: expect.objectContaining({
-          metadata: expect.objectContaining({ name: 'kubeclaw-http-secrets' }),
+      expect(mockCreateNamespacedSecret).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: expect.objectContaining({
+            metadata: expect.objectContaining({
+              name: 'kubeclaw-http-secrets',
+            }),
+          }),
         }),
-      }));
-      expect(mockCreateNamespacedDeployment).toHaveBeenCalledWith(expect.objectContaining({
-        body: expect.objectContaining({
-          metadata: expect.objectContaining({ name: 'kubeclaw-channel-http' }),
+      );
+      expect(mockCreateNamespacedDeployment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: expect.objectContaining({
+            metadata: expect.objectContaining({
+              name: 'kubeclaw-channel-http',
+            }),
+          }),
         }),
-      }));
+      );
     });
   });
 
@@ -415,7 +492,11 @@ describe('executeTool', () => {
 
       // Now populated
       mockGetAllRegisteredGroups.mockReturnValue({
-        'test:prog': { name: 'Progressive', folder: 'progressive', trigger: '@P' },
+        'test:prog': {
+          name: 'Progressive',
+          folder: 'progressive',
+          trigger: '@P',
+        },
       });
       const populated = await executeTool('list_groups', {});
       expect(populated).toContain('test:prog');

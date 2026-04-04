@@ -148,7 +148,10 @@ export class McpManager {
 
   private async connectServer(status: McpServerStatus): Promise<void> {
     const url = new URL(status.url);
-    const client = new Client({ name: `kubeclaw-${status.name}`, version: '1.0.0' });
+    const client = new Client({
+      name: `kubeclaw-${status.name}`,
+      version: '1.0.0',
+    });
 
     let transport: StreamableHTTPClientTransport | SSEClientTransport;
 
@@ -158,7 +161,10 @@ export class McpManager {
       await client.connect(transport);
     } catch {
       // Fall back to SSE transport (legacy MCP servers)
-      const sseClient = new Client({ name: `kubeclaw-${status.name}`, version: '1.0.0' });
+      const sseClient = new Client({
+        name: `kubeclaw-${status.name}`,
+        version: '1.0.0',
+      });
       transport = new SSEClientTransport(url);
       await sseClient.connect(transport);
       // Use the SSE client instead
@@ -181,14 +187,21 @@ export class McpManager {
     const tools: OpenAI.ChatCompletionTool[] = [];
     for (const tool of allTools) {
       // Apply allowedTools filter
-      if (status.allowedTools?.length && !isToolAllowed(tool.name, status.allowedTools)) {
+      if (
+        status.allowedTools?.length &&
+        !isToolAllowed(tool.name, status.allowedTools)
+      ) {
         continue;
       }
 
       // Check for name collision with existing tools
       if (this.toolToServer.has(tool.name)) {
         logger.warn(
-          { tool: tool.name, server: status.name, existingServer: this.toolToServer.get(tool.name) },
+          {
+            tool: tool.name,
+            server: status.name,
+            existingServer: this.toolToServer.get(tool.name),
+          },
           'MCP tool name collision, skipping (first server wins)',
         );
         continue;
@@ -208,9 +221,18 @@ export class McpManager {
       });
     }
 
-    this.servers.set(status.name, { name: status.name, client, transport, tools });
+    this.servers.set(status.name, {
+      name: status.name,
+      client,
+      transport,
+      tools,
+    });
     logger.info(
-      { server: status.name, toolCount: tools.length, totalDiscovered: allTools.length },
+      {
+        server: status.name,
+        toolCount: tools.length,
+        totalDiscovered: allTools.length,
+      },
       'Connected to MCP server',
     );
   }
@@ -219,7 +241,10 @@ export class McpManager {
     try {
       await server.client.close();
     } catch (err) {
-      logger.warn({ server: server.name, err }, 'Error disconnecting MCP server');
+      logger.warn(
+        { server: server.name, err },
+        'Error disconnecting MCP server',
+      );
     }
   }
 }

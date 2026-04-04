@@ -13,8 +13,8 @@ import {
 
 export interface JobInput extends ContainerInput {
   jobId?: string;
-  groupsPvc?: string;    // override PVC name for channel pod agent jobs
-  sessionsPvc?: string;  // override PVC name for channel pod agent jobs
+  groupsPvc?: string; // override PVC name for channel pod agent jobs
+  sessionsPvc?: string; // override PVC name for channel pod agent jobs
 }
 
 export interface JobOutput extends ContainerOutput {
@@ -54,8 +54,8 @@ export interface AgentJobSpec {
   // Additional volumes
   additionalMounts?: AdditionalMount[];
   // PVC override — used when agent job runs on behalf of a channel pod
-  groupsPvc?: string;    // defaults to 'kubeclaw-groups'
-  sessionsPvc?: string;  // defaults to 'kubeclaw-sessions'
+  groupsPvc?: string; // defaults to 'kubeclaw-groups'
+  sessionsPvc?: string; // defaults to 'kubeclaw-sessions'
   // Superuser mode: grants direct local tool access in the agent container
   superuser?: boolean;
 }
@@ -143,9 +143,9 @@ export interface TaskRequest {
     | 'remove_mcp_server'
     | 'list_mcp_servers';
   taskId?: string;
-  yaml?: string;  // deploy_channel: Kubernetes YAML to apply
-  channelName?: string;  // control_channel: target channel pod name (e.g. 'telegram')
-  command?: 'reload';    // control_channel: command to send
+  yaml?: string; // deploy_channel: Kubernetes YAML to apply
+  channelName?: string; // control_channel: target channel pod name (e.g. 'telegram')
+  command?: 'reload'; // control_channel: command to send
   prompt?: string;
   schedule_type?: 'cron' | 'interval' | 'once';
   schedule_value?: string;
@@ -165,10 +165,10 @@ export interface TaskRequest {
   image?: string;
   port?: string;
   path?: string;
-  env?: string;        // JSON-encoded Record<string, string>
-  channels?: string;   // JSON-encoded string[]
+  env?: string; // JSON-encoded Record<string, string>
+  channels?: string; // JSON-encoded string[]
   allowedTools?: string; // JSON-encoded string[]
-  resources?: string;    // JSON-encoded resource limits
+  resources?: string; // JSON-encoded resource limits
   resultStream?: string; // for list_mcp_servers result
 }
 
@@ -177,15 +177,15 @@ export interface ToolPodJobSpec {
   groupFolder: string;
   category: 'execution' | 'browser';
   timeout: number;
-  provider?: string;     // inherit parent agent's provider for image selection
-  groupsPvc?: string;    // defaults to 'kubeclaw-groups'
-  sessionsPvc?: string;  // defaults to 'kubeclaw-sessions'
+  provider?: string; // inherit parent agent's provider for image selection
+  groupsPvc?: string; // defaults to 'kubeclaw-groups'
+  sessionsPvc?: string; // defaults to 'kubeclaw-sessions'
 }
 
 export interface SidecarToolPodJobSpec {
   agentJobId: string;
   groupFolder: string;
-  toolName: string;       // used as Redis stream "category" key
+  toolName: string; // used as Redis stream "category" key
   toolSpec: ToolSpec;
   timeout: number;
   groupsPvc?: string;
@@ -214,7 +214,7 @@ export interface DistributedQueueItem {
 }
 
 export interface RawAttachment {
-  rawPath: string;   // relative path e.g. "attachments/raw/img-123.jpg"
+  rawPath: string; // relative path e.g. "attachments/raw/img-123.jpg"
   mediaType: string; // e.g. "image/jpeg" or "application/pdf"
   caption?: string;
 }

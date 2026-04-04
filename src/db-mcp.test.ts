@@ -61,7 +61,11 @@ describe('MCP Server DB operations', () => {
 
     it('updates existing server spec (upsert)', () => {
       setMcpServer(weatherSpec);
-      const updatedSpec = { ...weatherSpec, image: 'mcp/weather:v2', port: 4000 };
+      const updatedSpec = {
+        ...weatherSpec,
+        image: 'mcp/weather:v2',
+        port: 4000,
+      };
       setMcpServer(updatedSpec);
 
       const result = getMcpServer('weather');

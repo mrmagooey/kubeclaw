@@ -948,6 +948,22 @@ function buildModel(): Model<Api> {
     };
   }
 
+  if (provider === 'ollama') {
+    const modelId = process.env.OLLAMA_MODEL || 'llama3.2';
+    return {
+      id: modelId,
+      name: modelId,
+      api: 'openai-completions',
+      provider: 'ollama',
+      baseUrl: `${process.env.OLLAMA_HOST || 'http://ollama:11434'}/v1`,
+      reasoning: false,
+      input: ['text'],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 128000,
+      maxTokens: 4096,
+    };
+  }
+
   // Default: OpenAI-compatible
   const modelId = process.env.OPENAI_MODEL || process.env.DIRECT_LLM_MODEL || 'gpt-4o';
   return {
@@ -968,6 +984,7 @@ function getApiKeyForProvider(provider: string): string | undefined {
   if (provider === 'openrouter') {
     return process.env.OPENROUTER_API_KEY;
   }
+  if (provider === 'ollama') return 'ollama';
   return process.env.OPENAI_API_KEY;
 }
 

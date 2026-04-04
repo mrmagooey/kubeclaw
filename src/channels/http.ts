@@ -1,4 +1,9 @@
-import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http';
+import {
+  createServer,
+  type Server,
+  type IncomingMessage,
+  type ServerResponse,
+} from 'node:http';
 
 import { ASSISTANT_NAME } from '../config.js';
 import { readEnvFile } from '../env.js';
@@ -137,10 +142,15 @@ export class HttpChannel implements Channel {
     return new Promise((resolve, reject) => {
       this.server!.listen(this.config.port, () => {
         const users = Object.keys(this.config.users);
-        logger.info({ port: this.config.port, users }, 'HTTP channel listening');
+        logger.info(
+          { port: this.config.port, users },
+          'HTTP channel listening',
+        );
         console.log(`\n  HTTP chat: http://localhost:${this.config.port}`);
         console.log(`  Users: ${users.join(', ')}`);
-        console.log(`  Register each user as a group with JID: http:{username}\n`);
+        console.log(
+          `  Register each user as a group with JID: http:{username}\n`,
+        );
         resolve();
       });
       this.server!.on('error', reject);
@@ -315,7 +325,10 @@ export class HttpChannel implements Channel {
           client.res.write(ssePayload);
         }
       } catch (err) {
-        logger.debug({ jid, err }, 'SSE write failed — client likely disconnected');
+        logger.debug(
+          { jid, err },
+          'SSE write failed — client likely disconnected',
+        );
       }
     }
 
@@ -357,8 +370,7 @@ function parseConfig(): HttpConfig | null {
   );
 
   // HTTP_CHANNEL_USERS format: "alice:pass1,bob:pass2"
-  const usersStr =
-    process.env.HTTP_CHANNEL_USERS || envVars.HTTP_CHANNEL_USERS;
+  const usersStr = process.env.HTTP_CHANNEL_USERS || envVars.HTTP_CHANNEL_USERS;
 
   if (!usersStr) {
     logger.warn(
