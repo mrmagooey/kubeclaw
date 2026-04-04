@@ -12,9 +12,14 @@
  */
 import { describe, it, expect, beforeAll } from 'vitest';
 import { getMockLlmPort } from './setup.js';
+import { _initTestDatabase } from '../src/db.js';
 
 describe('DirectLLMRunner', () => {
-  beforeAll(() => {
+  beforeAll(async () => {
+    // Ensure the test database is initialized even if Redis was unavailable
+    // during the global setup (setup.ts skips _initTestDatabase on Redis failure).
+    await _initTestDatabase();
+
     const port = getMockLlmPort();
     if (!port) return;
     // Point the LLM client at the mock server before any runner is constructed.

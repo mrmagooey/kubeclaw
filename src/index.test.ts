@@ -73,14 +73,29 @@ vi.mock('./router.js', async (importOriginal) => {
   };
 });
 
-vi.mock('./runtime/index.js', async (importOriginal) => {
-  const actual = await importOriginal();
-  return {
-    ...(actual as any),
-    getAgentRunner: vi.fn(),
-    getRunnerForGroup: vi.fn(),
-  };
-});
+vi.mock('./runtime/index.js', () => ({
+  getAgentRunner: vi.fn(),
+  getRunnerForGroup: vi.fn(),
+  shutdownAllRunners: vi.fn(),
+}));
+
+vi.mock('./k8s/ipc-redis.js', () => ({
+  startIpcWatcher: vi.fn(),
+  startToolPodSpawnWatcher: vi.fn(),
+  startAgentJobSpawnWatcher: vi.fn(),
+  startTaskRequestWatcher: vi.fn(),
+  stopIpcWatcher: vi.fn(),
+}));
+
+vi.mock('./k8s/redis-client.js', () => ({
+  getOutputChannel: vi.fn().mockReturnValue('kubeclaw:output:test'),
+  getRedisClient: vi.fn().mockReturnValue({
+    xadd: vi.fn(),
+    xread: vi.fn(),
+    quit: vi.fn(),
+  }),
+  getRedisSubscriber: vi.fn(),
+}));
 
 vi.mock('./rag/retriever.js', () => ({
   augmentPrompt: vi.fn((_folder: string, prompt: string) => Promise.resolve(prompt)),

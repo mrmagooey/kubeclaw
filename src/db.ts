@@ -561,7 +561,7 @@ export function updateTask(
   updates: Partial<
     Pick<
       ScheduledTask,
-      'prompt' | 'schedule_type' | 'schedule_value' | 'next_run' | 'status'
+      'prompt' | 'schedule_type' | 'schedule_value' | 'next_run' | 'status' | 'last_result'
     >
   >,
 ): void {
@@ -587,6 +587,10 @@ export function updateTask(
   if (updates.status !== undefined) {
     fields.push('status = ?');
     values.push(updates.status);
+  }
+  if (updates.last_result !== undefined) {
+    fields.push('last_result = ?');
+    values.push(updates.last_result);
   }
 
   if (fields.length === 0) return;

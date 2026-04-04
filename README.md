@@ -58,7 +58,7 @@ Tell it in plain English: `"set up Telegram"` — it will ask for your credentia
 
 **Skills over features.** Instead of adding features (e.g. support for Telegram) to the codebase, contributors submit [claude code skills](https://code.claude.com/docs/en/skills) like `/add-telegram` that transform your fork. You end up with clean code that does exactly what you need.
 
-**Best harness, best model.** KubeClaw runs on the Claude Agent SDK, which means you're running Claude Code directly. Claude Code is highly capable and its coding and problem-solving capabilities allow it to modify and expand KubeClaw and tailor it to each user.
+**Best harness, best model.** KubeClaw runs on [pi-agent-core](https://github.com/badlogic/pi-mono), giving you access to 20+ LLM providers including Anthropic, OpenAI, Google, Groq, Ollama, and more — route different groups to different models based on cost or capability. Claude Code guides setup, customization, and debugging.
 
 ## What It Supports
 
@@ -68,7 +68,7 @@ Tell it in plain English: `"set up Telegram"` — it will ask for your credentia
 - **Scheduled tasks** - Recurring jobs that run Claude and can message you back
 - **Web access** - Search and fetch content from the Web
 - **Agent Swarms** - Spin up teams of specialized agents that collaborate on complex tasks. KubeClaw is the first personal AI assistant to support agent swarms.
-- **Dual LLM provider support** - Use Claude (via Claude Code) or OpenRouter (access to 100+ models including GPT-4o, Llama, and more)
+- **Multi-provider LLM support** - Route groups to any of 20+ providers including Anthropic, OpenAI, Google, Groq, Ollama, OpenRouter, and more. Mix and match models per group for cost or capability.
 - **Optional integrations** - Add Gmail (`/add-gmail`) and more via skills
 
 ## Usage
@@ -120,7 +120,7 @@ Skills we'd like to see:
 
 **Session Management**
 
-- `/clear` - Add a `/clear` command that compacts the conversation (summarizes context while preserving critical information in the same session). Requires figuring out how to trigger compaction programmatically via the Claude Agent SDK.
+- `/clear` - Add a `/clear` command that compacts the conversation (summarizes context while preserving critical information in the same session).
 
 ## Requirements
 
@@ -132,7 +132,7 @@ Skills we'd like to see:
 ## Architecture
 
 ```
-Channels → SQLite → Polling loop → Kubernetes Job (Claude Agent SDK) → Redis IPC → Response
+Channels → SQLite → Polling loop → Kubernetes Job (pi-agent-core) → Redis IPC → Response
 ```
 
 Single Node.js process. Channels are added via skills and self-register at startup — the orchestrator connects whichever ones have credentials present. Agents execute as Kubernetes Jobs with filesystem isolation and network policies. Only mounted directories are accessible. Per-group message queue with concurrency control. IPC via Redis Pub/Sub + Streams.
@@ -202,33 +202,25 @@ We don't want configuration sprawl. Every user should customize KubeClaw so that
 
 **Can I use third-party or open-source models?**
 
-Yes. KubeClaw supports multiple LLM providers:
+Yes. KubeClaw uses [pi-agent-core](https://github.com/badlogic/pi-mono) which supports 20+ providers out of the box. Each group can be routed to a different provider and model. Common options:
 
-**Option 1: OpenRouter (Recommended for multi-model access)**
+**Anthropic (default)**
+```bash
+ANTHROPIC_API_KEY=sk-ant-...
+```
 
-Set up OpenRouter to access 100+ models including GPT-4o, Llama, and more:
-
+**OpenRouter (100+ models)**
 ```bash
 OPENROUTER_API_KEY=your-key-here
 OPENROUTER_MODEL=openai/gpt-4o
 ```
 
-See [docs/OPENROUTER.md](docs/OPENROUTER.md) for detailed configuration.
-
-**Option 2: Claude API-compatible endpoints**
-
-For endpoints that support the Anthropic API format:
-
+**Local models via Ollama**
 ```bash
-ANTHROPIC_BASE_URL=https://your-api-endpoint.com
-ANTHROPIC_AUTH_TOKEN=your-token-here
+OLLAMA_HOST=http://localhost:11434
 ```
 
-This allows you to use:
-
-- Local models via [Ollama](https://ollama.ai) with an API proxy
-- Open-source models hosted on [Together AI](https://together.ai), [Fireworks](https://fireworks.ai), etc.
-- Custom model deployments with Anthropic-compatible APIs
+**Google, Groq, and others** — set the relevant API key and model in the group's provider config. See [docs/OPENROUTER.md](docs/OPENROUTER.md) for full provider configuration.
 
 **How do I debug issues?**
 

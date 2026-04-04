@@ -102,6 +102,7 @@ async function runTask(
   );
 
   if (!group) {
+    const errorMsg = `Group not found: ${task.group_folder}`;
     logger.error(
       { taskId: task.id, groupFolder: task.group_folder },
       'Group not found for task',
@@ -112,8 +113,11 @@ async function runTask(
       duration_ms: Date.now() - startTime,
       status: 'error',
       result: null,
-      error: `Group not found: ${task.group_folder}`,
+      error: errorMsg,
     });
+    // Update last_result so callers can detect that the task was processed,
+    // but preserve the current status (don't mark as completed).
+    updateTask(task.id, { last_result: `Error: ${errorMsg}` });
     return;
   }
 
@@ -246,7 +250,9 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
       logger.error({ err }, 'Error in scheduler loop');
     }
 
-    setTimeout(loop, SCHEDULER_POLL_INTERVAL);
+    // Re-read interval each iteration to allow tests to override via env var
+    const pollMs = parseInt(process.env.SCHEDULER_POLL_INTERVAL || '', 10) || SCHEDULER_POLL_INTERVAL;
+    setTimeout(loop, pollMs);
   };
 
   loop();

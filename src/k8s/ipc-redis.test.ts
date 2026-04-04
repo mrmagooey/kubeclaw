@@ -77,6 +77,8 @@ vi.mock('../db.js', () => ({
   createTask: vi.fn(),
   deleteTask: vi.fn(),
   getTaskById: vi.fn(),
+  getTasksForGroup: vi.fn().mockReturnValue([]),
+  getAllRegisteredGroups: vi.fn().mockReturnValue({}),
   updateTask: vi.fn(),
 }));
 

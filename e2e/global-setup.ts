@@ -195,29 +195,26 @@ export default async function setup() {
   await waitForRedisPod();
   console.log('✅ Redis pod running\n');
 
-  // Configure Redis default user with the admin password.
-  // Redis 7.2+ ignores --requirepass when --aclfile is set; the empty ACL
-  // file wins and makes the default user "nopass", which causes AUTH to fail.
-  // We set the password explicitly here so the orchestrator can authenticate.
-  console.log('🔑 Configuring Redis ACL default user password...');
+  // The Redis ACL init container disables the default user and creates named
+  // users. Tests must authenticate as the "orchestrator" user which has full
+  // permissions and uses the admin password from the Helm values.
+  console.log('🔑 Verifying Redis ACL connectivity with orchestrator user...');
   try {
-    spawnSync(
+    const aclCheck = spawnSync(
       'kubectl',
       [
         'exec', '-n', NAMESPACE, 'kubeclaw-redis-0', '--',
-        'redis-cli', 'ACL', 'SETUSER', 'default', 'on',
-        `>${E2E_REDIS_PASSWORD}`, '~*', '&*', '+@all',
+        'redis-cli', '--user', 'orchestrator', '-a', E2E_REDIS_PASSWORD, 'PING',
       ],
       { encoding: 'utf8', stdio: 'pipe' },
     );
-    spawnSync(
-      'kubectl',
-      ['exec', '-n', NAMESPACE, 'kubeclaw-redis-0', '--', 'redis-cli', '-a', E2E_REDIS_PASSWORD, 'ACL', 'SAVE'],
-      { encoding: 'utf8', stdio: 'pipe' },
-    );
-    console.log('✅ Redis ACL configured\n');
+    if (aclCheck.stdout?.trim() === 'PONG') {
+      console.log('✅ Redis ACL verified (orchestrator user)\n');
+    } else {
+      console.warn(`⚠️  Redis ACL check returned: ${aclCheck.stdout?.trim()}\n`);
+    }
   } catch (err) {
-    console.warn(`⚠️  Could not configure Redis ACL: ${err}\n`);
+    console.warn(`⚠️  Could not verify Redis ACL: ${err}\n`);
   }
 
   // Set up a port-forward so e2e tests can subscribe/publish to the SAME
@@ -240,17 +237,27 @@ export default async function setup() {
       { stdio: 'ignore', detached: false },
     );
 
-    // Give it a moment to establish
-    await sleep(2000);
-
-    // Verify the port is open
-    execSync(`nc -z localhost ${KUBECLAW_REDIS_LOCAL_PORT}`, { stdio: 'pipe' });
+    // Wait for port-forward to establish (retry up to 10s)
+    let portReady = false;
+    for (let i = 0; i < 5; i++) {
+      await sleep(2000);
+      const ncResult = spawnSync('nc', ['-z', 'localhost', String(KUBECLAW_REDIS_LOCAL_PORT)], { stdio: 'pipe' });
+      if (ncResult.status === 0) {
+        portReady = true;
+        break;
+      }
+      console.log(`   Port-forward not ready yet, retrying... (${i + 1}/5)`);
+    }
+    if (!portReady) {
+      throw new Error(`Port-forward to localhost:${KUBECLAW_REDIS_LOCAL_PORT} failed after 10s`);
+    }
     console.log(
       `✅ kubeclaw-redis port-forward active on localhost:${KUBECLAW_REDIS_LOCAL_PORT}\n`,
     );
 
-    // Tell all test files to use this forwarded Redis (password included)
-    process.env.KUBECLAW_REDIS_URL = `redis://:${E2E_REDIS_PASSWORD}@localhost:${KUBECLAW_REDIS_LOCAL_PORT}`;
+    // Tell all test files to use this forwarded Redis.
+    // Use the "orchestrator" ACL user which has full permissions.
+    process.env.KUBECLAW_REDIS_URL = `redis://orchestrator:${E2E_REDIS_PASSWORD}@localhost:${KUBECLAW_REDIS_LOCAL_PORT}`;
     // Also set REDIS_URL so tests that use process.env.REDIS_URL pick up the same instance
     process.env.REDIS_URL = process.env.KUBECLAW_REDIS_URL;
   } catch (err) {

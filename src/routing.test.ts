@@ -1,5 +1,29 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
+vi.mock('./runtime/index.js', () => ({
+  getAgentRunner: vi.fn(),
+  getRunnerForGroup: vi.fn(),
+  shutdownAllRunners: vi.fn(),
+}));
+
+vi.mock('./k8s/ipc-redis.js', () => ({
+  startIpcWatcher: vi.fn(),
+  startToolPodSpawnWatcher: vi.fn(),
+  startAgentJobSpawnWatcher: vi.fn(),
+  startTaskRequestWatcher: vi.fn(),
+  stopIpcWatcher: vi.fn(),
+}));
+
+vi.mock('./k8s/redis-client.js', () => ({
+  getOutputChannel: vi.fn().mockReturnValue('kubeclaw:output:test'),
+  getRedisClient: vi.fn().mockReturnValue({
+    xadd: vi.fn(),
+    xread: vi.fn(),
+    quit: vi.fn(),
+  }),
+  getRedisSubscriber: vi.fn(),
+}));
+
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from './config.js';
 import { _initTestDatabase, getAllChats, storeChatMetadata } from './db.js';
 import { getAvailableGroups, _setRegisteredGroups } from './index.js';

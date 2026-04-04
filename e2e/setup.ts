@@ -51,26 +51,41 @@ beforeAll(async () => {
   mockLlmPort = await startMockLLMServer({});
   console.log(`   Mock LLM running on port ${mockLlmPort}\n`);
 
+  // Always initialize the test database — it uses an in-memory SQLite DB
+  // and does not depend on Redis.
+  console.log('🗄️ Initializing test database...');
+  await _initTestDatabase();
+  console.log('✅ Test database initialized\n');
+
   const redisUrl = getRedisUrl();
   console.log(`\n🔌 Connecting to Redis: ${redisUrl}`);
 
   const { default: Redis } = await import('ioredis');
-  sharedRedis = new Redis(redisUrl, {
-    connectTimeout: 10000,
-    maxRetriesPerRequest: 3,
-  });
 
-  try {
-    await sharedRedis.ping();
-    console.log('✅ Redis connected successfully\n');
+  // Retry Redis connection with backoff — when many test forks start simultaneously,
+  // the kubectl port-forward may briefly refuse connections under load.
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    sharedRedis = new Redis(redisUrl, {
+      connectTimeout: 10000,
+      maxRetriesPerRequest: 3,
+      lazyConnect: true,
+    });
 
-    // Initialize test database (only when Redis is available)
-    console.log('🗄️ Initializing test database...');
-    await _initTestDatabase();
-    console.log('✅ Test database initialized\n');
-  } catch (error) {
-    console.warn(`⚠️  Redis not available at ${redisUrl} — tests that require Redis will be skipped\n`);
-    sharedRedis = null;
+    try {
+      await sharedRedis.connect();
+      await sharedRedis.ping();
+      console.log('✅ Redis connected successfully\n');
+      break;
+    } catch (error) {
+      await sharedRedis.quit().catch(() => {});
+      sharedRedis = null;
+      if (attempt < 5) {
+        console.warn(`   Redis connection attempt ${attempt}/5 failed, retrying in 2s...`);
+        await new Promise((r) => setTimeout(r, 2000));
+      } else {
+        console.warn(`⚠️  Redis not available at ${redisUrl} — tests that require Redis will be skipped\n`);
+      }
+    }
   }
 
   testNamespace = `test-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;

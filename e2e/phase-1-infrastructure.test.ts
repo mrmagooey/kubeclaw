@@ -60,21 +60,39 @@ describe('Phase 1: Infrastructure', () => {
   });
 
   describe('Redis', () => {
-    it('should have Redis connection available', async () => {
-      if (!isKubeclawDeployed()) return;
+    /** Connect to Redis with retries (port-forward may take a moment under load). */
+    async function connectWithRetry(): Promise<import('ioredis').Redis> {
       const { default: Redis } = await import('ioredis');
+      const url = process.env.REDIS_URL || 'redis://localhost:6379';
 
-      const redis = new Redis(
-        process.env.REDIS_URL || 'redis://localhost:6379',
-        {
-          connectTimeout: 5000,
+      // Retry connection up to 10 times with 3s delays to handle port-forward
+      // congestion when many test forks start simultaneously.
+      for (let attempt = 1; attempt <= 10; attempt++) {
+        const redis = new Redis(url, {
+          connectTimeout: 10000,
           maxRetriesPerRequest: 1,
           lazyConnect: true,
-        },
-      );
+        });
+        try {
+          await redis.connect();
+          await redis.ping();
+          return redis;
+        } catch {
+          await redis.quit().catch(() => {});
+          if (attempt < 10) {
+            await new Promise((r) => setTimeout(r, 3000));
+          }
+        }
+      }
+      throw new Error(`Redis not available at ${url} after 10 attempts`);
+    }
 
+    it('should have Redis connection available', async () => {
+      if (!isKubeclawDeployed()) return;
+
+      let redis: import('ioredis').Redis | null = null;
       try {
-        await redis.connect();
+        redis = await connectWithRetry();
         const pong = await redis.ping();
         expect(pong).toBe('PONG');
       } catch (error) {
@@ -82,30 +100,20 @@ describe('Phase 1: Infrastructure', () => {
           '⚠️  Redis not available:',
           error instanceof Error ? error.message : 'unknown error',
         );
-        // Fail if Redis isn't available
         expect.fail(
           `Redis should be available at ${process.env.REDIS_URL || 'redis://localhost:6379'}`,
         );
       } finally {
-        await redis.quit().catch(() => {});
+        await redis?.quit().catch(() => {});
       }
     });
 
     it('should support basic Redis operations', async () => {
       if (!isKubeclawDeployed()) return;
-      const { default: Redis } = await import('ioredis');
 
-      const redis = new Redis(
-        process.env.REDIS_URL || 'redis://localhost:6379',
-        {
-          connectTimeout: 5000,
-          maxRetriesPerRequest: 1,
-          lazyConnect: true,
-        },
-      );
-
+      let redis: import('ioredis').Redis | null = null;
       try {
-        await redis.connect();
+        redis = await connectWithRetry();
 
         // Test basic operations
         await redis.set('e2e-test-key', 'value', 'EX', 10);
@@ -119,7 +127,7 @@ describe('Phase 1: Infrastructure', () => {
           `Redis operations should work: ${error instanceof Error ? error.message : 'unknown error'}`,
         );
       } finally {
-        await redis.quit().catch(() => {});
+        await redis?.quit().catch(() => {});
       }
     });
   });

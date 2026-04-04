@@ -160,7 +160,7 @@ spec:
         - name: sessions
           persistentVolumeClaim:
             claimName: kubeclaw-channel-{{ $name }}-sessions
-{{- if $cfg.httpPort }}
+{{- if and $cfg.httpPort $.Values.networkPolicy.enabled }}
 ---
 # Allow ingress on the HTTP port — the global channel policy denies all pod-to-pod
 # ingress, so channels with httpPort need an explicit per-channel exception for the
