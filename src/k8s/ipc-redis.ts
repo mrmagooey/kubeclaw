@@ -7,7 +7,7 @@ import { Redis } from 'ioredis';
 
 import { SIDECAR_FILE_POLL_INTERVAL, TIMEZONE } from '../config.js';
 import { AvailableGroup } from '../runtime/types.js';
-import { createTask, deleteTask, getTaskById, getTasksForGroup, updateTask } from '../db.js';
+import { createTask, deleteTask, getAllRegisteredGroups, getTaskById, getTasksForGroup, updateTask } from '../db.js';
 import { isValidGroupFolder } from '../group-folder.js';
 import { logger } from '../logger.js';
 import { RegisteredGroup } from '../types.js';
@@ -27,6 +27,7 @@ import { TaskRequest } from './types.js';
 import { jobRunner } from './job-runner.js';
 import { ASSISTANT_NAME, CONTAINER_TIMEOUT, IDLE_TIMEOUT } from '../config.js';
 import { deployMcpServer, removeMcpServer, listMcpServers } from '../mcp-registry.js';
+import { loadSpecialists } from '../specialists.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
@@ -805,11 +806,29 @@ export async function startAgentJobSpawnWatcher(): Promise<void> {
           const obj: Record<string, string> = {};
           for (let i = 0; i < fields.length; i += 2) obj[fields[i]] = fields[i + 1];
 
-          const { agentJobId, groupFolder, chatJid, prompt, channel } = obj;
+          const { agentJobId, groupFolder, chatJid, prompt, channel, specialist } = obj;
           if (!agentJobId || !groupFolder || !chatJid || !prompt) continue;
 
           const resultStream = getAgentJobResultStream(agentJobId);
           const { groupsPvc, sessionsPvc } = channelPvcNames(channel ?? '');
+
+          // Resolve specialist prompt from agents.json if a specialist name was provided
+          let resolvedPrompt = prompt;
+          if (specialist) {
+            const specialists = loadSpecialists(groupFolder);
+            const spec = specialists?.find(
+              (s) => s.name.toLowerCase() === specialist.toLowerCase(),
+            );
+            if (spec) {
+              resolvedPrompt = `<specialist name="${spec.name}">\n${spec.prompt}\n</specialist>\n\n${prompt}`;
+            } else {
+              logger.warn({ agentJobId, groupFolder, specialist }, 'Specialist not found in agents.json, running without specialist prompt');
+            }
+          }
+
+          // Look up the parent group's llmProvider so the child job inherits it
+          const allGroups = getAllRegisteredGroups();
+          const parentGroup = Object.values(allGroups).find((g) => g.folder === groupFolder);
 
           // Fire-and-forget: run the agent job and write result when done
           const group = {
@@ -817,6 +836,7 @@ export async function startAgentJobSpawnWatcher(): Promise<void> {
             folder: groupFolder,
             trigger: '',
             added_at: new Date().toISOString(),
+            llmProvider: parentGroup?.llmProvider,
           };
 
           jobRunner
@@ -824,7 +844,7 @@ export async function startAgentJobSpawnWatcher(): Promise<void> {
               groupFolder,
               chatJid,
               isMain: false,
-              prompt,
+              prompt: resolvedPrompt,
               assistantName: ASSISTANT_NAME,
               groupsPvc,
               sessionsPvc,
