@@ -8,5 +8,5 @@ modifies:
 structured: {}
 conflicts: []
 depends:
-  - voice-transcription
+  - add-voice-transcription
 test: "npx vitest run src/channels/whatsapp.test.ts"
