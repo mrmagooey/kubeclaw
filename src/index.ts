@@ -324,10 +324,32 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // Build agent runs: one per mentioned specialist, or a single main agent run
   const agentRuns =
     mentionedSpecialists.length > 0
-      ? mentionedSpecialists.map((s) => ({
-          prompt: `<specialist name="${s.name}">\n${s.prompt}\n</specialist>\n\n${prompt}`,
-        }))
-      : [{ prompt }];
+      ? mentionedSpecialists.map((s) => {
+          // Merge specialist overrides onto the base group
+          const specialistGroup: RegisteredGroup = {
+            ...group,
+            // Override llmProvider if specialist specifies one
+            ...(s.llmProvider !== undefined && { llmProvider: s.llmProvider as RegisteredGroup['llmProvider'] }),
+            // Merge containerConfig: specialist's partial overrides win
+            containerConfig: s.containerConfig
+              ? { ...group.containerConfig, ...(s.containerConfig as RegisteredGroup['containerConfig']) }
+              : group.containerConfig,
+          };
+          // Isolated memory: use specialist-scoped session key
+          const sessionKey = s.memory?.isolated
+            ? `${group.folder}:${s.name}`
+            : group.folder;
+          // Append claudemd to the specialist prompt block if provided
+          const claudemdSection = s.claudemd
+            ? `\n<specialist_instructions>\n${s.claudemd}\n</specialist_instructions>`
+            : '';
+          return {
+            group: specialistGroup,
+            sessionKey,
+            prompt: `<specialist name="${s.name}">\n${s.prompt}\n</specialist>${claudemdSection}\n\n${prompt}`,
+          };
+        })
+      : [{ group, sessionKey: group.folder, prompt }];
 
   // Advance cursor in memory so the piping path in startMessageLoop sends
   // only new messages as deltas rather than re-fetching the full history.
@@ -348,7 +370,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   let outputSentToUser = false;
 
   for (const agentRun of agentRuns) {
-    const output = await runAgent(group, agentRun.prompt, chatJid, async (result) => {
+    const output = await runAgent(agentRun.group, agentRun.prompt, chatJid, async (result) => {
       // Streaming output callback — called for each agent result
       if (result.result) {
         const raw =
@@ -371,7 +393,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       if (result.status === 'error') {
         hadError = true;
       }
-    });
+    }, agentRun.sessionKey);
 
     if (output === 'error' || hadError) {
       hadError = true;
@@ -411,10 +433,13 @@ async function runAgent(
   prompt: string,
   chatJid: string,
   onOutput?: (output: ContainerOutput) => Promise<void>,
+  sessionKey?: string,
 ): Promise<'success' | 'error'> {
   const isMain = group.isMain === true;
   const provider = group.llmProvider || 'claude';
-  const sessionId = sessions[group.folder];
+  // sessionKey allows isolated specialist memory; defaults to group folder
+  const effectiveSessionKey = sessionKey ?? group.folder;
+  const sessionId = sessions[effectiveSessionKey];
 
   logger.info(
     { group: group.name, provider, hasProviderOverride: !!group.llmProvider },
@@ -452,8 +477,8 @@ async function runAgent(
   const wrappedOnOutput = onOutput
     ? async (output: ContainerOutput) => {
         if (output.newSessionId) {
-          sessions[group.folder] = output.newSessionId;
-          setSession(group.folder, output.newSessionId);
+          sessions[effectiveSessionKey] = output.newSessionId;
+          setSession(effectiveSessionKey, output.newSessionId);
         }
         await onOutput(output);
       }

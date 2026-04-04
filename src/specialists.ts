@@ -8,6 +8,11 @@ import { resolveGroupFolderPath } from './group-folder.js';
 export interface SpecialistDef {
   name: string;
   prompt: string;
+  triggers?: string[]; // Additional trigger aliases, e.g. ["@Research", "@Researcher"]
+  llmProvider?: string; // Override LLM provider for this specialist
+  containerConfig?: Record<string, unknown>; // Partial ContainerConfig overrides
+  memory?: { isolated?: boolean }; // If isolated=true, use specialist-scoped session key
+  claudemd?: string; // Extra system-prompt content appended for this specialist
 }
 
 /**
@@ -115,9 +120,41 @@ export function loadSpecialists(groupFolder: string): SpecialistDef[] | null {
       return null;
     }
 
+    // Collect optional extended fields if present and valid
+    const triggers =
+      Array.isArray(entryObj.triggers) &&
+      entryObj.triggers.every((t) => typeof t === 'string')
+        ? (entryObj.triggers as string[])
+        : undefined;
+
+    const llmProvider =
+      typeof entryObj.llmProvider === 'string' ? entryObj.llmProvider : undefined;
+
+    const containerConfig =
+      typeof entryObj.containerConfig === 'object' &&
+      entryObj.containerConfig !== null &&
+      !Array.isArray(entryObj.containerConfig)
+        ? (entryObj.containerConfig as Record<string, unknown>)
+        : undefined;
+
+    const memoryIsolated =
+      typeof entryObj.memory === 'object' &&
+      entryObj.memory !== null &&
+      typeof (entryObj.memory as Record<string, unknown>).isolated === 'boolean'
+        ? { isolated: (entryObj.memory as Record<string, unknown>).isolated as boolean }
+        : undefined;
+
+    const claudemd =
+      typeof entryObj.claudemd === 'string' ? entryObj.claudemd : undefined;
+
     validatedSpecialists.push({
       name: entryObj.name.trim(),
       prompt: entryObj.prompt.trim(),
+      ...(triggers !== undefined && { triggers }),
+      ...(llmProvider !== undefined && { llmProvider }),
+      ...(containerConfig !== undefined && { containerConfig }),
+      ...(memoryIsolated !== undefined && { memory: memoryIsolated }),
+      ...(claudemd !== undefined && { claudemd }),
     });
   }
 
@@ -146,13 +183,26 @@ export function detectMentionedSpecialists(
     return [];
   }
 
-  // Return specialists that match mentioned names, in order of available array
+  // Return specialists that match mentioned names or triggers, in order of available array
   const result: SpecialistDef[] = [];
   const seen = new Set<string>();
 
   for (const specialist of available) {
     const lowerName = specialist.name.toLowerCase();
-    if (mentionedNames.has(lowerName) && !seen.has(lowerName)) {
+    if (seen.has(lowerName)) continue;
+
+    // Check name match
+    const nameMatched = mentionedNames.has(lowerName);
+
+    // Check triggers: strip leading '@', compare case-insensitively
+    const triggerMatched =
+      !nameMatched &&
+      Array.isArray(specialist.triggers) &&
+      specialist.triggers.some((t) =>
+        mentionedNames.has(t.replace(/^@/, '').toLowerCase()),
+      );
+
+    if (nameMatched || triggerMatched) {
       result.push(specialist);
       seen.add(lowerName);
     }
