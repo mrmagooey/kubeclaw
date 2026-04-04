@@ -42,6 +42,7 @@ import {
   AgentOutputMessage,
   ToolPodJobSpec,
   SidecarToolPodJobSpec,
+  RawAttachment,
 } from './types.js';
 import { ContainerOutput } from '../runtime/types.js';
 import {
@@ -915,6 +916,77 @@ export class JobRunner {
         'Failed to get job logs',
       );
       return `Error getting logs: ${error instanceof Error ? error.message : String(error)}`;
+    }
+  }
+
+  /**
+   * Spawn a short-lived preprocessing K8s Job to resize images / extract PDF text.
+   * Waits for completion via K8s API polling. Returns true on success, false on failure.
+   */
+  async runPreprocessingJob(
+    group: RegisteredGroup,
+    attachments: RawAttachment[],
+    opts?: { groupsPvc?: string },
+  ): Promise<boolean> {
+    const jobName = buildJobName(`${group.folder}-preproc`);
+    const claimName = opts?.groupsPvc ?? 'kubeclaw-groups';
+
+    const job: V1Job = {
+      metadata: {
+        name: jobName,
+        namespace: this.namespace,
+        labels: { app: 'kubeclaw-preproc', 'nanoclaw/group': group.folder },
+      },
+      spec: {
+        ttlSecondsAfterFinished: JOB_TTL_SECONDS_AFTER_FINISHED,
+        activeDeadlineSeconds: 120,
+        backoffLimit: 0,
+        template: {
+          spec: {
+            restartPolicy: 'Never',
+            automountServiceAccountToken: false,
+            containers: [
+              {
+                name: 'preprocessor',
+                image: getContainerImage(group.llmProvider ?? 'openai'),
+                command: ['node', '/app/dist/attachment-preprocessor.js'],
+                env: [
+                  { name: 'TZ', value: TIMEZONE },
+                  { name: 'KUBECLAW_GROUP_FOLDER', value: group.folder },
+                  { name: 'KUBECLAW_ATTACHMENTS', value: JSON.stringify(attachments) },
+                ],
+                volumeMounts: [
+                  {
+                    name: 'groups-pvc',
+                    mountPath: '/workspace/group',
+                    subPath: group.folder,
+                  },
+                ],
+                resources: {
+                  requests: { memory: '128Mi', cpu: '100m' },
+                  limits: { memory: '512Mi', cpu: '500m' },
+                },
+              },
+            ],
+            volumes: [
+              {
+                name: 'groups-pvc',
+                persistentVolumeClaim: { claimName },
+              },
+            ],
+          },
+        },
+      },
+    };
+
+    await this.batchApi.createNamespacedJob({ namespace: this.namespace, body: job });
+
+    try {
+      await this.waitForJobCompletion(jobName, 120_000);
+      return true;
+    } catch (err) {
+      logger.warn({ jobName, group: group.folder, err }, 'Preprocessing job failed');
+      return false;
     }
   }
 

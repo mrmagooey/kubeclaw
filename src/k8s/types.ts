@@ -212,3 +212,9 @@ export interface DistributedQueueItem {
   priority: number;
   enqueuedAt: string;
 }
+
+export interface RawAttachment {
+  rawPath: string;   // relative path e.g. "attachments/raw/img-123.jpg"
+  mediaType: string; // e.g. "image/jpeg" or "application/pdf"
+  caption?: string;
+}

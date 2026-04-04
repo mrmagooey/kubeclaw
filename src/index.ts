@@ -4,6 +4,7 @@ import path from 'path';
 
 import {
   ASSISTANT_NAME,
+  GROUPS_DIR,
   KUBECLAW_MODE,
   POLL_INTERVAL,
   TIMEZONE,
@@ -52,6 +53,7 @@ import {
 import { startSchedulerLoop } from './task-scheduler.js';
 import { detectMentionedSpecialists, loadSpecialists } from './specialists.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
+import { RawAttachment } from './k8s/types.js';
 import { logger } from './logger.js';
 import { augmentPrompt } from './rag/retriever.js';
 import { indexConversationTurn } from './rag/indexer.js';
@@ -261,6 +263,46 @@ async function handleSkillInvocation(
   });
 }
 
+const RAW_ATTACHMENT_RE =
+  /\[RawAttachment: (attachments\/raw\/[^\s\]]+)\s+type=([^\s\]]+)(?:\s+caption="([^"]*)")?\]/g;
+
+function extractRawAttachments(messages: Array<{ content: string }>): RawAttachment[] {
+  const result: RawAttachment[] = [];
+  for (const msg of messages) {
+    for (const m of msg.content.matchAll(RAW_ATTACHMENT_RE)) {
+      result.push({ rawPath: m[1], mediaType: m[2], caption: m[3] });
+    }
+  }
+  return result;
+}
+
+function rewriteAttachmentMarkers<T extends { content: string }>(
+  messages: T[],
+  groupDir: string,
+): T[] {
+  return messages.map((msg) => {
+    const content = msg.content.replace(
+      /\[RawAttachment: (attachments\/raw\/[^\s\]]+)\s+type=([^\s\]]+)(?:\s+caption="([^"]*)")?\]/g,
+      (_match, rawPath: string, mediaType: string) => {
+        const donePath = path.join(groupDir, rawPath + '.done');
+        if (!fs.existsSync(donePath)) {
+          return `[Attachment: ${path.basename(rawPath)} (processing failed)]`;
+        }
+        const outputPath = fs.readFileSync(donePath, 'utf-8').trim();
+        if (mediaType.startsWith('image/')) {
+          return `[Image: ${outputPath}]`;
+        }
+        const txtPath = path.join(groupDir, rawPath + '.txt');
+        if (fs.existsSync(txtPath)) {
+          return fs.readFileSync(txtPath, 'utf-8').trim();
+        }
+        return `[Attachment: ${path.basename(rawPath)} (text unavailable)]`;
+      },
+    );
+    return { ...msg, content };
+  });
+}
+
 /**
  * Process all pending messages for a group.
  * Called by the GroupQueue when it's this group's turn.
@@ -278,7 +320,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   const isMainGroup = group.isMain === true;
 
   const sinceTimestamp = lastAgentTimestamp[chatJid] || '';
-  const missedMessages = getMessagesSince(
+  let missedMessages = getMessagesSince(
     chatJid,
     sinceTimestamp,
     ASSISTANT_NAME,
@@ -310,6 +352,29 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         await handleSkillInvocation(skillName, skillMd, rest.join(' '), chatJid, group, channel);
         return true;
       }
+    }
+  }
+
+  // Preprocessing gate: spawn K8s job to process raw attachments before agent runs
+  const rawAttachments = extractRawAttachments(missedMessages);
+  if (rawAttachments.length > 0) {
+    const runner = getRunnerForGroup(group);
+    if (typeof (runner as any).runPreprocessingJob === 'function') {
+      logger.info(
+        { group: group.name, count: rawAttachments.length },
+        'Spawning attachment preprocessing job',
+      );
+      const groupDir = path.join(GROUPS_DIR, group.folder);
+      const ok = await (runner as any).runPreprocessingJob(group, rawAttachments, {
+        groupsPvc: (group as any).groupsPvc,
+      });
+      if (!ok) {
+        logger.warn(
+          { group: group.name },
+          'Preprocessing job failed — continuing with unprocessed attachments',
+        );
+      }
+      missedMessages = rewriteAttachmentMarkers(missedMessages, groupDir);
     }
   }
 

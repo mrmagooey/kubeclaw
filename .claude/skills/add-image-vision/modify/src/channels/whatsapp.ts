@@ -20,7 +20,7 @@ import {
   STORE_DIR,
 } from '../config.js';
 import { getLastGroupSync, setLastGroupSync, updateChatName } from '../db.js';
-import { isImageMessage, processImage } from '../image.js';
+import { isImageMessage } from '../image.js';
 import { logger } from '../logger.js';
 import {
   Channel,
@@ -205,16 +205,19 @@ export class WhatsAppChannel implements Channel {
               normalized.videoMessage?.caption ||
               '';
 
-            // Image attachment handling
+            // Image attachment handling: download raw file, write to PVC,
+            // emit [RawAttachment: ...] marker for orchestrator preprocessing job
             if (isImageMessage(msg)) {
               try {
                 const buffer = await downloadMediaMessage(msg, 'buffer', {});
                 const groupDir = path.join(GROUPS_DIR, groups[chatJid].folder);
-                const caption = normalized?.imageMessage?.caption ?? '';
-                const result = await processImage(buffer as Buffer, groupDir, caption);
-                if (result) {
-                  content = result.content;
-                }
+                const rawDir = path.join(groupDir, 'attachments', 'raw');
+                fs.mkdirSync(rawDir, { recursive: true });
+                const filename = `raw-img-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.jpg`;
+                fs.writeFileSync(path.join(rawDir, filename), buffer as Buffer);
+                const caption = (normalized?.imageMessage?.caption ?? '').replace(/"/g, '\\"');
+                content = `[RawAttachment: attachments/raw/${filename} type=image/jpeg caption="${caption}"]`;
+                if (caption) content += ` ${caption.replace(/\\"/g, '"')}`;
               } catch (err) {
                 logger.warn({ err, jid: chatJid }, 'Image - download failed');
               }

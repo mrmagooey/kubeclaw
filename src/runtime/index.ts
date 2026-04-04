@@ -7,6 +7,7 @@ import fs from 'fs';
 import path from 'path';
 
 import { JobRunner, buildJobName } from '../k8s/job-runner.js';
+import { RawAttachment } from '../k8s/types.js';
 import { FileSidecarJobRunner } from '../k8s/file-sidecar-runner.js';
 import { HttpSidecarJobRunner } from '../k8s/http-sidecar-runner.js';
 import { DirectLLMRunner } from './direct-llm-runner.js';
@@ -81,6 +82,14 @@ class KubernetesAgentRunner implements AgentRunner {
         error: errorMessage,
       };
     }
+  }
+
+  async runPreprocessingJob(
+    group: RegisteredGroup,
+    attachments: RawAttachment[],
+    opts?: { groupsPvc?: string },
+  ): Promise<boolean> {
+    return this.jobRunner.runPreprocessingJob(group, attachments, opts);
   }
 
   writeTasksSnapshot(
