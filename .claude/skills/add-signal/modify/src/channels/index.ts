@@ -12,9 +12,9 @@ import './http.js';
 import './irc.js';
 
 // signal
+import './signal.js';
 
 // slack
-import './slack.js';
 
 // telegram
 

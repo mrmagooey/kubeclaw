@@ -95,8 +95,9 @@ export class SignalChannel implements Channel {
         return;
       }
 
-      const items: ReceiveItem[] = await resp.json();
-      if (!Array.isArray(items)) return;
+      const data: unknown = await resp.json();
+      if (!Array.isArray(data)) return;
+      const items = data as ReceiveItem[];
 
       for (const item of items) {
         this.handleEnvelope(item.envelope);

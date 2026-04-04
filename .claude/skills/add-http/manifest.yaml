@@ -5,8 +5,7 @@ core_version: 0.1.0
 adds:
   - src/channels/http.ts
   - src/channels/http.test.ts
-modifies:
-  - src/channels/index.ts
+modifies: []
 structured:
   npm_dependencies: {}
   env_additions:

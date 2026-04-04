@@ -6,6 +6,14 @@
 // gmail
 import './gmail.js';
 
+// http
+import './http.js';
+
+// irc
+import './irc.js';
+
+// signal
+
 // slack
 
 // telegram
