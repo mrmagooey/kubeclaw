@@ -8,6 +8,7 @@ vi.mock('../env.js', () => ({ readEnvFile: vi.fn(() => ({})) }));
 vi.mock('../config.js', () => ({
   ASSISTANT_NAME: 'Andy',
   TRIGGER_PATTERN: /^@Andy\b/i,
+  GROUPS_DIR: '/groups',
 }));
 vi.mock('../logger.js', () => ({
   logger: {
@@ -27,6 +28,13 @@ const mockServerInstance = {
     serverListeners.set(event, cb);
   }),
 };
+
+vi.mock('node:fs', () => ({
+  default: {
+    mkdirSync: vi.fn(),
+    writeFileSync: vi.fn(),
+  },
+}));
 
 vi.mock('node:http', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:http')>();
@@ -74,11 +82,15 @@ function makeReq(overrides: {
   method?: string;
   url?: string;
   auth?: string | null; // null = no header, string = "user:pass"
-  body?: string;
+  body?: string | Buffer;
+  contentType?: string;
 }): IncomingMessage {
   const headers: Record<string, string> = {};
   if (overrides.auth !== null) {
     headers.authorization = `Basic ${b64(overrides.auth ?? 'alice:secret')}`;
+  }
+  if (overrides.contentType) {
+    headers['content-type'] = overrides.contentType;
   }
   const req = {
     method: overrides.method ?? 'GET',
@@ -90,15 +102,40 @@ function makeReq(overrides: {
 
   // Simulate body streaming
   if (overrides.body !== undefined) {
+    const buf = typeof overrides.body === 'string' ? Buffer.from(overrides.body) : overrides.body;
     (req.on as ReturnType<typeof vi.fn>).mockImplementation(
       (event: string, cb: (...args: unknown[]) => void) => {
-        if (event === 'data') cb(Buffer.from(overrides.body!));
+        if (event === 'data') cb(buf);
         if (event === 'end') cb();
       },
     );
   }
 
   return req;
+}
+
+/** Build a minimal multipart/form-data body Buffer. */
+function makeMultipartBody(
+  boundary: string,
+  parts: Array<{ name: string; filename?: string; contentType?: string; data: Buffer | string }>,
+): Buffer {
+  const chunks: Buffer[] = [];
+  const CRLF = Buffer.from('\r\n');
+  for (const part of parts) {
+    chunks.push(Buffer.from(`--${boundary}\r\n`));
+    let disposition = `Content-Disposition: form-data; name="${part.name}"`;
+    if (part.filename) disposition += `; filename="${part.filename}"`;
+    chunks.push(Buffer.from(disposition + '\r\n'));
+    if (part.contentType) {
+      chunks.push(Buffer.from(`Content-Type: ${part.contentType}\r\n`));
+    }
+    chunks.push(CRLF);
+    const data = typeof part.data === 'string' ? Buffer.from(part.data) : part.data;
+    chunks.push(data);
+    chunks.push(CRLF);
+  }
+  chunks.push(Buffer.from(`--${boundary}--\r\n`));
+  return Buffer.concat(chunks);
 }
 
 function makeRes(): ServerResponse & { _status: number; _headers: Record<string, string>; _body: string } {
@@ -476,6 +513,156 @@ describe('HttpChannel', () => {
         'http:alice',
         expect.objectContaining({ content: 'hello' }),
       );
+      await channel.disconnect();
+    });
+  });
+
+  // ── POST /message — multipart image upload ───────────────────────────────
+
+  describe('POST /message (multipart image upload)', () => {
+    const JPEG_MAGIC = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]);
+    const BOUNDARY = 'test-boundary-123';
+
+    it('accepts JPEG upload and emits ImageAttachment marker', async () => {
+      const opts = makeOpts();
+      const channel = new HttpChannel(makeConfig(), opts);
+      await channel.connect();
+
+      const body = makeMultipartBody(BOUNDARY, [
+        { name: 'image', filename: 'photo.jpg', contentType: 'image/jpeg', data: JPEG_MAGIC },
+      ]);
+      const req = makeReq({
+        method: 'POST',
+        url: '/message',
+        auth: 'alice:secret',
+        contentType: `multipart/form-data; boundary=${BOUNDARY}`,
+        body,
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'http:alice',
+        expect.objectContaining({
+          content: expect.stringMatching(/\[ImageAttachment: attachments\/raw\/img-.*\.jpg\]/),
+        }),
+      );
+      await channel.disconnect();
+    });
+
+    it('includes caption in ImageAttachment marker', async () => {
+      const opts = makeOpts();
+      const channel = new HttpChannel(makeConfig(), opts);
+      await channel.connect();
+
+      const body = makeMultipartBody(BOUNDARY, [
+        { name: 'text', data: 'look at this' },
+        { name: 'image', filename: 'photo.jpg', contentType: 'image/jpeg', data: JPEG_MAGIC },
+      ]);
+      const req = makeReq({
+        method: 'POST',
+        url: '/message',
+        auth: 'alice:secret',
+        contentType: `multipart/form-data; boundary=${BOUNDARY}`,
+        body,
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'http:alice',
+        expect.objectContaining({
+          content: expect.stringMatching(/\[ImageAttachment: attachments\/raw\/img-.*\.jpg caption="look at this"\]/),
+        }),
+      );
+      await channel.disconnect();
+    });
+
+    it('returns 400 when multipart has no image part', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const body = makeMultipartBody(BOUNDARY, [
+        { name: 'text', data: 'hello' },
+      ]);
+      const req = makeReq({
+        method: 'POST',
+        url: '/message',
+        auth: 'alice:secret',
+        contentType: `multipart/form-data; boundary=${BOUNDARY}`,
+        body,
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(400);
+      await channel.disconnect();
+    });
+
+    it('returns 400 when multipart boundary header is missing', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({
+        method: 'POST',
+        url: '/message',
+        auth: 'alice:secret',
+        contentType: 'multipart/form-data',
+        body: Buffer.from('anything'),
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(400);
+      await channel.disconnect();
+    });
+
+    it('returns 415 for unrecognised binary (non-image)', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const pdfMagic = Buffer.from([0x25, 0x50, 0x44, 0x46, 0x2d]); // %PDF-
+      const body = makeMultipartBody(BOUNDARY, [
+        { name: 'image', filename: 'doc.pdf', contentType: 'application/pdf', data: pdfMagic },
+      ]);
+      const req = makeReq({
+        method: 'POST',
+        url: '/message',
+        auth: 'alice:secret',
+        contentType: `multipart/form-data; boundary=${BOUNDARY}`,
+        body,
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(415);
+      await channel.disconnect();
+    });
+
+    it('does not write file for unregistered user', async () => {
+      const fs = await import('node:fs');
+      const opts = makeOpts({ registeredGroups: vi.fn(() => ({})) });
+      const channel = new HttpChannel(makeConfig(), opts);
+      await channel.connect();
+
+      const body = makeMultipartBody(BOUNDARY, [
+        { name: 'image', filename: 'photo.jpg', contentType: 'image/jpeg', data: JPEG_MAGIC },
+      ]);
+      const req = makeReq({
+        method: 'POST',
+        url: '/message',
+        auth: 'alice:secret',
+        contentType: `multipart/form-data; boundary=${BOUNDARY}`,
+        body,
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      expect(fs.default.writeFileSync).not.toHaveBeenCalled();
+      expect(opts.onMessage).not.toHaveBeenCalled();
       await channel.disconnect();
     });
   });

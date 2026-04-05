@@ -1,5 +1,5 @@
 skill: http
-version: 1.0.0
+version: 1.1.0
 description: "HTTP chat channel with Basic Auth and SSE — no npm dependency, uses Node.js built-ins"
 core_version: 0.1.0
 adds:
