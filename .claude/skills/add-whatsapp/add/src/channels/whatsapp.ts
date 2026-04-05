@@ -5,6 +5,7 @@ import path from 'path';
 import makeWASocket, {
   Browsers,
   DisconnectReason,
+  downloadMediaMessage,
   WASocket,
   fetchLatestWaWebVersion,
   makeCacheableSignalKeyStore,
@@ -15,8 +16,25 @@ import makeWASocket, {
 import {
   ASSISTANT_HAS_OWN_NUMBER,
   ASSISTANT_NAME,
+  GROUPS_DIR,
   STORE_DIR,
 } from '../config.js';
+
+// Magic byte signatures for media type detection (no external dependency)
+const MEDIA_MAGIC: Array<{ bytes: number[]; mime: string }> = [
+  { bytes: [0xff, 0xd8, 0xff], mime: 'image/jpeg' },
+  { bytes: [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], mime: 'image/png' },
+  { bytes: [0x47, 0x49, 0x46], mime: 'image/gif' },
+  { bytes: [0x52, 0x49, 0x46, 0x46], mime: 'image/webp' },
+  { bytes: [0x25, 0x50, 0x44, 0x46], mime: 'application/pdf' },
+];
+
+function detectMediaType(buffer: Buffer): string | null {
+  for (const sig of MEDIA_MAGIC) {
+    if (sig.bytes.every((b, i) => buffer[i] === b)) return sig.mime;
+  }
+  return null;
+}
 import { getLastGroupSync, setLastGroupSync, updateChatName } from '../db.js';
 import { logger } from '../logger.js';
 import {
@@ -203,12 +221,61 @@ export class WhatsAppChannel implements Channel {
           // Only deliver full message for registered groups
           const groups = this.opts.registeredGroups();
           if (groups[chatJid]) {
-            const content =
+            let content =
               normalized.conversation ||
               normalized.extendedTextMessage?.text ||
               normalized.imageMessage?.caption ||
               normalized.videoMessage?.caption ||
               '';
+
+            // Image attachment: download raw file, validate via magic bytes,
+            // write to PVC, emit typed marker for preprocessor K8s Job
+            if (normalized?.imageMessage) {
+              try {
+                const buffer = await downloadMediaMessage(msg, 'buffer', {}) as Buffer;
+                const mime = detectMediaType(buffer);
+                if (mime?.startsWith('image/')) {
+                  const groupDir = path.join(GROUPS_DIR, groups[chatJid].folder);
+                  const rawDir = path.join(groupDir, 'attachments', 'raw');
+                  fs.mkdirSync(rawDir, { recursive: true });
+                  const ext = mime === 'image/png' ? '.png' : mime === 'image/gif' ? '.gif' : mime === 'image/webp' ? '.webp' : '.jpg';
+                  const filename = `img-${Date.now()}-${Math.random().toString(36).slice(2, 6)}${ext}`;
+                  fs.writeFileSync(path.join(rawDir, filename), buffer);
+                  const caption = (normalized.imageMessage.caption ?? '').replace(/"/g, '\\"');
+                  content = `[ImageAttachment: attachments/raw/${filename} caption="${caption}"]`;
+                  if (caption) content += ` ${caption.replace(/\\"/g, '"')}`;
+                } else {
+                  logger.debug({ jid: chatJid, mime }, 'Image message has unrecognized mime type, skipping');
+                  continue;
+                }
+              } catch (err) {
+                logger.warn({ err, jid: chatJid }, 'Image download failed');
+              }
+            }
+
+            // PDF attachment: download, validate magic bytes, write to PVC, emit typed marker
+            if (normalized?.documentMessage?.mimetype === 'application/pdf') {
+              try {
+                const buffer = await downloadMediaMessage(msg, 'buffer', {}) as Buffer;
+                const mime = detectMediaType(buffer);
+                if (mime === 'application/pdf') {
+                  const groupDir = path.join(GROUPS_DIR, groups[chatJid].folder);
+                  const rawDir = path.join(groupDir, 'attachments', 'raw');
+                  fs.mkdirSync(rawDir, { recursive: true });
+                  const filename = `doc-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.pdf`;
+                  fs.writeFileSync(path.join(rawDir, filename), buffer);
+                  const caption = normalized.documentMessage.caption ?? '';
+                  content = caption
+                    ? `${caption}\n\n[PdfAttachment: attachments/raw/${filename}]`
+                    : `[PdfAttachment: attachments/raw/${filename}]`;
+                } else {
+                  logger.debug({ jid: chatJid }, 'Document message failed magic byte validation, skipping');
+                  continue;
+                }
+              } catch (err) {
+                logger.warn({ err, jid: chatJid }, 'PDF download failed');
+              }
+            }
 
             // Skip protocol messages with no text content (encryption keys, read receipts, etc.)
             if (!content) continue;

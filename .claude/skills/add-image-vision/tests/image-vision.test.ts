@@ -34,8 +34,6 @@ describe('add-image-vision skill package', () => {
     });
 
     it('lists all modify files', () => {
-      expect(content).toContain('src/channels/whatsapp.ts');
-      expect(content).toContain('src/channels/whatsapp.test.ts');
       expect(content).toContain('container/agent-runner/src/index.ts');
     });
 
@@ -43,6 +41,8 @@ describe('add-image-vision skill package', () => {
       expect(content).not.toContain('src/container-runner.ts');
       // 'src/index.ts' alone (not as part of container/agent-runner/src/index.ts)
       expect(content).not.toMatch(/^  - src\/index\.ts$/m);
+      // whatsapp handling moved to add-whatsapp base file
+      expect(content).not.toContain('src/channels/whatsapp.ts');
     });
 
     it('has no channel dependencies', () => {
@@ -80,18 +80,17 @@ describe('add-image-vision skill package', () => {
   });
 
   describe('modify/ files exist', () => {
-    const modifyFiles = [
-      'src/channels/whatsapp.ts',
-      'src/channels/whatsapp.test.ts',
-      'container/agent-runner/src/index.ts',
-    ];
+    it('includes modify/container/agent-runner/src/index.ts', () => {
+      expect(fs.existsSync(path.join(SKILL_DIR, 'modify', 'container', 'agent-runner', 'src', 'index.ts'))).toBe(true);
+    });
 
-    for (const file of modifyFiles) {
-      it(`includes modify/${file}`, () => {
-        const filePath = path.join(SKILL_DIR, 'modify', file);
-        expect(fs.existsSync(filePath)).toBe(true);
-      });
-    }
+    it('does not include dead modify/src/channels/whatsapp.ts', () => {
+      expect(fs.existsSync(path.join(SKILL_DIR, 'modify', 'src', 'channels', 'whatsapp.ts'))).toBe(false);
+    });
+
+    it('does not include dead modify/src/channels/whatsapp.test.ts', () => {
+      expect(fs.existsSync(path.join(SKILL_DIR, 'modify', 'src', 'channels', 'whatsapp.test.ts'))).toBe(false);
+    });
 
     it('does not include dead modify/src/container-runner.ts', () => {
       expect(fs.existsSync(path.join(SKILL_DIR, 'modify', 'src', 'container-runner.ts'))).toBe(false);
@@ -99,50 +98,6 @@ describe('add-image-vision skill package', () => {
 
     it('does not include dead modify/src/index.ts', () => {
       expect(fs.existsSync(path.join(SKILL_DIR, 'modify', 'src', 'index.ts'))).toBe(false);
-    });
-  });
-
-  describe('modify/src/channels/whatsapp.ts', () => {
-    let content: string;
-
-    beforeAll(() => {
-      content = fs.readFileSync(
-        path.join(SKILL_DIR, 'modify', 'src', 'channels', 'whatsapp.ts'),
-        'utf-8',
-      );
-    });
-
-    it('imports detectMimeType from image.js', () => {
-      expect(content).toContain("from '../image.js'");
-      expect(content).toContain('detectMimeType');
-    });
-
-    it('imports downloadMediaMessage from baileys', () => {
-      expect(content).toContain('downloadMediaMessage');
-      expect(content).toContain("from '@whiskeysockets/baileys'");
-    });
-
-    it('emits typed ImageAttachment markers', () => {
-      expect(content).toContain('[ImageAttachment:');
-      expect(content).toContain('attachments/raw/');
-    });
-
-    it('emits typed PdfAttachment markers', () => {
-      expect(content).toContain('[PdfAttachment:');
-    });
-
-    it('uses magic byte detection not hardcoded type', () => {
-      expect(content).toContain('detectMimeType(buffer)');
-      expect(content).not.toContain('type=image/jpeg');
-    });
-
-    it('preserves core WhatsAppChannel structure', () => {
-      expect(content).toContain('export class WhatsAppChannel implements Channel');
-      expect(content).toContain('async connect()');
-      expect(content).toContain('async sendMessage(');
-      expect(content).toContain('async syncGroupMetadata(');
-      expect(content).toContain('private async translateJid(');
-      expect(content).toContain('private async flushOutgoingQueue(');
     });
   });
 });

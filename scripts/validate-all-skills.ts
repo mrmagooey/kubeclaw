@@ -129,6 +129,32 @@ async function main(): Promise<void> {
     resetWorkingTree();
     initNanoclaw();
 
+    // Step 0: Pre-apply declared dependencies so their `adds:` files are in place
+    // for type checking (avoids "module not found" errors on imports from deps)
+    const deps: string[] = skill.manifest.depends ?? [];
+    let depFailed = false;
+    for (const depName of deps) {
+      const depSkill = discoverSkills(skillsDir).find((s) => s.name === depName);
+      if (!depSkill) {
+        console.log(`  FAIL (apply): dependency '${depName}' not found`);
+        results.push({ name: skill.name, success: false, failedStep: 'apply', error: `dependency '${depName}' not found` });
+        depFailed = true;
+        break;
+      }
+      try {
+        const depApplyArgs = ['tsx', 'scripts/apply-skill.ts', depSkill.dir];
+        execSync(['npx', ...depApplyArgs].join(' '), { encoding: 'utf-8', stdio: 'pipe', timeout: 120_000 });
+        console.log(`  dep '${depName}': applied`);
+      } catch (err: any) {
+        const error = err.stderr?.toString() || err.stdout?.toString() || err.message;
+        console.log(`  FAIL (dep '${depName}'): ${truncate(error)}`);
+        results.push({ name: skill.name, success: false, failedStep: 'apply', error: `dep '${depName}' failed: ${error}` });
+        depFailed = true;
+        break;
+      }
+    }
+    if (depFailed) continue;
+
     // Step 1: Apply skill
     try {
       const applyOutput = execSync(

@@ -7,8 +7,6 @@ adds:
   - container/skills/pdf-reader/pdf-reader
 modifies:
   - container/Dockerfile
-  - src/channels/whatsapp.ts
-  - src/channels/whatsapp.test.ts
 structured:
   npm_dependencies: {}
   env_additions: []

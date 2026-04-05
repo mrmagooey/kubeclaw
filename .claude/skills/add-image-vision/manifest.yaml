@@ -7,8 +7,6 @@ adds:
   - src/image.test.ts
   - src/attachment-preprocessor.ts
 modifies:
-  - src/channels/whatsapp.ts
-  - src/channels/whatsapp.test.ts
   - container/agent-runner/src/index.ts
 structured:
   npm_dependencies:
