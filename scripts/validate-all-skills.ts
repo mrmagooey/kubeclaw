@@ -134,7 +134,7 @@ async function main(): Promise<void> {
     const deps: string[] = skill.manifest.depends ?? [];
     let depFailed = false;
     for (const depName of deps) {
-      const depSkill = discoverSkills(skillsDir).find((s) => s.name === depName);
+      const depSkill = discoverSkills(skillsDir).find((s) => s.manifest.skill === depName || s.name === depName);
       if (!depSkill) {
         console.log(`  FAIL (apply): dependency '${depName}' not found`);
         results.push({ name: skill.name, success: false, failedStep: 'apply', error: `dependency '${depName}' not found` });

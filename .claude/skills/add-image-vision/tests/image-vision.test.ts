@@ -57,7 +57,6 @@ describe('add-image-vision skill package', () => {
 
       const content = fs.readFileSync(filePath, 'utf-8');
       expect(content).toContain('export function detectMimeType');
-      expect(content).toContain('export function isImageMessage');
       expect(content).toContain("import sharp from 'sharp'");
       expect(content).toContain('MAGIC_BYTES');
     });

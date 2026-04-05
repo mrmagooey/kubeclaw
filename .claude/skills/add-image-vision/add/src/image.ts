@@ -1,7 +1,6 @@
 import fs from 'fs';
 import path from 'path';
 import sharp from 'sharp';
-import type { WAMessage } from '@whiskeysockets/baileys';
 
 const MAX_DIMENSION = 1024;
 const IMAGE_REF_PATTERN = /\[Image: (attachments\/[^\]]+)\]/g;
@@ -29,10 +28,6 @@ export interface ProcessedImage {
 export interface ImageAttachment {
   relativePath: string;
   mediaType: string;
-}
-
-export function isImageMessage(msg: WAMessage): boolean {
-  return !!msg.message?.imageMessage;
 }
 
 export async function processImage(

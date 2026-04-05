@@ -56,26 +56,18 @@ describe('pdf-reader skill package', () => {
 
   it('has all files declared in modifies', () => {
     const dockerfile = path.join(skillDir, 'modify', 'container', 'Dockerfile');
-    const whatsappTs = path.join(skillDir, 'modify', 'src', 'channels', 'whatsapp.ts');
-    const whatsappTestTs = path.join(skillDir, 'modify', 'src', 'channels', 'whatsapp.test.ts');
-
     expect(fs.existsSync(dockerfile)).toBe(true);
-    expect(fs.existsSync(whatsappTs)).toBe(true);
-    expect(fs.existsSync(whatsappTestTs)).toBe(true);
   });
 
   it('has intent files for all modified files', () => {
     expect(
       fs.existsSync(path.join(skillDir, 'modify', 'container', 'Dockerfile.intent.md')),
     ).toBe(true);
-    expect(
-      fs.existsSync(path.join(skillDir, 'modify', 'src', 'channels', 'whatsapp.ts.intent.md')),
-    ).toBe(true);
-    expect(
-      fs.existsSync(
-        path.join(skillDir, 'modify', 'src', 'channels', 'whatsapp.test.ts.intent.md'),
-      ),
-    ).toBe(true);
+  });
+
+  it('does not include dead whatsapp.ts modify (PDF handling moved to add-whatsapp)', () => {
+    expect(fs.existsSync(path.join(skillDir, 'modify', 'src', 'channels', 'whatsapp.ts'))).toBe(false);
+    expect(fs.existsSync(path.join(skillDir, 'modify', 'src', 'channels', 'whatsapp.test.ts'))).toBe(false);
   });
 
   it('modified Dockerfile includes poppler-utils and pdf-reader', () => {
@@ -105,67 +97,4 @@ describe('pdf-reader skill package', () => {
     expect(content).toContain('USER node');
   });
 
-  it('modified whatsapp.ts includes PDF attachment handling', () => {
-    const content = fs.readFileSync(
-      path.join(skillDir, 'modify', 'src', 'channels', 'whatsapp.ts'),
-      'utf-8',
-    );
-
-    expect(content).toContain('documentMessage');
-    expect(content).toContain('application/pdf');
-    expect(content).toContain('downloadMediaMessage');
-    expect(content).toContain('attachments');
-    expect(content).toContain('pdf-reader extract');
-  });
-
-  it('modified whatsapp.ts preserves core structure', () => {
-    const content = fs.readFileSync(
-      path.join(skillDir, 'modify', 'src', 'channels', 'whatsapp.ts'),
-      'utf-8',
-    );
-
-    // Core class and methods preserved
-    expect(content).toContain('class WhatsAppChannel');
-    expect(content).toContain('implements Channel');
-    expect(content).toContain('async connect()');
-    expect(content).toContain('async sendMessage(');
-    expect(content).toContain('isConnected()');
-    expect(content).toContain('ownsJid(');
-    expect(content).toContain('async disconnect()');
-    expect(content).toContain('async setTyping(');
-
-    // Core imports preserved
-    expect(content).toContain('ASSISTANT_NAME');
-    expect(content).toContain('STORE_DIR');
-  });
-
-  it('modified whatsapp.test.ts includes PDF attachment tests', () => {
-    const content = fs.readFileSync(
-      path.join(skillDir, 'modify', 'src', 'channels', 'whatsapp.test.ts'),
-      'utf-8',
-    );
-
-    expect(content).toContain('PDF');
-    expect(content).toContain('documentMessage');
-    expect(content).toContain('application/pdf');
-  });
-
-  it('modified whatsapp.test.ts preserves all existing test sections', () => {
-    const content = fs.readFileSync(
-      path.join(skillDir, 'modify', 'src', 'channels', 'whatsapp.test.ts'),
-      'utf-8',
-    );
-
-    // All existing test describe blocks preserved
-    expect(content).toContain("describe('connection lifecycle'");
-    expect(content).toContain("describe('authentication'");
-    expect(content).toContain("describe('reconnection'");
-    expect(content).toContain("describe('message handling'");
-    expect(content).toContain("describe('LID to JID translation'");
-    expect(content).toContain("describe('outgoing message queue'");
-    expect(content).toContain("describe('group metadata sync'");
-    expect(content).toContain("describe('ownsJid'");
-    expect(content).toContain("describe('setTyping'");
-    expect(content).toContain("describe('channel properties'");
-  });
 });
