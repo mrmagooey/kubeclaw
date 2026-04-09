@@ -39,6 +39,7 @@ import { getLastGroupSync, setLastGroupSync, updateChatName } from '../db.js';
 import { logger } from '../logger.js';
 import {
   Channel,
+  ChannelCapabilities,
   OnInboundMessage,
   OnChatMetadata,
   RegisteredGroup,
@@ -55,6 +56,13 @@ export interface WhatsAppChannelOpts {
 
 export class WhatsAppChannel implements Channel {
   name = 'whatsapp';
+  readonly capabilities: ChannelCapabilities = {
+    typing: true,
+    groupSync: true,
+    inboundImages: true,
+    inboundPdfs: true,
+    outboundMedia: true,
+  };
 
   private sock!: WASocket;
   private connected = false;
@@ -340,6 +348,34 @@ export class WhatsAppChannel implements Channel {
         { jid, err, queueSize: this.outgoingQueue.length },
         'Failed to send, message queued',
       );
+    }
+  }
+
+  async sendMedia(
+    jid: string,
+    buffer: Buffer,
+    mediaType: string,
+    caption?: string,
+  ): Promise<void> {
+    if (!this.connected) {
+      logger.warn({ jid, mediaType }, 'WA disconnected, cannot send media');
+      return;
+    }
+    try {
+      if (mediaType.startsWith('image/')) {
+        await this.sock.sendMessage(jid, { image: buffer, caption });
+      } else if (mediaType.startsWith('audio/')) {
+        await this.sock.sendMessage(jid, { audio: buffer });
+      } else {
+        await this.sock.sendMessage(jid, {
+          document: buffer,
+          mimetype: mediaType,
+          fileName: 'file',
+        });
+      }
+      logger.info({ jid, mediaType }, 'WhatsApp media sent');
+    } catch (err) {
+      logger.warn({ jid, mediaType, err }, 'Failed to send WhatsApp media');
     }
   }
 

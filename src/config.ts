@@ -112,7 +112,8 @@ export function getContainerImage(provider: LLMProvider): string {
     return process.env.CLAUDE_CONTAINER_IMAGE || 'kubeclaw-agent:claude';
   if (provider === 'openai')
     return process.env.OPENAI_CONTAINER_IMAGE || 'kubeclaw-agent:latest';
-  if (provider === 'ollama') return process.env.OLLAMA_CONTAINER_IMAGE || 'kubeclaw-agent:latest';
+  if (provider === 'ollama')
+    return process.env.OLLAMA_CONTAINER_IMAGE || 'kubeclaw-agent:latest';
   const envKey = `KUBECLAW_CONTAINER_IMAGE_${provider.toUpperCase().replace(/[^A-Z0-9]/g, '_')}`;
   return (
     process.env[envKey] ??

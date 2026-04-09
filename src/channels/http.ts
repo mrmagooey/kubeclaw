@@ -1,5 +1,10 @@
 import fs from 'node:fs';
-import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http';
+import {
+  createServer,
+  type Server,
+  type IncomingMessage,
+  type ServerResponse,
+} from 'node:http';
 import path from 'node:path';
 
 import { ASSISTANT_NAME, GROUPS_DIR } from '../config.js';
@@ -8,6 +13,7 @@ import { logger } from '../logger.js';
 import { registerChannel, ChannelOpts } from './registry.js';
 import {
   Channel,
+  ChannelCapabilities,
   OnChatMetadata,
   OnInboundMessage,
   RegisteredGroup,
@@ -34,7 +40,10 @@ const MAX_MULTIPART_SIZE = 10 * 1024 * 1024; // 10 MB
 
 const MEDIA_MAGIC: Array<{ bytes: number[]; mime: string }> = [
   { bytes: [0xff, 0xd8, 0xff], mime: 'image/jpeg' },
-  { bytes: [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], mime: 'image/png' },
+  {
+    bytes: [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a],
+    mime: 'image/png',
+  },
   { bytes: [0x47, 0x49, 0x46], mime: 'image/gif' },
   { bytes: [0x52, 0x49, 0x46, 0x46], mime: 'image/webp' },
 ];
@@ -238,6 +247,10 @@ form.addEventListener('submit', async (e) => {
 
 export class HttpChannel implements Channel {
   name = 'http';
+  readonly capabilities: ChannelCapabilities = {
+    inboundImages: true,
+    outboundMedia: true,
+  };
 
   private opts: HttpChannelOpts;
   private config: HttpConfig;
@@ -256,10 +269,15 @@ export class HttpChannel implements Channel {
     return new Promise((resolve, reject) => {
       this.server!.listen(this.config.port, () => {
         const users = Object.keys(this.config.users);
-        logger.info({ port: this.config.port, users }, 'HTTP channel listening');
+        logger.info(
+          { port: this.config.port, users },
+          'HTTP channel listening',
+        );
         console.log(`\n  HTTP chat: http://localhost:${this.config.port}`);
         console.log(`  Users: ${users.join(', ')}`);
-        console.log(`  Register each user as a group with JID: http:{username}\n`);
+        console.log(
+          `  Register each user as a group with JID: http:{username}\n`,
+        );
         resolve();
       });
       this.server!.on('error', reject);
@@ -429,7 +447,9 @@ export class HttpChannel implements Channel {
 
         // JSON text message
         try {
-          const { text } = JSON.parse(body.toString('utf8')) as { text?: string };
+          const { text } = JSON.parse(body.toString('utf8')) as {
+            text?: string;
+          };
           if (!text?.trim()) {
             res.writeHead(400, { 'Content-Type': 'text/plain' });
             res.end('Missing text');
@@ -476,6 +496,23 @@ export class HttpChannel implements Channel {
     logger.info({ jid }, 'HTTP message stored');
   }
 
+  private sendSse(username: string, eventType: string, data: string): void {
+    const clients = this.sseClients.filter((c) => c.username === username);
+    const payload = `event: ${eventType}\ndata: ${data}\n\n`;
+    for (const client of clients) {
+      try {
+        if (!client.res.writableEnded) {
+          client.res.write(payload);
+        }
+      } catch (err) {
+        logger.debug(
+          { username, err },
+          'SSE write failed — client likely disconnected',
+        );
+      }
+    }
+  }
+
   async sendMessage(jid: string, text: string): Promise<void> {
     const username = jid.slice('http:'.length);
     const clients = this.sseClients.filter((c) => c.username === username);
@@ -495,11 +532,38 @@ export class HttpChannel implements Channel {
           client.res.write(ssePayload);
         }
       } catch (err) {
-        logger.debug({ jid, err }, 'SSE write failed — client likely disconnected');
+        logger.debug(
+          { jid, err },
+          'SSE write failed — client likely disconnected',
+        );
       }
     }
 
     logger.info({ jid, clients: clients.length }, 'HTTP message sent via SSE');
+  }
+
+  async sendMedia(
+    jid: string,
+    buffer: Buffer,
+    mediaType: string,
+    caption?: string,
+  ): Promise<void> {
+    const username = jid.slice('http:'.length);
+    const clients = this.sseClients.filter((c) => c.username === username);
+
+    if (clients.length === 0) {
+      logger.debug({ jid }, 'No SSE client connected for HTTP JID (sendMedia)');
+      return;
+    }
+
+    const payload: { mediaType: string; data: string; caption?: string } = {
+      mediaType,
+      data: buffer.toString('base64'),
+    };
+    if (caption !== undefined) payload.caption = caption;
+
+    this.sendSse(username, 'media', JSON.stringify(payload));
+    logger.info({ jid, mediaType, clients: clients.length }, 'HTTP media sent via SSE');
   }
 
   isConnected(): boolean {
@@ -537,8 +601,7 @@ function parseConfig(): HttpConfig | null {
   );
 
   // HTTP_CHANNEL_USERS format: "alice:pass1,bob:pass2"
-  const usersStr =
-    process.env.HTTP_CHANNEL_USERS || envVars.HTTP_CHANNEL_USERS;
+  const usersStr = process.env.HTTP_CHANNEL_USERS || envVars.HTTP_CHANNEL_USERS;
 
   if (!usersStr) {
     logger.warn(

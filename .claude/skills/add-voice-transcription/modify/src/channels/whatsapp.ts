@@ -19,7 +19,7 @@ import {
 } from '../db.js';
 import { logger } from '../logger.js';
 import { isVoiceMessage, transcribeAudioMessage } from '../transcription.js';
-import { Channel, OnInboundMessage, OnChatMetadata, RegisteredGroup } from '../types.js';
+import { Channel, ChannelCapabilities, OnInboundMessage, OnChatMetadata, RegisteredGroup } from '../types.js';
 import { registerChannel, ChannelOpts } from './registry.js';
 
 const GROUP_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
@@ -32,6 +32,13 @@ export interface WhatsAppChannelOpts {
 
 export class WhatsAppChannel implements Channel {
   name = 'whatsapp';
+  readonly capabilities: ChannelCapabilities = {
+    typing: true,
+    groupSync: true,
+    inboundImages: true,
+    inboundPdfs: true,
+    inboundVoice: true,
+  };
 
   private sock!: WASocket;
   private connected = false;

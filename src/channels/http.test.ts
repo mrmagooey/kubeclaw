@@ -626,6 +626,158 @@ describe('HttpChannel', () => {
     });
   });
 
+  // ── sendMedia() via SSE ──────────────────────────────────────────────────
+
+  describe('sendMedia()', () => {
+    async function openSseClient(
+      channel: HttpChannel,
+      auth: string,
+    ): Promise<{
+      res: ReturnType<typeof makeRes>;
+      close: () => void;
+    }> {
+      const req = makeReq({ url: '/stream', auth });
+      const closeHandlers: Array<() => void> = [];
+      (req.on as ReturnType<typeof vi.fn>).mockImplementation(
+        (event: string, cb: () => void) => {
+          if (event === 'close') closeHandlers.push(cb);
+        },
+      );
+      const res = makeRes();
+      await dispatch(channel, req, res);
+      return { res, close: () => closeHandlers.forEach((h) => h()) };
+    }
+
+    it('sends SSE event with type "media" and base64 data', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const { res, close } = await openSseClient(channel, 'alice:secret');
+
+      const buf = Buffer.from([0x89, 0x50, 0x4e, 0x47]); // PNG magic bytes
+      await channel.sendMedia('http:alice', buf, 'image/png', 'A chart');
+
+      const written = (res.write as ReturnType<typeof vi.fn>).mock.calls
+        .map(([d]: [string]) => d)
+        .join('');
+
+      expect(written).toContain('event: media');
+      const dataLine = written.split('\n').find((l) => l.startsWith('data:'));
+      expect(dataLine).toBeDefined();
+      const parsed = JSON.parse(dataLine!.slice('data: '.length));
+      expect(parsed.mediaType).toBe('image/png');
+      expect(parsed.caption).toBe('A chart');
+      expect(parsed.data).toBe(buf.toString('base64'));
+
+      close();
+      await channel.disconnect();
+    });
+
+    it('omits caption field when not provided', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const { res, close } = await openSseClient(channel, 'alice:secret');
+
+      const buf = Buffer.from('pdf bytes');
+      await channel.sendMedia('http:alice', buf, 'application/pdf');
+
+      const written = (res.write as ReturnType<typeof vi.fn>).mock.calls
+        .map(([d]: [string]) => d)
+        .join('');
+
+      const dataLine = written.split('\n').find((l) => l.startsWith('data:'));
+      const parsed = JSON.parse(dataLine!.slice('data: '.length));
+      expect(parsed.mediaType).toBe('application/pdf');
+      expect(parsed.caption).toBeUndefined();
+
+      close();
+      await channel.disconnect();
+    });
+
+    it('does nothing when no SSE client is connected', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const buf = Buffer.from('data');
+      await expect(
+        channel.sendMedia('http:alice', buf, 'image/jpeg'),
+      ).resolves.toBeUndefined();
+
+      await channel.disconnect();
+    });
+
+    it('only sends to the correct user', async () => {
+      const channel = new HttpChannel(
+        makeConfig({ users: { alice: 'secret', bob: 'hunter2' } }),
+        makeOpts({
+          registeredGroups: vi.fn(() => ({
+            'http:alice': {
+              name: 'alice',
+              folder: 'alice',
+              trigger: '',
+              added_at: '',
+            },
+            'http:bob': {
+              name: 'bob',
+              folder: 'bob',
+              trigger: '',
+              added_at: '',
+            },
+          })),
+        }),
+      );
+      await channel.connect();
+
+      const alice = await (async () => {
+        const req = makeReq({ url: '/stream', auth: 'alice:secret' });
+        const closeHandlers: Array<() => void> = [];
+        (req.on as ReturnType<typeof vi.fn>).mockImplementation(
+          (event: string, cb: () => void) => {
+            if (event === 'close') closeHandlers.push(cb);
+          },
+        );
+        const res = makeRes();
+        await dispatch(channel, req, res);
+        return { res, close: () => closeHandlers.forEach((h) => h()) };
+      })();
+
+      const bob = await (async () => {
+        const req = makeReq({ url: '/stream', auth: 'bob:hunter2' });
+        const closeHandlers: Array<() => void> = [];
+        (req.on as ReturnType<typeof vi.fn>).mockImplementation(
+          (event: string, cb: () => void) => {
+            if (event === 'close') closeHandlers.push(cb);
+          },
+        );
+        const res = makeRes();
+        await dispatch(channel, req, res);
+        return { res, close: () => closeHandlers.forEach((h) => h()) };
+      })();
+
+      await channel.sendMedia('http:alice', Buffer.from('img'), 'image/png');
+
+      const aliceData = (alice.res.write as ReturnType<typeof vi.fn>).mock.calls
+        .map(([d]: [string]) => d)
+        .join('');
+      const bobData = (bob.res.write as ReturnType<typeof vi.fn>).mock.calls
+        .map(([d]: [string]) => d)
+        .join('');
+
+      expect(aliceData).toContain('event: media');
+      expect(bobData).not.toContain('event: media');
+
+      alice.close();
+      bob.close();
+      await channel.disconnect();
+    });
+
+    it('declares outboundMedia capability', () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      expect(channel.capabilities?.outboundMedia).toBe(true);
+    });
+  });
+
   // ── ownsJid() ────────────────────────────────────────────────────────────
 
   describe('ownsJid()', () => {

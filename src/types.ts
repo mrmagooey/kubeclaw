@@ -78,16 +78,27 @@ export interface ToolSpec {
   acpMode?: 'sync' | 'async'; // ACP execution mode (default: sync)
 }
 
+/**
+ * Orchestrator configuration for agents running in this group.
+ *
+ * **Runner selection rule** (checked in order):
+ * - `userImage` + `userPort` set → `HttpSidecarAgentRunner` (user container exposes HTTP API)
+ * - `userImage` set alone → `FileSidecarAgentRunner` (user container reads/writes files)
+ * - `direct: true` → `DirectLLMRunner` (in-process, no Kubernetes job)
+ * - none of the above → `KubernetesAgentRunner` (default, uses built-in agent image)
+ */
 export interface ContainerConfig {
   additionalMounts?: AdditionalMount[];
   timeout?: number; // Default: 300000 (5 minutes)
   tools?: ToolSpec[]; // Custom tool containers spawned on demand as sidecar tool pods
   // File sidecar configuration
-  userImage?: string; // Container image for file-based sidecar mode
+  /** Container image for sidecar mode. Used with userPort for HTTP sidecar, or alone for file-based sidecar. */
+  userImage?: string;
   userCommand?: string[]; // Command to run in user container
   userArgs?: string[]; // Arguments for user container command
   filePollInterval?: number; // Poll interval in ms (default: 1000)
-  userPort?: number; // HTTP sidecar: port the user container listens on
+  /** HTTP sidecar: port the user container listens on. When set with userImage, triggers HttpSidecarAgentRunner. */
+  userPort?: number;
   healthEndpoint?: string; // HTTP sidecar: health check path (default /agent/health)
   memoryRequest?: string; // K8s memory request (e.g., "512Mi")
   memoryLimit?: string; // K8s memory limit (e.g., "4Gi")
@@ -143,6 +154,11 @@ export interface ScheduledTask {
   prompt: string;
   schedule_type: 'cron' | 'interval' | 'once';
   schedule_value: string;
+  /**
+   * Context mode for the scheduled task:
+   * - `'group'`: passes the group's current `sessionId`, giving the agent conversational context with recent history.
+   * - `'isolated'`: passes no session ID, giving the agent a fresh context with no prior history.
+   */
   context_mode: 'group' | 'isolated';
   next_run: string | null;
   last_run: string | null;
@@ -162,6 +178,33 @@ export interface TaskRunLog {
 
 // --- Channel abstraction ---
 
+/**
+ * Declares what optional features a channel supports.
+ * Set as a readonly property on the channel class.
+ * Omitting a field means the channel does not support that feature.
+ * Be conservative: only declare capabilities your implementation actually provides.
+ */
+export interface ChannelCapabilities {
+  /** Channel can show a typing indicator. Must implement setTyping(). */
+  typing?: boolean;
+  /** Channel can discover chat/group names from the platform. Must implement syncGroups(). */
+  groupSync?: boolean;
+  /** Channel can receive image attachments. Writes [ImageAttachment: attachments/raw/...] markers. */
+  inboundImages?: boolean;
+  /** Channel can receive PDF attachments. Writes [PdfAttachment: attachments/raw/...] markers. */
+  inboundPdfs?: boolean;
+  /**
+   * Channel can receive voice/audio messages. Two patterns:
+   * - Inline: download audio, call transcribeBuffer(), write [Voice: transcript] into message content.
+   * - Marker: write [VoiceAttachment: attachments/raw/...] for the preprocessing pipeline.
+   */
+  inboundVoice?: boolean;
+  /** Channel natively renders markdown (bold, italic, code blocks). When absent, plain text is assumed. */
+  markdownOutput?: boolean;
+  /** Channel can deliver files/images to users. Must implement sendMedia(). */
+  outboundMedia?: boolean;
+}
+
 export interface Channel {
   name: string;
   connect(): Promise<void>;
@@ -169,10 +212,14 @@ export interface Channel {
   isConnected(): boolean;
   ownsJid(jid: string): boolean;
   disconnect(): Promise<void>;
+  /** Declares what optional features this channel supports. */
+  readonly capabilities?: ChannelCapabilities;
   // Optional: typing indicator. Channels that support it implement it.
   setTyping?(jid: string, isTyping: boolean): Promise<void>;
   // Optional: sync group/chat names from the platform.
   syncGroups?(force: boolean): Promise<void>;
+  // Optional: send a file/image to a user. Channels that support it implement it.
+  sendMedia?(jid: string, buffer: Buffer, mediaType: string, caption?: string): Promise<void>;
 }
 
 // Callback type that channels use to deliver inbound messages

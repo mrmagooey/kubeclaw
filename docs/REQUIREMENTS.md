@@ -194,3 +194,60 @@ These are the creator's settings, stored here for reference:
 ## Project Name
 
 **KubeClaw** - A reference to Clawdbot (now OpenClaw).
+
+---
+
+## Agent Output Conventions
+
+These conventions govern what agents write and how the orchestrator interprets it before delivery to users. Skill authors and group `CLAUDE.md` authors should be aware of them.
+
+### `<internal>` tag — hide reasoning from users
+
+Agents can wrap any content in `<internal>...</internal>` tags. The orchestrator strips these blocks (via `stripInternalTags` in `src/router.ts`) before sending output to the user.
+
+Use this for chain-of-thought, scratchpad reasoning, or planning steps that should inform the response but must not appear in the final message.
+
+Example:
+```
+<internal>
+The user asked about X. I should first check Y before answering.
+</internal>
+Here is the answer to your question about X...
+```
+
+### Prompt XML format — what agents receive
+
+The orchestrator formats inbound conversation history as XML before passing it to the agent:
+
+```xml
+<context timezone="America/New_York" />
+<messages>
+<message sender="Alice" time="10:30 AM">@Andy hello</message>
+<message sender="Bob" time="10:31 AM">@Andy what time is it?</message>
+</messages>
+```
+
+- `<context>` carries metadata (currently timezone).
+- `<messages>` contains one `<message>` per stored message, with `sender` and `time` attributes.
+- Special content markers (see below) may appear inside `<message>` bodies after preprocessing.
+
+### Input markers — preprocessed before the agent sees them
+
+These markers appear inside `<message>` content after the orchestrator preprocesses attachments. The agent sees them as part of the conversation history.
+
+| Marker | Meaning |
+|---|---|
+| `[Image: path/to/image.jpg]` | An image attachment, converted from the raw upload. |
+| `[Voice: transcript text]` | A voice message transcribed to text. |
+
+### `[SendFile: path caption="..."]` marker — deliver files to users
+
+Agents can embed this marker in their output to send a file or media item to the user. The orchestrator's `handleSendFileMarkers` (in `src/outbound-media.ts`) intercepts it, delivers the file via the appropriate channel, and strips the marker from the text reply.
+
+```
+[SendFile: groups/my-group/report.pdf caption="Your monthly report"]
+```
+
+- `path` is relative to the groups directory or an absolute path accessible to the orchestrator.
+- `caption` is optional.
+- Multiple `[SendFile: ...]` markers can appear in a single response.

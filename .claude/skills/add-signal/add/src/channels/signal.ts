@@ -3,6 +3,7 @@ import { logger } from '../logger.js';
 import { registerChannel, ChannelOpts } from './registry.js';
 import {
   Channel,
+  ChannelCapabilities,
   OnChatMetadata,
   OnInboundMessage,
   RegisteredGroup,
@@ -52,6 +53,7 @@ function toJid(source: string, groupId?: string): string {
 
 export class SignalChannel implements Channel {
   name = 'signal';
+  readonly capabilities: ChannelCapabilities = {};
 
   private opts: SignalChannelOpts;
   private config: SignalConfig;

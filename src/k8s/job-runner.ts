@@ -436,8 +436,14 @@ export class JobRunner {
       // Ollama-specific config (plain values, no credentials)
       ...(spec.provider === 'ollama'
         ? [
-            { name: 'OLLAMA_HOST', value: process.env.OLLAMA_HOST || 'http://ollama:11434' },
-            { name: 'OLLAMA_MODEL', value: process.env.OLLAMA_MODEL || 'llama3.2' },
+            {
+              name: 'OLLAMA_HOST',
+              value: process.env.OLLAMA_HOST || 'http://ollama:11434',
+            },
+            {
+              name: 'OLLAMA_MODEL',
+              value: process.env.OLLAMA_MODEL || 'llama3.2',
+            },
           ]
         : []),
       // Claude-specific credentials (only injected when provider is claude)

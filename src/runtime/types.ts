@@ -3,7 +3,8 @@
  * Common interfaces for Docker and Kubernetes runtimes
  */
 
-import { RegisteredGroup } from '../types.js';
+import { RegisteredGroup, McpServerStatus } from '../types.js';
+import { RawAttachment } from '../k8s/types.js';
 
 export interface ContainerInput {
   prompt: string;
@@ -59,4 +60,26 @@ export interface AgentRunner {
     registeredJids: Set<string>,
   ): void;
   shutdown(): Promise<void>;
+
+  /**
+   * Spawn a preprocessing job to convert raw attachments before the agent runs.
+   * Implemented by KubernetesAgentRunner; not available on other runners.
+   */
+  runPreprocessingJob?(
+    group: RegisteredGroup,
+    attachments: RawAttachment[],
+    opts?: { groupsPvc?: string },
+  ): Promise<boolean>;
+
+  /**
+   * Configure (or reconfigure) MCP server connections.
+   * Implemented by DirectLLMRunner; not available on other runners.
+   */
+  configureMcp?(servers: McpServerStatus[]): Promise<void>;
+
+  /**
+   * Send a follow-up message to an active sidecar job.
+   * Implemented by FileSidecarAgentRunner and HttpSidecarAgentRunner.
+   */
+  sendFollowUpMessage?(groupFolder: string, text: string): Promise<boolean>;
 }

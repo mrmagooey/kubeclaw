@@ -52,6 +52,14 @@ async function transcribeWithOpenAI(
   }
 }
 
+/**
+ * Channel-agnostic entry point: pass any audio buffer, get a transcript.
+ * Use this when implementing inboundVoice in a new channel.
+ */
+export async function transcribeBuffer(audioBuffer: Buffer): Promise<string | null> {
+  return transcribeWithOpenAI(audioBuffer, DEFAULT_CONFIG);
+}
+
 export async function transcribeAudioMessage(
   msg: WAMessage,
   sock: WASocket,
@@ -80,7 +88,7 @@ export async function transcribeAudioMessage(
 
     console.log(`Downloaded audio message: ${buffer.length} bytes`);
 
-    const transcript = await transcribeWithOpenAI(buffer, config);
+    const transcript = await transcribeBuffer(buffer);
 
     if (!transcript) {
       return config.fallbackMessage;

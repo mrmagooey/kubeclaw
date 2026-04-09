@@ -48,7 +48,7 @@ import {
   startTaskRequestWatcher,
 } from './k8s/ipc-redis.js';
 import { getOutputChannel, getRedisClient } from './k8s/redis-client.js';
-import { findChannel, formatMessages, formatOutbound } from './router.js';
+import { findChannel, formatMessages, formatOutbound, stripInternalTags } from './router.js';
 import {
   isSenderAllowed,
   isTriggerAllowed,
@@ -59,10 +59,15 @@ import { startSchedulerLoop } from './task-scheduler.js';
 import { detectMentionedSpecialists, loadSpecialists } from './specialists.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { RawAttachment } from './k8s/types.js';
+import {
+  IMAGE_ATTACHMENT_PATTERN,
+  PDF_ATTACHMENT_PATTERN,
+} from './attachment-markers.js';
 import { logger } from './logger.js';
 import { augmentPrompt } from './rag/retriever.js';
 import { indexConversationTurn } from './rag/indexer.js';
 import { startHttpAdminServer } from './admin-shell.js';
+import { handleSendFileMarkers } from './outbound-media.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -284,7 +289,7 @@ async function handleSkillInvocation(
           typeof result.result === 'string'
             ? result.result
             : JSON.stringify(result.result);
-        const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
+        const text = stripInternalTags(raw);
         if (text) await channel.sendMessage(chatJid, text);
       }
     },
@@ -302,14 +307,13 @@ interface AttachmentMarkerHandler {
 
 const ATTACHMENT_HANDLERS: AttachmentMarkerHandler[] = [
   {
-    pattern:
-      /\[ImageAttachment: (attachments\/raw\/[^\s\]]+)(?:\s+caption="([^"]*)")?\]/g,
+    pattern: IMAGE_ATTACHMENT_PATTERN,
     mediaType: 'image/jpeg',
     rewrite: (outputPath) => `[Image: ${outputPath}]`,
     fallback: (filename) => `[Image: ${filename} (processing failed)]`,
   },
   {
-    pattern: /\[PdfAttachment: (attachments\/raw\/[^\s\]]+)\]/g,
+    pattern: PDF_ATTACHMENT_PATTERN,
     mediaType: 'application/pdf',
     rewrite: () => '', // PDF handler reads .txt inline
     fallback: (filename) => `[Attachment: ${filename} (processing failed)]`,
@@ -423,13 +427,13 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   const rawAttachments = extractAttachments(missedMessages);
   if (rawAttachments.length > 0) {
     const runner = getRunnerForGroup(group);
-    if (typeof (runner as any).runPreprocessingJob === 'function') {
+    if (runner.runPreprocessingJob) {
       logger.info(
         { group: group.name, count: rawAttachments.length },
         'Spawning attachment preprocessing job',
       );
       const groupDir = path.join(GROUPS_DIR, group.folder);
-      const ok = await (runner as any).runPreprocessingJob(
+      const ok = await runner.runPreprocessingJob(
         group,
         rawAttachments,
         {
@@ -520,12 +524,18 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
               ? result.result
               : JSON.stringify(result.result);
           // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
-          const text = raw
-            .replace(/<internal>[\s\S]*?<\/internal>/g, '')
-            .trim();
+          const stripped = stripInternalTags(raw);
           logger.info(
             { group: group.name },
             `Agent output: ${raw.slice(0, 200)}`,
+          );
+          // Handle [SendFile: ...] markers — send media and strip/replace markers
+          const text = await handleSendFileMarkers(
+            stripped,
+            channel,
+            chatJid,
+            group.folder,
+            GROUPS_DIR,
           );
           if (text) {
             await channel.sendMessage(chatJid, text);

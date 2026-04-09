@@ -1,4 +1,4 @@
-import { Bot } from 'grammy';
+import { Bot, InputFile } from 'grammy';
 
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
 import { readEnvFile } from '../env.js';
@@ -6,6 +6,7 @@ import { logger } from '../logger.js';
 import { registerChannel, ChannelOpts } from './registry.js';
 import {
   Channel,
+  ChannelCapabilities,
   OnChatMetadata,
   OnInboundMessage,
   RegisteredGroup,
@@ -19,6 +20,11 @@ export interface TelegramChannelOpts {
 
 export class TelegramChannel implements Channel {
   name = 'telegram';
+  readonly capabilities: ChannelCapabilities = {
+    typing: true,
+    markdownOutput: true,
+    outboundMedia: true,
+  };
 
   private bot: Bot | null = null;
   private opts: TelegramChannelOpts;
@@ -215,6 +221,37 @@ export class TelegramChannel implements Channel {
       logger.info({ jid, length: text.length }, 'Telegram message sent');
     } catch (err) {
       logger.error({ jid, err }, 'Failed to send Telegram message');
+    }
+  }
+
+  async sendMedia(
+    jid: string,
+    buffer: Buffer,
+    mediaType: string,
+    caption?: string,
+  ): Promise<void> {
+    if (!this.bot) {
+      logger.warn('Telegram bot not initialized');
+      return;
+    }
+    try {
+      const chatId = jid.replace(/^tg:/, '');
+      if (mediaType.startsWith('image/')) {
+        await this.bot.api.sendPhoto(chatId, new InputFile(buffer), {
+          caption,
+        });
+      } else if (mediaType.startsWith('audio/')) {
+        await this.bot.api.sendAudio(chatId, new InputFile(buffer), {
+          caption,
+        });
+      } else {
+        await this.bot.api.sendDocument(chatId, new InputFile(buffer), {
+          caption,
+        });
+      }
+      logger.info({ jid, mediaType }, 'Telegram media sent');
+    } catch (err) {
+      logger.error({ jid, mediaType, err }, 'Failed to send Telegram media');
     }
   }
 

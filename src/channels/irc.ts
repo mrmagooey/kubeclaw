@@ -7,6 +7,7 @@ import { logger } from '../logger.js';
 import { registerChannel, ChannelOpts } from './registry.js';
 import {
   Channel,
+  ChannelCapabilities,
   OnChatMetadata,
   OnInboundMessage,
   RegisteredGroup,
@@ -31,6 +32,7 @@ interface IRCMessage {
 
 export class IRCChannel implements Channel {
   name = 'irc';
+  readonly capabilities: ChannelCapabilities = {};
 
   private client: any = null;
   private opts: IRCChannelOpts;

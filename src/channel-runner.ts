@@ -60,10 +60,22 @@ import { AvailableGroup, ContainerOutput } from './runtime/types.js';
 import { logger } from './logger.js';
 
 /**
- * Derive a stable, valid group folder name from a channel type + JID.
- * e.g. ("telegram", "-1001234567890") → "tg-1001234567890"
+ * Return the folder prefix used for a given channel type.
+ *
+ * Built-in mappings:
+ *   telegram  → tg
+ *   discord   → dc
+ *   slack     → sl
+ *   whatsapp  → wa
+ *   irc       → irc
+ *   http      → http
+ *
+ * Unknown types fall back to the first 3 characters of the channel name.
+ *
+ * Exported so channel authors can discover their prefix at runtime
+ * and so the table can be tested in isolation.
  */
-function jidToFolder(channelType: string, jid: string): string {
+export function folderPrefixForChannel(channelName: string): string {
   const prefix: Record<string, string> = {
     telegram: 'tg',
     discord: 'dc',
@@ -72,7 +84,15 @@ function jidToFolder(channelType: string, jid: string): string {
     irc: 'irc',
     http: 'http',
   };
-  const p = prefix[channelType] ?? channelType.slice(0, 3);
+  return prefix[channelName] ?? channelName.slice(0, 3);
+}
+
+/**
+ * Derive a stable, valid group folder name from a channel type + JID.
+ * e.g. ("telegram", "-1001234567890") → "tg-1001234567890"
+ */
+function jidToFolder(channelType: string, jid: string): string {
+  const p = folderPrefixForChannel(channelType);
   // Sanitize: keep alphanumeric, replace everything else with '-'
   const sanitized = jid
     .replace(/[^A-Za-z0-9]/g, '-')
