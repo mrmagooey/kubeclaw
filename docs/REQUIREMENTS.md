@@ -66,28 +66,40 @@ The project uses Docker by default (cross-platform). For macOS users who prefer 
 
 ## Vision
 
-A personal Claude assistant accessible via WhatsApp, with minimal custom code.
+A personal AI assistant accessible via multiple channels, with isolated pod execution on Kubernetes.
 
-**Core components:**
-- **Claude Agent SDK** as the core agent
-- **Containers** for isolated agent execution (Linux VMs)
-- **WhatsApp** as the primary I/O channel
+**Core architecture — four-tier pod model:**
+- **Orchestrator (High Priv)** — central coordinator, only pod with K8s API access. Manages all pod lifecycles, mediates discovery between tiers. Redis is architecturally part of this tier.
+- **Channel (Low Priv)** — user-facing communication pods (HTTP, WhatsApp, Signal, etc.). Each channel owns its LLM conversation directly against provider endpoints. The channel *is* the agent.
+- **Capability (Low Priv)** — long-lived feature pods (memory/RAG, MCP servers). Channels talk to them directly after orchestrator-mediated discovery.
+- **Tool Job (No Priv)** — short-lived specialist jobs (web search, browser, formatting). Created by the orchestrator on channel request. Can use external container images paired with IPC sidecars.
+
+**Core features:**
+- **Multi-channel messaging** via channel pods
 - **Persistent memory** per conversation and globally
-- **Scheduled tasks** that run Claude and can message back
-- **Web access** for search and browsing
-- **Browser automation** via agent-browser
+- **Scheduled tasks** that run and can message back
+- **Capabilities** as long-lived feature pods
+- **Tool jobs** for specialist output on demand
 
 **Implementation approach:**
-- Use existing tools (WhatsApp connector, Claude Agent SDK, MCP servers)
-- Minimal glue code
+- Channel pods talk directly to LLM providers (no Claude Code or Agent SDK dependency at runtime)
+- Orchestrator handles all K8s operations — no other tier has cluster access
+- Tool jobs can wrap external container images with IPC sidecars
 - File-based systems where possible (CLAUDE.md for memory, folders for groups)
 
 ---
 
 ## Architecture Decisions
 
+### Four-Tier Pod Model
+- **Orchestrator (High Priv)**: Only pod with K8s API access. Manages all pod lifecycles. Redis is part of this tier.
+- **Channel (Low Priv)**: User-facing pods. Own the LLM conversation directly against provider endpoints. The channel *is* the agent.
+- **Capability (Low Priv)**: Long-lived feature pods. Channels talk to them directly after orchestrator-mediated discovery.
+- **Tool Job (No Priv)**: Short-lived specialist jobs. Created by orchestrator on channel request. Can use external container images with IPC sidecars.
+- The orchestrator never relays data — it handles discovery and authorization, then tiers communicate directly.
+
 ### Message Routing
-- A router listens to WhatsApp and routes messages based on configuration
+- Channel pods handle their own message routing
 - Only messages from registered groups are processed
 - Trigger: `@Andy` prefix (case insensitive), configurable via `ASSISTANT_NAME` env var
 - Unregistered groups are ignored completely
@@ -96,23 +108,22 @@ A personal Claude assistant accessible via WhatsApp, with minimal custom code.
 - **Per-group memory**: Each group has a folder with its own `CLAUDE.md`
 - **Global memory**: Root `CLAUDE.md` is read by all groups, but only writable from "main" (self-chat)
 - **Files**: Groups can create/read files in their folder and reference them
-- Agent runs in the group's folder, automatically inherits both CLAUDE.md files
+- Channel pod runs in the group's folder, automatically inherits both CLAUDE.md files
 
 ### Session Management
-- Each group maintains a conversation session (via Claude Agent SDK)
+- Each group maintains a conversation session within its channel pod
 - Sessions auto-compact when context gets too long, preserving critical information
 
-### Container Isolation
-- All agents run inside containers (lightweight Linux VMs)
-- Each agent invocation spawns a container with mounted directories
-- Containers provide filesystem isolation - agents can only see mounted paths
-- Bash access is safe because commands run inside the container, not on the host
-- Browser automation via agent-browser with Chromium in the container
+### Pod Isolation
+- Channels, capabilities, and tool jobs run in isolated pods with no K8s API access
+- Only the orchestrator can create, destroy, or inspect pods
+- Pods provide filesystem isolation — only explicitly mounted paths are visible
+- Tool jobs can wrap external container images with IPC sidecars, keeping untrusted images sandboxed
+- Non-root execution in all non-orchestrator pods
 
 ### Scheduled Tasks
-- Users can ask Claude to schedule recurring or one-time tasks from any group
-- Tasks run as full agents in the context of the group that created them
-- Tasks have access to all tools including Bash (safe in container)
+- Users can ask to schedule recurring or one-time tasks from any group
+- Tasks run in the context of the group that created them
 - Tasks can optionally send messages to their group via `send_message` tool, or complete silently
 - Task runs are logged to the database with duration and result
 - Schedule types: cron expressions, intervals (ms), or one-time (ISO timestamp)
@@ -123,14 +134,12 @@ A personal Claude assistant accessible via WhatsApp, with minimal custom code.
 - New groups are added explicitly via the main channel
 - Groups are registered in SQLite (via the main channel or IPC `register_group` command)
 - Each group gets a dedicated folder under `groups/`
-- Groups can have additional directories mounted via `containerConfig`
 
 ### Main Channel Privileges
 - Main channel is the admin/control group (typically self-chat)
 - Can write to global memory (`groups/CLAUDE.md`)
 - Can schedule tasks for any group
 - Can view and manage tasks from all groups
-- Can configure additional directory mounts for any group
 
 ---
 

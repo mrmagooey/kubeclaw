@@ -1,12 +1,12 @@
 # KubeClaw Specification
 
-A personal Claude assistant with multi-channel support, persistent memory per conversation, scheduled tasks, and container-isolated agent execution.
+A personal AI assistant with multi-channel support, persistent memory per conversation, scheduled tasks, and isolated pod execution on Kubernetes.
 
 ---
 
 ## Table of Contents
 
-1. [Architecture](#architecture)
+1. [Architecture: Four-Tier Pod Model](#architecture-four-tier-pod-model)
 2. [Architecture: Channel System](#architecture-channel-system)
 3. [Folder Structure](#folder-structure)
 4. [Configuration](#configuration)
@@ -21,111 +21,136 @@ A personal Claude assistant with multi-channel support, persistent memory per co
 
 ---
 
-## Architecture
+## Architecture: Four-Tier Pod Model
+
+KubeClaw uses a four-tier pod architecture with clear privilege separation. Each tier has a distinct role and trust level.
+
+### Tiers
+
+| Tier | Privilege | Lifecycle | Role |
+|------|-----------|-----------|------|
+| **Orchestrator** | High (superuser) | Permanent | Central coordinator. Only pod with K8s API access. Manages all pod lifecycles, mediates discovery and authorization between tiers. Redis is architecturally part of this tier. |
+| **Channel** | Low | Permanent | User-facing communication (HTTP, WhatsApp, Signal, Telegram, etc.). Runs its own LLM conversation directly against provider endpoints. The channel *is* the agent. |
+| **Capability** | Low | Long-lived | Adds features to the deployment (memory/RAG, MCP servers, etc.). Channels talk to capabilities directly after orchestrator-mediated discovery. |
+| **Tool Job** | None | Short-lived | Specialist output on demand (web search, browser, formatting). Created by the orchestrator when a channel requests one. Can use external container images paired with IPC sidecars. |
+
+### Communication Model
 
 ```
-┌──────────────────────────────────────────────────────────────────────┐
-│                      KUBERNETES CLUSTER                               │
-│                                                                       │
-│  ┌──────────────────┐                  ┌────────────────────┐        │
-│  │ Channels         │─────────────────▶│   SQLite Database  │        │
-│  │ (self-register   │◀─────────────────│   (messages.db)    │        │
-│  │  at startup)     │  store/send       └─────────┬──────────┘        │
-│  └──────────────────┘                             │                   │
-│                                                   │                   │
-│         ┌─────────────────────────────────────────┘                   │
-│         │                                                             │
-│         ▼                                                             │
-│  ┌──────────────────┐    ┌──────────────────┐    ┌───────────────┐   │
-│  │  Message Loop    │    │  Scheduler Loop  │    │  Redis IPC    │   │
-│  │  (polls SQLite)  │    │  (checks tasks)  │    │  Watcher      │   │
-│  └────────┬─────────┘    └────────┬─────────┘    └───────────────┘   │
-│           │                       │                                   │
-│           └───────────┬───────────┘                                   │
-│                       │ creates Kubernetes Job                        │
-│                       ▼                                               │
-│  ┌──────────────────────────────────────────────────────────────┐    │
-│  │                  AGENT JOB (batch/Job)                        │    │
-│  │                                                                │    │
-│  │  Working directory: /workspace/group (from PVC mount)          │    │
-│  │  Volume mounts:                                                │    │
-│  │    • kubeclaw-groups PVC → /workspace/group (subPath: folder)  │    │
-│  │    • kubeclaw-sessions PVC → /home/node/.claude (subPath)      │    │
-│  │                                                                │    │
-│  │  Tools (all groups):                                           │    │
-│  │    • Bash (safe - sandboxed in Job!)                           │    │
-│  │    • Read, Write, Edit, Glob, Grep (file operations)           │    │
-│  │    • WebSearch, WebFetch (internet access)                     │    │
-│  │    • agent-browser (browser automation)                        │    │
-│  │    • mcp__kubeclaw__* (scheduler tools via Redis IPC)          │    │
-│  │                                                                │    │
-│  │  Communication: Redis Pub/Sub + Streams                        │    │
-│  └──────────────────────────────────────────────────────────────┘    │
-│                                                                       │
-└───────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────┐
+│                         KUBERNETES CLUSTER                                │
+│                                                                           │
+│  ┌────────────────────────────────────────────────────────────────────┐  │
+│  │               ORCHESTRATOR (High Priv)                              │  │
+│  │                                                                      │  │
+│  │  • Only pod with K8s API access (superuser)                          │  │
+│  │  • Manages all pod lifecycles (channels, capabilities, tool jobs)    │  │
+│  │  • Mediates discovery: channels ask orchestrator to locate            │  │
+│  │    capabilities and spin up tool jobs                                 │  │
+│  │  • Authorizes inter-tier communication                               │  │
+│  │  • Redis (Pub/Sub + Streams) is part of this tier                    │  │
+│  │  • SQLite for message storage, groups, sessions, tasks               │  │
+│  │                                                                      │  │
+│  └──────────┬──────────────────┬──────────────────┬───────────────────┘  │
+│             │ lifecycle +      │ lifecycle +      │ lifecycle +           │
+│             │ discovery        │ discovery        │ spin-up on request   │
+│             ▼                  ▼                  ▼                       │
+│  ┌──────────────────┐  ┌──────────────┐  ┌─────────────────────────┐    │
+│  │ CHANNEL (Low)    │  │ CAPABILITY   │  │ TOOL JOB (No Priv)      │    │
+│  │                  │  │ (Low)        │  │                          │    │
+│  │ Owns LLM convo  │  │ Long-lived   │  │ Short-lived              │    │
+│  │ Talks to LLM    │  │ Memory, RAG, │  │ Web search, browser,     │    │
+│  │ providers direct │  │ MCP servers  │  │ formatting               │    │
+│  │ User I/O        │  │              │  │ External images + IPC    │    │
+│  │                  │  │              │  │ sidecars                 │    │
+│  └────────┬─────────┘  └──────────────┘  └─────────────────────────┘    │
+│           │                    ▲                    ▲                     │
+│           │    direct after    │    direct after    │                     │
+│           │    discovery       │    discovery       │                     │
+│           └────────────────────┴────────────────────┘                     │
+│                                                                           │
+└───────────────────────────────────────────────────────────────────────────┘
 ```
+
+**Key points:**
+- The orchestrator never relays data between tiers — it handles discovery and authorization, then channels communicate directly with capabilities and tool jobs.
+- Channels run their own LLM conversations directly against provider endpoints (Anthropic, OpenAI, OpenRouter, Ollama, etc.). There is no Claude Code or Agent SDK dependency at runtime.
+- Tool jobs can wrap external container images (e.g. a third-party web search container) by pairing them with an IPC sidecar so the KubeClaw communication system can reach them.
+- Only the orchestrator can create, destroy, or inspect pods. Channels, capabilities, and tool jobs have no K8s API access.
 
 ### Technology Stack
 
-| Component          | Technology                                    | Purpose                                   |
-| ------------------ | --------------------------------------------- | ----------------------------------------- |
-| Channel System     | Channel registry (`src/channels/registry.ts`) | Channels self-register at startup         |
-| Message Storage    | SQLite (better-sqlite3)                       | Store messages for polling                |
-| Agent Runtime      | Kubernetes Jobs (`batch/v1`)                  | Isolated environments for agent execution |
-| IPC                | Redis Pub/Sub + Streams                       | Orchestrator ↔ agent communication        |
-| Agent              | @anthropic-ai/claude-agent-sdk                | Run Claude with tools and MCP servers     |
-| Browser Automation | agent-browser + Chromium                      | Web interaction and screenshots           |
-| Runtime            | Node.js 20+                                   | Host process for routing and scheduling   |
+| Component          | Technology                 | Purpose                                             |
+| ------------------ | -------------------------- | --------------------------------------------------- |
+| Orchestrator       | Node.js 20+               | Central coordinator, pod lifecycle, IPC              |
+| IPC                | Redis Pub/Sub + Streams    | Inter-tier communication and discovery               |
+| Message Storage    | SQLite (better-sqlite3)    | Messages, groups, sessions, tasks                    |
+| Channel Pods       | Per-channel container      | User I/O, LLM conversation against provider APIs     |
+| Capability Pods    | Per-capability container   | Long-lived features (RAG, MCP, memory)               |
+| Tool Jobs          | K8s Jobs (`batch/v1`)      | Short-lived specialist tasks, external images + IPC  |
+| Browser Automation | agent-browser + Chromium   | Web interaction and screenshots (tool job)            |
 
 ---
 
 ## Architecture: Channel System
 
-The core ships with no channels built in — each channel (WhatsApp, Telegram, Slack, Discord, Gmail) is installed as a [Claude Code skill](https://code.claude.com/docs/en/skills) that adds the channel code to your fork. Channels self-register at startup; installed channels with missing credentials emit a WARN log and are skipped.
+Channels are the user-facing tier of KubeClaw. Each channel runs as its own pod, owns its LLM conversation directly against provider endpoints, and communicates with users via a specific platform (WhatsApp, Telegram, HTTP, etc.).
+
+The core ships with no channels built in — each channel is installed as a [Claude Code skill](https://code.claude.com/docs/en/skills) that adds the channel code to your fork.
 
 ### System Diagram
 
 ```mermaid
 graph LR
-    subgraph Channels["Channels"]
+    subgraph Channels["Channel Pods (Low Priv)"]
         WA[WhatsApp]
         TG[Telegram]
         SL[Slack]
         DC[Discord]
-        New["Other Channel (Signal, Gmail...)"]
+        New["Other (Signal, HTTP...)"]
     end
 
-    subgraph Orchestrator["Orchestrator — index.ts"]
-        ML[Message Loop]
-        GQ[Group Queue]
-        RT[Router]
-        TS[Task Scheduler]
+    subgraph Orchestrator["Orchestrator Pod (High Priv)"]
+        LC[Pod Lifecycle]
+        DS[Discovery Service]
+        IPC[Redis IPC]
         DB[(SQLite)]
+        TS[Task Scheduler]
     end
 
-    subgraph Execution["Container Execution"]
-        CR[Container Runner]
-        LC["Kubernetes Job"]
-        IPC[Redis IPC Watcher]
+    subgraph Capabilities["Capability Pods (Low Priv)"]
+        MEM[Memory/RAG]
+        MCP[MCP Servers]
     end
 
-    %% Flow
-    WA & TG & SL & DC & New -->|onMessage| ML
-    ML --> GQ
-    GQ -->|concurrency| CR
-    CR --> LC
-    LC -->|Redis Pub/Sub| IPC
-    IPC -->|tasks & messages| RT
-    RT -->|Channel.sendMessage| Channels
-    TS -->|due tasks| CR
+    subgraph Tools["Tool Jobs (No Priv)"]
+        WS[Web Search]
+        BR[Browser]
+        FMT[Formatter]
+    end
 
-    %% DB Connections
-    DB <--> ML
-    DB <--> TS
+    %% Channel ↔ Orchestrator (discovery + lifecycle)
+    WA & TG & SL & DC & New -->|discovery request| DS
+    DS -->|endpoint info| Channels
+    LC -->|creates/destroys| Capabilities
+    LC -->|spins up on request| Tools
 
-    %% Styling for the dynamic channel
+    %% Direct after discovery
+    WA & TG & SL & DC & New -.->|direct after discovery| Capabilities
+    WA & TG & SL & DC & New -.->|direct after discovery| Tools
+
+    %% Styling
     style New stroke-dasharray: 5 5,stroke-width:2px
+    style FMT stroke-dasharray: 5 5,stroke-width:2px
 ```
+
+### Channel Pod Responsibilities
+
+A channel pod:
+- Owns the LLM conversation — talks directly to provider endpoints (Anthropic, OpenAI, OpenRouter, Ollama, etc.)
+- Handles user I/O for its platform (receiving and sending messages)
+- Requests capabilities and tool jobs through the orchestrator (discovery and authorization)
+- Communicates directly with capabilities and tool jobs after the orchestrator mediates discovery
 
 ### Channel Registry
 
@@ -480,45 +505,38 @@ Sessions enable conversation continuity - Claude remembers what you talked about
 ### Incoming Message Flow
 
 ```
-1. User sends a message via any connected channel
+1. User sends a message via a platform (WhatsApp, Telegram, HTTP, etc.)
    │
    ▼
-2. Channel receives message (e.g. Baileys for WhatsApp, Bot API for Telegram)
+2. Channel pod receives the message
    │
    ▼
-3. Message stored in SQLite (store/messages.db)
+3. Channel checks trigger pattern and group registration
+   ├── Not a registered group? → ignore
+   └── No trigger match? → store but don't process
    │
    ▼
-4. Message loop polls SQLite (every 2 seconds)
-   │
-   ▼
-5. Router checks:
-   ├── Is chat_jid in registered groups (SQLite)? → No: ignore
-   └── Does message match trigger pattern? → No: store but don't process
-   │
-   ▼
-6. Router catches up conversation:
-   ├── Fetch all messages since last agent interaction
+4. Channel catches up conversation context:
+   ├── Fetch messages since last interaction
    ├── Format with timestamp and sender name
    └── Build prompt with full conversation context
    │
    ▼
-7. Router invokes Claude Agent SDK:
-   ├── cwd: groups/{group-name}/
-   ├── prompt: conversation history + current message
-   ├── resume: session_id (for continuity)
-   └── mcpServers: kubeclaw (scheduler)
+5. Channel runs LLM conversation directly against provider endpoint:
+   ├── Provider: Anthropic, OpenAI, OpenRouter, Ollama, etc.
+   ├── Context: group memory (CLAUDE.md), conversation history
+   └── Session continuity via stored session state
    │
    ▼
-8. Claude processes message:
-   ├── Reads CLAUDE.md files for context
-   └── Uses tools as needed (search, email, etc.)
+6. During conversation, channel may request tools/capabilities:
+   ├── Asks orchestrator to discover a capability → gets endpoint → talks directly
+   └── Asks orchestrator to spin up a tool job → gets endpoint → talks directly
    │
    ▼
-9. Router prefixes response with assistant name and sends via the owning channel
+7. Channel sends response to user via its platform
    │
    ▼
-10. Router updates last agent timestamp and saves session ID
+8. Channel updates conversation state
 ```
 
 ### Trigger Word Matching
@@ -648,16 +666,17 @@ The `kubeclaw` MCP server is created dynamically per agent call with the current
 
 ## Deployment
 
-KubeClaw runs as a Kubernetes Deployment (`kubeclaw-orchestrator`) in the `kubeclaw` namespace.
+KubeClaw runs in the `kubeclaw` namespace. The orchestrator is a Kubernetes Deployment; channels and capabilities are long-lived pods managed by the orchestrator; tool jobs are ephemeral K8s Jobs created on demand.
 
 ### Startup Sequence
 
-When KubeClaw starts, it:
+When the orchestrator starts, it:
 
 1. Initializes the SQLite database
 2. Loads state from SQLite (registered groups, sessions, router state)
-3. **Connects channels** — loops through registered channels, instantiates those with credentials, calls `connect()` on each
-4. Once at least one channel is connected:
+3. **Starts channel pods** — loops through registered channels, creates pods for those with credentials
+4. **Starts capability pods** — creates long-lived pods for configured capabilities
+5. Once at least one channel is connected:
    - Starts the scheduler loop
    - Starts the Redis IPC watcher (`src/k8s/ipc-redis.ts`)
    - Sets up the per-group queue with `processGroupMessages`
@@ -667,13 +686,13 @@ When KubeClaw starts, it:
 ### Managing the Service
 
 ```bash
-# Check status
+# Check all KubeClaw pods (orchestrator, channels, capabilities, tool jobs)
 kubectl get pods -n kubeclaw
 
-# View logs
+# View orchestrator logs
 kubectl logs -f deployment/kubeclaw-orchestrator -n kubeclaw
 
-# Restart
+# Restart orchestrator (will restart all managed pods)
 kubectl rollout restart deployment/kubeclaw-orchestrator -n kubeclaw
 
 # Scale down / up
@@ -687,35 +706,35 @@ See [INSTALL.md](../INSTALL.md) for full deployment instructions.
 
 ## Security Considerations
 
-### Container Isolation
+### Pod Isolation by Tier
 
-All agents run inside containers (lightweight Linux VMs), providing:
+Security is enforced through the four-tier privilege model:
 
-- **Filesystem isolation**: Agents can only access mounted directories
-- **Safe Bash access**: Commands run inside the container, not on your Mac
-- **Network isolation**: Can be configured per-container if needed
-- **Process isolation**: Container processes can't affect the host
-- **Non-root user**: Container runs as unprivileged `node` user (uid 1000)
+- **Orchestrator (High Priv)**: Only pod with K8s API access. Controls all pod lifecycles and mediates discovery. Redis is part of this tier.
+- **Channel (Low Priv)**: No K8s API access. Handles user I/O and LLM conversations. Can only reach capabilities and tool jobs after orchestrator-mediated discovery.
+- **Capability (Low Priv)**: No K8s API access. Provides features to channels. Cannot create or destroy other pods.
+- **Tool Job (No Priv)**: No K8s API access. Ephemeral. Can use external container images paired with IPC sidecars. Auto-deleted after completion.
+
+All non-orchestrator pods run as unprivileged users with filesystem isolation — they can only access explicitly mounted directories.
 
 ### Prompt Injection Risk
 
-WhatsApp messages could contain malicious instructions attempting to manipulate Claude's behavior.
+User messages could contain malicious instructions attempting to manipulate the channel's LLM conversation.
 
 **Mitigations:**
 
-- Container isolation limits blast radius
+- Privilege separation limits blast radius — even a compromised channel cannot access K8s APIs or other groups
 - Only registered groups are processed
 - Trigger word required (reduces accidental processing)
-- Agents can only access their group's mounted directories
-- Main can configure additional directories per group
-- Claude's built-in safety training
+- Tool jobs are ephemeral and have no persistent privileges
+- LLM provider safety training
 
 **Recommendations:**
 
 - Only register trusted groups
-- Review additional directory mounts carefully
+- Review capability and tool job configurations
 - Review scheduled tasks periodically
-- Monitor logs for unusual activity
+- Monitor orchestrator logs for unusual pod activity
 
 ### Credential Storage
 

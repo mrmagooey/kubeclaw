@@ -1,26 +1,25 @@
 # KubeClaw
 
-Personal Claude assistant. See [README.md](README.md) for philosophy and setup. See [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md) for architecture decisions.
+Personal AI assistant. See [README.md](README.md) for philosophy and setup. See [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md) for architecture decisions.
 
 ## Quick Context
 
-Single Node.js process with skill-based channel system. Channels (WhatsApp, Telegram, Slack, Discord, Gmail) are skills that self-register at startup. Messages route to Claude Agent SDK running as Kubernetes Jobs. Each group has isolated filesystem and memory.
+Four-tier pod architecture: **Orchestrator** (high priv, only K8s API access, Redis), **Channel** (low priv, user I/O, owns LLM conversation directly against providers), **Capability** (low priv, long-lived features like memory/MCP), **Tool Job** (no priv, short-lived specialist tasks, external images + IPC sidecars). Orchestrator mediates discovery and authorization; channels then talk directly to capabilities and tool jobs.
 
 ## Key Files
 
 | File                                | Purpose                                                    |
 | ----------------------------------- | ---------------------------------------------------------- |
-| `src/index.ts`                      | Orchestrator: state, message loop, agent invocation        |
+| `src/index.ts`                      | Orchestrator: state, pod lifecycle, discovery               |
 | `src/channels/registry.ts`          | Channel registry (self-registration at startup)            |
 | `src/k8s/ipc-redis.ts`              | Redis IPC watcher and task processing                      |
-| `src/k8s/job-runner.ts`             | Spawns Kubernetes Jobs for agent execution                 |
+| `src/k8s/job-runner.ts`             | Manages pod lifecycles and tool job creation                |
 | `src/runtime/index.ts`              | Agent runner abstraction                                   |
 | `src/router.ts`                     | Message formatting and outbound routing                    |
 | `src/config.ts`                     | Trigger pattern, paths, intervals                          |
 | `src/task-scheduler.ts`             | Runs scheduled tasks                                       |
 | `src/db.ts`                         | SQLite operations                                          |
 | `groups/{name}/CLAUDE.md`           | Per-group memory (isolated)                                |
-| `container/skills/agent-browser.md` | Browser automation tool (available to all agents via Bash) |
 
 ## Skills
 

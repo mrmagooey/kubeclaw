@@ -26,7 +26,7 @@ Tell it in plain English: `"set up Telegram"` — it will ask for your credentia
 
 ## Philosophy
 
-**Secure by isolation.** Agents run as Kubernetes Jobs with filesystem isolation and can only see what's explicitly mounted. Bash access is safe because commands run inside the job, not on your host.
+**Secure by isolation.** Four-tier pod model with clear privilege separation. Only the orchestrator has K8s API access. Channels, capabilities, and tool jobs run in isolated pods and can only see what's explicitly mounted.
 
 **Skills over features.** Instead of adding features (e.g. support for Telegram) to the codebase, contributors submit [claude code skills](https://code.claude.com/docs/en/skills) like `/add-telegram` that transform your fork. You end up with clean code that does exactly what you need.
 
@@ -104,19 +104,26 @@ Skills we'd like to see:
 ## Architecture
 
 ```
-Channels → SQLite → Polling loop → Kubernetes Job (pi-agent-core) → Redis IPC → Response
+User → Channel Pod (owns LLM conversation) → Orchestrator (discovery) → Capability/Tool Pods
 ```
 
-Single Node.js process. Channels are added via skills and self-register at startup — the orchestrator connects whichever ones have credentials present. Agents execute as Kubernetes Jobs with filesystem isolation and network policies. Only mounted directories are accessible. Per-group message queue with concurrency control. IPC via Redis Pub/Sub + Streams.
+Four-tier pod model with clear privilege separation:
 
-For the full architecture details, see [docs/SPEC.md](docs/SPEC.md).
+| Tier | Privilege | Role |
+|------|-----------|------|
+| **Orchestrator** | High (superuser) | Only pod with K8s API access. Manages all pod lifecycles, mediates discovery. Redis is part of this tier. |
+| **Channel** | Low | User-facing I/O. Owns the LLM conversation directly against provider endpoints. The channel *is* the agent. |
+| **Capability** | Low | Long-lived feature pods (memory/RAG, MCP servers). Channels talk directly after orchestrator-mediated discovery. |
+| **Tool Job** | None | Short-lived specialist jobs (web search, browser). Can use external container images with IPC sidecars. |
+
+The orchestrator never relays data — it handles discovery and authorization, then channels communicate directly with capabilities and tool jobs. For the full architecture details, see [docs/SPEC.md](docs/SPEC.md).
 
 Key files:
 
 - `src/index.ts` — Orchestrator
 - `src/channels/registry.ts` — Channel registry
 - `src/k8s/ipc-redis.ts` — Redis IPC watcher
-- `src/k8s/job-runner.ts` — Spawns Kubernetes Jobs
+- `src/k8s/job-runner.ts` — Spawns Kubernetes Jobs and manages pod lifecycles
 - `src/runtime/index.ts` — Agent runner abstraction
 - `src/router.ts` — Message formatting and outbound routing
 - `src/group-queue.ts` — Per-group queue with global concurrency limit
@@ -166,7 +173,7 @@ Kubernetes provides better isolation, resource limits per agent, scalability acr
 
 **Is this secure?**
 
-Agents run as Kubernetes Jobs, not behind application-level permission checks. They can only access explicitly mounted directories. Network policies restrict agents to DNS, Redis, and HTTPS endpoints only. Jobs auto-delete after completion with TTL cleanup. You should still review what you're running, but the codebase is small enough that you actually can. See [docs/SECURITY.md](docs/SECURITY.md) for the full security model.
+Security is enforced through a four-tier privilege model — Orchestrator (superuser), Channel (low priv), Capability (low priv), Tool Job (no priv). Only the orchestrator has K8s API access. All other pods run isolated with no ability to create, destroy, or inspect other pods. Tool jobs can wrap external container images safely via IPC sidecars. See [docs/SECURITY.md](docs/SECURITY.md) for the full security model.
 
 **Why no configuration files?**
 
