@@ -64,7 +64,6 @@ storage:
     sessions: 20Gi
     project: 10Gi
     store: 1Gi
-    plugins: 1Gi
 
 # Application credentials.
 secrets:
@@ -79,23 +78,12 @@ secrets:
   openaiBaseUrl: ""
   # Optional: default model for DirectLLMRunner / AdminShell (e.g. gpt-4o, openai/gpt-4o)
   directLlmModel: ""
-  # Voyage AI API key — required when rag.provider=voyage.
-  voyageApiKey: ""
   # Admin HTTP interface password. Auto-generated on first install if left empty.
   adminHttpPassword: ""
-  # HTTP channel users (format: "user1:pass1,user2:pass2").
-  # Auto-generates "admin:<random>" on first install if left empty.
-  httpChannelUsers: ""
   # Set to use an existing Secret instead of creating one from the values above.
   # The Secret must contain keys: anthropic-api-key, claude-code-oauth-token,
   # openai-api-key (optional), openai-base-url (optional), voyage-api-key (optional)
   existingSecret: ""
-
-ollama:
-  # Kubernetes Service URL for Ollama. For cross-namespace: http://<svc>.<namespace>:11434
-  # The Ollama Deployment should carry label app: ollama for NetworkPolicy egress to work.
-  host: "http://ollama:11434"
-  model: "llama3.2"
 
 agent:
   # How long (seconds) an agent Job may run before being killed.
@@ -149,20 +137,7 @@ networkPolicy:
 #         - name: HTTP_CHANNEL_PORT
 #           key: port
 #           optional: true
-channels:
-  http:
-    enabled: true
-    httpPort: 4080
-    ingress:
-      enabled: true
-      className: nginx
-      host: chat.kubeclaw.local
-    envVars:
-      - name: HTTP_CHANNEL_USERS
-        key: users
-      - name: HTTP_CHANNEL_PORT
-        key: port
-        optional: true
+channels: {}
 
 # Default resource limits for channel pods.
 channelPod:
@@ -200,7 +175,7 @@ mcpServers: {}
 #   openai  — text-embedding-3-small. Reuses OPENAI_API_KEY. No new secrets.
 #   voyage  — voyage-3. Requires VOYAGE_API_KEY in secrets.
 rag:
-  enabled: true
+  enabled: false
   provider: openai           # "openai" | "voyage"
   model: ""                  # uses provider default if empty
   storage: 20Gi              # Qdrant PVC size

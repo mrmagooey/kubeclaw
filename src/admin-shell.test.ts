@@ -71,11 +71,10 @@ vi.mock('@kubernetes/client-node', () => {
     createNamespacedDeployment: mockCreateNamespacedDeployment,
     replaceNamespacedDeployment: mockReplaceNamespacedDeployment,
   };
-  let callCount = 0;
   class MockKubeConfig {
     loadFromCluster() {}
-    makeApiClient() {
-      return ++callCount === 1 ? mockCoreV1 : mockAppsV1;
+    makeApiClient(ApiClass: unknown) {
+      return ApiClass === MockCoreV1Api ? mockCoreV1 : mockAppsV1;
     }
   }
   return {

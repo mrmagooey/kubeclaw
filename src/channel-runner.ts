@@ -51,13 +51,124 @@ import {
   shouldDropMessage,
 } from './sender-allowlist.js';
 import { detectMentionedSpecialists, loadSpecialists } from './specialists.js';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 import {
   startIpcWatcher,
   startControlChannelWatcher,
+  type ControlMessage,
 } from './k8s/ipc-redis.js';
+import {
+  getRedisClient,
+  getChannelStatusChannel,
+} from './k8s/redis-client.js';
+import { registerChannel } from './channels/registry.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { AvailableGroup, ContainerOutput } from './runtime/types.js';
 import { logger } from './logger.js';
+
+const execFileAsync = promisify(execFile);
+
+/** Publish a lifecycle status event to the orchestrator. */
+async function publishChannelStatus(
+  status: 'ready' | 'configured' | 'error',
+  detail?: string,
+): Promise<void> {
+  try {
+    const client = getRedisClient();
+    const channel = getChannelStatusChannel(KUBECLAW_CHANNEL);
+    await client.publish(channel, JSON.stringify({ status, detail }));
+    logger.info({ status, detail }, 'Published channel status');
+  } catch (err) {
+    logger.error({ err, status }, 'Failed to publish channel status');
+  }
+}
+
+/**
+ * Handle a 'configure' control command from the orchestrator.
+ *
+ * Installs npm dependencies, dynamically imports the channel module,
+ * registers it, and starts the connection. This is the self-configuration
+ * path for blank channel pods.
+ *
+ * SECURITY: This handler is only reachable via the Redis control channel
+ * (kubeclaw:control:{channelName}), which only the orchestrator can
+ * publish to (enforced by Redis ACL). User messages cannot trigger this.
+ */
+async function handleConfigure(
+  msg: ControlMessage,
+  channelOpts: {
+    onMessage: (chatJid: string, msg: NewMessage) => void;
+    onChatMetadata: (
+      chatJid: string,
+      timestamp: string,
+      name?: string,
+      channel?: string,
+      isGroup?: boolean,
+    ) => void;
+    registeredGroups: () => Record<string, RegisteredGroup>;
+  },
+  channelsArray: Channel[],
+): Promise<void> {
+  const channelType = msg.channelType;
+  if (!channelType) {
+    logger.error('Configure command missing channelType');
+    await publishChannelStatus('error', 'Missing channelType');
+    return;
+  }
+
+  // Install npm dependencies if specified
+  const deps = (msg as any).dependencies as string[] | undefined;
+  if (deps && deps.length > 0) {
+    logger.info({ deps }, 'Installing npm dependencies...');
+    try {
+      await execFileAsync('npm', ['install', '--save', ...deps], {
+        cwd: process.cwd(),
+        timeout: 120_000,
+      });
+      logger.info({ deps }, 'Dependencies installed successfully');
+    } catch (err) {
+      logger.error({ err, deps }, 'Failed to install dependencies');
+      await publishChannelStatus('error', `npm install failed: ${err}`);
+      return;
+    }
+  }
+
+  // If the channel factory is already registered (built-in), use it directly
+  let factory = getChannelFactory(channelType);
+
+  // If not registered, try to dynamically import it
+  if (!factory) {
+    try {
+      const modulePath = `./channels/${channelType}.js`;
+      await import(modulePath);
+      factory = getChannelFactory(channelType);
+    } catch (err) {
+      logger.error({ err, channelType }, 'Failed to import channel module');
+      await publishChannelStatus('error', `Import failed: ${err}`);
+      return;
+    }
+  }
+
+  if (!factory) {
+    logger.error({ channelType }, 'Channel factory not found after import');
+    await publishChannelStatus('error', `No factory for ${channelType}`);
+    return;
+  }
+
+  // Create and connect the channel
+  const channel = factory(channelOpts);
+  if (!channel) {
+    logger.error({ channelType }, 'Channel factory returned null');
+    await publishChannelStatus('error', 'Factory returned null — check credentials');
+    return;
+  }
+
+  await connectWithRetry(channel);
+  channelsArray.push(channel);
+  logger.info({ channelType }, 'Channel configured and connected');
+  await publishChannelStatus('configured');
+}
 
 /**
  * Return the folder prefix used for a given channel type.
@@ -542,6 +653,9 @@ async function main(): Promise<void> {
     registeredGroups: () => registeredGroups,
   };
 
+  // Notify orchestrator that this channel pod is ready to receive commands.
+  await publishChannelStatus('ready');
+
   // Load the channel factory by type (KUBECLAW_CHANNEL_TYPE), not instance name (KUBECLAW_CHANNEL).
   // This allows multiple instances of the same type (e.g. "http-dev" and "http-prod" both using "http" factory).
   const factory = getChannelFactory(KUBECLAW_CHANNEL_TYPE);
@@ -592,7 +706,7 @@ async function main(): Promise<void> {
     ) => getDirectLLMRunner().writeGroupsSnapshot(gf, im, ag, rj),
   });
 
-  // Subscribe to orchestrator control commands (e.g. reload).
+  // Subscribe to orchestrator control commands (e.g. reload, configure).
   startControlChannelWatcher(KUBECLAW_CHANNEL, async (msg) => {
     if (msg.command === 'reload') {
       logger.info('Reload command received, reconnecting channel...');
@@ -625,6 +739,8 @@ async function main(): Promise<void> {
       } catch (err) {
         logger.error({ err }, 'Failed to reconfigure MCP servers');
       }
+    } else if (msg.command === 'configure') {
+      await handleConfigure(msg, channelOpts, channels);
     } else {
       logger.warn({ command: msg.command }, 'Unknown control command');
     }

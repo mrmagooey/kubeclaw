@@ -1091,7 +1091,7 @@ describe('JobRunner', () => {
     });
   });
 
-  describe('generateJobManifest — plugins PVC and service account', () => {
+  describe('generateJobManifest — service account', () => {
     it('sets automountServiceAccountToken: false on all agent jobs', () => {
       const manifest = jobRunner.generateJobManifest({
         name: 'nc-test-abc',
@@ -1107,46 +1107,7 @@ describe('JobRunner', () => {
       expect(podSpec.serviceAccountName).toBe('');
     });
 
-    it('mounts plugins PVC read-only for regular agent job', () => {
-      const manifest = jobRunner.generateJobManifest({
-        name: 'nc-test-abc',
-        groupFolder: 'test-group',
-        chatJid: 'test@g.us',
-        isMain: false,
-        prompt: 'hello',
-        provider: 'openai',
-      });
-
-      const volumeMounts = manifest.spec?.template?.spec?.containers?.[0]
-        ?.volumeMounts as any[];
-      const pluginsMount = volumeMounts?.find(
-        (m: any) => m.mountPath === '/workspace/plugins',
-      );
-      expect(pluginsMount).toBeDefined();
-      expect(pluginsMount.readOnly).toBe(true);
-    });
-
-    it('mounts plugins PVC read-write for superuser agent job', () => {
-      const manifest = jobRunner.generateJobManifest({
-        name: 'nc-test-abc',
-        groupFolder: 'test-group',
-        chatJid: 'test@g.us',
-        isMain: true,
-        prompt: 'hello',
-        provider: 'openai',
-        superuser: true,
-      });
-
-      const volumeMounts = manifest.spec?.template?.spec?.containers?.[0]
-        ?.volumeMounts as any[];
-      const pluginsMount = volumeMounts?.find(
-        (m: any) => m.mountPath === '/workspace/plugins',
-      );
-      expect(pluginsMount).toBeDefined();
-      expect(pluginsMount.readOnly).toBe(false);
-    });
-
-    it('includes plugins-pvc in volumes', () => {
+    it('does not mount plugins PVC on agent jobs', () => {
       const manifest = jobRunner.generateJobManifest({
         name: 'nc-test-abc',
         groupFolder: 'test-group',
@@ -1157,7 +1118,12 @@ describe('JobRunner', () => {
       });
 
       const volumes = manifest.spec?.template?.spec?.volumes as any[];
-      expect(volumes?.some((v: any) => v.name === 'plugins-pvc')).toBe(true);
+      expect(volumes?.some((v: any) => v.name === 'plugins-pvc')).toBeFalsy();
+      const volumeMounts = manifest.spec?.template?.spec?.containers?.[0]
+        ?.volumeMounts as any[];
+      expect(
+        volumeMounts?.some((m: any) => m.mountPath === '/workspace/plugins'),
+      ).toBeFalsy();
     });
   });
 

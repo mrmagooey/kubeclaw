@@ -15,7 +15,7 @@ import OpenAI from 'openai';
 
 import { GROUPS_DIR, KUBECLAW_CHANNEL, KUBECLAW_MODE } from '../config.js';
 import { getConversationHistory, appendConversationMessage } from '../db.js';
-import { indexConversationTurn } from '../rag/indexer.js';
+import { getRagProvider } from '../rag/provider.js';
 import { logger } from '../logger.js';
 import { RegisteredGroup } from '../types.js';
 import {
@@ -943,7 +943,7 @@ export class DirectLLMRunner implements AgentRunner {
       }
 
       if (fullResponse) {
-        void indexConversationTurn(
+        void getRagProvider().indexConversationTurn(
           input.groupFolder,
           input.prompt,
           fullResponse,

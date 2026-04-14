@@ -148,3 +148,7 @@ export function getTaskRequestStream(): string {
 export function getControlChannel(channelName: string): string {
   return `kubeclaw:control:${channelName}`;
 }
+
+export function getChannelStatusChannel(channelName: string): string {
+  return `kubeclaw:channel-status:${channelName}`;
+}

@@ -54,20 +54,6 @@ spec:
   resources:
     requests:
       storage: {{ .Values.storage.sizes.store }}
----
-# Plugins: skills and agent plugins (writable by superuser jobs, read-only by others).
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: kubeclaw-plugins
-  namespace: {{ .Values.namespace }}
-spec:
-  accessModes:
-    - ReadWriteOnce
-  {{- include "kubeclaw.storageClassName" . | nindent 2 }}
-  resources:
-    requests:
-      storage: {{ .Values.storage.sizes.plugins }}
 {{- range $name, $cfg := .Values.channels }}
 {{- if $cfg.enabled }}
 ---

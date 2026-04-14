@@ -2,6 +2,9 @@ import fs from 'fs';
 import http from 'http';
 import path from 'path';
 
+import { setupChannel } from './skills/orchestrator/channel-setup.js';
+import type { ChannelSetupInput } from './skills/orchestrator/types.js';
+
 import {
   ASSISTANT_NAME,
   GROUPS_DIR,
@@ -64,8 +67,7 @@ import {
   PDF_ATTACHMENT_PATTERN,
 } from './attachment-markers.js';
 import { logger } from './logger.js';
-import { augmentPrompt } from './rag/retriever.js';
-import { indexConversationTurn } from './rag/indexer.js';
+import { augmentPrompt, getRagProvider } from './rag/provider.js';
 import { startHttpAdminServer } from './admin-shell.js';
 import { handleSendFileMarkers } from './outbound-media.js';
 
@@ -215,8 +217,8 @@ export { recoverPendingMessages as _recoverPendingMessages };
 
 function loadSkillPrompt(name: string): string | null {
   for (const p of [
-    path.join(process.cwd(), '.claude', 'skills', name, 'SKILL.md'),
-    `/app/.claude/skills/${name}/SKILL.md`,
+    path.join(process.cwd(), 'skills', 'channel', `${name}.md`),
+    `/app/skills/channel/${name}.md`,
   ]) {
     try {
       return fs.readFileSync(p, 'utf-8');
@@ -227,25 +229,14 @@ function loadSkillPrompt(name: string): string | null {
   return null;
 }
 
-function buildSkillPrompt(
-  skillName: string,
-  skillMd: string,
-  extraArgs: string,
-): string {
-  return `You are applying the skill "${skillName}".
-
-The pre-compiled plugin has already been copied to /workspace/plugins/ by the orchestrator.
-Call deploy_channel with the Kubernetes YAML for the new channel pod when ready.
-
-TOOL MAPPING:
-- Edit tool → local_edit  |  Write tool → local_write
-- Read tool → local_read  |  Bash / run → local_bash
-${extraArgs ? `\nUser arguments: ${extraArgs}\n` : ''}
----
-
-${skillMd}`;
-}
-
+/**
+ * Handle a skill invocation from the main group.
+ *
+ * Orchestrator skills (channel setup) are executed programmatically — the
+ * orchestrator creates K8s resources directly. The channel skill document
+ * is sent to the new blank channel pod via the control channel so it can
+ * self-configure.
+ */
 async function handleSkillInvocation(
   skillName: string,
   skillMd: string,
@@ -254,45 +245,36 @@ async function handleSkillInvocation(
   group: RegisteredGroup,
   channel: Channel,
 ): Promise<void> {
-  // Copy pre-compiled plugin to PVC — orchestrator has direct fs access
-  for (const srcBase of [
-    path.join(process.cwd(), '.claude', 'skills', skillName, 'plugins'),
-    `/app/.claude/skills/${skillName}/plugins`,
-  ]) {
-    if (fs.existsSync(srcBase)) {
-      fs.mkdirSync('/workspace/plugins', { recursive: true });
-      for (const f of fs
-        .readdirSync(srcBase)
-        .filter((f) => f.endsWith('.js'))) {
-        fs.copyFileSync(
-          path.join(srcBase, f),
-          path.join('/workspace/plugins', f),
-        );
-        logger.info({ plugin: f, skillName }, 'Copied skill plugin to PVC');
-      }
-      break;
+  // Parse extra args as key=value pairs for channel setup input
+  const input: ChannelSetupInput = { type: skillName };
+  for (const arg of extraArgs.split(/\s+/).filter(Boolean)) {
+    const [key, ...rest] = arg.split('=');
+    if (key && rest.length > 0) {
+      (input as any)[key] = rest.join('=');
     }
   }
 
-  // Spawn agent job with superuser=true for remaining SKILL.md steps
-  const skillGroup: RegisteredGroup = {
-    ...group,
-    containerConfig: { ...group.containerConfig, superuser: true },
-  };
-  await runAgent(
-    skillGroup,
-    buildSkillPrompt(skillName, skillMd, extraArgs),
+  // Execute orchestrator-side K8s resource creation
+  const result = await setupChannel(input);
+  const summary = result.log.join('\n');
+
+  if (!result.success) {
+    await channel.sendMessage(chatJid, `Skill "${skillName}" failed:\n${summary}`);
+    return;
+  }
+
+  // Send the channel skill document to the new pod via control channel
+  // so it can self-configure (Phase 2 will implement the configure handler)
+  const { publishControlCommand } = await import('./k8s/ipc-redis.js');
+  await publishControlCommand(result.instanceName, {
+    command: 'configure',
+    channelType: skillName,
+    skillDocument: skillMd,
+  });
+
+  await channel.sendMessage(
     chatJid,
-    async (result) => {
-      if (result.result) {
-        const raw =
-          typeof result.result === 'string'
-            ? result.result
-            : JSON.stringify(result.result);
-        const text = stripInternalTags(raw);
-        if (text) await channel.sendMessage(chatJid, text);
-      }
-    },
+    `Channel "${result.instanceName}" deployed:\n${summary}`,
   );
 }
 
@@ -676,7 +658,7 @@ async function runAgent(
 
     // Index the conversation turn for future retrieval (non-blocking, non-fatal).
     if (output.result) {
-      void indexConversationTurn(group.folder, prompt, output.result);
+      void getRagProvider().indexConversationTurn(group.folder, prompt, output.result);
     }
 
     return 'success';
@@ -964,12 +946,20 @@ async function main(): Promise<void> {
     logger.error({ err }, 'Failed to sync MCP servers on startup');
   }
 
-  queue.setProcessMessagesFn(processGroupMessages);
-  recoverPendingMessages();
-  startMessageLoop().catch((err) => {
-    logger.fatal({ err }, 'Message loop crashed unexpectedly');
-    process.exit(1);
-  });
+  // In orchestrator mode, channels handle their own LLM conversations.
+  // The orchestrator only manages K8s resources, IPC, and task scheduling.
+  if (KUBECLAW_MODE !== 'orchestrator') {
+    queue.setProcessMessagesFn(processGroupMessages);
+    recoverPendingMessages();
+    startMessageLoop().catch((err) => {
+      logger.fatal({ err }, 'Message loop crashed unexpectedly');
+      process.exit(1);
+    });
+  } else {
+    logger.info(
+      'Orchestrator mode: channels handle LLM conversations, message loop disabled',
+    );
+  }
 }
 
 // Guard: only run when executed directly, not when imported by tests

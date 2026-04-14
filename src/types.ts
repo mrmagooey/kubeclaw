@@ -118,8 +118,6 @@ export interface ContainerConfig {
   imagePullPolicy?: 'Always' | 'IfNotPresent' | 'Never'; // For user images
   // Security context
   securityContext?: ContainerSecurityContext;
-  // Superuser mode: grants agent direct local tool access (orchestrator use only)
-  superuser?: boolean;
 }
 
 import type { LLMProvider } from './config.js';

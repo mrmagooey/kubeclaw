@@ -1318,7 +1318,27 @@ export async function startTaskRequestWatcher(): Promise<void> {
 export interface ControlMessage {
   command: string;
   servers?: string; // JSON-encoded McpServerStatus[] for mcp_update
+  /** Channel type for configure command (e.g. telegram, discord) */
+  channelType?: string;
+  /** Skill document content for channel self-configuration */
+  skillDocument?: string;
   [key: string]: unknown;
+}
+
+/**
+ * Publish a control command to a channel pod.
+ * Called by the orchestrator to send configure, reload, etc. commands.
+ */
+export async function publishControlCommand(
+  channelName: string,
+  msg: ControlMessage,
+): Promise<void> {
+  const client = getRedisClient();
+  await client.publish(getControlChannel(channelName), JSON.stringify(msg));
+  logger.info(
+    { channelName, command: msg.command },
+    'Published control command to channel',
+  );
 }
 
 export function startControlChannelWatcher(

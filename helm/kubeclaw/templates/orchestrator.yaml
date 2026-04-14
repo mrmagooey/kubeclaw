@@ -82,7 +82,7 @@ spec:
           command:
             - sh
             - -c
-            - chown -R 1000:1000 /app/groups /app/store /data/sessions /workspace/plugins
+            - chown -R 1000:1000 /app/groups /app/store /data/sessions
           securityContext:
             runAsUser: 0
           volumeMounts:
@@ -92,8 +92,6 @@ spec:
               mountPath: /app/store
             - name: sessions
               mountPath: /data/sessions
-            - name: plugins
-              mountPath: /workspace/plugins
       containers:
         - name: orchestrator
           image: {{ include "kubeclaw.image" (dict "root" . "name" "kubeclaw-orchestrator") }}
@@ -200,10 +198,6 @@ spec:
                   key: voyage-api-key
             {{- end }}
             {{- end }}
-            - name: OLLAMA_HOST
-              value: {{ .Values.ollama.host | quote }}
-            - name: OLLAMA_MODEL
-              value: {{ .Values.ollama.model | quote }}
             {{- if .Values.orchestrator.admin.enabled }}
             - name: ADMIN_HTTP_PORT
               value: {{ .Values.orchestrator.admin.port | quote }}
@@ -247,8 +241,6 @@ spec:
               mountPath: /app/store
             - name: sessions
               mountPath: /data/sessions
-            - name: plugins
-              mountPath: /workspace/plugins
           resources:
             {{- toYaml .Values.orchestrator.resources | nindent 12 }}
       volumes:
@@ -261,9 +253,6 @@ spec:
         - name: sessions
           persistentVolumeClaim:
             claimName: kubeclaw-sessions
-        - name: plugins
-          persistentVolumeClaim:
-            claimName: kubeclaw-plugins
 {{- if .Values.orchestrator.admin.enabled }}
 ---
 apiVersion: v1

@@ -56,8 +56,6 @@ export interface AgentJobSpec {
   // PVC override — used when agent job runs on behalf of a channel pod
   groupsPvc?: string; // defaults to 'kubeclaw-groups'
   sessionsPvc?: string; // defaults to 'kubeclaw-sessions'
-  // Superuser mode: grants direct local tool access in the agent container
-  superuser?: boolean;
 }
 
 export interface SidecarJobSpec extends AgentJobSpec {

@@ -323,7 +323,6 @@ export class JobRunner {
       assistantName: input.assistantName,
       timeout: Math.max(configTimeout, IDLE_TIMEOUT + 30_000),
       provider: group.llmProvider || 'openai',
-      superuser: group.containerConfig?.superuser,
       browserSidecar: group.containerConfig?.browserSidecar,
       nodeSelector: group.containerConfig?.nodeSelector,
       tolerations: group.containerConfig?.tolerations,
@@ -491,10 +490,6 @@ export class JobRunner {
             },
           ]
         : []),
-      // Superuser mode — only injected when explicitly granted by orchestrator
-      ...(spec.superuser
-        ? [{ name: 'KUBECLAW_SUPERUSER', value: 'true' }]
-        : []),
     ];
 
     // Volume mounts using PVCs
@@ -534,13 +529,6 @@ export class JobRunner {
       } as any);
     }
 
-    // Plugins PVC mount — writable for superuser (skill) jobs, read-only otherwise
-    volumeMounts.push({
-      name: 'plugins-pvc',
-      mountPath: '/workspace/plugins',
-      readOnly: !spec.superuser,
-    });
-
     // Volumes
     const volumes = [
       {
@@ -553,12 +541,6 @@ export class JobRunner {
         name: 'sessions-pvc',
         persistentVolumeClaim: {
           claimName: spec.sessionsPvc ?? 'kubeclaw-sessions',
-        },
-      },
-      {
-        name: 'plugins-pvc',
-        persistentVolumeClaim: {
-          claimName: 'kubeclaw-plugins',
         },
       },
     ];
