@@ -13,8 +13,8 @@ import {
 
 export interface JobInput extends ContainerInput {
   jobId?: string;
-  groupsPvc?: string; // override PVC name for channel pod agent jobs
-  sessionsPvc?: string; // override PVC name for channel pod agent jobs
+  groupsPvc?: string; // override PVC name for channel pod tool jobs
+  sessionsPvc?: string; // override PVC name for channel pod tool jobs
 }
 
 export interface JobOutput extends ContainerOutput {
@@ -29,7 +29,7 @@ export interface JobStatus {
   reason?: string;
 }
 
-export interface AgentJobSpec {
+export interface ToolJobSpec {
   name: string;
   groupFolder: string;
   chatJid: string;
@@ -53,12 +53,12 @@ export interface AgentJobSpec {
   securityContext?: ContainerSecurityContext;
   // Additional volumes
   additionalMounts?: AdditionalMount[];
-  // PVC override — used when agent job runs on behalf of a channel pod
+  // PVC override — used when tool job runs on behalf of a channel pod
   groupsPvc?: string; // defaults to 'kubeclaw-groups'
   sessionsPvc?: string; // defaults to 'kubeclaw-sessions'
 }
 
-export interface SidecarJobSpec extends AgentJobSpec {
+export interface SidecarJobSpec extends ToolJobSpec {
   userImage: string;
   userCommand?: string[];
   userArgs?: string[];
@@ -76,7 +76,7 @@ export interface SidecarCredentials {
   password: string;
 }
 
-export interface SidecarHttpJobSpec extends AgentJobSpec {
+export interface SidecarHttpJobSpec extends ToolJobSpec {
   userImage: string;
   userPort?: number; // default: 8080
   healthEndpoint?: string; // default: /agent/health
@@ -88,7 +88,7 @@ export interface SidecarHttpJobSpec extends AgentJobSpec {
   userImagePullPolicy?: 'Always' | 'IfNotPresent' | 'Never';
 }
 
-export interface SidecarFileJobSpec extends AgentJobSpec {
+export interface SidecarFileJobSpec extends ToolJobSpec {
   userImage: string;
   userCommand?: string[];
   userArgs?: string[];
@@ -206,7 +206,7 @@ export interface LogMessage {
 export interface DistributedQueueItem {
   id: string;
   groupJid: string;
-  jobSpec: AgentJobSpec;
+  jobSpec: ToolJobSpec;
   priority: number;
   enqueuedAt: string;
 }

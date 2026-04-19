@@ -19,13 +19,13 @@ import { isValidGroupFolder } from '../group-folder.js';
 import { logger } from '../logger.js';
 import { RegisteredGroup } from '../types.js';
 import {
-  getAgentJobResultStream,
+  getToolJobResultStream,
   getControlChannel,
   getInputStream,
   getOutputChannel,
   getRedisClient,
   getRedisSubscriber,
-  getSpawnAgentJobStream,
+  getSpawnToolJobStream,
   getSpawnToolPodStream,
   getTaskChannel,
   getTaskRequestStream,
@@ -69,7 +69,7 @@ function channelPvcNames(channel: string): {
   };
 }
 
-// Track tool pod jobs per agent job for cleanup
+// Track tool pod jobs per tool job for cleanup
 const toolPodsByAgent = new Map<string, Set<string>>();
 
 interface AgentOutputMessage {
@@ -682,7 +682,7 @@ export async function processTaskIpc(
 }
 
 /**
- * Clean up all tool pods associated with an agent job
+ * Clean up all tool pods associated with a tool job
  */
 export async function cleanupToolPods(agentJobId: string): Promise<void> {
   const pods = toolPodsByAgent.get(agentJobId);
@@ -869,16 +869,16 @@ export async function startToolPodSpawnWatcher(): Promise<void> {
 }
 
 /**
- * Watch the kubeclaw:spawn-agent-job stream and run full K8s agent jobs on
+ * Watch the kubeclaw:spawn-agent-job stream and run full K8s tool jobs on
  * behalf of channel pods. Writes the final result to
  * kubeclaw:agent-job-result:{agentJobId} so the channel pod can return it.
  */
-export async function startAgentJobSpawnWatcher(): Promise<void> {
+export async function startToolJobSpawnWatcher(): Promise<void> {
   const redis = getRedisClient();
-  const stream = getSpawnAgentJobStream();
+  const stream = getSpawnToolJobStream();
   let lastId = await resolveStreamTip(redis, stream);
 
-  logger.info('Agent job spawn watcher started');
+  logger.info('Tool job spawn watcher started');
 
   while (ipcWatcherRunning) {
     try {
@@ -910,7 +910,7 @@ export async function startAgentJobSpawnWatcher(): Promise<void> {
           } = obj;
           if (!agentJobId || !groupFolder || !chatJid || !prompt) continue;
 
-          const resultStream = getAgentJobResultStream(agentJobId);
+          const resultStream = getToolJobResultStream(agentJobId);
           const { groupsPvc, sessionsPvc } = channelPvcNames(channel ?? '');
 
           // Resolve specialist prompt from agents.json if a specialist name was provided
@@ -936,7 +936,7 @@ export async function startAgentJobSpawnWatcher(): Promise<void> {
             (g) => g.folder === groupFolder,
           );
 
-          // Fire-and-forget: run the agent job and write result when done
+          // Fire-and-forget: run the tool job and write result when done
           const group = {
             name: groupFolder,
             folder: groupFolder,
@@ -946,7 +946,7 @@ export async function startAgentJobSpawnWatcher(): Promise<void> {
           };
 
           jobRunner
-            .runAgentJob(group, {
+            .runToolJob(group, {
               groupFolder,
               chatJid,
               isMain: false,
@@ -957,7 +957,7 @@ export async function startAgentJobSpawnWatcher(): Promise<void> {
             })
             .then(async (output) => {
               const result =
-                output.result ?? output.error ?? 'Agent job completed';
+                output.result ?? output.error ?? 'Tool job completed';
               await redis.xadd(
                 resultStream,
                 '*',
@@ -968,11 +968,11 @@ export async function startAgentJobSpawnWatcher(): Promise<void> {
               );
               logger.debug(
                 { agentJobId },
-                'Agent job result written to stream',
+                'Tool job result written to stream',
               );
             })
             .catch(async (err) => {
-              logger.error({ agentJobId, err }, 'Agent job failed');
+              logger.error({ agentJobId, err }, 'Tool job failed');
               await redis.xadd(
                 resultStream,
                 '*',
@@ -985,13 +985,13 @@ export async function startAgentJobSpawnWatcher(): Promise<void> {
 
           logger.debug(
             { agentJobId, groupFolder },
-            'Spawned agent job for channel pod',
+            'Spawned tool job for channel pod',
           );
         }
       }
     } catch (err) {
       if (ipcWatcherRunning) {
-        logger.error({ err }, 'Agent job spawn watcher error');
+        logger.error({ err }, 'Tool job spawn watcher error');
         await new Promise((r) => setTimeout(r, 1000));
       }
     }

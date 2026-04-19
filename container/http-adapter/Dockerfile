@@ -1,5 +1,5 @@
 # NanoClaw HTTP Adapter Container
-# Sidecar adapter for HTTP-based communication with agent containers
+# Sidecar adapter for HTTP-based communication with tool containers
 
 FROM node:22-alpine
 

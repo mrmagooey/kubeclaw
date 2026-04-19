@@ -1,6 +1,6 @@
 # Redis IPC Protocol
 
-KubeClaw uses Redis pub/sub channels and streams for inter-process communication (IPC) between the orchestrator, channel pods, and agent containers (Kubernetes Jobs). This document describes the naming conventions, message formats, and communication patterns.
+KubeClaw uses Redis pub/sub channels and streams for inter-process communication (IPC) between the orchestrator, channel pods, and tool job containers. This document describes the naming conventions, message formats, and communication patterns.
 
 ## Overview
 
@@ -24,9 +24,9 @@ Pub/sub channels are used for:
 kubeclaw:messages:{groupFolder}
 ```
 
-**Purpose**: Broadcast messages from agent jobs back to a specific group chat.
+**Purpose**: Broadcast messages from tool jobs back to a specific group chat.
 
-**Who writes**: Agent containers via `ContainerOutput` on the `output` topic.
+**Who writes**: Tool containers via `ContainerOutput` on the `output` topic.
 **Who reads**: Orchestrator (in main mode) or channel pod (in channel mode).
 
 **Wire format**: JSON object with fields `type`, `chatJid`, `text`:
@@ -50,7 +50,7 @@ kubeclaw:tasks:{groupFolder}
 
 **Purpose**: Route task requests (schedule, pause, cancel, etc.) from agents to the orchestrator.
 
-**Who writes**: Agent containers via Redis pub/sub.
+**Who writes**: Tool containers via Redis pub/sub.
 **Who reads**: Orchestrator.
 
 **Wire format**: JSON object matching `TaskRequest` interface (see below).
@@ -88,10 +88,10 @@ Streams are used for persistent, ordered message queues where delivery guarantee
 kubeclaw:input:{jobId}
 ```
 
-**Purpose**: Messages and control signals sent _to_ a running agent job.
+**Purpose**: Messages and control signals sent _to_ a running tool job.
 
 **Who writes**: Orchestrator, channel pods, tool pods.
-**Who reads**: Agent container.
+**Who reads**: Tool container.
 
 **Message types**:
 - `type: "message"` — Text message to the agent
@@ -123,7 +123,7 @@ kubeclaw:toolcalls:{jobId}:{category}
 
 **Purpose**: Tool invocations from an agent to a specific tool pod category.
 
-**Who writes**: Agent container.
+**Who writes**: Tool container.
 **Who reads**: Tool pod (execution or browser service).
 
 **Message types**:
@@ -145,7 +145,7 @@ kubeclaw:toolresults:{jobId}:{category}
 **Purpose**: Responses from tool pods back to the agent.
 
 **Who writes**: Tool pod.
-**Who reads**: Agent container.
+**Who reads**: Tool container.
 
 **Wire format** (example):
 ```
@@ -168,16 +168,16 @@ kubeclaw:job:{jobId}:output
 
 ## Stream-Based Operations
 
-### Spawn Agent Job Stream
+### Spawn Tool Job Stream
 
 ```
 kubeclaw:spawn-agent-job
 ```
 
-**Purpose**: Queue of agent job specifications for the orchestrator to spawn.
+**Purpose**: Queue of tool job specifications for the orchestrator to spawn.
 
 **Who writes**: Channel pods (when running directly without K8s RBAC).
-**Who reads**: Orchestrator (`startAgentJobSpawnWatcher`).
+**Who reads**: Orchestrator (`startToolJobSpawnWatcher`).
 
 **Wire format** (Redis stream fields):
 ```
@@ -198,7 +198,7 @@ kubeclaw:spawn-tool-pod
 
 **Purpose**: Queue of tool pod specs for the orchestrator to create.
 
-**Who writes**: Agent containers and channel pods.
+**Who writes**: Tool containers and channel pods.
 **Who reads**: Orchestrator (`startToolPodSpawnWatcher`).
 
 **Wire format** (Redis stream fields):
@@ -213,15 +213,15 @@ toolPattern: http|file|acp  // optional: for sidecar tool pods
 toolPort: "8080"  // optional: for sidecar tool pods
 ```
 
-### Agent Job Result Stream
+### Tool Job Result Stream
 
 ```
 kubeclaw:agent-job-result:{jobId}
 ```
 
-**Purpose**: Final result/output from an agent job, for the initiator to read.
+**Purpose**: Final result/output from a tool job, for the initiator to read.
 
-**Who writes**: Orchestrator (after agent job completes).
+**Who writes**: Orchestrator (after tool job completes).
 **Who reads**: Channel pod that spawned the job (if applicable).
 
 **Wire format**: Same as `ContainerOutput` structure.
@@ -234,7 +234,7 @@ kubeclaw:task-requests
 
 **Purpose**: Global queue of task requests (schedule, pause, cancel, etc.) from agents.
 
-**Who writes**: Agent containers.
+**Who writes**: Tool containers.
 **Who reads**: Orchestrator (`startTaskRequestWatcher`).
 
 **Wire format**: JSON matching `TaskRequest` interface.
@@ -243,7 +243,7 @@ kubeclaw:task-requests
 
 ### AgentOutputMessage
 
-Messages sent from agent containers to the orchestrator via pub/sub:
+Messages sent from tool containers to the orchestrator via pub/sub:
 
 ```typescript
 interface AgentOutputMessage {
@@ -257,14 +257,14 @@ interface AgentOutputMessage {
 
 **Fields**:
 - `type`: Message category
-- `jobId`: Identifier of the sending agent job
+- `jobId`: Identifier of the sending tool job
 - `groupFolder`: Group folder name for authorization/routing
 - `timestamp`: ISO 8601 timestamp
 - `payload`: Type-specific content
 
 ### HostInputMessage
 
-Messages sent _to_ agent containers via streams:
+Messages sent _to_ tool containers via streams:
 
 ```typescript
 interface HostInputMessage {
@@ -367,10 +367,10 @@ interface LogMessage {
 
 ## Message Lifecycle
 
-### Agent Job Execution
+### Tool Job Execution
 
-1. **Spawn request**: Orchestrator or channel pod calls `jobRunner.createAgentJob(spec)` or publishes to `kubeclaw:spawn-agent-job` stream
-2. **Job initialization**: Agent container reads initial prompt, group folder, chat JID from environment
+1. **Spawn request**: Orchestrator or channel pod calls `jobRunner.runToolJob(spec)` or publishes to `kubeclaw:spawn-agent-job` stream
+2. **Job initialization**: Tool container reads initial prompt, group folder, chat JID from environment
 3. **Input stream polling**: Agent subscribes to `kubeclaw:input:{jobId}` and polls for incoming messages
 4. **Tool execution**: Agent publishes to `kubeclaw:toolcalls:{jobId}:execution` or `browser`, reads results from corresponding `toolresults` stream
 5. **Task requests**: Agent publishes task requests to `kubeclaw:tasks:{groupFolder}` pub/sub channel
@@ -393,7 +393,7 @@ interface LogMessage {
 1. **Request**: Agent publishes `schedule_task` to `kubeclaw:tasks:{groupFolder}`
 2. **Validation**: Orchestrator verifies authorization (main group can schedule for any group, non-main only for self)
 3. **Creation**: Task is stored in SQLite with `next_run` computed from cron/interval/once expression
-4. **Execution**: Task scheduler runs at scheduled time, spawns agent job with task prompt
+4. **Execution**: Task scheduler runs at scheduled time, spawns tool job with task prompt
 5. **Modification**: Agent can publish `pause_task`, `resume_task`, `cancel_task`, `update_task` requests
 
 ## Authorization
@@ -436,7 +436,7 @@ Both are configured with:
 
 ### Polling Pattern
 
-Agent containers poll input streams with XREAD in a blocking call (5s timeout). This avoids constant CPU spinning while remaining responsive to messages:
+Tool containers poll input streams with XREAD in a blocking call (5s timeout). This avoids constant CPU spinning while remaining responsive to messages:
 
 ```typescript
 await redis.xread('COUNT', 1, 'BLOCK', 5000, 'STREAMS', streamKey, lastId);
@@ -451,7 +451,7 @@ To avoid race conditions when watching streams (e.g., in `startToolPodSpawnWatch
 ### Error Recovery
 
 - **Lost pub/sub messages**: If the subscriber disconnects, messages published during the outage are lost. Critical operations use streams instead.
-- **Incomplete agent jobs**: If an agent container crashes, the orchestrator cleans up tool pods via `cleanupToolPods(agentJobId)`.
+- **Incomplete tool jobs**: If a tool container crashes, the orchestrator cleans up tool pods via `cleanupToolPods(agentJobId)`.
 - **Orphaned streams**: Input streams may persist if the agent crashes. Consider TTL or periodic cleanup.
 
 ## Debugging Tips

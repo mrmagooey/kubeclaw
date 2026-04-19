@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('./runtime/index.js', () => ({
+  getToolJobRunner: vi.fn(),
   getAgentRunner: vi.fn(),
   getRunnerForGroup: vi.fn(),
 }));

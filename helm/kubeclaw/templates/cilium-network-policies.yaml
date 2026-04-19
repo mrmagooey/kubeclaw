@@ -1,6 +1,6 @@
 {{- if .Values.ciliumNetworkPolicy.enabled }}
 ---
-# CiliumNetworkPolicy for agent jobs: locks external egress to specific FQDNs.
+# CiliumNetworkPolicy for tool jobs: locks external egress to specific FQDNs.
 # Requires Cilium CNI. Replaces the broad port-443 allowance in the standard
 # NetworkPolicy with an FQDN allowlist (api.anthropic.com etc.).
 apiVersion: cilium.io/v2

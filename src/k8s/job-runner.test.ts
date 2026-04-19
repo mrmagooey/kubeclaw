@@ -15,10 +15,10 @@ vi.mock('../config.js', () => ({
   IDLE_TIMEOUT: 1800000,
   TIMEZONE: 'America/Los_Angeles',
   KUBECLAW_NAMESPACE: 'nanoclaw',
-  AGENT_JOB_MEMORY_REQUEST: '512Mi',
-  AGENT_JOB_MEMORY_LIMIT: '4Gi',
-  AGENT_JOB_CPU_REQUEST: '250m',
-  AGENT_JOB_CPU_LIMIT: '2000m',
+  TOOL_JOB_MEMORY_REQUEST: '512Mi',
+  TOOL_JOB_MEMORY_LIMIT: '4Gi',
+  TOOL_JOB_CPU_REQUEST: '250m',
+  TOOL_JOB_CPU_LIMIT: '2000m',
   REDIS_AGENT_PASSWORD: '',
   REDIS_TOOL_SERVER_PASSWORD: '',
   REDIS_ADAPTER_PASSWORD: '',
@@ -795,7 +795,7 @@ describe('JobRunner', () => {
     });
   });
 
-  describe('runAgentJob', () => {
+  describe('runToolJob', () => {
     beforeEach(() => {
       vi.useFakeTimers();
     });
@@ -817,7 +817,7 @@ describe('JobRunner', () => {
       });
 
       const onProcess = vi.fn();
-      const result = await jobRunner.runAgentJob(
+      const result = await jobRunner.runToolJob(
         testGroup,
         testInput,
         onProcess,
@@ -834,7 +834,7 @@ describe('JobRunner', () => {
         new Error('K8s API error'),
       );
 
-      const result = await jobRunner.runAgentJob(testGroup, testInput);
+      const result = await jobRunner.runToolJob(testGroup, testInput);
 
       expect(result.status).toBe('error');
       expect(result.error).toBe('K8s API error');
@@ -853,7 +853,7 @@ describe('JobRunner', () => {
         },
       });
 
-      const result = await jobRunner.runAgentJob(testGroup, inputWithJobId);
+      const result = await jobRunner.runToolJob(testGroup, inputWithJobId);
 
       expect(result.jobId).toBe('custom-job-id');
     });
@@ -870,7 +870,7 @@ describe('JobRunner', () => {
         },
       });
 
-      await jobRunner.runAgentJob(testGroup, testInput);
+      await jobRunner.runToolJob(testGroup, testInput);
 
       const callArgs = mockBatchApi.createNamespacedJob.mock.calls[0][0];
       expect(callArgs.body.metadata.name).toContain('test-group');
@@ -917,7 +917,7 @@ describe('JobRunner', () => {
       expect(container?.command).toEqual(['node', '/app/dist/tool-server.js']);
     });
 
-    it('should set KUBECLAW_AGENT_JOB_ID and KUBECLAW_CATEGORY env vars', async () => {
+    it('should set KUBECLAW_TOOL_JOB_ID and KUBECLAW_CATEGORY env vars', async () => {
       mockBatchApi.createNamespacedJob.mockResolvedValue({});
 
       const spec: ToolPodJobSpec = {
@@ -935,7 +935,7 @@ describe('JobRunner', () => {
 
       expect(
         envVars.find(
-          (e: { name: string }) => e.name === 'KUBECLAW_AGENT_JOB_ID',
+          (e: { name: string }) => e.name === 'KUBECLAW_TOOL_JOB_ID',
         )?.value,
       ).toBe('agent-job-123');
       expect(
@@ -1092,7 +1092,7 @@ describe('JobRunner', () => {
   });
 
   describe('generateJobManifest — service account', () => {
-    it('sets automountServiceAccountToken: false on all agent jobs', () => {
+    it('sets automountServiceAccountToken: false on all tool jobs', () => {
       const manifest = jobRunner.generateJobManifest({
         name: 'nc-test-abc',
         groupFolder: 'test-group',
@@ -1107,7 +1107,7 @@ describe('JobRunner', () => {
       expect(podSpec.serviceAccountName).toBe('');
     });
 
-    it('does not mount plugins PVC on agent jobs', () => {
+    it('does not mount plugins PVC on tool jobs', () => {
       const manifest = jobRunner.generateJobManifest({
         name: 'nc-test-abc',
         groupFolder: 'test-group',

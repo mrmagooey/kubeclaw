@@ -1,6 +1,6 @@
 /**
  * Kubernetes Job Runner for NanoClaw
- * Creates and manages Kubernetes Jobs for agent execution
+ * Creates and manages Kubernetes Jobs for tool job execution
  */
 import {
   V1Job,
@@ -19,10 +19,10 @@ import {
   CONTAINER_MAX_OUTPUT_SIZE,
   IDLE_TIMEOUT,
   KUBECLAW_NAMESPACE,
-  AGENT_JOB_MEMORY_REQUEST,
-  AGENT_JOB_MEMORY_LIMIT,
-  AGENT_JOB_CPU_REQUEST,
-  AGENT_JOB_CPU_LIMIT,
+  TOOL_JOB_MEMORY_REQUEST,
+  TOOL_JOB_MEMORY_LIMIT,
+  TOOL_JOB_CPU_REQUEST,
+  TOOL_JOB_CPU_LIMIT,
   TIMEZONE,
   BROWSER_SIDECAR_IMAGE,
   BROWSER_SIDECAR_PORT,
@@ -38,7 +38,7 @@ import {
 import {
   JobInput,
   JobOutput,
-  AgentJobSpec,
+  ToolJobSpec,
   AgentOutputMessage,
   ToolPodJobSpec,
   SidecarToolPodJobSpec,
@@ -190,10 +190,10 @@ export class JobRunner {
   }
 
   /**
-   * Run an agent job in Kubernetes
+   * Run a tool job in Kubernetes
    * Creates a K8s Job, streams output via Redis, and waits for completion
    */
-  async runAgentJob(
+  async runToolJob(
     group: RegisteredGroup,
     input: JobInput,
     onProcess?: (jobName: string) => void,
@@ -208,12 +208,12 @@ export class JobRunner {
         jobId,
         isMain: input.isMain,
       },
-      'Creating Kubernetes job for agent',
+      'Creating Kubernetes job for tool job',
     );
 
     try {
       // Generate and create the job
-      const jobSpec = this.buildAgentJobSpec(group, input, jobId);
+      const jobSpec = this.buildToolJobSpec(group, input, jobId);
       const jobManifest = this.generateJobManifest(jobSpec);
 
       logger.debug(
@@ -304,13 +304,13 @@ export class JobRunner {
   }
 
   /**
-   * Build the AgentJobSpec from input parameters
+   * Build the ToolJobSpec from input parameters
    */
-  private buildAgentJobSpec(
+  private buildToolJobSpec(
     group: RegisteredGroup,
     input: JobInput,
     jobId: string,
-  ): AgentJobSpec {
+  ): ToolJobSpec {
     const configTimeout = group.containerConfig?.timeout || CONTAINER_TIMEOUT;
 
     return {
@@ -340,7 +340,7 @@ export class JobRunner {
   /**
    * Generate the Kubernetes Job manifest
    */
-  generateJobManifest(spec: AgentJobSpec): V1Job {
+  generateJobManifest(spec: ToolJobSpec): V1Job {
     const timeoutSeconds = Math.floor(
       (spec.timeout || CONTAINER_TIMEOUT) / 1000,
     );
@@ -361,7 +361,7 @@ export class JobRunner {
         value: String(CONTAINER_MAX_OUTPUT_SIZE),
       },
       { name: 'IDLE_TIMEOUT', value: String(IDLE_TIMEOUT) },
-      // Agent jobs authenticate as the 'agent' ACL user for least-privilege access.
+      // Tool jobs authenticate as the 'agent' ACL user for least-privilege access.
       {
         name: 'REDIS_URL',
         value: buildRedisUrl(
@@ -614,8 +614,8 @@ export class JobRunner {
 
     // Build resource limits — include GPU/device requests when specified
     const resourceLimits: Record<string, string> = {
-      memory: AGENT_JOB_MEMORY_LIMIT,
-      cpu: AGENT_JOB_CPU_LIMIT,
+      memory: TOOL_JOB_MEMORY_LIMIT,
+      cpu: TOOL_JOB_CPU_LIMIT,
       ...(spec.deviceRequests || {}),
     };
 
@@ -627,8 +627,8 @@ export class JobRunner {
       volumeMounts,
       resources: {
         requests: {
-          memory: AGENT_JOB_MEMORY_REQUEST,
-          cpu: AGENT_JOB_CPU_REQUEST,
+          memory: TOOL_JOB_MEMORY_REQUEST,
+          cpu: TOOL_JOB_CPU_REQUEST,
         },
         limits: resourceLimits,
       },
@@ -1072,7 +1072,7 @@ export class JobRunner {
     const envVars: Array<{ name: string; value?: string; valueFrom?: object }> =
       [
         { name: 'TZ', value: TIMEZONE },
-        { name: 'KUBECLAW_AGENT_JOB_ID', value: spec.agentJobId },
+        { name: 'KUBECLAW_TOOL_JOB_ID', value: spec.agentJobId },
         { name: 'KUBECLAW_CATEGORY', value: spec.category },
         { name: 'KUBECLAW_GROUP_FOLDER', value: spec.groupFolder },
         // Tool server pods authenticate as the 'tool-server' ACL user.
@@ -1147,12 +1147,12 @@ export class JobRunner {
                 volumeMounts,
                 resources: {
                   requests: {
-                    memory: AGENT_JOB_MEMORY_REQUEST,
-                    cpu: AGENT_JOB_CPU_REQUEST,
+                    memory: TOOL_JOB_MEMORY_REQUEST,
+                    cpu: TOOL_JOB_CPU_REQUEST,
                   },
                   limits: {
-                    memory: AGENT_JOB_MEMORY_LIMIT,
-                    cpu: AGENT_JOB_CPU_LIMIT,
+                    memory: TOOL_JOB_MEMORY_LIMIT,
+                    cpu: TOOL_JOB_CPU_LIMIT,
                   },
                 },
               } as any,
@@ -1213,7 +1213,7 @@ export class JobRunner {
 
     const bridgeEnv = [
       { name: 'TZ', value: TIMEZONE },
-      { name: 'KUBECLAW_AGENT_JOB_ID', value: spec.agentJobId },
+      { name: 'KUBECLAW_TOOL_JOB_ID', value: spec.agentJobId },
       { name: 'KUBECLAW_CATEGORY', value: spec.toolName },
       { name: 'KUBECLAW_GROUP_FOLDER', value: spec.groupFolder },
       { name: 'KUBECLAW_TOOL_MODE', value: toolMode },
@@ -1285,12 +1285,12 @@ export class JobRunner {
                 volumeMounts,
                 resources: {
                   requests: {
-                    memory: toolSpec.memoryRequest ?? AGENT_JOB_MEMORY_REQUEST,
-                    cpu: toolSpec.cpuRequest ?? AGENT_JOB_CPU_REQUEST,
+                    memory: toolSpec.memoryRequest ?? TOOL_JOB_MEMORY_REQUEST,
+                    cpu: toolSpec.cpuRequest ?? TOOL_JOB_CPU_REQUEST,
                   },
                   limits: {
-                    memory: toolSpec.memoryLimit ?? AGENT_JOB_MEMORY_LIMIT,
-                    cpu: toolSpec.cpuLimit ?? AGENT_JOB_CPU_LIMIT,
+                    memory: toolSpec.memoryLimit ?? TOOL_JOB_MEMORY_LIMIT,
+                    cpu: toolSpec.cpuLimit ?? TOOL_JOB_CPU_LIMIT,
                   },
                 },
               } as any,

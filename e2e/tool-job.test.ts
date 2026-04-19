@@ -3,10 +3,10 @@ import { execSync, spawn } from 'child_process';
 import { requireKubernetes, getNamespace } from './setup.js';
 
 const NAMESPACE = getNamespace();
-const AGENT_JOBLabels = { app: 'kubeclaw-agent', type: 'agent-job' };
-const TEST_JOB_NAME = 'e2e-test-agent-job';
+const TOOL_JOBLabels = { app: 'kubeclaw-agent', type: 'tool-job' };
+const TEST_JOB_NAME = 'e2e-test-tool-job';
 
-describe('Agent Job Lifecycle', () => {
+describe('Tool Job Lifecycle', () => {
   const jobs: string[] = [];
 
   beforeAll(async () => {
@@ -44,7 +44,7 @@ describe('Agent Job Lifecycle', () => {
 
     try {
       execSync(
-        `kubectl delete pods -l type=agent-job --namespace=${NAMESPACE} --grace-period=0 --force`,
+        `kubectl delete pods -l type=tool-job --namespace=${NAMESPACE} --grace-period=0 --force`,
         {
           encoding: 'utf8',
           stdio: ['pipe', 'pipe', 'ignore'],
@@ -55,11 +55,11 @@ describe('Agent Job Lifecycle', () => {
     }
   });
 
-  describe('Agent Job Templates', () => {
-    it('should have agent job templates in the cluster', async () => {
+  describe('Tool Job Templates', () => {
+    it('should have tool job templates in the cluster', async () => {
       try {
         const jobs = execSync(
-          `kubectl get jobs --namespace=${NAMESPACE} -l type=agent-job -o json`,
+          `kubectl get jobs --namespace=${NAMESPACE} -l type=tool-job -o json`,
           {
             encoding: 'utf8',
             stdio: ['pipe', 'pipe', 'ignore'],
@@ -99,7 +99,7 @@ metadata:
   namespace: ${NAMESPACE}
   labels:
     app: kubeclaw-agent
-    type: agent-job
+    type: tool-job
 spec:
   ttlSecondsAfterFinished: 60
   backoffLimit: 0
@@ -107,13 +107,13 @@ spec:
     metadata:
       labels:
         app: kubeclaw-agent
-        type: agent-job
+        type: tool-job
     spec:
       restartPolicy: Never
       containers:
       - name: agent
         image: busybox:1.36
-        command: ["sh", "-c", "echo 'Agent job test running' && sleep 2 && echo 'Agent job completed successfully' && exit 0"]
+        command: ["sh", "-c", "echo 'Tool job test running' && sleep 2 && echo 'Tool job completed successfully' && exit 0"]
         resources:
           requests:
             memory: "64Mi"
@@ -140,7 +140,7 @@ spec:
         const jobData = JSON.parse(job);
 
         expect(jobData.metadata.name).toBe(TEST_JOB_NAME);
-        expect(jobData.metadata.labels).toMatchObject(AGENT_JOBLabels);
+        expect(jobData.metadata.labels).toMatchObject(TOOL_JOBLabels);
         expect(jobData.metadata.namespace).toBe(NAMESPACE);
       } finally {
         try {
@@ -161,7 +161,7 @@ metadata:
   namespace: ${NAMESPACE}
   labels:
     app: kubeclaw-agent
-    type: agent-job
+    type: tool-job
 spec:
   ttlSecondsAfterFinished: 30
   backoffLimit: 0
@@ -169,7 +169,7 @@ spec:
     metadata:
       labels:
         app: kubeclaw-agent
-        type: agent-job
+        type: tool-job
     spec:
       restartPolicy: Never
       containers:
@@ -214,7 +214,7 @@ metadata:
   namespace: ${NAMESPACE}
   labels:
     app: kubeclaw-agent
-    type: agent-job
+    type: tool-job
 spec:
   ttlSecondsAfterFinished: 30
   backoffLimit: 0
@@ -222,7 +222,7 @@ spec:
     metadata:
       labels:
         app: kubeclaw-agent
-        type: agent-job
+        type: tool-job
     spec:
       restartPolicy: Never
       containers:
@@ -250,7 +250,7 @@ spec:
 
         expect(podItem).toBeDefined();
         expect(podItem.metadata.name).toContain(podJobName);
-        expect(podItem.metadata.labels).toMatchObject(AGENT_JOBLabels);
+        expect(podItem.metadata.labels).toMatchObject(TOOL_JOBLabels);
         expect(podItem.status.phase).toBe('Running');
       } finally {
         try {
@@ -273,7 +273,7 @@ metadata:
   namespace: ${NAMESPACE}
   labels:
     app: kubeclaw-agent
-    type: agent-job
+    type: tool-job
 spec:
   ttlSecondsAfterFinished: 30
   backoffLimit: 0
@@ -281,7 +281,7 @@ spec:
     metadata:
       labels:
         app: kubeclaw-agent
-        type: agent-job
+        type: tool-job
     spec:
       restartPolicy: Never
       containers:
@@ -336,7 +336,7 @@ metadata:
   namespace: ${NAMESPACE}
   labels:
     app: kubeclaw-agent
-    type: agent-job
+    type: tool-job
 spec:
   ttlSecondsAfterFinished: 30
   backoffLimit: 0
@@ -344,7 +344,7 @@ spec:
     metadata:
       labels:
         app: kubeclaw-agent
-        type: agent-job
+        type: tool-job
     spec:
       restartPolicy: Never
       containers:
@@ -391,7 +391,7 @@ metadata:
   namespace: ${NAMESPACE}
   labels:
     app: kubeclaw-agent
-    type: agent-job
+    type: tool-job
 spec:
   ttlSecondsAfterFinished: 5
   backoffLimit: 0
@@ -399,7 +399,7 @@ spec:
     metadata:
       labels:
         app: kubeclaw-agent
-        type: agent-job
+        type: tool-job
     spec:
       restartPolicy: Never
       containers:
@@ -462,7 +462,7 @@ metadata:
   namespace: ${NAMESPACE}
   labels:
     app: kubeclaw-agent
-    type: agent-job
+    type: tool-job
 spec:
   ttlSecondsAfterFinished: 300
   backoffLimit: 0
@@ -470,7 +470,7 @@ spec:
     metadata:
       labels:
         app: kubeclaw-agent
-        type: agent-job
+        type: tool-job
     spec:
       restartPolicy: Never
       containers:

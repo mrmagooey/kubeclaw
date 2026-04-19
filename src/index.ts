@@ -22,7 +22,7 @@ import { loadChannelPlugins } from './channels/plugin-loader.js';
 import {
   AvailableGroup,
   ContainerOutput,
-  getAgentRunner,
+  getToolJobRunner,
   getRunnerForGroup,
   shutdownAllRunners,
 } from './runtime/index.js';
@@ -47,7 +47,7 @@ import { resolveGroupFolderPath } from './group-folder.js';
 import {
   startIpcWatcher as startRedisIpcWatcher,
   startToolPodSpawnWatcher,
-  startAgentJobSpawnWatcher,
+  startToolJobSpawnWatcher,
   startTaskRequestWatcher,
 } from './k8s/ipc-redis.js';
 import { getOutputChannel, getRedisClient } from './k8s/redis-client.js';
@@ -70,6 +70,7 @@ import { logger } from './logger.js';
 import { augmentPrompt, getRagProvider } from './rag/provider.js';
 import { startHttpAdminServer } from './admin-shell.js';
 import { handleSendFileMarkers } from './outbound-media.js';
+import { startDiscoveryWatcher, stopDiscoveryWatcher } from './discovery.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -791,6 +792,7 @@ async function main(): Promise<void> {
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
+    stopDiscoveryWatcher();
     await queue.shutdown(10000);
     await shutdownAllRunners();
     for (const ch of channels) await ch.disconnect();
@@ -914,18 +916,19 @@ async function main(): Promise<void> {
       im: boolean,
       ag: AvailableGroup[],
       rj: Set<string>,
-    ) => getAgentRunner().writeGroupsSnapshot(gf, im, ag, rj),
+    ) => getToolJobRunner().writeGroupsSnapshot(gf, im, ag, rj),
   };
   startRedisIpcWatcher(ipcDeps);
   startToolPodSpawnWatcher().catch((err) =>
     logger.error({ err }, 'Tool pod spawn watcher crashed'),
   );
-  startAgentJobSpawnWatcher().catch((err) =>
-    logger.error({ err }, 'Agent job spawn watcher crashed'),
+  startToolJobSpawnWatcher().catch((err) =>
+    logger.error({ err }, 'Tool job spawn watcher crashed'),
   );
   startTaskRequestWatcher().catch((err) =>
     logger.error({ err }, 'Task request watcher crashed'),
   );
+  startDiscoveryWatcher();
 
   // Sync MCP servers from values.yaml (MCP_SERVERS_VALUES env var) and notify channel pods
   try {

@@ -3,7 +3,7 @@
 # Environment variants:
 #   Minikube / single-node: Use ReadWriteOnce (RWO) as shown below.
 #     NOTE: RWO volumes can only be mounted by ONE pod at a time,
-#     so you CANNOT run concurrent agent jobs.
+#     so you CANNOT run concurrent tool jobs.
 #
 #   Production (multi-node): Change accessModes to ReadWriteMany (RWX)
 #     and set an appropriate storageClassName for your provider:

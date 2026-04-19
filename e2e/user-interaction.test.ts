@@ -49,9 +49,11 @@ vi.mock('../src/runtime/index.js', () => {
     shutdown: vi.fn().mockResolvedValue(undefined),
   };
   return {
+    getToolJobRunner: vi.fn().mockReturnValue(mockRunner),
     getAgentRunner: vi.fn().mockReturnValue(mockRunner),
     getRunnerForGroup: vi.fn().mockReturnValue(mockRunner),
     shutdownAllRunners: vi.fn().mockResolvedValue(undefined),
+    resetRunners: vi.fn(),
     resetAgentRunner: vi.fn(),
     getACLManager: mockGetACLManager,
     RedisACLManager: class {},
@@ -63,7 +65,7 @@ vi.mock('../src/runtime/index.js', () => {
 vi.mock('../src/k8s/ipc-redis.js', () => ({
   startIpcWatcher: vi.fn(),
   startToolPodSpawnWatcher: vi.fn().mockResolvedValue(undefined),
-  startAgentJobSpawnWatcher: vi.fn().mockResolvedValue(undefined),
+  startToolJobSpawnWatcher: vi.fn().mockResolvedValue(undefined),
 }));
 
 // Mock the Redis-based distributed job queue to avoid Redis dependency

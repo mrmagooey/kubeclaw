@@ -327,7 +327,7 @@ describe('Tool Call Round-Trip', () => {
   // ── Orchestrator: cleanupToolPods ───────────────────────────────────────────
 
   describe('cleanupToolPods', () => {
-    it('deletes all tool pods created for an agent job', async () => {
+    it('deletes all tool pods created for a tool job', async () => {
       const deps = makeDeps();
       mockCreateToolPodJob
         .mockResolvedValueOnce('nc-exec-pod-1')
@@ -387,7 +387,7 @@ describe('Tool Call Round-Trip', () => {
       expect(mockStopJob).not.toHaveBeenCalled();
     });
 
-    it('does nothing for an unknown agent job', async () => {
+    it('does nothing for an unknown tool job', async () => {
       await cleanupToolPods('agent-does-not-exist');
       expect(mockStopJob).not.toHaveBeenCalled();
     });

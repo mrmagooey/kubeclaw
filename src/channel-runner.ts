@@ -357,7 +357,7 @@ async function runAgent(
   const isMain = group.isMain === true;
   const sessionId = sessions[group.folder];
 
-  // Channel pods always use DirectLLMRunner — no K8s agent jobs
+  // Channel pods always use DirectLLMRunner — no K8s tool jobs
   const agentRunner = getDirectLLMRunner();
 
   const tasks = getAllTasks();

@@ -1,0 +1,83 @@
+{{- range $name, $cfg := .Values.capabilities }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kubeclaw-capability-{{ $name }}
+  namespace: {{ $.Values.namespace }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kubeclaw-capability-{{ $name }}
+  template:
+    metadata:
+      labels:
+        app: kubeclaw-capability-{{ $name }}
+        kubeclaw/capability: {{ $name }}
+    spec:
+      # No K8s API access — capability pods are low priv tier
+      automountServiceAccountToken: false
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: capability
+          image: {{ $cfg.image }}
+          imagePullPolicy: {{ include "kubeclaw.pullPolicy" $ }}
+          env:
+            - name: REDIS_URL
+              value: redis://kubeclaw-redis:6379
+            - name: REDIS_USERNAME
+              value: adapter
+            - name: REDIS_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: kubeclaw-redis
+                  key: adapter-password
+            - name: KUBECLAW_CAPABILITY
+              value: {{ $name }}
+            {{- range $k, $v := $cfg.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ $cfg.port | default 8080 }}
+              protocol: TCP
+          readinessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+            timeoutSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            failureThreshold: 3
+            timeoutSeconds: 5
+          resources:
+            {{- if $cfg.resources }}
+            {{- toYaml $cfg.resources | nindent 12 }}
+            {{- else }}
+            {{- toYaml $.Values.capabilityPod.resources | nindent 12 }}
+            {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kubeclaw-capability-{{ $name }}
+  namespace: {{ $.Values.namespace }}
+spec:
+  selector:
+    app: kubeclaw-capability-{{ $name }}
+  ports:
+    - name: http
+      port: {{ $cfg.port | default 8080 }}
+      targetPort: http
+      protocol: TCP
+  type: ClusterIP
+{{- end }}

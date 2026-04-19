@@ -1,5 +1,7 @@
-# NanoClaw Orchestrator Container
-# Main application that manages channels and schedules agent jobs
+# KubeClaw Orchestrator Container
+# Top-level pod in the four-tier architecture (Orchestrator / Channel /
+# Capability / Tool Job). Manages channel pods, routes messages, and
+# coordinates capability and tool-job lifecycles via the K8s API.
 
 FROM node:20-slim
 

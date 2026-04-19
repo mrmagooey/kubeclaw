@@ -20,10 +20,10 @@ This is the default mode. A single long-running process manages the full lifecyc
 
 - Loads all channel factories that were self-registered via `registerChannel()` (unless `KUBECLAW_MODE=orchestrator`, in which case channels run in their own pods and are not loaded inline).
 - Maintains a registry of explicitly registered groups (`groups/{name}/` folders).
-- Spawns **Kubernetes Jobs** for agent execution via `src/k8s/job-runner.ts`. Each job runs an isolated container with the Claude Agent SDK.
+- Spawns **Kubernetes Jobs** for tool execution via `src/k8s/job-runner.ts`. Each job runs an isolated container with IPC sidecars.
 - Groups must be registered manually, typically through a command sent in the main group (e.g. via `register_group` IPC). Non-main groups require a trigger word (`@AssistantName`) before the agent responds.
 - The `onChatMetadata` callback only stores chat metadata — it does **not** auto-register groups.
-- Redis is required for IPC between the orchestrator and channel pods / agent jobs.
+- Redis is required for IPC between the orchestrator, channel pods, and tool jobs.
 
 ### Group registration in orchestrator mode
 

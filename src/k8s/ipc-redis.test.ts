@@ -76,7 +76,7 @@ vi.mock('./job-runner.js', () => ({
       .fn()
       .mockResolvedValue('kubeclaw-stool-abc-tool'),
     stopJob: vi.fn().mockResolvedValue(undefined),
-    runAgentJob: vi.fn().mockResolvedValue({ status: 'success', result: 'ok' }),
+    runToolJob: vi.fn().mockResolvedValue({ status: 'success', result: 'ok' }),
     applyYamlToK8s: vi.fn().mockResolvedValue(undefined),
   },
 }));
@@ -125,8 +125,8 @@ vi.mock('./redis-client.js', () => ({
   getTaskChannel: vi.fn((folder: string) => `kubeclaw:tasks:${folder}`),
   getInputStream: vi.fn((jobId: string) => `kubeclaw:input:${jobId}`),
   getSpawnToolPodStream: vi.fn(() => 'kubeclaw:spawn-tool-pod'),
-  getSpawnAgentJobStream: vi.fn(() => 'kubeclaw:spawn-agent-job'),
-  getAgentJobResultStream: vi.fn(
+  getSpawnToolJobStream: vi.fn(() => 'kubeclaw:spawn-agent-job'),
+  getToolJobResultStream: vi.fn(
     (id: string) => `kubeclaw:agent-job-result:${id}`,
   ),
 }));
@@ -152,7 +152,7 @@ import {
   processTaskIpc,
   cleanupToolPods,
   startToolPodSpawnWatcher,
-  startAgentJobSpawnWatcher,
+  startToolJobSpawnWatcher,
 } from './ipc-redis.js';
 import type { RegisteredGroup } from '../types.js';
 
@@ -1389,7 +1389,7 @@ describe('startToolPodSpawnWatcher', () => {
   });
 });
 
-describe('startAgentJobSpawnWatcher', () => {
+describe('startToolJobSpawnWatcher', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     await stopIpcWatcher();
@@ -1398,7 +1398,7 @@ describe('startAgentJobSpawnWatcher', () => {
     mockXadd.mockResolvedValue('mock-id');
     mockXread.mockResolvedValue(null);
     const { jobRunner } = await import('./job-runner.js');
-    vi.mocked(jobRunner.runAgentJob).mockResolvedValue({
+    vi.mocked(jobRunner.runToolJob).mockResolvedValue({
       status: 'success',
       result: 'ok',
     });
@@ -1408,7 +1408,7 @@ describe('startAgentJobSpawnWatcher', () => {
     await stopIpcWatcher();
   });
 
-  it('processes a spawn-agent-job message and writes result to stream', async () => {
+  it('processes a spawn-tool-job message and writes result to stream', async () => {
     startIpcWatcher(createMockDeps()); // sets ipcWatcherRunning = true
 
     let callCount = 0;
@@ -1443,12 +1443,12 @@ describe('startAgentJobSpawnWatcher', () => {
 
     const { jobRunner: jrImported } = await import('./job-runner.js');
 
-    await startAgentJobSpawnWatcher();
+    await startToolJobSpawnWatcher();
 
     // Give fire-and-forget .then() time to settle
     await new Promise((r) => setTimeout(r, 20));
 
-    expect(jrImported.runAgentJob).toHaveBeenCalled();
+    expect(jrImported.runToolJob).toHaveBeenCalled();
     // The .then() handler writes the result to the result stream
     expect(mockXadd).toHaveBeenCalledWith(
       'kubeclaw:agent-job-result:aj1',
@@ -1474,12 +1474,12 @@ describe('startAgentJobSpawnWatcher', () => {
       return null;
     });
 
-    await startAgentJobSpawnWatcher();
-    expect(jobRunner.runAgentJob).not.toHaveBeenCalled();
+    await startToolJobSpawnWatcher();
+    expect(jobRunner.runToolJob).not.toHaveBeenCalled();
   });
 
   it('exits immediately when ipcWatcherRunning is false', async () => {
-    await startAgentJobSpawnWatcher();
+    await startToolJobSpawnWatcher();
     expect(mockXread).not.toHaveBeenCalled();
   });
 });

@@ -85,7 +85,7 @@ export const TOOLS: OpenAI.ChatCompletionTool[] = [
           llmProvider: {
             type: 'string',
             description:
-              'LLM provider for K8s agent jobs: "claude", "openai", "openrouter", or "ollama". Use "ollama" to route agent jobs to a local Ollama K8s Service.',
+              'LLM provider for K8s tool jobs: "claude", "openai", "openrouter", or "ollama". Use "ollama" to route tool jobs to a local Ollama K8s Service.',
           },
           direct: {
             type: 'boolean',

@@ -1,5 +1,7 @@
-# NanoClaw OpenRouter Agent Container
-# Runs OpenAI SDK with OpenRouter API in isolated Linux VM with browser automation
+# KubeClaw Base Container (OpenRouter variant)
+# Shared image for orchestrator and channel pods using OpenRouter as the LLM provider.
+# Same four-tier architecture as the Claude variant
+# (Orchestrator / Channel / Capability / Tool Job).
 
 FROM node:22-slim
 

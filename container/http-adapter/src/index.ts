@@ -1,7 +1,7 @@
 /**
  * NanoClaw HTTP Adapter - Main Entry Point
  *
- * This sidecar adapter enables NanoClaw to communicate with agent containers
+ * This sidecar adapter enables NanoClaw to communicate with tool containers
  * that expose HTTP REST APIs. Uses Redis for bidirectional communication
  * with the orchestrator (follow-up support).
  *

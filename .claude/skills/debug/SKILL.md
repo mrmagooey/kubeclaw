@@ -1,6 +1,6 @@
 ---
 name: debug
-description: Debug Kubernetes agent issues. Use when things aren't working, agent jobs fail, authentication problems, or to understand how the Kubernetes system works. Covers logs, kubectl commands, PVCs, and common issues.
+description: Debug Kubernetes issues. Use when things aren't working, tool jobs fail, authentication problems, or to understand how the Kubernetes system works. Covers logs, kubectl commands, PVCs, and common issues.
 ---
 
 # KubeClaw Kubernetes Debugging
@@ -12,10 +12,10 @@ This guide covers debugging the Kubernetes-based agent execution system.
 ```
 Kubernetes Cluster
 ─────────────────────────────────────────────────────────────
-deployment/kubeclaw-orchestrator      batch/Job: kubeclaw-agent-*
+deployment/kubeclaw-orchestrator      batch/Job: kubeclaw-tool-*
     │                                      │
-    │ creates Job                          │ runs Claude Agent SDK
-    │ via src/k8s/job-runner.ts            │ with MCP servers
+    │ creates Job                          │ runs tool container
+    │ via src/k8s/job-runner.ts            │ with IPC sidecar
     │                                      │
     ├── Redis Pub/Sub ─────────────────────► agent output stream
     ├── Redis Streams ────────────────────► agent input
@@ -24,14 +24,14 @@ deployment/kubeclaw-orchestrator      batch/Job: kubeclaw-agent-*
     PVC: kubeclaw-sessions → /home/node/.claude (subPath: groupFolder)
 ```
 
-**Important:** Agent Jobs run as user `node` with `HOME=/home/node`. Session files must be mounted to `/home/node/.claude/` (not `/root/.claude/`) for session resumption to work.
+**Important:** Tool Jobs run as user `node` with `HOME=/home/node`. Session files must be mounted to `/home/node/.claude/` (not `/root/.claude/`) for session resumption to work.
 
 ## Log Locations
 
 | Log               | Command                                                              | Content                            |
 | ----------------- | -------------------------------------------------------------------- | ---------------------------------- |
 | Orchestrator logs | `kubectl logs -f deployment/kubeclaw-orchestrator -n kubeclaw`       | Message routing, job creation, IPC |
-| Agent job logs    | `kubectl logs job/<job-name> -n kubeclaw`                            | Claude SDK output, tool calls      |
+| Tool job logs     | `kubectl logs job/<job-name> -n kubeclaw`                            | Tool output, execution logs        |
 | Recent jobs       | `kubectl get jobs -n kubeclaw --sort-by=.metadata.creationTimestamp` | Job history                        |
 
 ## Enabling Debug Logging
@@ -205,13 +205,13 @@ Should contain one of:
 kubectl get pods -n kubeclaw
 ```
 
-### Check recent agent jobs:
+### Check recent tool jobs:
 
 ```bash
 kubectl get jobs -n kubeclaw --sort-by=.metadata.creationTimestamp | tail -10
 ```
 
-### View logs for a specific agent job:
+### View logs for a specific tool job:
 
 ```bash
 kubectl logs job/<job-name> -n kubeclaw
@@ -306,7 +306,7 @@ docker build -t kubeclaw-orchestrator:latest .
 kind load docker-image kubeclaw-orchestrator:latest  # or push to registry
 kubectl rollout restart deployment/kubeclaw-orchestrator -n kubeclaw
 
-# Rebuild agent container
+# Rebuild tool container
 ./container/build.sh
 kind load docker-image kubeclaw-agent:claude  # or push to registry
 # New jobs will pick up the new image automatically

@@ -585,11 +585,11 @@ describe('Real Orchestrator E2E', () => {
       ctx.skip();
     }
 
-    // Trim the spawn-agent-job stream so the orchestrator watcher's next BLOCK
+    // Trim the spawn-tool-job stream so the orchestrator watcher's next BLOCK
     // call resolves '$' to "empty". Without this, if the stream already contains
     // entries, '$' resolves to the existing last ID and the new message is skipped
     // until another entry arrives (race condition).
-    console.log('🧹 Trimming spawn-agent-job stream...');
+    console.log('🧹 Trimming spawn-tool-job stream...');
     await redis.del('kubeclaw:spawn-agent-job');
     // Wait one BLOCK cycle (watcher uses BLOCK 5000ms) so the watcher re-enters
     // BLOCK with '$' pointing at the now-empty stream.
@@ -601,7 +601,7 @@ describe('Real Orchestrator E2E', () => {
     const agentJobId = `e2e-job-${Date.now()}`;
     const testGroup = `test-group-${Date.now()}`;
 
-    console.log('📤 Publishing spawn-agent-job to Redis stream...');
+    console.log('📤 Publishing spawn-tool-job to Redis stream...');
     await redis.xadd(
       'kubeclaw:spawn-agent-job', '*',
       'agentJobId', agentJobId,
@@ -933,11 +933,11 @@ describe('Real Orchestrator E2E', () => {
       console.log('   Sender:', receivedMessage.message.sender);
       console.log('   Content:', receivedMessage.message.content);
 
-      // Step 5: Publish spawn-agent-job to Redis stream (orchestrator API)
+      // Step 5: Publish spawn-tool-job to Redis stream (orchestrator API)
       console.log(
-        '\n📤 [IRC Orchestrator] Step 5: Publishing spawn-agent-job to Redis stream...',
+        '\n📤 [IRC Orchestrator] Step 5: Publishing spawn-tool-job to Redis stream...',
       );
-      // Trim stream first so '$' resolves to empty — avoids the race where
+      // Trim stream first so '$' resolves to empty -- avoids the race where
       // an existing entry causes the watcher to skip our new message.
       await redis.del('kubeclaw:spawn-agent-job');
       await new Promise((r) => setTimeout(r, 6000));
@@ -954,9 +954,9 @@ describe('Real Orchestrator E2E', () => {
         'prompt', receivedMessage.message.content,
         'channel', '',
       );
-      console.log('✅ [IRC Orchestrator] Spawn-agent-job published to stream');
+      console.log('✅ [IRC Orchestrator] Spawn-tool-job published to stream');
       console.log('   Stream: kubeclaw:spawn-agent-job');
-      console.log('   Agent Job ID:', agentJobId);
+      console.log('   Tool Job ID:', agentJobId);
 
       // Step 6: Wait for orchestrator to process
       console.log(
@@ -969,7 +969,7 @@ describe('Real Orchestrator E2E', () => {
       console.log(logs.slice(-1000));
 
       // Verify orchestrator picked up the job spawn request
-      expect(logs).toMatch(/Creating Kubernetes job|Agent job spawn|spawn-agent-job|agentJobId/i);
+      expect(logs).toMatch(/Creating Kubernetes job|Tool job spawn|spawn-agent-job|agentJobId/i);
       console.log(
         '✅ [IRC Orchestrator] Orchestrator received and processed message',
       );

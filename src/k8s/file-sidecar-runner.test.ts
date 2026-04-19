@@ -72,10 +72,10 @@ vi.mock('../config.js', () => ({
   KUBECLAW_NAMESPACE: 'nanoclaw',
   SIDECAR_FILE_ADAPTER_IMAGE: 'nanoclaw/file-adapter:latest',
   SIDECAR_FILE_POLL_INTERVAL: 1000,
-  AGENT_JOB_MEMORY_REQUEST: '512Mi',
-  AGENT_JOB_MEMORY_LIMIT: '4Gi',
-  AGENT_JOB_CPU_REQUEST: '250m',
-  AGENT_JOB_CPU_LIMIT: '2000m',
+  TOOL_JOB_MEMORY_REQUEST: '512Mi',
+  TOOL_JOB_MEMORY_LIMIT: '4Gi',
+  TOOL_JOB_CPU_REQUEST: '250m',
+  TOOL_JOB_CPU_LIMIT: '2000m',
   TIMEZONE: 'UTC',
   REDIS_URL: 'redis://localhost:6379',
   REDIS_ADMIN_PASSWORD: undefined,
@@ -471,7 +471,7 @@ describe('FileSidecarJobRunner', () => {
     });
   });
 
-  describe('runAgentJob', () => {
+  describe('runToolJob', () => {
     const input: JobInput = {
       groupFolder: 'test-group',
       chatJid: 'test@g.us',
@@ -498,7 +498,7 @@ describe('FileSidecarJobRunner', () => {
         status: { succeeded: 1 },
       });
 
-      const result = await runner.runAgentJob(testGroup, input, spec);
+      const result = await runner.runToolJob(testGroup, input, spec);
       expect(result.status).toBe('success');
       expect(result.jobId).toBe('run-job-123');
     });
@@ -512,7 +512,7 @@ describe('FileSidecarJobRunner', () => {
       });
 
       const onProcess = vi.fn();
-      await runner.runAgentJob(testGroup, input, spec, onProcess);
+      await runner.runToolJob(testGroup, input, spec, onProcess);
       expect(onProcess).toHaveBeenCalledWith('run-job-123');
     });
 
@@ -521,7 +521,7 @@ describe('FileSidecarJobRunner', () => {
         new Error('K8s API unavailable'),
       );
 
-      const result = await runner.runAgentJob(testGroup, input, spec);
+      const result = await runner.runToolJob(testGroup, input, spec);
       expect(result.status).toBe('error');
       expect(result.error).toContain('K8s API unavailable');
     });

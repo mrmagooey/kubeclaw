@@ -6,7 +6,7 @@
 #   -f ./helm/kubeclaw/values-cilium.yaml
 #
 # Resources are sized for a ~6 GB minikube node (4 CPUs, 6144 MiB).
-# Peak usage: orchestrator (256Mi) + Redis (512Mi) + Falco (512Mi) + one agent job (2Gi) ≈ 3.3 Gi
+# Peak usage: orchestrator (256Mi) + Redis (512Mi) + Falco (512Mi) + one tool job (2Gi) ≈ 3.3 Gi
 
 orchestrator:
   maxConcurrentJobs: 3

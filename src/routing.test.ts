@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 vi.mock('./runtime/index.js', () => ({
+  getToolJobRunner: vi.fn(),
   getAgentRunner: vi.fn(),
   getRunnerForGroup: vi.fn(),
   shutdownAllRunners: vi.fn(),
@@ -9,7 +10,7 @@ vi.mock('./runtime/index.js', () => ({
 vi.mock('./k8s/ipc-redis.js', () => ({
   startIpcWatcher: vi.fn(),
   startToolPodSpawnWatcher: vi.fn(),
-  startAgentJobSpawnWatcher: vi.fn(),
+  startToolJobSpawnWatcher: vi.fn(),
   startTaskRequestWatcher: vi.fn(),
   stopIpcWatcher: vi.fn(),
 }));

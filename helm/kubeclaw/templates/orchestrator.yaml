@@ -5,7 +5,7 @@ metadata:
   name: kubeclaw-orchestrator
   namespace: {{ .Values.namespace }}
 ---
-# Grants the orchestrator permission to create/list/delete agent Jobs and read pod logs.
+# Grants the orchestrator permission to create/list/delete tool Jobs and read pod logs.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:

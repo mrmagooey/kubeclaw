@@ -438,7 +438,7 @@ groups/mygroup/
 
 ## Performance Considerations
 
-- Each mentioned specialist spawns a separate agent job
+- Each mentioned specialist spawns a separate tool job
 - Multiple specialists in one message may run in parallel (depends on cluster capacity)
 - Each specialist gets its own container with its own timeout and resource limits
 - Use `containerConfig.timeout` to prevent specialists from blocking the group

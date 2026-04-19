@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build the NanoClaw agent container images
+# Build KubeClaw container images (four-tier architecture)
 # Supports both Claude and OpenRouter LLM providers
 
 set -e
@@ -64,7 +64,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-echo "Building NanoClaw agent container images..."
+echo "Building KubeClaw container images..."
 echo "Container runtime: ${CONTAINER_RUNTIME}"
 echo ""
 

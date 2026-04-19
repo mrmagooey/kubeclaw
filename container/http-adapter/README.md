@@ -1,6 +1,6 @@
 # KubeClaw HTTP Adapter
 
-Sidecar container that enables KubeClaw to communicate with any agent container exposing an HTTP REST API. The agent container needs no knowledge of KubeClaw's internal protocol.
+Sidecar container that enables KubeClaw to communicate with any tool container exposing an HTTP REST API. The tool container needs no knowledge of KubeClaw's internal protocol.
 
 ## Architecture
 
@@ -18,7 +18,7 @@ Kubernetes Pod
 
 ## HTTP API Spec for Agent Authors
 
-Your agent container must expose two endpoints on port 8080 (configurable):
+Your tool container must expose two endpoints on port 8080 (configurable):
 
 ### GET /agent/health
 

@@ -38,7 +38,7 @@ Run commands directly—don't tell the user to run them.
 ```bash
 npm run dev          # Run with hot reload
 npm run build        # Compile TypeScript
-./container/build.sh # Rebuild agent container
+./container/build.sh # Rebuild tool container
 ```
 
 Service management:
@@ -68,7 +68,7 @@ Run `/debug` for guided troubleshooting. For quick checks:
 # Orchestrator status
 kubectl get pods -n kubeclaw
 
-# Recent agent jobs
+# Recent tool jobs
 kubectl get jobs -n kubeclaw --sort-by=.metadata.creationTimestamp | tail -10
 
 # Orchestrator errors

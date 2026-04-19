@@ -1,13 +1,13 @@
 /**
- * Agent Job Spawn Watcher E2E Tests
+ * Tool Job Spawn Watcher E2E Tests
  *
- * Verifies that the orchestrator's startAgentJobSpawnWatcher() correctly:
+ * Verifies that the orchestrator's startToolJobSpawnWatcher() correctly:
  *   - Reads from kubeclaw:spawn-agent-job stream
- *   - Runs the agent job via jobRunner.runAgentJob()
+ *   - Runs the tool job via jobRunner.runToolJob()
  *   - Writes result to kubeclaw:agent-job-result:{agentJobId} with
  *     `result` and `status` fields
  *
- * The agent job will fail quickly (bad API key) — that's intentional;
+ * The tool job will fail quickly (bad API key) — that's intentional;
  * we only verify the result stream gets written.
  *
  * Requires: orchestrator running in cluster.
@@ -48,7 +48,7 @@ function pollStream(
   });
 }
 
-describe('Agent Job Spawn Watcher', () => {
+describe('Tool Job Spawn Watcher', () => {
   let orchestratorRunning = false;
 
   beforeAll(() => {
@@ -95,7 +95,7 @@ describe('Agent Job Spawn Watcher', () => {
 
     console.log(`⏳ Waiting for result on ${resultStream}...`);
 
-    // The agent job runs in K8s and will fail (bad API key), but the
+    // The tool job runs in K8s and will fail (bad API key), but the
     // orchestrator must still write the result/error to the result stream.
     // activeDeadlineSeconds for the job is ~70s (IDLE_TIMEOUT+30s when
     // CONTAINER_TIMEOUT is overridden to 30s in the helm install).
@@ -108,6 +108,6 @@ describe('Agent Job Spawn Watcher', () => {
     // status should be one of the known terminal values
     expect(['completed', 'error', 'timeout', 'failed']).toContain(fields.status);
 
-    console.log(`✅ Agent job result received: status=${fields.status}`);
+    console.log(`✅ Tool job result received: status=${fields.status}`);
   }, 150_000);
 });

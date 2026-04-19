@@ -9,7 +9,7 @@
 #     -f ./helm/kubeclaw/values-cilium.yaml
 #
 # ── Strict mode (default) ────────────────────────────────────────────────────
-# Only the LLM provider endpoints are reachable from agent jobs.
+# Only the LLM provider endpoints are reachable from tool jobs.
 # The browser tool and arbitrary curl/git will be blocked.
 # Recommended for laptops that also hold SSH keys, cloud credentials, etc.
 #
@@ -30,7 +30,7 @@ ciliumNetworkPolicy:
 
   agent:
     allowedFQDNs:
-      - api.anthropic.com      # Claude Agent SDK — required
+      - api.anthropic.com      # Anthropic API — required
       - statsig.anthropic.com  # Claude Code feature flags — required by SDK
       # Tool-friendly mode: uncomment to allow arbitrary HTTPS for browser/curl/git:
       # - matchPattern: "*"

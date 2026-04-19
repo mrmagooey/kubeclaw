@@ -9,10 +9,10 @@ import path from 'path';
 // ---- Hoisted shared mocks -------------------------------------------------
 
 const {
-  mockJobRunAgentJob,
+  mockJobRunToolJob,
   mockJobCleanup,
-  mockFileSidecarRunAgentJob,
-  mockHttpSidecarRunAgentJob,
+  mockFileSidecarRunToolJob,
+  mockHttpSidecarRunToolJob,
   mockAclManager,
 } = vi.hoisted(() => {
   const mockAclManager = {
@@ -22,18 +22,18 @@ const {
     close: vi.fn().mockResolvedValue(undefined),
   };
   return {
-    mockJobRunAgentJob: vi.fn().mockResolvedValue({
+    mockJobRunToolJob: vi.fn().mockResolvedValue({
       status: 'success',
       result: 'ok',
       newSessionId: 'sess-1',
     }),
     mockJobCleanup: vi.fn().mockResolvedValue(undefined),
-    mockFileSidecarRunAgentJob: vi.fn().mockResolvedValue({
+    mockFileSidecarRunToolJob: vi.fn().mockResolvedValue({
       status: 'success',
       result: 'file-ok',
       newSessionId: 'sess-2',
     }),
-    mockHttpSidecarRunAgentJob: vi.fn().mockResolvedValue({
+    mockHttpSidecarRunToolJob: vi.fn().mockResolvedValue({
       status: 'success',
       result: 'http-ok',
       newSessionId: 'sess-3',
@@ -46,7 +46,7 @@ const {
 
 vi.mock('../k8s/job-runner.js', () => ({
   JobRunner: class {
-    runAgentJob = mockJobRunAgentJob;
+    runToolJob = mockJobRunToolJob;
     cleanup = mockJobCleanup;
   },
   buildJobName: vi.fn((folder: string) => `job-${folder}`),
@@ -54,13 +54,13 @@ vi.mock('../k8s/job-runner.js', () => ({
 
 vi.mock('../k8s/file-sidecar-runner.js', () => ({
   FileSidecarJobRunner: class {
-    runAgentJob = mockFileSidecarRunAgentJob;
+    runToolJob = mockFileSidecarRunToolJob;
   },
 }));
 
 vi.mock('../k8s/http-sidecar-runner.js', () => ({
   HttpSidecarJobRunner: class {
-    runAgentJob = mockHttpSidecarRunAgentJob;
+    runToolJob = mockHttpSidecarRunToolJob;
   },
 }));
 
@@ -111,8 +111,8 @@ describe('runtime/index', () => {
   beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kubeclaw-runtime-test-'));
     process.env.KUBECLAW_IPC_BASE = tmpDir;
-    const { resetAgentRunner } = await import('./index.js');
-    resetAgentRunner();
+    const { resetRunners } = await import('./index.js');
+    resetRunners();
     vi.clearAllMocks();
   });
 
@@ -191,20 +191,20 @@ describe('runtime/index', () => {
     });
   });
 
-  describe('getAgentRunner', () => {
+  describe('getToolJobRunner', () => {
     it('returns a runner with runAgent method', async () => {
-      const { getAgentRunner } = await import('./index.js');
-      const runner = getAgentRunner();
+      const { getToolJobRunner } = await import('./index.js');
+      const runner = getToolJobRunner();
       expect(typeof runner.runAgent).toBe('function');
     });
   });
 
-  describe('resetAgentRunner', () => {
+  describe('resetRunners', () => {
     it('creates a new instance after reset', async () => {
-      const { getAgentRunner, resetAgentRunner } = await import('./index.js');
-      const runner1 = getAgentRunner();
-      resetAgentRunner();
-      const runner2 = getAgentRunner();
+      const { getToolJobRunner, resetRunners } = await import('./index.js');
+      const runner1 = getToolJobRunner();
+      resetRunners();
+      const runner2 = getToolJobRunner();
       expect(runner1).not.toBe(runner2);
     });
   });
@@ -216,10 +216,10 @@ describe('runtime/index', () => {
     });
 
     it('shuts down all active runners and clears singletons', async () => {
-      const { getAgentRunner, shutdownAllRunners, getRunnerForGroup } =
+      const { getToolJobRunner, shutdownAllRunners, getRunnerForGroup } =
         await import('./index.js');
 
-      getAgentRunner();
+      getToolJobRunner();
 
       const directGroup = {
         name: 'direct',
@@ -234,10 +234,10 @@ describe('runtime/index', () => {
     });
   });
 
-  describe('KubernetesAgentRunner.writeTasksSnapshot', () => {
+  describe('KubernetesToolJobRunner.writeTasksSnapshot', () => {
     it('writes a JSON file to the IPC directory', async () => {
-      const { getAgentRunner } = await import('./index.js');
-      const runner = getAgentRunner();
+      const { getToolJobRunner } = await import('./index.js');
+      const runner = getToolJobRunner();
 
       const groupFolder = 'my-group';
       const tasks = [{ id: '1', name: 'Task 1', status: 'pending' }];
@@ -255,10 +255,10 @@ describe('runtime/index', () => {
     });
   });
 
-  describe('KubernetesAgentRunner.writeGroupsSnapshot', () => {
+  describe('KubernetesToolJobRunner.writeGroupsSnapshot', () => {
     it('writes available_groups.json for main group', async () => {
-      const { getAgentRunner } = await import('./index.js');
-      const runner = getAgentRunner();
+      const { getToolJobRunner } = await import('./index.js');
+      const runner = getToolJobRunner();
 
       const groupFolder = 'main-group';
       const groups = [{ name: 'group-a', folder: 'group-a' }];
@@ -276,8 +276,8 @@ describe('runtime/index', () => {
     });
 
     it('writes empty groups array for non-main groups', async () => {
-      const { getAgentRunner } = await import('./index.js');
-      const runner = getAgentRunner();
+      const { getToolJobRunner } = await import('./index.js');
+      const runner = getToolJobRunner();
 
       const groupFolder = 'sub-group';
       const groups = [{ name: 'group-a', folder: 'group-a' }];
@@ -308,7 +308,7 @@ describe('runtime/index', () => {
     });
   });
 
-  describe('FileSidecarAgentRunner', () => {
+  describe('FileSidecarToolJobRunner', () => {
     const fileSidecarGroup = {
       name: 'sidecar-group',
       folder: 'sidecar-group',
@@ -407,7 +407,7 @@ describe('runtime/index', () => {
     });
   });
 
-  describe('HttpSidecarAgentRunner', () => {
+  describe('HttpSidecarToolJobRunner', () => {
     const httpSidecarGroup = {
       name: 'http-sidecar-group',
       folder: 'http-sidecar-group',
@@ -507,13 +507,13 @@ describe('runtime/index', () => {
   describe('shutdownAllRunners - comprehensive', () => {
     it('shuts down all four runner types when all are active', async () => {
       const {
-        getAgentRunner,
+        getToolJobRunner,
         getRunnerForGroup,
         getDirectLLMRunner,
         shutdownAllRunners,
       } = await import('./index.js');
 
-      getAgentRunner();
+      getToolJobRunner();
       getDirectLLMRunner();
       getRunnerForGroup({
         name: 'fs',
@@ -544,17 +544,17 @@ describe('runtime/index', () => {
     assistantName: 'Bot',
   };
 
-  describe('KubernetesAgentRunner.runAgent', () => {
+  describe('KubernetesToolJobRunner.runAgent', () => {
     const k8sGroup = { name: 'k8s', folder: 'k8s', trigger: '', added_at: '' };
 
     it('returns success output', async () => {
-      const { getAgentRunner } = await import('./index.js');
-      mockJobRunAgentJob.mockResolvedValueOnce({
+      const { getToolJobRunner } = await import('./index.js');
+      mockJobRunToolJob.mockResolvedValueOnce({
         status: 'success',
         result: 'done',
         newSessionId: 'ns',
       });
-      const result = await getAgentRunner().runAgent(k8sGroup, {
+      const result = await getToolJobRunner().runAgent(k8sGroup, {
         ...baseInput,
         groupFolder: 'k8s',
       });
@@ -564,13 +564,13 @@ describe('runtime/index', () => {
     });
 
     it('returns error output when jobRunner returns error status', async () => {
-      const { getAgentRunner } = await import('./index.js');
-      mockJobRunAgentJob.mockResolvedValueOnce({
+      const { getToolJobRunner } = await import('./index.js');
+      mockJobRunToolJob.mockResolvedValueOnce({
         status: 'error',
         result: null,
         error: 'job failed',
       });
-      const result = await getAgentRunner().runAgent(k8sGroup, {
+      const result = await getToolJobRunner().runAgent(k8sGroup, {
         ...baseInput,
         groupFolder: 'k8s',
       });
@@ -579,9 +579,9 @@ describe('runtime/index', () => {
     });
 
     it('returns error when jobRunner throws', async () => {
-      const { getAgentRunner } = await import('./index.js');
-      mockJobRunAgentJob.mockRejectedValueOnce(new Error('k8s crash'));
-      const result = await getAgentRunner().runAgent(k8sGroup, {
+      const { getToolJobRunner } = await import('./index.js');
+      mockJobRunToolJob.mockRejectedValueOnce(new Error('k8s crash'));
+      const result = await getToolJobRunner().runAgent(k8sGroup, {
         ...baseInput,
         groupFolder: 'k8s',
       });
@@ -590,25 +590,25 @@ describe('runtime/index', () => {
     });
 
     it('calls onProcess callback when provided', async () => {
-      const { getAgentRunner } = await import('./index.js');
-      mockJobRunAgentJob.mockResolvedValueOnce({
+      const { getToolJobRunner } = await import('./index.js');
+      mockJobRunToolJob.mockResolvedValueOnce({
         status: 'success',
         result: 'ok',
       });
       const onProcess = vi.fn();
-      await getAgentRunner().runAgent(
+      await getToolJobRunner().runAgent(
         k8sGroup,
         { ...baseInput, groupFolder: 'k8s' },
         onProcess,
       );
       // onProcess is forwarded; K8s runner wraps it — just confirm no crash
-      expect(mockJobRunAgentJob).toHaveBeenCalled();
+      expect(mockJobRunToolJob).toHaveBeenCalled();
     });
 
     it('calls onOutput callback when provided', async () => {
-      const { getAgentRunner } = await import('./index.js');
+      const { getToolJobRunner } = await import('./index.js');
       const output = { status: 'success' as const, result: 'streamed' };
-      mockJobRunAgentJob.mockImplementationOnce(
+      mockJobRunToolJob.mockImplementationOnce(
         async (
           _g: unknown,
           _i: unknown,
@@ -620,7 +620,7 @@ describe('runtime/index', () => {
         },
       );
       const onOutput = vi.fn().mockResolvedValue(undefined);
-      await getAgentRunner().runAgent(
+      await getToolJobRunner().runAgent(
         k8sGroup,
         { ...baseInput, groupFolder: 'k8s' },
         undefined,
@@ -630,8 +630,8 @@ describe('runtime/index', () => {
     });
 
     it('uses KUBECLAW_IPC_BASE env for IPC path (caching)', async () => {
-      const { getAgentRunner } = await import('./index.js');
-      const runner = getAgentRunner();
+      const { getToolJobRunner } = await import('./index.js');
+      const runner = getToolJobRunner();
       const tasks: never[] = [];
       runner.writeTasksSnapshot('cached-group', false, tasks);
       runner.writeTasksSnapshot('cached-group', false, tasks); // second call uses cached path
@@ -645,7 +645,7 @@ describe('runtime/index', () => {
     });
   });
 
-  describe('FileSidecarAgentRunner.runAgent', () => {
+  describe('FileSidecarToolJobRunner.runAgent', () => {
     const fsGroup = {
       name: 'fs',
       folder: 'fs',
@@ -680,7 +680,7 @@ describe('runtime/index', () => {
 
     it('returns success output', async () => {
       const { getRunnerForGroup } = await import('./index.js');
-      mockFileSidecarRunAgentJob.mockResolvedValueOnce({
+      mockFileSidecarRunToolJob.mockResolvedValueOnce({
         status: 'success',
         result: 'fs-done',
         newSessionId: 'fs-sess',
@@ -695,7 +695,7 @@ describe('runtime/index', () => {
 
     it('returns error when jobRunner throws', async () => {
       const { getRunnerForGroup } = await import('./index.js');
-      mockFileSidecarRunAgentJob.mockRejectedValueOnce(new Error('fs crash'));
+      mockFileSidecarRunToolJob.mockRejectedValueOnce(new Error('fs crash'));
       const result = await getRunnerForGroup(fsGroup).runAgent(fsGroup, {
         ...baseInput,
         groupFolder: 'fs',
@@ -707,7 +707,7 @@ describe('runtime/index', () => {
     it('continues when ACL creation fails', async () => {
       const { getRunnerForGroup } = await import('./index.js');
       mockAclManager.createJobACL.mockRejectedValueOnce(new Error('acl error'));
-      mockFileSidecarRunAgentJob.mockResolvedValueOnce({
+      mockFileSidecarRunToolJob.mockResolvedValueOnce({
         status: 'success',
         result: 'ok',
       });
@@ -727,7 +727,7 @@ describe('runtime/index', () => {
 
       // suspend the job so activeJobs stays populated
       let resolveJob!: (v: unknown) => void;
-      mockFileSidecarRunAgentJob.mockReturnValueOnce(
+      mockFileSidecarRunToolJob.mockReturnValueOnce(
         new Promise((r) => {
           resolveJob = r;
         }),
@@ -764,7 +764,7 @@ describe('runtime/index', () => {
     it('shutdown revokes ACLs for active jobs', async () => {
       const { getRunnerForGroup } = await import('./index.js');
       let resolveJob!: (v: unknown) => void;
-      mockFileSidecarRunAgentJob.mockReturnValueOnce(
+      mockFileSidecarRunToolJob.mockReturnValueOnce(
         new Promise((r) => {
           resolveJob = r;
         }),
@@ -787,7 +787,7 @@ describe('runtime/index', () => {
     });
   });
 
-  describe('HttpSidecarAgentRunner.runAgent', () => {
+  describe('HttpSidecarToolJobRunner.runAgent', () => {
     const httpGroup = {
       name: 'http',
       folder: 'http',
@@ -813,7 +813,7 @@ describe('runtime/index', () => {
 
     it('returns success output', async () => {
       const { getRunnerForGroup } = await import('./index.js');
-      mockHttpSidecarRunAgentJob.mockResolvedValueOnce({
+      mockHttpSidecarRunToolJob.mockResolvedValueOnce({
         status: 'success',
         result: 'http-done',
         newSessionId: 'http-sess',
@@ -828,7 +828,7 @@ describe('runtime/index', () => {
 
     it('returns error when jobRunner throws', async () => {
       const { getRunnerForGroup } = await import('./index.js');
-      mockHttpSidecarRunAgentJob.mockRejectedValueOnce(new Error('http crash'));
+      mockHttpSidecarRunToolJob.mockRejectedValueOnce(new Error('http crash'));
       const result = await getRunnerForGroup(httpGroup).runAgent(httpGroup, {
         ...baseInput,
         groupFolder: 'http',
@@ -840,7 +840,7 @@ describe('runtime/index', () => {
     it('continues when ACL creation fails', async () => {
       const { getRunnerForGroup } = await import('./index.js');
       mockAclManager.createJobACL.mockRejectedValueOnce(new Error('acl error'));
-      mockHttpSidecarRunAgentJob.mockResolvedValueOnce({
+      mockHttpSidecarRunToolJob.mockResolvedValueOnce({
         status: 'success',
         result: 'ok',
       });
@@ -854,7 +854,7 @@ describe('runtime/index', () => {
     it('shutdown revokes ACLs for active jobs', async () => {
       const { getRunnerForGroup } = await import('./index.js');
       let resolveJob!: (v: unknown) => void;
-      mockHttpSidecarRunAgentJob.mockReturnValueOnce(
+      mockHttpSidecarRunToolJob.mockReturnValueOnce(
         new Promise((r) => {
           resolveJob = r;
         }),

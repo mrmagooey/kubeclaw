@@ -6,22 +6,21 @@
 
 KubeClaw runs as two persistent services on Kubernetes:
 
-- **Orchestrator** — Node.js process that receives messages from channels (Slack, Telegram, etc.) and manages agent jobs
-- **Redis** — Message bus between orchestrator and agent jobs
-
-When a message arrives, the orchestrator creates a short-lived Kubernetes **Job** that runs Claude Agent SDK in a container, communicates back via Redis Pub/Sub, then exits.
+- **Orchestrator** — manages pod lifecycles, mediates discovery, and coordinates tool jobs
+- **Channel pods** — user-facing communication (Telegram, Slack, etc.), each owns its LLM conversation directly
+- **Redis** — message bus between all tiers
 
 ```
 User message
     │
     ▼
-Orchestrator (Deployment)
-    │  creates
+Channel Pod (Deployment) ──► LLM Provider API
+    │  requests tool via Redis
     ▼
-Agent Job (batch/Job)  ◄──── Redis ────► Orchestrator
+Orchestrator (Deployment) ──► spawns Tool Job (batch/Job)
     │
     ▼
-Claude response → back through channel
+Tool result → back through channel
 ```
 
 ## Prerequisites
@@ -37,7 +36,7 @@ Claude response → back through channel
 ### 1. Build Images
 
 ```bash
-# Build the agent container (runs Claude SDK)
+# Build the tool container
 ./container/build.sh
 
 # Build the orchestrator image
@@ -127,23 +126,23 @@ All configuration is via Helm values. Pass overrides with `--set key=value` or a
 | Variable               | Default                       | Description                                                                                           |
 | ---------------------- | ----------------------------- | ----------------------------------------------------------------------------------------------------- |
 | `KUBECLAW_RUNTIME`     | `kubernetes`                  | Kubernetes namespace runtime identifier                                                               |
-| `KUBECLAW_NAMESPACE`   | `kubeclaw`                    | Kubernetes namespace for agent Jobs                                                                   |
+| `KUBECLAW_NAMESPACE`   | `kubeclaw`                    | Kubernetes namespace for tool Jobs                                                                    |
 | `KUBECLAW_IPC_BASE`    | `/data/sessions`              | Mount path for the sessions PVC (must match orchestrator volumeMount)                                 |
-| `MAX_CONCURRENT_JOBS`  | `10`                          | Maximum parallel agent Jobs                                                                           |
+| `MAX_CONCURRENT_JOBS`  | `10`                          | Maximum parallel tool Jobs                                                                            |
 | `REDIS_URL`            | `redis://kubeclaw-redis:6379` | Redis connection URL                                                                                  |
 | `REDIS_ADMIN_PASSWORD` | —                             | Redis ACL admin password (from `kubeclaw-redis` secret)                                               |
 | `ACL_ENCRYPTION_KEY`   | —                             | 32-byte key to encrypt ACL credentials at rest. If unset, a derived key is used (insecure — dev only) |
 
-### Agent Job Resources
+### Tool Job Resources
 
-These control the resource requests/limits for each agent Job pod.
+These control the resource requests/limits for each tool Job pod.
 
-| Variable                   | Default | Description                  |
-| -------------------------- | ------- | ---------------------------- |
-| `AGENT_JOB_MEMORY_REQUEST` | `512Mi` | Memory request per agent Job |
-| `AGENT_JOB_MEMORY_LIMIT`   | `4Gi`   | Memory limit per agent Job   |
-| `AGENT_JOB_CPU_REQUEST`    | `250m`  | CPU request per agent Job    |
-| `AGENT_JOB_CPU_LIMIT`      | `2000m` | CPU limit per agent Job      |
+| Variable                  | Default | Description                 |
+| ------------------------- | ------- | --------------------------- |
+| `TOOL_JOB_MEMORY_REQUEST` | `512Mi` | Memory request per tool Job |
+| `TOOL_JOB_MEMORY_LIMIT`   | `4Gi`   | Memory limit per tool Job   |
+| `TOOL_JOB_CPU_REQUEST`    | `250m`  | CPU request per tool Job    |
+| `TOOL_JOB_CPU_LIMIT`      | `2000m` | CPU limit per tool Job      |
 
 ### Container Behaviour
 
@@ -181,7 +180,7 @@ Add secrets for any channels you use. See the `/add-telegram`, `/add-slack`, `/a
 | `kubeclaw-groups`   | 50 Gi | RWX\*  | Group folders and `CLAUDE.md` memory files |
 | `kubeclaw-sessions` | 20 Gi | RWX\*  | Claude SDK session state                   |
 
-\*`kubeclaw-groups` and `kubeclaw-sessions` need RWX on multi-node clusters because both the orchestrator and agent Jobs mount them simultaneously. RWO works on single-node clusters where all pods schedule on the same node.
+\*`kubeclaw-groups` and `kubeclaw-sessions` need RWX on multi-node clusters because the orchestrator, channel pods, and tool Jobs mount them simultaneously. RWO works on single-node clusters where all pods schedule on the same node.
 
 **Recommended storage classes by provider:**
 
@@ -231,7 +230,7 @@ No cluster-level permissions are required.
 
 ## Network Policy
 
-`k8s/01-network-policy.yaml` restricts agent Job pods to egress-only traffic on:
+`k8s/01-network-policy.yaml` restricts tool Job pods to egress-only traffic on:
 
 - UDP/53 — DNS
 - TCP/6379 — Redis (within namespace)
@@ -247,7 +246,7 @@ The orchestrator has no NetworkPolicy restrictions by default.
 2. Load/push to your registry
 3. Roll the orchestrator: `kubectl rollout restart deployment/kubeclaw-orchestrator -n kubeclaw`
 
-In-progress agent Jobs will complete before the pod terminates (graceful shutdown). New jobs start on the new image automatically.
+In-progress tool Jobs will complete before the pod terminates (graceful shutdown). New jobs start on the new image automatically.
 
 ---
 
@@ -257,10 +256,10 @@ In-progress agent Jobs will complete before the pod terminates (graceful shutdow
 # Orchestrator logs
 kubectl logs -f deployment/kubeclaw-orchestrator -n kubeclaw
 
-# List recent agent jobs
+# List recent tool jobs
 kubectl get jobs -n kubeclaw --sort-by=.metadata.creationTimestamp
 
-# Logs for a specific agent job
+# Logs for a specific tool job
 kubectl logs job/<job-name> -n kubeclaw
 
 # Check Redis connectivity

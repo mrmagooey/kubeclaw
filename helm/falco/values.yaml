@@ -22,7 +22,7 @@ resources:
 
 customRules:
   kubeclaw_rules.yaml: |-
-    # KubeClaw agent job security rules.
+    # KubeClaw tool job security rules.
     # Alerts appear in: kubectl logs -n falco daemonset/falco
 
     - rule: KubeClaw agent unexpected outbound port
@@ -44,7 +44,7 @@ customRules:
     - rule: KubeClaw agent privilege escalation attempt
       desc: >
         A kubeclaw-agent pod executed a privilege-escalation binary (su, sudo,
-        newgrp, newuidmap, newgidmap). Agent containers run as UID 1000 and
+        newgrp, newuidmap, newgidmap). Tool containers run as UID 1000 and
         should never need elevated privileges.
       condition: >
         spawned_process

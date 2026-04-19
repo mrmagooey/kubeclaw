@@ -6,7 +6,7 @@ import { requireKubernetes, isKubeclawDeployed } from './setup.js';
  *
  * These tests verify that components integrate correctly:
  * - Orchestrator deployment
- * - Agent job spawning
+ * - Tool job spawning
  * - Message routing
  */
 describe('Phase 2: Integration', () => {

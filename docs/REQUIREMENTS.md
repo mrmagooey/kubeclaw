@@ -156,11 +156,11 @@ A personal AI assistant accessible via multiple channels, with isolated pod exec
 - Tools: `schedule_task`, `list_tasks`, `pause_task`, `resume_task`, `cancel_task`, `send_message`
 - Tasks stored in SQLite with run history
 - Scheduler loop checks for due tasks every minute
-- Tasks execute Claude Agent SDK in containerized group context
+- Tasks execute in containerized group context via tool jobs
 
 ### Web Access
 - Built-in WebSearch and WebFetch tools
-- Standard Claude Agent SDK capabilities
+- Standard LLM provider capabilities
 
 ### Browser Automation
 - agent-browser CLI with Chromium in container

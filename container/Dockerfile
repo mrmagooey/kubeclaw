@@ -1,5 +1,7 @@
-# NanoClaw Agent Container
-# Runs Claude Agent SDK in isolated Linux VM with browser automation
+# KubeClaw Base Container (Claude variant)
+# Shared image for orchestrator and channel pods in the four-tier architecture
+# (Orchestrator / Channel / Capability / Tool Job). The orchestrator runs
+# dist/index.js; channel pods run dist/channel-runner.js via KUBECLAW_MODE=channel.
 
 FROM node:22-slim
 

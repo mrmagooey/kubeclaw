@@ -10,7 +10,7 @@ import {
   getJobStatusKey,
 } from './redis-client.js';
 import { logger } from '../logger.js';
-import { AgentJobSpec, DistributedQueueItem } from './types.js';
+import { ToolJobSpec, DistributedQueueItem } from './types.js';
 
 const MAX_CONCURRENT_JOBS = parseInt(
   process.env.MAX_CONCURRENT_JOBS || '10',

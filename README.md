@@ -137,7 +137,6 @@ Key files:
 # Build images
 ./container/build.sh
 docker build -t your-registry/kubeclaw-orchestrator:latest .
-docker push your-registry/kubeclaw-agent:latest
 docker push your-registry/kubeclaw-orchestrator:latest
 
 # Install with Helm

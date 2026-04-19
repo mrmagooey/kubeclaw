@@ -1,6 +1,15 @@
 /**
- * Runtime Factory for NanoClaw
- * Kubernetes runtime
+ * Runtime Factory for KubeClaw — Four-Tier Pod Model
+ *
+ * Runner selection:
+ *   DirectLLMRunner           — channel pods talk to LLM directly (primary path)
+ *   KubernetesToolJobRunner   — spawns short-lived K8s tool jobs (NOT full agent chats)
+ *   FileSidecarToolJobRunner  — custom container via file-based IPC
+ *   HttpSidecarToolJobRunner  — custom container via HTTP REST API
+ *
+ * The orchestrator does NOT own LLM conversations; it only manages pod
+ * lifecycles and mediates discovery. Channels own conversations via
+ * DirectLLMRunner.
  */
 
 import fs from 'fs';
@@ -14,6 +23,7 @@ import { DirectLLMRunner } from './direct-llm-runner.js';
 import {
   ContainerInput,
   ContainerOutput,
+  MessageRunner,
   AgentRunner,
   AvailableGroup,
   Task,
@@ -26,15 +36,22 @@ import { getACLManager, RedisACLManager } from '../k8s/acl-manager.js';
 export type {
   ContainerInput,
   ContainerOutput,
+  MessageRunner,
   AgentRunner,
   AvailableGroup,
   Task,
 };
 
 /**
- * Kubernetes runtime implementation using k8s/job-runner.ts
+ * Kubernetes tool-job runner.
+ *
+ * Dispatches short-lived K8s Jobs for specialist tasks (tool execution,
+ * preprocessing). This is NOT the primary conversation path — channel pods
+ * use DirectLLMRunner for that. KubernetesToolJobRunner is used by the
+ * orchestrator for scheduled tasks or as a legacy fallback when no
+ * DirectLLMRunner is configured.
  */
-class KubernetesAgentRunner implements AgentRunner {
+class KubernetesToolJobRunner implements MessageRunner {
   private jobRunner: JobRunner;
   private groupIpcPaths: Map<string, string>;
 
@@ -56,7 +73,7 @@ class KubernetesAgentRunner implements AgentRunner {
     };
 
     try {
-      const result = await this.jobRunner.runAgentJob(
+      const result = await this.jobRunner.runToolJob(
         group,
         jobInput,
         onProcess ? (jobName) => onProcess(jobName, jobName) : undefined,
@@ -98,7 +115,7 @@ class KubernetesAgentRunner implements AgentRunner {
     tasks: Task[],
   ): void {
     // In Kubernetes mode, tasks are written to the group's IPC directory
-    // which is mounted via PVC. This allows agent jobs to read task state.
+    // which is mounted via PVC. This allows tool jobs to read task state.
     const groupIpcDir = this.getGroupIpcPath(groupFolder);
     fs.mkdirSync(groupIpcDir, { recursive: true });
 
@@ -154,7 +171,7 @@ class KubernetesAgentRunner implements AgentRunner {
     }
 
     // KUBECLAW_IPC_BASE must point to the orchestrator's mount of the sessions PVC.
-    // The agent job mounts sessions PVC subPath "${folder}/ipc" at /workspace/ipc,
+    // The tool job mounts sessions PVC subPath "${folder}/ipc" at /workspace/ipc,
     // so this path must resolve to the same location on the shared volume.
     // In the orchestrator pod: set KUBECLAW_IPC_BASE to the sessions PVC mountPath
     // (e.g. /data/sessions). Default falls back to a local temp dir for testing.
@@ -167,10 +184,12 @@ class KubernetesAgentRunner implements AgentRunner {
 }
 
 /**
- * File-based sidecar runtime implementation using k8s/file-sidecar-runner.ts
- * Enables running arbitrary containers without HTTP interfaces
+ * File-based sidecar tool-job runner using k8s/file-sidecar-runner.ts.
+ *
+ * Spawns a custom user container that communicates via file-based IPC.
+ * Used when a group's containerConfig specifies `userImage` without `userPort`.
  */
-class FileSidecarAgentRunner implements AgentRunner {
+class FileSidecarToolJobRunner implements MessageRunner {
   private jobRunner: FileSidecarJobRunner;
   private groupIpcPaths: Map<string, string>;
   private aclManager: RedisACLManager;
@@ -334,7 +353,7 @@ class FileSidecarAgentRunner implements AgentRunner {
         credentials,
       };
 
-      const result = await this.jobRunner.runAgentJob(
+      const result = await this.jobRunner.runToolJob(
         group,
         jobInput,
         specWithCredentials,
@@ -464,10 +483,12 @@ class FileSidecarAgentRunner implements AgentRunner {
 }
 
 /**
- * HTTP sidecar runtime implementation using k8s/http-sidecar-runner.ts
- * Enables running arbitrary containers with HTTP REST API interfaces
+ * HTTP sidecar tool-job runner using k8s/http-sidecar-runner.ts.
+ *
+ * Spawns a custom user container that exposes an HTTP REST API.
+ * Used when a group's containerConfig specifies both `userImage` and `userPort`.
  */
-class HttpSidecarAgentRunner implements AgentRunner {
+class HttpSidecarToolJobRunner implements MessageRunner {
   private jobRunner: HttpSidecarJobRunner;
   private groupIpcPaths: Map<string, string>;
   private aclManager: RedisACLManager;
@@ -629,7 +650,7 @@ class HttpSidecarAgentRunner implements AgentRunner {
         credentials,
       };
 
-      const result = await this.jobRunner.runAgentJob(
+      const result = await this.jobRunner.runToolJob(
         group,
         jobInput,
         specWithCredentials,
@@ -764,23 +785,23 @@ export interface SidecarRunner {
 }
 
 // Four lazy singletons — one per runner type
-let k8sRunner: KubernetesAgentRunner | null = null;
-let fileSidecarRunner: FileSidecarAgentRunner | null = null;
-let httpSidecarRunner: HttpSidecarAgentRunner | null = null;
+let k8sRunner: KubernetesToolJobRunner | null = null;
+let fileSidecarRunner: FileSidecarToolJobRunner | null = null;
+let httpSidecarRunner: HttpSidecarToolJobRunner | null = null;
 let directLLMRunner: DirectLLMRunner | null = null;
 
-function getK8sRunner(): KubernetesAgentRunner {
-  if (!k8sRunner) k8sRunner = new KubernetesAgentRunner();
+function getK8sRunner(): KubernetesToolJobRunner {
+  if (!k8sRunner) k8sRunner = new KubernetesToolJobRunner();
   return k8sRunner;
 }
 
-function getFileSidecarRunner(): FileSidecarAgentRunner {
-  if (!fileSidecarRunner) fileSidecarRunner = new FileSidecarAgentRunner();
+function getFileSidecarRunner(): FileSidecarToolJobRunner {
+  if (!fileSidecarRunner) fileSidecarRunner = new FileSidecarToolJobRunner();
   return fileSidecarRunner;
 }
 
-function getHttpSidecarRunner(): HttpSidecarAgentRunner {
-  if (!httpSidecarRunner) httpSidecarRunner = new HttpSidecarAgentRunner();
+function getHttpSidecarRunner(): HttpSidecarToolJobRunner {
+  if (!httpSidecarRunner) httpSidecarRunner = new HttpSidecarToolJobRunner();
   return httpSidecarRunner;
 }
 
@@ -792,37 +813,48 @@ export function getDirectLLMRunner(): DirectLLMRunner {
 /**
  * Select the correct runner for a group based on its containerConfig.
  *
+ * In the four-tier pod model, channel pods use DirectLLMRunner for all
+ * conversations. The other runners are for specialised dispatch:
+ *
  * Routing rules (checked in order):
- *   userImage + userPort → HttpSidecarAgentRunner  (user container exposes HTTP API)
- *   userImage only       → FileSidecarAgentRunner  (user container reads/writes files)
- *   direct               → DirectLLMRunner         (in-process Anthropic SDK, no K8s job)
- *   neither              → KubernetesAgentRunner   (built-in Claude / OpenRouter image)
+ *   userImage + userPort → HttpSidecarToolJobRunner   (user container exposes HTTP API)
+ *   userImage only       → FileSidecarToolJobRunner   (user container reads/writes files)
+ *   direct               → DirectLLMRunner            (in-process LLM, no K8s job — primary path for channels)
+ *   neither              → KubernetesToolJobRunner    (short-lived tool jobs / scheduled tasks / legacy fallback)
  */
-export function getRunnerForGroup(group: RegisteredGroup): AgentRunner {
+export function getRunnerForGroup(group: RegisteredGroup): MessageRunner {
   const { userImage, userPort, direct } = group.containerConfig ?? {};
   if (userImage && userPort) {
-    logger.debug({ group: group.name }, 'Using HTTP sidecar runner');
+    logger.debug({ group: group.name }, 'Using HTTP sidecar tool-job runner');
     return getHttpSidecarRunner();
   }
   if (userImage) {
-    logger.debug({ group: group.name }, 'Using file sidecar runner');
+    logger.debug({ group: group.name }, 'Using file sidecar tool-job runner');
     return getFileSidecarRunner();
   }
   if (direct) {
     logger.debug({ group: group.name }, 'Using direct LLM runner');
     return getDirectLLMRunner();
   }
-  logger.debug({ group: group.name }, 'Using Kubernetes agent runner');
+  logger.debug({ group: group.name }, 'Using Kubernetes tool-job runner');
   return getK8sRunner();
 }
 
 /**
- * Returns the K8s runner — for call sites that have no group context.
+ * Returns the K8s tool-job runner — for call sites that have no group context
+ * (e.g. writing groups snapshots from the orchestrator).
+ *
  * @deprecated Prefer getRunnerForGroup(group) when a group is available.
  */
-export function getAgentRunner(): AgentRunner {
+export function getToolJobRunner(): MessageRunner {
   return getK8sRunner();
 }
+
+/**
+ * Backwards-compatible alias for getToolJobRunner().
+ * @deprecated Use getToolJobRunner() or getRunnerForGroup(group).
+ */
+export const getAgentRunner = getToolJobRunner;
 
 /**
  * Shut down all active runner instances.
@@ -840,9 +872,15 @@ export async function shutdownAllRunners(): Promise<void> {
 /**
  * Reset all singleton instances (for testing).
  */
-export function resetAgentRunner(): void {
+export function resetRunners(): void {
   k8sRunner = fileSidecarRunner = httpSidecarRunner = directLLMRunner = null;
 }
+
+/**
+ * Backwards-compatible alias for resetRunners().
+ * @deprecated Use resetRunners().
+ */
+export const resetAgentRunner = resetRunners;
 
 // Re-export ACL manager for orchestrator integration
 export { getACLManager, RedisACLManager } from '../k8s/acl-manager.js';

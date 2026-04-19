@@ -3,7 +3,7 @@
  * orchestrator process or a channel pod. No Kubernetes Job is spawned for
  * chat. Conversation history is persisted in SQLite per group. When the LLM
  * calls a tool, execution is delegated to a K8s tool pod (browser / execution
- * categories) or a full K8s agent job (execute_agent).
+ * categories) or a full K8s tool job (execute_agent).
  *
  * Configure via environment variables (see src/runtime/llm-client.ts).
  */
@@ -19,7 +19,7 @@ import { getRagProvider } from '../rag/provider.js';
 import { logger } from '../logger.js';
 import { RegisteredGroup } from '../types.js';
 import {
-  AgentRunner,
+  MessageRunner,
   ContainerInput,
   ContainerOutput,
   Task,
@@ -30,9 +30,9 @@ import { jobRunner } from '../k8s/job-runner.js';
 import type { McpServerStatus, ToolSpec } from '../types.js';
 import { McpManager } from './mcp-manager.js';
 import {
-  getAgentJobResultStream,
+  getToolJobResultStream,
   getRedisClient,
-  getSpawnAgentJobStream,
+  getSpawnToolJobStream,
   getSpawnToolPodStream,
   getTaskRequestStream,
   getToolCallsStream,
@@ -44,7 +44,7 @@ const DEFAULT_SYSTEM_PROMPT =
 
 const MAX_TOOL_ROUNDS = 10;
 const TOOL_TIMEOUT_MS = 60_000; // 60 s per tool call
-const AGENT_JOB_TIMEOUT_MS = 300_000; // 5 min for full agent jobs
+const TOOL_JOB_TIMEOUT_MS = 300_000; // 5 min for full tool jobs
 
 // ---- Tool definitions ----
 
@@ -307,7 +307,7 @@ const TOOL_CATEGORY: Record<string, 'browser' | 'execution'> = {
 // ---- K8s tool pod dispatch ----
 
 async function executeToolViaK8s(
-  agentJobId: string,
+  toolJobId: string,
   groupFolder: string,
   toolName: string,
   args: Record<string, unknown>,
@@ -320,8 +320,8 @@ async function executeToolViaK8s(
   const requestId = crypto.randomUUID();
   const redis = getRedisClient();
 
-  const callsStream = getToolCallsStream(agentJobId, category);
-  const resultsStream = getToolResultsStream(agentJobId, category);
+  const callsStream = getToolCallsStream(toolJobId, category);
+  const resultsStream = getToolResultsStream(toolJobId, category);
 
   // Write call BEFORE spawning pod so the pod picks it up with lastId='0-0'
   await redis.xadd(
@@ -345,7 +345,7 @@ async function executeToolViaK8s(
     if (KUBECLAW_MODE === 'channel') {
       const spawnFields: string[] = [
         'agentJobId',
-        agentJobId,
+        toolJobId,
         'groupFolder',
         groupFolder,
         'category',
@@ -371,30 +371,30 @@ async function executeToolViaK8s(
       }
       await redis.xadd(getSpawnToolPodStream(), '*', ...spawnFields);
       logger.debug(
-        { agentJobId, category },
+        { toolJobId, category },
         'DirectLLMRunner: requested tool pod from orchestrator',
       );
     } else if (customSpec) {
       await jobRunner.createSidecarToolPodJob({
-        agentJobId,
+        agentJobId: toolJobId,
         groupFolder,
         toolName,
         toolSpec: customSpec,
         timeout: TOOL_TIMEOUT_MS,
       });
       logger.debug(
-        { agentJobId, toolName },
+        { toolJobId, toolName },
         'DirectLLMRunner: spawned sidecar tool pod',
       );
     } else {
       await jobRunner.createToolPodJob({
-        agentJobId,
+        agentJobId: toolJobId,
         groupFolder,
         category: category as 'browser' | 'execution',
         timeout: TOOL_TIMEOUT_MS,
       });
       logger.debug(
-        { agentJobId, category },
+        { toolJobId, category },
         'DirectLLMRunner: spawned tool pod',
       );
     }
@@ -438,24 +438,24 @@ async function executeToolViaK8s(
   return `Tool timed out after ${TOOL_TIMEOUT_MS / 1000}s`;
 }
 
-// ---- K8s agent job dispatch ----
+// ---- K8s tool job dispatch ----
 
-async function executeAgentJob(
+async function executeToolJob(
   groupFolder: string,
   chatJid: string,
   task: string,
 ): Promise<string> {
   const redis = getRedisClient();
-  const agentJobId = `agent-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
-  const resultStream = getAgentJobResultStream(agentJobId);
+  const toolJobId = `agent-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
+  const resultStream = getToolJobResultStream(toolJobId);
 
   if (KUBECLAW_MODE === 'channel') {
     // Delegate to orchestrator via Redis stream
     await redis.xadd(
-      getSpawnAgentJobStream(),
+      getSpawnToolJobStream(),
       '*',
       'agentJobId',
-      agentJobId,
+      toolJobId,
       'groupFolder',
       groupFolder,
       'chatJid',
@@ -463,16 +463,16 @@ async function executeAgentJob(
       'prompt',
       task,
       'timeout',
-      String(AGENT_JOB_TIMEOUT_MS),
+      String(TOOL_JOB_TIMEOUT_MS),
       'channel',
       KUBECLAW_CHANNEL,
     );
     logger.debug(
-      { agentJobId },
-      'DirectLLMRunner: requested agent job from orchestrator',
+      { toolJobId },
+      'DirectLLMRunner: requested tool job from orchestrator',
     );
   } else {
-    // Orchestrator spawns agent job directly and writes result to Redis
+    // Orchestrator spawns tool job directly and writes result to Redis
     const group: RegisteredGroup = {
       name: groupFolder,
       folder: groupFolder,
@@ -481,10 +481,10 @@ async function executeAgentJob(
     };
     // Run asynchronously and write result to stream when done
     jobRunner
-      .runAgentJob(group, { groupFolder, chatJid, isMain: false, prompt: task })
+      .runToolJob(group, { groupFolder, chatJid, isMain: false, prompt: task })
       .then(
         async (output) => {
-          const result = output.result ?? output.error ?? 'Agent job completed';
+          const result = output.result ?? output.error ?? 'Tool job completed';
           await redis.xadd(
             resultStream,
             '*',
@@ -508,7 +508,7 @@ async function executeAgentJob(
   }
 
   // Block-read for the final result
-  const deadline = Date.now() + AGENT_JOB_TIMEOUT_MS;
+  const deadline = Date.now() + TOOL_JOB_TIMEOUT_MS;
   let lastId = '0-0';
 
   while (Date.now() < deadline) {
@@ -529,12 +529,12 @@ async function executeAgentJob(
         const obj: Record<string, string> = {};
         for (let i = 0; i < fields.length; i += 2)
           obj[fields[i]] = fields[i + 1];
-        return obj.result ?? 'Agent job completed with no output';
+        return obj.result ?? 'Tool job completed with no output';
       }
     }
   }
 
-  return `Agent job timed out after ${AGENT_JOB_TIMEOUT_MS / 1000}s`;
+  return `Tool job timed out after ${TOOL_JOB_TIMEOUT_MS / 1000}s`;
 }
 
 // ---- Schedule task via Redis IPC ----
@@ -770,7 +770,7 @@ function loadSystemPrompt(groupFolder: string): string {
   return DEFAULT_SYSTEM_PROMPT;
 }
 
-export class DirectLLMRunner implements AgentRunner {
+export class DirectLLMRunner implements MessageRunner {
   private client: OpenAI;
   private mcpManager: McpManager | null = null;
 
@@ -812,7 +812,7 @@ export class DirectLLMRunner implements AgentRunner {
       { role: 'user', content: input.prompt },
     ];
 
-    const agentJobId = `direct-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
+    const toolJobId = `direct-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
     const spawnedCategories = new Set<string>();
 
     const customToolDefs: OpenAI.ChatCompletionTool[] = (
@@ -897,7 +897,7 @@ export class DirectLLMRunner implements AgentRunner {
                 args,
               );
             } else if (call.function.name === 'execute_agent') {
-              result = await executeAgentJob(
+              result = await executeToolJob(
                 input.groupFolder,
                 input.chatJid,
                 args.task as string,
@@ -917,7 +917,7 @@ export class DirectLLMRunner implements AgentRunner {
               result = await this.mcpManager.callTool(call.function.name, args);
             } else {
               result = await executeToolViaK8s(
-                agentJobId,
+                toolJobId,
                 input.groupFolder,
                 call.function.name,
                 args,

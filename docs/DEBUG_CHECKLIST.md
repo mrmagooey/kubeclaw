@@ -20,10 +20,10 @@ Both timers fire at the same time, so containers always exit via hard SIGKILL (c
 # 1. Is the orchestrator running?
 kubectl get pods -n kubeclaw -l app=kubeclaw-orchestrator
 
-# 2. Any running agent jobs?
+# 2. Any running tool jobs?
 kubectl get jobs -n kubeclaw --field-selector=status.active=1
 
-# 3. Recent agent jobs (last 10)
+# 3. Recent tool jobs (last 10)
 kubectl get jobs -n kubeclaw --sort-by=.metadata.creationTimestamp | tail -10
 
 # 4. Recent errors in orchestrator log?
@@ -60,7 +60,7 @@ for i, line in enumerate(lines):
 "
 ```
 
-## Agent Job Timeout Investigation
+## Tool Job Timeout Investigation
 
 ```bash
 # Check for timed-out jobs (activeDeadlineSeconds exceeded)

@@ -1,6 +1,6 @@
 /**
  * NanoClaw Tool Server
- * Alternative entrypoint for the agent container image.
+ * Alternative entrypoint for the tool container image.
  * Runs in tool category pods (execution | browser) and executes tool calls
  * routed from the agent MCP server via Redis Streams.
  */
@@ -13,7 +13,7 @@ import { createClient, RedisClientType } from 'redis';
 
 const execFileAsync = promisify(execFile);
 
-const agentJobId = process.env.KUBECLAW_AGENT_JOB_ID!;
+const agentJobId = process.env.KUBECLAW_TOOL_JOB_ID!;
 const category = process.env.KUBECLAW_CATEGORY as 'execution' | 'browser' | string;
 const redisUrl = process.env.REDIS_URL || 'redis://kubeclaw-redis:6379';
 const idleTimeout = parseInt(process.env.IDLE_TIMEOUT || '1800000', 10);
@@ -304,7 +304,7 @@ async function executeToolLocal(tool: string, input: Record<string, unknown>): P
 
 async function main(): Promise<void> {
   if (!agentJobId || (!category && !toolMode)) {
-    log('KUBECLAW_AGENT_JOB_ID and either KUBECLAW_CATEGORY or KUBECLAW_TOOL_MODE are required');
+    log('KUBECLAW_TOOL_JOB_ID and either KUBECLAW_CATEGORY or KUBECLAW_TOOL_MODE are required');
     process.exit(1);
   }
 

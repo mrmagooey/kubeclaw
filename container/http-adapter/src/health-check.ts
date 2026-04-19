@@ -1,7 +1,7 @@
 /**
  * NanoClaw HTTP Adapter - Health Check
  *
- * Polls GET /agent/health until the agent container is ready.
+ * Polls GET /agent/health until the tool container is ready.
  * Uses Node.js native fetch (Node 22+).
  */
 

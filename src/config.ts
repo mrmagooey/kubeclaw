@@ -264,14 +264,14 @@ export function assertToolImageAllowed(image: string): void {
   }
 }
 
-// --- Agent Job Resource Limits (Kubernetes) ---
-export const AGENT_JOB_MEMORY_REQUEST =
-  process.env.AGENT_JOB_MEMORY_REQUEST || '512Mi';
-export const AGENT_JOB_MEMORY_LIMIT =
-  process.env.AGENT_JOB_MEMORY_LIMIT || '4Gi';
-export const AGENT_JOB_CPU_REQUEST =
-  process.env.AGENT_JOB_CPU_REQUEST || '250m';
-export const AGENT_JOB_CPU_LIMIT = process.env.AGENT_JOB_CPU_LIMIT || '2000m';
+// --- Tool Job Resource Limits (Kubernetes) ---
+export const TOOL_JOB_MEMORY_REQUEST =
+  process.env.TOOL_JOB_MEMORY_REQUEST || '512Mi';
+export const TOOL_JOB_MEMORY_LIMIT =
+  process.env.TOOL_JOB_MEMORY_LIMIT || '4Gi';
+export const TOOL_JOB_CPU_REQUEST =
+  process.env.TOOL_JOB_CPU_REQUEST || '250m';
+export const TOOL_JOB_CPU_LIMIT = process.env.TOOL_JOB_CPU_LIMIT || '2000m';
 
 // --- Sidecar HTTP Adapter Configuration ---
 export const SIDECAR_HTTP_ADAPTER_IMAGE =

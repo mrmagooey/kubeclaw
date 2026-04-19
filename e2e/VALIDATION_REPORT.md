@@ -76,7 +76,7 @@ Addons: storage-provisioner
 | ------------ | ----------- | --------- | -------------- | ------------ |
 | Redis        | 100m        | 1         | 256Mi          | 2Gi          |
 | Orchestrator | 100m        | 500m      | 256Mi          | 512Mi        |
-| Agent Job    | 500m        | 2         | 512Mi          | 4Gi          |
+| Tool Job     | 500m        | 2         | 512Mi          | 4Gi          |
 
 ---
 
@@ -196,8 +196,8 @@ spec:
 
 **Impact:**
 
-- Orchestrator and agent jobs cannot share groups PVC simultaneously
-- Limits concurrent agent execution on same node
+- Orchestrator and tool jobs cannot share groups PVC simultaneously
+- Limits concurrent tool execution on same node
 - Production clusters with NFS/EFS should use RWX
 
 ---

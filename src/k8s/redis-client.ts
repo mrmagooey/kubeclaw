@@ -133,12 +133,12 @@ export function getSpawnToolPodStream(): string {
   return 'kubeclaw:spawn-tool-pod';
 }
 
-export function getSpawnAgentJobStream(): string {
+export function getSpawnToolJobStream(): string {
   return 'kubeclaw:spawn-agent-job';
 }
 
-export function getAgentJobResultStream(agentJobId: string): string {
-  return `kubeclaw:agent-job-result:${agentJobId}`;
+export function getToolJobResultStream(toolJobId: string): string {
+  return `kubeclaw:agent-job-result:${toolJobId}`;
 }
 
 export function getTaskRequestStream(): string {
@@ -151,4 +151,16 @@ export function getControlChannel(channelName: string): string {
 
 export function getChannelStatusChannel(channelName: string): string {
   return `kubeclaw:channel-status:${channelName}`;
+}
+
+export function getCapabilityRegisterStream(): string {
+  return 'kubeclaw:capability:register';
+}
+
+export function getDiscoveryRequestStream(): string {
+  return 'kubeclaw:discovery:request';
+}
+
+export function getDiscoveryResponseKey(requestId: string): string {
+  return `kubeclaw:discovery:response:${requestId}`;
 }

@@ -23,10 +23,10 @@ import {
   KUBECLAW_NAMESPACE,
   SIDECAR_FILE_ADAPTER_IMAGE,
   SIDECAR_FILE_POLL_INTERVAL,
-  AGENT_JOB_MEMORY_REQUEST,
-  AGENT_JOB_MEMORY_LIMIT,
-  AGENT_JOB_CPU_REQUEST,
-  AGENT_JOB_CPU_LIMIT,
+  TOOL_JOB_MEMORY_REQUEST,
+  TOOL_JOB_MEMORY_LIMIT,
+  TOOL_JOB_CPU_REQUEST,
+  TOOL_JOB_CPU_LIMIT,
   TIMEZONE,
   REDIS_URL,
   REDIS_ADAPTER_PASSWORD,
@@ -57,10 +57,10 @@ export class FileSidecarJobRunner {
   }
 
   /**
-   * Run an agent job using file-based sidecar pattern
+   * Run a tool job using file-based sidecar pattern
    * Creates a K8s Job with two containers sharing an emptyDir volume
    */
-  async runAgentJob(
+  async runToolJob(
     group: RegisteredGroup,
     input: JobInput,
     spec: SidecarFileJobSpec,
@@ -122,7 +122,7 @@ export class FileSidecarJobRunner {
           }
         : undefined;
 
-      // Stream output via Redis (same channel as agent jobs)
+      // Stream output via Redis (same channel as tool jobs)
       const streamingPromise = jobRunner.streamOutput(
         jobName,
         group.folder,
@@ -373,7 +373,7 @@ export class FileSidecarJobRunner {
                 },
                 stdin: true, // Accept input from orchestrator
               },
-              // User agent container (arbitrary user image)
+              // User tool container (arbitrary user image)
               {
                 name: 'user-agent',
                 image: spec.userImage,
@@ -384,12 +384,12 @@ export class FileSidecarJobRunner {
                 volumeMounts: userVolumeMounts,
                 resources: {
                   requests: {
-                    memory: spec.memoryRequest || AGENT_JOB_MEMORY_REQUEST,
-                    cpu: spec.cpuRequest || AGENT_JOB_CPU_REQUEST,
+                    memory: spec.memoryRequest || TOOL_JOB_MEMORY_REQUEST,
+                    cpu: spec.cpuRequest || TOOL_JOB_CPU_REQUEST,
                   },
                   limits: {
-                    memory: spec.memoryLimit || AGENT_JOB_MEMORY_LIMIT,
-                    cpu: spec.cpuLimit || AGENT_JOB_CPU_LIMIT,
+                    memory: spec.memoryLimit || TOOL_JOB_MEMORY_LIMIT,
+                    cpu: spec.cpuLimit || TOOL_JOB_CPU_LIMIT,
                   },
                 },
               },

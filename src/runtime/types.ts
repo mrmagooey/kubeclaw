@@ -1,6 +1,13 @@
 /**
- * Runtime Types for NanoClaw
- * Common interfaces for Docker and Kubernetes runtimes
+ * Runtime Types for KubeClaw
+ *
+ * Four-tier pod model:
+ *   Orchestrator  — manages pod lifecycles, mediates discovery
+ *   Channel pods  — own LLM conversations via DirectLLMRunner
+ *   Capability    — sidecar runners (file / HTTP) for custom containers
+ *   Tool jobs     — short-lived specialist K8s jobs (NOT full agent conversations)
+ *
+ * The MessageRunner interface is the shared contract across all tiers.
  */
 
 import { RegisteredGroup, McpServerStatus } from '../types.js';
@@ -42,9 +49,17 @@ export interface Task {
 }
 
 /**
- * Unified interface for agent execution across runtimes
+ * Unified interface for message/conversation execution across runtimes.
+ *
+ * In the four-tier model:
+ *   - DirectLLMRunner implements this for channel pods (primary path)
+ *   - KubernetesToolJobRunner implements this for orchestrator-spawned tool jobs
+ *   - FileSidecarToolJobRunner / HttpSidecarToolJobRunner implement this for
+ *     custom container sidecars
+ *
+ * @alias AgentRunner — kept as a backwards-compatible re-export
  */
-export interface AgentRunner {
+export interface MessageRunner {
   runAgent(
     group: RegisteredGroup,
     input: ContainerInput,
@@ -62,8 +77,8 @@ export interface AgentRunner {
   shutdown(): Promise<void>;
 
   /**
-   * Spawn a preprocessing job to convert raw attachments before the agent runs.
-   * Implemented by KubernetesAgentRunner; not available on other runners.
+   * Spawn a preprocessing job to convert raw attachments before the runner executes.
+   * Implemented by KubernetesToolJobRunner; not available on other runners.
    */
   runPreprocessingJob?(
     group: RegisteredGroup,
@@ -79,7 +94,12 @@ export interface AgentRunner {
 
   /**
    * Send a follow-up message to an active sidecar job.
-   * Implemented by FileSidecarAgentRunner and HttpSidecarAgentRunner.
+   * Implemented by FileSidecarToolJobRunner and HttpSidecarToolJobRunner.
    */
   sendFollowUpMessage?(groupFolder: string, text: string): Promise<boolean>;
 }
+
+/**
+ * Backwards-compatible alias. Prefer MessageRunner for new code.
+ */
+export type AgentRunner = MessageRunner;

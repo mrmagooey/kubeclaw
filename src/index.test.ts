@@ -19,7 +19,7 @@ import {
   registerGroup,
   getAvailableGroups,
 } from './index.js';
-import { getAgentRunner, getRunnerForGroup } from './runtime/index.js';
+import { getToolJobRunner, getRunnerForGroup } from './runtime/index.js';
 import { loadSpecialists, detectMentionedSpecialists } from './specialists.js';
 import { findChannel } from './router.js';
 import { getMessagesSince } from './db.js';
@@ -74,6 +74,7 @@ vi.mock('./router.js', async (importOriginal) => {
 });
 
 vi.mock('./runtime/index.js', () => ({
+  getToolJobRunner: vi.fn(),
   getAgentRunner: vi.fn(),
   getRunnerForGroup: vi.fn(),
   shutdownAllRunners: vi.fn(),
@@ -82,7 +83,7 @@ vi.mock('./runtime/index.js', () => ({
 vi.mock('./k8s/ipc-redis.js', () => ({
   startIpcWatcher: vi.fn(),
   startToolPodSpawnWatcher: vi.fn(),
-  startAgentJobSpawnWatcher: vi.fn(),
+  startToolJobSpawnWatcher: vi.fn(),
   startTaskRequestWatcher: vi.fn(),
   stopIpcWatcher: vi.fn(),
 }));
@@ -117,7 +118,7 @@ const mockGetAllRegisteredGroups = getAllRegisteredGroups as ReturnType<
 >;
 const mockSetRegisteredGroup = setRegisteredGroup as ReturnType<typeof vi.fn>;
 const mockFs = await import('fs');
-const mockGetAgentRunner = getAgentRunner as ReturnType<typeof vi.fn>;
+const mockGetToolJobRunner = getToolJobRunner as ReturnType<typeof vi.fn>;
 const mockGetRunnerForGroup = getRunnerForGroup as ReturnType<typeof vi.fn>;
 const mockLoadSpecialists = loadSpecialists as ReturnType<typeof vi.fn>;
 const mockDetectMentionedSpecialists = detectMentionedSpecialists as ReturnType<
@@ -848,7 +849,7 @@ describe('index.ts internal functions', () => {
         writeGroupsSnapshot: vi.fn(),
         shutdown: vi.fn(),
       };
-      mockGetAgentRunner.mockReturnValue(mockAgentRunner);
+      mockGetToolJobRunner.mockReturnValue(mockAgentRunner);
       mockGetRunnerForGroup.mockReturnValue(mockAgentRunner);
 
       mockChannel = {

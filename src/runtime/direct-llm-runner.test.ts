@@ -25,12 +25,12 @@ vi.mock('../k8s/job-runner.js', () => ({
   jobRunner: {
     createToolPodJob: vi.fn().mockResolvedValue(undefined),
     createSidecarToolPodJob: vi.fn().mockResolvedValue(undefined),
-    runAgentJob: vi.fn().mockResolvedValue({ status: 'success', result: 'ok' }),
+    runToolJob: vi.fn().mockResolvedValue({ status: 'success', result: 'ok' }),
   },
   JobRunner: class {
     createToolPodJob = vi.fn().mockResolvedValue(undefined);
     createSidecarToolPodJob = vi.fn().mockResolvedValue(undefined);
-    runAgentJob = vi
+    runToolJob = vi
       .fn()
       .mockResolvedValue({ status: 'success', result: 'ok' });
     cleanup = vi.fn().mockResolvedValue(undefined);
@@ -47,8 +47,8 @@ vi.mock('../k8s/redis-client.js', () => ({
     (id: string, cat: string) => `tool-results:${id}:${cat}`,
   ),
   getSpawnToolPodStream: vi.fn(() => 'spawn-tool-pod'),
-  getSpawnAgentJobStream: vi.fn(() => 'spawn-agent-job'),
-  getAgentJobResultStream: vi.fn((id: string) => `agent-job-result:${id}`),
+  getSpawnToolJobStream: vi.fn(() => 'spawn-agent-job'),
+  getToolJobResultStream: vi.fn((id: string) => `agent-job-result:${id}`),
 }));
 
 vi.mock('../db.js', () => ({
@@ -282,7 +282,7 @@ describe('DirectLLMRunner', () => {
       ],
     });
 
-    // Mock xread to return agent job result immediately (no requestId check for agent jobs)
+    // Mock xread to return tool job result immediately (no requestId check for tool jobs)
     mockRedisInstance.xread.mockResolvedValue([
       [
         'agent-result-stream',

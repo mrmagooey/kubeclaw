@@ -22,7 +22,7 @@ It will ask for credentials, create the channel pod, and register your first gro
   kubectl get pods -n {{ .Values.namespace }}
   kubectl logs -f deployment/kubeclaw-orchestrator -n {{ .Values.namespace }}
 
-=== Agent Jobs ===
+=== Tool Jobs ===
 
   kubectl get jobs -n {{ .Values.namespace }}
   kubectl logs job/<job-name> -n {{ .Values.namespace }}
@@ -30,7 +30,7 @@ It will ask for credentials, create the channel pod, and register your first gro
 {{- if not .Values.secrets.anthropicApiKey }}
 
 WARNING: No API credentials configured. The orchestrator is running but
-agent jobs will fail. Add credentials:
+tool jobs will fail. Add credentials:
 
   helm upgrade kubeclaw ./helm/kubeclaw \
     --set secrets.anthropicApiKey=YOUR_KEY \
@@ -40,7 +40,7 @@ agent jobs will fail. Add credentials:
 
 {{- if eq .Values.storage.accessMode "ReadWriteOnce" }}
 
-NOTE: storage.accessMode is ReadWriteOnce. Concurrent agent jobs may fail
+NOTE: storage.accessMode is ReadWriteOnce. Concurrent tool jobs may fail
 on multi-node clusters. For production use ReadWriteMany with a compatible
 CSI driver (EFS, Azure Files, NFS, Ceph).
 {{- end }}

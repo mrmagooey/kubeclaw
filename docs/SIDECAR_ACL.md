@@ -28,9 +28,9 @@ The ACL-based sidecar system allows KubeClaw to:
 │                           │ Creates ACL                                     │
 │                           ▼                                                 │
 │  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │                    SidecarAgentRunner                                 │   │
-│  │  - FileSidecarAgentRunner (file-based IPC)                           │   │
-│  │  - HttpSidecarAgentRunner (HTTP-based)                               │   │
+│  │                    SidecarToolJobRunner                                │   │
+│  │  - FileSidecarToolJobRunner (file-based IPC)                         │   │
+│  │  - HttpSidecarToolJobRunner (HTTP-based)                             │   │
 │  │  - Manages active jobs and routing                                   │   │
 │  └────────────────────────┬────────────────────────────────────────────┘   │
 │                           │                                                 │
@@ -138,13 +138,13 @@ The runtime factory manages sidecar lifecycles:
 
 ```typescript
 // File sidecar runner
-const fileRunner = new FileSidecarAgentRunner();
+const fileRunner = new FileSidecarToolJobRunner();
 fileRunner.setSendMessageHandler(async (groupFolder, text) => {
   // Route follow-up to active sidecar via Redis
 });
 
 // HTTP sidecar runner
-const httpRunner = new HttpSidecarAgentRunner();
+const httpRunner = new HttpSidecarToolJobRunner();
 ```
 
 ## Security Model

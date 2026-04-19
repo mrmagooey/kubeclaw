@@ -110,7 +110,7 @@ describe('Tool Pod Spawn Watcher', () => {
     const envMap = Object.fromEntries(
       (containers[0].env ?? []).map((e) => [e.name, e.value ?? '']),
     );
-    expect(envMap.KUBECLAW_AGENT_JOB_ID).toBe(agentJobId);
+    expect(envMap.KUBECLAW_TOOL_JOB_ID).toBe(agentJobId);
     expect(envMap.KUBECLAW_CATEGORY).toBe('execution');
 
     console.log(`✅ Standard tool pod job created: ${job.metadata.name}`);
@@ -160,7 +160,7 @@ describe('Tool Pod Spawn Watcher', () => {
     );
     expect(bridgeEnv.KUBECLAW_TOOL_MODE).toBe('http-bridge');
     expect(bridgeEnv.KUBECLAW_CATEGORY).toBe(toolName);
-    expect(bridgeEnv.KUBECLAW_AGENT_JOB_ID).toBe(agentJobId);
+    expect(bridgeEnv.KUBECLAW_TOOL_JOB_ID).toBe(agentJobId);
 
     console.log(`✅ Sidecar tool pod job created: ${job.metadata.name}`);
   }, 90000);

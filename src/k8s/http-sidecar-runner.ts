@@ -26,10 +26,10 @@ import {
   SIDECAR_HTTP_RETRY_DELAY,
   SIDECAR_HTTP_HEALTH_POLL_INTERVAL,
   SIDECAR_HTTP_HEALTH_POLL_TIMEOUT,
-  AGENT_JOB_MEMORY_REQUEST,
-  AGENT_JOB_MEMORY_LIMIT,
-  AGENT_JOB_CPU_REQUEST,
-  AGENT_JOB_CPU_LIMIT,
+  TOOL_JOB_MEMORY_REQUEST,
+  TOOL_JOB_MEMORY_LIMIT,
+  TOOL_JOB_CPU_REQUEST,
+  TOOL_JOB_CPU_LIMIT,
   TIMEZONE,
   REDIS_URL,
   REDIS_ADAPTER_PASSWORD,
@@ -60,10 +60,10 @@ export class HttpSidecarJobRunner {
   }
 
   /**
-   * Run an agent job using HTTP-based sidecar pattern
+   * Run a tool job using HTTP-based sidecar pattern
    * Creates a K8s Job with two containers sharing localhost network
    */
-  async runAgentJob(
+  async runToolJob(
     group: RegisteredGroup,
     input: JobInput,
     spec: SidecarHttpJobSpec,
@@ -292,7 +292,7 @@ export class HttpSidecarJobRunner {
                 },
                 stdin: true, // Accept input from orchestrator
               },
-              // User agent container (exposes HTTP API)
+              // User tool container (exposes HTTP API)
               {
                 name: 'user-agent',
                 image: spec.userImage,
@@ -305,12 +305,12 @@ export class HttpSidecarJobRunner {
                 ],
                 resources: {
                   requests: {
-                    memory: spec.memoryRequest || AGENT_JOB_MEMORY_REQUEST,
-                    cpu: spec.cpuRequest || AGENT_JOB_CPU_REQUEST,
+                    memory: spec.memoryRequest || TOOL_JOB_MEMORY_REQUEST,
+                    cpu: spec.cpuRequest || TOOL_JOB_CPU_REQUEST,
                   },
                   limits: {
-                    memory: spec.memoryLimit || AGENT_JOB_MEMORY_LIMIT,
-                    cpu: spec.cpuLimit || AGENT_JOB_CPU_LIMIT,
+                    memory: spec.memoryLimit || TOOL_JOB_MEMORY_LIMIT,
+                    cpu: spec.cpuLimit || TOOL_JOB_CPU_LIMIT,
                   },
                 },
               },

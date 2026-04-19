@@ -169,7 +169,7 @@ describe('Sidecar Tool Pod — http-bridge mode', () => {
       await pushToolCall(agentJobId, toolName, requestId, 'my_tool', { arg: 'hello' });
 
       toolServerProc = spawnToolServer({
-        KUBECLAW_AGENT_JOB_ID: agentJobId,
+        KUBECLAW_TOOL_JOB_ID: agentJobId,
         KUBECLAW_CATEGORY: toolName,
         KUBECLAW_TOOL_MODE: 'http-bridge',
         KUBECLAW_TOOL_PORT: String(httpPort),
@@ -214,7 +214,7 @@ describe('Sidecar Tool Pod — http-bridge mode', () => {
       await pushToolCall(agentJobId, toolName, requestId, 'error_tool', {});
 
       const proc = spawnToolServer({
-        KUBECLAW_AGENT_JOB_ID: agentJobId,
+        KUBECLAW_TOOL_JOB_ID: agentJobId,
         KUBECLAW_CATEGORY: toolName,
         KUBECLAW_TOOL_MODE: 'http-bridge',
         KUBECLAW_TOOL_PORT: String(errorPort),
@@ -302,7 +302,7 @@ describe('Sidecar Tool Pod — file-bridge mode', () => {
       await pushToolCall(agentJobId, toolName, requestId, 'file_tool', { data: 'world' });
 
       toolServerProc = spawnToolServer({
-        KUBECLAW_AGENT_JOB_ID: agentJobId,
+        KUBECLAW_TOOL_JOB_ID: agentJobId,
         KUBECLAW_CATEGORY: toolName,
         KUBECLAW_TOOL_MODE: 'file-bridge',
         KUBECLAW_SHARED_DIR: sharedDir,

@@ -29,7 +29,7 @@ export type {
   JobInput,
   JobOutput,
   JobStatus,
-  AgentJobSpec,
+  ToolJobSpec,
   RedisConfig,
   AgentOutputMessage,
   HostInputMessage,

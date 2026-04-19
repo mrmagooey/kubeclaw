@@ -133,7 +133,7 @@ describe('Tool Server Idle Timeout', () => {
 
   it('tool server exits with no error before idle timeout when category is invalid', async (ctx) => {
     // This tests that the tool-server startup guard works:
-    // If KUBECLAW_AGENT_JOB_ID is missing (invalid job), the pod exits immediately.
+    // If KUBECLAW_TOOL_JOB_ID is missing (invalid job), the pod exits immediately.
     //
     // We verify this by checking the pod reaches a terminal state quickly.
     if (!orchestratorRunning) ctx.skip();

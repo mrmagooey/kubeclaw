@@ -15,7 +15,7 @@ image:
 
 orchestrator:
   replicas: 1
-  # Maximum number of agent Jobs that can run concurrently.
+  # Maximum number of tool Jobs that can run concurrently.
   maxConcurrentJobs: 10
   # Admin HTTP interface — LLM-powered admin shell served as a sidecar.
   # Enabled by default on port 9090 with auto-generated credentials.
@@ -54,7 +54,7 @@ redis:
 
 storage:
   # ReadWriteOnce: suitable for single-node / minikube (no concurrent agents).
-  # ReadWriteMany: required for production with concurrent agent jobs.
+  # ReadWriteMany: required for production with concurrent tool jobs.
   #   Needs a CSI driver that supports RWX (e.g. EFS, Azure Files, NFS, Ceph).
   accessMode: ReadWriteOnce
   # Storage class name. Empty = use the cluster default.
@@ -67,9 +67,9 @@ storage:
 
 # Application credentials.
 secrets:
-  # Your Anthropic API key (https://console.anthropic.com/) — for K8s agent Jobs
+  # Your Anthropic API key (https://console.anthropic.com/) — for channel pods and tool Jobs
   anthropicApiKey: ""
-  # OAuth token for Claude Code (required for agent Jobs)
+  # OAuth token for Claude Code (required for channel pods)
   claudeCodeOauthToken: ""
   # OpenAI-compatible API key — for DirectLLMRunner and AdminShell.
   # Works with OpenAI, OpenRouter, Groq, Mistral, Ollama, and any compatible endpoint.
@@ -86,7 +86,7 @@ secrets:
   existingSecret: ""
 
 agent:
-  # How long (seconds) an agent Job may run before being killed.
+  # How long (seconds) a tool Job may run before being killed.
   timeoutSeconds: 3600
   resources:
     requests:
@@ -149,6 +149,38 @@ channelPod:
       memory: 256Mi
       cpu: 200m
 
+# Capability pods — long-lived feature pods (low priv tier).
+# Each capability runs a user-supplied container image as a Deployment + Service.
+# Capabilities have no Kubernetes API access (automountServiceAccountToken: false).
+# They connect to Redis for IPC-based discovery registration.
+#
+# The key is the capability name (used for K8s resource naming).
+#
+# Example:
+#   capabilities:
+#     mcp-server:
+#       image: my-mcp-server:latest
+#       port: 8080
+#       env: {}
+#       resources:
+#         requests:
+#           memory: "256Mi"
+#           cpu: "100m"
+#         limits:
+#           memory: "512Mi"
+#           cpu: "500m"
+capabilities: {}
+
+# Default resource limits for capability pods.
+capabilityPod:
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 100m
+    limits:
+      memory: 512Mi
+      cpu: 500m
+
 # MCP (Model Context Protocol) servers — deployed as separate pods.
 # Each server runs a container image that exposes MCP tools over HTTP.
 # Channel pods connect and discover tools automatically.
@@ -187,13 +219,13 @@ rag:
       memory: 1Gi
       cpu: "1"
 
-# CiliumNetworkPolicy — FQDN-based egress control for agent jobs and orchestrator.
+# CiliumNetworkPolicy — FQDN-based egress control for tool jobs and orchestrator.
 # Requires Cilium as the cluster CNI. Disabled by default (uses standard NetworkPolicy).
 # Enable in values-minikube.yaml or any Cilium-enabled environment.
 ciliumNetworkPolicy:
   enabled: false
   agent:
-    # FQDNs agent jobs may contact externally (port 443 only).
+    # FQDNs tool jobs may contact externally (port 443 only).
     # Use matchName for exact hostnames; see values-minikube.yaml for examples.
     allowedFQDNs: []
   orchestrator:

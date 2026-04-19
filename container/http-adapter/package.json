@@ -1,7 +1,7 @@
 {
   "name": "nanoclaw-http-adapter",
   "version": "1.0.0",
-  "description": "NanoClaw HTTP-based sidecar adapter for agent containers exposing REST APIs",
+  "description": "NanoClaw HTTP-based sidecar adapter for tool containers exposing REST APIs",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {

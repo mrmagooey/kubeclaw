@@ -24,7 +24,7 @@ npm run setup:minikube
 That's it. After ~10 minutes (mostly Falco's eBPF probe compilation) you'll have:
 
 - A minikube cluster running Cilium CNI
-- Falco monitoring agent job behaviour
+- Falco monitoring tool job behaviour
 - KubeClaw orchestrator and Redis deployed and ready
 
 Then run `/setup` in Claude Code to configure your API keys and channels.
@@ -80,8 +80,8 @@ The minikube deployment uses `CiliumNetworkPolicy` with `toFQDNs` rules to restr
 
 ### Default: Strict Mode
 
-Agent jobs can only reach:
-- `api.anthropic.com` — Claude Agent SDK (required)
+Tool jobs can only reach:
+- `api.anthropic.com` — Anthropic API (required)
 - `statsig.anthropic.com` — Claude Code feature flags (required by the SDK)
 
 The orchestrator can additionally reach the Kubernetes API server and whatever FQDNs are listed in `ciliumNetworkPolicy.orchestrator.allowedFQDNs`.
@@ -90,7 +90,7 @@ The orchestrator can additionally reach the Kubernetes API server and whatever F
 
 ### Tool-Friendly Mode
 
-To allow the browser tool and arbitrary HTTPS from agent jobs, uncomment the `matchPattern: "*"` entry in `helm/kubeclaw/values-cilium.yaml`:
+To allow the browser tool and arbitrary HTTPS from tool jobs, uncomment the `matchPattern: "*"` entry in `helm/kubeclaw/values-cilium.yaml`:
 
 ```yaml
 ciliumNetworkPolicy:
@@ -132,10 +132,10 @@ Approximate peak on a 6 GB minikube node:
 | Orchestrator | 256 Mi |
 | Redis | 512 Mi |
 | Falco | 512 Mi |
-| One agent job | 2 Gi |
+| One tool job | 2 Gi |
 | **Total peak** | **~3.3 Gi** |
 
-This leaves headroom on a 6 GB node. Increase `--memory` if you run multiple concurrent agent jobs (max 3 by default).
+This leaves headroom on a 6 GB node. Increase `--memory` if you run multiple concurrent tool jobs (max 3 by default).
 
 ## Troubleshooting
 
@@ -170,7 +170,7 @@ kubectl exec -n kube-system daemonset/cilium -- cilium policy get
 
 **Images not found (`ErrImageNeverPull`):** The build phase failed or was skipped. Run `npm run setup:minikube -- --skip-falco` to rebuild without reinstalling Falco, or check Docker build logs.
 
-**Agent jobs blocked:** If an agent can't reach the API, check the CiliumNetworkPolicy allowlist in `values-minikube.yaml` and redeploy with `helm upgrade`.
+**Tool jobs blocked:** If a tool job can't reach the API, check the CiliumNetworkPolicy allowlist in `values-minikube.yaml` and redeploy with `helm upgrade`.
 
 ## Stopping and Cleanup
 

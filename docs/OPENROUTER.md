@@ -15,7 +15,7 @@ OpenRouter is a unified API gateway that provides access to hundreds of LLMs fro
 
 | Aspect                 | Claude (Claude Code)                     | OpenRouter                          |
 | ---------------------- | ---------------------------------------- | ----------------------------------- |
-| **SDK**                | Claude Agent SDK                         | OpenAI SDK                          |
+| **SDK**                | Anthropic SDK (direct API)               | OpenAI SDK                          |
 | **Architecture**       | Recursive agent loop with built-in tools | Manual conversation loop            |
 | **Tool Calling**       | Built-in (Bash, Read, Write, Edit, etc.) | Via MCP (Model Context Protocol)    |
 | **Cost Model**         | Anthropic API pricing                    | OpenRouter unified pricing          |
