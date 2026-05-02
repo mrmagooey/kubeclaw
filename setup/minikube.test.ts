@@ -40,6 +40,13 @@ function setInotifyValues(instances: number | null, watches: number | null) {
   }
 }
 
+// FIXME: Tests use dynamic `import('./minikube.js')` inside each `it` so that
+// the module is re-evaluated after `process.platform` is overridden in
+// `beforeEach`. Refactoring to a top-level import + `vi.mock('node:fs')` would
+// require a different strategy for mocking `process.platform` (e.g. a module
+// factory that reads platform at call time), which would need a substantial
+// restructure. Leave as-is until a cleaner pattern is established.
+
 // ── tests ─────────────────────────────────────────────────────────────────────
 
 describe('checkInotifyLimits', () => {
@@ -114,8 +121,17 @@ describe('checkInotifyLimits', () => {
     expect(errors).toHaveLength(0);
   });
 
-  it('returns an error when instances is exactly at the minimum boundary (512)', async () => {
+  it('passes when instances is exactly at the minimum boundary (512)', async () => {
     setInotifyValues(512, 65536);
+
+    const { checkInotifyLimits } = await import('./minikube.js');
+    const errors = checkInotifyLimits();
+
+    expect(errors).toHaveLength(0);
+  });
+
+  it('passes when watches is exactly at the minimum boundary (instances=8192, watches=65536)', async () => {
+    setInotifyValues(8192, 65536);
 
     const { checkInotifyLimits } = await import('./minikube.js');
     const errors = checkInotifyLimits();

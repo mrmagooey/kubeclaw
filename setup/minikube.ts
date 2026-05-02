@@ -116,7 +116,7 @@ function checkPrerequisites(): string[] {
     });
     if (r.error || r.status !== 0) missing.push(bin);
   }
-  return missing;
+  return [...missing, ...checkInotifyLimits()];
 }
 
 // ── phase 1: cluster ──────────────────────────────────────────────────────────
@@ -321,25 +321,13 @@ export async function run(args: string[]): Promise<void> {
 
   logger.info(opts, 'Starting minikube setup');
 
-  // Prerequisites
-  const missing = checkPrerequisites();
-  if (missing.length > 0) {
+  // Prerequisites (binary checks + inotify limits merged via checkPrerequisites)
+  const preflightErrors = checkPrerequisites();
+  if (preflightErrors.length > 0) {
     emitStatus('SETUP_MINIKUBE_START', {
       STATUS: 'failed',
-      ERROR: 'missing_prerequisites',
-      MISSING: missing.join(', '),
-      LOG: `Install missing tools: ${missing.join(', ')}`,
-    });
-    process.exit(1);
-  }
-
-  const inotifyErrors = checkInotifyLimits();
-  if (inotifyErrors.length > 0) {
-    logger.error({ inotifyErrors }, 'Host inotify limits are insufficient for minikube');
-    emitStatus('SETUP_MINIKUBE_START', {
-      STATUS: 'failed',
-      ERROR: 'inotify_limits_too_low',
-      LOG: inotifyErrors.join('\n'),
+      ERROR: 'preflight_failed',
+      LOG: preflightErrors.join('\n'),
     });
     process.exit(1);
   }
