@@ -72,7 +72,7 @@ echo ""
 if [ "$BUILD_CLAUDE" = true ]; then
   echo "Building Claude agent..."
   echo "Image: kubeclaw-agent:claude"
-  ${CONTAINER_RUNTIME} build -f Dockerfile -t kubeclaw-agent:claude .
+  ${CONTAINER_RUNTIME} build --network=host -f Dockerfile -t kubeclaw-agent:claude .
   echo "Claude agent build complete!"
   echo ""
 fi
@@ -82,7 +82,7 @@ if [ "$BUILD_OPENROUTER" = true ]; then
   echo "Building OpenRouter agent..."
   echo "Image: kubeclaw-agent:openrouter"
   if [ -f "Dockerfile.openrouter" ]; then
-    ${CONTAINER_RUNTIME} build -f Dockerfile.openrouter -t kubeclaw-agent:openrouter .
+    ${CONTAINER_RUNTIME} build --network=host -f Dockerfile.openrouter -t kubeclaw-agent:openrouter .
     echo "OpenRouter agent build complete!"
   else
     echo "WARNING: Dockerfile.openrouter not found, skipping OpenRouter build"
@@ -96,7 +96,7 @@ if [ "$BUILD_FILE_ADAPTER" = true ]; then
   echo "Building File Adapter..."
   echo "Image: kubeclaw-file-adapter:latest"
   if [ -d "file-adapter" ]; then
-    ${CONTAINER_RUNTIME} build -f file-adapter/Dockerfile -t kubeclaw-file-adapter:latest file-adapter
+    ${CONTAINER_RUNTIME} build --network=host -f file-adapter/Dockerfile -t kubeclaw-file-adapter:latest file-adapter
     echo "File adapter build complete!"
   else
     echo "WARNING: file-adapter directory not found, skipping file adapter build"
@@ -109,7 +109,7 @@ if [ "$BUILD_HTTP_ADAPTER" = true ]; then
   echo "Building HTTP Adapter..."
   echo "Image: kubeclaw-http-adapter:latest"
   if [ -d "http-adapter" ]; then
-    ${CONTAINER_RUNTIME} build -f http-adapter/Dockerfile -t kubeclaw-http-adapter:latest http-adapter
+    ${CONTAINER_RUNTIME} build --network=host -f http-adapter/Dockerfile -t kubeclaw-http-adapter:latest http-adapter
     echo "HTTP adapter build complete!"
   else
     echo "WARNING: http-adapter directory not found, skipping HTTP adapter build"
@@ -122,7 +122,7 @@ if [ "$BUILD_BROWSER" = true ]; then
   echo "Building Browser Sidecar..."
   echo "Image: kubeclaw-browser-sidecar:latest"
   if [ -d "browser" ]; then
-    ${CONTAINER_RUNTIME} build -f browser/Dockerfile -t kubeclaw-browser-sidecar:latest browser
+    ${CONTAINER_RUNTIME} build --network=host -f browser/Dockerfile -t kubeclaw-browser-sidecar:latest browser
     echo "Browser sidecar build complete!"
   else
     echo "WARNING: browser directory not found, skipping browser sidecar build"
@@ -134,7 +134,7 @@ fi
 if [ "$BUILD_ORCHESTRATOR" = true ]; then
   echo "Building Orchestrator..."
   echo "Image: kubeclaw-orchestrator:latest"
-  ${CONTAINER_RUNTIME} build -f ../Dockerfile -t kubeclaw-orchestrator:latest ..
+  ${CONTAINER_RUNTIME} build --network=host -f ../Dockerfile -t kubeclaw-orchestrator:latest ..
   echo "Orchestrator build complete!"
   echo ""
 fi
