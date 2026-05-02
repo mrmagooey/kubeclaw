@@ -14,6 +14,7 @@
  *   npm run setup:minikube -- --skip-build     # skip image build
  *   npm run setup:minikube -- --skip-falco     # skip Falco install
  *   npm run setup:minikube -- --cpus 6 --memory 8192
+ *   npm run setup:minikube -- --profile kubeclaw  # use a named minikube profile
  */
 import { spawnSync } from 'child_process';
 import path from 'path';
@@ -22,22 +23,24 @@ import { logger } from '../src/logger.js';
 import { emitStatus } from './status.js';
 import { runKubectl, truncateText, waitForDaemonSet, waitForPodRunning } from './k8s-utils.js';
 
-interface MinikubeOpts {
+export interface MinikubeOpts {
   cpus: number;
   memory: number; // MiB
   disk: string;
   reset: boolean;
   skipBuild: boolean;
   skipFalco: boolean;
+  profile: string; // named minikube profile; empty = default profile
 }
 
-function parseArgs(args: string[]): MinikubeOpts {
+export function parseArgs(args: string[]): MinikubeOpts {
   let cpus = 4;
   let memory = 6144;
   let disk = '20g';
   let reset = false;
   let skipBuild = false;
   let skipFalco = false;
+  let profile = '';
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--reset') reset = true;
@@ -46,9 +49,15 @@ function parseArgs(args: string[]): MinikubeOpts {
     else if (args[i] === '--cpus' && args[i + 1]) { cpus = parseInt(args[++i], 10); }
     else if (args[i] === '--memory' && args[i + 1]) { memory = parseInt(args[++i], 10); }
     else if (args[i] === '--disk' && args[i + 1]) { disk = args[++i]; }
+    else if (args[i] === '--profile' && args[i + 1]) { profile = args[++i]; }
   }
 
-  return { cpus, memory, disk, reset, skipBuild, skipFalco };
+  return { cpus, memory, disk, reset, skipBuild, skipFalco, profile };
+}
+
+/** Returns `['-p', profile]` when a named profile is set, otherwise `[]`. */
+function profileFlag(profile: string): string[] {
+  return profile ? ['-p', profile] : [];
 }
 
 // ── prerequisites ─────────────────────────────────────────────────────────────
@@ -67,8 +76,8 @@ function checkPrerequisites(): string[] {
 
 // ── phase 1: cluster ──────────────────────────────────────────────────────────
 
-function minikubeStatus(): string {
-  const r = spawnSync('minikube', ['status', '--format={{.Host}}'], {
+function minikubeStatus(profile: string): string {
+  const r = spawnSync('minikube', [...profileFlag(profile), 'status', '--format={{.Host}}'], {
     encoding: 'utf8',
     stdio: ['pipe', 'pipe', 'pipe'],
   });
@@ -86,11 +95,11 @@ function ciliumReady(): boolean {
 }
 
 async function ensureMinikubeRunning(opts: MinikubeOpts): Promise<void> {
-  const status = minikubeStatus();
+  const status = minikubeStatus(opts.profile);
 
   if (opts.reset && status !== 'Unknown') {
     logger.info('--reset: deleting existing minikube cluster');
-    spawnSync('minikube', ['delete'], { stdio: 'inherit' });
+    spawnSync('minikube', [...profileFlag(opts.profile), 'delete'], { stdio: 'inherit' });
   } else if (status === 'Running') {
     if (ciliumReady()) {
       logger.info('Minikube already running with Cilium — skipping start');
@@ -106,6 +115,7 @@ async function ensureMinikubeRunning(opts: MinikubeOpts): Promise<void> {
   const result = spawnSync(
     'minikube',
     [
+      ...profileFlag(opts.profile),
       'start',
       `--cpus=${opts.cpus}`,
       `--memory=${opts.memory}`,
@@ -128,8 +138,8 @@ async function waitForCilium(): Promise<void> {
 
 // ── phase 2: image build ──────────────────────────────────────────────────────
 
-function getMinikubeDockerEnv(): Record<string, string> {
-  const r = spawnSync('minikube', ['docker-env', '--shell=bash'], {
+function getMinikubeDockerEnv(profile: string): Record<string, string> {
+  const r = spawnSync('minikube', [...profileFlag(profile), 'docker-env', '--shell=bash'], {
     encoding: 'utf8',
     stdio: ['pipe', 'pipe', 'pipe'],
   });
@@ -299,7 +309,7 @@ export async function run(args: string[]): Promise<void> {
   // Phase 2: images
   if (!opts.skipBuild) {
     try {
-      const dockerEnv = getMinikubeDockerEnv();
+      const dockerEnv = getMinikubeDockerEnv(opts.profile);
       await buildImages(projectRoot, dockerEnv);
       emitStatus('SETUP_MINIKUBE_IMAGES', { STATUS: 'ok' });
     } catch (err) {

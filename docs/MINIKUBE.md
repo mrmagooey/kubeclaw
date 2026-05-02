@@ -32,12 +32,15 @@ Then run `/setup` in Claude Code to configure your API keys and channels.
 ### Options
 
 ```bash
-npm run setup:minikube -- --reset        # delete and recreate the minikube cluster
-npm run setup:minikube -- --skip-build  # skip container image build (use existing)
-npm run setup:minikube -- --skip-falco  # skip Falco install
-npm run setup:minikube -- --cpus 6      # use 6 CPUs (default: 4)
-npm run setup:minikube -- --memory 8192 # use 8 GB RAM (default: 6144 MiB)
+npm run setup:minikube -- --reset           # delete and recreate the minikube cluster
+npm run setup:minikube -- --skip-build      # skip container image build (use existing)
+npm run setup:minikube -- --skip-falco      # skip Falco install
+npm run setup:minikube -- --cpus 6          # use 6 CPUs (default: 4)
+npm run setup:minikube -- --memory 8192     # use 8 GB RAM (default: 6144 MiB)
+npm run setup:minikube -- --profile kubeclaw  # use a named minikube profile (default: minikube)
 ```
+
+`--profile` lets you run KubeClaw alongside other minikube clusters without collision. The profile name is passed as `-p <name>` to every `minikube` command. `minikube start -p <name>` automatically sets the matching kubectl context, so all subsequent `kubectl` calls follow the correct cluster.
 
 ## What It Does
 
