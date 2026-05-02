@@ -30,7 +30,7 @@ Tool result → back through channel
 > - **iptables-nft hosts** (Ubuntu 24.04+ default): if you plan to use Cilium CNI on a remote cluster, it is incompatible with `iptables-nft`. Use the default bridge CNI or reconfigure to `iptables-legacy`. See "CNI and iptables".
 > - **Resources**: For local testing, budget ~6 GB RAM and ~4 CPUs for a single-node cluster. For production multi-node clusters, allocate resources proportional to expected concurrent tool jobs (default max 10; each job requests 512 MiB–2 Gi).
 > - **Build time**: First-time setup takes ~5 minutes for image builds and Kubernetes initialization. Budget additional time if you enable optional security tools (Falco eBPF probe compilation adds ~3 minutes).
-> - **Network**: Tool pods reach the public internet by default to call the Claude API and run tools. Self-hosted LLM endpoints require network policy adjustments (see "Self-hosted / OpenAI-compatible endpoint" for egress rules).
+> - **Network**: Tool pods reach the public internet by default to call the Claude API and run tools. Self-hosted LLM endpoints require network policy adjustments (see "Self-hosted endpoint network policy" for egress rules).
 
 ## Prerequisites
 
@@ -343,7 +343,7 @@ helm install kubeclaw ./helm/kubeclaw \
   --set networkPolicy.egressPorts[1]=443 \
   --set networkPolicy.egressPorts[2]=6379 \
   --set networkPolicy.egressPorts[3]=8080 \
-  ...
+  --namespace kubeclaw --create-namespace
 ```
 
 Or add it to a custom `values.yaml` file under the `networkPolicy` section.
