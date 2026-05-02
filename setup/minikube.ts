@@ -2,7 +2,7 @@
  * Step: minikube — Provision a local KubeClaw cluster on minikube.
  *
  * Phases:
- *   1. Start minikube with Cilium CNI
+ *   1. Start minikube (bridge CNI by default, Cilium opt-in)
  *   2. Build container images into minikube's Docker daemon
  *   3. Install Falco (runtime security)
  *   4. Deploy KubeClaw via Helm (laptop-optimised values)
@@ -15,6 +15,8 @@
  *   npm run setup:minikube -- --skip-falco     # skip Falco install
  *   npm run setup:minikube -- --cpus 6 --memory 8192
  *   npm run setup:minikube -- --profile kubeclaw  # use a named minikube profile
+ *   npm run setup:minikube -- --cni=cilium     # opt-in to Cilium CNI
+ *   npm run setup:minikube -- --with-cilium    # shortcut for --cni=cilium
  */
 import { spawnSync } from 'child_process';
 import path from 'path';
@@ -22,6 +24,8 @@ import path from 'path';
 import { logger } from '../src/logger.js';
 import { emitStatus } from './status.js';
 import { runKubectl, truncateText, waitForDaemonSet, waitForPodRunning } from './k8s-utils.js';
+
+type CniMode = 'cilium' | 'bridge' | 'auto';
 
 export interface MinikubeOpts {
   cpus: number;
@@ -31,6 +35,7 @@ export interface MinikubeOpts {
   skipBuild: boolean;
   skipFalco: boolean;
   profile: string; // named minikube profile; empty = default profile
+  cni: CniMode;
 }
 
 export function parseArgs(args: string[]): MinikubeOpts {
@@ -41,23 +46,75 @@ export function parseArgs(args: string[]): MinikubeOpts {
   let skipBuild = false;
   let skipFalco = false;
   let profile = '';
+  let cni: CniMode = 'auto';
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--reset') reset = true;
     else if (args[i] === '--skip-build') skipBuild = true;
     else if (args[i] === '--skip-falco') skipFalco = true;
+    else if (args[i] === '--with-cilium') cni = 'cilium';
     else if (args[i] === '--cpus' && args[i + 1]) { cpus = parseInt(args[++i], 10); }
     else if (args[i] === '--memory' && args[i + 1]) { memory = parseInt(args[++i], 10); }
     else if (args[i] === '--disk' && args[i + 1]) { disk = args[++i]; }
     else if (args[i] === '--profile' && args[i + 1]) { profile = args[++i]; }
+    else if (args[i].startsWith('--cni=')) {
+      const val = args[i].slice('--cni='.length) as CniMode;
+      if (val === 'cilium' || val === 'bridge' || val === 'auto') {
+        cni = val;
+      } else {
+        throw new Error(`Unknown --cni value "${val}". Valid values: cilium, bridge, auto`);
+      }
+    } else if (args[i] === '--cni' && args[i + 1]) {
+      const val = args[++i] as CniMode;
+      if (val === 'cilium' || val === 'bridge' || val === 'auto') {
+        cni = val;
+      } else {
+        throw new Error(`Unknown --cni value "${val}". Valid values: cilium, bridge, auto`);
+      }
+    }
   }
 
-  return { cpus, memory, disk, reset, skipBuild, skipFalco, profile };
+  return { cpus, memory, disk, reset, skipBuild, skipFalco, profile, cni };
 }
 
 /** Returns `['-p', profile]` when a named profile is set, otherwise `[]`. */
 function profileFlag(profile: string): string[] {
   return profile ? ['-p', profile] : [];
+}
+
+/**
+ * Detect the iptables backend on the host.
+ * Returns true if the host uses nf_tables (iptables-nft), which is incompatible with Cilium.
+ */
+export function hostUsesNftables(): boolean {
+  const r = spawnSync('iptables', ['--version'], {
+    encoding: 'utf8',
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  // iptables-nft reports something like "iptables v1.8.7 (nf_tables)"
+  const output = (r.stdout ?? '') + (r.stderr ?? '');
+  return output.includes('nf_tables');
+}
+
+/**
+ * Resolve the CNI to actually use, given the requested mode.
+ * In 'auto' mode, detects the host iptables backend.
+ */
+export function resolveCni(requested: CniMode): 'cilium' | 'bridge' {
+  if (requested === 'cilium') return 'cilium';
+  if (requested === 'bridge') return 'bridge';
+
+  // auto: probe iptables backend
+  if (hostUsesNftables()) {
+    logger.warn(
+      'Host uses iptables-nft (nf_tables backend detected). ' +
+      'Cilium requires iptables-legacy to work correctly. ' +
+      'Falling back to bridge CNI. ' +
+      'To override, pass --cni=cilium explicitly.',
+    );
+    return 'bridge';
+  }
+  return 'cilium';
 }
 
 // ── prerequisites ─────────────────────────────────────────────────────────────
@@ -94,24 +151,27 @@ function ciliumReady(): boolean {
   return r.status === 0 && parseInt(r.stdout.trim(), 10) > 0;
 }
 
-async function ensureMinikubeRunning(opts: MinikubeOpts): Promise<void> {
+async function ensureMinikubeRunning(opts: MinikubeOpts, resolvedCni: 'cilium' | 'bridge'): Promise<void> {
   const status = minikubeStatus(opts.profile);
 
   if (opts.reset && status !== 'Unknown') {
     logger.info('--reset: deleting existing minikube cluster');
     spawnSync('minikube', [...profileFlag(opts.profile), 'delete'], { stdio: 'inherit' });
   } else if (status === 'Running') {
-    if (ciliumReady()) {
+    if (resolvedCni === 'cilium' && ciliumReady()) {
       logger.info('Minikube already running with Cilium — skipping start');
+      return;
+    } else if (resolvedCni === 'bridge') {
+      logger.info('Minikube already running — skipping start (bridge CNI)');
       return;
     }
     logger.warn(
       'Minikube running but Cilium DaemonSet not found. ' +
-      'Re-run with --reset to recreate the cluster with Cilium.',
+      'Re-run with --reset to recreate the cluster.',
     );
   }
 
-  logger.info({ cpus: opts.cpus, memory: opts.memory }, 'Starting minikube with Cilium CNI');
+  logger.info({ cpus: opts.cpus, memory: opts.memory, cni: resolvedCni }, 'Starting minikube');
   const result = spawnSync(
     'minikube',
     [
@@ -121,7 +181,7 @@ async function ensureMinikubeRunning(opts: MinikubeOpts): Promise<void> {
       `--memory=${opts.memory}`,
       `--disk-size=${opts.disk}`,
       '--driver=docker',
-      '--cni=cilium',
+      `--cni=${resolvedCni}`,
       '--kubernetes-version=stable',
     ],
     { stdio: 'inherit' },
@@ -211,25 +271,31 @@ async function installFalco(projectRoot: string): Promise<void> {
 
 // ── phase 4: deploy kubeclaw ─────────────────────────────────────────────────
 
-async function deployKubeclaw(projectRoot: string): Promise<void> {
+async function deployKubeclaw(projectRoot: string, useCilium: boolean): Promise<void> {
   const chartPath = path.join(projectRoot, 'helm', 'kubeclaw');
   const valuesPath = path.join(chartPath, 'values-minikube.yaml');
   const ciliumValuesPath = path.join(chartPath, 'values-cilium.yaml');
 
-  logger.info('Deploying KubeClaw via Helm (minikube + Cilium values)');
-  const result = spawnSync(
-    'helm',
-    [
-      'upgrade', '--install', 'kubeclaw', chartPath,
-      '-f', valuesPath,
-      '-f', ciliumValuesPath,
-      '--namespace', 'kubeclaw',
-      '--create-namespace',
-      '--timeout', '3m',
-      '--wait',
-    ],
-    { stdio: 'inherit' },
+  const helmArgs = [
+    'upgrade', '--install', 'kubeclaw', chartPath,
+    '-f', valuesPath,
+  ];
+
+  if (useCilium) {
+    helmArgs.push('-f', ciliumValuesPath);
+    logger.info('Deploying KubeClaw via Helm (minikube + Cilium values)');
+  } else {
+    logger.info('Deploying KubeClaw via Helm (minikube values, bridge CNI)');
+  }
+
+  helmArgs.push(
+    '--namespace', 'kubeclaw',
+    '--create-namespace',
+    '--timeout', '3m',
+    '--wait',
   );
+
+  const result = spawnSync('helm', helmArgs, { stdio: 'inherit' });
   if (result.status !== 0) {
     const podStatus = runKubectl(['get', 'pods', '-n', 'kubeclaw'], 30);
     throw Object.assign(new Error('helm_deploy_failed'), { podStatus });
@@ -238,7 +304,7 @@ async function deployKubeclaw(projectRoot: string): Promise<void> {
 
 // ── phase 5: verify ───────────────────────────────────────────────────────────
 
-async function verify(): Promise<Record<string, string | boolean>> {
+async function verify(useCilium: boolean): Promise<Record<string, string | boolean>> {
   const ns = 'kubeclaw';
   const fields: Record<string, string | boolean> = {};
 
@@ -259,12 +325,14 @@ async function verify(): Promise<Record<string, string | boolean>> {
   );
   fields.FALCO_READY = falcoCheck.status === 0 && parseInt(falcoCheck.stdout.trim(), 10) > 0;
 
-  const cnpLines = runKubectl(
-    ['get', 'ciliumnetworkpolicies', '-n', ns, '--no-headers'], 10,
-  );
-  fields.CILIUM_POLICIES = cnpLines
-    ? cnpLines.trim().split('\n').filter(Boolean).length.toString()
-    : '0';
+  if (useCilium) {
+    const cnpLines = runKubectl(
+      ['get', 'ciliumnetworkpolicies', '-n', ns, '--no-headers'], 10,
+    );
+    fields.CILIUM_POLICIES = cnpLines
+      ? cnpLines.trim().split('\n').filter(Boolean).length.toString()
+      : '0';
+  }
 
   return fields;
 }
@@ -275,7 +343,10 @@ export async function run(args: string[]): Promise<void> {
   const projectRoot = process.cwd();
   const opts = parseArgs(args);
 
-  logger.info(opts, 'Starting minikube setup');
+  const resolvedCni = resolveCni(opts.cni);
+  const useCilium = resolvedCni === 'cilium';
+
+  logger.info({ ...opts, resolvedCni }, 'Starting minikube setup');
 
   // Prerequisites
   const missing = checkPrerequisites();
@@ -292,12 +363,16 @@ export async function run(args: string[]): Promise<void> {
 
   // Phase 1: cluster
   try {
-    await ensureMinikubeRunning(opts);
-    await waitForCilium();
-    emitStatus('SETUP_MINIKUBE_CLUSTER', { STATUS: 'ok', CNI: 'cilium' });
+    await ensureMinikubeRunning(opts, resolvedCni);
+    if (useCilium) {
+      await waitForCilium();
+    }
+    emitStatus('SETUP_MINIKUBE_CLUSTER', { STATUS: 'ok', CNI: resolvedCni });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    const diag = runKubectl(['get', 'pods', '-n', 'kube-system', '-l', 'k8s-app=cilium'], 10);
+    const diag = useCilium
+      ? runKubectl(['get', 'pods', '-n', 'kube-system', '-l', 'k8s-app=cilium'], 10)
+      : undefined;
     emitStatus('SETUP_MINIKUBE_CLUSTER', {
       STATUS: 'failed',
       ERROR: msg,
@@ -344,7 +419,7 @@ export async function run(args: string[]): Promise<void> {
 
   // Phase 4: deploy
   try {
-    await deployKubeclaw(projectRoot);
+    await deployKubeclaw(projectRoot, useCilium);
     emitStatus('SETUP_MINIKUBE_DEPLOY', { STATUS: 'ok' });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -359,7 +434,7 @@ export async function run(args: string[]): Promise<void> {
   }
 
   // Phase 5: verify
-  const verifyFields = await verify();
+  const verifyFields = await verify(useCilium);
   const allOk = Object.values(verifyFields).every((v) => v !== false && v !== '0');
   emitStatus('SETUP_MINIKUBE_VERIFY', {
     ...verifyFields,

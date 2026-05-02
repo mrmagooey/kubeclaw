@@ -1,6 +1,8 @@
 # KubeClaw on minikube (Laptop Deployment)
 
-Run KubeClaw locally on a laptop using minikube with **Cilium** as the CNI and **Falco** for runtime security. A single command provisions the cluster, builds images, installs security tooling, and deploys KubeClaw.
+Run KubeClaw locally on a laptop using minikube and **Falco** for runtime security. A single command provisions the cluster, builds images, installs security tooling, and deploys KubeClaw.
+
+By default the setup uses minikube's built-in **bridge** CNI (or auto-detects the best CNI for your host). Cilium is opt-in via `--cni=cilium` or `--with-cilium`.
 
 ## Prerequisites
 
@@ -23,7 +25,7 @@ npm run setup:minikube
 
 That's it. After ~10 minutes (mostly Falco's eBPF probe compilation) you'll have:
 
-- A minikube cluster running Cilium CNI
+- A minikube cluster (bridge CNI by default, or Cilium if requested)
 - Falco monitoring tool job behaviour
 - KubeClaw orchestrator and Redis deployed and ready
 
@@ -32,23 +34,46 @@ Then run `/setup` in Claude Code to configure your API keys and channels.
 ### Options
 
 ```bash
-npm run setup:minikube -- --reset           # delete and recreate the minikube cluster
-npm run setup:minikube -- --skip-build      # skip container image build (use existing)
-npm run setup:minikube -- --skip-falco      # skip Falco install
-npm run setup:minikube -- --cpus 6          # use 6 CPUs (default: 4)
-npm run setup:minikube -- --memory 8192     # use 8 GB RAM (default: 6144 MiB)
+npm run setup:minikube -- --reset             # delete and recreate the minikube cluster
+npm run setup:minikube -- --skip-build        # skip container image build (use existing)
+npm run setup:minikube -- --skip-falco        # skip Falco install
+npm run setup:minikube -- --cpus 6            # use 6 CPUs (default: 4)
+npm run setup:minikube -- --memory 8192       # use 8 GB RAM (default: 6144 MiB)
 npm run setup:minikube -- --profile kubeclaw  # use a named minikube profile (default: minikube)
+npm run setup:minikube -- --with-cilium       # opt-in to Cilium CNI
+npm run setup:minikube -- --cni=cilium        # same as --with-cilium
+npm run setup:minikube -- --cni=bridge        # force bridge CNI (minikube default)
+npm run setup:minikube -- --cni=auto          # auto-detect based on host iptables backend (default)
 ```
 
 `--profile` lets you run KubeClaw alongside other minikube clusters without collision. The profile name is passed as `-p <name>` to every `minikube` command. `minikube start -p <name>` automatically sets the matching kubectl context, so all subsequent `kubectl` calls follow the correct cluster.
 
 ## What It Does
 
-### Phase 1 — Cluster (Cilium CNI)
+### Phase 1 — Cluster
 
-Starts minikube with `--cni=cilium` and the Docker driver. Cilium replaces kube-proxy with eBPF-based packet processing and enforces Kubernetes `NetworkPolicy` resources with better performance and observability than iptables.
+Starts minikube with the Docker driver and the resolved CNI. The default CNI mode is `auto`:
 
-If minikube is already running with Cilium, this phase is skipped. If it's running without Cilium, you'll be prompted to re-run with `--reset`.
+- **auto (default):** Detects the host iptables backend by running `iptables --version`. If the output contains `nf_tables` (Ubuntu 24.04 default), the setup falls back to `bridge` and logs a warning. Otherwise it uses Cilium.
+- **bridge:** Uses minikube's built-in bridge CNI. Works on all hosts. No FQDN egress policies.
+- **cilium:** Uses Cilium CNI. Requires iptables-legacy-compatible hosts. Enables FQDN egress policies.
+
+If minikube is already running with Cilium and `--cni=cilium` is active, this phase is skipped. If it's running without Cilium and Cilium was requested, re-run with `--reset`.
+
+## CNI Selection
+
+The CNI controls network policy enforcement and eBPF-based packet filtering.
+
+| CNI | FQDN egress policies | Requires | Notes |
+|---|---|---|---|
+| bridge | No | nothing | Works everywhere; standard K8s NetworkPolicy only |
+| cilium | Yes | iptables-legacy | Blocks non-allowlisted FQDNs; better observability |
+
+**Default:** `auto` — bridge is selected automatically on hosts using iptables-nft (Ubuntu 24.04+). Cilium is selected on hosts with iptables-legacy.
+
+**When to choose Cilium:** You want strict FQDN egress policies (blocking agent internet access to non-allowlisted hostnames). Your host uses iptables-legacy (`iptables --version` shows `legacy`, not `nf_tables`).
+
+**When to stick with bridge:** You're on Ubuntu 24.04 or any host where `iptables --version` reports `nf_tables`. Cilium will crashloop on these hosts due to kernel iptables incompatibility.
 
 ### Phase 2 — Image Build
 
@@ -166,6 +191,16 @@ kubectl exec -n kube-system daemonset/cilium -- cilium policy get
 ```
 
 ### Common Issues
+
+**Cilium fails to start on Ubuntu 24.04 / iptables-nft hosts:** Symptoms include `cilium-operator` crashlooping, `kube-proxy` errors (`failed complete: too many open files`), and cilium init containers failing with `dial tcp 10.96.0.1:443: connect: no route to host`. This happens because Cilium requires iptables-legacy but Ubuntu 24.04 defaults to `iptables-nft`. Workaround: use bridge CNI instead.
+
+```bash
+# Reset and use bridge CNI
+npm run setup:minikube -- --reset --cni=bridge
+
+# Or verify what your host uses:
+iptables --version   # shows "(nf_tables)" or "(legacy)"
+```
 
 **`cilium_not_ready` after start:** Cilium's eBPF programs take 60–90 seconds to load. Wait a moment and retry. If it persists: `kubectl describe daemonset cilium -n kube-system`.
 
