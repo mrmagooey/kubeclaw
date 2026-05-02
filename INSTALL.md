@@ -23,6 +23,15 @@ Orchestrator (Deployment) ──► spawns Tool Job (batch/Job)
 Tool result → back through channel
 ```
 
+## Before You Start
+
+> **Read this even if you're in a hurry** — several host-level issues regularly bite users during setup and are covered in the Troubleshooting section:
+> - **Linux hosts (especially Ubuntu 22.04+)**: `fs.inotify.max_user_instances` must be ≥ 512. The default (128 on Ubuntu) is too low and causes watch failures. See Troubleshooting → "Linux inotify limits".
+> - **iptables-nft hosts** (Ubuntu 24.04+ default): if you plan to use Cilium CNI on a remote cluster, it is incompatible with `iptables-nft`. Use the default bridge CNI or reconfigure to `iptables-legacy`. See "CNI and iptables".
+> - **Resources**: For local testing, budget ~6 GB RAM and ~4 CPUs for a single-node cluster. For production multi-node clusters, allocate resources proportional to expected concurrent tool jobs (default max 10; each job requests 512 MiB–2 Gi).
+> - **Build time**: First-time setup takes ~5 minutes for image builds and Kubernetes initialization. Budget additional time if you enable optional security tools (Falco eBPF probe compilation adds ~3 minutes).
+> - **Network**: Tool pods reach the public internet by default to call the Claude API and run tools. Self-hosted LLM endpoints require network policy adjustments (see "Self-hosted / OpenAI-compatible endpoint" for egress rules).
+
 ## Prerequisites
 
 - Kubernetes 1.24+ with `batch/v1` Job support
@@ -120,6 +129,43 @@ All configuration is via Helm values. Pass overrides with `--set key=value` or a
 | `OPENROUTER_BASE_URL`     | `https://openrouter.ai/api/v1` | OpenRouter API base URL                           |
 | `OPENROUTER_HTTP_REFERER` | —                              | Your domain, for OpenRouter rankings (optional)   |
 | `OPENROUTER_X_TITLE`      | `KubeClaw`                     | App name for OpenRouter rankings (optional)       |
+
+#### Self-hosted / OpenAI-compatible endpoint
+
+Any endpoint that implements the OpenAI Chat Completions API can be used as the LLM backend for the channel pods. This includes:
+
+- **llama.cpp** — fast local inference from GGUF models
+- **Ollama** — simple local model server (Mac, Linux, Windows)
+- **vLLM** — high-throughput serving framework
+- **LocalAI** — drop-in replacement for OpenAI API
+- **Groq** — fast inference cloud API
+- **Mistral** — Mistral's managed API
+- Any other compatible endpoint
+
+To use a self-hosted endpoint, set these three values:
+
+```bash
+helm install kubeclaw ./helm/kubeclaw \
+  --set secrets.openaiApiKey=local \
+  --set secrets.openaiBaseUrl=http://192.168.7.100:8080/v1 \
+  --set secrets.directLlmModel=mistral-7b-instruct \
+  --namespace kubeclaw --create-namespace
+```
+
+| Variable                     | Description                                                    |
+| ---------------------------- | -------------------------------------------------------------- |
+| `secrets.openaiApiKey`       | API key for the endpoint. Use a placeholder (e.g. `local`) if the endpoint has no authentication. |
+| `secrets.openaiBaseUrl`      | Full base URL including `/v1` suffix. Examples: `http://192.168.7.100:8080/v1`, `http://ollama:11434/v1`, `https://api.groq.com/openai/v1`. |
+| `secrets.directLlmModel`     | Model identifier the endpoint expects (e.g. `mistral-7b-instruct`, `neural-chat`, `gpt-4`). |
+
+**Reachability**: The LLM endpoint must be reachable from inside the cluster. For single-node clusters (minikube, kind), endpoints on your host machine are typically reachable via host IP. To verify reachability:
+
+```bash
+kubectl run --rm -i probe --image=curlimages/curl:latest --restart=Never -- \
+  curl -sS http://192.168.7.100:8080/v1/models
+```
+
+If the endpoint uses a non-standard port (not 80/443), you may need to allow egress on that port. See the network policy section or add the port to `networkPolicy.egressPorts` in the chart values.
 
 ### Kubernetes Runtime
 
@@ -273,6 +319,71 @@ kubectl exec -it deployment/kubeclaw-orchestrator -n kubeclaw -- \
 ```
 
 See also the `/debug` skill for guided troubleshooting.
+
+---
+
+## Troubleshooting
+
+### Linux inotify limits
+
+On Linux hosts, the kernel parameter `fs.inotify.max_user_instances` limits how many inotify watches a single user can create. The default on Ubuntu is 128, which is too low for KubeClaw's persistent file watching in agent jobs.
+
+**Symptom:** Agent jobs timeout or fail with `ENOSPC` ("No space left on device") when attempting file operations.
+
+**Fix:** Increase the limit to at least 512:
+
+```bash
+sudo sysctl -w fs.inotify.max_user_instances=512
+```
+
+To make it permanent, edit `/etc/sysctl.conf`:
+
+```
+fs.inotify.max_user_instances=512
+```
+
+Then apply:
+
+```bash
+sudo sysctl -p
+```
+
+### CNI and iptables
+
+Modern Linux distributions (Ubuntu 24.04+, Debian 13+) default to `iptables-nft` instead of `iptables-legacy`. The Cilium CNI does not support `iptables-nft` and will fail to install on such systems.
+
+**Symptom:** When deploying on a non-minikube cluster with Cilium, pods fail to schedule or show `NetworkPolicy` enforcement errors.
+
+**Fix:** Use the default Kubernetes bridge CNI instead of Cilium, or reconfigure your host to use `iptables-legacy`:
+
+**Option 1 (recommended):** Use the default bridge CNI by omitting the Cilium chart from your Helm values. The default `NetworkPolicy` controller will provide basic network isolation.
+
+**Option 2:** Reconfigure iptables to use legacy mode:
+
+```bash
+sudo update-alternatives --set iptables /usr/sbin/iptables-legacy
+```
+
+Then restart your Kubernetes cluster. After the cluster is ready, deploy Cilium via Helm.
+
+### Self-hosted endpoint network policy
+
+Tool pods run with a `NetworkPolicy` that restricts egress to specific ports and (optionally) FQDNs. If you use a self-hosted LLM endpoint on a non-standard port, you must allow it explicitly.
+
+**Symptom:** Tool jobs timeout when calling `--set secrets.openaiBaseUrl=http://...`.
+
+**Fix:** Add the endpoint's port to `networkPolicy.egressPorts` in your Helm values:
+
+```bash
+helm install kubeclaw ./helm/kubeclaw \
+  --set networkPolicy.egressPorts[0]=53 \
+  --set networkPolicy.egressPorts[1]=443 \
+  --set networkPolicy.egressPorts[2]=6379 \
+  --set networkPolicy.egressPorts[3]=8080 \
+  ...
+```
+
+Or add it to a custom `values.yaml` file under the `networkPolicy` section.
 
 ---
 
