@@ -229,7 +229,7 @@ async function deployKubeclaw(projectRoot: string): Promise<void> {
   // --create-namespace creates the namespace without these labels, so we
   // apply them here. --overwrite is idempotent on re-runs.
   logger.info('Applying pod-security labels to kubeclaw namespace');
-  spawnSync(
+  const labelResult = spawnSync(
     'kubectl',
     [
       'label', 'namespace', 'kubeclaw',
@@ -239,6 +239,9 @@ async function deployKubeclaw(projectRoot: string): Promise<void> {
     ],
     { stdio: 'inherit' },
   );
+  if (labelResult.status !== 0) {
+    throw new Error('pod_security_label_failed');
+  }
 }
 
 // ── phase 5: verify ───────────────────────────────────────────────────────────

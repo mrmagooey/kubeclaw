@@ -68,7 +68,7 @@ View alerts: `kubectl logs -n falco daemonset/falco --follow`
 
 ### Phase 4 — KubeClaw Helm Deploy
 
-Deploys KubeClaw using the Helm chart with `helm/kubeclaw/values-minikube.yaml` — laptop-sized resource requests and Cilium network policies enabled.
+Deploys KubeClaw using the Helm chart with `helm/kubeclaw/values-minikube.yaml` — laptop-sized resource requests and Cilium network policies enabled. Immediately after the Helm install, the script applies `pod-security.kubernetes.io/enforce=privileged` labels to the `kubeclaw` namespace so the admission controller permits privileged pods (Redis, orchestrator).
 
 ### Phase 5 — Verify
 
