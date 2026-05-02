@@ -99,6 +99,14 @@ agent:
 networkPolicy:
   # Disable to troubleshoot connectivity issues; re-enable in production.
   enabled: true
+  # Extra TCP ports allowed for egress from channel, agent, and tool pods.
+  # Use this for self-hosted LLM endpoints on non-standard ports
+  # (e.g. 8080 for llama.cpp, 11434 for Ollama).
+  extraEgressPorts: []
+  # Example:
+  #   extraEgressPorts:
+  #     - 8080
+  #     - 11434
 
 # Channel pods — one Deployment per channel instance.
 # Each channel pod runs the same orchestrator image with KUBECLAW_MODE=channel.
