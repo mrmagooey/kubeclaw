@@ -2,16 +2,16 @@
 
 Run KubeClaw locally on a laptop using minikube and **Falco** for runtime security. A single command provisions the cluster, builds images, installs security tooling, and deploys KubeClaw.
 
-By default the setup uses minikube's built-in **bridge** CNI (or auto-detects the best CNI for your host). Cilium is opt-in via `--cni=cilium` or `--with-cilium`.
+By default the setup uses minikube's built-in **bridge** CNI (or auto-detects the best CNI for your host). Cilium is opt-in via `--cni=cilium` or `--with-cilium`. Falco is installed by default and can be skipped with `--skip-falco`.
 
 ## Before You Start
 
 > **Read this even if you're in a hurry** — several host-level issues regularly bite users during laptop setup:
 > - **Linux hosts (especially Ubuntu 22.04+)**: `fs.inotify.max_user_instances` must be ≥ 512. The default (128 on Ubuntu) is too low. See the main [INSTALL.md](../INSTALL.md) → Troubleshooting → "Linux inotify limits".
-> - **iptables-nft on Ubuntu 24.04+**: Cilium does not work with the default `iptables-nft`. No action needed for minikube (it handles this), but be aware if you later try the same minikube cluster on a multi-node production setup.
+> - **iptables-nft on Ubuntu 24.04+**: Cilium does not work with the default `iptables-nft`. The setup auto-detects this and falls back to bridge CNI.
 > - **Resources**: Budget ~6 GB RAM and 4 CPUs free for the minikube VM. The setup script defaults to `--memory 6144` and `--cpus 4` — adjust if you have less headroom (see the setup options).
 > - **Build time**: First-time setup takes ~10 minutes total. Most of that is Falco's eBPF probe compilation (3 minutes) and Docker image builds (2–3 minutes). Rerunning `npm run setup:minikube` is much faster if the cluster already exists.
-> - **Network security**: By default, minikube is strict — tool jobs can only reach `api.anthropic.com` and `statsig.anthropic.com`. See "Network Security (CiliumNetworkPolicy)" to allow additional FQDNs or unlock tool-friendly mode for browser automation and unrestricted HTTPS.
+> - **Network security**: With Cilium CNI active, tool jobs can only reach `api.anthropic.com` and `statsig.anthropic.com` by default. See "Network Security (CiliumNetworkPolicy)" to allow additional FQDNs or unlock tool-friendly mode for browser automation and unrestricted HTTPS.
 
 ## Prerequisites
 
@@ -32,20 +32,42 @@ Install the following before running setup:
 npm run setup:minikube
 ```
 
-That's it. After ~10 minutes (mostly Falco's eBPF probe compilation) you'll have:
+After ~10 minutes (mostly Falco's eBPF probe compilation) you'll have:
 
-- A minikube cluster (bridge CNI by default, or Cilium if requested)
-- Falco monitoring tool job behaviour
+- A minikube cluster (bridge CNI by default, or Cilium if requested via `--cni=cilium`)
+- Falco monitoring tool job behaviour (unless skipped with `--skip-falco`)
 - KubeClaw orchestrator and Redis deployed and ready
 
 Then run `/setup` in Claude Code to configure your API keys and channels.
 
-### Options
+### Flags
+
+| Flag | Default | Description |
+|---|---|---|
+| `--reset` | off | Delete and recreate the minikube cluster from scratch |
+| `--skip-build` | off | Skip container image build (use existing images in the minikube daemon) |
+| `--skip-falco` | off | Skip Falco installation (Cilium network policy enforcement still active) |
+| `--cpus N` | `4` | Number of CPUs to allocate to the minikube VM |
+| `--memory N` | `6144` | RAM to allocate in MiB (e.g. `--memory 8192` for 8 GB) |
+| `--disk SIZE` | `20g` | Disk size for the minikube VM (e.g. `--disk 40g`) |
+
+### Planned flags
+
+These flags are in active development across other PRs and may not be available on `main` yet — see the issue tracker for status.
+
+| Flag | Default | Description |
+|---|---|---|
+| `--profile <name>` | minikube default | Name the minikube profile/cluster. Useful for running multiple kubeclaw clusters on one machine. |
+| `--cni <auto\|bridge\|cilium>` | `auto` | Choose the CNI. `auto` detects the host iptables backend and falls back to `bridge` on iptables-nft hosts. `cilium` enables FQDN egress policies but requires an iptables-legacy compatible host. |
+| `--with-cilium` | off | Shortcut for `--cni=cilium`. |
+
+Examples:
 
 ```bash
 npm run setup:minikube -- --reset             # delete and recreate the minikube cluster
 npm run setup:minikube -- --skip-build        # skip container image build (use existing)
-npm run setup:minikube -- --skip-falco        # skip Falco install
+npm run setup:minikube -- --skip-falco        # skip Falco install (faster, less security monitoring)
+npm run setup:minikube -- --skip-falco --skip-build  # fastest re-deploy
 npm run setup:minikube -- --cpus 6            # use 6 CPUs (default: 4)
 npm run setup:minikube -- --memory 8192       # use 8 GB RAM (default: 6144 MiB)
 npm run setup:minikube -- --profile kubeclaw  # use a named minikube profile (default: minikube)
@@ -59,7 +81,9 @@ npm run setup:minikube -- --cni=auto          # auto-detect based on host iptabl
 
 ## What It Does
 
-### Phase 1 — Cluster
+The script runs five phases in order:
+
+### Phase 1 — Start minikube
 
 Starts minikube with the Docker driver and the resolved CNI. The default CNI mode is `auto`:
 
@@ -84,13 +108,15 @@ The CNI controls network policy enforcement and eBPF-based packet filtering.
 
 **When to stick with bridge:** You're on Ubuntu 24.04 or any host where `iptables --version` reports `nf_tables`. Cilium will crashloop on these hosts due to kernel iptables incompatibility.
 
-### Phase 2 — Image Build
+### Phase 2 — Build images
 
-Sets `DOCKER_HOST` to minikube's internal Docker daemon and builds the container images directly inside it. No image registry or `minikube image load` needed — `imagePullPolicy: Never` (the default when no registry is set) picks them up instantly.
+Sets `DOCKER_HOST` to minikube's internal Docker daemon and builds the container images directly inside it. No image registry or `minikube image load` needed — `imagePullPolicy: Never` picks them up instantly.
 
-### Phase 3 — Falco
+Skipped with `--skip-build`.
 
-Installs Falco from the [falcosecurity Helm chart](https://github.com/falcosecurity/charts) using the `modern_ebpf` driver — CO-RE eBPF that works without kernel headers or `/sys/kernel/debug` access, making it compatible with minikube's Docker-based node.
+### Phase 3 — Install Falco (opt-in, on by default)
+
+Installs Falco from the [falcosecurity Helm chart](https://github.com/falcosecurity/charts) using the `modern_ebpf` driver — CO-RE eBPF that works without kernel headers or `/sys/kernel/debug` access, compatible with minikube's Docker-based node.
 
 Four custom rules are deployed for KubeClaw agent pods:
 
@@ -103,13 +129,15 @@ Four custom rules are deployed for KubeClaw agent pods:
 
 View alerts: `kubectl logs -n falco daemonset/falco --follow`
 
-### Phase 4 — KubeClaw Helm Deploy
+**Skip with `--skip-falco`** — Cilium network policy enforcement remains active. Use this for faster re-deploys or when you don't need runtime syscall monitoring.
 
-Deploys KubeClaw using the Helm chart with `helm/kubeclaw/values-minikube.yaml` — laptop-sized resource requests and Cilium network policies enabled. Immediately after the Helm install, the script applies `pod-security.kubernetes.io/enforce=privileged` labels to the `kubeclaw` namespace so the admission controller permits privileged pods (Redis, orchestrator).
+### Phase 4 — Deploy KubeClaw via Helm
+
+Deploys KubeClaw using the Helm chart with `helm/kubeclaw/values-minikube.yaml` (laptop-sized resource requests). When Cilium is in use, `values-cilium.yaml` is also applied (FQDN egress policies). Immediately after the Helm install, the script applies `pod-security.kubernetes.io/enforce=privileged` labels to the `kubeclaw` namespace so the admission controller permits privileged pods (Redis, orchestrator).
 
 ### Phase 5 — Verify
 
-Checks that the orchestrator, Redis, Falco, and CiliumNetworkPolicy resources are all present and ready.
+Checks that the orchestrator, Redis, Falco (if installed), and CiliumNetworkPolicy resources are all present and ready.
 
 ## Network Security (CiliumNetworkPolicy)
 

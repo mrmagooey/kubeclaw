@@ -2,21 +2,19 @@
 
 ## Quick Start
 
+**Laptop (minikube):**
+
 ```bash
 git clone https://github.com/qwibitai/kubeclaw.git
 cd kubeclaw
-
-# Build images (for local clusters, load instead of push)
-./container/build.sh
-docker build -t kubeclaw-orchestrator:latest .
-
-# Install with Helm
-helm install kubeclaw ./helm/kubeclaw \
-  --set secrets.anthropicApiKey=sk-ant-... \
-  --namespace kubeclaw --create-namespace
+npm run setup:minikube
 ```
 
-Then open the admin shell to add a channel:
+One command starts a minikube cluster with Cilium network policy enforcement, builds the images, and deploys KubeClaw. Falco runtime security is included by default (skip with `--skip-falco`). See [docs/MINIKUBE.md](docs/MINIKUBE.md) for all options.
+
+**Production cluster:** See [INSTALL.md](INSTALL.md) for Helm-based install on EKS, GKE, AKS, or any multi-node cluster.
+
+After setup, open the admin shell to add a channel:
 
 ```bash
 kubectl exec -it deployment/kubeclaw-orchestrator -n kubeclaw -- node dist/admin-shell.js
