@@ -28,6 +28,14 @@ spec:
       ports:
         - protocol: TCP
           port: 443
+    {{- with .Values.networkPolicy.extraEgressPorts }}
+    - to: []
+      ports:
+        {{- range . }}
+        - protocol: TCP
+          port: {{ . }}
+        {{- end }}
+    {{- end }}
 ---
 # Orchestrator: unrestricted egress (needs to create Jobs, call APIs, reach Redis).
 # Ingress restricted to port 8080 (health/metrics).
@@ -89,6 +97,14 @@ spec:
       ports:
         - protocol: TCP
           port: 80
+    {{- with .Values.networkPolicy.extraEgressPorts }}
+    - to: []
+      ports:
+        {{- range . }}
+        - protocol: TCP
+          port: {{ . }}
+        {{- end }}
+    {{- end }}
 ---
 # Tool pods (execution/browser): DNS + Redis IPC + HTTP/HTTPS for web tasks.
 # Broader egress than agents (adds port 80) but no K8s API access, no ingress.
@@ -121,6 +137,14 @@ spec:
           port: 80
         - protocol: TCP
           port: 443
+    {{- with .Values.networkPolicy.extraEgressPorts }}
+    - to: []
+      ports:
+        {{- range . }}
+        - protocol: TCP
+          port: {{ . }}
+        {{- end }}
+    {{- end }}
 ---
 # Sidecar tool pods (custom user containers): same egress profile as tool pods.
 apiVersion: networking.k8s.io/v1
