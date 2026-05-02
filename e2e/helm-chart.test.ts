@@ -119,11 +119,15 @@ beforeAll(async () => {
     { encoding: 'utf8', timeout: 60_000 },
   );
 
-  // Pre-create the namespace with helm ownership metadata so helm can manage
-  // it (the chart's namespace.yaml PATCHes it with pod-security labels).
+  // Pre-create the namespace so helm can install into it.
+  // The chart no longer manages the Namespace resource — --create-namespace
+  // owns it. We add pod-security and helm ownership labels here so that
+  // the namespace test and helm upgrade both work correctly.
   spawnSync('kubectl', ['create', 'namespace', NAMESPACE], { encoding: 'utf8' });
   spawnSync('kubectl', ['label', 'namespace', NAMESPACE,
     'app.kubernetes.io/managed-by=Helm',
+    'pod-security.kubernetes.io/enforce=privileged',
+    'pod-security.kubernetes.io/enforce-version=latest',
   ], { encoding: 'utf8' });
   spawnSync('kubectl', ['annotate', 'namespace', NAMESPACE,
     `meta.helm.sh/release-name=${RELEASE}`,
@@ -241,7 +245,7 @@ describe('helm chart static checks', () => {
     );
     expect(result.status, result.stderr).toBe(0);
     for (const kind of [
-      'Namespace', 'StatefulSet', 'Deployment', 'NetworkPolicy',
+      'StatefulSet', 'Deployment', 'NetworkPolicy',
       'PersistentVolumeClaim', 'ConfigMap', 'Secret',
       'ServiceAccount', 'Role', 'RoleBinding',
     ]) {

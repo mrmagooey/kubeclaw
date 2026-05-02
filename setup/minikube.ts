@@ -354,6 +354,24 @@ async function deployKubeclaw(projectRoot: string, useCilium: boolean): Promise<
     const podStatus = runKubectl(['get', 'pods', '-n', 'kubeclaw'], 30);
     throw Object.assign(new Error('helm_deploy_failed'), { podStatus });
   }
+
+  // Apply pod-security labels to the namespace.
+  // --create-namespace creates the namespace without these labels, so we
+  // apply them here. --overwrite is idempotent on re-runs.
+  logger.info('Applying pod-security labels to kubeclaw namespace');
+  const labelResult = spawnSync(
+    'kubectl',
+    [
+      'label', 'namespace', 'kubeclaw',
+      'pod-security.kubernetes.io/enforce=privileged',
+      'pod-security.kubernetes.io/enforce-version=latest',
+      '--overwrite',
+    ],
+    { stdio: 'inherit' },
+  );
+  if (labelResult.status !== 0) {
+    throw new Error('pod_security_label_failed');
+  }
 }
 
 // ── phase 5: verify ───────────────────────────────────────────────────────────

@@ -71,6 +71,15 @@ helm install kubeclaw ./helm/kubeclaw \
   --namespace kubeclaw --create-namespace
 ```
 
+Then apply the Pod Security labels that allow Redis and the orchestrator to run with the required UIDs:
+
+```bash
+kubectl label namespace kubeclaw \
+  pod-security.kubernetes.io/enforce=privileged \
+  pod-security.kubernetes.io/enforce-version=latest \
+  --overwrite
+```
+
 ### 3. Verify
 
 ```bash
