@@ -130,6 +130,51 @@ All configuration is via Helm values. Pass overrides with `--set key=value` or a
 | `OPENROUTER_HTTP_REFERER` | —                              | Your domain, for OpenRouter rankings (optional)   |
 | `OPENROUTER_X_TITLE`      | `KubeClaw`                     | App name for OpenRouter rankings (optional)       |
 
+#### Self-hosted / OpenAI-compatible endpoint
+
+Any endpoint that implements the OpenAI Chat Completions API can be used as the LLM backend for the channel pods. This includes:
+
+- **llama.cpp** — fast local inference from GGUF models
+- **Ollama** — simple local model server (Mac, Linux, Windows)
+- **vLLM** — high-throughput serving framework
+- **LocalAI** — drop-in replacement for OpenAI API
+- **Groq** — fast inference cloud API
+- **Mistral** — Mistral's managed API
+- Any other compatible endpoint
+
+To use a self-hosted endpoint, set these three values:
+
+```bash
+helm install kubeclaw ./helm/kubeclaw \
+  --set secrets.openaiApiKey=local \
+  --set secrets.openaiBaseUrl=http://192.168.7.100:8080/v1 \
+  --set secrets.directLlmModel=mistral-7b-instruct \
+  --namespace kubeclaw --create-namespace
+```
+
+| Variable                     | Description                                                    |
+| ---------------------------- | -------------------------------------------------------------- |
+| `secrets.openaiApiKey`       | API key for the endpoint. Use a placeholder (e.g. `local`) if the endpoint has no authentication. |
+| `secrets.openaiBaseUrl`      | Full base URL including `/v1` suffix. Examples: `http://192.168.7.100:8080/v1`, `http://ollama:11434/v1`, `https://api.groq.com/openai/v1`. |
+| `secrets.directLlmModel`     | Model identifier the endpoint expects (e.g. `mistral-7b-instruct`, `neural-chat`, `gpt-4`). |
+
+**Reachability**: The LLM endpoint must be reachable from inside the cluster. For single-node clusters (minikube, kind), endpoints on your host machine are typically reachable via host IP. To verify reachability:
+
+```bash
+kubectl run --rm -i probe --image=curlimages/curl:latest --restart=Never -- \
+  curl -sS http://192.168.7.100:8080/v1/models
+```
+
+If the endpoint uses a non-standard port (not 80/443), the chart's network policy will block the connection. The current escape hatch is to disable network policies entirely:
+
+```bash
+helm install kubeclaw ./helm/kubeclaw \
+  --set networkPolicy.enabled=false \
+  ...
+```
+
+This removes all egress restrictions for tool pods. A future chart version is planned to add an `extraEgressPorts` value for fine-grained port allowances — but that value does not exist yet; do not use it.
+
 ### Kubernetes Runtime
 
 | Variable               | Default                       | Description                                                                                           |
