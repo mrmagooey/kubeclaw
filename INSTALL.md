@@ -1,6 +1,6 @@
 # KubeClaw — Kubernetes Installation Guide
 
-> **Running on a laptop?** See [docs/MINIKUBE.md](docs/MINIKUBE.md) for a single-command local setup using minikube with Cilium CNI and Falco runtime security.
+> **Running on a laptop?** Use `npm run setup:minikube` — see [docs/MINIKUBE.md](docs/MINIKUBE.md) for what the script does and how to customize it. The rest of this guide covers production / multi-node clusters.
 
 ## Overview
 
@@ -33,6 +33,8 @@ Tool result → back through channel
 
 ## Quick Start
 
+> **Laptop / local install?** Run `npm run setup:minikube` and see [docs/MINIKUBE.md](docs/MINIKUBE.md). The rest of this guide covers production / multi-node clusters.
+
 ### 1. Build Images
 
 ```bash
@@ -40,31 +42,15 @@ Tool result → back through channel
 ./container/build.sh
 
 # Build the orchestrator image
-docker build -t kubeclaw-orchestrator:latest .
+docker build -t your-registry/kubeclaw-orchestrator:latest .
+docker push your-registry/kubeclaw-orchestrator:latest
 ```
-
-For local clusters (kind, minikube), load the images:
-
-```bash
-kind load docker-image kubeclaw-agent:latest
-kind load docker-image kubeclaw-orchestrator:latest
-# OR
-minikube image load kubeclaw-agent:latest
-minikube image load kubeclaw-orchestrator:latest
-```
-
-For remote clusters, push to a registry and set `image.registry` in your values.
 
 ### 2. Install with Helm
 
 ```bash
-# Single-node / local cluster (default values use ReadWriteOnce)
 helm install kubeclaw ./helm/kubeclaw \
-  --set secrets.anthropicApiKey=sk-ant-... \
-  --namespace kubeclaw --create-namespace
-
-# Multi-node production cluster (RWX storage required)
-helm install kubeclaw ./helm/kubeclaw \
+  --set image.registry=your-registry \
   --set secrets.anthropicApiKey=sk-ant-... \
   --set storage.accessMode=ReadWriteMany \
   --set storage.storageClass=efs-csi \

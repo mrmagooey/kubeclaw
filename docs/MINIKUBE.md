@@ -1,6 +1,6 @@
 # KubeClaw on minikube (Laptop Deployment)
 
-Run KubeClaw locally on a laptop using minikube with **Cilium** as the CNI and **Falco** for runtime security. A single command provisions the cluster, builds images, installs security tooling, and deploys KubeClaw.
+Run KubeClaw locally on a laptop using minikube. A single command provisions the cluster, builds images, and deploys KubeClaw. Cilium CNI is always installed for network policy enforcement. Falco runtime security is installed by default and can be skipped with `--skip-falco`.
 
 ## Prerequisites
 
@@ -21,39 +21,54 @@ Install the following before running setup:
 npm run setup:minikube
 ```
 
-That's it. After ~10 minutes (mostly Falco's eBPF probe compilation) you'll have:
+After ~10 minutes (mostly Falco's eBPF probe compilation) you'll have:
 
 - A minikube cluster running Cilium CNI
-- Falco monitoring tool job behaviour
+- Falco monitoring tool job behaviour (unless skipped)
 - KubeClaw orchestrator and Redis deployed and ready
 
 Then run `/setup` in Claude Code to configure your API keys and channels.
 
-### Options
+### Flags
+
+| Flag | Default | Description |
+|---|---|---|
+| `--reset` | off | Delete and recreate the minikube cluster from scratch |
+| `--skip-build` | off | Skip container image build (use existing images in the minikube daemon) |
+| `--skip-falco` | off | Skip Falco installation (Cilium network policy enforcement still active) |
+| `--cpus N` | `4` | Number of CPUs to allocate to the minikube VM |
+| `--memory N` | `6144` | RAM to allocate in MiB (e.g. `--memory 8192` for 8 GB) |
+| `--disk SIZE` | `20g` | Disk size for the minikube VM (e.g. `--disk 40g`) |
+
+Examples:
 
 ```bash
-npm run setup:minikube -- --reset        # delete and recreate the minikube cluster
-npm run setup:minikube -- --skip-build  # skip container image build (use existing)
-npm run setup:minikube -- --skip-falco  # skip Falco install
-npm run setup:minikube -- --cpus 6      # use 6 CPUs (default: 4)
-npm run setup:minikube -- --memory 8192 # use 8 GB RAM (default: 6144 MiB)
+npm run setup:minikube -- --reset               # delete and recreate the cluster
+npm run setup:minikube -- --skip-build          # skip image build, use existing
+npm run setup:minikube -- --skip-falco          # skip Falco (faster, less security monitoring)
+npm run setup:minikube -- --cpus 6 --memory 8192  # give the VM more resources
+npm run setup:minikube -- --skip-falco --skip-build  # fastest re-deploy
 ```
 
 ## What It Does
 
-### Phase 1 — Cluster (Cilium CNI)
+The script runs five phases in order:
+
+### Phase 1 — Start minikube (Cilium CNI)
 
 Starts minikube with `--cni=cilium` and the Docker driver. Cilium replaces kube-proxy with eBPF-based packet processing and enforces Kubernetes `NetworkPolicy` resources with better performance and observability than iptables.
 
 If minikube is already running with Cilium, this phase is skipped. If it's running without Cilium, you'll be prompted to re-run with `--reset`.
 
-### Phase 2 — Image Build
+### Phase 2 — Build images
 
-Sets `DOCKER_HOST` to minikube's internal Docker daemon and builds the container images directly inside it. No image registry or `minikube image load` needed — `imagePullPolicy: Never` (the default when no registry is set) picks them up instantly.
+Sets `DOCKER_HOST` to minikube's internal Docker daemon and builds the container images directly inside it. No image registry or `minikube image load` needed — `imagePullPolicy: Never` picks them up instantly.
 
-### Phase 3 — Falco
+Skipped with `--skip-build`.
 
-Installs Falco from the [falcosecurity Helm chart](https://github.com/falcosecurity/charts) using the `modern_ebpf` driver — CO-RE eBPF that works without kernel headers or `/sys/kernel/debug` access, making it compatible with minikube's Docker-based node.
+### Phase 3 — Install Falco (opt-in, on by default)
+
+Installs Falco from the [falcosecurity Helm chart](https://github.com/falcosecurity/charts) using the `modern_ebpf` driver — CO-RE eBPF that works without kernel headers or `/sys/kernel/debug` access, compatible with minikube's Docker-based node.
 
 Four custom rules are deployed for KubeClaw agent pods:
 
@@ -66,13 +81,15 @@ Four custom rules are deployed for KubeClaw agent pods:
 
 View alerts: `kubectl logs -n falco daemonset/falco --follow`
 
-### Phase 4 — KubeClaw Helm Deploy
+**Skip with `--skip-falco`** — Cilium network policy enforcement remains active. Use this for faster re-deploys or when you don't need runtime syscall monitoring.
 
-Deploys KubeClaw using the Helm chart with `helm/kubeclaw/values-minikube.yaml` — laptop-sized resource requests and Cilium network policies enabled.
+### Phase 4 — Deploy KubeClaw via Helm
+
+Deploys KubeClaw using the Helm chart with `helm/kubeclaw/values-minikube.yaml` (laptop-sized resource requests) and `values-cilium.yaml` (Cilium network policies).
 
 ### Phase 5 — Verify
 
-Checks that the orchestrator, Redis, Falco, and CiliumNetworkPolicy resources are all present and ready.
+Checks that the orchestrator, Redis, Falco (if installed), and CiliumNetworkPolicy resources are all present and ready.
 
 ## Network Security (CiliumNetworkPolicy)
 
