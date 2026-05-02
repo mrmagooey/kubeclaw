@@ -40,6 +40,16 @@ Then run `/setup` in Claude Code to configure your API keys and channels.
 | `--memory N` | `6144` | RAM to allocate in MiB (e.g. `--memory 8192` for 8 GB) |
 | `--disk SIZE` | `20g` | Disk size for the minikube VM (e.g. `--disk 40g`) |
 
+### Planned flags
+
+These flags are in active development across other PRs and may not be available on `main` yet — see the issue tracker for status.
+
+| Flag | Default | Description |
+|---|---|---|
+| `--profile <name>` | minikube default | Name the minikube profile/cluster. Useful for running multiple kubeclaw clusters on one machine. |
+| `--cni <auto\|bridge\|cilium>` | `auto` | Choose the CNI. `auto` detects the host iptables backend and falls back to `bridge` on iptables-nft hosts. `cilium` enables FQDN egress policies but requires an iptables-legacy compatible host. |
+| `--with-cilium` | off | Shortcut for `--cni=cilium`. |
+
 Examples:
 
 ```bash
@@ -56,7 +66,7 @@ The script runs five phases in order:
 
 ### Phase 1 — Start minikube (Cilium CNI)
 
-Starts minikube with `--cni=cilium` and the Docker driver. Cilium replaces kube-proxy with eBPF-based packet processing and enforces Kubernetes `NetworkPolicy` resources with better performance and observability than iptables.
+Starts minikube with `--cni=cilium` and the Docker driver. Cilium replaces kube-proxy with eBPF-based packet processing and enforces Kubernetes `NetworkPolicy` resources with better performance and observability than iptables. _(future: `--cni` flag will make this opt-in; see [Planned flags](#planned-flags) below)_
 
 If minikube is already running with Cilium, this phase is skipped. If it's running without Cilium, you'll be prompted to re-run with `--reset`.
 
