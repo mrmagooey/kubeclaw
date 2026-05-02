@@ -173,10 +173,23 @@ export function checkInotifyLimits(): string[] {
   return errors;
 }
 
+/**
+ * Args used to ask each binary for its version, returning exit 0 when present.
+ * `--version` is unsupported on minikube, kubectl, and helm — they print errors
+ * and exit non-zero. Docker accepts `--version`; the others use the `version`
+ * subcommand (kubectl needs `--client` to avoid contacting an apiserver).
+ */
+const VERSION_ARGS: Record<string, string[]> = {
+  minikube: ['version'],
+  kubectl: ['version', '--client'],
+  helm: ['version'],
+  docker: ['--version'],
+};
+
 function checkPrerequisites(): string[] {
   const missing: string[] = [];
   for (const bin of ['minikube', 'kubectl', 'helm', 'docker'] as const) {
-    const r = spawnSync(bin, ['--version'], {
+    const r = spawnSync(bin, VERSION_ARGS[bin], {
       encoding: 'utf8',
       stdio: ['pipe', 'pipe', 'pipe'],
     });
@@ -514,5 +527,15 @@ export async function run(args: string[]): Promise<void> {
     HINT: allOk
       ? 'Run /setup in Claude Code to configure channels and credentials'
       : 'Some checks failed — run: kubectl get pods -n kubeclaw && kubectl get pods -n falco',
+  });
+}
+
+// Run when invoked directly (e.g. `tsx setup/minikube.ts ...` via `npm run
+// setup:minikube`). When imported by setup/index.ts as a step module, the
+// dispatcher calls `run()` itself, so the gate prevents double execution.
+if (import.meta.url === `file://${process.argv[1]}`) {
+  run(process.argv.slice(2)).catch((err) => {
+    logger.error({ err }, 'minikube setup failed');
+    process.exit(1);
   });
 }
