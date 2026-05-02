@@ -4,6 +4,15 @@ Run KubeClaw locally on a laptop using minikube and **Falco** for runtime securi
 
 By default the setup uses minikube's built-in **bridge** CNI (or auto-detects the best CNI for your host). Cilium is opt-in via `--cni=cilium` or `--with-cilium`.
 
+## Before You Start
+
+> **Read this even if you're in a hurry** — several host-level issues regularly bite users during laptop setup:
+> - **Linux hosts (especially Ubuntu 22.04+)**: `fs.inotify.max_user_instances` must be ≥ 512. The default (128 on Ubuntu) is too low. See the main [INSTALL.md](../INSTALL.md) → Troubleshooting → "Linux inotify limits".
+> - **iptables-nft on Ubuntu 24.04+**: Cilium does not work with the default `iptables-nft`. No action needed for minikube (it handles this), but be aware if you later try the same minikube cluster on a multi-node production setup.
+> - **Resources**: Budget ~6 GB RAM and 4 CPUs free for the minikube VM. The setup script defaults to `--memory 6144` and `--cpus 4` — adjust if you have less headroom (see the setup options).
+> - **Build time**: First-time setup takes ~10 minutes total. Most of that is Falco's eBPF probe compilation (3 minutes) and Docker image builds (2–3 minutes). Rerunning `npm run setup:minikube` is much faster if the cluster already exists.
+> - **Network security**: By default, minikube is strict — tool jobs can only reach `api.anthropic.com` and `statsig.anthropic.com`. See "Network Security (CiliumNetworkPolicy)" to allow additional FQDNs or unlock tool-friendly mode for browser automation and unrestricted HTTPS.
+
 ## Prerequisites
 
 Install the following before running setup:
