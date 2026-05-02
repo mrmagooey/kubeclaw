@@ -160,15 +160,17 @@ kubectl run --rm -i probe --image=curlimages/curl:latest --restart=Never -- \
   curl -sS http://192.168.7.100:8080/v1/models
 ```
 
-If the endpoint uses a non-standard port (not 80/443), the chart's network policy will block the connection. The current escape hatch is to disable network policies entirely:
+If the endpoint uses a non-standard port (not 80/443), the chart's network policy will block the connection. Use `networkPolicy.extraEgressPorts` to allow specific ports without disabling the policy:
 
 ```bash
 helm install kubeclaw ./helm/kubeclaw \
-  --set networkPolicy.enabled=false \
+  --set 'networkPolicy.extraEgressPorts={8080,11434}' \
   ...
 ```
 
-This removes all egress restrictions for tool pods. A future chart version is planned to add an `extraEgressPorts` value for fine-grained port allowances — but that value does not exist yet; do not use it.
+The example above allows TCP 8080 (llama.cpp) and 11434 (Ollama) for channel, agent, and tool pods. The orchestrator policy is unrestricted by default and not affected.
+
+If you need a blunt escape hatch (e.g. for debugging), `--set networkPolicy.enabled=false` removes all egress restrictions.
 
 ### Kubernetes Runtime
 
