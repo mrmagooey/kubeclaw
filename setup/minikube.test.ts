@@ -1,23 +1,33 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 /**
- * Tests for setup/minikube.ts — parseArgs, hostUsesNftables, resolveCni.
+ * Tests for setup/minikube.ts.
  *
- * All child_process calls are mocked. The tests cover:
+ * Covers:
  *   - parseArgs: defaults, profile, cpu/memory/disk/skip flags
  *   - parseArgs: --cni flag (= and space forms), --with-cilium
  *   - parseArgs: invalid --cni value throws
- *   - hostUsesNftables: stdout containing nf_tables / legacy / no tag
- *   - resolveCni: explicit cilium / bridge pass-through
- *   - resolveCni: auto + nf_tables → bridge, auto + legacy → cilium
+ *   - hostUsesNftables: stdout containing nf_tables / legacy / no tag / not-found
+ *   - resolveCni: explicit cilium / bridge pass-through, auto + nf_tables → bridge, auto + legacy → cilium
+ *   - checkInotifyLimits: low/ok/boundary/non-Linux/unreadable
  */
 
 // ── mocks ─────────────────────────────────────────────────────────────────────
 
-// We need to intercept spawnSync calls that hostUsesNftables makes.
-// The module uses spawnSync at the top level so we mock child_process.
+// Intercept spawnSync calls (used by hostUsesNftables and resolveCni).
 const mockSpawnSync = vi.fn();
 vi.mock('child_process', () => ({ spawnSync: mockSpawnSync }));
+
+// Intercept readFileSync calls (used by checkInotifyLimits).
+const mockReadFileResults: Map<string, string | Error> = new Map();
+vi.mock('node:fs', () => ({
+  readFileSync: vi.fn((filePath: string) => {
+    const result = mockReadFileResults.get(filePath);
+    if (result === undefined) throw new Error(`ENOENT: ${filePath}`);
+    if (result instanceof Error) throw result;
+    return result;
+  }),
+}));
 
 // Silence logger output during tests.
 vi.mock('../src/logger.js', () => ({
@@ -30,6 +40,27 @@ function spawnResult(stdout: string, status = 0) {
   return { status, stdout, stderr: '', error: undefined };
 }
 
+function setInotifyValues(instances: number | null, watches: number | null) {
+  if (instances !== null) {
+    mockReadFileResults.set(
+      '/proc/sys/fs/inotify/max_user_instances',
+      `${instances}\n`,
+    );
+  }
+  if (watches !== null) {
+    mockReadFileResults.set(
+      '/proc/sys/fs/inotify/max_user_watches',
+      `${watches}\n`,
+    );
+  }
+}
+
+// FIXME: Tests use dynamic `import('./minikube.js')` inside each `it` so that
+// the module is re-evaluated after `process.platform` is overridden in
+// `beforeEach`. Refactoring to a top-level import would require a different
+// strategy for mocking `process.platform` (e.g. a module factory that reads
+// platform at call time), which would need a substantial restructure.
+
 // ── parseArgs ─────────────────────────────────────────────────────────────────
 
 describe('parseArgs', () => {
@@ -41,7 +72,6 @@ describe('parseArgs', () => {
   };
 
   beforeEach(async () => {
-    // Re-import every time to get a fresh module instance with mocks applied.
     const mod = await import('./minikube.js');
     parseArgs = mod.parseArgs;
   });
@@ -171,16 +201,12 @@ describe('hostUsesNftables', () => {
   });
 
   it('returns true when iptables reports nf_tables', () => {
-    mockSpawnSync.mockReturnValue(
-      spawnResult('iptables v1.8.7 (nf_tables)\n'),
-    );
+    mockSpawnSync.mockReturnValue(spawnResult('iptables v1.8.7 (nf_tables)\n'));
     expect(hostUsesNftables()).toBe(true);
   });
 
   it('returns false when iptables reports legacy', () => {
-    mockSpawnSync.mockReturnValue(
-      spawnResult('iptables v1.8.7 (legacy)\n'),
-    );
+    mockSpawnSync.mockReturnValue(spawnResult('iptables v1.8.7 (legacy)\n'));
     expect(hostUsesNftables()).toBe(false);
   });
 
@@ -215,16 +241,12 @@ describe('resolveCni', () => {
   });
 
   it('auto returns bridge when host uses nf_tables', () => {
-    mockSpawnSync.mockReturnValue(
-      spawnResult('iptables v1.8.7 (nf_tables)\n'),
-    );
+    mockSpawnSync.mockReturnValue(spawnResult('iptables v1.8.7 (nf_tables)\n'));
     expect(resolveCni('auto')).toBe('bridge');
   });
 
   it('auto returns cilium when host uses legacy iptables', () => {
-    mockSpawnSync.mockReturnValue(
-      spawnResult('iptables v1.8.7 (legacy)\n'),
-    );
+    mockSpawnSync.mockReturnValue(spawnResult('iptables v1.8.7 (legacy)\n'));
     expect(resolveCni('auto')).toBe('cilium');
   });
 
@@ -236,5 +258,115 @@ describe('resolveCni', () => {
   it('explicit bridge ignores iptables backend (no spawnSync call)', () => {
     resolveCni('bridge');
     expect(mockSpawnSync).not.toHaveBeenCalled();
+  });
+});
+
+// ── checkInotifyLimits ────────────────────────────────────────────────────────
+
+describe('checkInotifyLimits', () => {
+  let originalPlatform: PropertyDescriptor | undefined;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockReadFileResults.clear();
+    originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform');
+    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+  });
+
+  afterEach(() => {
+    if (originalPlatform) {
+      Object.defineProperty(process, 'platform', originalPlatform);
+    }
+  });
+
+  it('returns an error when max_user_instances is below the minimum (512)', async () => {
+    setInotifyValues(128, 524288);
+    const { checkInotifyLimits } = await import('./minikube.js');
+    const errors = checkInotifyLimits();
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain('inotify limits are too low');
+    expect(errors[0]).toContain('max_user_instances = 128');
+    expect(errors[0]).toContain('sudo sysctl -w fs.inotify.max_user_instances=8192');
+    expect(errors[0]).toContain('sudo sysctl -w fs.inotify.max_user_watches=524288');
+    expect(errors[0]).toContain('/etc/sysctl.d/99-inotify.conf');
+  });
+
+  it('returns an error when max_user_watches is below the minimum (65536)', async () => {
+    setInotifyValues(8192, 8192);
+    const { checkInotifyLimits } = await import('./minikube.js');
+    const errors = checkInotifyLimits();
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain('inotify limits are too low');
+    expect(errors[0]).toContain('max_user_watches   = 8192');
+    expect(errors[0]).toContain('sudo sysctl -w fs.inotify.max_user_watches=524288');
+  });
+
+  it('returns an error when both values are below their minimums', async () => {
+    setInotifyValues(128, 8192);
+    const { checkInotifyLimits } = await import('./minikube.js');
+    const errors = checkInotifyLimits();
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain('max_user_instances = 128');
+    expect(errors[0]).toContain('max_user_watches   = 8192');
+  });
+
+  it('returns no errors when both values meet the thresholds', async () => {
+    setInotifyValues(512, 65536);
+    const { checkInotifyLimits } = await import('./minikube.js');
+    expect(checkInotifyLimits()).toHaveLength(0);
+  });
+
+  it('returns no errors when values greatly exceed the thresholds', async () => {
+    setInotifyValues(8192, 524288);
+    const { checkInotifyLimits } = await import('./minikube.js');
+    expect(checkInotifyLimits()).toHaveLength(0);
+  });
+
+  it('passes when instances is exactly at the minimum boundary (512)', async () => {
+    setInotifyValues(512, 65536);
+    const { checkInotifyLimits } = await import('./minikube.js');
+    expect(checkInotifyLimits()).toHaveLength(0);
+  });
+
+  it('passes when watches is exactly at the minimum boundary (instances=8192, watches=65536)', async () => {
+    setInotifyValues(8192, 65536);
+    const { checkInotifyLimits } = await import('./minikube.js');
+    expect(checkInotifyLimits()).toHaveLength(0);
+  });
+
+  it('returns an error when instances is one below the minimum (511)', async () => {
+    setInotifyValues(511, 65536);
+    const { checkInotifyLimits } = await import('./minikube.js');
+    expect(checkInotifyLimits()).toHaveLength(1);
+  });
+
+  it('skips the check on non-Linux platforms (macOS)', async () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+    mockReadFileResults.clear();
+    const { checkInotifyLimits } = await import('./minikube.js');
+    expect(checkInotifyLimits()).toHaveLength(0);
+  });
+
+  it('skips the check on Windows', async () => {
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+    mockReadFileResults.clear();
+    const { checkInotifyLimits } = await import('./minikube.js');
+    expect(checkInotifyLimits()).toHaveLength(0);
+  });
+
+  it('returns an error when /proc/sys/fs/inotify files are unreadable', async () => {
+    const { checkInotifyLimits } = await import('./minikube.js');
+    const errors = checkInotifyLimits();
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain('(unreadable)');
+  });
+
+  it('error message includes the sysctl.d persistence snippet', async () => {
+    setInotifyValues(128, 8192);
+    const { checkInotifyLimits } = await import('./minikube.js');
+    const errors = checkInotifyLimits();
+    expect(errors[0]).toContain('fs.inotify.max_user_instances = 8192');
+    expect(errors[0]).toContain('fs.inotify.max_user_watches   = 524288');
+    expect(errors[0]).toContain('sudo sysctl --system');
   });
 });

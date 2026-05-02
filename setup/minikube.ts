@@ -19,6 +19,7 @@
  *   npm run setup:minikube -- --with-cilium    # shortcut for --cni=cilium
  */
 import { spawnSync } from 'child_process';
+import { readFileSync } from 'node:fs';
 import path from 'path';
 
 import { logger } from '../src/logger.js';
@@ -119,6 +120,59 @@ export function resolveCni(requested: CniMode): 'cilium' | 'bridge' {
 
 // ── prerequisites ─────────────────────────────────────────────────────────────
 
+const INOTIFY_MIN_INSTANCES = 512;
+const INOTIFY_MIN_WATCHES = 65536;
+const INOTIFY_REC_INSTANCES = 8192;
+const INOTIFY_REC_WATCHES = 524288;
+
+/** Read an integer from a /proc/sys sysctl file. Returns null on any error. */
+function readSysctlInt(filePath: string): number | null {
+  try {
+    return parseInt(readFileSync(filePath, 'utf8').trim(), 10);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Verify that Linux inotify limits are high enough for minikube to run.
+ * Returns an array of error strings (empty = ok). Skipped on non-Linux.
+ */
+export function checkInotifyLimits(): string[] {
+  if (process.platform !== 'linux') return [];
+
+  const errors: string[] = [];
+
+  const instances = readSysctlInt('/proc/sys/fs/inotify/max_user_instances');
+  const watches = readSysctlInt('/proc/sys/fs/inotify/max_user_watches');
+
+  const instancesOk = instances !== null && instances >= INOTIFY_MIN_INSTANCES;
+  const watchesOk = watches !== null && watches >= INOTIFY_MIN_WATCHES;
+
+  if (!instancesOk || !watchesOk) {
+    const lines: string[] = [
+      'inotify limits are too low — kube-proxy / storage-provisioner will crashloop with "too many open files".',
+      '',
+      'Current values:',
+      `  fs.inotify.max_user_instances = ${instances ?? '(unreadable)'}  (minimum: ${INOTIFY_MIN_INSTANCES})`,
+      `  fs.inotify.max_user_watches   = ${watches ?? '(unreadable)'}  (minimum: ${INOTIFY_MIN_WATCHES})`,
+      '',
+      'Apply immediately (until next reboot):',
+      `  sudo sysctl -w fs.inotify.max_user_instances=${INOTIFY_REC_INSTANCES}`,
+      `  sudo sysctl -w fs.inotify.max_user_watches=${INOTIFY_REC_WATCHES}`,
+      '',
+      'Make it permanent — add to /etc/sysctl.d/99-inotify.conf:',
+      `  fs.inotify.max_user_instances = ${INOTIFY_REC_INSTANCES}`,
+      `  fs.inotify.max_user_watches   = ${INOTIFY_REC_WATCHES}`,
+      '',
+      'Then reload: sudo sysctl --system',
+    ];
+    errors.push(lines.join('\n'));
+  }
+
+  return errors;
+}
+
 function checkPrerequisites(): string[] {
   const missing: string[] = [];
   for (const bin of ['minikube', 'kubectl', 'helm', 'docker'] as const) {
@@ -128,7 +182,7 @@ function checkPrerequisites(): string[] {
     });
     if (r.error || r.status !== 0) missing.push(bin);
   }
-  return missing;
+  return [...missing, ...checkInotifyLimits()];
 }
 
 // ── phase 1: cluster ──────────────────────────────────────────────────────────
@@ -348,17 +402,17 @@ export async function run(args: string[]): Promise<void> {
 
   logger.info({ ...opts, resolvedCni }, 'Starting minikube setup');
 
-  // Prerequisites
-  const missing = checkPrerequisites();
-  if (missing.length > 0) {
+  // Prerequisites (binary checks + inotify limits merged via checkPrerequisites)
+  const preflightErrors = checkPrerequisites();
+  if (preflightErrors.length > 0) {
     emitStatus('SETUP_MINIKUBE_START', {
       STATUS: 'failed',
-      ERROR: 'missing_prerequisites',
-      MISSING: missing.join(', '),
-      LOG: `Install missing tools: ${missing.join(', ')}`,
+      ERROR: 'preflight_failed',
+      LOG: preflightErrors.join('\n'),
     });
     process.exit(1);
   }
+
   emitStatus('SETUP_MINIKUBE_START', { STATUS: 'ok', PREREQUISITES: 'all present' });
 
   // Phase 1: cluster
