@@ -173,44 +173,31 @@ The skill installer (orchestrator add-oauth-webchat path) prompts for these valu
 
 ## Skill packaging
 
-New skill at `skills/channel/add-oauth-webchat/` with `manifest.yaml`:
+This channel is a **built-in** channel: implementation ships in `src/channels/oauth-webchat.ts` and is imported from `src/channels/index.ts` like the existing `http` and `irc` channels. There is no external manifest pipeline involved — `skills/channel/oauth-webchat.md` is a single markdown doc with frontmatter that describes the channel for operators (mirroring `skills/channel/http.md` and `skills/channel/irc.md`).
+
+`skills/channel/oauth-webchat.md` frontmatter shape (matching `skills/channel/irc.md`):
 
 ```yaml
-skill: add-oauth-webchat
-version: 1.0.0
-core_version: ">=1.0.0"
-
-adds:
-  - src/channels/oauth-webchat.ts
-  - src/channels/oauth-webchat.test.ts
-
-modifies:
-  - src/channels/index.ts          # append: import './oauth-webchat.js'
-  - src/channel-runner.ts          # add 'oauth-webchat' → 'oauth' to folderPrefixForChannel
-  - src/skills/orchestrator/types.ts          # extend ChannelSetupInput
-  - src/skills/orchestrator/channel-setup.ts  # add buildSecretData/validateChannelCredentials branches
-  - docs/ADDING_A_CHANNEL.md       # add 'oauth-webchat' → 'oauth' row to prefix table
-
-structured:
-  npm_dependencies:
-    openid-client: "^5.6.0"
-  env_additions:
-    - OAUTH_WEBCHAT_PORT
-    - OAUTH_WEBCHAT_PUBLIC_URL
-    - OAUTH_WEBCHAT_OIDC_ISSUER
-    - OAUTH_WEBCHAT_CLIENT_ID
-    - OAUTH_WEBCHAT_CLIENT_SECRET
-    - OAUTH_WEBCHAT_ALLOWED_EMAILS
-    - OAUTH_WEBCHAT_COOKIE_SECRET
-    - OAUTH_WEBCHAT_SESSION_TTL_DAYS
-    - OAUTH_WEBCHAT_SCOPES
-    - OAUTH_WEBCHAT_PROVIDER_NAME
-
-conflicts: []
-depends: []
-
-test: "npx vitest run src/channels/oauth-webchat.test.ts"
+---
+name: oauth-webchat
+description: OAuth/OIDC web chat channel
+dependencies:
+  - openid-client
+env:
+  - OAUTH_WEBCHAT_PORT
+  - OAUTH_WEBCHAT_PUBLIC_URL
+  - OAUTH_WEBCHAT_OIDC_ISSUER
+  - OAUTH_WEBCHAT_CLIENT_ID
+  - OAUTH_WEBCHAT_CLIENT_SECRET
+  - OAUTH_WEBCHAT_ALLOWED_EMAILS
+  - OAUTH_WEBCHAT_COOKIE_SECRET
+  - OAUTH_WEBCHAT_SESSION_TTL_DAYS
+  - OAUTH_WEBCHAT_SCOPES
+  - OAUTH_WEBCHAT_PROVIDER_NAME
+---
 ```
+
+The `openid-client` npm dependency is added directly to `package.json`.
 
 ## Testing
 
