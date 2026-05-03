@@ -377,7 +377,10 @@ export class OAuthWebchatChannel implements Channel {
         res.end('Missing state cookie');
         return;
       }
-      const statePayload = verifyStateCookie(stateRaw, this.config.cookieSecret);
+      const statePayload = verifyStateCookie(
+        stateRaw,
+        this.config.cookieSecret,
+      );
       if (!statePayload) {
         res.writeHead(400, { 'Content-Type': 'text/plain' });
         res.end('Invalid state cookie');
@@ -395,7 +398,10 @@ export class OAuthWebchatChannel implements Channel {
       try {
         claims = await this.oidc.exchangeCode({
           params: { code, state: queryState },
-          checks: { state: statePayload.state, code_verifier: statePayload.codeVerifier },
+          checks: {
+            state: statePayload.state,
+            code_verifier: statePayload.codeVerifier,
+          },
         });
       } catch (err) {
         logger.warn({ err }, 'oauth-webchat: token exchange failed');
@@ -424,7 +430,8 @@ export class OAuthWebchatChannel implements Channel {
       const sessionCookie = signSessionCookie(
         {
           email: email.toLowerCase(),
-          exp: Math.floor(Date.now() / 1000) + this.config.sessionTtlDays * 86400,
+          exp:
+            Math.floor(Date.now() / 1000) + this.config.sessionTtlDays * 86400,
         },
         this.config.cookieSecret,
       );
@@ -493,4 +500,13 @@ export class OidcClient {
     );
     return tokenSet.claims() as OidcClaims;
   }
+}
+
+export function getSessionFromCookies(
+  cookies: Record<string, string>,
+  secret: string,
+): SessionPayload | null {
+  const raw = cookies[SESSION_COOKIE];
+  if (!raw) return null;
+  return verifySessionCookie(raw, secret);
 }

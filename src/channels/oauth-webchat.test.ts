@@ -520,13 +520,19 @@ async function loginAndExtractStateCookie(
   await dispatch(channel, req, res);
   const setCookie = res._headers['Set-Cookie'];
   const cookies = Array.isArray(setCookie) ? setCookie : [String(setCookie)];
-  const stateCookie = cookies.find((c) => String(c).startsWith('oauth-webchat-state='))!;
+  const stateCookie = cookies.find((c) =>
+    String(c).startsWith('oauth-webchat-state='),
+  )!;
   const cookieHeader = String(stateCookie).split(';')[0];
   // Extract the actual state by decoding the cookie value
-  const rawValue = decodeURIComponent(cookieHeader.slice('oauth-webchat-state='.length));
+  const rawValue = decodeURIComponent(
+    cookieHeader.slice('oauth-webchat-state='.length),
+  );
   const dot = rawValue.indexOf('.');
   const payloadB64 = rawValue.slice(0, dot);
-  const payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8')) as { state: string };
+  const payload = JSON.parse(
+    Buffer.from(payloadB64, 'base64url').toString('utf8'),
+  ) as { state: string };
   return { stateValue: payload.state, cookieHeader };
 }
 
@@ -544,7 +550,10 @@ describe('GET /callback', () => {
   it('rejects when state value does not match cookie', async () => {
     const channel = new OAuthWebchatChannel(makeConfig(), makeOpts());
     await channel.connect();
-    const { cookieHeader } = await loginAndExtractStateCookie(channel, makeConfig().cookieSecret);
+    const { cookieHeader } = await loginAndExtractStateCookie(
+      channel,
+      makeConfig().cookieSecret,
+    );
     const req = makeReq({
       url: '/callback?code=CODE&state=WRONG',
       cookie: cookieHeader,
@@ -568,7 +577,10 @@ describe('GET /callback', () => {
     });
     const channel = new OAuthWebchatChannel(makeConfig(), makeOpts());
     await channel.connect();
-    const { stateValue, cookieHeader } = await loginAndExtractStateCookie(channel, makeConfig().cookieSecret);
+    const { stateValue, cookieHeader } = await loginAndExtractStateCookie(
+      channel,
+      makeConfig().cookieSecret,
+    );
     const req = makeReq({
       url: `/callback?code=CODE&state=${stateValue}`,
       cookie: cookieHeader,
@@ -592,7 +604,10 @@ describe('GET /callback', () => {
     });
     const channel = new OAuthWebchatChannel(makeConfig(), makeOpts());
     await channel.connect();
-    const { stateValue, cookieHeader } = await loginAndExtractStateCookie(channel, makeConfig().cookieSecret);
+    const { stateValue, cookieHeader } = await loginAndExtractStateCookie(
+      channel,
+      makeConfig().cookieSecret,
+    );
     const req = makeReq({
       url: `/callback?code=CODE&state=${stateValue}`,
       cookie: cookieHeader,
@@ -616,7 +631,10 @@ describe('GET /callback', () => {
     });
     const channel = new OAuthWebchatChannel(makeConfig(), makeOpts());
     await channel.connect();
-    const { stateValue, cookieHeader } = await loginAndExtractStateCookie(channel, makeConfig().cookieSecret);
+    const { stateValue, cookieHeader } = await loginAndExtractStateCookie(
+      channel,
+      makeConfig().cookieSecret,
+    );
     const req = makeReq({
       url: `/callback?code=CODE&state=${stateValue}`,
       cookie: cookieHeader,
@@ -631,12 +649,40 @@ describe('GET /callback', () => {
         ? res._headers['Set-Cookie']
         : [String(res._headers['Set-Cookie'] ?? '')]
     ) as string[];
-    expect(setCookies.some((c) => c.startsWith('oauth-webchat-session='))).toBe(true);
+    expect(setCookies.some((c) => c.startsWith('oauth-webchat-session='))).toBe(
+      true,
+    );
     expect(
       setCookies.some(
         (c) => c.startsWith('oauth-webchat-state=') && c.includes('Max-Age=0'),
       ),
     ).toBe(true);
     await channel.disconnect();
+  });
+});
+
+import { getSessionFromCookies } from './oauth-webchat.js';
+
+describe('getSessionFromCookies', () => {
+  it('returns null when no session cookie is present', () => {
+    expect(getSessionFromCookies({}, 'a'.repeat(64))).toBeNull();
+  });
+
+  it('returns null when session cookie is invalid', () => {
+    expect(
+      getSessionFromCookies({ 'oauth-webchat-session': 'garbage' }, 'a'.repeat(64)),
+    ).toBeNull();
+  });
+
+  it('returns the payload for a valid cookie', () => {
+    const cookie = signSessionCookie(
+      { email: 'alice@example.com', exp: Math.floor(Date.now() / 1000) + 3600 },
+      'a'.repeat(64),
+    );
+    const result = getSessionFromCookies(
+      { 'oauth-webchat-session': cookie },
+      'a'.repeat(64),
+    );
+    expect(result?.email).toBe('alice@example.com');
   });
 });
