@@ -280,6 +280,7 @@ credentialInjection:
 
   broker:
     image: ghcr.io/mrmagooey/kubeclaw-credential-broker:latest
+    port: 8080
     replicas: 1
     resources:
       requests: { cpu: 50m, memory: 64Mi }
