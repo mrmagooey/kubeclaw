@@ -1,0 +1,39 @@
+{{- if and (ne .Values.credentialInjection.mode "off") .Values.credentialInjection.internalCA.autoProvision -}}
+# Self-signed root issuer for the KubeClaw internal egress CA.
+# Workload pods mount the resulting CA cert and trust it; the credential-injection
+# dataplane (sidecar Envoy or Istio egress gateway) presents certs signed by it.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: kubeclaw-egress-ca-bootstrap
+  namespace: {{ .Release.Namespace }}
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: kubeclaw-egress-ca
+  namespace: {{ .Release.Namespace }}
+spec:
+  isCA: true
+  commonName: kubeclaw-egress-ca
+  secretName: kubeclaw-egress-ca-tls
+  duration: {{ .Values.credentialInjection.internalCA.duration }}
+  renewBefore: {{ .Values.credentialInjection.internalCA.renewBefore }}
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: kubeclaw-egress-ca-bootstrap
+    kind: Issuer
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: kubeclaw-egress-ca
+  namespace: {{ .Release.Namespace }}
+spec:
+  ca:
+    secretName: kubeclaw-egress-ca-tls
+{{- end }}
