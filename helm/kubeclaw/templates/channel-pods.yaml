@@ -19,6 +19,9 @@ spec:
     spec:
       # No K8s API access — channel pods delegate all K8s operations to the orchestrator
       automountServiceAccountToken: false
+      {{- if ne $.Values.credentialInjection.mode "off" }}
+      serviceAccountName: kubeclaw-channel-{{ $name }}
+      {{- end }}
       securityContext:
         runAsUser: 0
         runAsNonRoot: false
@@ -69,6 +72,7 @@ spec:
                 secretKeyRef:
                   name: kubeclaw-redis
                   key: channel-password
+            {{- if eq $.Values.credentialInjection.mode "off" }}
             - name: OPENAI_API_KEY
               valueFrom:
                 secretKeyRef:
@@ -81,6 +85,7 @@ spec:
                   name: {{ include "kubeclaw.secretName" $ }}
                   key: openai-base-url
                   optional: true
+            {{- end }}
             - name: DIRECT_LLM_MODEL
               valueFrom:
                 secretKeyRef:
@@ -100,7 +105,7 @@ spec:
               value: {{ $.Values.rag.topK | quote }}
             - name: RAG_SCORE_THRESHOLD
               value: {{ $.Values.rag.scoreThreshold | quote }}
-            {{- if eq $.Values.rag.provider "voyage" }}
+            {{- if and (eq $.Values.rag.provider "voyage") (eq $.Values.credentialInjection.mode "off") }}
             - name: VOYAGE_API_KEY
               valueFrom:
                 secretKeyRef:
@@ -108,6 +113,7 @@ spec:
                   key: voyage-api-key
             {{- end }}
             {{- end }}
+            {{- if eq $.Values.credentialInjection.mode "off" }}
             {{- range $cfg.envVars }}
             - name: {{ .name }}
               valueFrom:
@@ -115,6 +121,10 @@ spec:
                   name: kubeclaw-channel-{{ $name }}
                   key: {{ .key }}
                   optional: {{ default false .optional }}
+            {{- end }}
+            {{- end }}
+            {{- if eq $.Values.credentialInjection.mode "sidecar" }}
+            {{- include "kubeclaw.credentialSidecarEnv" $ | nindent 12 }}
             {{- end }}
           ports:
             {{- if $cfg.httpPort }}
@@ -150,6 +160,9 @@ spec:
               mountPath: /data/sessions
           resources:
             {{- toYaml $.Values.channelPod.resources | nindent 12 }}
+        {{- if eq $.Values.credentialInjection.mode "sidecar" }}
+        {{- include "kubeclaw.credentialSidecarContainer" $ | nindent 8 }}
+        {{- end }}
       volumes:
         - name: groups
           persistentVolumeClaim:
@@ -160,6 +173,9 @@ spec:
         - name: sessions
           persistentVolumeClaim:
             claimName: kubeclaw-channel-{{ $name }}-sessions
+        {{- if eq $.Values.credentialInjection.mode "sidecar" }}
+        {{- include "kubeclaw.credentialSidecarVolumes" $ | nindent 8 }}
+        {{- end }}
 {{- if and $cfg.httpPort $.Values.networkPolicy.enabled }}
 ---
 # Allow ingress on the HTTP port — the global channel policy denies all pod-to-pod
