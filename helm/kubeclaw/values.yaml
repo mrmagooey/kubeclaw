@@ -263,3 +263,38 @@ signalCli:
     limits:
       memory: 512Mi
       cpu: "1"
+
+# --- Credential injection (network-layer auth header injection) ---
+# When enabled, third-party API credentials are NOT injected as env vars
+# into channel/capability/tool-job pods. Instead, a credential-broker
+# service holds the secrets and a sidecar (or Istio egress gateway)
+# stamps the Authorization header on outbound HTTPS requests.
+# See docs/CREDENTIAL_INJECTION.md for operator detail.
+credentialInjection:
+  # mode: off | sidecar | istio | auto
+  # - off:     no broker, env-var injection (legacy behavior)
+  # - sidecar: per-pod Envoy sidecar, works on any cluster (default for new installs)
+  # - istio:   Istio egress gateway (requires Istio CRDs)
+  # - auto:    detect Istio at install time, fall back to sidecar
+  mode: sidecar
+
+  broker:
+    image: ghcr.io/mrmagooey/kubeclaw-credential-broker:latest
+    replicas: 1
+    resources:
+      requests: { cpu: 50m, memory: 64Mi }
+      limits:   { cpu: 500m, memory: 256Mi }
+
+  sidecar:
+    image: envoyproxy/envoy:v1.31-latest
+    resources:
+      requests: { cpu: 25m, memory: 32Mi }
+      limits:   { cpu: 200m, memory: 128Mi }
+    listenPort: 8443
+
+  internalCA:
+    # If false, operator must supply their own kubeclaw-egress-ca-tls Secret.
+    autoProvision: true
+    # Renewal threshold; cert-manager defaults are fine.
+    duration: 87600h    # 10y
+    renewBefore: 720h   # 30d

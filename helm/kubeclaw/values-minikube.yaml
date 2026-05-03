@@ -56,3 +56,6 @@ channelPod:
     limits:
       memory: 512Mi
       cpu: 250m
+
+credentialInjection:
+  mode: off

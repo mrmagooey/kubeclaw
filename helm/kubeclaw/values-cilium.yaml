@@ -46,3 +46,9 @@ ciliumNetworkPolicy:
       # - openrouter.ai
       # - api.telegram.org
       # - slack.com
+
+# Cilium installs typically already have egress controls. The credential
+# broker + sidecar still adds value (header injection, audit). Default
+# to sidecar; switch to istio if you also run Istio on top of Cilium.
+credentialInjection:
+  mode: sidecar
