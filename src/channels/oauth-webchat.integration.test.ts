@@ -129,8 +129,7 @@ async function startFakeIssuer(): Promise<FakeIssuer> {
       nextEmail = email;
       nextVerified = verified;
     },
-    close: () =>
-      new Promise<void>((resolve) => server.close(() => resolve())),
+    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
   };
 }
 
@@ -266,16 +265,16 @@ describe('OAuthWebchatChannel — integration', () => {
 
     // Step 2: Follow redirect to fake issuer's /authorize — it 302s back to /callback
     const authorizeUrl = String(start.headers.location);
-    const authorizeRes = await new Promise<{ headers: http.IncomingHttpHeaders }>(
-      (resolve, reject) => {
-        http
-          .get(authorizeUrl, (r) => {
-            r.resume(); // discard body
-            resolve({ headers: r.headers });
-          })
-          .on('error', reject);
-      },
-    );
+    const authorizeRes = await new Promise<{
+      headers: http.IncomingHttpHeaders;
+    }>((resolve, reject) => {
+      http
+        .get(authorizeUrl, (r) => {
+          r.resume(); // discard body
+          resolve({ headers: r.headers });
+        })
+        .on('error', reject);
+    });
 
     // Step 3: The fake issuer redirects to our channel's /callback
     const callbackUrl = String(authorizeRes.headers.location);

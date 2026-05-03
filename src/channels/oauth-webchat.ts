@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import nodePath from 'node:path';
 
 export interface SessionPayload {
+  kind: 'session';
   email: string;
   /** Unix epoch seconds */
   exp: number;
@@ -50,10 +51,10 @@ export function verifySessionCookie(
     return null;
   }
 
-  // Only `exp` is required. Other fields are validated by callers
-  // (e.g. session vs state cookies have different shapes).
   if (typeof payload.exp !== 'number') return null;
   if (payload.exp <= Math.floor(Date.now() / 1000)) return null;
+  if (payload.kind !== 'session') return null;
+  if (typeof payload.email !== 'string' || payload.email.length === 0) return null;
 
   return payload;
 }
@@ -303,18 +304,26 @@ function parseCookies(header: string | undefined): Record<string, string> {
     if (eq < 1) continue;
     const k = part.slice(0, eq).trim();
     const v = part.slice(eq + 1).trim();
-    if (k) out[k] = decodeURIComponent(v);
+    if (!k) continue;
+    try {
+      out[k] = decodeURIComponent(v);
+    } catch {
+      out[k] = v;
+    }
   }
   return out;
 }
 
 interface StatePayload {
+  kind: 'state';
   state: string;
   codeVerifier: string;
   exp: number;
 }
 
 function signStateCookie(payload: StatePayload, secret: string): string {
+  // signSessionCookie's input type is SessionPayload but the underlying
+  // sign operation only depends on JSON-serializing the payload.
   return signSessionCookie(payload as unknown as SessionPayload, secret);
 }
 
@@ -322,7 +331,38 @@ function verifyStateCookie(
   cookie: string,
   secret: string,
 ): StatePayload | null {
-  return verifySessionCookie(cookie, secret) as unknown as StatePayload | null;
+  // Mirror verifySessionCookie's signature/exp checks but require the
+  // 'state' kind discriminator and the state-shape fields.
+  const dot = cookie.indexOf('.');
+  if (dot < 1 || dot === cookie.length - 1) return null;
+  const payloadB64 = cookie.slice(0, dot);
+  const sigB64 = cookie.slice(dot + 1);
+  let payloadBytes: Buffer;
+  let sig: Buffer;
+  try {
+    payloadBytes = Buffer.from(payloadB64, 'base64url');
+    sig = Buffer.from(sigB64, 'base64url');
+  } catch {
+    return null;
+  }
+  const expected = crypto
+    .createHmac('sha256', secret)
+    .update(payloadBytes)
+    .digest();
+  if (expected.length !== sig.length) return null;
+  if (!crypto.timingSafeEqual(expected, sig)) return null;
+  let payload: StatePayload;
+  try {
+    payload = JSON.parse(payloadBytes.toString('utf8')) as StatePayload;
+  } catch {
+    return null;
+  }
+  if (typeof payload.exp !== 'number') return null;
+  if (payload.exp <= Math.floor(Date.now() / 1000)) return null;
+  if (payload.kind !== 'state') return null;
+  if (typeof payload.state !== 'string' || payload.state.length === 0) return null;
+  if (typeof payload.codeVerifier !== 'string' || payload.codeVerifier.length === 0) return null;
+  return payload;
 }
 
 function genState(): string {
@@ -335,6 +375,15 @@ function genCodeVerifier(): string {
 
 function codeChallengeFor(verifier: string): string {
   return crypto.createHash('sha256').update(verifier).digest('base64url');
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 const CHAT_HTML = (email: string) => `<!DOCTYPE html>
@@ -364,7 +413,7 @@ const CHAT_HTML = (email: string) => `<!DOCTYPE html>
 </style>
 </head>
 <body>
-<div id="header"><span>Signed in as ${email}</span><a href="/logout">Logout</a></div>
+<div id="header"><span>Signed in as ${escapeHtml(email)}</span><a href="/logout">Logout</a></div>
 <div id="messages"></div>
 <div id="status">Connecting…</div>
 <div id="preview-area"></div>
@@ -463,7 +512,7 @@ const LOGIN_HTML = (providerName: string) => `<!DOCTYPE html>
 .card{background:#fff;padding:2rem;border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,.05);text-align:center}
 button{padding:.75rem 1.5rem;font-size:1rem;background:#0b93f6;color:#fff;border:none;border-radius:8px;cursor:pointer}
 </style></head><body><div class="card"><h2>Sign in</h2>
-<form action="/login/start" method="get"><button type="submit">Sign in with ${providerName}</button></form>
+<form action="/login/start" method="get"><button type="submit">Sign in with ${escapeHtml(providerName)}</button></form>
 </div></body></html>`;
 
 export class OAuthWebchatChannel implements Channel {
@@ -493,7 +542,15 @@ export class OAuthWebchatChannel implements Channel {
   }
 
   async connect(): Promise<void> {
-    this.server = createServer((req, res) => this.handleRequest(req, res));
+    this.server = createServer((req, res) => {
+      this.handleRequest(req, res).catch((err) => {
+        logger.error({ err, url: req.url }, 'oauth-webchat handler error');
+        if (!res.headersSent) {
+          res.writeHead(500, { 'Content-Type': 'text/plain' });
+          res.end('Internal error');
+        }
+      });
+    });
     return new Promise((resolve, reject) => {
       this.server!.listen(this.config.port, () => {
         logger.info(
@@ -613,7 +670,7 @@ export class OAuthWebchatChannel implements Channel {
       const state = genState();
       const codeVerifier = genCodeVerifier();
       const stateCookie = signStateCookie(
-        { state, codeVerifier, exp: Math.floor(Date.now() / 1000) + 300 },
+        { kind: 'state', state, codeVerifier, exp: Math.floor(Date.now() / 1000) + 300 },
         this.config.cookieSecret,
       );
       const authorizeUrl = await this.oidc.buildAuthorizeUrl({
@@ -688,6 +745,7 @@ export class OAuthWebchatChannel implements Channel {
 
       const sessionCookie = signSessionCookie(
         {
+          kind: 'session',
           email: email.toLowerCase(),
           exp:
             Math.floor(Date.now() / 1000) + this.config.sessionTtlDays * 86400,
@@ -904,13 +962,18 @@ export class OidcClient {
   private async getClient(): Promise<OidcLibClient> {
     if (!this.clientPromise) {
       this.clientPromise = (async () => {
-        const issuer = await Issuer.discover(this.opts.issuer);
-        return new issuer.Client({
-          client_id: this.opts.clientId,
-          client_secret: this.opts.clientSecret,
-          redirect_uris: [this.opts.redirectUri],
-          response_types: ['code'],
-        });
+        try {
+          const issuer = await Issuer.discover(this.opts.issuer);
+          return new issuer.Client({
+            client_id: this.opts.clientId,
+            client_secret: this.opts.clientSecret,
+            redirect_uris: [this.opts.redirectUri],
+            response_types: ['code'],
+          });
+        } catch (err) {
+          this.clientPromise = null; // allow retry on next call
+          throw err;
+        }
       })();
     }
     return this.clientPromise;

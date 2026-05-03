@@ -65,7 +65,7 @@ vi.mock('openid-client', () => {
   return { Issuer, __mocks: { Client, callback, authorizationUrl } };
 });
 
-import { signSessionCookie, verifySessionCookie } from './oauth-webchat.js';
+import { signSessionCookie, verifySessionCookie, type SessionPayload } from './oauth-webchat.js';
 import { isEmailAllowed, parseAllowlist } from './oauth-webchat.js';
 
 const SECRET = 'a'.repeat(64);
@@ -73,11 +73,12 @@ const SECRET = 'a'.repeat(64);
 describe('signSessionCookie / verifySessionCookie', () => {
   it('round-trips a valid cookie', () => {
     const cookie = signSessionCookie(
-      { email: 'alice@example.com', exp: nowSeconds() + 3600 },
+      { kind: 'session', email: 'alice@example.com', exp: nowSeconds() + 3600 },
       SECRET,
     );
     const result = verifySessionCookie(cookie, SECRET);
     expect(result).toEqual({
+      kind: 'session',
       email: 'alice@example.com',
       exp: expect.any(Number),
     });
@@ -85,7 +86,7 @@ describe('signSessionCookie / verifySessionCookie', () => {
 
   it('rejects a cookie signed with a different secret', () => {
     const cookie = signSessionCookie(
-      { email: 'alice@example.com', exp: nowSeconds() + 3600 },
+      { kind: 'session', email: 'alice@example.com', exp: nowSeconds() + 3600 },
       SECRET,
     );
     expect(verifySessionCookie(cookie, 'b'.repeat(64))).toBeNull();
@@ -93,7 +94,7 @@ describe('signSessionCookie / verifySessionCookie', () => {
 
   it('rejects an expired cookie', () => {
     const cookie = signSessionCookie(
-      { email: 'alice@example.com', exp: nowSeconds() - 1 },
+      { kind: 'session', email: 'alice@example.com', exp: nowSeconds() - 1 },
       SECRET,
     );
     expect(verifySessionCookie(cookie, SECRET)).toBeNull();
@@ -101,7 +102,7 @@ describe('signSessionCookie / verifySessionCookie', () => {
 
   it('rejects a cookie with tampered payload', () => {
     const cookie = signSessionCookie(
-      { email: 'alice@example.com', exp: nowSeconds() + 3600 },
+      { kind: 'session', email: 'alice@example.com', exp: nowSeconds() + 3600 },
       SECRET,
     );
     const [, sig] = cookie.split('.');
@@ -705,7 +706,7 @@ describe('getSessionFromCookies', () => {
 
   it('returns the payload for a valid cookie', () => {
     const cookie = signSessionCookie(
-      { email: 'alice@example.com', exp: Math.floor(Date.now() / 1000) + 3600 },
+      { kind: 'session', email: 'alice@example.com', exp: Math.floor(Date.now() / 1000) + 3600 },
       'a'.repeat(64),
     );
     const result = getSessionFromCookies(
@@ -732,7 +733,7 @@ describe('GET /', () => {
     const channel = new OAuthWebchatChannel(makeConfig(), makeOpts());
     await channel.connect();
     const session = signSessionCookie(
-      { email: 'alice@example.com', exp: Math.floor(Date.now() / 1000) + 3600 },
+      { kind: 'session', email: 'alice@example.com', exp: Math.floor(Date.now() / 1000) + 3600 },
       makeConfig().cookieSecret,
     );
     const req = makeReq({
@@ -765,7 +766,7 @@ describe('GET /stream', () => {
     const channel = new OAuthWebchatChannel(makeConfig(), makeOpts());
     await channel.connect();
     const session = signSessionCookie(
-      { email: 'alice@example.com', exp: Math.floor(Date.now() / 1000) + 3600 },
+      { kind: 'session', email: 'alice@example.com', exp: Math.floor(Date.now() / 1000) + 3600 },
       makeConfig().cookieSecret,
     );
     const req = makeReq({
@@ -822,7 +823,7 @@ function makeReqWithBody(overrides: {
 
 function sessionCookieHeader(): string {
   const value = signSessionCookie(
-    { email: 'alice@example.com', exp: Math.floor(Date.now() / 1000) + 3600 },
+    { kind: 'session', email: 'alice@example.com', exp: Math.floor(Date.now() / 1000) + 3600 },
     makeConfig().cookieSecret,
   );
   return `oauth-webchat-session=${encodeURIComponent(value)}`;
@@ -982,7 +983,7 @@ describe('sendMessage', () => {
     const channel = new OAuthWebchatChannel(makeConfig(), makeOpts());
     await channel.connect();
     const session = signSessionCookie(
-      { email: 'alice@example.com', exp: Math.floor(Date.now() / 1000) + 3600 },
+      { kind: 'session', email: 'alice@example.com', exp: Math.floor(Date.now() / 1000) + 3600 },
       makeConfig().cookieSecret,
     );
     const req = makeReq({
@@ -1012,7 +1013,7 @@ describe('sendMessage', () => {
     const channel = new OAuthWebchatChannel(makeConfig(), makeOpts());
     await channel.connect();
     const session = signSessionCookie(
-      { email: 'alice@example.com', exp: Math.floor(Date.now() / 1000) + 3600 },
+      { kind: 'session', email: 'alice@example.com', exp: Math.floor(Date.now() / 1000) + 3600 },
       makeConfig().cookieSecret,
     );
     const req = makeReq({
@@ -1052,7 +1053,7 @@ describe('sendMedia', () => {
     const channel = new OAuthWebchatChannel(makeConfig(), makeOpts());
     await channel.connect();
     const session = signSessionCookie(
-      { email: 'alice@example.com', exp: Math.floor(Date.now() / 1000) + 3600 },
+      { kind: 'session', email: 'alice@example.com', exp: Math.floor(Date.now() / 1000) + 3600 },
       makeConfig().cookieSecret,
     );
     const req = makeReq({
@@ -1117,5 +1118,49 @@ describe('self-registration', () => {
     const factory = factoryCall![1] as (opts: unknown) => unknown;
     const result = factory(makeOpts());
     expect(result).toBeNull();
+  });
+});
+
+describe('C1 regression: state cookie cannot be used as session cookie', () => {
+  it('verifySessionCookie rejects a state-shaped payload', () => {
+    // signSessionCookie produces a cookie whose payload has kind:'state'.
+    // Even though signed with the same secret, verifySessionCookie must reject it.
+    const stateCookie = signSessionCookie(
+      // Cast to bypass the new TypeScript narrowing — this simulates an
+      // attacker presenting a state cookie.
+      { kind: 'state', state: 'X', codeVerifier: 'Y', exp: Math.floor(Date.now() / 1000) + 300 } as unknown as SessionPayload,
+      'a'.repeat(64),
+    );
+    expect(verifySessionCookie(stateCookie, 'a'.repeat(64))).toBeNull();
+  });
+
+  it('getSessionFromCookies rejects a cookie that lacks email', () => {
+    const cookie = signSessionCookie(
+      { kind: 'state', exp: Math.floor(Date.now() / 1000) + 300 } as unknown as SessionPayload,
+      'a'.repeat(64),
+    );
+    expect(getSessionFromCookies({ 'oauth-webchat-session': cookie }, 'a'.repeat(64))).toBeNull();
+  });
+
+  it('GET /stream rejects a state cookie presented as a session cookie', async () => {
+    const channel = new OAuthWebchatChannel(makeConfig(), makeOpts());
+    await channel.connect();
+    // First, get a real state cookie by hitting /login/start
+    const startReq = makeReq({ url: '/login/start' });
+    const startRes = makeRes();
+    await dispatch(channel, startReq, startRes);
+    const setCookie = startRes._headers['Set-Cookie'];
+    const cookies = Array.isArray(setCookie) ? setCookie : [String(setCookie)];
+    const stateCookie = cookies.find((c) => String(c).startsWith('oauth-webchat-state='))!;
+    const stateValue = String(stateCookie).split(';')[0].slice('oauth-webchat-state='.length);
+    // Present that value as the session cookie
+    const req = makeReq({
+      url: '/stream',
+      cookie: `oauth-webchat-session=${stateValue}`,
+    });
+    const res = makeRes();
+    await dispatch(channel, req, res);
+    expect(res._status).toBe(401);
+    await channel.disconnect();
   });
 });

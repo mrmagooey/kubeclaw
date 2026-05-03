@@ -191,7 +191,9 @@ export async function createOrReplaceDeployment(
 // ---- Main setup function ----
 
 /** Build secret data from channel setup input. */
-export function buildSecretData(input: ChannelSetupInput): Record<string, string> {
+export function buildSecretData(
+  input: ChannelSetupInput,
+): Record<string, string> {
   const { type } = input;
   const data: Record<string, string> = {};
 
@@ -218,14 +220,17 @@ export function buildSecretData(input: ChannelSetupInput): Record<string, string
     if (input.publicUrl) data['OAUTH_WEBCHAT_PUBLIC_URL'] = input.publicUrl;
     if (input.oidcIssuer) data['OAUTH_WEBCHAT_OIDC_ISSUER'] = input.oidcIssuer;
     if (input.clientId) data['OAUTH_WEBCHAT_CLIENT_ID'] = input.clientId;
-    if (input.clientSecret) data['OAUTH_WEBCHAT_CLIENT_SECRET'] = input.clientSecret;
+    if (input.clientSecret)
+      data['OAUTH_WEBCHAT_CLIENT_SECRET'] = input.clientSecret;
     if (input.allowedEmails)
       data['OAUTH_WEBCHAT_ALLOWED_EMAILS'] = input.allowedEmails;
-    if (input.cookieSecret) data['OAUTH_WEBCHAT_COOKIE_SECRET'] = input.cookieSecret;
+    if (input.cookieSecret)
+      data['OAUTH_WEBCHAT_COOKIE_SECRET'] = input.cookieSecret;
     if (input.sessionTtlDays !== undefined)
       data['OAUTH_WEBCHAT_SESSION_TTL_DAYS'] = String(input.sessionTtlDays);
     if (input.scopes) data['OAUTH_WEBCHAT_SCOPES'] = input.scopes;
-    if (input.providerName) data['OAUTH_WEBCHAT_PROVIDER_NAME'] = input.providerName;
+    if (input.providerName)
+      data['OAUTH_WEBCHAT_PROVIDER_NAME'] = input.providerName;
   }
 
   return data;
