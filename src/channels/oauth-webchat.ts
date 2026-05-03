@@ -552,7 +552,43 @@ export class OAuthWebchatChannel implements Channel {
         logger.debug({ jid, err }, 'oauth-webchat: SSE write failed');
       }
     }
-    logger.info({ jid, clients: clients.length }, 'oauth-webchat message sent via SSE');
+    logger.info(
+      { jid, clients: clients.length },
+      'oauth-webchat message sent via SSE',
+    );
+  }
+
+  async sendMedia(
+    jid: string,
+    buffer: Buffer,
+    mediaType: string,
+    caption?: string,
+  ): Promise<void> {
+    const email = jid.slice('oauth-webchat:'.length);
+    const clients = this.sseClients.filter((c) => c.email === email);
+    if (clients.length === 0) {
+      logger.debug({ jid }, 'oauth-webchat: no SSE client connected (sendMedia)');
+      return;
+    }
+    const payload: { mediaType: string; data: string; caption?: string } = {
+      mediaType,
+      data: buffer.toString('base64'),
+    };
+    if (caption !== undefined) payload.caption = caption;
+    const ssePayload = `event: media\ndata: ${JSON.stringify(payload)}\n\n`;
+    for (const client of clients) {
+      try {
+        if (!client.res.writableEnded) {
+          client.res.write(ssePayload);
+        }
+      } catch (err) {
+        logger.debug({ jid, err }, 'oauth-webchat: SSE write failed (sendMedia)');
+      }
+    }
+    logger.info(
+      { jid, mediaType, clients: clients.length },
+      'oauth-webchat media sent via SSE',
+    );
   }
 
   private async handleRequest(

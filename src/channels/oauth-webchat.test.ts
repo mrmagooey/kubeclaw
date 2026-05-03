@@ -1044,3 +1044,46 @@ describe('sendMessage', () => {
     await channel.disconnect();
   });
 });
+
+describe('sendMedia', () => {
+  it('emits an SSE "media" event with base64 data', async () => {
+    const channel = new OAuthWebchatChannel(makeConfig(), makeOpts());
+    await channel.connect();
+    const session = signSessionCookie(
+      { email: 'alice@example.com', exp: Math.floor(Date.now() / 1000) + 3600 },
+      makeConfig().cookieSecret,
+    );
+    const req = makeReq({
+      url: '/stream',
+      cookie: `oauth-webchat-session=${encodeURIComponent(session)}`,
+    });
+    const closeHandlers: Array<() => void> = [];
+    (req.on as ReturnType<typeof vi.fn>).mockImplementation(
+      (event: string, cb: () => void) => {
+        if (event === 'close') closeHandlers.push(cb);
+      },
+    );
+    const res = makeRes();
+    await dispatch(channel, req, res);
+
+    const buf = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+    await channel.sendMedia(
+      'oauth-webchat:alice@example.com',
+      buf,
+      'image/png',
+      'Hi',
+    );
+
+    const written = (res.write as ReturnType<typeof vi.fn>).mock.calls
+      .map(([d]: [string]) => d)
+      .join('');
+    expect(written).toContain('event: media');
+    const dataLine = written.split('\n').find((l) => l.startsWith('data:'));
+    const parsed = JSON.parse(dataLine!.slice('data: '.length));
+    expect(parsed.mediaType).toBe('image/png');
+    expect(parsed.caption).toBe('Hi');
+    expect(parsed.data).toBe(buf.toString('base64'));
+    closeHandlers.forEach((h) => h());
+    await channel.disconnect();
+  });
+});
