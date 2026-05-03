@@ -66,6 +66,7 @@ The full prefix table (from `folderPrefixForChannel`):
 | `whatsapp` | `wa` |
 | `irc` | `irc` |
 | `http` | `http` |
+| `oauth-webchat` | `oauth` |
 | _(unknown)_ | first 3 chars of channel name |
 
 The identifier part of the JID is then sanitised:
