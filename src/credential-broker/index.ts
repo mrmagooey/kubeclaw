@@ -1,5 +1,6 @@
 import http from 'http';
 import fs from 'fs';
+import { fileURLToPath } from 'node:url';
 import { logger } from '../logger.js';
 import {
   KubeConfig,
@@ -14,7 +15,8 @@ import { K8sSecretSource } from './k8s-secret-source.js';
 import { PinoAudit } from './audit.js';
 import { handleExtAuthz } from './ext-authz.js';
 
-const CONFIG_PATH = process.env.BROKER_CONFIG_PATH ?? '/etc/credential-broker/config.yaml';
+const CONFIG_PATH =
+  process.env.BROKER_CONFIG_PATH ?? '/etc/credential-broker/config.yaml';
 const PORT = parseInt(process.env.BROKER_PORT ?? '8080', 10);
 const NAMESPACE = process.env.BROKER_NAMESPACE ?? 'kubeclaw';
 const AUDIENCE = process.env.BROKER_AUDIENCE ?? 'kubeclaw-credential-broker';
@@ -25,12 +27,18 @@ function loadConfigOrThrow(path: string) {
   try {
     text = fs.readFileSync(path, 'utf8');
   } catch (err) {
-    throw new Error(`broker config not readable at ${path}: ${(err as Error).message}`, { cause: err });
+    throw new Error(
+      `broker config not readable at ${path}: ${(err as Error).message}`,
+      { cause: err },
+    );
   }
   try {
     return loadBrokerConfig(text);
   } catch (err) {
-    throw new Error(`invalid broker config at ${path}: ${(err as Error).message}`, { cause: err });
+    throw new Error(
+      `invalid broker config at ${path}: ${(err as Error).message}`,
+      { cause: err },
+    );
   }
 }
 
@@ -72,7 +80,10 @@ export async function startBroker(): Promise<http.Server> {
 
   const secretSource = new K8sSecretSource({
     readSecret: async (name) => {
-      const res = await coreApi.readNamespacedSecret({ name, namespace: NAMESPACE });
+      const res = await coreApi.readNamespacedSecret({
+        name,
+        namespace: NAMESPACE,
+      });
       return { data: res.data ?? {} };
     },
     cacheTtlMs: SECRET_TTL_MS,
@@ -88,7 +99,9 @@ export async function startBroker(): Promise<http.Server> {
     handleExtAuthz(
       {
         authorization: req.headers['authorization'] as string | undefined,
-        'x-forwarded-authority': req.headers['x-forwarded-authority'] as string | undefined,
+        'x-forwarded-authority': req.headers['x-forwarded-authority'] as
+          | string
+          | undefined,
       },
       { resolver, identityVerifier, secretSource, audit },
     )
@@ -110,7 +123,16 @@ export async function startBroker(): Promise<http.Server> {
   });
 }
 
-if (process.env.KUBECLAW_MODE === 'credential-broker') {
+// Direct-run guard: only invoke startBroker() when this module is the
+// process entrypoint (e.g. `tsx src/credential-broker/index.ts` or
+// `node dist/credential-broker/index.js`). When dispatched via
+// `src/index.ts`, the dispatcher calls startBroker() explicitly.
+const isDirectRun =
+  process.argv[1] &&
+  new URL(import.meta.url).pathname ===
+    new URL(`file://${process.argv[1]}`).pathname;
+
+if (isDirectRun) {
   startBroker().catch((err) => {
     logger.error({ err }, 'broker failed to start');
     process.exit(1);

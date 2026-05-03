@@ -55,7 +55,8 @@ export const DATA_DIR = path.resolve(PROJECT_ROOT, 'data');
 
 export const KUBECLAW_MODE = (process.env.KUBECLAW_MODE || 'orchestrator') as
   | 'orchestrator'
-  | 'channel';
+  | 'channel'
+  | 'credential-broker';
 export const KUBECLAW_CHANNEL = process.env.KUBECLAW_CHANNEL || '';
 // Channel type for factory lookup — defaults to KUBECLAW_CHANNEL for backwards compat.
 // Set explicitly when the instance name differs from the type (e.g. "http-staging" instance, "http" type).
