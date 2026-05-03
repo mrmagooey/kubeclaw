@@ -248,7 +248,10 @@ function signStateCookie(payload: StatePayload, secret: string): string {
   return signSessionCookie(payload as unknown as SessionPayload, secret);
 }
 
-function verifyStateCookie(cookie: string, secret: string): StatePayload | null {
+function verifyStateCookie(
+  cookie: string,
+  secret: string,
+): StatePayload | null {
   return verifySessionCookie(cookie, secret) as unknown as StatePayload | null;
 }
 
@@ -335,7 +338,10 @@ export class OAuthWebchatChannel implements Channel {
     // Implemented in a later task
   }
 
-  private async handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  private async handleRequest(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
     const url = new URL(req.url ?? '/', this.config.publicUrl);
 
     if (req.method === 'GET' && url.pathname === '/login') {
@@ -358,6 +364,77 @@ export class OAuthWebchatChannel implements Channel {
       res.writeHead(302, {
         'Set-Cookie': `${STATE_COOKIE}=${encodeURIComponent(stateCookie)}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=300`,
         Location: authorizeUrl,
+      });
+      res.end();
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/callback') {
+      const cookies = parseCookies(req.headers.cookie);
+      const stateRaw = cookies[STATE_COOKIE];
+      if (!stateRaw) {
+        res.writeHead(400, { 'Content-Type': 'text/plain' });
+        res.end('Missing state cookie');
+        return;
+      }
+      const statePayload = verifyStateCookie(stateRaw, this.config.cookieSecret);
+      if (!statePayload) {
+        res.writeHead(400, { 'Content-Type': 'text/plain' });
+        res.end('Invalid state cookie');
+        return;
+      }
+      const queryState = url.searchParams.get('state');
+      const code = url.searchParams.get('code');
+      if (!code || queryState !== statePayload.state) {
+        res.writeHead(400, { 'Content-Type': 'text/plain' });
+        res.end('State mismatch');
+        return;
+      }
+
+      let claims: OidcClaims;
+      try {
+        claims = await this.oidc.exchangeCode({
+          params: { code, state: queryState },
+          checks: { state: statePayload.state, code_verifier: statePayload.codeVerifier },
+        });
+      } catch (err) {
+        logger.warn({ err }, 'oauth-webchat: token exchange failed');
+        res.writeHead(400, { 'Content-Type': 'text/plain' });
+        res.end('Token exchange failed');
+        return;
+      }
+
+      const email = (claims.email ?? '').toString();
+      const verified = claims.email_verified === true;
+      if (!isEmailAllowed(email, verified, this.config.allowlist)) {
+        logger.info(
+          { email, verified, sub: claims.sub },
+          'oauth-webchat: rejected non-allowlisted login',
+        );
+        res.writeHead(403, { 'Content-Type': 'text/plain' });
+        res.end('Sorry, your account is not authorized.');
+        return;
+      }
+
+      logger.info(
+        { email: email.toLowerCase(), sub: claims.sub },
+        'oauth-webchat: successful login',
+      );
+
+      const sessionCookie = signSessionCookie(
+        {
+          email: email.toLowerCase(),
+          exp: Math.floor(Date.now() / 1000) + this.config.sessionTtlDays * 86400,
+        },
+        this.config.cookieSecret,
+      );
+      const maxAge = this.config.sessionTtlDays * 86400;
+      res.writeHead(302, {
+        'Set-Cookie': [
+          `${SESSION_COOKIE}=${encodeURIComponent(sessionCookie)}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${maxAge}`,
+          `${STATE_COOKIE}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0`,
+        ],
+        Location: '/',
       });
       res.end();
       return;

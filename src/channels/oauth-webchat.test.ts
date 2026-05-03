@@ -430,7 +430,10 @@ interface FakeRes {
   _headers: Record<string, string | string[]>;
   _body: string;
   writableEnded: boolean;
-  writeHead: (status: number, headers?: Record<string, string | string[]>) => void;
+  writeHead: (
+    status: number,
+    headers?: Record<string, string | string[]>,
+  ) => void;
   write: (data: string) => void;
   end: (data?: string) => void;
   on: ReturnType<typeof vi.fn>;
@@ -458,11 +461,17 @@ function makeRes(): FakeRes {
   return res;
 }
 
-async function dispatch(channel: OAuthWebchatChannel, req: IncomingMessage, res: FakeRes) {
-  await (mockServerInstance._handler as (r: IncomingMessage, s: ServerResponse) => unknown)(
-    req,
-    res as unknown as ServerResponse,
-  );
+async function dispatch(
+  channel: OAuthWebchatChannel,
+  req: IncomingMessage,
+  res: FakeRes,
+) {
+  await (
+    mockServerInstance._handler as (
+      r: IncomingMessage,
+      s: ServerResponse,
+    ) => unknown
+  )(req, res as unknown as ServerResponse);
   await new Promise((r) => setTimeout(r, 0));
 }
 
@@ -495,7 +504,139 @@ describe('GET /login/start', () => {
     expect(loc).toContain('STATE');
     const setCookie = res._headers['Set-Cookie'];
     const cookies = Array.isArray(setCookie) ? setCookie : [setCookie ?? ''];
-    expect(cookies.some((c) => String(c).startsWith('oauth-webchat-state='))).toBe(true);
+    expect(
+      cookies.some((c) => String(c).startsWith('oauth-webchat-state=')),
+    ).toBe(true);
+    await channel.disconnect();
+  });
+});
+
+async function loginAndExtractStateCookie(
+  channel: OAuthWebchatChannel,
+  _cookieSecret: string,
+): Promise<{ stateValue: string; cookieHeader: string }> {
+  const req = makeReq({ url: '/login/start' });
+  const res = makeRes();
+  await dispatch(channel, req, res);
+  const setCookie = res._headers['Set-Cookie'];
+  const cookies = Array.isArray(setCookie) ? setCookie : [String(setCookie)];
+  const stateCookie = cookies.find((c) => String(c).startsWith('oauth-webchat-state='))!;
+  const cookieHeader = String(stateCookie).split(';')[0];
+  // Extract the actual state by decoding the cookie value
+  const rawValue = decodeURIComponent(cookieHeader.slice('oauth-webchat-state='.length));
+  const dot = rawValue.indexOf('.');
+  const payloadB64 = rawValue.slice(0, dot);
+  const payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8')) as { state: string };
+  return { stateValue: payload.state, cookieHeader };
+}
+
+describe('GET /callback', () => {
+  it('rejects when state cookie is missing', async () => {
+    const channel = new OAuthWebchatChannel(makeConfig(), makeOpts());
+    await channel.connect();
+    const req = makeReq({ url: '/callback?code=CODE&state=STATE' });
+    const res = makeRes();
+    await dispatch(channel, req, res);
+    expect(res._status).toBe(400);
+    await channel.disconnect();
+  });
+
+  it('rejects when state value does not match cookie', async () => {
+    const channel = new OAuthWebchatChannel(makeConfig(), makeOpts());
+    await channel.connect();
+    const { cookieHeader } = await loginAndExtractStateCookie(channel, makeConfig().cookieSecret);
+    const req = makeReq({
+      url: '/callback?code=CODE&state=WRONG',
+      cookie: cookieHeader,
+    });
+    const res = makeRes();
+    await dispatch(channel, req, res);
+    expect(res._status).toBe(400);
+    await channel.disconnect();
+  });
+
+  it('rejects an unverified email with 403', async () => {
+    const oidcMod = (await import('openid-client')) as unknown as {
+      __mocks: { callback: ReturnType<typeof vi.fn> };
+    };
+    oidcMod.__mocks.callback.mockResolvedValue({
+      claims: () => ({
+        email: 'alice@example.com',
+        email_verified: false,
+        sub: '12345',
+      }),
+    });
+    const channel = new OAuthWebchatChannel(makeConfig(), makeOpts());
+    await channel.connect();
+    const { stateValue, cookieHeader } = await loginAndExtractStateCookie(channel, makeConfig().cookieSecret);
+    const req = makeReq({
+      url: `/callback?code=CODE&state=${stateValue}`,
+      cookie: cookieHeader,
+    });
+    const res = makeRes();
+    await dispatch(channel, req, res);
+    expect(res._status).toBe(403);
+    await channel.disconnect();
+  });
+
+  it('rejects an email not on the allowlist with 403', async () => {
+    const oidcMod = (await import('openid-client')) as unknown as {
+      __mocks: { callback: ReturnType<typeof vi.fn> };
+    };
+    oidcMod.__mocks.callback.mockResolvedValue({
+      claims: () => ({
+        email: 'eve@evil.com',
+        email_verified: true,
+        sub: '12345',
+      }),
+    });
+    const channel = new OAuthWebchatChannel(makeConfig(), makeOpts());
+    await channel.connect();
+    const { stateValue, cookieHeader } = await loginAndExtractStateCookie(channel, makeConfig().cookieSecret);
+    const req = makeReq({
+      url: `/callback?code=CODE&state=${stateValue}`,
+      cookie: cookieHeader,
+    });
+    const res = makeRes();
+    await dispatch(channel, req, res);
+    expect(res._status).toBe(403);
+    await channel.disconnect();
+  });
+
+  it('issues a session cookie and 302 to / on success', async () => {
+    const oidcMod = (await import('openid-client')) as unknown as {
+      __mocks: { callback: ReturnType<typeof vi.fn> };
+    };
+    oidcMod.__mocks.callback.mockResolvedValue({
+      claims: () => ({
+        email: 'alice@example.com',
+        email_verified: true,
+        sub: '12345',
+      }),
+    });
+    const channel = new OAuthWebchatChannel(makeConfig(), makeOpts());
+    await channel.connect();
+    const { stateValue, cookieHeader } = await loginAndExtractStateCookie(channel, makeConfig().cookieSecret);
+    const req = makeReq({
+      url: `/callback?code=CODE&state=${stateValue}`,
+      cookie: cookieHeader,
+    });
+    const res = makeRes();
+    await dispatch(channel, req, res);
+
+    expect(res._status).toBe(302);
+    expect(String(res._headers['Location'])).toBe('/');
+    const setCookies = (
+      Array.isArray(res._headers['Set-Cookie'])
+        ? res._headers['Set-Cookie']
+        : [String(res._headers['Set-Cookie'] ?? '')]
+    ) as string[];
+    expect(setCookies.some((c) => c.startsWith('oauth-webchat-session='))).toBe(true);
+    expect(
+      setCookies.some(
+        (c) => c.startsWith('oauth-webchat-state=') && c.includes('Max-Age=0'),
+      ),
+    ).toBe(true);
     await channel.disconnect();
   });
 });
