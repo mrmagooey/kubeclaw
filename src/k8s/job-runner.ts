@@ -34,7 +34,15 @@ import {
   REDIS_AGENT_PASSWORD,
   REDIS_TOOL_SERVER_PASSWORD,
   REDIS_ADAPTER_PASSWORD,
+  getInjectionMode,
+  CREDENTIAL_SIDECAR_IMAGE,
+  CREDENTIAL_SIDECAR_PORT,
 } from '../config.js';
+import { workloadEnvForSidecar } from '../credential-injection/workload-env.js';
+import {
+  sidecarContainerSpec,
+  sidecarVolumes,
+} from '../credential-injection/sidecar-spec.js';
 import {
   JobInput,
   JobOutput,
@@ -90,6 +98,23 @@ export function buildJobName(folder: string): string {
   const truncated = sanitized.slice(0, maxFolderLen);
   return `${prefix}-${truncated}-${suffix}`;
 }
+
+/**
+ * API key env var names that must be stripped from the main container when the
+ * credential-injection sidecar is active.  The sidecar (Envoy + credential
+ * broker) fetches and injects these at request time, so they must NOT be
+ * present in the pod spec (defense-in-depth; the tool-server strip-list in
+ * container/agent-runner/src/tool-server.ts:SECRET_ENV_VARS is kept as a
+ * separate layer).
+ */
+const STRIPPED_WHEN_INJECTED = new Set([
+  'OPENAI_API_KEY',
+  'OPENROUTER_API_KEY',
+  'ANTHROPIC_API_KEY',
+  'ANTHROPIC_AUTH_TOKEN',
+  'CLAUDE_CODE_OAUTH_TOKEN',
+  'VOYAGE_API_KEY',
+]);
 
 // Job constants
 const JOB_TTL_SECONDS_AFTER_FINISHED = 3600;
@@ -612,6 +637,16 @@ export class JobRunner {
       });
     }
 
+    // Credential injection: strip API keys and add proxy env when active
+    const injectionMode = getInjectionMode();
+    const finalEnv =
+      injectionMode === 'sidecar' || injectionMode === 'istio'
+        ? [
+            ...envVars.filter((e) => !STRIPPED_WHEN_INJECTED.has(e.name)),
+            ...workloadEnvForSidecar({ port: CREDENTIAL_SIDECAR_PORT }),
+          ]
+        : envVars;
+
     // Build resource limits — include GPU/device requests when specified
     const resourceLimits: Record<string, string> = {
       memory: TOOL_JOB_MEMORY_LIMIT,
@@ -623,7 +658,7 @@ export class JobRunner {
       name: 'agent',
       image: getContainerImage(spec.provider || 'claude'),
       imagePullPolicy: 'IfNotPresent',
-      env: envVars,
+      env: finalEnv,
       volumeMounts,
       resources: {
         requests: {
@@ -663,6 +698,23 @@ export class JobRunner {
         ]
       : undefined;
 
+    // Build final containers and volumes arrays, appending credential sidecar when active
+    const containers: any[] = [agentContainer];
+    const finalVolumes: any[] = [...volumes];
+    if (injectionMode === 'sidecar') {
+      containers.push(
+        sidecarContainerSpec({
+          image: CREDENTIAL_SIDECAR_IMAGE,
+          port: CREDENTIAL_SIDECAR_PORT,
+        }),
+      );
+      finalVolumes.push(...sidecarVolumes());
+    }
+
+    // Service account: use dedicated SA for tool jobs when injection is active
+    const podServiceAccountName =
+      injectionMode !== 'off' ? 'kubeclaw-tool-job' : '';
+
     const job: V1Job = {
       apiVersion: 'batch/v1',
       kind: 'Job',
@@ -685,11 +737,11 @@ export class JobRunner {
           },
           spec: {
             restartPolicy: 'Never',
-            serviceAccountName: '',
+            serviceAccountName: podServiceAccountName,
             automountServiceAccountToken: false,
             ...(initContainers && { initContainers }),
-            containers: [agentContainer],
-            volumes,
+            containers,
+            volumes: finalVolumes,
             ...(spec.nodeSelector && { nodeSelector: spec.nodeSelector }),
             ...(spec.tolerations && { tolerations: spec.tolerations }),
             ...(spec.affinity && { affinity: spec.affinity }),

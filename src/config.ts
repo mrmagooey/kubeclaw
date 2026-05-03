@@ -305,6 +305,14 @@ export const BROWSER_SIDECAR_CPU_REQUEST =
 export const BROWSER_SIDECAR_CPU_LIMIT =
   process.env.BROWSER_SIDECAR_CPU_LIMIT || '500m';
 
+// --- Credential Sidecar Configuration ---
+export const CREDENTIAL_SIDECAR_IMAGE =
+  process.env.CREDENTIAL_SIDECAR_IMAGE ?? 'envoyproxy/envoy:v1.31-latest';
+export const CREDENTIAL_SIDECAR_PORT = parseInt(
+  process.env.CREDENTIAL_SIDECAR_PORT ?? '8443',
+  10,
+);
+
 export {
   getInjectionMode,
   type InjectionMode,
