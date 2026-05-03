@@ -1,4 +1,5 @@
 import { vi, describe, it, expect } from 'vitest';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 
 vi.mock('../logger.js', () => ({
   logger: {
@@ -13,6 +14,36 @@ vi.mock('../env.js', () => ({
   readEnvFile: vi.fn(() => ({})),
 }));
 
+const mockServerInstance: {
+  listen: ReturnType<typeof vi.fn>;
+  close: ReturnType<typeof vi.fn>;
+  on: ReturnType<typeof vi.fn>;
+  _handler?: (req: IncomingMessage, res: ServerResponse) => void;
+} = {
+  listen: vi.fn((_port: number, cb: () => void) => cb()),
+  close: vi.fn((cb: () => void) => cb()),
+  on: vi.fn(),
+};
+
+vi.mock('node:http', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:http')>();
+  return {
+    ...actual,
+    createServer: vi.fn(
+      (handler: (req: IncomingMessage, res: ServerResponse) => void) => {
+        mockServerInstance._handler = handler;
+        return mockServerInstance;
+      },
+    ),
+  };
+});
+
+vi.mock('../config.js', () => ({
+  ASSISTANT_NAME: 'Andy',
+  TRIGGER_PATTERN: /^@Andy\b/i,
+  GROUPS_DIR: '/tmp/groups-test',
+}));
+
 vi.mock('openid-client', () => {
   const callback = vi.fn();
   const authorizationUrl = vi.fn(
@@ -24,7 +55,9 @@ vi.mock('openid-client', () => {
   const Issuer = {
     discover: vi.fn().mockResolvedValue({
       Client,
-      metadata: { authorization_endpoint: 'https://issuer.example.com/authorize' },
+      metadata: {
+        authorization_endpoint: 'https://issuer.example.com/authorize',
+      },
     }),
   };
   return { Issuer, __mocks: { Client, callback, authorizationUrl } };
@@ -225,6 +258,82 @@ describe('parseConfig', () => {
   });
 });
 
+import { OAuthWebchatChannel } from './oauth-webchat.js';
+
+function makeConfig() {
+  return {
+    port: 4080,
+    publicUrl: 'https://chat.example.com',
+    oidcIssuer: 'https://issuer.example.com',
+    clientId: 'cid',
+    clientSecret: 'sec',
+    allowlist: parseAllowlist('alice@example.com,@trusted.org'),
+    cookieSecret: 'a'.repeat(64),
+    sessionTtlDays: 30,
+    scopes: 'openid email profile',
+    providerName: 'OIDC',
+  };
+}
+
+function makeOpts() {
+  return {
+    onMessage: vi.fn(),
+    onChatMetadata: vi.fn(),
+    registeredGroups: vi.fn(() => ({
+      'oauth-webchat:alice@example.com': {
+        name: 'alice@example.com',
+        folder: 'oauth-alice-example-com',
+        trigger: '@Andy',
+        added_at: '2024-01-01T00:00:00.000Z',
+      },
+    })),
+  };
+}
+
+describe('OAuthWebchatChannel — lifecycle and basics', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('has name "oauth-webchat"', () => {
+    const channel = new OAuthWebchatChannel(makeConfig(), makeOpts());
+    expect(channel.name).toBe('oauth-webchat');
+  });
+
+  it('declares inboundImages and outboundMedia capabilities', () => {
+    const channel = new OAuthWebchatChannel(makeConfig(), makeOpts());
+    expect(channel.capabilities?.inboundImages).toBe(true);
+    expect(channel.capabilities?.outboundMedia).toBe(true);
+  });
+
+  it('owns oauth-webchat: prefixed JIDs', () => {
+    const channel = new OAuthWebchatChannel(makeConfig(), makeOpts());
+    expect(channel.ownsJid('oauth-webchat:alice@example.com')).toBe(true);
+    expect(channel.ownsJid('http:alice')).toBe(false);
+    expect(channel.ownsJid('telegram:123')).toBe(false);
+  });
+
+  it('isConnected() returns false before connect', () => {
+    const channel = new OAuthWebchatChannel(makeConfig(), makeOpts());
+    expect(channel.isConnected()).toBe(false);
+  });
+
+  it('isConnected() returns true after connect, false after disconnect', async () => {
+    const channel = new OAuthWebchatChannel(makeConfig(), makeOpts());
+    await channel.connect();
+    expect(channel.isConnected()).toBe(true);
+    await channel.disconnect();
+    expect(channel.isConnected()).toBe(false);
+  });
+
+  it('listens on the configured port', async () => {
+    const channel = new OAuthWebchatChannel({ ...makeConfig(), port: 9123 }, makeOpts());
+    await channel.connect();
+    expect(mockServerInstance.listen).toHaveBeenCalledWith(9123, expect.any(Function));
+    await channel.disconnect();
+  });
+});
+
 describe('OidcClient', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -240,14 +349,14 @@ describe('OidcClient', () => {
     });
 
     const { Issuer } = await import('openid-client');
-    expect((Issuer.discover as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+    expect(Issuer.discover as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
 
     const url = await oidc.buildAuthorizeUrl({
       state: 'STATE',
       codeChallenge: 'CHALLENGE',
     });
     expect(url).toContain('STATE');
-    expect((Issuer.discover as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
+    expect(Issuer.discover as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(
       'https://issuer.example.com',
     );
   });
@@ -263,11 +372,17 @@ describe('OidcClient', () => {
     await oidc.buildAuthorizeUrl({ state: 'A', codeChallenge: 'X' });
     await oidc.buildAuthorizeUrl({ state: 'B', codeChallenge: 'Y' });
     const { Issuer } = await import('openid-client');
-    expect((Issuer.discover as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1);
+    expect(
+      (Issuer.discover as ReturnType<typeof vi.fn>).mock.calls.length,
+    ).toBe(1);
   });
 
   it('exchangeCode returns claims on success', async () => {
-    const claims = { email: 'alice@example.com', email_verified: true, sub: '12345' };
+    const claims = {
+      email: 'alice@example.com',
+      email_verified: true,
+      sub: '12345',
+    };
     const mocks = (await import('openid-client')) as unknown as {
       __mocks: { callback: ReturnType<typeof vi.fn> };
     };

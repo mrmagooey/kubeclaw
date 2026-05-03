@@ -201,6 +201,90 @@ export interface OidcClaims {
   [key: string]: unknown;
 }
 
+import {
+  createServer,
+  type Server,
+  type IncomingMessage,
+  type ServerResponse,
+} from 'node:http';
+
+import {
+  Channel,
+  ChannelCapabilities,
+  OnChatMetadata,
+  OnInboundMessage,
+  RegisteredGroup,
+} from '../types.js';
+
+export interface OAuthWebchatChannelOpts {
+  onMessage: OnInboundMessage;
+  onChatMetadata: OnChatMetadata;
+  registeredGroups: () => Record<string, RegisteredGroup>;
+}
+
+const SESSION_COOKIE = 'oauth-webchat-session';
+const STATE_COOKIE = 'oauth-webchat-state';
+
+export class OAuthWebchatChannel implements Channel {
+  name = 'oauth-webchat';
+  readonly capabilities: ChannelCapabilities = {
+    inboundImages: true,
+    outboundMedia: true,
+  };
+
+  private opts: OAuthWebchatChannelOpts;
+  private config: OAuthWebchatConfig;
+  private server: Server | null = null;
+
+  constructor(config: OAuthWebchatConfig, opts: OAuthWebchatChannelOpts) {
+    this.config = config;
+    this.opts = opts;
+  }
+
+  async connect(): Promise<void> {
+    this.server = createServer((req, res) => this.handleRequest(req, res));
+    return new Promise((resolve, reject) => {
+      this.server!.listen(this.config.port, () => {
+        logger.info(
+          {
+            port: this.config.port,
+            publicUrl: this.config.publicUrl,
+            issuer: this.config.oidcIssuer,
+          },
+          'oauth-webchat channel listening',
+        );
+        resolve();
+      });
+      this.server!.on('error', reject);
+    });
+  }
+
+  isConnected(): boolean {
+    return this.server !== null;
+  }
+
+  ownsJid(jid: string): boolean {
+    return jid.startsWith('oauth-webchat:');
+  }
+
+  async disconnect(): Promise<void> {
+    if (this.server) {
+      await new Promise<void>((resolve) => this.server!.close(() => resolve()));
+      this.server = null;
+      logger.info('oauth-webchat channel closed');
+    }
+  }
+
+  async sendMessage(_jid: string, _text: string): Promise<void> {
+    // Implemented in a later task
+  }
+
+  private handleRequest(_req: IncomingMessage, res: ServerResponse): void {
+    res.writeHead(404, { 'Content-Type': 'text/plain' });
+    res.end('Not found');
+  }
+}
+
 export class OidcClient {
   private opts: OidcClientOptions;
   private clientPromise: Promise<OidcLibClient> | null = null;
