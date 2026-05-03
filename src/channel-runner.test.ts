@@ -1,4 +1,9 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+
+vi.hoisted(() => {
+  process.env.KUBECLAW_CHANNEL = 'test';
+});
+
 import { folderPrefixForChannel } from './channel-runner.js';
 
 describe('folderPrefixForChannel', () => {

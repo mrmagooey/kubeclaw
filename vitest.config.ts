@@ -7,8 +7,5 @@ export default defineConfig({
       'setup/**/*.test.ts',
       'skills-engine/**/*.test.ts',
     ],
-    env: {
-      KUBECLAW_CHANNEL: 'test',
-    },
   },
 });
