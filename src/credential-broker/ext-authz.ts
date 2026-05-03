@@ -28,7 +28,10 @@ export interface AuthzResponse {
   headers: Record<string, string>;
 }
 
-export async function handleExtAuthz(req: AuthzRequest, deps: Deps): Promise<AuthzResponse> {
+export async function handleExtAuthz(
+  req: AuthzRequest,
+  deps: Deps,
+): Promise<AuthzResponse> {
   const destination = req['x-forwarded-authority'];
   if (!destination) {
     deps.audit.record({ destination: '<missing>', status: 400 });
@@ -49,7 +52,13 @@ export async function handleExtAuthz(req: AuthzRequest, deps: Deps): Promise<Aut
     return { status: 403, headers: {} };
   }
 
-  const credential = await deps.secretSource.read(mapping.credentialRef);
+  let credential: string;
+  try {
+    credential = await deps.secretSource.read(mapping.credentialRef);
+  } catch {
+    deps.audit.record({ identity, destination, mappingId: mapping.id, status: 503 });
+    return { status: 503, headers: {} };
+  }
   const headerValue = deps.resolver.formatHeader(mapping.headerScheme, credential);
   deps.audit.record({ identity, destination, mappingId: mapping.id, status: 200 });
   return { status: 200, headers: { authorization: headerValue } };
