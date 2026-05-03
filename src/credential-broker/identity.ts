@@ -24,7 +24,7 @@ export class IdentityVerifier {
     if (!authorizationHeader.startsWith('Bearer ')) {
       throw new Error('Authorization header must use Bearer scheme');
     }
-    const token = authorizationHeader.slice('Bearer '.length);
+    const token = authorizationHeader.slice('Bearer '.length).trimStart();
     const review = await this.opts.createTokenReview(token, [
       this.opts.audience,
     ]);

@@ -71,12 +71,22 @@ describe('Resolver', () => {
         id: 'multi',
         destinations: ['api.first.com', 'api.second.com'],
         identities: ['*'],
-        credentialRef: { kind: 'Secret', name: 'kubeclaw-secrets', key: 'shared' },
+        credentialRef: {
+          kind: 'Secret',
+          name: 'kubeclaw-secrets',
+          key: 'shared',
+        },
         headerScheme: 'bearer',
       },
     ]);
-    expect(multi.find({ destination: 'api.first.com', identity: 'sa/x' })?.id).toBe('multi');
-    expect(multi.find({ destination: 'api.second.com', identity: 'sa/x' })?.id).toBe('multi');
-    expect(multi.find({ destination: 'api.third.com', identity: 'sa/x' })?.id).toBeUndefined();
+    expect(
+      multi.find({ destination: 'api.first.com', identity: 'sa/x' })?.id,
+    ).toBe('multi');
+    expect(
+      multi.find({ destination: 'api.second.com', identity: 'sa/x' })?.id,
+    ).toBe('multi');
+    expect(
+      multi.find({ destination: 'api.third.com', identity: 'sa/x' })?.id,
+    ).toBeUndefined();
   });
 });

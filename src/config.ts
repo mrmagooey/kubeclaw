@@ -304,4 +304,7 @@ export const BROWSER_SIDECAR_CPU_REQUEST =
 export const BROWSER_SIDECAR_CPU_LIMIT =
   process.env.BROWSER_SIDECAR_CPU_LIMIT || '500m';
 
-export { getInjectionMode, type InjectionMode } from './credential-injection/mode.js';
+export {
+  getInjectionMode,
+  type InjectionMode,
+} from './credential-injection/mode.js';
