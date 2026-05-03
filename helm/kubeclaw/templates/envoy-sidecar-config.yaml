@@ -1,0 +1,104 @@
+{{- if eq .Values.credentialInjection.mode "sidecar" -}}
+# Envoy bootstrap config for the per-pod credential-injection sidecar.
+# Workloads point HTTPS_PROXY at localhost:listenPort; this Envoy intercepts
+# every outbound HTTPS request, calls the broker via ext_authz, and stamps
+# the returned Authorization header on the upstream request.
+#
+# NOTE: The broker returns 401 until a projected SA token is injected into the
+# Authorization request header — that wiring is added in Task 1.4/1.5.
+# A 401 from the broker blocks the upstream request, which is the safe failure
+# mode (no credentials leaked, no unintended calls succeed).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kubeclaw-envoy-sidecar
+  namespace: {{ .Values.namespace }}
+data:
+  envoy.yaml: |
+    admin:
+      address:
+        socket_address: { address: 127.0.0.1, port_value: 9901 }
+    static_resources:
+      listeners:
+        - name: forward_proxy
+          address:
+            socket_address:
+              address: 127.0.0.1
+              port_value: {{ .Values.credentialInjection.sidecar.listenPort }}
+          filter_chains:
+            - filters:
+                - name: envoy.filters.network.http_connection_manager
+                  typed_config:
+                    "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                    stat_prefix: forward
+                    http_filters:
+                      - name: envoy.filters.http.ext_authz
+                        typed_config:
+                          "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz
+                          transport_api_version: V3
+                          http_service:
+                            server_uri:
+                              uri: http://credential-broker.{{ .Values.namespace }}.svc:{{ .Values.credentialInjection.broker.port }}
+                              cluster: credential_broker
+                              timeout: 2s
+                            path_prefix: /authz
+                            authorization_request:
+                              allowed_headers:
+                                patterns:
+                                  - exact: ":authority"
+                                  - exact: "authorization"
+                                  - exact: "x-kubeclaw-job-id"
+                              headers_to_add:
+                                - { key: "X-Forwarded-Authority", value: "%REQ(:AUTHORITY)%" }
+                            authorization_response:
+                              allowed_upstream_headers:
+                                patterns:
+                                  - exact: "authorization"
+                      - name: envoy.filters.http.dynamic_forward_proxy
+                        typed_config:
+                          "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_forward_proxy.v3.FilterConfig
+                          dns_cache_config:
+                            name: dynamic_dns
+                            dns_lookup_family: V4_ONLY
+                      - name: envoy.filters.http.router
+                        typed_config:
+                          "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                    route_config:
+                      virtual_hosts:
+                        - name: any
+                          domains: ["*"]
+                          routes:
+                            - match: { prefix: "/" }
+                              route:
+                                cluster: dynamic_forward_cluster
+      clusters:
+        - name: credential_broker
+          type: STRICT_DNS
+          connect_timeout: 2s
+          load_assignment:
+            cluster_name: credential_broker
+            endpoints:
+              - lb_endpoints:
+                  - endpoint:
+                      address:
+                        socket_address:
+                          address: credential-broker.{{ .Values.namespace }}.svc
+                          port_value: {{ .Values.credentialInjection.broker.port }}
+        - name: dynamic_forward_cluster
+          lb_policy: CLUSTER_PROVIDED
+          connect_timeout: 5s
+          cluster_type:
+            name: envoy.clusters.dynamic_forward_proxy
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.clusters.dynamic_forward_proxy.v3.ClusterConfig
+              dns_cache_config:
+                name: dynamic_dns
+                dns_lookup_family: V4_ONLY
+          transport_socket:
+            name: envoy.transport_sockets.tls
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
+              common_tls_context:
+                validation_context:
+                  trusted_ca: { filename: /etc/ssl/certs/ca-certificates.crt }
+{{- end }}
