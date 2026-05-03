@@ -62,10 +62,7 @@ class QdrantRagProvider implements RagProvider {
     }
   }
 
-  async retrieveContext(
-    groupFolder: string,
-    query: string,
-  ): Promise<string> {
+  async retrieveContext(groupFolder: string, query: string): Promise<string> {
     try {
       const { retrieveContext } = await import('./retriever.js');
       return await retrieveContext(groupFolder, query);
@@ -113,10 +110,7 @@ class LightRagProvider implements RagProvider {
     }
   }
 
-  async retrieveContext(
-    groupFolder: string,
-    query: string,
-  ): Promise<string> {
+  async retrieveContext(groupFolder: string, query: string): Promise<string> {
     try {
       const res = await fetch(`${this.baseUrl}/query`, {
         method: 'POST',
@@ -125,7 +119,10 @@ class LightRagProvider implements RagProvider {
         signal: AbortSignal.timeout(15_000),
       });
       if (!res.ok) {
-        logger.debug({ status: res.status, groupFolder }, 'LightRAG query failed');
+        logger.debug(
+          { status: res.status, groupFolder },
+          'LightRAG query failed',
+        );
         return '';
       }
       const json = (await res.json()) as { response?: string };

@@ -155,7 +155,11 @@ export async function createOrReplaceDeployment(
   const { appsV1 } = getK8sClients();
   try {
     await appsV1.readNamespacedDeployment({ name, namespace: NAMESPACE });
-    await appsV1.replaceNamespacedDeployment({ name, namespace: NAMESPACE, body });
+    await appsV1.replaceNamespacedDeployment({
+      name,
+      namespace: NAMESPACE,
+      body,
+    });
     return `Updated Deployment ${name}`;
   } catch {
     await appsV1.createNamespacedDeployment({ namespace: NAMESPACE, body });
@@ -174,8 +178,7 @@ function buildSecretData(input: ChannelSetupInput): Record<string, string> {
     data['TELEGRAM_BOT_TOKEN'] = input.token;
   if (type === 'discord' && input.token)
     data['DISCORD_BOT_TOKEN'] = input.token;
-  if (type === 'slack' && input.token)
-    data['SLACK_BOT_TOKEN'] = input.token;
+  if (type === 'slack' && input.token) data['SLACK_BOT_TOKEN'] = input.token;
   if (type === 'whatsapp' && input.phoneNumber)
     data['WHATSAPP_PHONE_NUMBER'] = input.phoneNumber;
   if (type === 'irc') {
@@ -301,7 +304,12 @@ export async function setupChannel(
 
   // Build and create Deployment
   const channelImage = await getOrchestratorImage();
-  const envVars = buildChannelEnvVars(instanceName, type, secretName, secretData);
+  const envVars = buildChannelEnvVars(
+    instanceName,
+    type,
+    secretName,
+    secretData,
+  );
 
   const deploymentBody: k8s.V1Deployment = {
     apiVersion: 'apps/v1',

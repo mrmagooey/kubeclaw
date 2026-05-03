@@ -51,7 +51,12 @@ import {
   startTaskRequestWatcher,
 } from './k8s/ipc-redis.js';
 import { getOutputChannel, getRedisClient } from './k8s/redis-client.js';
-import { findChannel, formatMessages, formatOutbound, stripInternalTags } from './router.js';
+import {
+  findChannel,
+  formatMessages,
+  formatOutbound,
+  stripInternalTags,
+} from './router.js';
 import {
   isSenderAllowed,
   isTriggerAllowed,
@@ -260,7 +265,10 @@ async function handleSkillInvocation(
   const summary = result.log.join('\n');
 
   if (!result.success) {
-    await channel.sendMessage(chatJid, `Skill "${skillName}" failed:\n${summary}`);
+    await channel.sendMessage(
+      chatJid,
+      `Skill "${skillName}" failed:\n${summary}`,
+    );
     return;
   }
 
@@ -416,13 +424,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         'Spawning attachment preprocessing job',
       );
       const groupDir = path.join(GROUPS_DIR, group.folder);
-      const ok = await runner.runPreprocessingJob(
-        group,
-        rawAttachments,
-        {
-          groupsPvc: (group as any).groupsPvc,
-        },
-      );
+      const ok = await runner.runPreprocessingJob(group, rawAttachments, {
+        groupsPvc: (group as any).groupsPvc,
+      });
       if (!ok) {
         logger.warn(
           { group: group.name },
@@ -659,7 +663,11 @@ async function runAgent(
 
     // Index the conversation turn for future retrieval (non-blocking, non-fatal).
     if (output.result) {
-      void getRagProvider().indexConversationTurn(group.folder, prompt, output.result);
+      void getRagProvider().indexConversationTurn(
+        group.folder,
+        prompt,
+        output.result,
+      );
     }
 
     return 'success';

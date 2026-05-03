@@ -11,10 +11,7 @@ import fs from 'fs';
 import path from 'path';
 
 import { logger } from '../logger.js';
-import {
-  getRedisSubscriber,
-  getChannelStatusChannel,
-} from './redis-client.js';
+import { getRedisSubscriber, getChannelStatusChannel } from './redis-client.js';
 import { publishControlCommand } from './ipc-redis.js';
 
 export interface ChannelStatusEvent {
@@ -45,8 +42,7 @@ export function startChannelStatusWatcher(channelNames: string[]): void {
     subscriber.subscribe(channel, (err) => {
       if (err)
         logger.error({ err, channel }, 'Failed to subscribe to channel status');
-      else
-        logger.info({ channel }, 'Subscribed to channel status');
+      else logger.info({ channel }, 'Subscribed to channel status');
     });
   }
 
@@ -78,8 +74,7 @@ export function watchChannelStatus(channelName: string): void {
   subscriber.subscribe(channel, (err) => {
     if (err)
       logger.error({ err, channel }, 'Failed to subscribe to channel status');
-    else
-      logger.info({ channel }, 'Dynamically subscribed to channel status');
+    else logger.info({ channel }, 'Dynamically subscribed to channel status');
   });
 }
 
@@ -112,7 +107,12 @@ function parseDependencies(skillDoc: string): string[] {
   if (!depsMatch) return [];
   return depsMatch[1]
     .split('\n')
-    .map((line) => line.replace(/^\s+-\s+/, '').replace(/^["']|["']$/g, '').trim())
+    .map((line) =>
+      line
+        .replace(/^\s+-\s+/, '')
+        .replace(/^["']|["']$/g, '')
+        .trim(),
+    )
     .filter(Boolean);
 }
 

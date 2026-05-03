@@ -966,10 +966,7 @@ export async function startToolJobSpawnWatcher(): Promise<void> {
                 'status',
                 output.status,
               );
-              logger.debug(
-                { agentJobId },
-                'Tool job result written to stream',
-              );
+              logger.debug({ agentJobId }, 'Tool job result written to stream');
             })
             .catch(async (err) => {
               logger.error({ agentJobId, err }, 'Tool job failed');

@@ -13,7 +13,10 @@ vi.mock('./logger.js', () => ({
   },
 }));
 
-import { parseSendFileMarkers, handleSendFileMarkers } from './outbound-media.js';
+import {
+  parseSendFileMarkers,
+  handleSendFileMarkers,
+} from './outbound-media.js';
 import type { Channel } from './types.js';
 
 // ── parseSendFileMarkers ──────────────────────────────────────────────────────
@@ -25,16 +28,20 @@ describe('parseSendFileMarkers', () => {
   });
 
   it('parses a single marker without caption', () => {
-    const text = 'Here is the chart [SendFile: attachments/generated/chart.png]';
+    const text =
+      'Here is the chart [SendFile: attachments/generated/chart.png]';
     const markers = parseSendFileMarkers(text);
     expect(markers).toHaveLength(1);
-    expect(markers[0].rawMatch).toBe('[SendFile: attachments/generated/chart.png]');
+    expect(markers[0].rawMatch).toBe(
+      '[SendFile: attachments/generated/chart.png]',
+    );
     expect(markers[0].filePath).toBe('attachments/generated/chart.png');
     expect(markers[0].caption).toBeUndefined();
   });
 
   it('parses a single marker with caption', () => {
-    const text = '[SendFile: attachments/generated/chart.png caption="Here\'s your chart"]';
+    const text =
+      '[SendFile: attachments/generated/chart.png caption="Here\'s your chart"]';
     const markers = parseSendFileMarkers(text);
     expect(markers).toHaveLength(1);
     expect(markers[0].filePath).toBe('attachments/generated/chart.png');
@@ -101,7 +108,13 @@ describe('handleSendFileMarkers', () => {
 
   it('returns text unchanged when no markers', async () => {
     const channel = makeChannel();
-    const result = await handleSendFileMarkers('Hello world', channel, 'http:alice', 'alice', tmpDir);
+    const result = await handleSendFileMarkers(
+      'Hello world',
+      channel,
+      'http:alice',
+      'alice',
+      tmpDir,
+    );
     expect(result).toBe('Hello world');
   });
 
@@ -113,10 +126,20 @@ describe('handleSendFileMarkers', () => {
     const groupDir = path.join(tmpDir, 'alice');
     const genDir = path.join(groupDir, 'attachments', 'generated');
     fs.mkdirSync(genDir, { recursive: true });
-    fs.writeFileSync(path.join(genDir, 'chart.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    fs.writeFileSync(
+      path.join(genDir, 'chart.png'),
+      Buffer.from([0x89, 0x50, 0x4e, 0x47]),
+    );
 
-    const text = 'Here you go [SendFile: attachments/generated/chart.png caption="Your chart"]';
-    const result = await handleSendFileMarkers(text, channel, 'http:alice', 'alice', tmpDir);
+    const text =
+      'Here you go [SendFile: attachments/generated/chart.png caption="Your chart"]';
+    const result = await handleSendFileMarkers(
+      text,
+      channel,
+      'http:alice',
+      'alice',
+      tmpDir,
+    );
 
     expect(sendMedia).toHaveBeenCalledOnce();
     expect(sendMedia).toHaveBeenCalledWith(
@@ -137,7 +160,13 @@ describe('handleSendFileMarkers', () => {
     fs.writeFileSync(path.join(genDir, 'report.pdf'), Buffer.from('%PDF'));
 
     const text = 'See [SendFile: attachments/generated/report.pdf]';
-    const result = await handleSendFileMarkers(text, channel, 'http:alice', 'alice', tmpDir);
+    const result = await handleSendFileMarkers(
+      text,
+      channel,
+      'http:alice',
+      'alice',
+      tmpDir,
+    );
 
     expect(result).toBe('See [File: report.pdf]');
   });
@@ -165,7 +194,13 @@ describe('handleSendFileMarkers', () => {
     fs.writeFileSync(path.join(genDir, 'ok.png'), Buffer.from([0x89]));
 
     const text = '[SendFile: attachments/generated/ok.png]';
-    const result = await handleSendFileMarkers(text, channel, 'http:alice', 'alice', tmpDir);
+    const result = await handleSendFileMarkers(
+      text,
+      channel,
+      'http:alice',
+      'alice',
+      tmpDir,
+    );
 
     expect(sendMedia).toHaveBeenCalledOnce();
     expect(result).toBe('');
@@ -180,7 +215,13 @@ describe('handleSendFileMarkers', () => {
 
     const text = 'Check this [SendFile: attachments/generated/missing.png]';
     // Should not throw — should log warning and continue
-    const result = await handleSendFileMarkers(text, channel, 'http:alice', 'alice', tmpDir);
+    const result = await handleSendFileMarkers(
+      text,
+      channel,
+      'http:alice',
+      'alice',
+      tmpDir,
+    );
 
     // sendMedia was called (file read threw), marker is stripped
     expect(result).toBe('Check this');

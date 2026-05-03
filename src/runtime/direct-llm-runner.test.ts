@@ -30,9 +30,7 @@ vi.mock('../k8s/job-runner.js', () => ({
   JobRunner: class {
     createToolPodJob = vi.fn().mockResolvedValue(undefined);
     createSidecarToolPodJob = vi.fn().mockResolvedValue(undefined);
-    runToolJob = vi
-      .fn()
-      .mockResolvedValue({ status: 'success', result: 'ok' });
+    runToolJob = vi.fn().mockResolvedValue({ status: 'success', result: 'ok' });
     cleanup = vi.fn().mockResolvedValue(undefined);
   },
   buildJobName: vi.fn((folder: string) => `job-${folder}`),

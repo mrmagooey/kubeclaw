@@ -70,7 +70,10 @@ export async function registerCapability(
     'EX',
     HEARTBEAT_TTL_SECONDS,
   );
-  logger.info({ name: reg.name, endpoint: reg.endpoint }, 'Capability registered');
+  logger.info(
+    { name: reg.name, endpoint: reg.endpoint },
+    'Capability registered',
+  );
 }
 
 /**
@@ -112,7 +115,9 @@ export async function getCapabilitiesForChannel(
   const all = await getCapabilities();
   return all.filter(
     (cap) =>
-      !cap.channels || cap.channels.length === 0 || cap.channels.includes(channelName),
+      !cap.channels ||
+      cap.channels.length === 0 ||
+      cap.channels.includes(channelName),
   );
 }
 
@@ -285,10 +290,7 @@ async function watchDiscoveryRequests(): Promise<void> {
 
           const { requestId } = obj;
           if (!requestId) {
-            logger.warn(
-              { fields: obj },
-              'Discovery request missing requestId',
-            );
+            logger.warn({ fields: obj }, 'Discovery request missing requestId');
             continue;
           }
 

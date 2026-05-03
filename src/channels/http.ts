@@ -563,7 +563,10 @@ export class HttpChannel implements Channel {
     if (caption !== undefined) payload.caption = caption;
 
     this.sendSse(username, 'media', JSON.stringify(payload));
-    logger.info({ jid, mediaType, clients: clients.length }, 'HTTP media sent via SSE');
+    logger.info(
+      { jid, mediaType, clients: clients.length },
+      'HTTP media sent via SSE',
+    );
   }
 
   isConnected(): boolean {

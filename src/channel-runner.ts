@@ -58,10 +58,7 @@ import {
   startControlChannelWatcher,
   type ControlMessage,
 } from './k8s/ipc-redis.js';
-import {
-  getRedisClient,
-  getChannelStatusChannel,
-} from './k8s/redis-client.js';
+import { getRedisClient, getChannelStatusChannel } from './k8s/redis-client.js';
 import { registerChannel } from './channels/registry.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { AvailableGroup, ContainerOutput } from './runtime/types.js';
@@ -160,7 +157,10 @@ async function handleConfigure(
   const channel = factory(channelOpts);
   if (!channel) {
     logger.error({ channelType }, 'Channel factory returned null');
-    await publishChannelStatus('error', 'Factory returned null — check credentials');
+    await publishChannelStatus(
+      'error',
+      'Factory returned null — check credentials',
+    );
     return;
   }
 

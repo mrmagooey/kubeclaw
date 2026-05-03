@@ -47,7 +47,10 @@ export const VOICE_ATTACHMENT_PATTERN =
  * @example
  *   content = imageAttachmentMarker(rawPath, msg.caption) + '\n' + content;
  */
-export function imageAttachmentMarker(rawPath: string, caption?: string): string {
+export function imageAttachmentMarker(
+  rawPath: string,
+  caption?: string,
+): string {
   if (caption) {
     return `[ImageAttachment: ${rawPath} caption="${caption}"]`;
   }

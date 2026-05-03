@@ -23,9 +23,7 @@ import { initDatabase } from './db.js';
 import * as db from './db.js';
 import { logger } from './logger.js';
 import { createLLMClient, DEFAULT_DIRECT_MODEL } from './runtime/llm-client.js';
-import {
-  setupChannel,
-} from './skills/orchestrator/channel-setup.js';
+import { setupChannel } from './skills/orchestrator/channel-setup.js';
 import type { ChannelSetupInput } from './skills/orchestrator/types.js';
 
 // K8s clients (in-cluster config, auto-detected from service account)

@@ -267,10 +267,8 @@ export function assertToolImageAllowed(image: string): void {
 // --- Tool Job Resource Limits (Kubernetes) ---
 export const TOOL_JOB_MEMORY_REQUEST =
   process.env.TOOL_JOB_MEMORY_REQUEST || '512Mi';
-export const TOOL_JOB_MEMORY_LIMIT =
-  process.env.TOOL_JOB_MEMORY_LIMIT || '4Gi';
-export const TOOL_JOB_CPU_REQUEST =
-  process.env.TOOL_JOB_CPU_REQUEST || '250m';
+export const TOOL_JOB_MEMORY_LIMIT = process.env.TOOL_JOB_MEMORY_LIMIT || '4Gi';
+export const TOOL_JOB_CPU_REQUEST = process.env.TOOL_JOB_CPU_REQUEST || '250m';
 export const TOOL_JOB_CPU_LIMIT = process.env.TOOL_JOB_CPU_LIMIT || '2000m';
 
 // --- Sidecar HTTP Adapter Configuration ---

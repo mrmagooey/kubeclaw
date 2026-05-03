@@ -934,9 +934,8 @@ describe('JobRunner', () => {
         callArgs.body.spec?.template?.spec?.containers?.[0]?.env || [];
 
       expect(
-        envVars.find(
-          (e: { name: string }) => e.name === 'KUBECLAW_TOOL_JOB_ID',
-        )?.value,
+        envVars.find((e: { name: string }) => e.name === 'KUBECLAW_TOOL_JOB_ID')
+          ?.value,
       ).toBe('agent-job-123');
       expect(
         envVars.find((e: { name: string }) => e.name === 'KUBECLAW_CATEGORY')
