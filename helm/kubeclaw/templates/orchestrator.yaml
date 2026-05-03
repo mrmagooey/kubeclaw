@@ -159,7 +159,6 @@ spec:
                   name: {{ include "kubeclaw.secretName" . }}
                   key: claude-code-oauth-token
                   optional: true
-            {{- if eq .Values.credentialInjection.mode "off" }}
             - name: OPENAI_API_KEY
               valueFrom:
                 secretKeyRef:
@@ -172,7 +171,6 @@ spec:
                   name: {{ include "kubeclaw.secretName" . }}
                   key: openai-base-url
                   optional: true
-            {{- end }}
             - name: DIRECT_LLM_MODEL
               valueFrom:
                 secretKeyRef:
@@ -192,7 +190,7 @@ spec:
               value: {{ .Values.rag.topK | quote }}
             - name: RAG_SCORE_THRESHOLD
               value: {{ .Values.rag.scoreThreshold | quote }}
-            {{- if and (eq .Values.rag.provider "voyage") (eq .Values.credentialInjection.mode "off") }}
+            {{- if eq .Values.rag.provider "voyage" }}
             - name: VOYAGE_API_KEY
               valueFrom:
                 secretKeyRef:
