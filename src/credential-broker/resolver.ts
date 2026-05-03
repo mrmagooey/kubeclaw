@@ -30,7 +30,13 @@ export class Resolver {
   }
 
   formatHeader(scheme: Mapping['headerScheme'], value: string): string {
-    if (scheme === 'bearer') return `Bearer ${value}`;
-    throw new Error(`unsupported header scheme: ${scheme}`);
+    switch (scheme) {
+      case 'bearer':
+        return `Bearer ${value}`;
+      default: {
+        const _exhaustive: never = scheme;
+        throw new Error(`unsupported header scheme: ${_exhaustive as string}`);
+      }
+    }
   }
 }
