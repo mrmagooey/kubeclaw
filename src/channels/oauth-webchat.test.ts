@@ -44,6 +44,8 @@ vi.mock('../config.js', () => ({
   GROUPS_DIR: '/tmp/groups-test',
 }));
 
+vi.mock('./registry.js', () => ({ registerChannel: vi.fn() }));
+
 vi.mock('openid-client', () => {
   const callback = vi.fn();
   const authorizationUrl = vi.fn(
@@ -1085,5 +1087,35 @@ describe('sendMedia', () => {
     expect(parsed.data).toBe(buf.toString('base64'));
     closeHandlers.forEach((h) => h());
     await channel.disconnect();
+  });
+});
+
+import { registerChannel } from './registry.js';
+
+describe('self-registration', () => {
+  beforeEach(() => {
+    vi.resetModules();
+    (registerChannel as ReturnType<typeof vi.fn>).mockClear();
+  });
+
+  it('registers a factory under "oauth-webchat"', async () => {
+    await import('./oauth-webchat.js');
+    expect(registerChannel).toHaveBeenCalledWith(
+      'oauth-webchat',
+      expect.any(Function),
+    );
+  });
+
+  it('factory returns null when env is missing', async () => {
+    for (const k of Object.keys(process.env)) {
+      if (k.startsWith('OAUTH_WEBCHAT_')) delete process.env[k];
+    }
+    await import('./oauth-webchat.js');
+    const calls = (registerChannel as ReturnType<typeof vi.fn>).mock.calls;
+    const factoryCall = calls.find(([n]) => n === 'oauth-webchat');
+    expect(factoryCall).toBeDefined();
+    const factory = factoryCall![1] as (opts: unknown) => unknown;
+    const result = factory(makeOpts());
+    expect(result).toBeNull();
   });
 });

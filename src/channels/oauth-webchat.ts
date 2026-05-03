@@ -567,7 +567,10 @@ export class OAuthWebchatChannel implements Channel {
     const email = jid.slice('oauth-webchat:'.length);
     const clients = this.sseClients.filter((c) => c.email === email);
     if (clients.length === 0) {
-      logger.debug({ jid }, 'oauth-webchat: no SSE client connected (sendMedia)');
+      logger.debug(
+        { jid },
+        'oauth-webchat: no SSE client connected (sendMedia)',
+      );
       return;
     }
     const payload: { mediaType: string; data: string; caption?: string } = {
@@ -582,7 +585,10 @@ export class OAuthWebchatChannel implements Channel {
           client.res.write(ssePayload);
         }
       } catch (err) {
-        logger.debug({ jid, err }, 'oauth-webchat: SSE write failed (sendMedia)');
+        logger.debug(
+          { jid, err },
+          'oauth-webchat: SSE write failed (sendMedia)',
+        );
       }
     }
     logger.info(
@@ -945,3 +951,11 @@ export function getSessionFromCookies(
   if (!raw) return null;
   return verifySessionCookie(raw, secret);
 }
+
+import { registerChannel, ChannelOpts } from './registry.js';
+
+registerChannel('oauth-webchat', (opts: ChannelOpts) => {
+  const config = parseConfig();
+  if (!config) return null;
+  return new OAuthWebchatChannel(config, opts);
+});
