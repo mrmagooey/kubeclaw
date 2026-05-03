@@ -1,4 +1,18 @@
-import { describe, it, expect } from 'vitest';
+import { vi, describe, it, expect } from 'vitest';
+
+vi.mock('../logger.js', () => ({
+  logger: {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  },
+}));
+
+vi.mock('../env.js', () => ({
+  readEnvFile: vi.fn(() => ({})),
+}));
+
 import { signSessionCookie, verifySessionCookie } from './oauth-webchat.js';
 import { isEmailAllowed, parseAllowlist } from './oauth-webchat.js';
 
@@ -61,7 +75,9 @@ function nowSeconds(): number {
 
 describe('parseAllowlist', () => {
   it('parses a mix of full emails and wildcards', () => {
-    expect(parseAllowlist('alice@example.com,@trusted.org,bob@example.com')).toEqual({
+    expect(
+      parseAllowlist('alice@example.com,@trusted.org,bob@example.com'),
+    ).toEqual({
       exact: new Set(['alice@example.com', 'bob@example.com']),
       domains: new Set(['trusted.org']),
     });
@@ -105,5 +121,84 @@ describe('isEmailAllowed', () => {
 
   it('rejects an empty / missing email', () => {
     expect(isEmailAllowed('', true, allowlist)).toBe(false);
+  });
+});
+
+import { parseConfig } from './oauth-webchat.js';
+import { afterEach, beforeEach } from 'vitest';
+
+describe('parseConfig', () => {
+  const REQUIRED_ENV = {
+    OAUTH_WEBCHAT_PUBLIC_URL: 'https://chat.example.com',
+    OAUTH_WEBCHAT_OIDC_ISSUER: 'https://accounts.example.com',
+    OAUTH_WEBCHAT_CLIENT_ID: 'client-id',
+    OAUTH_WEBCHAT_CLIENT_SECRET: 'client-secret',
+    OAUTH_WEBCHAT_ALLOWED_EMAILS: 'alice@example.com',
+    OAUTH_WEBCHAT_COOKIE_SECRET: 'a'.repeat(32),
+  };
+
+  let original: NodeJS.ProcessEnv;
+  beforeEach(() => {
+    original = { ...process.env };
+    for (const k of Object.keys(process.env)) {
+      if (k.startsWith('OAUTH_WEBCHAT_')) delete process.env[k];
+    }
+  });
+  afterEach(() => {
+    process.env = original;
+  });
+
+  it('parses all required vars with defaults applied', () => {
+    Object.assign(process.env, REQUIRED_ENV);
+    const config = parseConfig();
+    expect(config).not.toBeNull();
+    expect(config!.port).toBe(4080);
+    expect(config!.publicUrl).toBe('https://chat.example.com');
+    expect(config!.oidcIssuer).toBe('https://accounts.example.com');
+    expect(config!.clientId).toBe('client-id');
+    expect(config!.clientSecret).toBe('client-secret');
+    expect(config!.cookieSecret).toBe('a'.repeat(32));
+    expect(config!.sessionTtlDays).toBe(30);
+    expect(config!.scopes).toBe('openid email profile');
+    expect(config!.providerName).toBe('OIDC');
+    expect(config!.allowlist.exact.has('alice@example.com')).toBe(true);
+  });
+
+  it('honours custom overrides', () => {
+    Object.assign(process.env, REQUIRED_ENV, {
+      OAUTH_WEBCHAT_PORT: '9000',
+      OAUTH_WEBCHAT_SESSION_TTL_DAYS: '7',
+      OAUTH_WEBCHAT_SCOPES: 'openid email',
+      OAUTH_WEBCHAT_PROVIDER_NAME: 'Google',
+    });
+    const config = parseConfig()!;
+    expect(config.port).toBe(9000);
+    expect(config.sessionTtlDays).toBe(7);
+    expect(config.scopes).toBe('openid email');
+    expect(config.providerName).toBe('Google');
+  });
+
+  it('returns null when public URL is missing', () => {
+    const env = { ...REQUIRED_ENV };
+    delete (env as Record<string, string | undefined>).OAUTH_WEBCHAT_PUBLIC_URL;
+    Object.assign(process.env, env);
+    expect(parseConfig()).toBeNull();
+  });
+
+  it('returns null when issuer is missing', () => {
+    const env = { ...REQUIRED_ENV };
+    delete (env as Record<string, string | undefined>).OAUTH_WEBCHAT_OIDC_ISSUER;
+    Object.assign(process.env, env);
+    expect(parseConfig()).toBeNull();
+  });
+
+  it('returns null when allowlist is empty', () => {
+    Object.assign(process.env, REQUIRED_ENV, { OAUTH_WEBCHAT_ALLOWED_EMAILS: '' });
+    expect(parseConfig()).toBeNull();
+  });
+
+  it('returns null when cookie secret is shorter than 32 bytes', () => {
+    Object.assign(process.env, REQUIRED_ENV, { OAUTH_WEBCHAT_COOKIE_SECRET: 'short' });
+    expect(parseConfig()).toBeNull();
   });
 });

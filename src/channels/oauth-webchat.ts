@@ -91,3 +91,91 @@ export function isEmailAllowed(
   const domain = normalized.slice(at + 1);
   return allowlist.domains.has(domain);
 }
+
+import { readEnvFile } from '../env.js';
+import { logger } from '../logger.js';
+
+export interface OAuthWebchatConfig {
+  port: number;
+  publicUrl: string;
+  oidcIssuer: string;
+  clientId: string;
+  clientSecret: string;
+  allowlist: Allowlist;
+  cookieSecret: string;
+  sessionTtlDays: number;
+  scopes: string;
+  providerName: string;
+}
+
+const ENV_KEYS = [
+  'OAUTH_WEBCHAT_PORT',
+  'OAUTH_WEBCHAT_PUBLIC_URL',
+  'OAUTH_WEBCHAT_OIDC_ISSUER',
+  'OAUTH_WEBCHAT_CLIENT_ID',
+  'OAUTH_WEBCHAT_CLIENT_SECRET',
+  'OAUTH_WEBCHAT_ALLOWED_EMAILS',
+  'OAUTH_WEBCHAT_COOKIE_SECRET',
+  'OAUTH_WEBCHAT_SESSION_TTL_DAYS',
+  'OAUTH_WEBCHAT_SCOPES',
+  'OAUTH_WEBCHAT_PROVIDER_NAME',
+];
+
+function envOr(file: Record<string, string>, key: string): string {
+  return process.env[key] ?? file[key] ?? '';
+}
+
+export function parseConfig(): OAuthWebchatConfig | null {
+  const file = readEnvFile(ENV_KEYS);
+
+  const publicUrl = envOr(file, 'OAUTH_WEBCHAT_PUBLIC_URL');
+  const oidcIssuer = envOr(file, 'OAUTH_WEBCHAT_OIDC_ISSUER');
+  const clientId = envOr(file, 'OAUTH_WEBCHAT_CLIENT_ID');
+  const clientSecret = envOr(file, 'OAUTH_WEBCHAT_CLIENT_SECRET');
+  const allowedEmails = envOr(file, 'OAUTH_WEBCHAT_ALLOWED_EMAILS');
+  const cookieSecret = envOr(file, 'OAUTH_WEBCHAT_COOKIE_SECRET');
+
+  if (!publicUrl) {
+    logger.warn('oauth-webchat: OAUTH_WEBCHAT_PUBLIC_URL is required');
+    return null;
+  }
+  if (!oidcIssuer) {
+    logger.warn('oauth-webchat: OAUTH_WEBCHAT_OIDC_ISSUER is required');
+    return null;
+  }
+  if (!clientId || !clientSecret) {
+    logger.warn(
+      'oauth-webchat: OAUTH_WEBCHAT_CLIENT_ID and OAUTH_WEBCHAT_CLIENT_SECRET are required',
+    );
+    return null;
+  }
+  if (!allowedEmails) {
+    logger.warn('oauth-webchat: OAUTH_WEBCHAT_ALLOWED_EMAILS is required');
+    return null;
+  }
+  if (!cookieSecret || cookieSecret.length < 32) {
+    logger.warn(
+      'oauth-webchat: OAUTH_WEBCHAT_COOKIE_SECRET must be at least 32 characters',
+    );
+    return null;
+  }
+
+  const allowlist = parseAllowlist(allowedEmails);
+  if (allowlist.exact.size === 0 && allowlist.domains.size === 0) {
+    logger.warn('oauth-webchat: OAUTH_WEBCHAT_ALLOWED_EMAILS produced no entries');
+    return null;
+  }
+
+  return {
+    port: parseInt(envOr(file, 'OAUTH_WEBCHAT_PORT') || '4080', 10),
+    publicUrl,
+    oidcIssuer,
+    clientId,
+    clientSecret,
+    allowlist,
+    cookieSecret,
+    sessionTtlDays: parseInt(envOr(file, 'OAUTH_WEBCHAT_SESSION_TTL_DAYS') || '30', 10),
+    scopes: envOr(file, 'OAUTH_WEBCHAT_SCOPES') || 'openid email profile',
+    providerName: envOr(file, 'OAUTH_WEBCHAT_PROVIDER_NAME') || 'OIDC',
+  };
+}
