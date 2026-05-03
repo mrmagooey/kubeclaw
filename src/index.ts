@@ -771,6 +771,15 @@ function recoverPendingMessages(): void {
 }
 
 async function main(): Promise<void> {
+  if (process.env.KUBECLAW_MODE === 'credential-broker') {
+    // Defer to the broker entrypoint, which has its own startup logic.
+    await import('./credential-broker/index.js');
+    // The broker keeps the process alive via its HTTP server.
+    // No further orchestrator/channel setup runs in this mode.
+    // (We do NOT exit here — let the imported module's server hold the process.)
+    return;
+  }
+
   startOrchestratorHealthServer();
   await initDatabase();
   logger.info('Database initialized');
