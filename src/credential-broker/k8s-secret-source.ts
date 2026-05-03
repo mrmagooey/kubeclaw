@@ -1,12 +1,21 @@
-export interface SecretRef { kind: 'Secret'; name: string; key: string }
-export interface RawSecret { data?: Record<string, string> }
+export interface SecretRef {
+  kind: 'Secret';
+  name: string;
+  key: string;
+}
+export interface RawSecret {
+  data?: Record<string, string>;
+}
 
 export interface K8sSecretSourceOpts {
   readSecret: (name: string) => Promise<RawSecret>;
   cacheTtlMs: number;
 }
 
-interface CacheEntry { value: string; expiresAt: number }
+interface CacheEntry {
+  value: string;
+  expiresAt: number;
+}
 
 export class K8sSecretSource {
   private cache = new Map<string, CacheEntry>();
@@ -26,7 +35,10 @@ export class K8sSecretSource {
     }
     const value = Buffer.from(b64, 'base64').toString('utf8');
     if (this.opts.cacheTtlMs > 0) {
-      this.cache.set(cacheKey, { value, expiresAt: now + this.opts.cacheTtlMs });
+      this.cache.set(cacheKey, {
+        value,
+        expiresAt: now + this.opts.cacheTtlMs,
+      });
     }
     return value;
   }
