@@ -6,7 +6,10 @@ export interface SessionPayload {
   exp: number;
 }
 
-export function signSessionCookie(payload: SessionPayload, secret: string): string {
+export function signSessionCookie(
+  payload: SessionPayload,
+  secret: string,
+): string {
   const payloadBytes = Buffer.from(JSON.stringify(payload), 'utf8');
   const sig = crypto.createHmac('sha256', secret).update(payloadBytes).digest();
   return `${payloadBytes.toString('base64url')}.${sig.toString('base64url')}`;
@@ -31,7 +34,10 @@ export function verifySessionCookie(
     return null;
   }
 
-  const expected = crypto.createHmac('sha256', secret).update(payloadBytes).digest();
+  const expected = crypto
+    .createHmac('sha256', secret)
+    .update(payloadBytes)
+    .digest();
   if (expected.length !== sig.length) return null;
   if (!crypto.timingSafeEqual(expected, sig)) return null;
 
@@ -48,4 +54,40 @@ export function verifySessionCookie(
   if (payload.exp <= Math.floor(Date.now() / 1000)) return null;
 
   return payload;
+}
+
+export interface Allowlist {
+  exact: Set<string>;
+  domains: Set<string>;
+}
+
+export function parseAllowlist(spec: string): Allowlist {
+  const exact = new Set<string>();
+  const domains = new Set<string>();
+  for (const raw of spec.split(',')) {
+    const entry = raw.trim().toLowerCase();
+    if (!entry) continue;
+    if (entry.startsWith('@')) {
+      const domain = entry.slice(1);
+      if (domain) domains.add(domain);
+    } else {
+      exact.add(entry);
+    }
+  }
+  return { exact, domains };
+}
+
+export function isEmailAllowed(
+  email: string,
+  emailVerified: boolean,
+  allowlist: Allowlist,
+): boolean {
+  if (!emailVerified) return false;
+  const normalized = email.trim().toLowerCase();
+  if (!normalized) return false;
+  if (allowlist.exact.has(normalized)) return true;
+  const at = normalized.lastIndexOf('@');
+  if (at < 0) return false;
+  const domain = normalized.slice(at + 1);
+  return allowlist.domains.has(domain);
 }
