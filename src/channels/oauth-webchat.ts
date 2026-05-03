@@ -408,6 +408,7 @@ export class OAuthWebchatChannel implements Channel {
   private server: Server | null = null;
   private oidc: OidcClient;
   private sseClients: Array<{ email: string; res: ServerResponse }> = [];
+  private messageSeq = 0;
 
   constructor(config: OAuthWebchatConfig, opts: OAuthWebchatChannelOpts) {
     this.config = config;
@@ -636,8 +637,90 @@ export class OAuthWebchatChannel implements Channel {
       return;
     }
 
+    if (req.method === 'POST' && url.pathname === '/message') {
+      const session = getSessionFromCookies(
+        parseCookies(req.headers.cookie),
+        this.config.cookieSecret,
+      );
+      if (!session) {
+        res.writeHead(401, { 'Content-Type': 'text/plain' });
+        res.end('Unauthorized');
+        return;
+      }
+      const contentType = (req.headers['content-type'] ?? '').toLowerCase();
+      const chunks: Buffer[] = [];
+      let total = 0;
+      const MAX = 10 * 1024 * 1024;
+
+      req.on('data', (chunk: Buffer) => {
+        total += chunk.length;
+        if (total > MAX) {
+          res.writeHead(413, { 'Content-Type': 'text/plain' });
+          res.end('Payload too large');
+          req.destroy();
+          return;
+        }
+        chunks.push(chunk);
+      });
+
+      req.on('end', () => {
+        const body = Buffer.concat(chunks);
+
+        if (contentType.startsWith('multipart/form-data')) {
+          // Multipart handler is added in Task 15.
+          res.writeHead(415, { 'Content-Type': 'text/plain' });
+          res.end('Multipart not yet supported');
+          return;
+        }
+
+        let parsed: { text?: string };
+        try {
+          parsed = JSON.parse(body.toString('utf8'));
+        } catch {
+          res.writeHead(400, { 'Content-Type': 'text/plain' });
+          res.end('Invalid JSON');
+          return;
+        }
+        const text = (parsed.text ?? '').trim();
+        if (!text) {
+          res.writeHead(400, { 'Content-Type': 'text/plain' });
+          res.end('Missing text');
+          return;
+        }
+        this.handleInbound(session.email, text);
+        res.writeHead(200, { 'Content-Type': 'text/plain' });
+        res.end('ok');
+      });
+      return;
+    }
+
     res.writeHead(404, { 'Content-Type': 'text/plain' });
     res.end('Not found');
+  }
+
+  private handleInbound(email: string, text: string): void {
+    const jid = `oauth-webchat:${email}`;
+    const timestamp = new Date().toISOString();
+    const msgId = `${Date.now()}-${++this.messageSeq}`;
+
+    this.opts.onChatMetadata(jid, timestamp, email, 'oauth-webchat', false);
+
+    const group = this.opts.registeredGroups()[jid];
+    if (!group) {
+      logger.debug({ jid }, 'oauth-webchat message from unregistered user');
+      return;
+    }
+
+    this.opts.onMessage(jid, {
+      id: msgId,
+      chat_jid: jid,
+      sender: email,
+      sender_name: email,
+      content: text,
+      timestamp,
+      is_from_me: false,
+    });
+    logger.info({ jid }, 'oauth-webchat message stored');
   }
 }
 

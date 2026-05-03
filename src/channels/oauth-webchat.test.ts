@@ -786,3 +786,121 @@ describe('GET /stream', () => {
     await channel.disconnect();
   });
 });
+
+function makeReqWithBody(overrides: {
+  url: string;
+  cookie?: string;
+  contentType?: string;
+  body: string;
+}): IncomingMessage {
+  const headers: Record<string, string> = {
+    'content-type': overrides.contentType ?? 'application/json',
+  };
+  if (overrides.cookie) headers.cookie = overrides.cookie;
+  const req = {
+    method: 'POST',
+    url: overrides.url,
+    headers,
+    on: vi.fn(),
+    destroy: vi.fn(),
+  } as unknown as IncomingMessage;
+  (req.on as ReturnType<typeof vi.fn>).mockImplementation(
+    (event: string, cb: (arg?: Buffer) => void) => {
+      if (event === 'data') cb(Buffer.from(overrides.body));
+      if (event === 'end') cb();
+    },
+  );
+  return req;
+}
+
+function sessionCookieHeader(): string {
+  const value = signSessionCookie(
+    { email: 'alice@example.com', exp: Math.floor(Date.now() / 1000) + 3600 },
+    makeConfig().cookieSecret,
+  );
+  return `oauth-webchat-session=${encodeURIComponent(value)}`;
+}
+
+describe('POST /message (JSON)', () => {
+  it('rejects with 401 when no session', async () => {
+    const channel = new OAuthWebchatChannel(makeConfig(), makeOpts());
+    await channel.connect();
+    const req = makeReqWithBody({ url: '/message', body: '{"text":"hi"}' });
+    const res = makeRes();
+    await dispatch(channel, req, res);
+    expect(res._status).toBe(401);
+    await channel.disconnect();
+  });
+
+  it('delivers a message for a registered email', async () => {
+    const opts = makeOpts();
+    const channel = new OAuthWebchatChannel(makeConfig(), opts);
+    await channel.connect();
+    const req = makeReqWithBody({
+      url: '/message',
+      cookie: sessionCookieHeader(),
+      body: '{"text":"hello"}',
+    });
+    const res = makeRes();
+    await dispatch(channel, req, res);
+    expect(res._status).toBe(200);
+    expect(opts.onChatMetadata).toHaveBeenCalledWith(
+      'oauth-webchat:alice@example.com',
+      expect.any(String),
+      'alice@example.com',
+      'oauth-webchat',
+      false,
+    );
+    expect(opts.onMessage).toHaveBeenCalledWith(
+      'oauth-webchat:alice@example.com',
+      expect.objectContaining({ content: 'hello', sender: 'alice@example.com' }),
+    );
+    await channel.disconnect();
+  });
+
+  it('records metadata but does not deliver for unregistered email', async () => {
+    const opts = makeOpts();
+    opts.registeredGroups = vi.fn(() => ({})) as ReturnType<typeof vi.fn>;
+    const channel = new OAuthWebchatChannel(makeConfig(), opts);
+    await channel.connect();
+    const req = makeReqWithBody({
+      url: '/message',
+      cookie: sessionCookieHeader(),
+      body: '{"text":"hi"}',
+    });
+    const res = makeRes();
+    await dispatch(channel, req, res);
+    expect(res._status).toBe(200);
+    expect(opts.onChatMetadata).toHaveBeenCalled();
+    expect(opts.onMessage).not.toHaveBeenCalled();
+    await channel.disconnect();
+  });
+
+  it('returns 400 for missing text', async () => {
+    const channel = new OAuthWebchatChannel(makeConfig(), makeOpts());
+    await channel.connect();
+    const req = makeReqWithBody({
+      url: '/message',
+      cookie: sessionCookieHeader(),
+      body: '{}',
+    });
+    const res = makeRes();
+    await dispatch(channel, req, res);
+    expect(res._status).toBe(400);
+    await channel.disconnect();
+  });
+
+  it('returns 400 for invalid JSON', async () => {
+    const channel = new OAuthWebchatChannel(makeConfig(), makeOpts());
+    await channel.connect();
+    const req = makeReqWithBody({
+      url: '/message',
+      cookie: sessionCookieHeader(),
+      body: 'not-json',
+    });
+    const res = makeRes();
+    await dispatch(channel, req, res);
+    expect(res._status).toBe(400);
+    await channel.disconnect();
+  });
+});
