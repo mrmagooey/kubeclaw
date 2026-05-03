@@ -447,6 +447,15 @@ export class OAuthWebchatChannel implements Channel {
       return;
     }
 
+    if (req.method === 'GET' && url.pathname === '/logout') {
+      res.writeHead(302, {
+        'Set-Cookie': `${SESSION_COOKIE}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0`,
+        Location: '/login',
+      });
+      res.end();
+      return;
+    }
+
     res.writeHead(404, { 'Content-Type': 'text/plain' });
     res.end('Not found');
   }

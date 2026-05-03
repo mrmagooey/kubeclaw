@@ -536,6 +536,29 @@ async function loginAndExtractStateCookie(
   return { stateValue: payload.state, cookieHeader };
 }
 
+describe('GET /logout', () => {
+  it('clears the session cookie and redirects to /login', async () => {
+    const channel = new OAuthWebchatChannel(makeConfig(), makeOpts());
+    await channel.connect();
+    const req = makeReq({ url: '/logout' });
+    const res = makeRes();
+    await dispatch(channel, req, res);
+    expect(res._status).toBe(302);
+    expect(String(res._headers['Location'])).toBe('/login');
+    const setCookies = (
+      Array.isArray(res._headers['Set-Cookie'])
+        ? res._headers['Set-Cookie']
+        : [String(res._headers['Set-Cookie'] ?? '')]
+    ) as string[];
+    expect(
+      setCookies.some(
+        (c) => c.startsWith('oauth-webchat-session=') && c.includes('Max-Age=0'),
+      ),
+    ).toBe(true);
+    await channel.disconnect();
+  });
+});
+
 describe('GET /callback', () => {
   it('rejects when state cookie is missing', async () => {
     const channel = new OAuthWebchatChannel(makeConfig(), makeOpts());
@@ -670,7 +693,10 @@ describe('getSessionFromCookies', () => {
 
   it('returns null when session cookie is invalid', () => {
     expect(
-      getSessionFromCookies({ 'oauth-webchat-session': 'garbage' }, 'a'.repeat(64)),
+      getSessionFromCookies(
+        { 'oauth-webchat-session': 'garbage' },
+        'a'.repeat(64),
+      ),
     ).toBeNull();
   });
 
