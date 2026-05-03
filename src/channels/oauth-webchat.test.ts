@@ -13,6 +13,23 @@ vi.mock('../env.js', () => ({
   readEnvFile: vi.fn(() => ({})),
 }));
 
+vi.mock('openid-client', () => {
+  const callback = vi.fn();
+  const authorizationUrl = vi.fn(
+    () => 'https://issuer.example.com/authorize?client_id=cid&state=STATE',
+  );
+  const Client = vi.fn().mockImplementation(function () {
+    return { authorizationUrl, callback };
+  });
+  const Issuer = {
+    discover: vi.fn().mockResolvedValue({
+      Client,
+      metadata: { authorization_endpoint: 'https://issuer.example.com/authorize' },
+    }),
+  };
+  return { Issuer, __mocks: { Client, callback, authorizationUrl } };
+});
+
 import { signSessionCookie, verifySessionCookie } from './oauth-webchat.js';
 import { isEmailAllowed, parseAllowlist } from './oauth-webchat.js';
 
@@ -124,7 +141,7 @@ describe('isEmailAllowed', () => {
   });
 });
 
-import { parseConfig } from './oauth-webchat.js';
+import { parseConfig, OidcClient } from './oauth-webchat.js';
 import { afterEach, beforeEach } from 'vitest';
 
 describe('parseConfig', () => {
@@ -187,18 +204,86 @@ describe('parseConfig', () => {
 
   it('returns null when issuer is missing', () => {
     const env = { ...REQUIRED_ENV };
-    delete (env as Record<string, string | undefined>).OAUTH_WEBCHAT_OIDC_ISSUER;
+    delete (env as Record<string, string | undefined>)
+      .OAUTH_WEBCHAT_OIDC_ISSUER;
     Object.assign(process.env, env);
     expect(parseConfig()).toBeNull();
   });
 
   it('returns null when allowlist is empty', () => {
-    Object.assign(process.env, REQUIRED_ENV, { OAUTH_WEBCHAT_ALLOWED_EMAILS: '' });
+    Object.assign(process.env, REQUIRED_ENV, {
+      OAUTH_WEBCHAT_ALLOWED_EMAILS: '',
+    });
     expect(parseConfig()).toBeNull();
   });
 
   it('returns null when cookie secret is shorter than 32 bytes', () => {
-    Object.assign(process.env, REQUIRED_ENV, { OAUTH_WEBCHAT_COOKIE_SECRET: 'short' });
+    Object.assign(process.env, REQUIRED_ENV, {
+      OAUTH_WEBCHAT_COOKIE_SECRET: 'short',
+    });
     expect(parseConfig()).toBeNull();
+  });
+});
+
+describe('OidcClient', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('discovers the issuer lazily on first use', async () => {
+    const oidc = new OidcClient({
+      issuer: 'https://issuer.example.com',
+      clientId: 'cid',
+      clientSecret: 'sec',
+      redirectUri: 'https://chat.example.com/callback',
+      scopes: 'openid email profile',
+    });
+
+    const { Issuer } = await import('openid-client');
+    expect((Issuer.discover as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+
+    const url = await oidc.buildAuthorizeUrl({
+      state: 'STATE',
+      codeChallenge: 'CHALLENGE',
+    });
+    expect(url).toContain('STATE');
+    expect((Issuer.discover as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
+      'https://issuer.example.com',
+    );
+  });
+
+  it('caches the issuer between calls', async () => {
+    const oidc = new OidcClient({
+      issuer: 'https://issuer.example.com',
+      clientId: 'cid',
+      clientSecret: 'sec',
+      redirectUri: 'https://chat.example.com/callback',
+      scopes: 'openid email profile',
+    });
+    await oidc.buildAuthorizeUrl({ state: 'A', codeChallenge: 'X' });
+    await oidc.buildAuthorizeUrl({ state: 'B', codeChallenge: 'Y' });
+    const { Issuer } = await import('openid-client');
+    expect((Issuer.discover as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1);
+  });
+
+  it('exchangeCode returns claims on success', async () => {
+    const claims = { email: 'alice@example.com', email_verified: true, sub: '12345' };
+    const mocks = (await import('openid-client')) as unknown as {
+      __mocks: { callback: ReturnType<typeof vi.fn> };
+    };
+    mocks.__mocks.callback.mockResolvedValue({ claims: () => claims });
+
+    const oidc = new OidcClient({
+      issuer: 'https://issuer.example.com',
+      clientId: 'cid',
+      clientSecret: 'sec',
+      redirectUri: 'https://chat.example.com/callback',
+      scopes: 'openid email profile',
+    });
+    const result = await oidc.exchangeCode({
+      params: { code: 'CODE', state: 'STATE' },
+      checks: { state: 'STATE', code_verifier: 'VERIFIER' },
+    });
+    expect(result).toEqual(claims);
   });
 });

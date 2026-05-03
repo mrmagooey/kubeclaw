@@ -92,6 +92,7 @@ export function isEmailAllowed(
   return allowlist.domains.has(domain);
 }
 
+import { Issuer, type Client as OidcLibClient } from 'openid-client';
 import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
 
@@ -162,7 +163,9 @@ export function parseConfig(): OAuthWebchatConfig | null {
 
   const allowlist = parseAllowlist(allowedEmails);
   if (allowlist.exact.size === 0 && allowlist.domains.size === 0) {
-    logger.warn('oauth-webchat: OAUTH_WEBCHAT_ALLOWED_EMAILS produced no entries');
+    logger.warn(
+      'oauth-webchat: OAUTH_WEBCHAT_ALLOWED_EMAILS produced no entries',
+    );
     return null;
   }
 
@@ -174,8 +177,76 @@ export function parseConfig(): OAuthWebchatConfig | null {
     clientSecret,
     allowlist,
     cookieSecret,
-    sessionTtlDays: parseInt(envOr(file, 'OAUTH_WEBCHAT_SESSION_TTL_DAYS') || '30', 10),
+    sessionTtlDays: parseInt(
+      envOr(file, 'OAUTH_WEBCHAT_SESSION_TTL_DAYS') || '30',
+      10,
+    ),
     scopes: envOr(file, 'OAUTH_WEBCHAT_SCOPES') || 'openid email profile',
     providerName: envOr(file, 'OAUTH_WEBCHAT_PROVIDER_NAME') || 'OIDC',
   };
+}
+
+export interface OidcClientOptions {
+  issuer: string;
+  clientId: string;
+  clientSecret: string;
+  redirectUri: string;
+  scopes: string;
+}
+
+export interface OidcClaims {
+  email?: string;
+  email_verified?: boolean;
+  sub?: string;
+  [key: string]: unknown;
+}
+
+export class OidcClient {
+  private opts: OidcClientOptions;
+  private clientPromise: Promise<OidcLibClient> | null = null;
+
+  constructor(opts: OidcClientOptions) {
+    this.opts = opts;
+  }
+
+  private async getClient(): Promise<OidcLibClient> {
+    if (!this.clientPromise) {
+      this.clientPromise = (async () => {
+        const issuer = await Issuer.discover(this.opts.issuer);
+        return new issuer.Client({
+          client_id: this.opts.clientId,
+          client_secret: this.opts.clientSecret,
+          redirect_uris: [this.opts.redirectUri],
+          response_types: ['code'],
+        });
+      })();
+    }
+    return this.clientPromise;
+  }
+
+  async buildAuthorizeUrl(args: {
+    state: string;
+    codeChallenge: string;
+  }): Promise<string> {
+    const client = await this.getClient();
+    return client.authorizationUrl({
+      scope: this.opts.scopes,
+      state: args.state,
+      code_challenge: args.codeChallenge,
+      code_challenge_method: 'S256',
+    });
+  }
+
+  async exchangeCode(args: {
+    params: { code: string; state: string };
+    checks: { state: string; code_verifier: string };
+  }): Promise<OidcClaims> {
+    const client = await this.getClient();
+    const tokenSet = await client.callback(
+      this.opts.redirectUri,
+      args.params,
+      args.checks,
+    );
+    return tokenSet.claims() as OidcClaims;
+  }
 }
