@@ -42,7 +42,6 @@ credentialInjection:
 | `off` | No broker. API keys injected as env vars (legacy). | None. |
 | `sidecar` | Per-pod Envoy sidecar intercepts outbound HTTPS. Broker stamps credentials. | cert-manager for internal CA. |
 | `istio` | Istio egress gateway routes traffic through broker. No per-pod sidecar. | Istio CRDs already installed. |
-| `auto` | Detect Istio CRDs at install time; fall back to `sidecar` if absent. | Depends on detected mode. |
 
 The orchestrator pod is intentionally excluded from all modes — it is the trusted tier and retains credentials in environment variables.
 
