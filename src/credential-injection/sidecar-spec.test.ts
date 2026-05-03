@@ -1,9 +1,16 @@
 import { describe, it, expect } from 'vitest';
-import { sidecarContainerSpec, sidecarVolumes, sidecarVolumeMounts } from './sidecar-spec.js';
+import {
+  sidecarContainerSpec,
+  sidecarVolumes,
+  sidecarVolumeMounts,
+} from './sidecar-spec.js';
 
 describe('sidecarContainerSpec', () => {
   it('mounts envoy config and broker token', () => {
-    const c = sidecarContainerSpec({ image: 'envoyproxy/envoy:v1.31', port: 8443 });
+    const c = sidecarContainerSpec({
+      image: 'envoyproxy/envoy:v1.31',
+      port: 8443,
+    });
     const names = (c.volumeMounts ?? []).map((m) => m.name);
     expect(names).toContain('envoy-config');
     expect(names).toContain('broker-token');
@@ -11,7 +18,10 @@ describe('sidecarContainerSpec', () => {
   });
 
   it('runs envoy with the config path', () => {
-    const c = sidecarContainerSpec({ image: 'envoyproxy/envoy:v1.31', port: 8443 });
+    const c = sidecarContainerSpec({
+      image: 'envoyproxy/envoy:v1.31',
+      port: 8443,
+    });
     expect(c.args).toEqual(['-c', '/etc/envoy/envoy.yaml']);
   });
 });
@@ -21,6 +31,16 @@ describe('sidecarVolumes', () => {
     const vols = sidecarVolumes();
     const tok = vols.find((v) => v.name === 'broker-token');
     const sources = (tok as any).projected.sources;
-    expect(sources[0].serviceAccountToken.audience).toBe('kubeclaw-credential-broker');
+    expect(sources[0].serviceAccountToken.audience).toBe(
+      'kubeclaw-credential-broker',
+    );
+  });
+});
+
+describe('volume / mount parity', () => {
+  it('every volume has a matching mount and vice versa', () => {
+    const volumeNames = new Set(sidecarVolumes().map((v) => v.name));
+    const mountNames = new Set(sidecarVolumeMounts().map((m) => m.name));
+    expect(volumeNames).toEqual(mountNames);
   });
 });
