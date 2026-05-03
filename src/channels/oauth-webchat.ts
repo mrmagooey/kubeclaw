@@ -225,6 +225,54 @@ export interface OAuthWebchatChannelOpts {
 const SESSION_COOKIE = 'oauth-webchat-session';
 const STATE_COOKIE = 'oauth-webchat-state';
 
+function parseCookies(header: string | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!header) return out;
+  for (const part of header.split(';')) {
+    const eq = part.indexOf('=');
+    if (eq < 1) continue;
+    const k = part.slice(0, eq).trim();
+    const v = part.slice(eq + 1).trim();
+    if (k) out[k] = decodeURIComponent(v);
+  }
+  return out;
+}
+
+interface StatePayload {
+  state: string;
+  codeVerifier: string;
+  exp: number;
+}
+
+function signStateCookie(payload: StatePayload, secret: string): string {
+  return signSessionCookie(payload as unknown as SessionPayload, secret);
+}
+
+function verifyStateCookie(cookie: string, secret: string): StatePayload | null {
+  return verifySessionCookie(cookie, secret) as unknown as StatePayload | null;
+}
+
+function genState(): string {
+  return crypto.randomBytes(16).toString('base64url');
+}
+
+function genCodeVerifier(): string {
+  return crypto.randomBytes(32).toString('base64url');
+}
+
+function codeChallengeFor(verifier: string): string {
+  return crypto.createHash('sha256').update(verifier).digest('base64url');
+}
+
+const LOGIN_HTML = (providerName: string) => `<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>Sign in</title>
+<style>body{font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;height:100dvh;margin:0;background:#f5f5f5}
+.card{background:#fff;padding:2rem;border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,.05);text-align:center}
+button{padding:.75rem 1.5rem;font-size:1rem;background:#0b93f6;color:#fff;border:none;border-radius:8px;cursor:pointer}
+</style></head><body><div class="card"><h2>Sign in</h2>
+<form action="/login/start" method="get"><button type="submit">Sign in with ${providerName}</button></form>
+</div></body></html>`;
+
 export class OAuthWebchatChannel implements Channel {
   name = 'oauth-webchat';
   readonly capabilities: ChannelCapabilities = {
@@ -235,10 +283,18 @@ export class OAuthWebchatChannel implements Channel {
   private opts: OAuthWebchatChannelOpts;
   private config: OAuthWebchatConfig;
   private server: Server | null = null;
+  private oidc: OidcClient;
 
   constructor(config: OAuthWebchatConfig, opts: OAuthWebchatChannelOpts) {
     this.config = config;
     this.opts = opts;
+    this.oidc = new OidcClient({
+      issuer: config.oidcIssuer,
+      clientId: config.clientId,
+      clientSecret: config.clientSecret,
+      redirectUri: `${config.publicUrl.replace(/\/$/, '')}/callback`,
+      scopes: config.scopes,
+    });
   }
 
   async connect(): Promise<void> {
@@ -279,7 +335,34 @@ export class OAuthWebchatChannel implements Channel {
     // Implemented in a later task
   }
 
-  private handleRequest(_req: IncomingMessage, res: ServerResponse): void {
+  private async handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const url = new URL(req.url ?? '/', this.config.publicUrl);
+
+    if (req.method === 'GET' && url.pathname === '/login') {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(LOGIN_HTML(this.config.providerName));
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/login/start') {
+      const state = genState();
+      const codeVerifier = genCodeVerifier();
+      const stateCookie = signStateCookie(
+        { state, codeVerifier, exp: Math.floor(Date.now() / 1000) + 300 },
+        this.config.cookieSecret,
+      );
+      const authorizeUrl = await this.oidc.buildAuthorizeUrl({
+        state,
+        codeChallenge: codeChallengeFor(codeVerifier),
+      });
+      res.writeHead(302, {
+        'Set-Cookie': `${STATE_COOKIE}=${encodeURIComponent(stateCookie)}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=300`,
+        Location: authorizeUrl,
+      });
+      res.end();
+      return;
+    }
+
     res.writeHead(404, { 'Content-Type': 'text/plain' });
     res.end('Not found');
   }

@@ -327,9 +327,15 @@ describe('OAuthWebchatChannel — lifecycle and basics', () => {
   });
 
   it('listens on the configured port', async () => {
-    const channel = new OAuthWebchatChannel({ ...makeConfig(), port: 9123 }, makeOpts());
+    const channel = new OAuthWebchatChannel(
+      { ...makeConfig(), port: 9123 },
+      makeOpts(),
+    );
     await channel.connect();
-    expect(mockServerInstance.listen).toHaveBeenCalledWith(9123, expect.any(Function));
+    expect(mockServerInstance.listen).toHaveBeenCalledWith(
+      9123,
+      expect.any(Function),
+    );
     await channel.disconnect();
   });
 });
@@ -400,5 +406,96 @@ describe('OidcClient', () => {
       checks: { state: 'STATE', code_verifier: 'VERIFIER' },
     });
     expect(result).toEqual(claims);
+  });
+});
+
+function makeReq(overrides: {
+  method?: string;
+  url?: string;
+  cookie?: string;
+}): IncomingMessage {
+  const headers: Record<string, string> = {};
+  if (overrides.cookie) headers.cookie = overrides.cookie;
+  return {
+    method: overrides.method ?? 'GET',
+    url: overrides.url ?? '/',
+    headers,
+    on: vi.fn(),
+    destroy: vi.fn(),
+  } as unknown as IncomingMessage;
+}
+
+interface FakeRes {
+  _status: number;
+  _headers: Record<string, string | string[]>;
+  _body: string;
+  writableEnded: boolean;
+  writeHead: (status: number, headers?: Record<string, string | string[]>) => void;
+  write: (data: string) => void;
+  end: (data?: string) => void;
+  on: ReturnType<typeof vi.fn>;
+}
+
+function makeRes(): FakeRes {
+  const res: FakeRes = {
+    _status: 0,
+    _headers: {},
+    _body: '',
+    writableEnded: false,
+    writeHead: vi.fn((status, headers) => {
+      res._status = status;
+      if (headers) Object.assign(res._headers, headers);
+    }),
+    write: vi.fn((data) => {
+      res._body += data;
+    }),
+    end: vi.fn((data) => {
+      if (data) res._body += data;
+      res.writableEnded = true;
+    }),
+    on: vi.fn(),
+  };
+  return res;
+}
+
+async function dispatch(channel: OAuthWebchatChannel, req: IncomingMessage, res: FakeRes) {
+  await (mockServerInstance._handler as (r: IncomingMessage, s: ServerResponse) => unknown)(
+    req,
+    res as unknown as ServerResponse,
+  );
+  await new Promise((r) => setTimeout(r, 0));
+}
+
+describe('GET /login', () => {
+  it('serves the login page when no session cookie present', async () => {
+    const channel = new OAuthWebchatChannel(makeConfig(), makeOpts());
+    await channel.connect();
+    const req = makeReq({ url: '/login' });
+    const res = makeRes();
+    await dispatch(channel, req, res);
+    expect(res._status).toBe(200);
+    expect(String(res._headers['Content-Type'])).toContain('text/html');
+    expect(res._body).toContain('Sign in with OIDC');
+    expect(res._body).toContain('/login/start');
+    await channel.disconnect();
+  });
+});
+
+describe('GET /login/start', () => {
+  it('redirects to the provider authorize URL with state cookie set', async () => {
+    const channel = new OAuthWebchatChannel(makeConfig(), makeOpts());
+    await channel.connect();
+    const req = makeReq({ url: '/login/start' });
+    const res = makeRes();
+    await dispatch(channel, req, res);
+
+    expect(res._status).toBe(302);
+    const loc = String(res._headers['Location']);
+    expect(loc).toContain('issuer.example.com');
+    expect(loc).toContain('STATE');
+    const setCookie = res._headers['Set-Cookie'];
+    const cookies = Array.isArray(setCookie) ? setCookie : [setCookie ?? ''];
+    expect(cookies.some((c) => String(c).startsWith('oauth-webchat-state='))).toBe(true);
+    await channel.disconnect();
   });
 });
