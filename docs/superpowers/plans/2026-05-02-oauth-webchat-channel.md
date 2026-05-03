@@ -6,7 +6,7 @@
 
 **Architecture:** A Node `http` server in the same shape as `src/channels/http.ts`, hand-rolled (no Express). Authentication uses an OIDC redirect flow (`openid-client`) to get a verified email, then issues an HMAC-signed session cookie. JIDs are `oauth-webchat:<email>`. Operator brings their own Ingress/TLS termination. Code is duplicated rather than shared with `http.ts` (see spec §"Code-sharing decision").
 
-**Tech Stack:** TypeScript, Node `http` (no framework), `openid-client` ^5.6.0, vitest (existing test stack), HMAC-SHA256 via `node:crypto`.
+**Tech Stack:** TypeScript, Node `http` (no framework), `openid-client` ^5.7.1, vitest (existing test stack), HMAC-SHA256 via `node:crypto`.
 
 **Spec:** `docs/superpowers/specs/2026-05-02-oauth-webchat-channel-design.md`
 
@@ -59,7 +59,7 @@ If `git status` is not clean inside the worktree, stop and investigate before pr
 - [ ] **Step 1: Install dep**
 
 ```bash
-npm install openid-client@^5.6.0
+npm install openid-client@^5.7.1
 ```
 
 - [ ] **Step 2: Verify it landed in package.json**
@@ -67,7 +67,7 @@ npm install openid-client@^5.6.0
 ```bash
 grep openid-client package.json
 ```
-Expected: `"openid-client": "^5.6.0"` under `dependencies`.
+Expected: `"openid-client": "^5.7.1"` under `dependencies`.
 
 - [ ] **Step 3: Verify the project still builds**
 
@@ -694,7 +694,7 @@ git commit -m "feat(oauth-webchat): add env-driven config parser with validation
 
 The wrapper handles discovery (one-time fetch) and exposes `buildAuthorizeUrl(state, codeChallenge)`, `exchangeCode(code, codeVerifier)`. Uses `openid-client` v5 API: `Issuer.discover(url)`, `new issuer.Client({...})`, `client.authorizationUrl({...})`, `client.callback(redirectUri, params, checks)`.
 
-`openid-client@^5.6.0` exports `Issuer` and works in pure Node. The client returns `tokenSet.claims()` as the verified ID token claims.
+`openid-client@^5.7.1` exports `Issuer` and works in pure Node. The client returns `tokenSet.claims()` as the verified ID token claims.
 
 For tests, mock `openid-client` so we don't actually fetch.
 
