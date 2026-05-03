@@ -791,7 +791,9 @@ function makeReqWithBody(overrides: {
   url: string;
   cookie?: string;
   contentType?: string;
-  body: string;
+  // Accept a Buffer directly to preserve binary bytes (e.g. PNG magic bytes).
+  // When a string is passed, Buffer.from(string) uses utf8 encoding as usual.
+  body: string | Buffer;
 }): IncomingMessage {
   const headers: Record<string, string> = {
     'content-type': overrides.contentType ?? 'application/json',
@@ -804,9 +806,13 @@ function makeReqWithBody(overrides: {
     on: vi.fn(),
     destroy: vi.fn(),
   } as unknown as IncomingMessage;
+  const bodyBuf =
+    Buffer.isBuffer(overrides.body)
+      ? overrides.body
+      : Buffer.from(overrides.body);
   (req.on as ReturnType<typeof vi.fn>).mockImplementation(
     (event: string, cb: (arg?: Buffer) => void) => {
-      if (event === 'data') cb(Buffer.from(overrides.body));
+      if (event === 'data') cb(bodyBuf);
       if (event === 'end') cb();
     },
   );
@@ -853,7 +859,10 @@ describe('POST /message (JSON)', () => {
     );
     expect(opts.onMessage).toHaveBeenCalledWith(
       'oauth-webchat:alice@example.com',
-      expect.objectContaining({ content: 'hello', sender: 'alice@example.com' }),
+      expect.objectContaining({
+        content: 'hello',
+        sender: 'alice@example.com',
+      }),
     );
     await channel.disconnect();
   });
@@ -901,6 +910,62 @@ describe('POST /message (JSON)', () => {
     const res = makeRes();
     await dispatch(channel, req, res);
     expect(res._status).toBe(400);
+    await channel.disconnect();
+  });
+});
+
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+
+describe('POST /message (multipart image)', () => {
+  it('writes image to disk and emits ImageAttachment marker', async () => {
+    const tmpdir = fs.mkdtempSync(path.join(os.tmpdir(), 'oauth-webchat-test-'));
+    vi.doMock('../config.js', () => ({
+      ASSISTANT_NAME: 'Andy',
+      TRIGGER_PATTERN: /^@Andy\b/i,
+      GROUPS_DIR: tmpdir,
+    }));
+    const mod = await import('./oauth-webchat.js');
+    const opts = makeOpts();
+    opts.registeredGroups = vi.fn(() => ({
+      'oauth-webchat:alice@example.com': {
+        name: 'alice@example.com',
+        folder: 'oauth-webchat:alice@example.com',
+        trigger: '@Andy',
+        added_at: '2024-01-01T00:00:00.000Z',
+      },
+    })) as ReturnType<typeof vi.fn>;
+    const channel = new mod.OAuthWebchatChannel(makeConfig(), opts);
+    await channel.connect();
+
+    const boundary = '----testboundary';
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
+    const body = Buffer.concat([
+      Buffer.from(`--${boundary}\r\n`),
+      Buffer.from('Content-Disposition: form-data; name="image"; filename="x.png"\r\n'),
+      Buffer.from('Content-Type: image/png\r\n\r\n'),
+      png,
+      Buffer.from(`\r\n--${boundary}--\r\n`),
+    ]);
+
+    const req = makeReqWithBody({
+      url: '/message',
+      cookie: sessionCookieHeader(),
+      contentType: `multipart/form-data; boundary=${boundary}`,
+      body: body,
+    });
+    const res = makeRes();
+    await dispatch(channel, req, res);
+
+    expect(res._status).toBe(200);
+    expect(opts.onMessage).toHaveBeenCalledWith(
+      'oauth-webchat:alice@example.com',
+      expect.objectContaining({
+        content: expect.stringContaining('[ImageAttachment: attachments/raw/'),
+      }),
+    );
+    fs.rmSync(tmpdir, { recursive: true, force: true });
     await channel.disconnect();
   });
 });

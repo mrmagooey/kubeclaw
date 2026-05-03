@@ -1,4 +1,6 @@
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import nodePath from 'node:path';
 
 export interface SessionPayload {
   email: string;
@@ -95,6 +97,71 @@ export function isEmailAllowed(
 import { Issuer, type Client as OidcLibClient } from 'openid-client';
 import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
+import { GROUPS_DIR } from '../config.js';
+
+const MAX_MULTIPART_SIZE = 10 * 1024 * 1024; // 10 MB
+
+const MEDIA_MAGIC: Array<{ bytes: number[]; mime: string }> = [
+  { bytes: [0xff, 0xd8, 0xff], mime: 'image/jpeg' },
+  { bytes: [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], mime: 'image/png' },
+  { bytes: [0x47, 0x49, 0x46], mime: 'image/gif' },
+  { bytes: [0x52, 0x49, 0x46, 0x46], mime: 'image/webp' },
+];
+
+function detectMediaType(buffer: Buffer): string | null {
+  for (const sig of MEDIA_MAGIC) {
+    if (sig.bytes.every((b, i) => buffer[i] === b)) return sig.mime;
+  }
+  return null;
+}
+
+interface MultipartPart {
+  name: string;
+  filename?: string;
+  contentType?: string;
+  data: Buffer;
+}
+
+function parseMultipart(body: Buffer, boundary: string): MultipartPart[] {
+  const parts: MultipartPart[] = [];
+  const sep = Buffer.from(`--${boundary}`);
+  const CRLF = Buffer.from('\r\n');
+  const CRLFCRLF = Buffer.from('\r\n\r\n');
+  let pos = 0;
+  while (pos < body.length) {
+    const bStart = body.indexOf(sep, pos);
+    if (bStart === -1) break;
+    pos = bStart + sep.length;
+    if (body.slice(pos, pos + 2).equals(Buffer.from('--'))) break;
+    if (body.slice(pos, pos + 2).equals(CRLF)) pos += 2;
+    const headerEnd = body.indexOf(CRLFCRLF, pos);
+    if (headerEnd === -1) break;
+    const headerStr = body.slice(pos, headerEnd).toString('utf8');
+    pos = headerEnd + 4;
+    const nextBound = body.indexOf(sep, pos);
+    if (nextBound === -1) break;
+    let dataEnd = nextBound;
+    if (body.slice(dataEnd - 2, dataEnd).equals(CRLF)) dataEnd -= 2;
+    const data = body.slice(pos, dataEnd);
+    pos = nextBound;
+    let name = '';
+    let filename: string | undefined;
+    let contentType: string | undefined;
+    for (const line of headerStr.split('\r\n')) {
+      const lower = line.toLowerCase();
+      if (lower.startsWith('content-disposition:')) {
+        const nameMatch = line.match(/name="([^"]+)"/i);
+        const fileMatch = line.match(/filename="([^"]+)"/i);
+        if (nameMatch) name = nameMatch[1];
+        if (fileMatch) filename = fileMatch[1];
+      } else if (lower.startsWith('content-type:')) {
+        contentType = line.slice('content-type:'.length).trim();
+      }
+    }
+    if (name) parts.push({ name, filename, contentType, data });
+  }
+  return parts;
+}
 
 export interface OAuthWebchatConfig {
   port: number;
@@ -650,11 +717,10 @@ export class OAuthWebchatChannel implements Channel {
       const contentType = (req.headers['content-type'] ?? '').toLowerCase();
       const chunks: Buffer[] = [];
       let total = 0;
-      const MAX = 10 * 1024 * 1024;
 
       req.on('data', (chunk: Buffer) => {
         total += chunk.length;
-        if (total > MAX) {
+        if (total > MAX_MULTIPART_SIZE) {
           res.writeHead(413, { 'Content-Type': 'text/plain' });
           res.end('Payload too large');
           req.destroy();
@@ -667,9 +733,45 @@ export class OAuthWebchatChannel implements Channel {
         const body = Buffer.concat(chunks);
 
         if (contentType.startsWith('multipart/form-data')) {
-          // Multipart handler is added in Task 15.
-          res.writeHead(415, { 'Content-Type': 'text/plain' });
-          res.end('Multipart not yet supported');
+          const boundaryMatch = contentType.match(/boundary=([^\s;]+)/);
+          if (!boundaryMatch) {
+            res.writeHead(400, { 'Content-Type': 'text/plain' });
+            res.end('Missing boundary');
+            return;
+          }
+          const parts = parseMultipart(body, boundaryMatch[1]);
+          const textPart = parts.find((p) => p.name === 'text');
+          const imagePart = parts.find((p) => p.name === 'image');
+          if (!imagePart) {
+            res.writeHead(400, { 'Content-Type': 'text/plain' });
+            res.end('Missing image');
+            return;
+          }
+          const mime = detectMediaType(imagePart.data);
+          if (!mime) {
+            res.writeHead(415, { 'Content-Type': 'text/plain' });
+            res.end('Unsupported image format');
+            return;
+          }
+          const jid = `oauth-webchat:${session.email}`;
+          const group = this.opts.registeredGroups()[jid];
+          if (!group) {
+            res.writeHead(200, { 'Content-Type': 'text/plain' });
+            res.end('ok');
+            return;
+          }
+          const ext = mime.split('/')[1].replace('jpeg', 'jpg');
+          const filename = `img-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.${ext}`;
+          const attachDir = nodePath.join(GROUPS_DIR, group.folder, 'attachments', 'raw');
+          fs.mkdirSync(attachDir, { recursive: true });
+          fs.writeFileSync(nodePath.join(attachDir, filename), imagePart.data);
+          const caption = textPart?.data.toString('utf8').trim() ?? '';
+          const marker = caption
+            ? `[ImageAttachment: attachments/raw/${filename} caption="${caption}"]`
+            : `[ImageAttachment: attachments/raw/${filename}]`;
+          this.handleInbound(session.email, marker);
+          res.writeHead(200, { 'Content-Type': 'text/plain' });
+          res.end('ok');
           return;
         }
 
