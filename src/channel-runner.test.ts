@@ -1,5 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 
+// channel-runner.ts has a module-level `if (!KUBECLAW_CHANNEL) process.exit(1)`
+// guard. Hoist the env stub above the import so the guard passes.
 vi.hoisted(() => {
   process.env.KUBECLAW_CHANNEL = 'test';
 });
