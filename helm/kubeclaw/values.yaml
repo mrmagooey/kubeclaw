@@ -276,7 +276,7 @@ credentialInjection:
   # - sidecar: per-pod Envoy sidecar, works on any cluster (default for new installs)
   # - istio:   Istio egress gateway (requires Istio CRDs)
   # - auto:    detect Istio at install time, fall back to sidecar
-  mode: sidecar
+  mode: "sidecar"
 
   broker:
     image: ghcr.io/mrmagooey/kubeclaw-credential-broker:latest

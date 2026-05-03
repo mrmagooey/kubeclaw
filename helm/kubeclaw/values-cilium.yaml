@@ -51,4 +51,4 @@ ciliumNetworkPolicy:
 # broker + sidecar still adds value (header injection, audit). Default
 # to sidecar; switch to istio if you also run Istio on top of Cilium.
 credentialInjection:
-  mode: sidecar
+  mode: "sidecar"
