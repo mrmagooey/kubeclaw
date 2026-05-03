@@ -40,3 +40,6 @@ misc/
 .nanoclaw/
 
 agents-sdk-docs
+
+# Worktrees for parallel agent work
+.claude/worktrees/
