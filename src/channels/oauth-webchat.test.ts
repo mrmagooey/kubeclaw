@@ -552,7 +552,8 @@ describe('GET /logout', () => {
     ) as string[];
     expect(
       setCookies.some(
-        (c) => c.startsWith('oauth-webchat-session=') && c.includes('Max-Age=0'),
+        (c) =>
+          c.startsWith('oauth-webchat-session=') && c.includes('Max-Age=0'),
       ),
     ).toBe(true);
     await channel.disconnect();
@@ -710,5 +711,39 @@ describe('getSessionFromCookies', () => {
       'a'.repeat(64),
     );
     expect(result?.email).toBe('alice@example.com');
+  });
+});
+
+describe('GET /', () => {
+  it('redirects to /login when no session', async () => {
+    const channel = new OAuthWebchatChannel(makeConfig(), makeOpts());
+    await channel.connect();
+    const req = makeReq({ url: '/' });
+    const res = makeRes();
+    await dispatch(channel, req, res);
+    expect(res._status).toBe(302);
+    expect(String(res._headers['Location'])).toBe('/login');
+    await channel.disconnect();
+  });
+
+  it('serves chat HTML with email when session is valid', async () => {
+    const channel = new OAuthWebchatChannel(makeConfig(), makeOpts());
+    await channel.connect();
+    const session = signSessionCookie(
+      { email: 'alice@example.com', exp: Math.floor(Date.now() / 1000) + 3600 },
+      makeConfig().cookieSecret,
+    );
+    const req = makeReq({
+      url: '/',
+      cookie: `oauth-webchat-session=${encodeURIComponent(session)}`,
+    });
+    const res = makeRes();
+    await dispatch(channel, req, res);
+    expect(res._status).toBe(200);
+    expect(String(res._headers['Content-Type'])).toContain('text/html');
+    expect(res._body).toContain('alice@example.com');
+    expect(res._body).toContain('/stream');
+    expect(res._body).toContain('/logout');
+    await channel.disconnect();
   });
 });

@@ -267,6 +267,126 @@ function codeChallengeFor(verifier: string): string {
   return crypto.createHash('sha256').update(verifier).digest('base64url');
 }
 
+const CHAT_HTML = (email: string) => `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chat</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, sans-serif; background: #f5f5f5; height: 100dvh; display: flex; flex-direction: column; }
+  #header { padding: .5rem 1rem; background: #fff; border-bottom: 1px solid #e0e0e0; font-size: .8rem; color: #555; display: flex; justify-content: space-between; }
+  #header a { color: #0b93f6; text-decoration: none; }
+  #messages { flex: 1; overflow-y: auto; padding: 1rem; display: flex; flex-direction: column; gap: 0.5rem; }
+  .msg { max-width: 75%; padding: 0.5rem 0.75rem; border-radius: 12px; line-height: 1.4; white-space: pre-wrap; word-break: break-word; }
+  .msg.user { align-self: flex-end; background: #0b93f6; color: #fff; border-bottom-right-radius: 4px; }
+  .msg.assistant { align-self: flex-start; background: #fff; border: 1px solid #e0e0e0; border-bottom-left-radius: 4px; }
+  #form { display: flex; gap: 0.5rem; padding: 0.75rem; background: #fff; border-top: 1px solid #e0e0e0; align-items: flex-end; }
+  #input { flex: 1; padding: 0.5rem 0.75rem; border: 1px solid #ccc; border-radius: 8px; font-size: 1rem; resize: none; height: 2.5rem; max-height: 8rem; overflow-y: auto; }
+  #send { padding: 0.5rem 1rem; background: #0b93f6; color: #fff; border: none; border-radius: 8px; cursor: pointer; font-size: 1rem; }
+  #send:disabled { opacity: 0.5; cursor: default; }
+  #status { font-size: 0.75rem; color: #888; padding: 0.25rem 1rem; }
+  #attach-label { cursor: pointer; font-size: 1.25rem; padding: 0.25rem; line-height: 1; user-select: none; }
+  #file-input { display: none; }
+  #preview-area { padding: 0.25rem 0.75rem; font-size: 0.8rem; color: #555; min-height: 0; }
+  #preview-area img { max-height: 80px; border-radius: 6px; display: block; margin-top: 0.25rem; }
+</style>
+</head>
+<body>
+<div id="header"><span>Signed in as ${email}</span><a href="/logout">Logout</a></div>
+<div id="messages"></div>
+<div id="status">Connecting…</div>
+<div id="preview-area"></div>
+<form id="form">
+  <label id="attach-label" title="Attach image">📎<input id="file-input" type="file" accept="image/*"></label>
+  <textarea id="input" placeholder="Send a message…" rows="1"></textarea>
+  <button id="send" type="submit">Send</button>
+</form>
+<script>
+const msgs = document.getElementById('messages');
+const status = document.getElementById('status');
+const form = document.getElementById('form');
+const input = document.getElementById('input');
+const send = document.getElementById('send');
+const fileInput = document.getElementById('file-input');
+const previewArea = document.getElementById('preview-area');
+let pendingFile = null;
+
+function addMsg(text, role) {
+  const div = document.createElement('div');
+  div.className = 'msg ' + role;
+  div.textContent = text;
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+const es = new EventSource('/stream', { withCredentials: true });
+es.onopen = () => { status.textContent = 'Connected'; };
+es.onmessage = (e) => { addMsg(e.data, 'assistant'); };
+es.onerror = () => { status.textContent = 'Reconnecting…'; };
+
+fileInput.addEventListener('change', () => {
+  const file = fileInput.files[0];
+  if (!file) return;
+  pendingFile = file;
+  previewArea.textContent = '';
+  const nameSpan = document.createElement('span');
+  nameSpan.textContent = file.name;
+  const img = document.createElement('img');
+  img.src = URL.createObjectURL(file);
+  previewArea.appendChild(nameSpan);
+  previewArea.appendChild(document.createElement('br'));
+  previewArea.appendChild(img);
+});
+
+input.addEventListener('input', () => {
+  input.style.height = '2.5rem';
+  input.style.height = Math.min(input.scrollHeight, 128) + 'px';
+});
+
+input.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    form.requestSubmit();
+  }
+});
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const text = input.value.trim();
+  if (!text && !pendingFile) return;
+  const displayText = text || (pendingFile ? '[image]' : '');
+  input.value = '';
+  input.style.height = '2.5rem';
+  send.disabled = true;
+  addMsg(displayText, 'user');
+  try {
+    if (pendingFile) {
+      const fd = new FormData();
+      if (text) fd.append('text', text);
+      fd.append('image', pendingFile, pendingFile.name);
+      await fetch('/message', { method: 'POST', credentials: 'include', body: fd });
+      pendingFile = null;
+      previewArea.textContent = '';
+      fileInput.value = '';
+    } else {
+      await fetch('/message', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ text }),
+      });
+    }
+  } finally {
+    send.disabled = false;
+    input.focus();
+  }
+});
+</script>
+</body>
+</html>`;
+
 const LOGIN_HTML = (providerName: string) => `<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><title>Sign in</title>
 <style>body{font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;height:100dvh;margin:0;background:#f5f5f5}
@@ -444,6 +564,21 @@ export class OAuthWebchatChannel implements Channel {
         Location: '/',
       });
       res.end();
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/') {
+      const session = getSessionFromCookies(
+        parseCookies(req.headers.cookie),
+        this.config.cookieSecret,
+      );
+      if (!session) {
+        res.writeHead(302, { Location: '/login' });
+        res.end();
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(CHAT_HTML(session.email));
       return;
     }
 
