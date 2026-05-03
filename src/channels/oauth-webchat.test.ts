@@ -806,10 +806,9 @@ function makeReqWithBody(overrides: {
     on: vi.fn(),
     destroy: vi.fn(),
   } as unknown as IncomingMessage;
-  const bodyBuf =
-    Buffer.isBuffer(overrides.body)
-      ? overrides.body
-      : Buffer.from(overrides.body);
+  const bodyBuf = Buffer.isBuffer(overrides.body)
+    ? overrides.body
+    : Buffer.from(overrides.body);
   (req.on as ReturnType<typeof vi.fn>).mockImplementation(
     (event: string, cb: (arg?: Buffer) => void) => {
       if (event === 'data') cb(bodyBuf);
@@ -920,7 +919,9 @@ import os from 'node:os';
 
 describe('POST /message (multipart image)', () => {
   it('writes image to disk and emits ImageAttachment marker', async () => {
-    const tmpdir = fs.mkdtempSync(path.join(os.tmpdir(), 'oauth-webchat-test-'));
+    const tmpdir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'oauth-webchat-test-'),
+    );
     vi.doMock('../config.js', () => ({
       ASSISTANT_NAME: 'Andy',
       TRIGGER_PATTERN: /^@Andy\b/i,
@@ -940,10 +941,14 @@ describe('POST /message (multipart image)', () => {
     await channel.connect();
 
     const boundary = '----testboundary';
-    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
+    const png = Buffer.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3,
+    ]);
     const body = Buffer.concat([
       Buffer.from(`--${boundary}\r\n`),
-      Buffer.from('Content-Disposition: form-data; name="image"; filename="x.png"\r\n'),
+      Buffer.from(
+        'Content-Disposition: form-data; name="image"; filename="x.png"\r\n',
+      ),
       Buffer.from('Content-Type: image/png\r\n\r\n'),
       png,
       Buffer.from(`\r\n--${boundary}--\r\n`),
@@ -966,6 +971,76 @@ describe('POST /message (multipart image)', () => {
       }),
     );
     fs.rmSync(tmpdir, { recursive: true, force: true });
+    await channel.disconnect();
+  });
+});
+
+describe('sendMessage', () => {
+  it('writes SSE data to connected client for the JID', async () => {
+    const channel = new OAuthWebchatChannel(makeConfig(), makeOpts());
+    await channel.connect();
+    const session = signSessionCookie(
+      { email: 'alice@example.com', exp: Math.floor(Date.now() / 1000) + 3600 },
+      makeConfig().cookieSecret,
+    );
+    const req = makeReq({
+      url: '/stream',
+      cookie: `oauth-webchat-session=${encodeURIComponent(session)}`,
+    });
+    const closeHandlers: Array<() => void> = [];
+    (req.on as ReturnType<typeof vi.fn>).mockImplementation(
+      (event: string, cb: () => void) => {
+        if (event === 'close') closeHandlers.push(cb);
+      },
+    );
+    const streamRes = makeRes();
+    await dispatch(channel, req, streamRes);
+
+    await channel.sendMessage('oauth-webchat:alice@example.com', 'Hello');
+    const written = (streamRes.write as ReturnType<typeof vi.fn>).mock.calls
+      .map(([d]: [string]) => d)
+      .join('');
+    expect(written).toContain('data: Hello');
+
+    closeHandlers.forEach((h) => h());
+    await channel.disconnect();
+  });
+
+  it('encodes multi-line messages as multiple data: lines', async () => {
+    const channel = new OAuthWebchatChannel(makeConfig(), makeOpts());
+    await channel.connect();
+    const session = signSessionCookie(
+      { email: 'alice@example.com', exp: Math.floor(Date.now() / 1000) + 3600 },
+      makeConfig().cookieSecret,
+    );
+    const req = makeReq({
+      url: '/stream',
+      cookie: `oauth-webchat-session=${encodeURIComponent(session)}`,
+    });
+    const closeHandlers: Array<() => void> = [];
+    (req.on as ReturnType<typeof vi.fn>).mockImplementation(
+      (event: string, cb: () => void) => {
+        if (event === 'close') closeHandlers.push(cb);
+      },
+    );
+    const streamRes = makeRes();
+    await dispatch(channel, req, streamRes);
+
+    await channel.sendMessage('oauth-webchat:alice@example.com', 'one\ntwo');
+    const written = (streamRes.write as ReturnType<typeof vi.fn>).mock.calls
+      .map(([d]: [string]) => d)
+      .join('');
+    expect(written).toContain('data: one\ndata: two');
+    closeHandlers.forEach((h) => h());
+    await channel.disconnect();
+  });
+
+  it('does nothing when no SSE client is connected', async () => {
+    const channel = new OAuthWebchatChannel(makeConfig(), makeOpts());
+    await channel.connect();
+    await expect(
+      channel.sendMessage('oauth-webchat:alice@example.com', 'no client'),
+    ).resolves.toBeUndefined();
     await channel.disconnect();
   });
 });

@@ -103,7 +103,10 @@ const MAX_MULTIPART_SIZE = 10 * 1024 * 1024; // 10 MB
 
 const MEDIA_MAGIC: Array<{ bytes: number[]; mime: string }> = [
   { bytes: [0xff, 0xd8, 0xff], mime: 'image/jpeg' },
-  { bytes: [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], mime: 'image/png' },
+  {
+    bytes: [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a],
+    mime: 'image/png',
+  },
   { bytes: [0x47, 0x49, 0x46], mime: 'image/gif' },
   { bytes: [0x52, 0x49, 0x46, 0x46], mime: 'image/webp' },
 ];
@@ -531,8 +534,25 @@ export class OAuthWebchatChannel implements Channel {
     }
   }
 
-  async sendMessage(_jid: string, _text: string): Promise<void> {
-    // Implemented in a later task
+  async sendMessage(jid: string, text: string): Promise<void> {
+    const email = jid.slice('oauth-webchat:'.length);
+    const clients = this.sseClients.filter((c) => c.email === email);
+    if (clients.length === 0) {
+      logger.debug({ jid }, 'oauth-webchat: no SSE client connected');
+      return;
+    }
+    const lines = text.split('\n');
+    const ssePayload = lines.map((l) => `data: ${l}`).join('\n') + '\n\n';
+    for (const client of clients) {
+      try {
+        if (!client.res.writableEnded) {
+          client.res.write(ssePayload);
+        }
+      } catch (err) {
+        logger.debug({ jid, err }, 'oauth-webchat: SSE write failed');
+      }
+    }
+    logger.info({ jid, clients: clients.length }, 'oauth-webchat message sent via SSE');
   }
 
   private async handleRequest(
@@ -762,7 +782,12 @@ export class OAuthWebchatChannel implements Channel {
           }
           const ext = mime.split('/')[1].replace('jpeg', 'jpg');
           const filename = `img-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.${ext}`;
-          const attachDir = nodePath.join(GROUPS_DIR, group.folder, 'attachments', 'raw');
+          const attachDir = nodePath.join(
+            GROUPS_DIR,
+            group.folder,
+            'attachments',
+            'raw',
+          );
           fs.mkdirSync(attachDir, { recursive: true });
           fs.writeFileSync(nodePath.join(attachDir, filename), imagePart.data);
           const caption = textPart?.data.toString('utf8').trim() ?? '';
