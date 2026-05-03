@@ -3,10 +3,15 @@ export interface TokenReviewStatus {
   user?: { username?: string };
   error?: string;
 }
-export interface TokenReviewResponse { status: TokenReviewStatus }
+export interface TokenReviewResponse {
+  status: TokenReviewStatus;
+}
 
 export interface IdentityVerifierOpts {
-  createTokenReview: (token: string, audiences: string[]) => Promise<TokenReviewResponse>;
+  createTokenReview: (
+    token: string,
+    audiences: string[],
+  ) => Promise<TokenReviewResponse>;
   audience: string;
   namespace?: string;
 }
@@ -20,16 +25,22 @@ export class IdentityVerifier {
       throw new Error('Authorization header must use Bearer scheme');
     }
     const token = authorizationHeader.slice('Bearer '.length);
-    const review = await this.opts.createTokenReview(token, [this.opts.audience]);
+    const review = await this.opts.createTokenReview(token, [
+      this.opts.audience,
+    ]);
     if (!review.status.authenticated) {
-      throw new Error(`token not authenticated: ${review.status.error ?? 'unknown'}`);
+      throw new Error(
+        `token not authenticated: ${review.status.error ?? 'unknown'}`,
+      );
     }
     const username = review.status.user?.username ?? '';
     const m = username.match(/^system:serviceaccount:([^:]+):(.+)$/);
     if (!m) throw new Error(`unexpected username format: ${username}`);
     const [, ns, sa] = m;
     if (this.opts.namespace && ns !== this.opts.namespace) {
-      throw new Error(`token from namespace ${ns}, expected ${this.opts.namespace}`);
+      throw new Error(
+        `token from namespace ${ns}, expected ${this.opts.namespace}`,
+      );
     }
     return `sa/${sa}`;
   }
