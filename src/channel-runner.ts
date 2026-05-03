@@ -194,6 +194,7 @@ export function folderPrefixForChannel(channelName: string): string {
     whatsapp: 'wa',
     irc: 'irc',
     http: 'http',
+    'oauth-webchat': 'oauth',
   };
   return prefix[channelName] ?? channelName.slice(0, 3);
 }
