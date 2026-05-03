@@ -407,6 +407,7 @@ export class OAuthWebchatChannel implements Channel {
   private config: OAuthWebchatConfig;
   private server: Server | null = null;
   private oidc: OidcClient;
+  private sseClients: Array<{ email: string; res: ServerResponse }> = [];
 
   constructor(config: OAuthWebchatConfig, opts: OAuthWebchatChannelOpts) {
     this.config = config;
@@ -447,6 +448,14 @@ export class OAuthWebchatChannel implements Channel {
   }
 
   async disconnect(): Promise<void> {
+    for (const client of this.sseClients) {
+      try {
+        client.res.end();
+      } catch {
+        // ignore
+      }
+    }
+    this.sseClients = [];
     if (this.server) {
       await new Promise<void>((resolve) => this.server!.close(() => resolve()));
       this.server = null;
@@ -588,6 +597,42 @@ export class OAuthWebchatChannel implements Channel {
         Location: '/login',
       });
       res.end();
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/stream') {
+      const session = getSessionFromCookies(
+        parseCookies(req.headers.cookie),
+        this.config.cookieSecret,
+      );
+      if (!session) {
+        res.writeHead(401, { 'Content-Type': 'text/plain' });
+        res.end('Unauthorized');
+        return;
+      }
+
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        'X-Accel-Buffering': 'no',
+      });
+      res.write(':ok\n\n');
+
+      const client = { email: session.email, res };
+      this.sseClients.push(client);
+
+      req.on('close', () => {
+        this.sseClients = this.sseClients.filter((c) => c !== client);
+      });
+
+      const ping = setInterval(() => {
+        if (!res.writableEnded) {
+          res.write(': ping\n\n');
+        } else {
+          clearInterval(ping);
+        }
+      }, 30_000);
       return;
     }
 

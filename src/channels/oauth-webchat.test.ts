@@ -747,3 +747,42 @@ describe('GET /', () => {
     await channel.disconnect();
   });
 });
+
+describe('GET /stream', () => {
+  it('rejects with 401 when no session', async () => {
+    const channel = new OAuthWebchatChannel(makeConfig(), makeOpts());
+    await channel.connect();
+    const req = makeReq({ url: '/stream' });
+    const res = makeRes();
+    await dispatch(channel, req, res);
+    expect(res._status).toBe(401);
+    await channel.disconnect();
+  });
+
+  it('opens SSE stream with correct headers when authenticated', async () => {
+    const channel = new OAuthWebchatChannel(makeConfig(), makeOpts());
+    await channel.connect();
+    const session = signSessionCookie(
+      { email: 'alice@example.com', exp: Math.floor(Date.now() / 1000) + 3600 },
+      makeConfig().cookieSecret,
+    );
+    const req = makeReq({
+      url: '/stream',
+      cookie: `oauth-webchat-session=${encodeURIComponent(session)}`,
+    });
+    const closeHandlers: Array<() => void> = [];
+    (req.on as ReturnType<typeof vi.fn>).mockImplementation(
+      (event: string, cb: () => void) => {
+        if (event === 'close') closeHandlers.push(cb);
+      },
+    );
+    const res = makeRes();
+    await dispatch(channel, req, res);
+    expect(res._status).toBe(200);
+    expect(res._headers['Content-Type']).toBe('text/event-stream');
+    expect(res._headers['Cache-Control']).toBe('no-cache');
+    expect(res._body).toContain(':ok');
+    closeHandlers.forEach((h) => h());
+    await channel.disconnect();
+  });
+});
