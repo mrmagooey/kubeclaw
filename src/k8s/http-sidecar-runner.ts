@@ -1,8 +1,8 @@
 /**
- * HTTP Sidecar Job Runner for NanoClaw
+ * HTTP Sidecar Job Runner for KubeClaw
  *
  * Creates Kubernetes Jobs with two containers sharing localhost network:
- * - kubeclaw-http-adapter: Handles NanoClaw protocol, communicates via HTTP
+ * - kubeclaw-http-adapter: Handles KubeClaw protocol, communicates via HTTP
  * - user-agent: User's arbitrary container image exposing HTTP REST API
  *
  * No shared volumes needed — communication is over localhost within the Pod.
@@ -249,9 +249,9 @@ export class HttpSidecarJobRunner {
         namespace: this.namespace,
         labels: {
           ...JOB_LABELS,
-          'nanoclaw/group': input.groupFolder,
-          'nanoclaw/chat-jid': safeChatJid,
-          'nanoclaw/type': 'http-sidecar',
+          'kubeclaw/group': input.groupFolder,
+          'kubeclaw/chat-jid': safeChatJid,
+          'kubeclaw/type': 'http-sidecar',
         },
       },
       spec: {
@@ -274,7 +274,7 @@ export class HttpSidecarJobRunner {
               imagePullSecrets: spec.imagePullSecrets.map((name) => ({ name })),
             }),
             containers: [
-              // Sidecar adapter container (handles NanoClaw protocol via HTTP)
+              // Sidecar adapter container (handles KubeClaw protocol via HTTP)
               {
                 name: 'kubeclaw-http-adapter',
                 image: SIDECAR_HTTP_ADAPTER_IMAGE,
@@ -326,7 +326,7 @@ export class HttpSidecarJobRunner {
   /**
    * @deprecated Use jobRunner.streamOutput() instead — output now flows through Redis
    * Stream output from the sidecar container logs
-   * Parses NanoClaw marker output from log stream
+   * Parses KubeClaw marker output from log stream
    */
   async streamSidecarLogs(
     jobName: string,

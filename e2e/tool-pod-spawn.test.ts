@@ -101,7 +101,7 @@ describe('Tool Pod Spawn Watcher', () => {
     );
 
     const job = await pollForJob(
-      `app=kubeclaw-tool-pod,nanoclaw/agent-job=${agentJobId}`,
+      `app=kubeclaw-tool-pod,kubeclaw/agent-job=${agentJobId}`,
     );
 
     const containers = job.spec.template.spec.containers;
@@ -141,7 +141,7 @@ describe('Tool Pod Spawn Watcher', () => {
     );
 
     const job = await pollForJob(
-      `app=kubeclaw-sidecar-tool,nanoclaw/agent-job=${agentJobId}`,
+      `app=kubeclaw-sidecar-tool,kubeclaw/agent-job=${agentJobId}`,
     );
 
     const containers = job.spec.template.spec.containers;
@@ -188,7 +188,7 @@ describe('Tool Pod Spawn Watcher', () => {
     );
 
     const job = await pollForJob(
-      `app=kubeclaw-sidecar-tool,nanoclaw/agent-job=${agentJobId}`,
+      `app=kubeclaw-sidecar-tool,kubeclaw/agent-job=${agentJobId}`,
     );
 
     const volumes = job.spec.template.spec.volumes ?? [];

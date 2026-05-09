@@ -1,8 +1,8 @@
 /**
- * File Sidecar Job Runner for NanoClaw
+ * File Sidecar Job Runner for KubeClaw
  *
  * Creates Kubernetes Jobs with two containers:
- * - kubeclaw-file-adapter: Handles NanoClaw protocol via file-based IPC
+ * - kubeclaw-file-adapter: Handles KubeClaw protocol via file-based IPC
  * - user-agent: User's arbitrary container image
  *
  * Uses emptyDir volume for file-based IPC between containers.
@@ -328,9 +328,9 @@ export class FileSidecarJobRunner {
         namespace: this.namespace,
         labels: {
           ...JOB_LABELS,
-          'nanoclaw/group': input.groupFolder,
-          'nanoclaw/chat-jid': safeChatJid,
-          'nanoclaw/type': 'file-sidecar',
+          'kubeclaw/group': input.groupFolder,
+          'kubeclaw/chat-jid': safeChatJid,
+          'kubeclaw/type': 'file-sidecar',
         },
       },
       spec: {
@@ -354,7 +354,7 @@ export class FileSidecarJobRunner {
               imagePullSecrets: spec.imagePullSecrets.map((name) => ({ name })),
             }),
             containers: [
-              // Sidecar adapter container (handles NanoClaw protocol)
+              // Sidecar adapter container (handles KubeClaw protocol)
               {
                 name: 'kubeclaw-file-adapter',
                 image: SIDECAR_FILE_ADAPTER_IMAGE,

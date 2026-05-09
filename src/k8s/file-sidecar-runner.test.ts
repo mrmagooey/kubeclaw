@@ -69,8 +69,8 @@ vi.mock('@kubernetes/client-node', () => {
 vi.mock('../config.js', () => ({
   CONTAINER_TIMEOUT: 300000,
   IDLE_TIMEOUT: 30000,
-  KUBECLAW_NAMESPACE: 'nanoclaw',
-  SIDECAR_FILE_ADAPTER_IMAGE: 'nanoclaw/file-adapter:latest',
+  KUBECLAW_NAMESPACE: 'kubeclaw',
+  SIDECAR_FILE_ADAPTER_IMAGE: 'kubeclaw/file-adapter:latest',
   SIDECAR_FILE_POLL_INTERVAL: 1000,
   TOOL_JOB_MEMORY_REQUEST: '512Mi',
   TOOL_JOB_MEMORY_LIMIT: '4Gi',
@@ -152,7 +152,7 @@ describe('FileSidecarJobRunner', () => {
       expect(manifest.apiVersion).toBe('batch/v1');
       expect(manifest.kind).toBe('Job');
       expect(manifest.metadata?.name).toBe('test-job-id');
-      expect(manifest.metadata?.namespace).toBe('nanoclaw');
+      expect(manifest.metadata?.namespace).toBe('kubeclaw');
     });
 
     it('should include both sidecar and user containers', () => {
@@ -465,9 +465,9 @@ describe('FileSidecarJobRunner', () => {
       );
 
       const labels = manifest.metadata?.labels;
-      expect(labels?.['nanoclaw/group']).toBe('test-group');
-      expect(labels?.['nanoclaw/type']).toBe('file-sidecar');
-      expect(labels?.['nanoclaw/chat-jid']).toBe('test-g-us');
+      expect(labels?.['kubeclaw/group']).toBe('test-group');
+      expect(labels?.['kubeclaw/type']).toBe('file-sidecar');
+      expect(labels?.['kubeclaw/chat-jid']).toBe('test-g-us');
     });
   });
 

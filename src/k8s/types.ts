@@ -1,5 +1,5 @@
 /**
- * Kubernetes-specific types for NanoClaw runtime
+ * Kubernetes-specific types for KubeClaw runtime
  */
 
 import { ContainerInput, ContainerOutput } from '../runtime/types.js';

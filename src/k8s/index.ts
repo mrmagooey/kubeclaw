@@ -1,5 +1,5 @@
 /**
- * Kubernetes runtime module for NanoClaw
+ * Kubernetes runtime module for KubeClaw
  * Exports all K8s-specific functionality
  */
 

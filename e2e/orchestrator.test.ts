@@ -563,7 +563,7 @@ describe('Real Orchestrator E2E', () => {
       return;
     }
 
-    const startupPattern = /Database initialized|State loaded|NanoClaw running/;
+    const startupPattern = /Database initialized|State loaded|KubeClaw running/;
     if (!startupPattern.test(logs)) {
       // Kubernetes container log rotation may have overwritten the startup
       // messages (e.g. a long-running pod that produces high-volume periodic
@@ -817,7 +817,7 @@ describe('Real Orchestrator E2E', () => {
   describe('IRC Channel Integration with Orchestrator', () => {
     const IRC_PORT = 16670; // Dedicated port for this test suite
     const IRC_SERVER = 'localhost';
-    const IRC_NICK = 'NanoClawOrchestrator';
+    const IRC_NICK = 'KubeClawOrchestrator';
     const IRC_CHANNEL = '#orchestrator-test';
 
     let ircServer: ReturnType<

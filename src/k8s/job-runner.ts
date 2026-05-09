@@ -1,5 +1,5 @@
 /**
- * Kubernetes Job Runner for NanoClaw
+ * Kubernetes Job Runner for KubeClaw
  * Creates and manages Kubernetes Jobs for tool job execution
  */
 import {
@@ -723,8 +723,8 @@ export class JobRunner {
         namespace: this.namespace,
         labels: {
           ...JOB_LABELS,
-          'nanoclaw/group': spec.groupFolder,
-          'nanoclaw/chat-jid': spec.chatJid.replace(/[^a-zA-Z0-9-]/g, '-'),
+          'kubeclaw/group': spec.groupFolder,
+          'kubeclaw/chat-jid': spec.chatJid.replace(/[^a-zA-Z0-9-]/g, '-'),
         },
       },
       spec: {
@@ -1032,7 +1032,7 @@ export class JobRunner {
       metadata: {
         name: jobName,
         namespace: this.namespace,
-        labels: { app: 'kubeclaw-preproc', 'nanoclaw/group': group.folder },
+        labels: { app: 'kubeclaw-preproc', 'kubeclaw/group': group.folder },
       },
       spec: {
         ttlSecondsAfterFinished: JOB_TTL_SECONDS_AFTER_FINISHED,
@@ -1176,9 +1176,9 @@ export class JobRunner {
         namespace: this.namespace,
         labels: {
           app: 'kubeclaw-tool-pod',
-          'nanoclaw/group': spec.groupFolder,
-          'nanoclaw/category': spec.category,
-          'nanoclaw/agent-job': spec.agentJobId,
+          'kubeclaw/group': spec.groupFolder,
+          'kubeclaw/category': spec.category,
+          'kubeclaw/agent-job': spec.agentJobId,
         },
       },
       spec: {
@@ -1302,9 +1302,9 @@ export class JobRunner {
         namespace: this.namespace,
         labels: {
           app: 'kubeclaw-sidecar-tool',
-          'nanoclaw/group': spec.groupFolder,
-          'nanoclaw/tool': spec.toolName,
-          'nanoclaw/agent-job': spec.agentJobId,
+          'kubeclaw/group': spec.groupFolder,
+          'kubeclaw/tool': spec.toolName,
+          'kubeclaw/agent-job': spec.agentJobId,
         },
       },
       spec: {

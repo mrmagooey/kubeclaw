@@ -14,7 +14,7 @@ vi.mock('../config.js', () => ({
   CONTAINER_TIMEOUT: 1800000,
   IDLE_TIMEOUT: 1800000,
   TIMEZONE: 'America/Los_Angeles',
-  KUBECLAW_NAMESPACE: 'nanoclaw',
+  KUBECLAW_NAMESPACE: 'kubeclaw',
   TOOL_JOB_MEMORY_REQUEST: '512Mi',
   TOOL_JOB_MEMORY_LIMIT: '4Gi',
   TOOL_JOB_CPU_REQUEST: '250m',
@@ -175,7 +175,7 @@ describe('JobRunner', () => {
       expect(manifest.apiVersion).toBe('batch/v1');
       expect(manifest.kind).toBe('Job');
       expect(manifest.metadata?.name).toBe('test-job');
-      expect(manifest.metadata?.namespace).toBe('nanoclaw');
+      expect(manifest.metadata?.namespace).toBe('kubeclaw');
       expect(manifest.spec?.template?.spec?.containers?.[0]?.image).toBe(
         'kubeclaw-agent:claude',
       );
@@ -718,7 +718,7 @@ describe('JobRunner', () => {
       await expect(jobRunner.stopJob('test-job')).resolves.toBeUndefined();
       expect(mockBatchApi.deleteNamespacedJob).toHaveBeenCalledWith({
         name: 'test-job',
-        namespace: 'nanoclaw',
+        namespace: 'kubeclaw',
         gracePeriodSeconds: 0,
       });
     });
@@ -898,9 +898,9 @@ describe('JobRunner', () => {
       const labels = callArgs.body.metadata?.labels;
 
       expect(labels?.app).toBe('kubeclaw-tool-pod');
-      expect(labels?.['nanoclaw/group']).toBe('test-group');
-      expect(labels?.['nanoclaw/category']).toBe('execution');
-      expect(labels?.['nanoclaw/agent-job']).toBe('agent-job-123');
+      expect(labels?.['kubeclaw/group']).toBe('test-group');
+      expect(labels?.['kubeclaw/category']).toBe('execution');
+      expect(labels?.['kubeclaw/agent-job']).toBe('agent-job-123');
     });
 
     it('should run container with node /app/dist/tool-server.js command', async () => {
@@ -1266,7 +1266,7 @@ describe('JobRunner', () => {
       await jobRunner.applyYamlToK8s('yaml');
 
       expect(mockAppsApi.createNamespacedDeployment).toHaveBeenCalledWith(
-        expect.objectContaining({ namespace: 'nanoclaw' }),
+        expect.objectContaining({ namespace: 'kubeclaw' }),
       );
     });
   });

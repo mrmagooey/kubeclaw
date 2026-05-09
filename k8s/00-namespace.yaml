@@ -3,7 +3,7 @@ kind: Namespace
 metadata:
   name: kubeclaw
   labels:
-    app: nanoclaw
+    app: kubeclaw
     # Using restricted PodSecurity with Redis running as non-root (UID 999)
     # This provides the highest level of security isolation
     pod-security.kubernetes.io/enforce: privileged

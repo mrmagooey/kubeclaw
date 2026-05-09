@@ -65,7 +65,7 @@ vi.mock('@kubernetes/client-node', () => {
 // Mock config
 vi.mock('../config.js', () => ({
   CONTAINER_TIMEOUT: 300000,
-  KUBECLAW_NAMESPACE: 'nanoclaw',
+  KUBECLAW_NAMESPACE: 'kubeclaw',
   SIDECAR_HTTP_ADAPTER_IMAGE: 'kubeclaw-http-adapter:latest',
   SIDECAR_HTTP_REQUEST_TIMEOUT: 300000,
   SIDECAR_HTTP_MAX_RETRIES: 3,
@@ -141,7 +141,7 @@ describe('HttpSidecarJobRunner', () => {
       expect(manifest.apiVersion).toBe('batch/v1');
       expect(manifest.kind).toBe('Job');
       expect(manifest.metadata?.name).toBe('test-job-id');
-      expect(manifest.metadata?.namespace).toBe('nanoclaw');
+      expect(manifest.metadata?.namespace).toBe('kubeclaw');
     });
 
     it('should set TTL and backoff limit', () => {
@@ -895,10 +895,10 @@ describe('HttpSidecarJobRunner', () => {
       );
 
       const labels = manifest.metadata?.labels;
-      expect(labels?.['nanoclaw/group']).toBe('test-group');
-      expect(labels?.['nanoclaw/type']).toBe('http-sidecar');
+      expect(labels?.['kubeclaw/group']).toBe('test-group');
+      expect(labels?.['kubeclaw/type']).toBe('http-sidecar');
       // Special characters in chatJid get replaced with '-'
-      expect(labels?.['nanoclaw/chat-jid']).toBe('test-g-us');
+      expect(labels?.['kubeclaw/chat-jid']).toBe('test-g-us');
     });
 
     it('should sanitize chatJid in labels by replacing non-alphanumeric chars with -', () => {
@@ -927,7 +927,7 @@ describe('HttpSidecarJobRunner', () => {
 
       const labels = manifest.metadata?.labels;
       // '@' and '.' are replaced with '-'
-      expect(labels?.['nanoclaw/chat-jid']).toBe('1234567890-group-g-us');
+      expect(labels?.['kubeclaw/chat-jid']).toBe('1234567890-group-g-us');
     });
 
     it('should include app label on both job metadata and pod template', () => {

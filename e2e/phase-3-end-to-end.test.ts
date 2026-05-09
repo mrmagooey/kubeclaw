@@ -142,7 +142,7 @@ describe('Phase 3: End-to-End', () => {
   describe('IRC Channel Integration', () => {
     const IRC_PORT = 16668; // Use different port from irc-channel.test.ts
     const IRC_SERVER = 'localhost';
-    const IRC_NICK = 'NanoClawE2E';
+    const IRC_NICK = 'KubeClawE2E';
     const IRC_CHANNEL = '#e2e-test';
 
     let ircServer: ReturnType<typeof getIRCServer>;
@@ -232,7 +232,7 @@ describe('Phase 3: End-to-End', () => {
       }
 
       const chatJid = `irc:${IRC_CHANNEL.toLowerCase()}@${IRC_SERVER}:${IRC_PORT}`;
-      const messageText = 'Response from NanoClaw bot';
+      const messageText = 'Response from KubeClaw bot';
 
       // Record messages on the server before sending
       const messagesBefore = ircServer?.getChannelMessages?.(IRC_CHANNEL) ?? [];
@@ -283,7 +283,7 @@ describe('Phase 3: End-to-End', () => {
   describe('IRC Full Roundtrip', () => {
     const IRC_FULL_PORT = 16669; // Use different port from other tests
     const IRC_FULL_SERVER = 'localhost';
-    const IRC_FULL_NICK = 'NanoClawRoundtrip';
+    const IRC_FULL_NICK = 'KubeClawRoundtrip';
     const IRC_FULL_CHANNEL = '#roundtrip-test';
 
     let ircFullServer: ReturnType<typeof getIRCServer>;

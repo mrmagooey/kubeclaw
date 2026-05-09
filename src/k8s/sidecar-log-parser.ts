@@ -1,5 +1,5 @@
 /**
- * Sidecar Log Parser — pure marker extraction for NanoClaw sidecar runners.
+ * Sidecar Log Parser — pure marker extraction for KubeClaw sidecar runners.
  *
  * All three sidecar runner variants (sidecar-job-runner, file-sidecar-runner,
  * http-sidecar-runner) share identical marker-parsing logic. This module
