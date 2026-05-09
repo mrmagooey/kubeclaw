@@ -17,7 +17,7 @@ vi.mock('./logger.js', () => ({
 }));
 
 vi.mock('./config.js', () => ({
-  MOUNT_ALLOWLIST_PATH: '/home/user/.config/nanoclaw/mount-allowlist.json',
+  MOUNT_ALLOWLIST_PATH: '/home/user/.config/kubeclaw/mount-allowlist.json',
 }));
 
 vi.mock('fs', async () => {
