@@ -24,10 +24,12 @@ spec:
       ports:
         - protocol: TCP
           port: 6379
+    {{- if eq .Values.credentialInjection.mode "off" }}
     - to: []
       ports:
         - protocol: TCP
           port: 443
+    {{- end }}
     {{- with .Values.networkPolicy.extraEgressPorts }}
     - to: []
       ports:
@@ -89,6 +91,7 @@ spec:
       ports:
         - protocol: TCP
           port: 6379
+    {{- if eq .Values.credentialInjection.mode "off" }}
     - to: []
       ports:
         - protocol: TCP
@@ -97,6 +100,7 @@ spec:
       ports:
         - protocol: TCP
           port: 80
+    {{- end }}
     {{- with .Values.networkPolicy.extraEgressPorts }}
     - to: []
       ports:
@@ -131,12 +135,14 @@ spec:
       ports:
         - protocol: TCP
           port: 6379
+    {{- if eq .Values.credentialInjection.mode "off" }}
     - to: []
       ports:
         - protocol: TCP
           port: 80
         - protocol: TCP
           port: 443
+    {{- end }}
     {{- with .Values.networkPolicy.extraEgressPorts }}
     - to: []
       ports:
@@ -170,12 +176,14 @@ spec:
       ports:
         - protocol: TCP
           port: 6379
+    {{- if eq .Values.credentialInjection.mode "off" }}
     - to: []
       ports:
         - protocol: TCP
           port: 80
         - protocol: TCP
           port: 443
+    {{- end }}
 ---
 # Capability pods: egress to Redis + DNS. Ingress from channel pods on capability port.
 # No K8s API access — automountServiceAccountToken is false on these pods.
@@ -213,6 +221,7 @@ spec:
       ports:
         - protocol: TCP
           port: 6379
+    {{- if eq .Values.credentialInjection.mode "off" }}
     - to: []
       ports:
         - protocol: TCP
@@ -221,4 +230,5 @@ spec:
       ports:
         - protocol: TCP
           port: 80
+    {{- end }}
 {{- end }}

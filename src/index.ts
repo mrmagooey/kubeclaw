@@ -771,6 +771,14 @@ function recoverPendingMessages(): void {
 }
 
 async function main(): Promise<void> {
+  if (KUBECLAW_MODE === 'credential-broker') {
+    const { startBroker } = await import('./credential-broker/index.js');
+    await startBroker();
+    // The broker keeps the process alive via its HTTP server.
+    // No further orchestrator/channel setup runs in this mode.
+    return;
+  }
+
   startOrchestratorHealthServer();
   await initDatabase();
   logger.info('Database initialized');

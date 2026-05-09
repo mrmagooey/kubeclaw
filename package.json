@@ -8,6 +8,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
+    "broker:dev": "KUBECLAW_MODE=credential-broker tsx src/credential-broker/index.ts",
     "typecheck": "tsc --noEmit",
     "format": "prettier --check \"src/**/*.ts\"",
     "format:fix": "prettier --write \"src/**/*.ts\"",

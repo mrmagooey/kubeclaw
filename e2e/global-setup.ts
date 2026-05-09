@@ -15,6 +15,10 @@ const REDIS_READY_TIMEOUT = 90_000;
 // Keep a reference so teardown can kill the port-forward process
 let portForwardProcess: ReturnType<typeof spawn> | null = null;
 
+// Track whether global-setup installed kubeclaw (so teardown only uninstalls
+// what it installed, never a pre-existing user installation).
+let kubeclawInstalledBySetup = false;
+
 function sleep(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
 }
@@ -53,78 +57,91 @@ export default async function setup() {
     mkdirSync(resultsDir, { recursive: true });
   }
 
-  // Check if minikube is installed
-  let minikubeInstalled = false;
+  // Check kubectl connection first — if it already works we don't need to
+  // start minikube at all (e.g. kubeclaw profile, remote cluster, etc.)
+  let kubernetesReady = false;
   try {
-    execSync('which minikube', { stdio: 'pipe' });
-    minikubeInstalled = true;
+    execSync('kubectl cluster-info', { stdio: 'pipe', timeout: 10000 });
+    kubernetesReady = true;
+    console.log('✅ Kubernetes cluster is accessible\n');
   } catch {
-    console.log('❌ Minikube is not installed. Please install minikube first:');
-    console.log('   See: https://minikube.sigs.k8s.io/docs/start/\n');
+    // kubectl not working yet — try to start minikube below
   }
 
-  // Check if minikube is running
-  let minikubeRunning = false;
-  if (minikubeInstalled) {
+  if (!kubernetesReady) {
+    // Check if minikube is installed
+    let minikubeInstalled = false;
     try {
-      execSync('minikube status', { stdio: 'pipe' });
-      minikubeRunning = true;
-      console.log('✅ Minikube is running\n');
+      execSync('which minikube', { stdio: 'pipe' });
+      minikubeInstalled = true;
     } catch {
-      console.log('⚠️  Minikube is not running. Attempting to start...\n');
+      console.log('❌ Minikube is not installed. Please install minikube first:');
+      console.log('   See: https://minikube.sigs.k8s.io/docs/start/\n');
+    }
 
-      // Try to start minikube
+    // Check if minikube is running
+    let minikubeRunning = false;
+    if (minikubeInstalled) {
       try {
-        console.log('   Starting minikube with docker driver...');
-        execSync(
-          'minikube start --driver=docker --memory=4096 --cpus=2 --wait=all',
-          {
-            stdio: 'inherit',
-            timeout: 300000, // 5 minute timeout
-          },
-        );
-        console.log('✅ Minikube started successfully\n');
+        execSync('minikube status', { stdio: 'pipe' });
         minikubeRunning = true;
-      } catch (startError) {
-        console.error('❌ Failed to start minikube automatically\n');
-        console.error('   You can try starting it manually with:');
-        console.error(
-          '   minikube start --driver=docker --memory=4096 --cpus=2\n',
-        );
-        console.error('   Or run the setup command:');
-        console.error('   make setup-minikube\n');
-        throw new Error(
-          'Minikube is required for E2E tests but could not be started. ' +
-            'Please start minikube manually and try again.',
-        );
+        console.log('✅ Minikube is running\n');
+      } catch {
+        console.log('⚠️  Minikube is not running. Attempting to start...\n');
+
+        // Try to start minikube
+        try {
+          console.log('   Starting minikube with docker driver...');
+          execSync(
+            'minikube start --driver=docker --memory=4096 --cpus=2 --wait=all',
+            {
+              stdio: 'inherit',
+              timeout: 300000, // 5 minute timeout
+            },
+          );
+          console.log('✅ Minikube started successfully\n');
+          minikubeRunning = true;
+        } catch (startError) {
+          console.error('❌ Failed to start minikube automatically\n');
+          console.error('   You can try starting it manually with:');
+          console.error(
+            '   minikube start --driver=docker --memory=4096 --cpus=2\n',
+          );
+          console.error('   Or run the setup command:');
+          console.error('   make setup-minikube\n');
+          throw new Error(
+            'Minikube is required for E2E tests but could not be started. ' +
+              'Please start minikube manually and try again.',
+          );
+        }
       }
     }
-  }
 
-  // Check kubectl connection
-  if (minikubeRunning) {
-    try {
-      // Use minikube context
-      execSync('kubectl config use-context minikube', { stdio: 'pipe' });
-      execSync('kubectl cluster-info', { stdio: 'pipe' });
-      console.log('✅ Kubernetes cluster is accessible\n');
-    } catch {
-      console.error(
-        '❌ Kubernetes cluster not accessible even though minikube is running\n',
-      );
-      console.error('   Try the following commands:\n');
-      console.error('   kubectl config use-context minikube');
-      console.error('   kubectl cluster-info\n');
+    if (minikubeRunning) {
+      try {
+        // Use minikube context
+        execSync('kubectl config use-context minikube', { stdio: 'pipe' });
+        execSync('kubectl cluster-info', { stdio: 'pipe' });
+        console.log('✅ Kubernetes cluster is accessible\n');
+        kubernetesReady = true;
+      } catch {
+        console.error(
+          '❌ Kubernetes cluster not accessible even though minikube is running\n',
+        );
+        console.error('   Try the following commands:\n');
+        console.error('   kubectl config use-context minikube');
+        console.error('   kubectl cluster-info\n');
+        throw new Error(
+          'Kubernetes cluster is not accessible. ' +
+            'Please ensure kubectl is configured correctly and try again.',
+        );
+      }
+    } else {
       throw new Error(
-        'Kubernetes cluster is not accessible. ' +
-          'Please ensure kubectl is configured correctly and try again.',
+        'Kubernetes is required for E2E tests but minikube is not available. ' +
+          'Please install and start minikube before running E2E tests.',
       );
     }
-  } else {
-    throw new Error(
-      'Kubernetes is required for E2E tests but minikube is not available. ' +
-        'Please install and start minikube before running E2E tests.',
-    );
   }
 
   // ── Build agent container image into minikube Docker daemon ─────────────
@@ -157,39 +174,55 @@ export default async function setup() {
   }
 
   // ── Install kubeclaw via Helm ────────────────────────────────────────────
-  // Pre-create the namespace with Helm ownership metadata so that helm can
-  // manage it (the chart's namespace.yaml PATCHes it with pod-security labels).
-  console.log('📦 Installing kubeclaw helm chart into kubeclaw namespace...');
-  spawnSync('kubectl', ['create', 'namespace', NAMESPACE], { encoding: 'utf8' });
-  spawnSync('kubectl', ['label', 'namespace', NAMESPACE,
-    'app.kubernetes.io/managed-by=Helm',
-  ], { encoding: 'utf8' });
-  spawnSync('kubectl', ['annotate', 'namespace', NAMESPACE,
-    `meta.helm.sh/release-name=${RELEASE}`,
-    `meta.helm.sh/release-namespace=${NAMESPACE}`,
-  ], { encoding: 'utf8' });
-
-  const installResult = spawnSync(
+  // Skip if kubeclaw is already deployed — we must not overwrite a live user
+  // installation with test credentials, and teardown must not uninstall it.
+  const existingRelease = spawnSync(
     'helm',
-    [
-      'upgrade', '--install',
-      RELEASE,
-      CHART_DIR,
-      '--namespace', NAMESPACE,
-      '--timeout', '120s',
-      '--set', `namespace=${NAMESPACE}`,
-      '--set', 'secrets.anthropicApiKey=test-key',
-      '--set', 'secrets.claudeCodeOauthToken=test-token',
-      '--set', `redis.password=${E2E_REDIS_PASSWORD}`,
-    ],
+    ['status', RELEASE, '--namespace', NAMESPACE],
     { encoding: 'utf8', stdio: 'pipe' },
   );
+  if (existingRelease.status === 0) {
+    console.log(
+      '✅ kubeclaw release already deployed — skipping helm install ' +
+        '(teardown will also skip uninstall to preserve the live installation)\n',
+    );
+    kubeclawInstalledBySetup = false;
+  } else {
+    // Pre-create the namespace with Helm ownership metadata so that helm can
+    // manage it (the chart's namespace.yaml PATCHes it with pod-security labels).
+    console.log('📦 Installing kubeclaw helm chart into kubeclaw namespace...');
+    spawnSync('kubectl', ['create', 'namespace', NAMESPACE], { encoding: 'utf8' });
+    spawnSync('kubectl', ['label', 'namespace', NAMESPACE,
+      'app.kubernetes.io/managed-by=Helm',
+    ], { encoding: 'utf8' });
+    spawnSync('kubectl', ['annotate', 'namespace', NAMESPACE,
+      `meta.helm.sh/release-name=${RELEASE}`,
+      `meta.helm.sh/release-namespace=${NAMESPACE}`,
+    ], { encoding: 'utf8' });
 
-  if (installResult.status !== 0) {
-    console.error('helm install stderr:', installResult.stderr);
-    throw new Error(`helm install failed with exit code ${installResult.status}`);
+    const installResult = spawnSync(
+      'helm',
+      [
+        'upgrade', '--install',
+        RELEASE,
+        CHART_DIR,
+        '--namespace', NAMESPACE,
+        '--timeout', '120s',
+        '--set', `namespace=${NAMESPACE}`,
+        '--set', 'secrets.anthropicApiKey=test-key',
+        '--set', 'secrets.claudeCodeOauthToken=test-token',
+        '--set', `redis.password=${E2E_REDIS_PASSWORD}`,
+      ],
+      { encoding: 'utf8', stdio: 'pipe' },
+    );
+
+    if (installResult.status !== 0) {
+      console.error('helm install stderr:', installResult.stderr);
+      throw new Error(`helm install failed with exit code ${installResult.status}`);
+    }
+    console.log('✅ kubeclaw helm chart installed\n');
+    kubeclawInstalledBySetup = true;
   }
-  console.log('✅ kubeclaw helm chart installed\n');
 
   // Wait for Redis pod to be ready before attempting port-forward
   await waitForRedisPod();
@@ -279,13 +312,17 @@ export async function teardown() {
     portForwardProcess = null;
   }
 
-  spawnSync('helm', ['uninstall', RELEASE, '--namespace', NAMESPACE], {
-    encoding: 'utf8',
-    stdio: 'pipe',
-  });
-  spawnSync(
-    'kubectl',
-    ['delete', 'namespace', NAMESPACE, '--ignore-not-found', '--timeout=60s'],
-    { encoding: 'utf8', stdio: 'pipe' },
-  );
+  // Only uninstall kubeclaw if global-setup installed it — never tear down a
+  // pre-existing user installation.
+  if (kubeclawInstalledBySetup) {
+    spawnSync('helm', ['uninstall', RELEASE, '--namespace', NAMESPACE], {
+      encoding: 'utf8',
+      stdio: 'pipe',
+    });
+    spawnSync(
+      'kubectl',
+      ['delete', 'namespace', NAMESPACE, '--ignore-not-found', '--timeout=60s'],
+      { encoding: 'utf8', stdio: 'pipe' },
+    );
+  }
 }

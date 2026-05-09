@@ -1,0 +1,114 @@
+{{- if eq .Values.credentialInjection.mode "sidecar" -}}
+# When credential injection is in sidecar mode, workload pods (tool-pod,
+# sidecar-tool, channel, capability) are restricted to:
+#   - DNS (UDP 53)
+#   - Redis (TCP 6379) within namespace
+#   - Credential broker (TCP {{ .Values.credentialInjection.broker.port }}) within namespace
+#   - HTTPS/HTTP egress to internet (still required because the sidecar
+#     uses the same network namespace as the workload, so it cannot be
+#     distinguished by NetworkPolicy — the practical isolation comes from
+#     the workload's HTTP client pointing at localhost:8443).
+#
+# NOTE (shared netns limitation): because the sidecar runs in the *same
+# network namespace* as the workload, NetworkPolicy cannot distinguish
+# "workload egress" from "sidecar egress". The hardening is operational
+# (HTTP client points at localhost) not policy-enforced. True separation
+# requires an init-container that uses iptables in the workload's netns
+# to block direct egress — defer to a future hardening task.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kubeclaw-workload-egress-restricted-tool-pod
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app: kubeclaw-tool-pod
+  policyTypes: [Egress]
+  egress:
+    - to: []
+      ports: [{ protocol: UDP, port: 53 }]
+    - to:
+        - podSelector: { matchLabels: { app: kubeclaw-redis } }
+      ports: [{ protocol: TCP, port: 6379 }]
+    - to:
+        - podSelector: { matchLabels: { app: kubeclaw-credential-broker } }
+      ports: [{ protocol: TCP, port: {{ .Values.credentialInjection.broker.port }} }]
+    - to: []
+      ports:
+        - { protocol: TCP, port: 443 }
+        - { protocol: TCP, port: 80 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kubeclaw-workload-egress-restricted-sidecar-tool
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app: kubeclaw-sidecar-tool
+  policyTypes: [Egress]
+  egress:
+    - to: []
+      ports: [{ protocol: UDP, port: 53 }]
+    - to:
+        - podSelector: { matchLabels: { app: kubeclaw-redis } }
+      ports: [{ protocol: TCP, port: 6379 }]
+    - to:
+        - podSelector: { matchLabels: { app: kubeclaw-credential-broker } }
+      ports: [{ protocol: TCP, port: {{ .Values.credentialInjection.broker.port }} }]
+    - to: []
+      ports:
+        - { protocol: TCP, port: 443 }
+        - { protocol: TCP, port: 80 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kubeclaw-workload-egress-restricted-channel
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchExpressions:
+      - { key: kubeclaw/channel, operator: Exists }
+  policyTypes: [Egress]
+  egress:
+    - to: []
+      ports: [{ protocol: UDP, port: 53 }]
+    - to:
+        - podSelector: { matchLabels: { app: kubeclaw-redis } }
+      ports: [{ protocol: TCP, port: 6379 }]
+    - to:
+        - podSelector: { matchLabels: { app: kubeclaw-credential-broker } }
+      ports: [{ protocol: TCP, port: {{ .Values.credentialInjection.broker.port }} }]
+    - to: []
+      ports:
+        - { protocol: TCP, port: 443 }
+        - { protocol: TCP, port: 80 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kubeclaw-workload-egress-restricted-capability
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchExpressions:
+      - { key: kubeclaw/capability, operator: Exists }
+  policyTypes: [Egress]
+  egress:
+    - to: []
+      ports: [{ protocol: UDP, port: 53 }]
+    - to:
+        - podSelector: { matchLabels: { app: kubeclaw-redis } }
+      ports: [{ protocol: TCP, port: 6379 }]
+    - to:
+        - podSelector: { matchLabels: { app: kubeclaw-credential-broker } }
+      ports: [{ protocol: TCP, port: {{ .Values.credentialInjection.broker.port }} }]
+    - to: []
+      ports:
+        - { protocol: TCP, port: 443 }
+        - { protocol: TCP, port: 80 }
+{{- end }}

@@ -56,3 +56,7 @@ channelPod:
     limits:
       memory: 512Mi
       cpu: 250m
+
+# Local dev: skip broker overhead; credentials injected as env vars.
+credentialInjection:
+  mode: "off"

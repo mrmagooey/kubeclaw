@@ -22,6 +22,8 @@ vi.mock('../config.js', () => ({
   REDIS_AGENT_PASSWORD: '',
   REDIS_TOOL_SERVER_PASSWORD: '',
   REDIS_ADAPTER_PASSWORD: '',
+  CREDENTIAL_SIDECAR_IMAGE: 'envoyproxy/envoy:v1.31-latest',
+  CREDENTIAL_SIDECAR_PORT: 8443,
   assertToolImageAllowed: vi.fn(),
   getContainerImage: vi.fn((provider: string) => {
     if (provider === 'openrouter') {
@@ -29,6 +31,7 @@ vi.mock('../config.js', () => ({
     }
     return 'kubeclaw-agent:claude';
   }),
+  getInjectionMode: vi.fn(() => 'off'),
 }));
 
 // Mock logger
@@ -111,6 +114,7 @@ vi.mock('@kubernetes/client-node', () => {
 
 // Now import after mocks are set up
 import { JobRunner, buildJobName } from './job-runner.js';
+import * as configModule from '../config.js';
 
 const testGroup: RegisteredGroup = {
   name: 'Test Group',
@@ -1360,6 +1364,146 @@ describe('JobRunner', () => {
         .metadata?.name as string;
       expect(jobName.length).toBeLessThanOrEqual(63);
       expect(jobName).toContain('stool');
+    });
+  });
+
+  // Shared fixture for credential injection tests
+  const credInjectionSpec = {
+    name: 'nc-cred-test',
+    groupFolder: 'cred-group',
+    chatJid: 'cred@g.us',
+    isMain: false,
+    prompt: 'hello cred test',
+    provider: 'claude' as const,
+    timeout: 1800000,
+    sessionId: 'sess-abc',
+    assistantName: 'Andy',
+  };
+
+  describe('generateJobManifest — credential injection mode=off (regression)', () => {
+    beforeEach(() => {
+      vi.mocked(configModule.getInjectionMode).mockReturnValue('off');
+    });
+
+    it('ANTHROPIC_API_KEY is present in the pod spec when mode=off', () => {
+      const manifest = jobRunner.generateJobManifest(credInjectionSpec);
+      const envNames = (
+        manifest.spec?.template?.spec?.containers?.[0]?.env ?? []
+      ).map((e) => e.name);
+      expect(envNames).toContain('ANTHROPIC_API_KEY');
+    });
+
+    it('exactly one container in the pod spec when mode=off', () => {
+      const manifest = jobRunner.generateJobManifest(credInjectionSpec);
+      expect(manifest.spec?.template?.spec?.containers).toHaveLength(1);
+    });
+
+    it('serviceAccountName is empty string when mode=off', () => {
+      const manifest = jobRunner.generateJobManifest(credInjectionSpec);
+      expect(manifest.spec?.template?.spec?.serviceAccountName).toBe('');
+    });
+
+    it('no sidecar volumes when mode=off', () => {
+      const manifest = jobRunner.generateJobManifest(credInjectionSpec);
+      const volumeNames = (manifest.spec?.template?.spec?.volumes ?? []).map(
+        (v) => v.name,
+      );
+      expect(volumeNames).not.toContain('envoy-config');
+      expect(volumeNames).not.toContain('broker-token');
+      expect(volumeNames).not.toContain('egress-ca');
+    });
+  });
+
+  describe('generateJobManifest — credential injection mode=sidecar', () => {
+    beforeEach(() => {
+      vi.mocked(configModule.getInjectionMode).mockReturnValue('sidecar');
+    });
+
+    it('appends credential-sidecar container, strips API key envs, adds HTTPS_PROXY', () => {
+      const manifest = jobRunner.generateJobManifest(credInjectionSpec);
+      const containers = manifest.spec?.template?.spec?.containers ?? [];
+      expect(containers).toHaveLength(2);
+      expect(containers.some((c) => c.name === 'credential-sidecar')).toBe(
+        true,
+      );
+      const main = containers.find((c) => c.name !== 'credential-sidecar')!;
+      const envNames = (main.env ?? []).map((e) => e.name);
+      expect(envNames).not.toContain('ANTHROPIC_API_KEY');
+      expect(envNames).not.toContain('OPENAI_API_KEY');
+      expect(envNames).not.toContain('OPENROUTER_API_KEY');
+      expect(envNames).not.toContain('ANTHROPIC_AUTH_TOKEN');
+      expect(envNames).not.toContain('CLAUDE_CODE_OAUTH_TOKEN');
+      expect(envNames).toContain('HTTPS_PROXY');
+      expect(envNames).toContain('NODE_EXTRA_CA_CERTS');
+    });
+
+    it('sets serviceAccountName to kubeclaw-tool-job when mode=sidecar', () => {
+      const manifest = jobRunner.generateJobManifest(credInjectionSpec);
+      expect(manifest.spec?.template?.spec?.serviceAccountName).toBe(
+        'kubeclaw-tool-job',
+      );
+    });
+
+    it('adds sidecar volumes (envoy-config, broker-token, egress-ca)', () => {
+      const manifest = jobRunner.generateJobManifest(credInjectionSpec);
+      const volumeNames = (manifest.spec?.template?.spec?.volumes ?? []).map(
+        (v) => v.name,
+      );
+      expect(volumeNames).toContain('envoy-config');
+      expect(volumeNames).toContain('broker-token');
+      expect(volumeNames).toContain('egress-ca');
+    });
+
+    it('credential-sidecar container uses correct image and port', () => {
+      const manifest = jobRunner.generateJobManifest(credInjectionSpec);
+      const sidecar = manifest.spec?.template?.spec?.containers?.find(
+        (c) => c.name === 'credential-sidecar',
+      );
+      expect(sidecar).toBeDefined();
+      expect(sidecar?.image).toBe('envoyproxy/envoy:v1.31-latest');
+      expect(sidecar?.ports?.[0]?.containerPort).toBe(8443);
+    });
+  });
+
+  describe('generateJobManifest — credential injection mode=istio', () => {
+    beforeEach(() => {
+      vi.mocked(configModule.getInjectionMode).mockReturnValue('istio');
+    });
+
+    it('strips API key envs and adds HTTPS_PROXY when mode=istio', () => {
+      const manifest = jobRunner.generateJobManifest(credInjectionSpec);
+      const envNames = (
+        manifest.spec?.template?.spec?.containers?.[0]?.env ?? []
+      ).map((e) => e.name);
+      expect(envNames).not.toContain('ANTHROPIC_API_KEY');
+      expect(envNames).not.toContain('OPENAI_API_KEY');
+      expect(envNames).toContain('HTTPS_PROXY');
+    });
+
+    it('does NOT add a credential-sidecar container when mode=istio', () => {
+      const manifest = jobRunner.generateJobManifest(credInjectionSpec);
+      const containers = manifest.spec?.template?.spec?.containers ?? [];
+      expect(containers).toHaveLength(1);
+      expect(containers.some((c) => c.name === 'credential-sidecar')).toBe(
+        false,
+      );
+    });
+
+    it('does NOT add sidecar volumes when mode=istio', () => {
+      const manifest = jobRunner.generateJobManifest(credInjectionSpec);
+      const volumeNames = (manifest.spec?.template?.spec?.volumes ?? []).map(
+        (v) => v.name,
+      );
+      expect(volumeNames).not.toContain('envoy-config');
+      expect(volumeNames).not.toContain('broker-token');
+      expect(volumeNames).not.toContain('egress-ca');
+    });
+
+    it('sets serviceAccountName to kubeclaw-tool-job when mode=istio', () => {
+      const manifest = jobRunner.generateJobManifest(credInjectionSpec);
+      expect(manifest.spec?.template?.spec?.serviceAccountName).toBe(
+        'kubeclaw-tool-job',
+      );
     });
   });
 });

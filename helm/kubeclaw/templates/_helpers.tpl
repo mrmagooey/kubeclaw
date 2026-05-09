@@ -46,3 +46,53 @@ Resolve the kubeclaw-secrets Secret name: existing or the one we create.
 kubeclaw-secrets
 {{- end -}}
 {{- end }}
+
+{{/*
+credentialSidecarContainer renders the Envoy sidecar container.
+Caller must have already gated on .Values.credentialInjection.mode == "sidecar".
+*/}}
+{{- define "kubeclaw.credentialSidecarContainer" -}}
+- name: credential-sidecar
+  image: {{ .Values.credentialInjection.sidecar.image }}
+  imagePullPolicy: IfNotPresent
+  args: ["-c", "/etc/envoy/envoy.yaml"]
+  ports:
+    - name: proxy
+      containerPort: {{ .Values.credentialInjection.sidecar.listenPort }}
+  volumeMounts:
+    - { name: envoy-config, mountPath: /etc/envoy, readOnly: true }
+    - { name: broker-token, mountPath: /var/run/secrets/tokens, readOnly: true }
+    - { name: egress-ca, mountPath: /etc/ssl/certs, readOnly: true }
+  resources: {{ toYaml .Values.credentialInjection.sidecar.resources | nindent 4 }}
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1337
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities: { drop: [ALL] }
+{{- end -}}
+
+{{- define "kubeclaw.credentialSidecarVolumes" -}}
+- name: envoy-config
+  configMap:
+    name: kubeclaw-envoy-sidecar
+- name: broker-token
+  projected:
+    sources:
+      - serviceAccountToken:
+          audience: kubeclaw-credential-broker
+          expirationSeconds: 600
+          path: broker-token
+- name: egress-ca
+  secret:
+    secretName: kubeclaw-egress-ca-tls
+    items: [{ key: ca.crt, path: kubeclaw-egress-ca.crt }]
+{{- end -}}
+
+{{- define "kubeclaw.credentialSidecarEnv" -}}
+- { name: HTTPS_PROXY,        value: "http://127.0.0.1:{{ .Values.credentialInjection.sidecar.listenPort }}" }
+- { name: HTTP_PROXY,         value: "http://127.0.0.1:{{ .Values.credentialInjection.sidecar.listenPort }}" }
+- { name: NO_PROXY,           value: "localhost,127.0.0.1,kubeclaw-redis,credential-broker" }
+- { name: NODE_EXTRA_CA_CERTS, value: "/etc/ssl/certs/kubeclaw-egress-ca.crt" }
+- { name: SSL_CERT_FILE,       value: "/etc/ssl/certs/kubeclaw-egress-ca.crt" }
+{{- end -}}
