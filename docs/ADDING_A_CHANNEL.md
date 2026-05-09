@@ -168,7 +168,7 @@ fs.writeFileSync(path.join(GROUPS_DIR, folder, rawPath), imageBuffer);
 content = imageAttachmentMarker(rawPath, caption) + '\n' + content;
 ```
 
-The preprocessing pipeline (added by the `add-image-vision` skill) reads these markers, resizes the image, and rewrites them to `[Image: attachments/processed/...]` before the agent sees them.
+A preprocessing pipeline (image-vision) is expected to read these markers, resize the image, and rewrite them to `[Image: attachments/processed/...]` before the agent sees them. See `docs/INSTALLING_A_CHANNEL.md` (capability section) for how to add the pipeline via `/customize`.
 
 ### `inboundPdfs: true` — PDF attachments
 
@@ -183,7 +183,7 @@ fs.writeFileSync(path.join(GROUPS_DIR, folder, rawPath), pdfBuffer);
 content = pdfAttachmentMarker(rawPath) + '\n' + content;
 ```
 
-The `add-pdf-reader` skill must also be applied for the agent to receive extracted PDF text.
+A pdf-reader preprocessing module must also be present for the agent to receive extracted PDF text. See `docs/INSTALLING_A_CHANNEL.md` for how to add it via `/customize`.
 
 ### `inboundVoice: true` — voice messages
 
@@ -201,7 +201,7 @@ if (transcript) {
 }
 ```
 
-Requires the `add-voice-transcription` skill to be applied (which adds `src/transcription.ts` and the `openai` npm dependency).
+Requires `src/transcription.ts` (which depends on the `openai` npm package) to be present in the build. See `docs/INSTALLING_A_CHANNEL.md` for how to add voice transcription via `/customize`.
 
 **Option B — Attachment marker (uses preprocessing pipeline):**
 
