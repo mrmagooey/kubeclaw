@@ -10,9 +10,9 @@ data:
     #!/bin/sh
     set -e
 
-    INPUT_DIR="${NANOCLAW_INPUT_DIR:-/workspace/input}"
-    OUTPUT_DIR="${NANOCLAW_OUTPUT_DIR:-/workspace/output}"
-    POLL_INTERVAL="${NANOCLAW_POLL_INTERVAL:-1}"
+    INPUT_DIR="${KUBECLAW_INPUT_DIR:-/workspace/input}"
+    OUTPUT_DIR="${KUBECLAW_OUTPUT_DIR:-/workspace/output}"
+    POLL_INTERVAL="${KUBECLAW_POLL_INTERVAL:-1}"
 
     log() { echo "[runner-wrapper] $*" >&2; }
 
@@ -29,9 +29,9 @@ data:
         write_error "No prompt in task file"
         return 1
       fi
-      if [ -n "$NANOCLAW_USER_COMMAND" ]; then
+      if [ -n "$KUBECLAW_USER_COMMAND" ]; then
         local result
-        if result=$(echo "$prompt" | eval "$NANOCLAW_USER_COMMAND" 2>&1); then
+        if result=$(echo "$prompt" | eval "$KUBECLAW_USER_COMMAND" 2>&1); then
           write_output "$result"
         else
           write_error "$result"
@@ -74,9 +74,9 @@ data:
     #!/bin/sh
     set -e
 
-    INPUT_DIR="${NANOCLAW_INPUT_DIR:-/workspace/input}"
-    OUTPUT_DIR="${NANOCLAW_OUTPUT_DIR:-/workspace/output}"
-    POLL_INTERVAL="${NANOCLAW_POLL_INTERVAL:-1}"
+    INPUT_DIR="${KUBECLAW_INPUT_DIR:-/workspace/input}"
+    OUTPUT_DIR="${KUBECLAW_OUTPUT_DIR:-/workspace/output}"
+    POLL_INTERVAL="${KUBECLAW_POLL_INTERVAL:-1}"
 
     log() { echo "[runner-wrapper] $*" >&2; }
 
@@ -92,9 +92,9 @@ data:
         write_error "No prompt in task file"
         return 1
       fi
-      if [ -n "$NANOCLAW_USER_COMMAND" ]; then
+      if [ -n "$KUBECLAW_USER_COMMAND" ]; then
         local result
-        if result=$(echo "$prompt" | eval "$NANOCLAW_USER_COMMAND" 2>&1); then
+        if result=$(echo "$prompt" | eval "$KUBECLAW_USER_COMMAND" 2>&1); then
           write_output "$result"
         else
           write_error "$result"

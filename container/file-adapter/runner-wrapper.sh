@@ -1,6 +1,6 @@
 #!/bin/sh
-# NanoClaw Runner Wrapper Script
-# 
+# KubeClaw Runner Wrapper Script
+#
 # This script runs inside the user container and provides the interface
 # between the file-based IPC and the user's application.
 #
@@ -8,17 +8,17 @@
 # and writes results to /workspace/output/result.json
 #
 # Environment variables:
-#   NANOCLAW_INPUT_DIR    - Input directory (default: /workspace/input)
-#   NANOCLAW_OUTPUT_DIR   - Output directory (default: /workspace/output)
-#   NANOCLAW_POLL_INTERVAL - Poll interval in seconds (default: 1)
-#   NANOCLAW_USER_COMMAND - User command to run (optional)
+#   KUBECLAW_INPUT_DIR    - Input directory (default: /workspace/input)
+#   KUBECLAW_OUTPUT_DIR   - Output directory (default: /workspace/output)
+#   KUBECLAW_POLL_INTERVAL - Poll interval in seconds (default: 1)
+#   KUBECLAW_USER_COMMAND - User command to run (optional)
 
 set -e
 
 # Configuration
-INPUT_DIR="${NANOCLAW_INPUT_DIR:-/workspace/input}"
-OUTPUT_DIR="${NANOCLAW_OUTPUT_DIR:-/workspace/output}"
-POLL_INTERVAL="${NANOCLAW_POLL_INTERVAL:-1}"
+INPUT_DIR="${KUBECLAW_INPUT_DIR:-/workspace/input}"
+OUTPUT_DIR="${KUBECLAW_OUTPUT_DIR:-/workspace/output}"
+POLL_INTERVAL="${KUBECLAW_POLL_INTERVAL:-1}"
 
 # Ensure directories exist
 mkdir -p "$INPUT_DIR" "$OUTPUT_DIR"
@@ -54,17 +54,17 @@ process_task() {
     local status="success"
     local error_msg=""
     
-    if [ -n "$NANOCLAW_USER_COMMAND" ]; then
+    if [ -n "$KUBECLAW_USER_COMMAND" ]; then
         # Run user's command with task as environment variable
-        log "Running user command: $NANOCLAW_USER_COMMAND"
-        
+        log "Running user command: $KUBECLAW_USER_COMMAND"
+
         # Export task data as environment variables
-        export NANOCLAW_TASK_FILE="$task_file"
-        export NANOCLAW_TASK_CONTENT="$task_content"
-        export NANOCLAW_TASK_PROMPT="$prompt"
-        
+        export KUBECLAW_TASK_FILE="$task_file"
+        export KUBECLAW_TASK_CONTENT="$task_content"
+        export KUBECLAW_TASK_PROMPT="$prompt"
+
         # Run command and capture output
-        if result=$(eval "$NANOCLAW_USER_COMMAND" 2>&1); then
+        if result=$(eval "$KUBECLAW_USER_COMMAND" 2>&1); then
             status="success"
         else
             status="error"

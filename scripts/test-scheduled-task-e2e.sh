@@ -43,10 +43,10 @@ cleanup() {
   # Teardown mock server
   bash "$(dirname "$0")/mock-llm-teardown.sh" kubeclaw 2>/dev/null || true
   # Restore original helm values if API key is available
-  if [ -n "${OPENROUTER_NANOCLAW_TESTING_KEY:-}" ]; then
+  if [ -n "${OPENROUTER_KUBECLAW_TESTING_KEY:-}" ]; then
     helm upgrade kubeclaw ./helm/kubeclaw \
       -f ./helm/kubeclaw/values-minikube.yaml \
-      --set secrets.openaiApiKey="$OPENROUTER_NANOCLAW_TESTING_KEY" \
+      --set secrets.openaiApiKey="$OPENROUTER_KUBECLAW_TESTING_KEY" \
       --set secrets.openaiBaseUrl="https://openrouter.ai/api/v1" \
       --set secrets.directLlmModel="moonshotai/kimi-k2.5" \
       --namespace kubeclaw >/dev/null 2>&1 || true

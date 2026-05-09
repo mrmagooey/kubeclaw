@@ -6,9 +6,9 @@
 
 set -e
 
-INPUT_DIR="${NANOCLAW_INPUT_DIR:-/workspace/input}"
-OUTPUT_DIR="${NANOCLAW_OUTPUT_DIR:-/workspace/output}"
-POLL_INTERVAL="${NANOCLAW_POLL_INTERVAL:-1}"
+INPUT_DIR="${KUBECLAW_INPUT_DIR:-/workspace/input}"
+OUTPUT_DIR="${KUBECLAW_OUTPUT_DIR:-/workspace/output}"
+POLL_INTERVAL="${KUBECLAW_POLL_INTERVAL:-1}"
 
 mkdir -p "$INPUT_DIR" "$OUTPUT_DIR"
 
