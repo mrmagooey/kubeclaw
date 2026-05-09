@@ -1,5 +1,7 @@
 # KubeClaw Skills Architecture
 
+> **Historical design document.** This describes an earlier vision for KubeClaw where channels and integrations shipped as Claude Code skills that transformed a fork. That pattern has been retired for installers — channels are now first-class TypeScript modules in `src/channels/` installed via the orchestrator admin shell. See [INSTALLING_A_CHANNEL.md](INSTALLING_A_CHANNEL.md) and [ADDING_A_CHANNEL.md](ADDING_A_CHANNEL.md) for the current architecture. This document is preserved for context.
+
 ## Core Principle
 
 Skills are self-contained, auditable packages that apply programmatically via standard git merge mechanics. Claude Code orchestrates the process — running git commands, reading skill manifests, and stepping in only when git can't resolve a conflict on its own. The system uses existing git features (`merge-file`, `rerere`, `apply`) rather than custom merge infrastructure.

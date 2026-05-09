@@ -1,5 +1,7 @@
 # KubeClaw Skills Architecture
 
+> **Historical design document.** This describes an earlier vision for KubeClaw where channels and integrations shipped as Claude Code skills that transformed a fork. That pattern has been retired for installers — channels are now first-class TypeScript modules in `src/channels/` installed via the orchestrator admin shell. See [INSTALLING_A_CHANNEL.md](INSTALLING_A_CHANNEL.md) and [ADDING_A_CHANNEL.md](ADDING_A_CHANNEL.md) for the current architecture. This document is preserved for context.
+
 ## What Skills Are For
 
 KubeClaw's core is intentionally minimal. Skills are how users extend it: adding channels, integrations, cross-platform support, or replacing internals entirely. Examples: add Telegram alongside WhatsApp, switch from Apple Container to Docker, add Gmail integration, add voice message transcription. Each skill modifies the actual codebase, adding channel handlers, updating the message router, changing container configuration, and adding dependencies, rather than working through a plugin API or runtime hooks.
