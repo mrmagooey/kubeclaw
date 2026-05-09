@@ -207,7 +207,7 @@ These control the resource requests/limits for each tool Job pod.
 
 ### Channel Integrations
 
-Add secrets for any channels you use. See the `/add-telegram`, `/add-slack`, `/add-discord`, `/add-whatsapp` skills for guided setup.
+Add secrets for any channels you use. For guided setup, use the orchestrator admin shell — see [docs/INSTALLING_A_CHANNEL.md](docs/INSTALLING_A_CHANNEL.md). The variables below are reference-only; the admin shell collects them interactively.
 
 | Variable                | Channel  | Description                           |
 | ----------------------- | -------- | ------------------------------------- |

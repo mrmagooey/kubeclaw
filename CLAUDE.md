@@ -25,11 +25,12 @@ Four-tier pod architecture: **Orchestrator** (high priv, only K8s API access, Re
 
 | Skill               | When to Use                                                       |
 | ------------------- | ----------------------------------------------------------------- |
-| `/customize`        | Adding channels, integrations, changing behavior                  |
+| `/customize`        | Source-code changes: new channel TYPES, behavior, triggers        |
 | `/debug`            | Container issues, logs, troubleshooting                           |
-| `/update-kubeclaw`  | Bring upstream KubeClaw updates into a customized install         |
 | `/qodo-pr-resolver` | Fetch and fix Qodo PR review issues interactively or in batch     |
 | `/get-qodo-rules`   | Load org- and repo-level coding rules from Qodo before code tasks |
+
+For installing an existing channel (Telegram, Slack, etc.), use the orchestrator admin shell — see `docs/INSTALLING_A_CHANNEL.md`.
 
 ## Development
 

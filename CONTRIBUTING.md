@@ -1,23 +1,32 @@
 # Contributing
 
-## Source Code Changes
+## What's accepted
 
-**Accepted:** Bug fixes, security fixes, simplifications, reducing code.
+- New channel types (Telegram, Discord, Slack, etc. patterns) — first-class TypeScript modules in `src/channels/`. See [docs/ADDING_A_CHANNEL.md](docs/ADDING_A_CHANNEL.md) for the `Channel` interface contract and the plumbing required to make the new type installable via the admin shell.
+- Bug fixes, security fixes, simplifications, reducing code.
+- Capability pods (MCP servers, model-server adapters) — wire via Helm `capabilities:` / `mcpServers:` and document in [docs/INSTALLING_A_CHANNEL.md](docs/INSTALLING_A_CHANNEL.md).
+- Inline preprocessing modules (image-vision, pdf-reader, voice-transcription) — `src/preprocessing/*.ts`, plumbed into the orchestrator's preprocessing job.
 
-**Not accepted:** Features, capabilities, compatibility, enhancements. These should be skills.
+## How to contribute a new channel type
 
-## Skills
+1. Implement the `Channel` interface from `src/types.ts` in `src/channels/<name>.ts` — see existing channels (`telegram.ts`, `slack.ts`, `discord.ts`) for reference.
+2. Self-register at module bottom; add a barrel import to `src/channels/index.ts`.
+3. Plumb the new type into `src/skills/orchestrator/channel-setup.ts` and the validated enum in `src/skills/orchestrator/types.ts` so the admin shell `setup_channel` tool can install it.
+4. Write a unit test at `src/channels/<name>.test.ts` and an integration test if external behavior matters.
+5. Add a runtime spec at `skills/channel/<name>.md` describing dependencies and required env vars.
+6. Open a PR.
 
-A [skill](https://code.claude.com/docs/en/skills) is a markdown file in `.claude/skills/` that teaches Claude Code how to transform a KubeClaw installation.
+## Testing
 
-A PR that contributes a skill should not modify any source files.
+Run the full suite before submitting:
 
-Your skill should contain the **instructions** Claude follows to add the feature—not pre-built code. See `/add-telegram` for a good example.
+```bash
+npm run typecheck
+npm test
+```
 
-### Why?
+For changes touching K8s manifests or the orchestrator's pod-spec construction:
 
-Every user should have clean and minimal code that does exactly what they need. Skills let users selectively add features to their fork without inheriting code for features they don't want.
-
-### Testing
-
-Test your skill by running it on a fresh clone before submitting.
+```bash
+npm run test:e2e -- <relevant-test-file>
+```

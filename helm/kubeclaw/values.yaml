@@ -252,7 +252,7 @@ ciliumNetworkPolicy:
 
 # Signal messaging channel — deploys signal-cli-rest-api as a StatefulSet.
 # Enable alongside channels.signal.enabled to use Signal as a channel.
-# After deploying, register your number via the signal-cli REST API (see /add-signal skill).
+# After deploying, register your number via the signal-cli REST API.
 signalCli:
   enabled: false
   imageTag: latest
