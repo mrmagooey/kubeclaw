@@ -69,9 +69,14 @@ describe('handleExtAuthz', () => {
 
   it('503 when secret read fails', async () => {
     const d = deps();
-    (d.secretSource.read as any) = vi.fn().mockRejectedValue(new Error('secret deleted'));
+    (d.secretSource.read as any) = vi
+      .fn()
+      .mockRejectedValue(new Error('secret deleted'));
     const res = await handleExtAuthz(
-      { authorization: 'Bearer t', 'x-forwarded-authority': 'api.anthropic.com' },
+      {
+        authorization: 'Bearer t',
+        'x-forwarded-authority': 'api.anthropic.com',
+      },
       d,
     );
     expect(res.status).toBe(503);

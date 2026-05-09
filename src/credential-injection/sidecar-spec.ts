@@ -11,7 +11,11 @@
  *   - `ca.crt` → cert-manager always emits this key in the Secret
  */
 
-import type { V1Container, V1Volume, V1VolumeMount } from '@kubernetes/client-node';
+import type {
+  V1Container,
+  V1Volume,
+  V1VolumeMount,
+} from '@kubernetes/client-node';
 
 export interface SidecarOpts {
   image: string;

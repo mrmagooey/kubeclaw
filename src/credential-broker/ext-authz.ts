@@ -56,10 +56,23 @@ export async function handleExtAuthz(
   try {
     credential = await deps.secretSource.read(mapping.credentialRef);
   } catch {
-    deps.audit.record({ identity, destination, mappingId: mapping.id, status: 503 });
+    deps.audit.record({
+      identity,
+      destination,
+      mappingId: mapping.id,
+      status: 503,
+    });
     return { status: 503, headers: {} };
   }
-  const headerValue = deps.resolver.formatHeader(mapping.headerScheme, credential);
-  deps.audit.record({ identity, destination, mappingId: mapping.id, status: 200 });
+  const headerValue = deps.resolver.formatHeader(
+    mapping.headerScheme,
+    credential,
+  );
+  deps.audit.record({
+    identity,
+    destination,
+    mappingId: mapping.id,
+    status: 200,
+  });
   return { status: 200, headers: { authorization: headerValue } };
 }
