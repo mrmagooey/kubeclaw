@@ -1,5 +1,5 @@
 /**
- * Step: kubernetes — Deploy NanoClaw to Kubernetes cluster.
+ * Step: kubernetes — Deploy KubeClaw to Kubernetes cluster.
  *
  * Applies manifests, creates secrets, and verifies deployment.
  */

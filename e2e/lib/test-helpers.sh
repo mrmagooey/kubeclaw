@@ -1,5 +1,5 @@
 #!/bin/bash
-# E2E Test Helpers Library for NanoClaw Kubernetes Testing
+# E2E Test Helpers Library for KubeClaw Kubernetes Testing
 
 set -e
 

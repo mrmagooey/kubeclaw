@@ -1,5 +1,5 @@
 /**
- * Redis Mock for testing NanoClaw adapters
+ * Redis Mock for testing KubeClaw adapters
  * Provides an in-memory mock of Redis client functionality
  */
 

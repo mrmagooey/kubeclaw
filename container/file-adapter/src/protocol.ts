@@ -1,7 +1,7 @@
 /**
- * NanoClaw File Adapter - Protocol Handling
+ * KubeClaw File Adapter - Protocol Handling
  *
- * Handles the NanoClaw protocol markers for stdin/stdout communication
+ * Handles the KubeClaw protocol markers for stdin/stdout communication
  * with the orchestrator.
  */
 
@@ -58,7 +58,7 @@ export interface ResultFile {
 }
 
 /**
- * Wrap output with NanoClaw markers and write to stdout
+ * Wrap output with KubeClaw markers and write to stdout
  */
 export function writeMarkedOutput(output: ContainerOutput): void {
   console.log(OUTPUT_START_MARKER);

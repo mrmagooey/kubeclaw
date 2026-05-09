@@ -47,7 +47,7 @@ describe('IRC Channel End-to-End', () => {
 
   const IRC_PORT = 16667;
   const IRC_SERVER = 'localhost';
-  const IRC_NICK = 'NanoClawBot';
+  const IRC_NICK = 'KubeClawBot';
   const IRC_CHANNEL = '#test-e2e';
 
   function createTestOpts(): IRCChannelOpts {
@@ -235,7 +235,7 @@ describe('IRC Channel End-to-End', () => {
         return;
       }
 
-      const messageText = 'Test message from NanoClaw!';
+      const messageText = 'Test message from KubeClaw!';
       const chatJid = `irc:${IRC_CHANNEL.toLowerCase()}@${IRC_SERVER}:${IRC_PORT}`;
 
       await channel.sendMessage(chatJid, messageText);

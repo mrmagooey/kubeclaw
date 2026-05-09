@@ -1,7 +1,7 @@
 /**
- * NanoClaw File Adapter - Main Entry Point
+ * KubeClaw File Adapter - Main Entry Point
  *
- * This sidecar adapter enables NanoClaw to run arbitrary containers without
+ * This sidecar adapter enables KubeClaw to run arbitrary containers without
  * HTTP interfaces. It uses file-based IPC via shared volumes and Redis for
  * bidirectional communication with the orchestrator (follow-up support).
  *

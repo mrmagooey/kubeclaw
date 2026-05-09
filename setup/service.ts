@@ -1,6 +1,6 @@
 /**
  * Step: service — Service setup.
- * NanoClaw now runs exclusively on Kubernetes.
+ * KubeClaw now runs exclusively on Kubernetes.
  */
 import { execSync } from 'child_process';
 
@@ -36,7 +36,7 @@ export async function run(_args: string[]): Promise<void> {
 
   // Non-Kubernetes mode is no longer supported
   logger.error(
-    'Non-Kubernetes runtime detected. NanoClaw now runs exclusively on Kubernetes.',
+    'Non-Kubernetes runtime detected. KubeClaw now runs exclusively on Kubernetes.',
   );
   emitStatus('SETUP_SERVICE', {
     SERVICE_TYPE: 'unknown',
@@ -46,6 +46,6 @@ export async function run(_args: string[]): Promise<void> {
     LOG: 'logs/setup.log',
   });
   throw new Error(
-    'Non-Kubernetes runtime is not supported. NanoClaw now runs exclusively on Kubernetes.',
+    'Non-Kubernetes runtime is not supported. KubeClaw now runs exclusively on Kubernetes.',
   );
 }

@@ -1,5 +1,5 @@
 /**
- * Stdio MCP Server for NanoClaw OpenRouter
+ * Stdio MCP Server for KubeClaw OpenRouter
  * Standalone process that handles MCP tool calls via stdio
  * Reads context from environment variables, writes IPC files for the host.
  */

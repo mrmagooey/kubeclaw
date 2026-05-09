@@ -1,5 +1,5 @@
 /**
- * NanoClaw OpenRouter Agent Runner
+ * KubeClaw OpenRouter Agent Runner
  * Runs inside a container, receives config via stdin, outputs result to stdout
  *
  * Uses OpenAI SDK with OpenRouter API for LLM inference.
@@ -95,7 +95,7 @@ const OPENROUTER_BASE_URL =
   process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1';
 const OPENROUTER_REFERER =
   process.env.OPENROUTER_HTTP_REFERER || 'https://kubeclaw.local';
-const OPENROUTER_TITLE = process.env.OPENROUTER_X_TITLE || 'NanoClaw';
+const OPENROUTER_TITLE = process.env.OPENROUTER_X_TITLE || 'KubeClaw';
 
 // Secrets to strip from Bash tool subprocess environments
 const SECRET_ENV_VARS = [

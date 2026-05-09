@@ -1,5 +1,5 @@
 /**
- * NanoClaw File Adapter - File IPC
+ * KubeClaw File Adapter - File IPC
  *
  * Handles file-based IPC using polling (not inotify) for maximum portability.
  * Watches for task files in /workspace/input/ and reads result files from

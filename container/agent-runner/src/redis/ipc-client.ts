@@ -1,5 +1,5 @@
 /**
- * Redis IPC Client for NanoClaw Agent Runner
+ * Redis IPC Client for KubeClaw Agent Runner
  * Replaces filesystem-based IPC with Redis pub/sub and streams
  */
 

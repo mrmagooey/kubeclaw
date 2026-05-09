@@ -1,5 +1,5 @@
 /**
- * In-Memory Filesystem Mock for testing NanoClaw adapters
+ * In-Memory Filesystem Mock for testing KubeClaw adapters
  * Simulates Node.js fs module operations
  */
 

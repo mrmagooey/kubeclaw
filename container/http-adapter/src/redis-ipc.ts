@@ -1,5 +1,5 @@
 /**
- * Redis IPC Client for NanoClaw Sidecar Adapters
+ * Redis IPC Client for KubeClaw Sidecar Adapters
  *
  * Handles bidirectional communication with the orchestrator using Redis Streams.
  * Uses Redis ACL for authentication with per-job credentials.

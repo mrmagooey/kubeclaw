@@ -117,7 +117,7 @@ describe('Mock E2E Usage', () => {
       const data = await response.json();
       expect(data.choices).toHaveLength(1);
       expect(data.choices[0].message.content).toBe(
-        "Hello! I'm your NanoClaw assistant. How can I help you today?",
+        "Hello! I'm your KubeClaw assistant. How can I help you today?",
       );
     });
 

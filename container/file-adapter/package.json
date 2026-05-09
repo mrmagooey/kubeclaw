@@ -1,7 +1,7 @@
 {
-  "name": "nanoclaw-file-adapter",
+  "name": "kubeclaw-file-adapter",
   "version": "1.0.0",
-  "description": "NanoClaw file-based sidecar adapter for arbitrary containers",
+  "description": "KubeClaw file-based sidecar adapter for arbitrary containers",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {

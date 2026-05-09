@@ -1,5 +1,5 @@
 {
-  "name": "nanoclaw-agent-openrouter",
+  "name": "kubeclaw-agent-openrouter",
   "version": "1.0.0",
   "private": true,
   "type": "module",

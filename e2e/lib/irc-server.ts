@@ -258,7 +258,7 @@ export class MockIRCServer extends EventEmitter {
 
     // Send welcome numerics
     this.sendNumeric(client, 1, [
-      `Welcome to the NanoClaw Test IRC Network ${client.nick}!${client.username}@${client.hostname}`,
+      `Welcome to the KubeClaw Test IRC Network ${client.nick}!${client.username}@${client.hostname}`,
     ]);
     this.sendNumeric(client, 2, [
       `Your host is ${this.serverName}, running version test-1.0`,
@@ -271,7 +271,7 @@ export class MockIRCServer extends EventEmitter {
       `:- ${this.serverName} Message of the Day -`,
     ]);
     this.sendNumeric(client, 372, [
-      `:- Welcome to the NanoClaw Test IRC Server`,
+      `:- Welcome to the KubeClaw Test IRC Server`,
     ]);
     this.sendNumeric(client, 376, [`:End of /MOTD command`]);
 

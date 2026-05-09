@@ -1,8 +1,8 @@
 #!/bin/bash
 set -e
 
-# NanoClaw E2E Test Suite
-# Kubernetes-based end-to-end testing for NanoClaw
+# KubeClaw E2E Test Suite
+# Kubernetes-based end-to-end testing for KubeClaw
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/test-helpers.sh"
@@ -757,7 +757,7 @@ test_resource_teardown() {
 
 main() {
     echo "================================================================================"
-    echo "NanoClaw E2E Test Suite - Kubernetes Testing"
+    echo "KubeClaw E2E Test Suite - Kubernetes Testing"
     echo "================================================================================"
     echo ""
     

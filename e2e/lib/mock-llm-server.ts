@@ -28,7 +28,7 @@ let usageCount = 0;
 const DEFAULT_RESPONSES: Record<string, MockResponseTemplate> = {
   default: {
     role: 'assistant',
-    content: "Hello! I'm your NanoClaw assistant. How can I help you today?",
+    content: "Hello! I'm your KubeClaw assistant. How can I help you today?",
   },
   greeting: {
     role: 'assistant',

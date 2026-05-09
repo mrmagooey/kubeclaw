@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-# NanoClaw E2E Minikube Setup Script
+# KubeClaw E2E Minikube Setup Script
 # Sets up minikube environment for Kubernetes testing
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -15,7 +15,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 echo "================================================================================"
-echo "NanoClaw E2E Test Environment Setup"
+echo "KubeClaw E2E Test Environment Setup"
 echo "================================================================================"
 echo ""
 
@@ -150,7 +150,7 @@ else
     cat <<EOF | docker build -t kubeclaw:latest -f - "${SCRIPT_DIR}"
 FROM alpine:latest
 RUN echo "Placeholder kubeclaw image"
-CMD ["sh", "-c", "echo 'NanoClaw placeholder' && sleep infinity"]
+CMD ["sh", "-c", "echo 'KubeClaw placeholder' && sleep infinity"]
 EOF
 fi
 

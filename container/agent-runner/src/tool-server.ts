@@ -1,5 +1,5 @@
 /**
- * NanoClaw Tool Server
+ * KubeClaw Tool Server
  * Alternative entrypoint for the tool container image.
  * Runs in tool category pods (execution | browser) and executes tool calls
  * routed from the agent MCP server via Redis Streams.
@@ -116,7 +116,7 @@ async function toolNotebookEdit(input: { notebook_path: string; new_source: stri
 // --- Browser tools ---
 
 async function toolWebFetch(input: { url: string; prompt?: string }): Promise<string> {
-  const res = await fetch(input.url, { headers: { 'User-Agent': 'Mozilla/5.0 NanoClaw/1.0' } });
+  const res = await fetch(input.url, { headers: { 'User-Agent': 'Mozilla/5.0 KubeClaw/1.0' } });
   const text = await res.text();
   // Trim to avoid huge responses
   return text.slice(0, 50000);
@@ -125,7 +125,7 @@ async function toolWebFetch(input: { url: string; prompt?: string }): Promise<st
 async function toolWebSearch(input: { query: string }): Promise<string> {
   // Use DuckDuckGo HTML endpoint
   const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(input.query)}`;
-  const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 NanoClaw/1.0' } });
+  const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 KubeClaw/1.0' } });
   const html = await res.text();
   // Extract result titles and snippets
   const results = [...html.matchAll(/<a class="result__a"[^>]*href="([^"]*)"[^>]*>([^<]*)<\/a>/g)]

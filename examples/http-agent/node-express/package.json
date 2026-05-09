@@ -1,7 +1,7 @@
 {
-  "name": "nanoclaw-example-http-agent",
+  "name": "kubeclaw-example-http-agent",
   "version": "1.0.0",
-  "description": "Example NanoClaw HTTP agent using Express",
+  "description": "Example KubeClaw HTTP agent using Express",
   "type": "module",
   "main": "app.js",
   "scripts": {

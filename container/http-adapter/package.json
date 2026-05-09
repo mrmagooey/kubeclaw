@@ -1,7 +1,7 @@
 {
-  "name": "nanoclaw-http-adapter",
+  "name": "kubeclaw-http-adapter",
   "version": "1.0.0",
-  "description": "NanoClaw HTTP-based sidecar adapter for tool containers exposing REST APIs",
+  "description": "KubeClaw HTTP-based sidecar adapter for tool containers exposing REST APIs",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {

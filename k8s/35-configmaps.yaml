@@ -1,4 +1,4 @@
-# NanoClaw ConfigMaps
+# KubeClaw ConfigMaps
 # Contains scripts that are mounted into agent sidecar containers.
 #
 # kubeclaw-runner-wrapper  — used by sidecar-job-runner (mounts at /scripts)
