@@ -36,31 +36,21 @@ I don't need an installation wizard - Claude Code guides the setup. I don't need
 
 The codebase assumes you have an AI collaborator. It doesn't need to be excessively self-documenting or self-debugging because Claude is always there.
 
-### Skills Over Features
+### First-class channels, operator-installable
 
-When people contribute, they shouldn't add "Telegram support alongside WhatsApp." They should contribute a skill like `/add-telegram` that transforms the codebase. Users fork the repo, run skills to customize, and end up with clean code that does exactly what they need - not a bloated system trying to support everyone's use case simultaneously.
+Channels are first-class TypeScript modules in `src/channels/`. The orchestrator's admin shell installs the ones an operator wants — see `docs/INSTALLING_A_CHANNEL.md`. Source-code contributions add new channel TYPES (the messaging-platform integration); operator deployments select from what exists. This replaces an earlier design where each channel shipped as a Claude Code skill that transformed the codebase.
 
 ---
 
-## RFS (Request for Skills)
+## Wishlist
 
-Skills we'd love contributors to build:
+Items contributors could pick up:
 
-### Communication Channels
-Skills to add or switch to different messaging platforms:
-- `/add-telegram` - Add Telegram as an input channel
-- `/add-slack` - Add Slack as an input channel
-- `/add-discord` - Add Discord as an input channel
-- `/add-sms` - Add SMS via Twilio or similar
-- `/convert-to-telegram` - Replace WhatsApp with Telegram entirely
+### Communication channels not yet supported
+- SMS via Twilio or similar (no `src/channels/sms.ts` today)
 
-### Container Runtime
-The project uses Docker by default (cross-platform). For macOS users who prefer Apple Container:
-- `/convert-to-apple-container` - Switch from Docker to Apple Container (macOS-only)
-
-### Platform Support
-- `/setup-linux` - Make the full setup work on Linux (depends on Docker conversion)
-- `/setup-windows` - Windows support via WSL2 + Docker
+### Lifecycle tools for the admin shell
+- `remove_channel` and `rotate_channel_credentials` tools in `src/admin-shell.ts` — currently operators must manually `kubectl delete` the Deployment + Secret + PVCs.
 
 ---
 
