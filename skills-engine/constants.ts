@@ -1,4 +1,4 @@
-export const NANOCLAW_DIR = '.kubeclaw';
+export const KUBECLAW_DIR = '.kubeclaw';
 export const STATE_FILE = 'state.yaml';
 export const BASE_DIR = '.kubeclaw/base';
 export const BACKUP_DIR = '.kubeclaw/backup';

@@ -69,9 +69,9 @@ function resetWorkingTree(): void {
   }
 }
 
-function initNanoclaw(): void {
+function initKubeclaw(): void {
   execSync(
-    'npx tsx -e "import { initNanoclawDir } from \'./skills-engine/index\'; initNanoclawDir();"',
+    'npx tsx -e "import { initKubeclawDir } from \'./skills-engine/index\'; initKubeclawDir();"',
     { stdio: 'pipe', timeout: 30_000 },
   );
 }
@@ -127,7 +127,7 @@ async function main(): Promise<void> {
 
     // Clean slate
     resetWorkingTree();
-    initNanoclaw();
+    initKubeclaw();
 
     // Step 0: Pre-apply declared dependencies so their `adds:` files are in place
     // for type checking (avoids "module not found" errors on imports from deps)

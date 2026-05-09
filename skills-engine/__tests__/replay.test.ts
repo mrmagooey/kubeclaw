@@ -9,7 +9,7 @@ import {
   createSkillPackage,
   createTempDir,
   initGitRepo,
-  setupNanoclawDir,
+  setupKubeclawDir,
 } from './test-helpers.js';
 
 describe('replay', () => {
@@ -18,7 +18,7 @@ describe('replay', () => {
 
   beforeEach(() => {
     tmpDir = createTempDir();
-    setupNanoclawDir(tmpDir);
+    setupKubeclawDir(tmpDir);
     createMinimalState(tmpDir);
     initGitRepo(tmpDir);
     process.chdir(tmpDir);

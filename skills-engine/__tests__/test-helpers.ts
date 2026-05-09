@@ -5,10 +5,10 @@ import path from 'path';
 import { stringify } from 'yaml';
 
 export function createTempDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'nanoclaw-test-'));
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'kubeclaw-test-'));
 }
 
-export function setupNanoclawDir(tmpDir: string): void {
+export function setupKubeclawDir(tmpDir: string): void {
   fs.mkdirSync(path.join(tmpDir, '.kubeclaw', 'base', 'src'), {
     recursive: true,
   });

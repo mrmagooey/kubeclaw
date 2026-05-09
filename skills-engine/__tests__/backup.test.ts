@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import { createBackup, restoreBackup, clearBackup } from '../backup.js';
-import { createTempDir, setupNanoclawDir, cleanup } from './test-helpers.js';
+import { createTempDir, setupKubeclawDir, cleanup } from './test-helpers.js';
 
 describe('backup', () => {
   let tmpDir: string;
@@ -10,7 +10,7 @@ describe('backup', () => {
 
   beforeEach(() => {
     tmpDir = createTempDir();
-    setupNanoclawDir(tmpDir);
+    setupKubeclawDir(tmpDir);
     process.chdir(tmpDir);
   });
 

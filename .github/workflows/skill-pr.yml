@@ -103,7 +103,7 @@ jobs:
       - name: Initialize skills system
         run: >-
           npx tsx -e
-          "import { initNanoclawDir } from './skills-engine/index'; initNanoclawDir();"
+          "import { initKubeclawDir } from './skills-engine/index'; initKubeclawDir();"
 
       - name: Apply skill
         run: npx tsx scripts/apply-skill.ts ".claude/skills/${{ matrix.skill }}"

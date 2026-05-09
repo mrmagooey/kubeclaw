@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  NANOCLAW_DIR,
+  KUBECLAW_DIR,
   STATE_FILE,
   BASE_DIR,
   BACKUP_DIR,
@@ -11,7 +11,7 @@ import {
 
 describe('constants', () => {
   const allConstants = {
-    NANOCLAW_DIR,
+    KUBECLAW_DIR,
     STATE_FILE,
     BASE_DIR,
     BACKUP_DIR,
@@ -35,7 +35,7 @@ describe('constants', () => {
     }
   });
 
-  it('NANOCLAW_DIR is .kubeclaw', () => {
-    expect(NANOCLAW_DIR).toBe('.kubeclaw');
+  it('KUBECLAW_DIR is .kubeclaw', () => {
+    expect(KUBECLAW_DIR).toBe('.kubeclaw');
   });
 });

@@ -2,10 +2,10 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 
-import { initNanoclawDir } from '../init.js';
+import { initKubeclawDir } from '../init.js';
 import { createTempDir, cleanup } from './test-helpers.js';
 
-describe('initNanoclawDir', () => {
+describe('initKubeclawDir', () => {
   let tmpDir: string;
   const originalCwd = process.cwd();
 
@@ -20,13 +20,13 @@ describe('initNanoclawDir', () => {
   });
 
   it('creates .kubeclaw/backup and .kubeclaw/base directories', () => {
-    initNanoclawDir();
+    initKubeclawDir();
     expect(fs.existsSync(path.join(tmpDir, '.kubeclaw', 'backup'))).toBe(true);
     expect(fs.existsSync(path.join(tmpDir, '.kubeclaw', 'base'))).toBe(true);
   });
 
   it('writes initial state file with correct structure', () => {
-    initNanoclawDir();
+    initKubeclawDir();
     const stateFile = path.join(tmpDir, '.kubeclaw', 'state.yaml');
     expect(fs.existsSync(stateFile)).toBe(true);
     const content = fs.readFileSync(stateFile, 'utf-8');
@@ -39,14 +39,14 @@ describe('initNanoclawDir', () => {
       path.join(tmpDir, 'package.json'),
       JSON.stringify({ version: '3.1.4', name: 'test' }),
     );
-    initNanoclawDir();
+    initKubeclawDir();
     const stateFile = path.join(tmpDir, '.kubeclaw', 'state.yaml');
     const content = fs.readFileSync(stateFile, 'utf-8');
     expect(content).toContain('3.1.4');
   });
 
   it('falls back to 0.0.0 when package.json is missing', () => {
-    initNanoclawDir();
+    initKubeclawDir();
     const stateFile = path.join(tmpDir, '.kubeclaw', 'state.yaml');
     const content = fs.readFileSync(stateFile, 'utf-8');
     expect(content).toContain('0.0.0');
@@ -57,7 +57,7 @@ describe('initNanoclawDir', () => {
       path.join(tmpDir, 'package.json'),
       JSON.stringify({ version: '2.0.0', name: 'test' }),
     );
-    initNanoclawDir();
+    initKubeclawDir();
     expect(
       fs.existsSync(path.join(tmpDir, '.kubeclaw', 'base', 'package.json')),
     ).toBe(true);
@@ -66,7 +66,7 @@ describe('initNanoclawDir', () => {
   it('snapshots src/ directory contents into .kubeclaw/base', () => {
     fs.mkdirSync(path.join(tmpDir, 'src'), { recursive: true });
     fs.writeFileSync(path.join(tmpDir, 'src', 'index.ts'), 'export {}');
-    initNanoclawDir();
+    initKubeclawDir();
     expect(
       fs.existsSync(path.join(tmpDir, '.kubeclaw', 'base', 'src', 'index.ts')),
     ).toBe(true);
@@ -78,14 +78,14 @@ describe('initNanoclawDir', () => {
       path.join(tmpDir, '.kubeclaw', 'base', 'stale.txt'),
       'old content',
     );
-    initNanoclawDir();
+    initKubeclawDir();
     expect(
       fs.existsSync(path.join(tmpDir, '.kubeclaw', 'base', 'stale.txt')),
     ).toBe(false);
   });
 
   it('does not throw when no BASE_INCLUDES paths exist', () => {
-    expect(() => initNanoclawDir()).not.toThrow();
+    expect(() => initKubeclawDir()).not.toThrow();
   });
 
   it('excludes node_modules and .git from src/ snapshot', () => {
@@ -97,7 +97,7 @@ describe('initNanoclawDir', () => {
       'module',
     );
     fs.writeFileSync(path.join(tmpDir, 'src', 'real.ts'), 'code');
-    initNanoclawDir();
+    initKubeclawDir();
     expect(
       fs.existsSync(
         path.join(tmpDir, '.kubeclaw', 'base', 'src', 'node_modules'),

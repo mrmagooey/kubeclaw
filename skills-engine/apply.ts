@@ -5,10 +5,10 @@ import os from 'os';
 import path from 'path';
 
 import { clearBackup, createBackup, restoreBackup } from './backup.js';
-import { NANOCLAW_DIR, STATE_FILE } from './constants.js';
+import { KUBECLAW_DIR, STATE_FILE } from './constants.js';
 import { copyDir } from './fs-utils.js';
 import { isCustomizeActive } from './customize.js';
-import { initNanoclawDir } from './init.js';
+import { initKubeclawDir } from './init.js';
 import { executeFileOps } from './file-ops.js';
 import { acquireLock } from './lock.js';
 import {
@@ -40,9 +40,9 @@ export async function applySkill(skillDir: string): Promise<ApplyResult> {
 
   // --- Pre-flight checks ---
   // Auto-initialize skills system if state file doesn't exist
-  const statePath = path.join(projectRoot, NANOCLAW_DIR, STATE_FILE);
+  const statePath = path.join(projectRoot, KUBECLAW_DIR, STATE_FILE);
   if (!fs.existsSync(statePath)) {
-    initNanoclawDir();
+    initKubeclawDir();
   }
   const currentState = readState();
 
@@ -102,7 +102,7 @@ export async function applySkill(skillDir: string): Promise<ApplyResult> {
   for (const relPath of manifest.modifies) {
     const resolvedPath = resolvePathRemap(relPath, pathRemap);
     const currentPath = path.join(projectRoot, resolvedPath);
-    const basePath = path.join(projectRoot, NANOCLAW_DIR, 'base', resolvedPath);
+    const basePath = path.join(projectRoot, KUBECLAW_DIR, 'base', resolvedPath);
 
     if (fs.existsSync(currentPath) && fs.existsSync(basePath)) {
       const currentHash = computeFileHash(currentPath);
@@ -186,7 +186,7 @@ export async function applySkill(skillDir: string): Promise<ApplyResult> {
       const currentPath = path.join(projectRoot, resolvedPath);
       const basePath = path.join(
         projectRoot,
-        NANOCLAW_DIR,
+        KUBECLAW_DIR,
         'base',
         resolvedPath,
       );
@@ -214,7 +214,7 @@ export async function applySkill(skillDir: string): Promise<ApplyResult> {
       // git merge-file modifies the first argument in-place, so use a temp copy
       const tmpCurrent = path.join(
         os.tmpdir(),
-        `nanoclaw-merge-${crypto.randomUUID()}-${path.basename(relPath)}`,
+        `kubeclaw-merge-${crypto.randomUUID()}-${path.basename(relPath)}`,
       );
       fs.copyFileSync(currentPath, tmpCurrent);
 
