@@ -1,5 +1,7 @@
 # Installer Skills Cleanup Implementation Plan
 
+> **Historical document.** This describes the installer-skills cleanup work that was completed in May 2026. The skill directories referenced here (e.g. `update-nanoclaw`, the various `add-*` stubs) have been removed from the repo. Preserved for context — do not act on the steps below as if they were still pending. See `docs/INSTALLING_A_CHANNEL.md` for the current installation flow.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Remove 17 install/sync-shaped Claude Code skills, replace their guidance with operator-facing docs and a refreshed `/customize`, and verify nothing in the codebase still references the deleted slash commands.

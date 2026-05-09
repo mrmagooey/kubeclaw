@@ -1,5 +1,7 @@
 # Installer Skills Cleanup — Design
 
+> **Historical document.** This describes the installer-skills cleanup work that was completed in May 2026. The skill directories referenced here (e.g. `update-nanoclaw`, the various `add-*` stubs) have been removed from the repo. Preserved for context — do not act on the steps below as if they were still pending. See `docs/INSTALLING_A_CHANNEL.md` for the current installation flow.
+
 ## Goal
 
 Remove all Claude Code skills that overlap with runtime install/sync concerns. After this change, `.claude/skills/` contains only dev-time concerns (code customization, K8s debugging, code review). All channel installation flows through the orchestrator's admin shell; capability installation flows through Helm values.
