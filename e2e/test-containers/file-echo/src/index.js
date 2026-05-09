@@ -15,10 +15,10 @@
 import fs from 'fs';
 import path from 'path';
 
-const INPUT_DIR = process.env.NANOCLAW_INPUT_DIR || '/workspace/input';
-const OUTPUT_DIR = process.env.NANOCLAW_OUTPUT_DIR || '/workspace/output';
+const INPUT_DIR = process.env.KUBECLAW_INPUT_DIR || '/workspace/input';
+const OUTPUT_DIR = process.env.KUBECLAW_OUTPUT_DIR || '/workspace/output';
 const POLL_INTERVAL = parseInt(
-  process.env.NANOCLAW_POLL_INTERVAL || '1000',
+  process.env.KUBECLAW_POLL_INTERVAL || '1000',
   10,
 );
 

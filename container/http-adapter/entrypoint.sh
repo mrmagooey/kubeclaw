@@ -1,5 +1,5 @@
 #!/bin/sh
-# Entrypoint for NanoClaw HTTP Adapter
+# Entrypoint for KubeClaw HTTP Adapter
 # Reads JSON from stdin and passes to the adapter
 
 # Optional: Read from file if INPUT_FILE is set

@@ -1,5 +1,5 @@
 """
-Example NanoClaw HTTP Agent - Python Flask
+Example KubeClaw HTTP Agent - Python Flask
 
 A minimal agent that echoes back the prompt with some processing.
 Implements the required /agent/health and /agent/task endpoints.

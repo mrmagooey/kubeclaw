@@ -1,5 +1,5 @@
 /**
- * Example NanoClaw HTTP Agent - Node.js Express
+ * Example KubeClaw HTTP Agent - Node.js Express
  *
  * A minimal agent that echoes back the prompt with some processing.
  * Implements the required /agent/health and /agent/task endpoints.

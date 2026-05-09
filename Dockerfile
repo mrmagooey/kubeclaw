@@ -33,9 +33,9 @@ RUN mkdir -p /app/groups /app/store && \
     chown -R 1000:1000 /app/groups /app/store
 
 # Set environment variables
-ENV NANOCLAW_RUNTIME=kubernetes
-ENV REDIS_URL=redis://nanoclaw-redis:6379
-ENV NANOCLAW_NAMESPACE=nanoclaw
+ENV KUBECLAW_RUNTIME=kubernetes
+ENV REDIS_URL=redis://kubeclaw-redis:6379
+ENV KUBECLAW_NAMESPACE=kubeclaw
 
 # Expose port (if needed for health checks)
 EXPOSE 8080

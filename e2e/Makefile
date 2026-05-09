@@ -21,12 +21,12 @@ PROJECT_ROOT := $(E2E_DIR)/..
 RESULTS_DIR := $(E2E_DIR)/results
 
 # Docker images
-ORCHESTRATOR_IMAGE := nanoclaw-orchestrator:latest
-AGENT_IMAGE := nanoclaw-agent:latest
-FILE_ADAPTER_IMAGE := nanoclaw-file-adapter:latest
-HTTP_ADAPTER_IMAGE := nanoclaw-http-adapter:latest
-TEST_FILE_ECHO_IMAGE := nanoclaw-test-file-echo:latest
-TEST_HTTP_ECHO_IMAGE := nanoclaw-test-http-echo:latest
+ORCHESTRATOR_IMAGE := kubeclaw-orchestrator:latest
+AGENT_IMAGE := kubeclaw-agent:latest
+FILE_ADAPTER_IMAGE := kubeclaw-file-adapter:latest
+HTTP_ADAPTER_IMAGE := kubeclaw-http-adapter:latest
+TEST_FILE_ECHO_IMAGE := kubeclaw-test-file-echo:latest
+TEST_HTTP_ECHO_IMAGE := kubeclaw-test-http-echo:latest
 
 # Colors for output
 GREEN := \033[0;32m
@@ -76,7 +76,7 @@ build-images: ## Build Docker images for testing
 	@cd $(PROJECT_ROOT) && docker build -t $(ORCHESTRATOR_IMAGE) .
 	@cd $(PROJECT_ROOT)/container && docker build -f Dockerfile -t $(AGENT_IMAGE) ..
 	@echo "$(GREEN)Images built:$(NC)"
-	@docker images --format "table {{.Repository}}:{{.Tag}}\t{{.Size}}" | grep nanoclaw || true
+	@docker images --format "table {{.Repository}}:{{.Tag}}\t{{.Size}}" | grep kubeclaw || true
 
 load-images: ## Load images into minikube
 	@echo "$(GREEN)Loading images into minikube...$(NC)"
@@ -89,7 +89,7 @@ build-test-containers: ## Build test container images for sidecar e2e tests
 	@cd $(E2E_DIR)/test-containers/file-echo && docker build -t $(TEST_FILE_ECHO_IMAGE) .
 	@cd $(E2E_DIR)/test-containers/http-echo && docker build -t $(TEST_HTTP_ECHO_IMAGE) .
 	@echo "$(GREEN)Test images built:$(NC)"
-	@docker images --format "table {{.Repository}}:{{.Tag}}\t{{.Size}}" | grep nanoclaw-test || true
+	@docker images --format "table {{.Repository}}:{{.Tag}}\t{{.Size}}" | grep kubeclaw-test || true
 
 load-test-containers: ## Load test container images into minikube
 	@echo "$(GREEN)Loading test images into minikube...$(NC)"
@@ -99,7 +99,7 @@ load-test-containers: ## Load test container images into minikube
 
 deploy-k8s: ## Deploy to Kubernetes
 	@echo "$(GREEN)Deploying to Kubernetes...$(NC)"
-	@kubectl create namespace nanoclaw 2>/dev/null || true
+	@kubectl create namespace kubeclaw 2>/dev/null || true
 	@kubectl apply -f $(PROJECT_ROOT)/k8s/00-namespace.yaml || true
 	@kubectl apply -f $(PROJECT_ROOT)/k8s/10-redis.yaml
 	@kubectl apply -f $(PROJECT_ROOT)/k8s/20-storage.yaml
@@ -107,9 +107,9 @@ deploy-k8s: ## Deploy to Kubernetes
 	@kubectl apply -f $(PROJECT_ROOT)/k8s/40-agent-job-template.yaml
 	@kubectl apply -f $(PROJECT_ROOT)/k8s/01-network-policy.yaml || true
 	@echo "$(GREEN)Waiting for Redis...$(NC)"
-	@kubectl wait --namespace=nanoclaw --for=condition=ready pod -l app=nanoclaw-redis --timeout=120s
+	@kubectl wait --namespace=kubeclaw --for=condition=ready pod -l app=kubeclaw-redis --timeout=120s
 	@echo "$(GREEN)Waiting for orchestrator...$(NC)"
-	@kubectl wait --namespace=nanoclaw --for=condition=available deployment/nanoclaw-orchestrator --timeout=180s || true
+	@kubectl wait --namespace=kubeclaw --for=condition=available deployment/kubeclaw-orchestrator --timeout=180s || true
 	@echo "$(GREEN)Deployment complete$(NC)"
 
 test: ## Run all E2E tests
@@ -155,23 +155,23 @@ report: ## Generate test report from results
 logs: ## Show Kubernetes logs
 	@echo "$(GREEN)Kubernetes Logs:$(NC)"
 	@echo "--- Orchestrator ---"
-	@kubectl logs --namespace=nanoclaw -l app=nanoclaw-orchestrator --tail=50 2>/dev/null || echo "$(YELLOW)No orchestrator logs found$(NC)"
+	@kubectl logs --namespace=kubeclaw -l app=kubeclaw-orchestrator --tail=50 2>/dev/null || echo "$(YELLOW)No orchestrator logs found$(NC)"
 	@echo ""
 	@echo "--- Redis ---"
-	@kubectl logs --namespace=nanoclaw -l app=nanoclaw-redis --tail=50 2>/dev/null || echo "$(YELLOW)No Redis logs found$(NC)"
+	@kubectl logs --namespace=kubeclaw -l app=kubeclaw-redis --tail=50 2>/dev/null || echo "$(YELLOW)No Redis logs found$(NC)"
 
 status: ## Show deployment status
 	@echo "$(GREEN)Deployment Status:$(NC)"
-	@kubectl get pods --namespace=nanoclaw 2>/dev/null || echo "$(YELLOW)No pods found$(NC)"
+	@kubectl get pods --namespace=kubeclaw 2>/dev/null || echo "$(YELLOW)No pods found$(NC)"
 	@echo ""
-	@kubectl get services --namespace=nanoclaw 2>/dev/null || echo "$(YELLOW)No services found$(NC)"
+	@kubectl get services --namespace=kubeclaw 2>/dev/null || echo "$(YELLOW)No services found$(NC)"
 
 cleanup: ## Clean up test resources
 	@echo "$(GREEN)Cleaning up...$(NC)"
-	@kubectl delete namespace nanoclaw 2>/dev/null || true
+	@kubectl delete namespace kubeclaw 2>/dev/null || true
 	@minikube delete 2>/dev/null || true
 	@docker-compose -f $(CI_DIR)/docker-compose.test.yml down -v 2>/dev/null || true
-	@docker network rm nanoclaw-e2e 2>/dev/null || true
+	@docker network rm kubeclaw-e2e 2>/dev/null || true
 	@echo "$(GREEN)Cleanup complete$(NC)"
 
 clean-results: ## Clean test results

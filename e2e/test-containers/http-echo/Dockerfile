@@ -1,4 +1,4 @@
-# NanoClaw HTTP Echo Test Container
+# KubeClaw HTTP Echo Test Container
 # Simple Express server that echoes back HTTP requests
 
 FROM node:20-alpine

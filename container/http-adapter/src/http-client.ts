@@ -1,5 +1,5 @@
 /**
- * NanoClaw HTTP Adapter - HTTP Client
+ * KubeClaw HTTP Adapter - HTTP Client
  *
  * Makes HTTP calls to the tool container with exponential backoff retry.
  * Uses Node.js native fetch (Node 22+) — no axios dependency needed.

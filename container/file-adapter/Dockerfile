@@ -1,4 +1,4 @@
-# NanoClaw File Adapter Container
+# KubeClaw File Adapter Container
 # Sidecar adapter for file-based IPC with arbitrary containers
 
 FROM node:20-alpine

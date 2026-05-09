@@ -55,22 +55,22 @@ RUN mkdir -p /workspace/group /workspace/global /workspace/extra /workspace/ipc/
 
 # Create entrypoint script
 # Docker mode: task JSON is piped to stdin (cat > /tmp/input.json)
-# K8s mode:   task is passed as env vars (NANOCLAW_PROMPT etc.) — build JSON from them
+# K8s mode:   task is passed as env vars (KUBECLAW_PROMPT etc.) — build JSON from them
 # Follow-up messages arrive via IPC files in /workspace/ipc/input/
 RUN cat > /app/entrypoint.sh <<'ENTRYPOINT'
 #!/bin/bash
 set -e
-if [ -n "$NANOCLAW_PROMPT" ]; then
+if [ -n "$KUBECLAW_PROMPT" ]; then
   # Kubernetes mode: build ContainerInput JSON from env vars
   node -e "
 process.stdout.write(JSON.stringify({
-  prompt: process.env.NANOCLAW_PROMPT,
-  groupFolder: process.env.NANOCLAW_GROUP_FOLDER || '',
-  chatJid: process.env.NANOCLAW_CHAT_JID || '',
-  sessionId: process.env.NANOCLAW_SESSION_ID || undefined,
-  isMain: process.env.NANOCLAW_IS_MAIN === 'true',
-  assistantName: process.env.NANOCLAW_ASSISTANT_NAME || 'Andy',
-  isScheduledTask: process.env.NANOCLAW_IS_SCHEDULED === 'true',
+  prompt: process.env.KUBECLAW_PROMPT,
+  groupFolder: process.env.KUBECLAW_GROUP_FOLDER || '',
+  chatJid: process.env.KUBECLAW_CHAT_JID || '',
+  sessionId: process.env.KUBECLAW_SESSION_ID || undefined,
+  isMain: process.env.KUBECLAW_IS_MAIN === 'true',
+  assistantName: process.env.KUBECLAW_ASSISTANT_NAME || 'Andy',
+  isScheduledTask: process.env.KUBECLAW_IS_SCHEDULED === 'true',
 }));
 " > /tmp/input.json
 else

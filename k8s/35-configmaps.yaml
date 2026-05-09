@@ -23,9 +23,9 @@ data:
 
     set -e
 
-    INPUT_DIR="${NANOCLAW_INPUT_DIR:-/workspace/input}"
-    OUTPUT_DIR="${NANOCLAW_OUTPUT_DIR:-/workspace/output}"
-    POLL_INTERVAL="${NANOCLAW_POLL_INTERVAL:-1}"
+    INPUT_DIR="${KUBECLAW_INPUT_DIR:-/workspace/input}"
+    OUTPUT_DIR="${KUBECLAW_OUTPUT_DIR:-/workspace/output}"
+    POLL_INTERVAL="${KUBECLAW_POLL_INTERVAL:-1}"
 
     log() {
         echo "[runner-wrapper] $*" >&2
@@ -58,10 +58,10 @@ data:
         log "Running user command with prompt: ${prompt:0:100}..."
 
         # Run the user's command with the prompt
-        # User command is passed via environment variable NANOCLAW_USER_COMMAND
-        if [ -n "$NANOCLAW_USER_COMMAND" ]; then
+        # User command is passed via environment variable KUBECLAW_USER_COMMAND
+        if [ -n "$KUBECLAW_USER_COMMAND" ]; then
             local result
-            if result=$(eval "$NANOCLAW_USER_COMMAND" <<< "$prompt" 2>&1); then
+            if result=$(eval "$KUBECLAW_USER_COMMAND" <<< "$prompt" 2>&1); then
                 log "Command executed successfully"
                 write_output "$result"
             else
@@ -69,7 +69,7 @@ data:
                 write_error "$result"
             fi
         else
-            log "No NANOCLAW_USER_COMMAND set, echoing prompt"
+            log "No KUBECLAW_USER_COMMAND set, echoing prompt"
             write_output "$prompt"
         fi
     }
@@ -127,9 +127,9 @@ data:
 
     set -e
 
-    INPUT_DIR="${NANOCLAW_INPUT_DIR:-/workspace/input}"
-    OUTPUT_DIR="${NANOCLAW_OUTPUT_DIR:-/workspace/output}"
-    POLL_INTERVAL="${NANOCLAW_POLL_INTERVAL:-1}"
+    INPUT_DIR="${KUBECLAW_INPUT_DIR:-/workspace/input}"
+    OUTPUT_DIR="${KUBECLAW_OUTPUT_DIR:-/workspace/output}"
+    POLL_INTERVAL="${KUBECLAW_POLL_INTERVAL:-1}"
 
     log() {
         echo "[runner-wrapper] $*" >&2
@@ -160,9 +160,9 @@ data:
 
         log "Running user command with prompt: ${prompt:0:100}..."
 
-        if [ -n "$NANOCLAW_USER_COMMAND" ]; then
+        if [ -n "$KUBECLAW_USER_COMMAND" ]; then
             local result
-            if result=$(eval "$NANOCLAW_USER_COMMAND" <<< "$prompt" 2>&1); then
+            if result=$(eval "$KUBECLAW_USER_COMMAND" <<< "$prompt" 2>&1); then
                 log "Command executed successfully"
                 write_output "$result"
             else
@@ -170,7 +170,7 @@ data:
                 write_error "$result"
             fi
         else
-            log "No NANOCLAW_USER_COMMAND set, echoing prompt"
+            log "No KUBECLAW_USER_COMMAND set, echoing prompt"
             write_output "$prompt"
         fi
     }

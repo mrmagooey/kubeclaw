@@ -138,11 +138,11 @@ spec:
                 secretKeyRef:
                   name: kubeclaw-redis
                   key: admin-password
-            - name: NANOCLAW_RUNTIME
+            - name: KUBECLAW_RUNTIME
               value: kubernetes
-            - name: NANOCLAW_NAMESPACE
+            - name: KUBECLAW_NAMESPACE
               value: kubeclaw
-            - name: NANOCLAW_IPC_BASE
+            - name: KUBECLAW_IPC_BASE
               value: /data/sessions
             - name: MAX_CONCURRENT_JOBS
               value: '10'
@@ -163,7 +163,7 @@ spec:
             - name: IRC_PORT
               value: '16667'
             - name: IRC_NICK
-              value: NanoClawBot
+              value: KubeClawBot
             - name: IRC_CHANNELS
               value: '#test-e2e'
           volumeMounts:

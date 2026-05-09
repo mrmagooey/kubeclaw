@@ -1,4 +1,4 @@
-# NanoClaw File Echo Test Container
+# KubeClaw File Echo Test Container
 # Simple container that reads from /workspace/input/task.json and writes to /workspace/output/result.json
 
 FROM node:20-alpine
