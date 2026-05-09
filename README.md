@@ -74,23 +74,20 @@ The codebase is small enough that Claude can safely modify it.
 
 ## Contributing
 
-**Don't add features. Add skills.**
+Channels are first-class TypeScript modules in `src/channels/`. To add a new channel TYPE:
 
-If you want to add Telegram support, don't create a PR that adds Telegram alongside WhatsApp. Instead, contribute a skill file (`.claude/skills/add-telegram/SKILL.md`) that teaches Claude Code how to transform a KubeClaw installation to use Telegram.
+1. Implement the `Channel` interface from `src/types.ts` — see `docs/ADDING_A_CHANNEL.md` for the full contract (JID conventions, capability declarations, plugin loader).
+2. Self-register at module bottom in your channel file; add a barrel import to `src/channels/index.ts`.
+3. Plumb the new type into `src/skills/orchestrator/channel-setup.ts` so the admin shell can install it.
+4. Open a PR.
 
-Users then run `/add-telegram` on their fork and get clean code that does exactly what they need, not a bloated system trying to support every use case.
+For installing an existing channel into your own KubeClaw deployment, see [docs/INSTALLING_A_CHANNEL.md](docs/INSTALLING_A_CHANNEL.md). For other source-code customization (triggers, behavior, router), use `/customize`.
 
-### RFS (Request for Skills)
+### Wishlist
 
-Skills we'd like to see:
+**Session management**
 
-**Communication Channels**
-
-- `/add-signal` - Add Signal as a channel
-
-**Session Management**
-
-- `/clear` - Add a `/clear` command that compacts the conversation (summarizes context while preserving critical information in the same session).
+- `/clear` — a `/clear` command that compacts the conversation (summarizes context while preserving critical information in the same session).
 
 ## Requirements
 
