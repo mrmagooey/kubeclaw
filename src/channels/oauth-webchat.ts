@@ -54,7 +54,8 @@ export function verifySessionCookie(
   if (typeof payload.exp !== 'number') return null;
   if (payload.exp <= Math.floor(Date.now() / 1000)) return null;
   if (payload.kind !== 'session') return null;
-  if (typeof payload.email !== 'string' || payload.email.length === 0) return null;
+  if (typeof payload.email !== 'string' || payload.email.length === 0)
+    return null;
 
   return payload;
 }
@@ -360,8 +361,13 @@ function verifyStateCookie(
   if (typeof payload.exp !== 'number') return null;
   if (payload.exp <= Math.floor(Date.now() / 1000)) return null;
   if (payload.kind !== 'state') return null;
-  if (typeof payload.state !== 'string' || payload.state.length === 0) return null;
-  if (typeof payload.codeVerifier !== 'string' || payload.codeVerifier.length === 0) return null;
+  if (typeof payload.state !== 'string' || payload.state.length === 0)
+    return null;
+  if (
+    typeof payload.codeVerifier !== 'string' ||
+    payload.codeVerifier.length === 0
+  )
+    return null;
   return payload;
 }
 
@@ -670,7 +676,12 @@ export class OAuthWebchatChannel implements Channel {
       const state = genState();
       const codeVerifier = genCodeVerifier();
       const stateCookie = signStateCookie(
-        { kind: 'state', state, codeVerifier, exp: Math.floor(Date.now() / 1000) + 300 },
+        {
+          kind: 'state',
+          state,
+          codeVerifier,
+          exp: Math.floor(Date.now() / 1000) + 300,
+        },
         this.config.cookieSecret,
       );
       const authorizeUrl = await this.oidc.buildAuthorizeUrl({
