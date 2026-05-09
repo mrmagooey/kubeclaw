@@ -16,4 +16,4 @@ Markdown documents describing long-lived capability pods (RAG, MCP servers, memo
 
 ## `.claude/skills/` — Claude Code Skills
 
-Developer-facing workflows consumed by Claude Code CLI during development. These never run at runtime. Examples: `/customize`, `/debug`, `/update-nanoclaw`.
+Developer-facing workflows consumed by Claude Code CLI during development. These never run at runtime. Examples: `/customize`, `/debug`, `/qodo-pr-resolver`, `/get-qodo-rules`. Channel installation is NOT a Claude skill — see [docs/INSTALLING_A_CHANNEL.md](../docs/INSTALLING_A_CHANNEL.md).
