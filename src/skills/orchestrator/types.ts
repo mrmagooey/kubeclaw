@@ -24,6 +24,24 @@ export interface ChannelSetupInput {
   httpUsers?: string;
   /** HTTP listen port (HTTP) */
   httpPort?: number;
+  /** Public base URL with scheme, e.g. https://chat.example.com (oauth-webchat) */
+  publicUrl?: string;
+  /** OIDC issuer URL (oauth-webchat) */
+  oidcIssuer?: string;
+  /** OAuth client ID (oauth-webchat) */
+  clientId?: string;
+  /** OAuth client secret (oauth-webchat) */
+  clientSecret?: string;
+  /** Comma-separated allowed emails or @domain wildcards (oauth-webchat) */
+  allowedEmails?: string;
+  /** ≥32-char HMAC secret for session cookie (oauth-webchat) */
+  cookieSecret?: string;
+  /** Session lifetime in days (oauth-webchat, default 30) */
+  sessionTtlDays?: number;
+  /** OIDC scopes (oauth-webchat, default "openid email profile") */
+  scopes?: string;
+  /** Display name on login button (oauth-webchat, default "OIDC") */
+  providerName?: string;
   /** Auto-register a default group */
   registerGroup?: boolean;
   groupJid?: string;
@@ -48,4 +66,12 @@ export const CHANNEL_ENV: Record<string, string[]> = {
   irc: ['IRC_SERVER', 'IRC_NICK', 'IRC_CHANNELS'],
   http: ['HTTP_CHANNEL_PORT', 'HTTP_CHANNEL_USERS'],
   signal: ['SIGNAL_PHONE_NUMBER', 'SIGNAL_CLI_URL'],
+  'oauth-webchat': [
+    'OAUTH_WEBCHAT_PUBLIC_URL',
+    'OAUTH_WEBCHAT_OIDC_ISSUER',
+    'OAUTH_WEBCHAT_CLIENT_ID',
+    'OAUTH_WEBCHAT_CLIENT_SECRET',
+    'OAUTH_WEBCHAT_ALLOWED_EMAILS',
+    'OAUTH_WEBCHAT_COOKIE_SECRET',
+  ],
 };
