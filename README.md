@@ -26,20 +26,20 @@ Tell it in plain English: `"set up Telegram"` — it will ask for your credentia
 
 **Secure by isolation.** Four-tier pod model with clear privilege separation. Only the orchestrator has K8s API access. Channels, capabilities, and tool jobs run in isolated pods and can only see what's explicitly mounted.
 
-**Skills over features.** Instead of adding features (e.g. support for Telegram) to the codebase, contributors submit [claude code skills](https://code.claude.com/docs/en/skills) like `/add-telegram` that transform your fork. You end up with clean code that does exactly what you need.
+**Operator-installable.** Channels are first-class TypeScript modules in `src/channels/`. Operators install the ones they want via the orchestrator's admin shell — see [docs/INSTALLING_A_CHANNEL.md](docs/INSTALLING_A_CHANNEL.md). Capabilities (MCP servers, model servers, RAG) are configured via Helm values. Source-code customizations (new channel TYPES, behavior tweaks) use the `/customize` Claude Code skill.
 
 **Best harness, best model.** KubeClaw runs on [pi-agent-core](https://github.com/badlogic/pi-mono), giving you access to 20+ LLM providers including Anthropic, OpenAI, Google, Groq, Ollama, and more — route different groups to different models based on cost or capability. Claude Code guides setup, customization, and debugging.
 
 ## What It Supports
 
-- **Multi-channel messaging** - Talk to your assistant from WhatsApp, Telegram, Discord, Slack, or Gmail. Add channels with skills like `/add-whatsapp` or `/add-telegram`. Run one or many at the same time.
+- **Multi-channel messaging** - Talk to your assistant from WhatsApp, Telegram, Discord, Slack, IRC, Signal, Gmail, HTTP, or oauth-webchat. Install channels via the orchestrator admin shell (see [docs/INSTALLING_A_CHANNEL.md](docs/INSTALLING_A_CHANNEL.md)). Run one or many at the same time.
 - **Isolated group context** - Each group has its own memory, isolated filesystem, and runs in its own Kubernetes Job sandbox with only that filesystem mounted to it.
 - **Main channel** - Your private channel (self-chat) for admin control; every group is completely isolated
 - **Scheduled tasks** - Recurring jobs that run Claude and can message you back
 - **Web access** - Search and fetch content from the Web
 - **Agent Swarms** - Spin up teams of specialized agents that collaborate on complex tasks. KubeClaw is the first personal AI assistant to support agent swarms.
 - **Multi-provider LLM support** - Route groups to any of 20+ providers including Anthropic, OpenAI, Google, Groq, Ollama, OpenRouter, and more. Mix and match models per group for cost or capability.
-- **Optional integrations** - Add Gmail (`/add-gmail`) and more via skills
+- **Optional integrations** - Gmail and more via the admin shell installer
 
 ## Usage
 
