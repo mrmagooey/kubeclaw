@@ -247,14 +247,16 @@ Channels self-register using a barrel-import pattern:
 
 ### Adding a New Channel
 
-To add a new channel, contribute a skill to `.claude/skills/add-<name>/` that:
+To add a new channel TYPE, contribute a PR that:
 
 1. Adds a `src/channels/<name>.ts` file implementing the `Channel` interface
 2. Calls `registerChannel(name, factory)` at module load
 3. Returns `null` from the factory if credentials are missing
 4. Adds an import line to `src/channels/index.ts`
+5. Plumbs the new type into `src/skills/orchestrator/channel-setup.ts` and the validated enum in `src/skills/orchestrator/types.ts` so the admin shell `setup_channel` tool can install it
+6. Adds a runtime spec at `skills/channel/<name>.md` describing dependencies and required env vars
 
-See existing channel implementations in `src/channels/` (e.g. `telegram.ts`, `slack.ts`, `discord.ts`, `whatsapp.ts`, `gmail.ts`) for the pattern.
+See existing channel implementations in `src/channels/` (e.g. `telegram.ts`, `slack.ts`, `discord.ts`, `whatsapp.ts`, `gmail.ts`) for the pattern. See `docs/ADDING_A_CHANNEL.md` for the full `Channel` contract and `docs/INSTALLING_A_CHANNEL.md` for the operator install path.
 
 ---
 
