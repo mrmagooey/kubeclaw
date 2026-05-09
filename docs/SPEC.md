@@ -254,7 +254,7 @@ To add a new channel, contribute a skill to `.claude/skills/add-<name>/` that:
 3. Returns `null` from the factory if credentials are missing
 4. Adds an import line to `src/channels/index.ts`
 
-See existing skills (`/add-whatsapp`, `/add-telegram`, `/add-slack`, `/add-discord`, `/add-gmail`) for the pattern.
+See existing channel implementations in `src/channels/` (e.g. `telegram.ts`, `slack.ts`, `discord.ts`, `whatsapp.ts`, `gmail.ts`) for the pattern.
 
 ---
 
@@ -305,16 +305,11 @@ kubeclaw/
 ├── dist/                          # Compiled JavaScript (gitignored)
 │
 ├── .claude/
-│   └── skills/
-│       ├── setup/SKILL.md              # /setup - First-time installation
-│       ├── customize/SKILL.md          # /customize - Add capabilities
-│       ├── debug/SKILL.md              # /debug - Container debugging
-│       ├── add-telegram/SKILL.md       # /add-telegram - Telegram channel
-│       ├── add-gmail/SKILL.md          # /add-gmail - Gmail integration
-│       ├── add-voice-transcription/    # /add-voice-transcription - Whisper
-│       ├── x-integration/SKILL.md      # /x-integration - X/Twitter
-│       ├── convert-to-apple-container/  # /convert-to-apple-container - Apple Container runtime
-│       └── add-parallel/SKILL.md       # /add-parallel - Parallel agents
+│   └── skills/                          # Dev-time Claude Code skills
+│       ├── customize/SKILL.md          # /customize — source-code customization
+│       ├── debug/SKILL.md              # /debug — K8s troubleshooting
+│       ├── qodo-pr-resolver/           # /qodo-pr-resolver — code-review tooling
+│       └── get-qodo-rules/             # /get-qodo-rules — load coding rules
 │
 ├── groups/
 │   ├── CLAUDE.md                  # Global memory (all groups read this)
