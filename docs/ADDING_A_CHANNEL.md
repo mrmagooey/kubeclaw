@@ -192,7 +192,7 @@ Two implementation patterns:
 **Option A — Inline transcription (recommended for simplicity):**
 
 ```typescript
-import { transcribeBuffer } from '../transcription.js'; // added by add-voice-transcription skill
+import { transcribeBuffer } from '../transcription.js'; // module added via /customize (voice-transcription)
 
 // Download audio bytes from platform...
 const transcript = await transcribeBuffer(audioBuffer);
