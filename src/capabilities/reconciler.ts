@@ -35,7 +35,10 @@ export async function deleteSpec(spec: CapabilitySpec): Promise<void> {
   } catch (err) {
     logger.warn({ err, dep, ns }, 'Failed to delete Service');
   }
-  if (spec.storage) {
+  // RAG kinds always render a PVC (the builders default storage when the spec
+  // doesn't declare it); HTTP/MCP only when the spec explicitly declares it.
+  const hasPvc = spec.kind === 'rag' || !!spec.storage;
+  if (hasPvc) {
     try {
       await jobRunner.deletePersistentVolumeClaim(`${dep}-data`, ns);
     } catch (err) {

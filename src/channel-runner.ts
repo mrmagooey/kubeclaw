@@ -83,6 +83,54 @@ async function publishChannelStatus(
 }
 
 /**
+ * Handle a 'capabilities_update' control command from the orchestrator.
+ *
+ * The orchestrator broadcasts this whenever a capability is installed or
+ * removed. The channel pod filters MCP entries out of the payload, projects
+ * them to McpServerStatus shape, reconfigures the MCP runtime, and resets
+ * the cached RAG provider so a newly installed Qdrant/LightRAG takes effect
+ * without a pod restart.
+ *
+ * Exported for the e2e test in capabilities-e2e.test.ts.
+ */
+export async function handleCapabilitiesUpdate(
+  msg: ControlMessage,
+): Promise<void> {
+  try {
+    const capabilities = JSON.parse(msg.capabilities || '[]') as Array<{
+      name: string;
+      kind: string;
+      endpoint: string;
+      kindMetadata: {
+        path?: string;
+        allowedTools?: string[];
+        backend?: string;
+      };
+    }>;
+    const mcpServers = capabilities
+      .filter((c) => c.kind === 'mcp')
+      .map((c) => ({
+        name: c.name,
+        url: `${c.endpoint}${c.kindMetadata.path ?? '/mcp'}`,
+        allowedTools: c.kindMetadata.allowedTools,
+      }));
+    await getDirectLLMRunner().configureMcp(mcpServers);
+    // Drop the cached RAG provider so the next call re-selects against
+    // the new capability set (e.g. a newly installed Qdrant or LightRAG).
+    resetRagProvider();
+    logger.info(
+      { count: mcpServers.length },
+      'MCP servers reconfigured from capabilities_update',
+    );
+  } catch (err) {
+    logger.error(
+      { err },
+      'Failed to reconfigure MCP servers from capabilities_update',
+    );
+  }
+}
+
+/**
  * Handle a 'configure' control command from the orchestrator.
  *
  * Installs npm dependencies, dynamically imports the channel module,
@@ -734,38 +782,7 @@ async function main(): Promise<void> {
       channels.push(newChannel);
       logger.info('Channel reloaded successfully');
     } else if (msg.command === 'capabilities_update') {
-      try {
-        const capabilities = JSON.parse(msg.capabilities || '[]') as Array<{
-          name: string;
-          kind: string;
-          endpoint: string;
-          kindMetadata: {
-            path?: string;
-            allowedTools?: string[];
-            backend?: string;
-          };
-        }>;
-        const mcpServers = capabilities
-          .filter((c) => c.kind === 'mcp')
-          .map((c) => ({
-            name: c.name,
-            url: `${c.endpoint}${c.kindMetadata.path ?? '/mcp'}`,
-            allowedTools: c.kindMetadata.allowedTools,
-          }));
-        await getDirectLLMRunner().configureMcp(mcpServers);
-        // Drop the cached RAG provider so the next call re-selects against
-        // the new capability set (e.g. a newly installed Qdrant or LightRAG).
-        resetRagProvider();
-        logger.info(
-          { count: mcpServers.length },
-          'MCP servers reconfigured from capabilities_update',
-        );
-      } catch (err) {
-        logger.error(
-          { err },
-          'Failed to reconfigure MCP servers from capabilities_update',
-        );
-      }
+      await handleCapabilitiesUpdate(msg);
     } else if (msg.command === 'configure') {
       await handleConfigure(msg, channelOpts, channels);
     } else {
