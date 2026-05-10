@@ -25,7 +25,7 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-let db: SqlJsDatabase;
+export let db: SqlJsDatabase;
 let dbPath: string;
 
 function createSchema(database: SqlJsDatabase): void {
@@ -146,6 +146,22 @@ function createSchema(database: SqlJsDatabase): void {
   `);
 
   database.run(`
+    CREATE TABLE IF NOT EXISTS capabilities (
+      name        TEXT PRIMARY KEY,
+      kind        TEXT NOT NULL,
+      spec        TEXT NOT NULL,
+      lifecycle   TEXT NOT NULL DEFAULT 'pending',
+      last_probe_at TEXT,
+      last_error  TEXT,
+      created_at  TEXT NOT NULL,
+      updated_at  TEXT NOT NULL
+    )
+  `);
+  database.run(
+    `CREATE INDEX IF NOT EXISTS idx_capabilities_kind ON capabilities(kind)`,
+  );
+
+  database.run(`
     CREATE TABLE IF NOT EXISTS conversation_history (
       id        TEXT PRIMARY KEY,
       group_folder TEXT NOT NULL,
@@ -197,7 +213,7 @@ function createSchema(database: SqlJsDatabase): void {
   }
 }
 
-function saveDatabase(): void {
+export function saveDatabase(): void {
   const data = db.export();
   const buffer = Buffer.from(data);
   fs.writeFileSync(dbPath, buffer);
@@ -249,6 +265,20 @@ export async function _initTestDatabase(): Promise<void> {
   const SQL = await getSqlJs();
   db = new SQL.Database();
   createSchema(db);
+}
+
+/**
+ * Test-only: reset the in-memory database. Drops and recreates all tables.
+ */
+export function __resetDbForTest(): void {
+  for (const t of ['capabilities', 'mcp_servers']) {
+    try {
+      db.run(`DELETE FROM ${t}`);
+    } catch {
+      // table may not exist yet
+    }
+  }
+  saveDatabase();
 }
 
 function backfillBotMessages(): void {
