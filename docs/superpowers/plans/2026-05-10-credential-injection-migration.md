@@ -1424,7 +1424,7 @@ Rationale for a separate port: the authz port (8080) is in the hot path for ever
 
 Decision: extend the existing `credential-broker` Service with a second named port `metrics: 9090`. A separate Service would be cleaner for ServiceMonitor selection but adds unnecessary resource count for the majority of operators who don't run Prometheus Operator. The single-Service approach is simpler and the ServiceMonitor can target by port name.
 
-- [ ] **Step 12.1:** In `credential-broker.yaml`, add a `metrics` named port to both the Deployment container spec and the Service. In the Deployment:
+- [x] **Step 12.1:** In `credential-broker.yaml`, add a `metrics` named port to both the Deployment container spec and the Service. In the Deployment:
 
   ```yaml
   ports:
@@ -1452,7 +1452,7 @@ Decision: extend the existing `credential-broker` Service with a second named po
   - { name: BROKER_METRICS_PORT, value: {{ .Values.credentialInjection.metrics.port | quote }} }
   ```
 
-- [ ] **Step 12.2:** Create `helm/kubeclaw/templates/credential-broker-servicemonitor.yaml`:
+- [x] **Step 12.2:** Create `helm/kubeclaw/templates/credential-broker-servicemonitor.yaml`:
 
   ```yaml
   {{- if and (ne .Values.credentialInjection.mode "off") .Values.credentialInjection.metrics.serviceMonitor.enabled -}}
@@ -1477,7 +1477,7 @@ Decision: extend the existing `credential-broker` Service with a second named po
   {{- end }}
   ```
 
-- [ ] **Step 12.3:** Render-test:
+- [x] **Step 12.3:** Render-test:
 
   ```bash
   # ServiceMonitor not rendered by default:
@@ -1505,7 +1505,7 @@ Decision: extend the existing `credential-broker` Service with a second named po
   #     targetPort: 9090
   ```
 
-- [ ] **Step 12.4:** Commit.
+- [x] **Step 12.4:** Commit.
 
   ```
   git add helm/kubeclaw/templates/credential-broker.yaml \
