@@ -638,21 +638,26 @@ export class JobRunner {
       });
     }
 
-    // Credential injection: strip API keys and add proxy env when active.
-    // Strip only when mode != off AND auditOnly=false.
-    // In audit-only mode the sidecar is still injected so the broker observes
-    // traffic, but workload env vars remain present so upstream calls still work
-    // via the env-var key during the observation window.
+    // Credential injection: strip API keys when active (sidecar or istio).
+    // In istio mode, Istio's iptables-based redirection routes egress automatically;
+    // no HTTPS_PROXY env is needed. In sidecar mode, HTTPS_PROXY points at the
+    // per-pod Envoy sidecar so traffic flows through it.
+    // In audit-only mode (sidecar only), keys are kept and HTTPS_PROXY is still set
+    // so the broker observes traffic via the sidecar.
     const injectionMode = getInjectionMode();
     const auditOnly = getAuditOnly();
-    const shouldStrip =
+    const stripsCredentials =
       (injectionMode === 'sidecar' || injectionMode === 'istio') && !auditOnly;
-    const finalEnv = shouldStrip
+    const addsSidecarProxy = injectionMode === 'sidecar';
+
+    const finalEnv = stripsCredentials
       ? [
           ...envVars.filter((e) => !STRIPPED_WHEN_INJECTED.has(e.name)),
-          ...workloadEnvForSidecar({ port: CREDENTIAL_SIDECAR_PORT }),
+          ...(addsSidecarProxy
+            ? workloadEnvForSidecar({ port: CREDENTIAL_SIDECAR_PORT })
+            : []),
         ]
-      : injectionMode === 'sidecar' || injectionMode === 'istio'
+      : addsSidecarProxy
         ? [...envVars, ...workloadEnvForSidecar({ port: CREDENTIAL_SIDECAR_PORT })]
         : envVars;
 

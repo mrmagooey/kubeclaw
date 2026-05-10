@@ -1490,14 +1490,14 @@ describe('JobRunner', () => {
       vi.mocked(configModule.getInjectionMode).mockReturnValue('istio');
     });
 
-    it('strips API key envs and adds HTTPS_PROXY when mode=istio', () => {
+    it('strips API key envs but does NOT add HTTPS_PROXY when mode=istio', () => {
       const manifest = jobRunner.generateJobManifest(credInjectionSpec);
       const envNames = (
         manifest.spec?.template?.spec?.containers?.[0]?.env ?? []
       ).map((e) => e.name);
       expect(envNames).not.toContain('ANTHROPIC_API_KEY');
       expect(envNames).not.toContain('OPENAI_API_KEY');
-      expect(envNames).toContain('HTTPS_PROXY');
+      expect(envNames).not.toContain('HTTPS_PROXY');
     });
 
     it('does NOT add a credential-sidecar container when mode=istio', () => {
@@ -1589,6 +1589,30 @@ describe('JobRunner', () => {
       const agentEnv = manifest.spec!.template.spec!.containers[0].env as Array<{ name: string }>;
       const names = agentEnv.map((e) => e.name);
       expect(names).toContain('ANTHROPIC_API_KEY');
+    });
+
+    it('mode=istio: strips API keys but no HTTPS_PROXY and no credential-sidecar container', () => {
+      process.env.CREDENTIAL_INJECTION_MODE = 'istio';
+      process.env.CREDENTIAL_INJECTION_AUDIT_ONLY = 'false';
+      const manifest = runner.generateJobManifest(makeSpec());
+      const agentEnv = manifest.spec!.template.spec!.containers[0].env as Array<{ name: string }>;
+      const names = agentEnv.map((e) => e.name);
+      expect(names).not.toContain('ANTHROPIC_API_KEY');
+      expect(names).not.toContain('HTTPS_PROXY');
+      const containerNames = manifest.spec!.template.spec!.containers.map((c: any) => c.name);
+      expect(containerNames).not.toContain('credential-sidecar');
+    });
+
+    it('mode=istio + auditOnly=true: keeps API keys, no HTTPS_PROXY, no credential-sidecar', () => {
+      process.env.CREDENTIAL_INJECTION_MODE = 'istio';
+      process.env.CREDENTIAL_INJECTION_AUDIT_ONLY = 'true';
+      const manifest = runner.generateJobManifest(makeSpec());
+      const agentEnv = manifest.spec!.template.spec!.containers[0].env as Array<{ name: string }>;
+      const names = agentEnv.map((e) => e.name);
+      expect(names).toContain('ANTHROPIC_API_KEY');
+      expect(names).not.toContain('HTTPS_PROXY');
+      const containerNames = manifest.spec!.template.spec!.containers.map((c: any) => c.name);
+      expect(containerNames).not.toContain('credential-sidecar');
     });
   });
 });

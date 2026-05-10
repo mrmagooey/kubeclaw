@@ -53,6 +53,9 @@ spec:
             {{- if eq $.Values.credentialInjection.mode "sidecar" }}
             {{- include "kubeclaw.credentialSidecarEnv" $ | nindent 12 }}
             {{- end }}
+            {{- if eq $.Values.credentialInjection.mode "istio" }}
+            # In istio mode, iptables redirection handles egress; no HTTPS_PROXY needed.
+            {{- end }}
           ports:
             - name: http
               containerPort: {{ $cfg.port | default 8080 }}

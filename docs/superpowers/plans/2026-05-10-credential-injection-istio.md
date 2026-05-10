@@ -708,7 +708,7 @@ git commit -m "feat(helm): exclude orchestrator from Istio injection when mode=i
 
 In `mode=istio`, Istio's mesh sidecar handles egress — the per-pod Envoy sidecar from Phase 1 must not be injected (it would conflict). However, the API key env vars are still stripped (the broker still handles credentials). The Istio mesh sidecar does NOT need the `HTTPS_PROXY` env var — Istio captures traffic via iptables.
 
-- [ ] **Step 1: Update `channel-pods.yaml` sidecar injection guards**
+- [x] **Step 1: Update `channel-pods.yaml` sidecar injection guards**
 
 Open `helm/kubeclaw/templates/channel-pods.yaml`.
 
@@ -749,7 +749,7 @@ Find the line:
 
 This also remains unchanged.
 
-- [ ] **Step 2: Update `capability-pods.yaml` sidecar injection guards**
+- [x] **Step 2: Update `capability-pods.yaml` sidecar injection guards**
 
 Open `helm/kubeclaw/templates/capability-pods.yaml`. Apply the same guard audit: confirm the sidecar container and volumes inclusions are already gated on `mode == "sidecar"` (from the grep output we confirmed this at line 74 and 77). No change needed if already correct. If any include is gated on `mode != "off"`, tighten to `mode == "sidecar"`.
 
@@ -772,7 +772,7 @@ Replace with:
             {{- end }}
 ```
 
-- [ ] **Step 3: Update `job-runner.ts` to narrow injection to `mode=sidecar` only**
+- [x] **Step 3: Update `job-runner.ts` to narrow injection to `mode=sidecar` only**
 
 Open `src/k8s/job-runner.ts`. Find the block at line 641–712:
 
@@ -828,7 +828,7 @@ Also update the sidecar container injection block at line 704:
 
 This block is already gated on `injectionMode === 'sidecar'` — confirm it is unchanged and that no `istio` case was missed.
 
-- [ ] **Step 4: Add/update unit tests in `job-runner.test.ts`**
+- [x] **Step 4: Add/update unit tests in `job-runner.test.ts`**
 
 Find the credential injection tests in `src/k8s/job-runner.test.ts` (or create a describe block if absent). Add cases for `mode=istio`:
 
@@ -887,13 +887,13 @@ describe('tool job credential injection modes', () => {
 
 Note: `buildJobSpecForTest` is a test helper that calls the internal job spec builder with a stubbed KubeConfig. Add it to the test file's setup if not already present, following the existing pattern in `job-runner.test.ts`.
 
-- [ ] **Step 5: Run tests**
+- [x] **Step 5: Run tests**
 
 Run: `npm test -- src/k8s/job-runner.test.ts`
 
 Expected: all tests pass including the new `mode=istio` cases.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add helm/kubeclaw/templates/channel-pods.yaml \
