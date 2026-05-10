@@ -1,82 +1,72 @@
 ---
 name: rag-qdrant
-description: RAG via Qdrant vector database with OpenAI or Voyage embeddings
+description: Vector RAG via Qdrant — installable as a unified capability
 type: capability
 dependencies: []
-env:
-  - QDRANT_URL
-  - EMBEDDING_PROVIDER
-  - EMBEDDING_MODEL
-  - RAG_TOP_K
-  - RAG_SCORE_THRESHOLD
-  - VOYAGE_API_KEY
 ---
 
-# RAG-Qdrant — Vector Memory for Channels
+# RAG-Qdrant — Vector RAG Capability
 
-Deploys a Qdrant vector database and wires channels to embed and retrieve
-conversational context. Each message turn is indexed; relevant past context
-is injected before the LLM call.
+Qdrant is a `kind: 'rag'` capability with `backend: 'qdrant'`. The
+orchestrator deploys it as a Deployment + Service + PVC and exposes it
+to channels through capability discovery.
 
-## Architecture
+Channels resolve a Qdrant endpoint via `getRagEntry(channelName)` from
+`src/capabilities/client.ts`. The existing `src/rag/` indexer/retriever
+pipeline transparently uses the resolved endpoint via `QDRANT_URL`.
 
-A **Capability** pod — a long-lived Qdrant StatefulSet that channels talk
-to directly via HTTP after orchestrator-mediated discovery.
+## Install
 
-## Providers
+From the orchestrator admin shell, call `install_capability` with:
 
-| Provider | Model | API Key |
-|----------|-------|---------|
-| `openai` | `text-embedding-3-small` | Reuses `OPENAI_API_KEY` (already in kubeclaw-secrets) |
-| `voyage` | `voyage-3` | Requires `VOYAGE_API_KEY` added to kubeclaw-secrets |
-
-## Helm Configuration
-
-Enable in your values override:
-
-```yaml
-rag:
-  enabled: true
-  provider: openai        # "openai" or "voyage"
-  model: ""               # uses provider default if empty
-  storage: 20Gi           # Qdrant PVC size
-  qdrantVersion: latest
-  topK: 5                 # chunks injected per message
-  scoreThreshold: "0.5"   # minimum cosine similarity (0-1)
-  resources:
-    limits:
-      memory: 1Gi
-      cpu: "1"
+```json
+{
+  "tool": "install_capability",
+  "arguments": {
+    "spec": {
+      "kind": "rag",
+      "backend": "qdrant",
+      "name": "main-rag",
+      "image": "qdrant/qdrant:latest",
+      "storage": { "sizeGi": 20, "mountPath": "/qdrant/storage" }
+    }
+  }
+}
 ```
 
-If using the Voyage provider, add the API key to secrets:
+The orchestrator persists the spec to the `capabilities` SQLite table,
+applies the K8s manifests via the reconciler, health-probes the
+endpoint at `/healthz`, and broadcasts a `capabilities_update` to all
+channel pods. Channels resolve the new endpoint on their next message
+turn.
 
-```yaml
-secrets:
-  voyageApiKey: "your-voyage-api-key"
+## Verify
+
+```json
+{ "tool": "list_capabilities", "arguments": {} }
 ```
 
-## What Gets Deployed
+The Qdrant entry's `lifecycle` should transition `pending → ready`
+within ~30 seconds (one health-probe cycle).
 
-- **Qdrant StatefulSet** (`kubeclaw-qdrant`) with a PVC for vector storage
-- **Qdrant Service** on ports 6333 (HTTP) and 6334 (gRPC)
-- Env vars injected into orchestrator and channel pods:
-  `QDRANT_URL`, `EMBEDDING_PROVIDER`, `EMBEDDING_MODEL`, `RAG_TOP_K`, `RAG_SCORE_THRESHOLD`
+For pod logs:
 
-## Source Code
-
-- `src/rag/store.ts` — Qdrant collection management and vector upsert/query
-- `src/rag/indexer.ts` — conversation turn indexing (called after each LLM response)
-- `src/rag/retriever.ts` — context retrieval (called before each LLM prompt)
-
-## Verification
-
-After enabling, check that Qdrant is running:
-
-```bash
-kubectl get pods -n kubeclaw -l app=kubeclaw-qdrant
-kubectl logs statefulset/kubeclaw-qdrant -n kubeclaw --tail=10
+```json
+{ "tool": "get_capability_logs", "arguments": { "name": "main-rag" } }
 ```
 
-Test embedding by sending a message through any channel — the orchestrator
-logs should show RAG indexing and retrieval activity.
+## Remove
+
+```json
+{ "tool": "remove_capability", "arguments": { "name": "main-rag" } }
+```
+
+This deletes the Deployment, Service, and PVC. Existing vector data is
+gone — back up `/qdrant/storage` first if you need to retain it.
+
+## Channel-side use
+
+Channels see Qdrant via `getRagEntry()`. The selection cache is
+process-local per channel pod, so an install/remove takes effect on
+channel-pod restart. (Future improvement: bust the cache on
+`capabilities_update`.)
