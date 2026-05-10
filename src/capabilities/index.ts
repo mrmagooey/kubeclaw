@@ -20,9 +20,6 @@ export {
   startCapabilitySubsystem,
 } from './registry.js';
 
-export {
-  startDiscoveryWatcher,
-  stopDiscoveryWatcher,
-} from './discovery.js';
+export { startDiscoveryWatcher, stopDiscoveryWatcher } from './discovery.js';
 
 export { startHealthProbes, stopHealthProbes } from './health.js';

@@ -123,7 +123,10 @@ describe('discovery', () => {
       image: 'mcp/x:1.0',
       channels: ['slack'],
     });
-    await __handleRequestForTest({ requestId: 'rNoChan', capability: 'restricted' });
+    await __handleRequestForTest({
+      requestId: 'rNoChan',
+      capability: 'restricted',
+    });
     const response = JSON.parse(mockSet.mock.calls[0][1]);
     expect(response).toEqual([]);
   });

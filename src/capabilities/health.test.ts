@@ -38,6 +38,8 @@ describe('health.probeOnce', () => {
     fetchMock.mockRejectedValueOnce(new Error('connection refused'));
     await probeOnce();
     expect(getCapabilityStatus('weather')?.lifecycle).toBe('unhealthy');
-    expect(getCapabilityStatus('weather')?.lastError).toContain('connection refused');
+    expect(getCapabilityStatus('weather')?.lastError).toContain(
+      'connection refused',
+    );
   });
 });

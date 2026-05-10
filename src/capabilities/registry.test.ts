@@ -96,13 +96,16 @@ describe('registry', () => {
       channels: ['discord'],
     });
 
-    expect(getEntriesForChannel('slack').map((e) => e.name).sort()).toEqual([
-      'public-mcp',
-      'slack-only',
-    ]);
-    expect(getEntriesForChannel('http').map((e) => e.name).sort()).toEqual([
-      'public-mcp',
-    ]);
+    expect(
+      getEntriesForChannel('slack')
+        .map((e) => e.name)
+        .sort(),
+    ).toEqual(['public-mcp', 'slack-only']);
+    expect(
+      getEntriesForChannel('http')
+        .map((e) => e.name)
+        .sort(),
+    ).toEqual(['public-mcp']);
   });
 
   it("remove notifies a non-standard channel name that was ACL'd to the removed spec", async () => {
@@ -115,9 +118,7 @@ describe('registry', () => {
     mockPublish.mockClear();
     await removeCapability('mychan-only');
     // mockPublish was called for each targeted channel, including mychan.
-    const publishedChannels = mockPublish.mock.calls.map(
-      (c) => c[0] as string,
-    );
+    const publishedChannels = mockPublish.mock.calls.map((c) => c[0] as string);
     expect(publishedChannels).toContain('kubeclaw:control:mychan');
   });
 });

@@ -79,7 +79,11 @@ export type CapabilityKind = CapabilitySpec['kind'];
  * `unhealthy`: most recent health probe failed.
  * `removing`: marked for deletion, K8s resources being torn down.
  */
-export type CapabilityLifecycle = 'pending' | 'ready' | 'unhealthy' | 'removing';
+export type CapabilityLifecycle =
+  | 'pending'
+  | 'ready'
+  | 'unhealthy'
+  | 'removing';
 
 export interface CapabilityStatus {
   name: string;

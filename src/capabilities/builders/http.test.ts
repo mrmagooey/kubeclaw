@@ -42,14 +42,21 @@ describe('buildHttpYaml', () => {
     const docs = parseAllDocuments(yaml).map((d) => d.toJSON());
     const kinds = docs.map((d) => d.kind);
     expect(kinds).toEqual(
-      expect.arrayContaining(['Deployment', 'Service', 'PersistentVolumeClaim']),
+      expect.arrayContaining([
+        'Deployment',
+        'Service',
+        'PersistentVolumeClaim',
+      ]),
     );
     const dep = docs.find((d) => d.kind === 'Deployment');
     expect(dep.spec.template.spec.containers[0].volumeMounts).toEqual([
       { name: 'data', mountPath: '/data' },
     ]);
     expect(dep.spec.template.spec.volumes).toEqual([
-      { name: 'data', persistentVolumeClaim: { claimName: 'kubeclaw-cap-cache-data' } },
+      {
+        name: 'data',
+        persistentVolumeClaim: { claimName: 'kubeclaw-cap-cache-data' },
+      },
     ]);
     const pvc = docs.find((d) => d.kind === 'PersistentVolumeClaim');
     expect(pvc.metadata.name).toBe('kubeclaw-cap-cache-data');

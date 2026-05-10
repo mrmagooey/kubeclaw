@@ -241,26 +241,20 @@ export type OnChatMetadata = (
 
 // --- MCP Server Types ---
 
-export interface McpServerSpec {
-  name: string;
-  image: string;
-  port?: number; // default 3000
-  path?: string; // MCP endpoint path, default "/mcp"
-  command?: string[]; // optional entrypoint override
-  env?: Record<string, string>; // env vars for the server container
-  channels?: string[]; // which channels can access (empty = all)
-  allowedTools?: string[]; // tool name whitelist/globs (empty = all)
-  resources?: {
-    memoryRequest?: string;
-    memoryLimit?: string;
-    cpuRequest?: string;
-    cpuLimit?: string;
-  };
-}
+import type { McpCapabilitySpec } from './capabilities/types.js';
 
+/**
+ * @deprecated Use McpCapabilitySpec from './capabilities/types.js'.
+ * Retained as a structural alias for backwards compatibility through phase 4.
+ */
+export type McpServerSpec = Omit<McpCapabilitySpec, 'kind'> & { kind?: 'mcp' };
+
+/**
+ * @deprecated Use CapabilityDiscoveryEntry (kind === 'mcp') instead.
+ */
 export interface McpServerStatus {
   name: string;
-  url: string; // e.g. http://kubeclaw-mcp-weather:3000/mcp
+  url: string;
   allowedTools?: string[];
 }
 

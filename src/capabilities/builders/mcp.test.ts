@@ -68,7 +68,10 @@ describe('buildMcpYaml', () => {
     });
 
     it('renders env entries as a list of name/value objects when provided', () => {
-      const yamlStr = buildMcpYaml({ ...base, env: { LOG_LEVEL: 'debug', FOO: 'bar' } });
+      const yamlStr = buildMcpYaml({
+        ...base,
+        env: { LOG_LEVEL: 'debug', FOO: 'bar' },
+      });
       const container = getDeploymentContainer(yamlStr);
       expect(container.env).toEqual([
         { name: 'LOG_LEVEL', value: 'debug' },

@@ -963,18 +963,27 @@ async function main(): Promise<void> {
     try {
       specs = JSON.parse(capValuesJson);
     } catch (err) {
-      logger.fatal({ err }, 'CAPABILITIES_VALUES is not valid JSON; refusing to start');
+      logger.fatal(
+        { err },
+        'CAPABILITIES_VALUES is not valid JSON; refusing to start',
+      );
       process.exit(1);
     }
     for (const spec of specs) {
       try {
         await installCapability(spec);
       } catch (err) {
-        logger.error({ err, spec }, 'Failed to install capability from CAPABILITIES_VALUES');
+        logger.error(
+          { err, spec },
+          'Failed to install capability from CAPABILITIES_VALUES',
+        );
         // continue installing the remaining specs
       }
     }
-    logger.info({ count: specs.length }, 'Synced capabilities from values.yaml');
+    logger.info(
+      { count: specs.length },
+      'Synced capabilities from values.yaml',
+    );
   }
 
   const mcpValuesJson = process.env.MCP_SERVERS_VALUES;
@@ -983,14 +992,20 @@ async function main(): Promise<void> {
     try {
       mcpSpecs = JSON.parse(mcpValuesJson);
     } catch (err) {
-      logger.fatal({ err }, 'MCP_SERVERS_VALUES is not valid JSON; refusing to start');
+      logger.fatal(
+        { err },
+        'MCP_SERVERS_VALUES is not valid JSON; refusing to start',
+      );
       process.exit(1);
     }
     for (const m of mcpSpecs) {
       try {
         await installCapability({ ...m, kind: 'mcp' });
       } catch (err) {
-        logger.error({ err, spec: m }, 'Failed to install MCP server from MCP_SERVERS_VALUES');
+        logger.error(
+          { err, spec: m },
+          'Failed to install MCP server from MCP_SERVERS_VALUES',
+        );
       }
     }
     logger.warn(

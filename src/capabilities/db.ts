@@ -74,7 +74,9 @@ export function updateCapabilityStatus(
   saveDatabase();
 }
 
-export function getCapabilityStatus(name: string): CapabilityStatus | undefined {
+export function getCapabilityStatus(
+  name: string,
+): CapabilityStatus | undefined {
   const stmt = db.prepare(
     `SELECT name, lifecycle, last_probe_at, last_error
        FROM capabilities WHERE name = ?`,

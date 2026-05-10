@@ -51,7 +51,9 @@ function endpointFor(spec: CapabilitySpec): string {
   return `http://${deploymentName(spec.name)}:${defaultPort(spec)}`;
 }
 
-export function specToDiscoveryEntry(spec: CapabilitySpec): CapabilityDiscoveryEntry {
+export function specToDiscoveryEntry(
+  spec: CapabilitySpec,
+): CapabilityDiscoveryEntry {
   const endpoint = endpointFor(spec);
   switch (spec.kind) {
     case 'mcp':
