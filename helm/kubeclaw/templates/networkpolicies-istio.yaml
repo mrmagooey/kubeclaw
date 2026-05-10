@@ -1,0 +1,142 @@
+{{- if eq .Values.credentialInjection.mode "istio" -}}
+# NetworkPolicies for mode=istio.
+#
+# Security model in istio mode vs. sidecar mode:
+#   Sidecar mode: workload + sidecar share a netns, so NetworkPolicy cannot
+#     distinguish their egress. Workloads can potentially bypass the proxy by
+#     opening raw sockets. The hardening is operational (HTTP client config),
+#     not policy-enforced.
+#
+#   Istio mode: the Istio sidecar uses iptables rules installed in the
+#     workload's netns by the istio-init initContainer. ALL egress is
+#     redirected to the Envoy proxy at port 15001 before it leaves the
+#     netns. A workload cannot open a raw socket to the internet without
+#     going through the proxy, which routes to the egress gateway, which
+#     calls the credential broker. This is a genuine security upgrade.
+#
+# NetworkPolicy role in istio mode:
+#   - We still use NetworkPolicy to restrict broker access. Only the egress
+#     gateway pod should reach the broker on port {{ .Values.credentialInjection.broker.port }}.
+#   - Workload pods do not need a NetworkPolicy rule to reach the broker
+#     directly — iptables inside their netns prevents direct access anyway,
+#     and traffic goes through the gateway.
+#   - Deny-all egress from workload pods (except DNS and in-namespace).
+#     Istio's iptables already enforces this, but NetworkPolicy adds a
+#     second defence-in-depth layer at the CNI level.
+---
+# Egress gateway is the ONLY pod allowed to reach the credential broker.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kubeclaw-broker-ingress-istio
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app: kubeclaw-credential-broker
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              istio: kubeclaw-egressgateway
+      ports:
+        - protocol: TCP
+          port: {{ .Values.credentialInjection.broker.port }}
+---
+# Workload pods: restrict egress to DNS + in-namespace services.
+# Istio iptables enforces the actual constraint; this adds a CNI-level layer.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kubeclaw-workload-egress-restricted-istio-tool-pod
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app: kubeclaw-tool-pod
+  policyTypes: [Egress]
+  egress:
+    - to: []
+      ports: [{ protocol: UDP, port: 53 }]
+    - to:
+        - podSelector: { matchLabels: { app: kubeclaw-redis } }
+      ports: [{ protocol: TCP, port: 6379 }]
+    # Istio control plane traffic (xDS from istiod). Port 15012 is istiod's
+    # gRPC port for certificate provisioning and config delivery.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: istio-system
+      ports:
+        - { protocol: TCP, port: 15012 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kubeclaw-workload-egress-restricted-istio-sidecar-tool
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app: kubeclaw-sidecar-tool
+  policyTypes: [Egress]
+  egress:
+    - to: []
+      ports: [{ protocol: UDP, port: 53 }]
+    - to:
+        - podSelector: { matchLabels: { app: kubeclaw-redis } }
+      ports: [{ protocol: TCP, port: 6379 }]
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: istio-system
+      ports:
+        - { protocol: TCP, port: 15012 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kubeclaw-workload-egress-restricted-istio-channel
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchExpressions:
+      - { key: kubeclaw/channel, operator: Exists }
+  policyTypes: [Egress]
+  egress:
+    - to: []
+      ports: [{ protocol: UDP, port: 53 }]
+    - to:
+        - podSelector: { matchLabels: { app: kubeclaw-redis } }
+      ports: [{ protocol: TCP, port: 6379 }]
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: istio-system
+      ports:
+        - { protocol: TCP, port: 15012 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kubeclaw-workload-egress-restricted-istio-capability
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchExpressions:
+      - { key: kubeclaw/capability, operator: Exists }
+  policyTypes: [Egress]
+  egress:
+    - to: []
+      ports: [{ protocol: UDP, port: 53 }]
+    - to:
+        - podSelector: { matchLabels: { app: kubeclaw-redis } }
+      ports: [{ protocol: TCP, port: 6379 }]
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: istio-system
+      ports:
+        - { protocol: TCP, port: 15012 }
+{{- end }}

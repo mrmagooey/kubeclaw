@@ -1668,7 +1668,7 @@ git commit -m "feat(broker): read x-forwarded-client-cert header in HTTP server 
 
 In `mode=istio`, the Istio sidecar's iptables rules enforce egress — NetworkPolicy no longer needs to block direct internet access from workload pods (iptables in the netns already does this). However, we still scope which pods can reach the credential-broker: only the egress gateway pod (selector `istio: kubeclaw-egressgateway`) needs to reach `credential-broker:8080`. The per-pod-sidecar → broker rules from sidecar mode are not rendered.
 
-- [ ] **Step 1: Create `networkpolicies-istio.yaml`**
+- [x] **Step 1: Create `networkpolicies-istio.yaml`**
 
 Create `helm/kubeclaw/templates/networkpolicies-istio.yaml`:
 
@@ -1817,7 +1817,7 @@ spec:
 {{- end }}
 ```
 
-- [ ] **Step 2: Verify render**
+- [x] **Step 2: Verify render**
 
 Run: `helm template helm/kubeclaw --set credentialInjection.mode=istio | grep "kind: NetworkPolicy" | wc -l`
 
@@ -1831,7 +1831,7 @@ Run: `helm template helm/kubeclaw --set credentialInjection.mode=istio | grep "k
 
 Expected: empty output (sidecar-mode policies absent in istio mode).
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add helm/kubeclaw/templates/networkpolicies-istio.yaml
