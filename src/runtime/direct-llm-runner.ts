@@ -665,29 +665,34 @@ async function mcpServerAction(
   const redis = getRedisClient();
 
   if (action === 'deploy_mcp_server') {
-    const fields: string[] = [
+    const spec = {
+      kind: 'mcp' as const,
+      name: args.name as string,
+      image: args.image as string,
+      ...(args.port ? { port: Number(args.port) } : {}),
+      ...(args.path ? { path: args.path as string } : {}),
+      ...(args.command ? { command: args.command as string[] } : {}),
+      ...(args.env ? { env: args.env as Record<string, string> } : {}),
+      ...(args.channels ? { channels: args.channels as string[] } : {}),
+      ...(args.allowedTools
+        ? { allowedTools: args.allowedTools as string[] }
+        : {}),
+      ...(args.resources
+        ? { resources: args.resources as Record<string, unknown> }
+        : {}),
+    };
+    await redis.xadd(
+      getTaskRequestStream(),
+      '*',
       'type',
-      'deploy_mcp_server',
+      'install_capability',
       'groupFolder',
       groupFolder,
       'isMain',
       String(isMain),
-      'name',
-      args.name as string,
-      'image',
-      args.image as string,
-    ];
-    if (args.port) fields.push('port', String(args.port));
-    if (args.path) fields.push('path', args.path as string);
-    if (args.command) fields.push('command', JSON.stringify(args.command));
-    if (args.env) fields.push('env', JSON.stringify(args.env));
-    if (args.channels) fields.push('channels', JSON.stringify(args.channels));
-    if (args.allowedTools)
-      fields.push('allowedTools', JSON.stringify(args.allowedTools));
-    if (args.resources)
-      fields.push('resources', JSON.stringify(args.resources));
-
-    await redis.xadd(getTaskRequestStream(), '*', ...fields);
+      'spec',
+      JSON.stringify(spec),
+    );
     return `MCP server "${args.name}" deployment requested. It will be available shortly.`;
   }
 
@@ -696,7 +701,7 @@ async function mcpServerAction(
       getTaskRequestStream(),
       '*',
       'type',
-      'remove_mcp_server',
+      'remove_capability',
       'groupFolder',
       groupFolder,
       'isMain',
@@ -708,12 +713,12 @@ async function mcpServerAction(
   }
 
   if (action === 'list_mcp_servers') {
-    const resultStream = `kubeclaw:mcp-list-result:${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
+    const resultStream = `kubeclaw:capabilities-list-result:${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
     await redis.xadd(
       getTaskRequestStream(),
       '*',
       'type',
-      'list_mcp_servers',
+      'list_capabilities',
       'groupFolder',
       groupFolder,
       'isMain',
@@ -741,7 +746,15 @@ async function mcpServerAction(
           const obj: Record<string, string> = {};
           for (let i = 0; i < fields.length; i += 2)
             obj[fields[i]] = fields[i + 1];
-          return obj.result ?? 'No MCP servers found.';
+          if (!obj.result) return 'No MCP servers found.';
+          try {
+            const all = JSON.parse(obj.result) as Array<{ kind: string }>;
+            const mcpServers = all.filter((c) => c.kind === 'mcp');
+            if (mcpServers.length === 0) return 'No MCP servers deployed.';
+            return JSON.stringify(mcpServers, null, 2);
+          } catch {
+            return obj.result;
+          }
         }
       }
     }
