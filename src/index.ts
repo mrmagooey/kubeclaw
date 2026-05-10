@@ -80,6 +80,7 @@ import {
   startDiscoveryWatcher,
   stopDiscoveryWatcher,
   startHealthProbes,
+  backfillFromLegacyMcp,
 } from './capabilities/index.js';
 import { handleSendFileMarkers } from './outbound-media.js';
 
@@ -953,6 +954,7 @@ async function main(): Promise<void> {
   // Start the unified capabilities subsystem.
   startDiscoveryWatcher();
   startHealthProbes();
+  await backfillFromLegacyMcp();
   await startCapabilitySubsystem();
 
   // One-shot ingest of values.yaml-supplied specs (env: CAPABILITIES_VALUES, JSON array).
