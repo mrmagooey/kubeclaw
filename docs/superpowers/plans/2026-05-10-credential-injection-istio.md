@@ -180,7 +180,7 @@ git commit -m "feat(helm): extend credentialInjection.istio value tree"
 
 The `Sidecar` resource restricts what external services pods in the kubeclaw namespace can reach via the Istio service registry. By specifying `egress.hosts: ["istio-system/*", "./*"]` (plus `"~/*"` for DNS lookups), all pod traffic that is not matched by a `ServiceEntry` will be dropped by the proxy, and traffic that IS matched routes through the egress gateway.
 
-- [ ] **Step 1: Create the file**
+- [x] **Step 1: Create the file**
 
 Create `helm/kubeclaw/templates/istio-sidecar.yaml`:
 
@@ -211,7 +211,7 @@ spec:
 {{- end }}
 ```
 
-- [ ] **Step 2: Verify render**
+- [x] **Step 2: Verify render**
 
 Run: `helm template helm/kubeclaw --set credentialInjection.mode=istio | grep -A 10 "kind: Sidecar"`
 
@@ -226,7 +226,7 @@ Run: `helm template helm/kubeclaw --set credentialInjection.mode=sidecar | grep 
 
 Expected: empty output (resource not rendered in sidecar mode).
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add helm/kubeclaw/templates/istio-sidecar.yaml

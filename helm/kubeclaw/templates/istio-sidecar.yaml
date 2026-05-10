@@ -1,0 +1,24 @@
+{{- if eq .Values.credentialInjection.mode "istio" -}}
+# Sidecar resource restricts all pod egress in the kubeclaw namespace to:
+#   - Services within the same namespace (./* for Redis, broker, etc.)
+#   - Resources declared via ServiceEntry (external upstreams)
+# Traffic not matching any ServiceEntry is dropped by the Istio proxy,
+# giving true iptables-enforced egress control — unlike Phase 1 sidecar mode
+# where workload and sidecar share a netns and NetworkPolicy cannot separate them.
+apiVersion: networking.istio.io/v1
+kind: Sidecar
+metadata:
+  name: kubeclaw-egress-restriction
+  namespace: {{ .Values.namespace }}
+spec:
+  egress:
+    # Allow traffic to all services within the kubeclaw namespace (Redis, broker, etc.)
+    - hosts:
+        - "./*"
+    # Allow traffic declared in ServiceEntry resources in the istio-system namespace.
+    # ServiceEntry resources created by this chart are placed in the kubeclaw namespace,
+    # so "./*" above covers them. "istio-system/*" is kept for platform-level entries
+    # (e.g. cert-manager ACME, mesh control-plane traffic).
+    - hosts:
+        - "istio-system/*"
+{{- end }}
