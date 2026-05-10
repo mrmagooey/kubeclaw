@@ -1417,6 +1417,37 @@ export class JobRunner {
       }
     }
   }
+
+  /**
+   * Delete a PersistentVolumeClaim by name.
+   */
+  async deletePersistentVolumeClaim(
+    name: string,
+    namespace?: string,
+  ): Promise<void> {
+    const ns = namespace || this.namespace;
+    try {
+      await this.coreApi.deleteNamespacedPersistentVolumeClaim({
+        name,
+        namespace: ns,
+      });
+      logger.info(
+        { kind: 'PersistentVolumeClaim', name, namespace: ns },
+        'Deleted K8s resource',
+      );
+    } catch (err: unknown) {
+      const status = (err as { response?: { statusCode?: number } })?.response
+        ?.statusCode;
+      if (status === 404) {
+        logger.debug(
+          { kind: 'PersistentVolumeClaim', name },
+          'Resource not found, nothing to delete',
+        );
+      } else {
+        throw err;
+      }
+    }
+  }
 }
 
 // Export singleton instance
