@@ -1,0 +1,115 @@
+/**
+ * Unified Capability type system.
+ *
+ * A capability is a long-lived, low-priv pod the orchestrator manages on
+ * behalf of channels. Every capability is declared as a CapabilitySpec
+ * (a discriminated union by `kind`). The orchestrator persists the spec,
+ * reconciles it to Kubernetes, health-probes the endpoint, and answers
+ * channel discovery requests with a typed entry.
+ */
+
+export interface CapabilityResources {
+  memoryRequest?: string;
+  memoryLimit?: string;
+  cpuRequest?: string;
+  cpuLimit?: string;
+}
+
+export interface CapabilityStorage {
+  /** PVC size in GiB. */
+  sizeGi: number;
+  /** Container path the PVC mounts to. */
+  mountPath: string;
+}
+
+export interface CapabilityBase {
+  /** Cluster-unique identifier. Becomes part of the Deployment name. */
+  name: string;
+  /** Container image (with tag). */
+  image: string;
+  /** Container port the service exposes. Defaults set per kind. */
+  port?: number;
+  /** Plain env values. */
+  env?: Record<string, string>;
+  /** Names of K8s Secrets to envFrom. Each must already exist in the kubeclaw namespace. */
+  envFromSecrets?: string[];
+  /** ACL: empty/undefined = all channels. */
+  channels?: string[];
+  /** Resource requests/limits. */
+  resources?: CapabilityResources;
+  /** Optional PVC. */
+  storage?: CapabilityStorage;
+  /** HTTP path the orchestrator probes for liveness. Default: '/health'. */
+  healthPath?: string;
+  /** Optional command override. */
+  command?: string[];
+  /** Optional args. */
+  args?: string[];
+}
+
+export interface McpCapabilitySpec extends CapabilityBase {
+  kind: 'mcp';
+  /** MCP endpoint path. Default: '/mcp'. */
+  path?: string;
+  /** Optional whitelist of tool names exposed by this MCP server. */
+  allowedTools?: string[];
+}
+
+export interface RagCapabilitySpec extends CapabilityBase {
+  kind: 'rag';
+  /** RAG backend implementation. */
+  backend: 'qdrant' | 'lightrag';
+}
+
+export interface HttpCapabilitySpec extends CapabilityBase {
+  kind: 'http';
+}
+
+export type CapabilitySpec =
+  | McpCapabilitySpec
+  | RagCapabilitySpec
+  | HttpCapabilitySpec;
+
+export type CapabilityKind = CapabilitySpec['kind'];
+
+/**
+ * Persisted lifecycle status for a capability.
+ * `pending`: in DB but reconciler hasn't deployed yet.
+ * `ready`: most recent health probe succeeded.
+ * `unhealthy`: most recent health probe failed.
+ * `removing`: marked for deletion, K8s resources being torn down.
+ */
+export type CapabilityLifecycle = 'pending' | 'ready' | 'unhealthy' | 'removing';
+
+export interface CapabilityStatus {
+  name: string;
+  lifecycle: CapabilityLifecycle;
+  /** ISO timestamp of the last health probe (success or failure). */
+  lastProbeAt: string | null;
+  /** Last probe error message, if any. */
+  lastError: string | null;
+}
+
+/**
+ * Entry returned to a channel via discovery. The kindMetadata field
+ * carries kind-specific data (allowedTools for MCP, backend for RAG).
+ */
+export type CapabilityDiscoveryEntry =
+  | {
+      name: string;
+      kind: 'mcp';
+      endpoint: string;
+      kindMetadata: { path: string; allowedTools?: string[] };
+    }
+  | {
+      name: string;
+      kind: 'rag';
+      endpoint: string;
+      kindMetadata: { backend: 'qdrant' | 'lightrag' };
+    }
+  | {
+      name: string;
+      kind: 'http';
+      endpoint: string;
+      kindMetadata: Record<string, never>;
+    };
