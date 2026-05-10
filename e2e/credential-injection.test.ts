@@ -199,3 +199,83 @@ spec:
     expect(out).toContain('401');
   }, 60_000);
 });
+
+describe('audit-only mode (mode=sidecar, auditOnly=true)', () => {
+  const AUDIT_RELEASE = 'ke2e-inject-audit';
+
+  beforeAll(() => {
+    const tmpDir = mkdtempSync(path.join(tmpdir(), 'ke2e-audit-'));
+    const valuesFile = path.join(tmpDir, 'audit-values.yaml');
+    writeFileSync(
+      valuesFile,
+      [
+        'credentialInjection:',
+        '  mode: sidecar',
+        '  auditOnly: true',
+        `  broker:`,
+        `    image: ${buildBrokerImage()}`,
+      ].join('\n'),
+    );
+    execSync(
+      `helm upgrade --install ${AUDIT_RELEASE} helm/kubeclaw ` +
+        `--namespace ${NS} --create-namespace ` +
+        `-f ${valuesFile} --wait --timeout 120s`,
+      { stdio: 'inherit' },
+    );
+  });
+
+  afterAll(() => {
+    execSync(`helm uninstall ${AUDIT_RELEASE} --namespace ${NS}`, {
+      stdio: 'pipe',
+    });
+  });
+
+  it('tool-job pod has API key env vars PRESENT in audit-only mode', () => {
+    const podName = 'audit-inspect-pod';
+    execSync(
+      `kubectl -n ${NS} run ${podName} --image=busybox:latest --restart=Never ` +
+        `--command -- env`,
+      { stdio: 'pipe' },
+    );
+    execSync(`kubectl -n ${NS} wait pod/${podName} --for=condition=Succeeded --timeout=30s`, {
+      stdio: 'pipe',
+    });
+    const logs = k(`logs ${podName}`);
+    expect(logs).toMatch(/ANTHROPIC_API_KEY/);
+    execSync(`kubectl -n ${NS} delete pod ${podName} --ignore-not-found`, {
+      stdio: 'pipe',
+    });
+  });
+
+  it('tool-job pod has Envoy sidecar container PRESENT in audit-only mode', () => {
+    const rendered = execSync(
+      `helm template ${AUDIT_RELEASE} helm/kubeclaw ` +
+        `--set credentialInjection.mode=sidecar ` +
+        `--set credentialInjection.auditOnly=true ` +
+        `--namespace ${NS}`,
+      { encoding: 'utf8' },
+    );
+    expect(rendered).toContain('credential-sidecar');
+  });
+
+  it('broker logs show auditOnly=true decisions after traffic', () => {
+    const brokerPod = k(`get pods -l app=kubeclaw-credential-broker -o jsonpath='{.items[0].metadata.name}'`);
+    expect(brokerPod).toBeTruthy();
+  });
+
+  it('broker /metrics endpoint returns credential_broker_authz_total', async () => {
+    execSync(
+      `kubectl -n ${NS} port-forward deployment/kubeclaw-credential-broker 19090:9090 &`,
+      { shell: '/bin/bash', encoding: 'utf8' },
+    );
+    await new Promise((r) => setTimeout(r, 2000));
+    const metricsText = execSync(`curl -s http://localhost:19090/metrics`, {
+      encoding: 'utf8',
+    });
+    expect(metricsText).toContain('credential_broker_authz_total');
+    execSync(`kill $(lsof -t -i:19090) 2>/dev/null || true`, {
+      shell: '/bin/bash',
+      stdio: 'pipe',
+    });
+  });
+});

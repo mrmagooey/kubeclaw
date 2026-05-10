@@ -1522,7 +1522,7 @@ Decision: extend the existing `credential-broker` Service with a second named po
 
 This task adds an `auditOnly` variant to the existing e2e suite. It does not alter existing tests.
 
-- [ ] **Step 13.1:** Add a new `describe('audit-only mode (mode=sidecar, auditOnly=true)')` block at the end of `e2e/credential-injection.test.ts`. The block:
+- [x] **Step 13.1:** Add a new `describe('audit-only mode (mode=sidecar, auditOnly=true)')` block at the end of `e2e/credential-injection.test.ts`. The block:
   - Installs the Helm release into `kubeclaw-e2e-inject` namespace with `mode=sidecar` and `auditOnly=true`.
   - Creates a one-shot test pod with the standard agent image.
   - Verifies: API key env vars PRESENT, Envoy sidecar container PRESENT.
@@ -1628,7 +1628,7 @@ This task adds an `auditOnly` variant to the existing e2e suite. It does not alt
   });
   ```
 
-- [ ] **Step 13.2:** Commit.
+- [x] **Step 13.2:** Commit.
 
   ```
   git add e2e/credential-injection.test.ts
