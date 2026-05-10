@@ -1644,7 +1644,7 @@ This task adds an `auditOnly` variant to the existing e2e suite. It does not alt
 
 The existing migration section (lines 142-150) covers the direct `mode=off → mode=sidecar` jump. Replace it with the four-step safe migration using audit-only as an intermediate stage.
 
-- [ ] **Step 14.1:** Replace the existing "Migration from `mode: off` to `mode: sidecar`" section (lines 142-150) with the following extended content:
+- [x] **Step 14.1:** Replace the existing "Migration from `mode: off` to `mode: sidecar`" section (lines 142-150) with the following extended content:
 
   ```markdown
   ## Migration from `mode: off` to `mode: sidecar`
@@ -1789,7 +1789,7 @@ The existing migration section (lines 142-150) covers the direct `mode=off → m
   ```
   ```
 
-- [ ] **Step 14.2:** Commit.
+- [x] **Step 14.2:** Commit.
 
   ```
   git add docs/CREDENTIAL_INJECTION.md
