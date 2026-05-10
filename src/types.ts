@@ -242,8 +242,11 @@ export type OnChatMetadata = (
 // --- MCP Server Types ---
 
 /**
- * @deprecated Use CapabilityDiscoveryEntry (kind === 'mcp') instead.
- * Retained for the runtime MCP manager; removed in Task 4.4.
+ * Internal shape used by the runtime MCP manager (`src/runtime/mcp-manager.ts`)
+ * and the channel-side reconfigure path. Capabilities are externally typed as
+ * `CapabilityDiscoveryEntry` (kind === 'mcp'); this type is the post-projection
+ * view the MCP client code consumes — keep it in sync if the MCP discovery
+ * shape evolves.
  */
 export interface McpServerStatus {
   name: string;

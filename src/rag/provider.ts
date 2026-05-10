@@ -190,7 +190,17 @@ export function getRagProvider(): RagProvider {
   return _provider;
 }
 
-/** Test-only: drop the cached provider so the next call re-selects. */
+/**
+ * Drop the cached provider so the next `getRagProvider()` call re-selects from
+ * the capability registry. Channel pods call this when a `capabilities_update`
+ * notification arrives so a newly installed RAG capability becomes active
+ * without a pod restart.
+ */
+export function resetRagProvider(): void {
+  _provider = undefined;
+}
+
+/** @deprecated Use resetRagProvider(). Test-only alias kept for back-compat. */
 export function __resetRagProviderForTest(): void {
   _provider = undefined;
 }

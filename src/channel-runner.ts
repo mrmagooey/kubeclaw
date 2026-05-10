@@ -51,6 +51,7 @@ import {
   shouldDropMessage,
 } from './sender-allowlist.js';
 import { detectMentionedSpecialists, loadSpecialists } from './specialists.js';
+import { resetRagProvider } from './rag/provider.js';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import {
@@ -752,6 +753,9 @@ async function main(): Promise<void> {
             allowedTools: c.kindMetadata.allowedTools,
           }));
         await getDirectLLMRunner().configureMcp(mcpServers);
+        // Drop the cached RAG provider so the next call re-selects against
+        // the new capability set (e.g. a newly installed Qdrant or LightRAG).
+        resetRagProvider();
         logger.info(
           { count: mcpServers.length },
           'MCP servers reconfigured from capabilities_update',

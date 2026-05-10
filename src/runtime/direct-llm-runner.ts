@@ -793,7 +793,7 @@ export class DirectLLMRunner implements MessageRunner {
 
   /**
    * Configure MCP server connections. Can be called multiple times
-   * to reconfigure (e.g. when mcp_update control message arrives).
+   * to reconfigure (e.g. when capabilities_update control message arrives).
    */
   async configureMcp(servers: McpServerStatus[]): Promise<void> {
     if (this.mcpManager) {
