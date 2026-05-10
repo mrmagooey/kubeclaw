@@ -1985,7 +1985,7 @@ git commit -m "test(helm): add render coverage for mode=istio across all resourc
 
 Estimated run time: ~15–20 minutes (kind cluster creation ~2 min, Istio install ~5 min, chart install ~2 min, test execution ~8 min).
 
-- [ ] **Step 1: Create the e2e test file**
+- [x] **Step 1: Create the e2e test file**
 
 Create `e2e/credential-injection-istio.test.ts`:
 
@@ -2211,7 +2211,7 @@ EOF`,
 });
 ```
 
-- [ ] **Step 2: Create the GitHub Actions workflow**
+- [x] **Step 2: Create the GitHub Actions workflow**
 
 Create `.github/workflows/e2e-istio.yml`:
 
@@ -2316,13 +2316,13 @@ jobs:
         run: kind delete cluster --name kubeclaw-e2e-istio
 ```
 
-- [ ] **Step 3: Verify the workflow file is valid YAML**
+- [x] **Step 3: Verify the workflow file is valid YAML**
 
 Run: `python3 -c "import yaml; yaml.safe_load(open('.github/workflows/e2e-istio.yml').read()); print('OK')"` 
 
 Expected: `OK`.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add e2e/credential-injection-istio.test.ts .github/workflows/e2e-istio.yml
