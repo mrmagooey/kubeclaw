@@ -38,13 +38,14 @@ async function handleRequest(req: DiscoveryRequest): Promise<void> {
     const spec = getCapabilityByName(req.capability);
     if (!spec) {
       result = [];
-    } else if (
-      req.channel &&
-      spec.channels?.length &&
-      !spec.channels.includes(req.channel)
-    ) {
-      result = []; // ACL denies this channel
+    } else if (spec.channels?.length) {
+      // Spec has an ACL. Allow only when the requester identifies as a permitted channel.
+      result =
+        req.channel && spec.channels.includes(req.channel)
+          ? [specToDiscoveryEntry(spec)]
+          : [];
     } else {
+      // Unrestricted spec — anyone who knows the name can fetch it.
       result = [specToDiscoveryEntry(spec)];
     }
   } else if (req.channel) {
@@ -103,6 +104,10 @@ async function watchRequests(): Promise<void> {
             logger.warn({ fields: obj }, 'Discovery request missing requestId');
             continue;
           }
+          // Note: on handler failure the response key is never written.
+          // Callers detect this as a poll timeout. We don't write an error
+          // sentinel because clients already treat absence as a transient
+          // failure (retried via the outer ipc loop).
           try {
             await handleRequest({
               requestId: obj.requestId,

@@ -51,7 +51,10 @@ describe('discovery', () => {
     await __handleRequestForTest({ requestId: 'r1', capability: 'weather' });
     const setArgs = mockSet.mock.calls[0];
     expect(setArgs[0]).toBe('kubeclaw:discovery:response:r1');
-    const response = JSON.parse(setArgs[1]) as Array<{ name: string; kind: string }>;
+    const response = JSON.parse(setArgs[1]) as Array<{
+      name: string;
+      kind: string;
+    }>;
     expect(response).toHaveLength(1);
     expect(response[0].kind).toBe('mcp');
   });
@@ -69,18 +72,30 @@ describe('discovery', () => {
       image: 'mcp/public:1.0',
     });
     await __handleRequestForTest({ requestId: 'r2', channel: 'http' });
-    const response = JSON.parse(mockSet.mock.calls[0][1]) as Array<{ name: string }>;
+    const response = JSON.parse(mockSet.mock.calls[0][1]) as Array<{
+      name: string;
+    }>;
     expect(response.map((r) => r.name).sort()).toEqual(['public']);
   });
 
-  it('start/stop is idempotent', () => {
+  it('startDiscoveryWatcher is idempotent — second call is a no-op', () => {
+    mockXrevrange.mockClear();
     startDiscoveryWatcher();
     startDiscoveryWatcher();
-    stopDiscoveryWatcher();
+    // resolveStreamTip uses xrevrange; the second start would call it a second time
+    // if it weren't guarded. The watch loop is async — wait a microtask so the loop body
+    // begins executing before we count.
+    return Promise.resolve().then(() => {
+      expect(mockXrevrange).toHaveBeenCalledTimes(1);
+      stopDiscoveryWatcher();
+    });
   });
 
   it('returns empty array for unknown capability name', async () => {
-    await __handleRequestForTest({ requestId: 'r3', capability: 'does-not-exist' });
+    await __handleRequestForTest({
+      requestId: 'r3',
+      capability: 'does-not-exist',
+    });
     const response = JSON.parse(mockSet.mock.calls[0][1]);
     expect(response).toEqual([]);
   });
@@ -99,5 +114,29 @@ describe('discovery', () => {
     });
     const response = JSON.parse(mockSet.mock.calls[0][1]);
     expect(response).toEqual([]);
+  });
+
+  it('denies a by-name request without channel for ACL-restricted spec', async () => {
+    await installCapability({
+      kind: 'mcp',
+      name: 'restricted',
+      image: 'mcp/x:1.0',
+      channels: ['slack'],
+    });
+    await __handleRequestForTest({ requestId: 'rNoChan', capability: 'restricted' });
+    const response = JSON.parse(mockSet.mock.calls[0][1]);
+    expect(response).toEqual([]);
+  });
+
+  it('allows a by-name request without channel for unrestricted spec', async () => {
+    await installCapability({
+      kind: 'mcp',
+      name: 'public',
+      image: 'mcp/p:1.0',
+    });
+    await __handleRequestForTest({ requestId: 'rOpen', capability: 'public' });
+    const response = JSON.parse(mockSet.mock.calls[0][1]);
+    expect(response).toHaveLength(1);
+    expect(response[0].name).toBe('public');
   });
 });
