@@ -32,7 +32,9 @@ describe('buildRagLightRagYaml', () => {
   });
 
   it('envFroms the config secret', () => {
-    expect(buildRagLightRagYaml(spec)).toContain('name: kubeclaw-lightrag-config');
+    expect(buildRagLightRagYaml(spec)).toContain(
+      'name: kubeclaw-lightrag-config',
+    );
   });
 
   it('throws when backend is not lightrag', () => {

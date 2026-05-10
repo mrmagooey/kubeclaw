@@ -19,8 +19,18 @@ beforeEach(() => mockEntries.mockReset());
 describe('client', () => {
   it('getRagEntry returns the first rag capability for the channel', () => {
     mockEntries.mockReturnValue([
-      { kind: 'rag', name: 'main', endpoint: 'http://x', kindMetadata: { backend: 'qdrant' } },
-      { kind: 'mcp', name: 'wx', endpoint: 'http://y', kindMetadata: { path: '/mcp' } },
+      {
+        kind: 'rag',
+        name: 'main',
+        endpoint: 'http://x',
+        kindMetadata: { backend: 'qdrant' },
+      },
+      {
+        kind: 'mcp',
+        name: 'wx',
+        endpoint: 'http://y',
+        kindMetadata: { path: '/mcp' },
+      },
     ]);
     expect(getRagEntry('http')?.name).toBe('main');
   });
@@ -32,9 +42,19 @@ describe('client', () => {
 
   it('getMcpEntries returns only MCP entries', () => {
     mockEntries.mockReturnValue([
-      { kind: 'rag', name: 'main', endpoint: '', kindMetadata: { backend: 'qdrant' } },
+      {
+        kind: 'rag',
+        name: 'main',
+        endpoint: '',
+        kindMetadata: { backend: 'qdrant' },
+      },
       { kind: 'mcp', name: 'wx', endpoint: '', kindMetadata: { path: '/mcp' } },
-      { kind: 'mcp', name: 'cal', endpoint: '', kindMetadata: { path: '/mcp' } },
+      {
+        kind: 'mcp',
+        name: 'cal',
+        endpoint: '',
+        kindMetadata: { path: '/mcp' },
+      },
     ]);
     expect(getMcpEntries('http').map((e) => e.name)).toEqual(['wx', 'cal']);
   });
@@ -42,7 +62,12 @@ describe('client', () => {
   it('getHttpEntry returns the named http entry when present', () => {
     mockEntries.mockReturnValue([
       { kind: 'http', name: 'cache', endpoint: 'http://c', kindMetadata: {} },
-      { kind: 'http', name: 'shortener', endpoint: 'http://s', kindMetadata: {} },
+      {
+        kind: 'http',
+        name: 'shortener',
+        endpoint: 'http://s',
+        kindMetadata: {},
+      },
     ]);
     expect(getHttpEntry('http', 'shortener')?.endpoint).toBe('http://s');
   });

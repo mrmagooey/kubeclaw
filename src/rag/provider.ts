@@ -193,7 +193,10 @@ export function getRagProvider(): RagProvider {
 
     if (lightragUrl) {
       _provider = new LightRagProvider(lightragUrl);
-      logger.info({ url: lightragUrl, source: 'env' }, 'RAG provider: LightRAG');
+      logger.info(
+        { url: lightragUrl, source: 'env' },
+        'RAG provider: LightRAG',
+      );
     } else if (qdrantUrl && process.env.EMBEDDING_PROVIDER !== 'none') {
       _provider = new QdrantRagProvider();
       logger.info({ url: qdrantUrl, source: 'env' }, 'RAG provider: Qdrant');

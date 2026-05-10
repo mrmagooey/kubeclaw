@@ -13,7 +13,9 @@ export function buildYaml(spec: CapabilitySpec): string {
     case 'rag':
       if (spec.backend === 'qdrant') return buildRagQdrantYaml(spec);
       if (spec.backend === 'lightrag') return buildRagLightRagYaml(spec);
-      throw new Error(`Unknown RAG backend: ${(spec as { backend: string }).backend}`);
+      throw new Error(
+        `Unknown RAG backend: ${(spec as { backend: string }).backend}`,
+      );
     default: {
       // Exhaustiveness check
       const _exhaustive: never = spec;

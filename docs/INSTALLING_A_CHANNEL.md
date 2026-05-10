@@ -146,7 +146,7 @@ Use the `/customize` Claude Code skill to add these; it'll ask the right questio
 
 ### RAG (special case)
 
-RAG isn't a capability under `capabilities:` — it's a top-level Helm values block:
+RAG can be deployed either via Helm values (legacy) or as a capability (recommended). For the **capability-based approach**, install it via the admin shell after the orchestrator boots (see Task 3.1+ in docs/superpowers/plans). For the **legacy Helm approach**:
 
 ```yaml
 rag:
