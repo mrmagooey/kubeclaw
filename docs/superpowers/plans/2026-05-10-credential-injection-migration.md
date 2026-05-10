@@ -1344,7 +1344,7 @@ The Helm templates currently strip API key env vars under `{{- if eq $.Values.cr
 
 Rationale for a separate port: the authz port (8080) is in the hot path for every outbound HTTPS call from every workload pod. A Prometheus scrape every 30 s on that same port would appear in the authz latency histogram, inflating p99. Port separation keeps the histogram clean and lets the Kubernetes Service remain single-port on 8080.
 
-- [ ] **Step 11.1:** Add a second `http.Server` in `startBroker()` for metrics, after the authz server is created. Full updated `startBroker()` return block:
+- [x] **Step 11.1:** Add a second `http.Server` in `startBroker()` for metrics, after the authz server is created. Full updated `startBroker()` return block:
 
   ```typescript
   const authzServer = http.createServer((req, res) => {
@@ -1403,11 +1403,11 @@ Rationale for a separate port: the authz port (8080) is in the hot path for ever
   return authzServer; // primary handle returned for tests; metricsServer is fire-and-forget
   ```
 
-- [ ] **Step 11.2:** Run `npx tsc --noEmit` to confirm no type errors.
+- [x] **Step 11.2:** Run `npx tsc --noEmit` to confirm no type errors.
 
   Expected: zero errors.
 
-- [ ] **Step 11.3:** Commit.
+- [x] **Step 11.3:** Commit.
 
   ```
   git add src/credential-broker/index.ts

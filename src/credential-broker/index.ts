@@ -103,7 +103,7 @@ export async function startBroker(): Promise<http.Server> {
 
   const audit = new PinoAudit();
 
-  const server = http.createServer((req, res) => {
+  const authzServer = http.createServer((req, res) => {
     if (req.method !== 'POST' || req.url !== '/authz') {
       res.writeHead(404).end();
       return;
@@ -127,12 +127,36 @@ export async function startBroker(): Promise<http.Server> {
       });
   });
 
-  return new Promise((resolve) => {
-    server.listen(PORT, () => {
-      logger.info({ port: PORT }, 'credential broker listening');
-      resolve(server);
+  const metricsServer = http.createServer(async (req, res) => {
+    if (req.url !== '/metrics') {
+      res.writeHead(404).end();
+      return;
+    }
+    try {
+      const body = await metricsRegistry.metrics();
+      res.setHeader('Content-Type', metricsRegistry.contentType);
+      res.writeHead(200).end(body);
+    } catch (err) {
+      logger.error({ err }, 'metrics handler crashed');
+      res.writeHead(500).end();
+    }
+  });
+
+  await new Promise<void>((resolve) => {
+    authzServer.listen(PORT, () => {
+      logger.info({ port: PORT }, 'credential broker authz listening');
+      resolve();
     });
   });
+
+  await new Promise<void>((resolve) => {
+    metricsServer.listen(METRICS_PORT, () => {
+      logger.info({ port: METRICS_PORT }, 'credential broker metrics listening');
+      resolve();
+    });
+  });
+
+  return authzServer;
 }
 
 // Direct-run guard: only invoke startBroker() when this module is the
