@@ -44,3 +44,16 @@ NOTE: storage.accessMode is ReadWriteOnce. Concurrent tool jobs may fail
 on multi-node clusters. For production use ReadWriteMany with a compatible
 CSI driver (EFS, Azure Files, NFS, Ceph).
 {{- end }}
+
+{{- include "kubeclaw.requireIstio" . }}
+{{- if eq .Values.credentialInjection.mode "istio" }}
+
+Credential injection mode: istio
+  Minimum Istio version required: 1.24 LTS
+  The kubeclaw namespace is labeled istio-injection=enabled.
+  Egress gateway: kubeclaw-istio-egressgateway ({{ .Values.credentialInjection.istio.gateway.replicas }} replica(s))
+  All workload egress is forced through the gateway via a Sidecar resource.
+  Workload pods receive Istio mesh sidecars (SPIFFE identity).
+  The orchestrator pod is excluded from injection (sidecar.istio.io/inject=false).
+  Ambient mode is not supported — see docs/CREDENTIAL_INJECTION.md.
+{{- end }}

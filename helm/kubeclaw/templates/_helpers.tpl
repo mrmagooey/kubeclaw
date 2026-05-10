@@ -96,3 +96,29 @@ Caller must have already gated on .Values.credentialInjection.mode == "sidecar".
 - { name: NODE_EXTRA_CA_CERTS, value: "/etc/ssl/certs/kubeclaw-egress-ca.crt" }
 - { name: SSL_CERT_FILE,       value: "/etc/ssl/certs/kubeclaw-egress-ca.crt" }
 {{- end -}}
+
+{{/*
+istioInstalled — returns "true" when the networking.istio.io/v1 CRD group is
+present in the cluster. Returns "" when running offline (helm template) because
+lookup returns an empty map without cluster access.
+Usage: {{- if include "kubeclaw.istioInstalled" . }}
+*/}}
+{{- define "kubeclaw.istioInstalled" -}}
+{{- $crd := lookup "apiextensions.k8s.io/v1" "CustomResourceDefinition" "" "virtualservices.networking.istio.io" -}}
+{{- if $crd.metadata -}}
+true
+{{- end -}}
+{{- end -}}
+
+{{/*
+kubeclaw.requireIstio — fails with a clear message when mode=istio and the
+cluster is reachable but Istio CRDs are absent. Silent when running offline.
+*/}}
+{{- define "kubeclaw.requireIstio" -}}
+{{- if eq .Values.credentialInjection.mode "istio" -}}
+  {{- $crd := lookup "apiextensions.k8s.io/v1" "CustomResourceDefinition" "" "virtualservices.networking.istio.io" -}}
+  {{- if and (not $crd.metadata) (lookup "v1" "Namespace" "" "kube-system").metadata -}}
+    {{- fail "credentialInjection.mode=istio requires Istio CRDs. Install Istio >= 1.24 first, or use mode=sidecar." -}}
+  {{- end -}}
+{{- end -}}
+{{- end -}}

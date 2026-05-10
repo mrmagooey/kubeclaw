@@ -60,7 +60,7 @@ When `mode=istio` is selected, the chart should fail fast with a human-readable 
 
 Because `helm template` runs without cluster access and `lookup` returns empty maps in that context, the CRD check must be phrased so that offline rendering always passes; it only blocks on `helm install`/`helm upgrade` (which do have cluster access). Use the pattern: if the lookup result for the CRD group is nil/empty AND the chart can detect it's running with cluster access (no clean way in Helm), the safest approach is to emit a NOTES.txt warning and rely on a `helm lint` rule. The plan uses the `fail` function gated on the lookup returning a non-nil value with `kind == ""`, which is the Helm convention for "CRD not found in cluster":
 
-- [ ] **Step 1: Add the `kubeclaw.istioInstalled` helper to `_helpers.tpl`**
+- [x] **Step 1: Add the `kubeclaw.istioInstalled` helper to `_helpers.tpl`**
 
 Open `helm/kubeclaw/templates/_helpers.tpl` and append after the last `{{- end -}}`:
 
@@ -92,7 +92,7 @@ cluster is reachable but Istio CRDs are absent. Silent when running offline.
 {{- end -}}
 ```
 
-- [ ] **Step 2: Call the guard from `NOTES.txt`**
+- [x] **Step 2: Call the guard from `NOTES.txt`**
 
 Open `helm/kubeclaw/templates/NOTES.txt`. After any existing content, add:
 
@@ -111,13 +111,13 @@ Credential injection mode: istio
 {{- end }}
 ```
 
-- [ ] **Step 3: Verify offline rendering does not fail**
+- [x] **Step 3: Verify offline rendering does not fail**
 
 Run: `helm template helm/kubeclaw --set credentialInjection.mode=istio --set credentialInjection.istio.gateway.replicas=2`
 
 Expected: no `Error:` output, renders to stdout without error (CRD check is silent offline).
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add helm/kubeclaw/templates/_helpers.tpl helm/kubeclaw/templates/NOTES.txt
