@@ -507,7 +507,7 @@ git commit -m "feat(helm): add egress Gateway, VirtualService, and gateway Deplo
 
 The EnvoyFilter patches the egress gateway's Envoy config to call the credential-broker via `ext_authz` before forwarding traffic upstream. The broker response's `authorization` header is stamped on the upstream request (same as the Phase 1 sidecar's `allowed_upstream_headers`).
 
-- [ ] **Step 1: Create `istio-envoyfilter.yaml`**
+- [x] **Step 1: Create `istio-envoyfilter.yaml`**
 
 Create `helm/kubeclaw/templates/istio-envoyfilter.yaml`:
 
@@ -573,7 +573,7 @@ spec:
 {{- end }}
 ```
 
-- [ ] **Step 2: Verify render**
+- [x] **Step 2: Verify render**
 
 Run: `helm template helm/kubeclaw --set credentialInjection.mode=istio | grep "kind: EnvoyFilter"`
 
@@ -587,7 +587,7 @@ Run: `helm template helm/kubeclaw --set credentialInjection.mode=sidecar | grep 
 
 Expected: empty output.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add helm/kubeclaw/templates/istio-envoyfilter.yaml

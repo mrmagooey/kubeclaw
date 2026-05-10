@@ -1,0 +1,54 @@
+{{- if eq .Values.credentialInjection.mode "istio" -}}
+# EnvoyFilter patches the kubeclaw egress gateway to call the credential-broker
+# via ext_authz for every proxied request. On a 200 response from the broker,
+# the returned "authorization" header is stamped on the upstream request.
+# The broker receives the workload's SPIFFE identity via the
+# x-forwarded-client-cert header that Istio mTLS populates automatically.
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: kubeclaw-credential-authz
+  namespace: {{ .Values.namespace }}
+spec:
+  workloadSelector:
+    labels:
+      istio: kubeclaw-egressgateway
+  configPatches:
+    # Insert ext_authz HTTP filter before the router filter on the outbound listener.
+    - applyTo: HTTP_FILTER
+      match:
+        context: GATEWAY
+        listener:
+          filterChain:
+            filter:
+              name: envoy.filters.network.http_connection_manager
+              subFilter:
+                name: envoy.filters.http.router
+      patch:
+        operation: INSERT_BEFORE
+        value:
+          name: envoy.filters.http.ext_authz
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz
+            http_service:
+              server_uri:
+                uri: http://credential-broker.{{ .Values.namespace }}.svc.cluster.local:{{ .Values.credentialInjection.broker.port }}
+                cluster: outbound|{{ .Values.credentialInjection.broker.port }}||credential-broker.{{ .Values.namespace }}.svc.cluster.local
+                timeout: 5s
+              path_prefix: /authz
+              authorization_request:
+                allowed_headers:
+                  patterns:
+                    - exact: authorization
+                    - exact: x-forwarded-client-cert
+                    - exact: x-forwarded-authority
+              authorization_response:
+                allowed_upstream_headers:
+                  patterns:
+                    - exact: authorization
+            failure_mode_allow: false
+            with_request_body:
+              max_request_bytes: 0
+              allow_partial_message: false
+              pack_as_bytes: false
+{{- end }}
