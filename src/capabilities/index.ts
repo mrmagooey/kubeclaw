@@ -18,7 +18,6 @@ export {
   getEntriesForChannel,
   notifyAllChannels,
   startCapabilitySubsystem,
-  backfillFromLegacyMcp,
 } from './registry.js';
 
 export { startDiscoveryWatcher, stopDiscoveryWatcher } from './discovery.js';

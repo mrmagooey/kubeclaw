@@ -241,16 +241,9 @@ export type OnChatMetadata = (
 
 // --- MCP Server Types ---
 
-import type { McpCapabilitySpec } from './capabilities/types.js';
-
-/**
- * @deprecated Use McpCapabilitySpec from './capabilities/types.js'.
- * Retained as a structural alias for backwards compatibility through phase 4.
- */
-export type McpServerSpec = Omit<McpCapabilitySpec, 'kind'> & { kind?: 'mcp' };
-
 /**
  * @deprecated Use CapabilityDiscoveryEntry (kind === 'mcp') instead.
+ * Retained for the runtime MCP manager; removed in Task 4.4.
  */
 export interface McpServerStatus {
   name: string;

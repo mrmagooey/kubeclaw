@@ -956,12 +956,7 @@ describe('processTaskIpc', () => {
       mockXadd.mockClear();
       const deps = createMockDeps();
 
-      await processTaskIpc(
-        { type: 'list_capabilities' },
-        'main',
-        true,
-        deps,
-      );
+      await processTaskIpc({ type: 'list_capabilities' }, 'main', true, deps);
 
       expect(listCapabilities).toHaveBeenCalled();
       expect(mockXadd).not.toHaveBeenCalled();

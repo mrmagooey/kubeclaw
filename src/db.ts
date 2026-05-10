@@ -19,7 +19,6 @@ import {
   ScheduledTask,
   TaskRunLog,
   JobACL,
-  McpServerSpec,
 } from './types.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -137,14 +136,8 @@ function createSchema(database: SqlJsDatabase): void {
     `CREATE INDEX IF NOT EXISTS idx_job_acls_expires ON job_acls(expires_at, status)`,
   );
 
-  database.run(`
-    CREATE TABLE IF NOT EXISTS mcp_servers (
-      name TEXT PRIMARY KEY,
-      spec TEXT NOT NULL,
-      status TEXT DEFAULT 'active',
-      created_at TEXT NOT NULL
-    )
-  `);
+  // Legacy mcp_servers table is dropped in the unified-capabilities migration.
+  database.run(`DROP TABLE IF EXISTS mcp_servers`);
 
   database.run(`
     CREATE TABLE IF NOT EXISTS capabilities (
@@ -1141,47 +1134,6 @@ export function getJobACLByGroup(groupFolder: string): JobACL | undefined {
 
 export function revokeJobACL(jobId: string): void {
   db.run(`UPDATE job_acls SET status = 'revoked' WHERE job_id = ?`, [jobId]);
-  saveDatabase();
-}
-
-// --- MCP Server Functions ---
-
-export function setMcpServer(spec: McpServerSpec): void {
-  db.run(
-    `INSERT OR REPLACE INTO mcp_servers (name, spec, status, created_at)
-     VALUES (?, ?, 'active', COALESCE((SELECT created_at FROM mcp_servers WHERE name = ?), ?))`,
-    [spec.name, JSON.stringify(spec), spec.name, new Date().toISOString()],
-  );
-  saveDatabase();
-}
-
-export function getMcpServer(name: string): McpServerSpec | undefined {
-  const stmt = db.prepare(
-    `SELECT spec FROM mcp_servers WHERE name = ? AND status = 'active'`,
-  );
-  stmt.bind([name]);
-
-  if (stmt.step()) {
-    const row = stmt.getAsObject() as { spec: string };
-    stmt.free();
-    return JSON.parse(row.spec) as McpServerSpec;
-  }
-  stmt.free();
-  return undefined;
-}
-
-export function getAllMcpServers(): McpServerSpec[] {
-  const result = db.exec(
-    `SELECT spec FROM mcp_servers WHERE status = 'active' ORDER BY created_at`,
-  );
-  if (result.length === 0) return [];
-  return result[0].values.map(
-    (row: unknown[]) => JSON.parse(row[0] as string) as McpServerSpec,
-  );
-}
-
-export function deleteMcpServer(name: string): void {
-  db.run(`DELETE FROM mcp_servers WHERE name = ?`, [name]);
   saveDatabase();
 }
 

@@ -13,8 +13,6 @@ import type {
   CapabilityDiscoveryEntry,
 } from './types.js';
 import { deploymentName } from './builders/common.js';
-import { getAllMcpServers } from '../db.js';
-
 const KNOWN_CHANNELS = [
   'http',
   'telegram',
@@ -189,20 +187,3 @@ export async function startCapabilitySubsystem(): Promise<void> {
   await notifyAllChannels();
 }
 
-let backfillRan = false;
-
-export async function backfillFromLegacyMcp(): Promise<void> {
-  if (backfillRan) return;
-  backfillRan = true;
-  const legacyRows = getAllMcpServers();
-  for (const row of legacyRows) {
-    if (getCapability(row.name)) continue;
-    await installCapability({ ...row, kind: 'mcp' });
-    logger.info({ name: row.name }, 'Backfilled legacy MCP server');
-  }
-}
-
-/** Test-only reset */
-export function __resetBackfillFlagForTest(): void {
-  backfillRan = false;
-}
