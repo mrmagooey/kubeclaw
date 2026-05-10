@@ -75,7 +75,6 @@ import { logger } from './logger.js';
 import { augmentPrompt, getRagProvider } from './rag/provider.js';
 import { startHttpAdminServer } from './admin-shell.js';
 import { handleSendFileMarkers } from './outbound-media.js';
-import { startDiscoveryWatcher, stopDiscoveryWatcher } from './discovery.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -779,6 +778,9 @@ async function main(): Promise<void> {
     return;
   }
 
+  // Populated once the capabilities subsystem is dynamically imported below.
+  let stopDiscoveryWatcher: () => void = () => {};
+
   startOrchestratorHealthServer();
   await initDatabase();
   logger.info('Database initialized');
@@ -944,25 +946,45 @@ async function main(): Promise<void> {
   startTaskRequestWatcher().catch((err) =>
     logger.error({ err }, 'Task request watcher crashed'),
   );
+  // Start the unified capabilities subsystem.
+  const {
+    startCapabilitySubsystem,
+    startDiscoveryWatcher,
+    stopDiscoveryWatcher: _stopDiscoveryWatcher,
+    startHealthProbes,
+    installCapability,
+  } = await import('./capabilities/index.js');
+  stopDiscoveryWatcher = _stopDiscoveryWatcher;
   startDiscoveryWatcher();
+  startHealthProbes();
+  await startCapabilitySubsystem();
 
-  // Sync MCP servers from values.yaml (MCP_SERVERS_VALUES env var) and notify channel pods
+  // One-shot ingest of values.yaml-supplied specs (env: CAPABILITIES_VALUES, JSON array).
+  // Backwards compat: also accept MCP_SERVERS_VALUES (kind injected as 'mcp').
   try {
-    const { syncFromValues, notifyAllChannels } =
-      await import('./mcp-registry.js');
+    const capValuesJson = process.env.CAPABILITIES_VALUES;
+    if (capValuesJson) {
+      const specs = JSON.parse(capValuesJson) as Array<
+        Parameters<typeof installCapability>[0]
+      >;
+      for (const spec of specs) await installCapability(spec);
+      logger.info({ count: specs.length }, 'Synced capabilities from values.yaml');
+    }
     const mcpValuesJson = process.env.MCP_SERVERS_VALUES;
     if (mcpValuesJson) {
-      const mcpSpecs = JSON.parse(mcpValuesJson);
-      await syncFromValues(mcpSpecs);
+      const mcpSpecs = JSON.parse(mcpValuesJson) as Array<
+        Omit<Parameters<typeof installCapability>[0], 'kind'>
+      >;
+      for (const m of mcpSpecs) {
+        await installCapability({ ...m, kind: 'mcp' });
+      }
       logger.info(
         { count: mcpSpecs.length },
-        'Synced MCP servers from values.yaml',
+        'Synced legacy MCP_SERVERS_VALUES (deprecated, use CAPABILITIES_VALUES)',
       );
     }
-    // Always notify channels on startup (covers servers already in DB from previous runs)
-    await notifyAllChannels();
   } catch (err) {
-    logger.error({ err }, 'Failed to sync MCP servers on startup');
+    logger.error({ err }, 'Failed to sync capabilities on startup');
   }
 
   // In orchestrator mode, channels handle their own LLM conversations.
