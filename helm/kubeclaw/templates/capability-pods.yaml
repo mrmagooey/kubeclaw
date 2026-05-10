@@ -44,6 +44,12 @@ spec:
             - name: {{ $k }}
               value: {{ $v | quote }}
             {{- end }}
+            {{/*
+            Capability pods do not inject kubeclaw-secrets API keys via this template;
+            any credential env vars come from $cfg.env (operator-supplied).
+            credentialSidecarEnv sets HTTPS_PROXY regardless of auditOnly so the
+            sidecar observes traffic even in audit-only mode.
+            */}}
             {{- if eq $.Values.credentialInjection.mode "sidecar" }}
             {{- include "kubeclaw.credentialSidecarEnv" $ | nindent 12 }}
             {{- end }}

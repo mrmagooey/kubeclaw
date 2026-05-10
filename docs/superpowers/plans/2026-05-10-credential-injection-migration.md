@@ -868,7 +868,7 @@ The new condition: strip when `(mode != off) && (auditOnly === false)`. The side
 
 The Helm templates currently strip API key env vars under `{{- if eq $.Values.credentialInjection.mode "off" }}` (strip when off, i.e. inject keys only in off mode). The condition needs to also pass the keys through when `auditOnly=true`.
 
-- [ ] **Step 7.1:** In `helm/kubeclaw/templates/channel-pods.yaml`, update all occurrences of `{{- if eq $.Values.credentialInjection.mode "off" }}` that gate API key injection to instead read:
+- [x] **Step 7.1:** In `helm/kubeclaw/templates/channel-pods.yaml`, update all occurrences of `{{- if eq $.Values.credentialInjection.mode "off" }}` that gate API key injection to instead read:
 
   ```yaml
   {{- if or (eq $.Values.credentialInjection.mode "off") $.Values.credentialInjection.auditOnly }}
@@ -886,7 +886,7 @@ The Helm templates currently strip API key env vars under `{{- if eq $.Values.cr
   {{- if or (eq $.Values.credentialInjection.mode "off") $.Values.credentialInjection.auditOnly }}
   ```
 
-- [ ] **Step 7.2:** In `helm/kubeclaw/templates/capability-pods.yaml`, `capability-pods.yaml` does not currently have explicit API key env var injection (capabilities use their own env stanza), but the `credentialSidecarEnv` include at line 47 should remain gated on mode=sidecar regardless of auditOnly — the proxy env vars must still be set so traffic routes through the sidecar in audit-only mode. Verify this template needs no change for the strip logic: capabilities don't inject `kubeclaw-secrets` API keys directly via the template, so no change is needed here. Add a comment confirming this:
+- [x] **Step 7.2:** In `helm/kubeclaw/templates/capability-pods.yaml`, `capability-pods.yaml` does not currently have explicit API key env var injection (capabilities use their own env stanza), but the `credentialSidecarEnv` include at line 47 should remain gated on mode=sidecar regardless of auditOnly — the proxy env vars must still be set so traffic routes through the sidecar in audit-only mode. Verify this template needs no change for the strip logic: capabilities don't inject `kubeclaw-secrets` API keys directly via the template, so no change is needed here. Add a comment confirming this:
 
   ```yaml
   # Note: capability pods do not inject kubeclaw-secrets API keys via template;
@@ -895,7 +895,7 @@ The Helm templates currently strip API key env vars under `{{- if eq $.Values.cr
   # which is correct: the sidecar must observe traffic even in audit-only mode.
   ```
 
-- [ ] **Step 7.3:** Render-test the four `(mode × auditOnly)` combinations for channel pods. For each, grep for `ANTHROPIC_API_KEY` presence/absence:
+- [x] **Step 7.3:** Render-test the four `(mode × auditOnly)` combinations for channel pods. For each, grep for `ANTHROPIC_API_KEY` presence/absence:
 
   ```bash
   # (mode=sidecar, auditOnly=false) — keys ABSENT
@@ -931,7 +931,7 @@ The Helm templates currently strip API key env vars under `{{- if eq $.Values.cr
   # Expected: Error: ... auditOnly=true requires mode != "off" ...
   ```
 
-- [ ] **Step 7.4:** Commit.
+- [x] **Step 7.4:** Commit.
 
   ```
   git add helm/kubeclaw/templates/channel-pods.yaml helm/kubeclaw/templates/capability-pods.yaml
