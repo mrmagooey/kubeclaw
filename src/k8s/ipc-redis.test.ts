@@ -141,9 +141,20 @@ vi.mock('cron-parser', () => ({
   },
 }));
 
+vi.mock('../capabilities/index.js', () => ({
+  installCapability: vi.fn().mockResolvedValue(undefined),
+  removeCapability: vi.fn().mockResolvedValue(undefined),
+  listCapabilities: vi.fn().mockReturnValue([]),
+}));
+
 import { CronExpressionParser } from 'cron-parser';
 import { createTask, deleteTask, getTaskById, updateTask } from '../db.js';
 import { isValidGroupFolder } from '../group-folder.js';
+import {
+  installCapability,
+  removeCapability,
+  listCapabilities,
+} from '../capabilities/index.js';
 import {
   startIpcWatcher,
   stopIpcWatcher,
@@ -823,6 +834,137 @@ describe('processTaskIpc', () => {
         expect.objectContaining({ err: expect.any(Error) }),
         'Failed to apply channel deployment',
       );
+    });
+  });
+
+  describe('install_capability', () => {
+    it('calls installCapability when authorized', async () => {
+      const spec = {
+        name: 'my-mcp',
+        kind: 'mcp',
+        image: 'ghcr.io/example/mcp:latest',
+      };
+      const deps = createMockDeps();
+
+      await processTaskIpc(
+        { type: 'install_capability', spec: JSON.stringify(spec) },
+        'main',
+        true,
+        deps,
+      );
+
+      expect(installCapability).toHaveBeenCalledWith(spec);
+    });
+
+    it('blocks install_capability from non-main group', async () => {
+      const spec = { name: 'my-mcp', kind: 'mcp', image: 'img:latest' };
+      const deps = createMockDeps();
+
+      await processTaskIpc(
+        { type: 'install_capability', spec: JSON.stringify(spec) },
+        'other-group',
+        false,
+        deps,
+      );
+
+      expect(installCapability).not.toHaveBeenCalled();
+    });
+
+    it('logs error when installCapability throws', async () => {
+      vi.mocked(installCapability).mockRejectedValueOnce(
+        new Error('install error'),
+      );
+      const { logger } = await import('../logger.js');
+      const spec = { name: 'bad', kind: 'mcp', image: 'img:latest' };
+      const deps = createMockDeps();
+
+      await processTaskIpc(
+        { type: 'install_capability', spec: JSON.stringify(spec) },
+        'main',
+        true,
+        deps,
+      );
+
+      expect(logger.error).toHaveBeenCalledWith(
+        expect.objectContaining({ err: expect.any(Error) }),
+        'Failed to install capability',
+      );
+    });
+  });
+
+  describe('remove_capability', () => {
+    it('calls removeCapability when authorized', async () => {
+      const deps = createMockDeps();
+
+      await processTaskIpc(
+        { type: 'remove_capability', name: 'my-mcp' },
+        'main',
+        true,
+        deps,
+      );
+
+      expect(removeCapability).toHaveBeenCalledWith('my-mcp');
+    });
+
+    it('blocks remove_capability from non-main group', async () => {
+      const deps = createMockDeps();
+
+      await processTaskIpc(
+        { type: 'remove_capability', name: 'my-mcp' },
+        'other-group',
+        false,
+        deps,
+      );
+
+      expect(removeCapability).not.toHaveBeenCalled();
+    });
+
+    it('does nothing when name is missing', async () => {
+      const deps = createMockDeps();
+
+      await processTaskIpc({ type: 'remove_capability' }, 'main', true, deps);
+
+      expect(removeCapability).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('list_capabilities', () => {
+    it('writes capabilities to resultStream when provided', async () => {
+      const caps = [{ name: 'my-mcp', kind: 'mcp' }];
+      vi.mocked(listCapabilities).mockReturnValueOnce(caps as any);
+      const deps = createMockDeps();
+
+      await processTaskIpc(
+        { type: 'list_capabilities', resultStream: 'kubeclaw:result:abc' },
+        'main',
+        true,
+        deps,
+      );
+
+      expect(listCapabilities).toHaveBeenCalled();
+      expect(mockXadd).toHaveBeenCalledWith(
+        'kubeclaw:result:abc',
+        '*',
+        'result',
+        JSON.stringify(caps),
+        'status',
+        'success',
+      );
+    });
+
+    it('does not write to stream when resultStream is absent', async () => {
+      mockXadd.mockClear();
+      const deps = createMockDeps();
+
+      await processTaskIpc(
+        { type: 'list_capabilities' },
+        'main',
+        true,
+        deps,
+      );
+
+      expect(listCapabilities).toHaveBeenCalled();
+      expect(mockXadd).not.toHaveBeenCalled();
     });
   });
 

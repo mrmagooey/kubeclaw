@@ -34,10 +34,10 @@ import { TaskRequest } from './types.js';
 import { jobRunner } from './job-runner.js';
 import { ASSISTANT_NAME, CONTAINER_TIMEOUT, IDLE_TIMEOUT } from '../config.js';
 import {
-  deployMcpServer,
-  removeMcpServer,
-  listMcpServers,
-} from '../mcp-registry.js';
+  installCapability,
+  removeCapability,
+  listCapabilities,
+} from '../capabilities/index.js';
 import { loadSpecialists } from '../specialists.js';
 
 export interface IpcDeps {
@@ -600,65 +600,52 @@ export async function processTaskIpc(
       }
       break;
 
-    case 'deploy_mcp_server':
+    case 'install_capability':
       if (!isMain) {
         logger.warn(
           { sourceGroup },
-          'Unauthorized deploy_mcp_server attempt blocked',
+          'Unauthorized install_capability attempt blocked',
         );
         break;
       }
-      if (data.name && data.image) {
+      if (data.spec) {
         try {
-          await deployMcpServer({
-            name: data.name,
-            image: data.image,
-            port: data.port ? Number(data.port) : undefined,
-            path: data.path || undefined,
-            command: data.command
-              ? JSON.parse(data.command as string)
-              : undefined,
-            env: data.env ? JSON.parse(data.env) : undefined,
-            channels: data.channels ? JSON.parse(data.channels) : undefined,
-            allowedTools: data.allowedTools
-              ? JSON.parse(data.allowedTools)
-              : undefined,
-            resources: data.resources ? JSON.parse(data.resources) : undefined,
-          });
+          const spec = JSON.parse(data.spec);
+          await installCapability(spec);
           logger.info(
-            { sourceGroup, name: data.name },
-            'MCP server deployed via IPC',
+            { sourceGroup, name: spec.name, kind: spec.kind },
+            'Capability installed via IPC',
           );
         } catch (err) {
-          logger.error({ err, name: data.name }, 'Failed to deploy MCP server');
+          logger.error({ err }, 'Failed to install capability');
         }
       }
       break;
 
-    case 'remove_mcp_server':
+    case 'remove_capability':
       if (!isMain) {
         logger.warn(
           { sourceGroup },
-          'Unauthorized remove_mcp_server attempt blocked',
+          'Unauthorized remove_capability attempt blocked',
         );
         break;
       }
       if (data.name) {
         try {
-          await removeMcpServer(data.name);
+          await removeCapability(data.name);
           logger.info(
             { sourceGroup, name: data.name },
-            'MCP server removed via IPC',
+            'Capability removed via IPC',
           );
         } catch (err) {
-          logger.error({ err, name: data.name }, 'Failed to remove MCP server');
+          logger.error({ err, name: data.name }, 'Failed to remove capability');
         }
       }
       break;
 
-    case 'list_mcp_servers':
+    case 'list_capabilities':
       try {
-        const servers = listMcpServers();
+        const capabilities = listCapabilities();
         const resultStream = data.resultStream;
         if (resultStream) {
           const client = getRedisClient();
@@ -666,13 +653,13 @@ export async function processTaskIpc(
             resultStream,
             '*',
             'result',
-            JSON.stringify(servers),
+            JSON.stringify(capabilities),
             'status',
             'success',
           );
         }
       } catch (err) {
-        logger.error({ err }, 'Failed to list MCP servers');
+        logger.error({ err }, 'Failed to list capabilities');
       }
       break;
 
@@ -1228,72 +1215,54 @@ export async function startTaskRequestWatcher(): Promise<void> {
                   );
               }
             }
-          } else if (type === 'deploy_mcp_server') {
+          } else if (type === 'install_capability') {
             if (obj.isMain !== 'true') {
-              logger.warn({ groupFolder }, 'Unauthorized deploy_mcp_server');
+              logger.warn({ groupFolder }, 'Unauthorized install_capability');
               continue;
             }
-            if (obj.name && obj.image) {
-              try {
-                await deployMcpServer({
-                  name: obj.name,
-                  image: obj.image,
-                  port: obj.port ? Number(obj.port) : undefined,
-                  path: obj.path || undefined,
-                  command: obj.command ? JSON.parse(obj.command) : undefined,
-                  env: obj.env ? JSON.parse(obj.env) : undefined,
-                  channels: obj.channels ? JSON.parse(obj.channels) : undefined,
-                  allowedTools: obj.allowedTools
-                    ? JSON.parse(obj.allowedTools)
-                    : undefined,
-                  resources: obj.resources
-                    ? JSON.parse(obj.resources)
-                    : undefined,
-                });
-                logger.info(
-                  { name: obj.name },
-                  'MCP server deployed via stream',
-                );
-              } catch (err) {
-                logger.error(
-                  { err, name: obj.name },
-                  'Failed to deploy MCP server',
-                );
-              }
+            try {
+              const spec = JSON.parse(obj.spec);
+              await installCapability(spec);
+              logger.info(
+                { name: spec.name, kind: spec.kind },
+                'Capability installed via stream',
+              );
+            } catch (err) {
+              logger.error({ err }, 'Failed to install capability');
             }
-          } else if (type === 'remove_mcp_server') {
+          } else if (type === 'remove_capability') {
             if (obj.isMain !== 'true') {
-              logger.warn({ groupFolder }, 'Unauthorized remove_mcp_server');
+              logger.warn({ groupFolder }, 'Unauthorized remove_capability');
               continue;
             }
             if (obj.name) {
               try {
-                await removeMcpServer(obj.name);
+                await removeCapability(obj.name);
                 logger.info(
                   { name: obj.name },
-                  'MCP server removed via stream',
+                  'Capability removed via stream',
                 );
               } catch (err) {
                 logger.error(
                   { err, name: obj.name },
-                  'Failed to remove MCP server',
+                  'Failed to remove capability',
                 );
               }
             }
-          } else if (type === 'list_mcp_servers') {
+          } else if (type === 'list_capabilities') {
             try {
-              const servers = listMcpServers();
+              const capabilities = listCapabilities();
               if (obj.resultStream)
                 await redis.xadd(
                   obj.resultStream,
                   '*',
                   'result',
-                  JSON.stringify(servers),
+                  JSON.stringify(capabilities),
                   'status',
                   'success',
                 );
             } catch (err) {
-              logger.error({ err }, 'Failed to list MCP servers');
+              logger.error({ err }, 'Failed to list capabilities');
             }
           }
         }
