@@ -106,9 +106,7 @@ spec:
 ${commandBlock}${argsBlock}          ports:
             - containerPort: ${a.port}
               name: http
-          env:
-${envBlock}
-${envFromBlock}          resources:
+${envBlock ? `          env:\n${envBlock}\n` : ''}${envFromBlock}          resources:
             requests:
               memory: ${memReq}
               cpu: ${cpuReq}

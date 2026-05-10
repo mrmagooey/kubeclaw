@@ -17,6 +17,5 @@ export function buildMcpYaml(spec: McpCapabilitySpec): string {
     args: spec.args,
     resources: spec.resources,
     healthPath: spec.healthPath,
-    storage: undefined,
   });
 }
