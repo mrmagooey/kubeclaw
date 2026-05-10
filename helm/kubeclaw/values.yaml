@@ -277,6 +277,12 @@ credentialInjection:
   # - istio:   Istio egress gateway (requires Istio CRDs)
   mode: "sidecar"
 
+  # auditOnly: when true, the broker is deployed and sidecar-injected but does NOT
+  # strip workload env vars and does NOT stamp the Authorization header.
+  # The broker logs and metrics record every decision as a dry-run.
+  # Requires mode != off (fail at render time if mode=off).
+  auditOnly: false
+
   broker:
     image: ghcr.io/mrmagooey/kubeclaw-credential-broker:latest
     port: 8080
@@ -298,3 +304,13 @@ credentialInjection:
     # Renewal threshold; cert-manager defaults are fine.
     duration: 87600h    # 10y
     renewBefore: 720h   # 30d
+
+  metrics:
+    enabled: true
+    # Metrics are served on a dedicated port separate from broker.port (8080)
+    # so scraping does not compete with authz request traffic.
+    port: 9090
+    serviceMonitor:
+      # Set to true if your cluster runs prometheus-operator.
+      enabled: false
+      interval: "30s"

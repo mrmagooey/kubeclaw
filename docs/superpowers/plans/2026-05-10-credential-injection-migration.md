@@ -38,7 +38,7 @@ The master plan (`docs/superpowers/plans/2026-05-02-credential-injection.md` lin
 - Modify: `helm/kubeclaw/templates/credential-broker.yaml`
 - Test: manual `helm template` render under four combinations
 
-- [ ] **Step 1.1:** Open `helm/kubeclaw/values.yaml`. In the `credentialInjection` block (after line 301), add `auditOnly` and `metrics` stanzas so the block reads:
+- [x] **Step 1.1:** Open `helm/kubeclaw/values.yaml`. In the `credentialInjection` block (after line 301), add `auditOnly` and `metrics` stanzas so the block reads:
 
   ```yaml
   credentialInjection:
@@ -81,7 +81,7 @@ The master plan (`docs/superpowers/plans/2026-05-02-credential-injection.md` lin
         interval: "30s"
   ```
 
-- [ ] **Step 1.2:** At the top of `helm/kubeclaw/templates/credential-broker.yaml`, inside the outer `{{- if ne .Values.credentialInjection.mode "off" -}}` guard, add a render-time validation immediately after the opening line:
+- [x] **Step 1.2:** At the top of `helm/kubeclaw/templates/credential-broker.yaml`, inside the outer `{{- if ne .Values.credentialInjection.mode "off" -}}` guard, add a render-time validation immediately after the opening line:
 
   ```yaml
   {{- if ne .Values.credentialInjection.mode "off" -}}
@@ -103,7 +103,7 @@ The master plan (`docs/superpowers/plans/2026-05-02-credential-injection.md` lin
 
   Place the `fail` block as the very first two lines of the file before the existing `{{- if ne … "off" -}}`.
 
-- [ ] **Step 1.3:** Verify renders for each combination. Expected outcomes:
+- [x] **Step 1.3:** Verify renders for each combination. Expected outcomes:
 
   ```
   # Should render cleanly (broker deployed, auditOnly false):
@@ -135,7 +135,7 @@ The master plan (`docs/superpowers/plans/2026-05-02-credential-injection.md` lin
   # Expected output: Error: ... auditOnly=true requires mode != "off" ...
   ```
 
-- [ ] **Step 1.4:** Commit.
+- [x] **Step 1.4:** Commit.
 
   ```
   git add helm/kubeclaw/values.yaml helm/kubeclaw/templates/credential-broker.yaml
