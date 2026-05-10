@@ -52,6 +52,9 @@ Items contributors could pick up:
 ### Lifecycle tools for the admin shell
 - `remove_channel` and `rotate_channel_credentials` tools in `src/admin-shell.ts` — currently operators must manually `kubectl delete` the Deployment + Secret + PVCs.
 
+### First-class capability kinds
+- A `kind: 'transcription'` (e.g. Whisper) so multiple channels can share one speech-to-text pod via the capabilities subsystem instead of bolting voice handling onto each channel that supports inbound voice.
+
 ---
 
 ## Vision

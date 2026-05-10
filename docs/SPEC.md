@@ -31,7 +31,7 @@ KubeClaw uses a four-tier pod architecture with clear privilege separation. Each
 |------|-----------|-----------|------|
 | **Orchestrator** | High (superuser) | Permanent | Central coordinator. Only pod with K8s API access. Manages all pod lifecycles, mediates discovery and authorization between tiers. Redis is architecturally part of this tier. |
 | **Channel** | Low | Permanent | User-facing communication (HTTP, WhatsApp, Signal, Telegram, etc.). Runs its own LLM conversation directly against provider endpoints. The channel *is* the agent. |
-| **Capability** | Low | Long-lived | Adds features to the deployment (memory/RAG, MCP servers, etc.). Channels talk to capabilities directly after orchestrator-mediated discovery. |
+| **Capability** | Low | Long-lived | Long-lived feature pods (RAG, MCP servers, generic HTTP services). Declared as a `CapabilitySpec` and persisted in the orchestrator's SQLite. The orchestrator reconciles the spec to a Deployment + Service + optional PVC, health-probes the endpoint, and answers channel discovery requests with a typed entry per kind. |
 | **Tool Job** | None | Short-lived | Specialist output on demand (web search, browser, formatting). Created by the orchestrator when a channel requests one. Can use external container images paired with IPC sidecars. |
 
 ### Communication Model
@@ -257,6 +257,89 @@ To add a new channel TYPE, contribute a PR that:
 6. Adds a runtime spec at `skills/channel/<name>.md` describing dependencies and required env vars
 
 See existing channel implementations in `src/channels/` (e.g. `telegram.ts`, `slack.ts`, `discord.ts`, `whatsapp.ts`, `gmail.ts`) for the pattern. See `docs/ADDING_A_CHANNEL.md` for the full `Channel` contract and `docs/INSTALLING_A_CHANNEL.md` for the operator install path.
+
+---
+
+## Architecture: Capabilities System
+
+Capabilities are the long-lived feature tier. Every capability is declared
+as a `CapabilitySpec` (a discriminated union by `kind`) and persisted in
+the `capabilities` SQLite table. The orchestrator owns the full lifecycle:
+spec validation, K8s reconciliation, health probing, and channel discovery.
+
+### `CapabilitySpec`
+
+Defined at `src/capabilities/types.ts`. The discriminator is `kind`:
+
+| `kind`  | Backend defaults | Use case |
+|---------|------------------|----------|
+| `mcp`   | port 3000, path `/mcp` | Model Context Protocol servers exposing tools to channels |
+| `rag`   | port 6333 (qdrant) / 9621 (lightrag); per-backend storage defaults | Vector or graph-vector retrieval backends |
+| `http`  | port 8080, path `/health` | Generic third-party HTTP service (escape hatch for any long-lived pod that doesn't need a first-class kind) |
+
+Each variant extends a shared `CapabilityBase` with `name`, `image`,
+`port`, `env`, `envFromSecrets`, `channels` (ACL), `resources`, `storage`
+(optional PVC), `healthPath`, and optional `command`/`args`.
+
+### Lifecycle
+
+1. **Install** — `installCapability(spec)` writes the spec to SQLite and
+   calls `applySpec` (in `src/capabilities/reconciler.ts`), which
+   generates Deployment + Service (+ PVC if `storage` is declared) YAML
+   via the per-kind builder in `src/capabilities/builders/` and applies
+   via `jobRunner.applyYamlToK8s`.
+2. **Reconcile-on-startup** — `startCapabilitySubsystem()` reads all
+   persisted specs and re-applies each (idempotent, since the K8s API
+   does create-or-replace).
+3. **Health probe** — every 30 seconds, `probeOnce()` (in `health.ts`)
+   does an HTTP GET on each capability's `healthPath` and updates the
+   `lifecycle` column (`pending` / `ready` / `unhealthy`).
+4. **Discovery** — channels write to the `kubeclaw:discovery:request`
+   Redis stream with `{ requestId, capability?, channel? }`. The
+   orchestrator reads, ACL-filters, and writes a typed
+   `CapabilityDiscoveryEntry[]` to `kubeclaw:discovery:response:<requestId>`.
+5. **Channel notification** — every install/remove publishes a
+   `capabilities_update` to each channel's control channel. Channels
+   filter by kind and reconfigure the runtime as needed (e.g. the MCP
+   manager re-registers tools).
+6. **Remove** — `removeCapability(name)` calls `deleteSpec` (Deployment +
+   Service + PVC) and removes the DB row, then notifies channels.
+
+### Admin-shell tools
+
+| Tool | Purpose |
+|---|---|
+| `install_capability` | Install or update a capability from a `CapabilitySpec` JSON object |
+| `remove_capability` | Tear down by name |
+| `list_capabilities` | Show installed specs with lifecycle status |
+| `get_capability_logs` | Tail the pod logs |
+
+### Adding a new capability kind
+
+1. Add the variant to the `CapabilitySpec` union in `src/capabilities/types.ts`.
+2. Add a builder in `src/capabilities/builders/` and wire it into the
+   `buildYaml` switch in `builders/index.ts`.
+3. Add the kind to the `defaultPort()` and `specToDiscoveryEntry()`
+   helpers in `src/capabilities/registry.ts`. The `kindMetadata` shape
+   should be a discriminated branch of `CapabilityDiscoveryEntry`.
+4. (Optional) Add a typed accessor to `src/capabilities/client.ts`
+   (e.g. `getMyKindEntry(channel)`).
+5. Add the kind's default port to the `DEFAULT_PORTS` map in `health.ts`.
+6. Update tests; update `docs/SPEC.md`.
+
+### Key files
+
+| File | Purpose |
+|---|---|
+| `src/capabilities/types.ts` | `CapabilitySpec` discriminated union and discovery types |
+| `src/capabilities/db.ts` | SQLite CRUD for the `capabilities` table |
+| `src/capabilities/builders/` | Per-kind YAML rendering (MCP, RAG-Qdrant, RAG-LightRAG, HTTP) and shared `renderDeploymentAndService` |
+| `src/capabilities/reconciler.ts` | `applySpec`, `deleteSpec`, `reconcileAllOnStartup` |
+| `src/capabilities/registry.ts` | Public install/remove/list/notify; `getEntriesForChannel`; subsystem startup |
+| `src/capabilities/discovery.ts` | Redis stream watcher answering channel discovery requests |
+| `src/capabilities/health.ts` | Periodic HTTP health probes; updates DB status |
+| `src/capabilities/client.ts` | Channel-side typed accessors (`getRagEntry`, `getMcpEntries`, `getHttpEntry`) |
+| `src/capabilities/index.ts` | Barrel export |
 
 ---
 

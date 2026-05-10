@@ -738,7 +738,11 @@ async function main(): Promise<void> {
           name: string;
           kind: string;
           endpoint: string;
-          kindMetadata: { path?: string; allowedTools?: string[]; backend?: string };
+          kindMetadata: {
+            path?: string;
+            allowedTools?: string[];
+            backend?: string;
+          };
         }>;
         const mcpServers = capabilities
           .filter((c) => c.kind === 'mcp')
