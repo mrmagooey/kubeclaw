@@ -63,7 +63,12 @@ describe('mcp-registry shim', () => {
         endpoint: 'http://kubeclaw-cap-weather:3000',
         kindMetadata: { path: '/mcp', allowedTools: ['get_forecast'] },
       },
-      { kind: 'rag', name: 'r', endpoint: 'http://r:6333', kindMetadata: { backend: 'qdrant' } },
+      {
+        kind: 'rag',
+        name: 'r',
+        endpoint: 'http://r:6333',
+        kindMetadata: { backend: 'qdrant' },
+      },
     ]);
     const result = getServersForChannel('http');
     expect(result).toEqual([

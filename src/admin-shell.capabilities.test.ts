@@ -3,9 +3,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const mockInstall = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const mockRemove = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const mockList = vi.hoisted(() =>
-  vi.fn().mockReturnValue([
-    { kind: 'mcp', name: 'weather', image: 'mcp/weather:1.0' },
-  ]),
+  vi
+    .fn()
+    .mockReturnValue([
+      { kind: 'mcp', name: 'weather', image: 'mcp/weather:1.0' },
+    ]),
 );
 const mockStatus = vi.hoisted(() =>
   vi.fn().mockReturnValue({

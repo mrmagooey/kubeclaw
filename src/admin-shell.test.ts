@@ -53,6 +53,7 @@ vi.mock('./db.js', () => ({
 
 const MockCoreV1Api = class {};
 const MockAppsV1Api = class {};
+const MockBatchV1Api = class {};
 
 vi.mock('@kubernetes/client-node', () => {
   const mockCoreV1 = {
@@ -71,16 +72,21 @@ vi.mock('@kubernetes/client-node', () => {
     createNamespacedDeployment: mockCreateNamespacedDeployment,
     replaceNamespacedDeployment: mockReplaceNamespacedDeployment,
   };
+  const mockBatchV1 = {};
   class MockKubeConfig {
     loadFromCluster() {}
+    loadFromDefault() {}
     makeApiClient(ApiClass: unknown) {
-      return ApiClass === MockCoreV1Api ? mockCoreV1 : mockAppsV1;
+      if (ApiClass === MockCoreV1Api) return mockCoreV1;
+      if (ApiClass === MockBatchV1Api) return mockBatchV1;
+      return mockAppsV1;
     }
   }
   return {
     KubeConfig: MockKubeConfig,
     CoreV1Api: MockCoreV1Api,
     AppsV1Api: MockAppsV1Api,
+    BatchV1Api: MockBatchV1Api,
   };
 });
 
@@ -113,6 +119,10 @@ describe('admin-shell TOOLS array', () => {
       'setup_channel',
       'get_orchestrator_status',
       'restart_orchestrator',
+      'install_capability',
+      'remove_capability',
+      'list_capabilities',
+      'get_capability_logs',
     ]);
   });
 
