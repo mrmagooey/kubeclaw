@@ -992,7 +992,7 @@ The Helm templates currently strip API key env vars under `{{- if eq $.Values.cr
 - Create: `src/credential-broker/metrics.ts`
 - Create: `src/credential-broker/metrics.test.ts`
 
-- [ ] **Step 9.1:** Write failing tests in `src/credential-broker/metrics.test.ts`:
+- [x] **Step 9.1:** Write failing tests in `src/credential-broker/metrics.test.ts`:
 
   ```typescript
   import { describe, it, expect, beforeEach } from 'vitest';
@@ -1055,7 +1055,7 @@ The Helm templates currently strip API key env vars under `{{- if eq $.Values.cr
   });
   ```
 
-- [ ] **Step 9.2:** Run to confirm failure:
+- [x] **Step 9.2:** Run to confirm failure:
 
   ```
   npx vitest run src/credential-broker/metrics.test.ts
@@ -1063,7 +1063,7 @@ The Helm templates currently strip API key env vars under `{{- if eq $.Values.cr
 
   Expected: import error (module does not exist yet).
 
-- [ ] **Step 9.3:** Create `src/credential-broker/metrics.ts`:
+- [x] **Step 9.3:** Create `src/credential-broker/metrics.ts`:
 
   ```typescript
   import { Counter, Histogram, Registry } from 'prom-client';
@@ -1153,7 +1153,7 @@ The Helm templates currently strip API key env vars under `{{- if eq $.Values.cr
   }
   ```
 
-- [ ] **Step 9.4:** Run the tests to confirm all 8 pass:
+- [x] **Step 9.4:** Run the tests to confirm all 8 pass:
 
   ```
   npx vitest run src/credential-broker/metrics.test.ts
@@ -1161,7 +1161,7 @@ The Helm templates currently strip API key env vars under `{{- if eq $.Values.cr
 
   Expected: 8 passing.
 
-- [ ] **Step 9.5:** Commit.
+- [x] **Step 9.5:** Commit.
 
   ```
   git add src/credential-broker/metrics.ts src/credential-broker/metrics.test.ts
