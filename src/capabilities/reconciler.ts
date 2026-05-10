@@ -22,22 +22,24 @@ export async function applySpec(spec: CapabilitySpec): Promise<void> {
  */
 export async function deleteSpec(spec: CapabilitySpec): Promise<void> {
   const dep = deploymentName(spec.name);
+  // All capability resources live in KUBECLAW_NAMESPACE. If a future kind
+  // ever supports cross-namespace deployment, derive `ns` from the spec.
   const ns = KUBECLAW_NAMESPACE;
   try {
     await jobRunner.deleteDeployment(dep, ns);
   } catch (err) {
-    logger.warn({ err, dep }, 'Failed to delete Deployment (may be gone)');
+    logger.warn({ err, dep, ns }, 'Failed to delete Deployment');
   }
   try {
     await jobRunner.deleteService(dep, ns);
   } catch (err) {
-    logger.warn({ err, dep }, 'Failed to delete Service (may be gone)');
+    logger.warn({ err, dep, ns }, 'Failed to delete Service');
   }
   if (spec.storage) {
     try {
       await jobRunner.deletePersistentVolumeClaim(`${dep}-data`, ns);
     } catch (err) {
-      logger.warn({ err, dep }, 'Failed to delete PVC (may be gone)');
+      logger.warn({ err, dep, ns }, 'Failed to delete PVC');
     }
   }
   logger.info({ name: spec.name, kind: spec.kind }, 'Capability removed');

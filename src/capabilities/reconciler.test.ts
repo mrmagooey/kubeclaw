@@ -1,8 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mockApplyYaml = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
-const mockDeleteDeployment = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
-const mockDeleteService = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+const mockDeleteDeployment = vi.hoisted(() =>
+  vi.fn().mockResolvedValue(undefined),
+);
+const mockDeleteService = vi.hoisted(() =>
+  vi.fn().mockResolvedValue(undefined),
+);
 const mockDeletePvc = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 
 vi.mock('../k8s/job-runner.js', () => ({
@@ -20,7 +24,7 @@ vi.mock('../config.js', () => ({
   KUBECLAW_NAMESPACE: 'kubeclaw',
 }));
 
-import { applySpec, deleteSpec } from './reconciler.js';
+import { applySpec, deleteSpec, reconcileAllOnStartup } from './reconciler.js';
 import type { CapabilitySpec } from './types.js';
 
 const mcpSpec: CapabilitySpec = {
@@ -57,6 +61,21 @@ describe('reconciler', () => {
       'kubeclaw',
     );
     expect(mockDeletePvc).not.toHaveBeenCalled();
+  });
+
+  it('reconcileAllOnStartup applies each spec; one failure does not stop the loop', async () => {
+    mockApplyYaml
+      .mockRejectedValueOnce(new Error('boom'))
+      .mockResolvedValueOnce(undefined);
+
+    await reconcileAllOnStartup([
+      { kind: 'mcp', name: 'a', image: 'mcp/a:1' },
+      { kind: 'mcp', name: 'b', image: 'mcp/b:1' },
+    ]);
+
+    expect(mockApplyYaml).toHaveBeenCalledTimes(2);
+    const secondCallYaml = mockApplyYaml.mock.calls[1][0] as string;
+    expect(secondCallYaml).toContain('kubeclaw-cap-b');
   });
 
   it('deleteSpec also removes PVC when storage was declared', async () => {
