@@ -81,6 +81,14 @@ spec:
     metadata:
       labels:
         app: kubeclaw-orchestrator
+      {{- if eq .Values.credentialInjection.mode "istio" }}
+      annotations:
+        # The orchestrator is the trusted control-plane tier; it must not receive
+        # an Istio sidecar even though the namespace label enables injection for
+        # all other pods. The orchestrator accesses the K8s API directly using
+        # its own SA credentials and does not need mesh identity.
+        sidecar.istio.io/inject: "false"
+      {{- end }}
     spec:
       serviceAccountName: kubeclaw-orchestrator
       securityContext:

@@ -656,7 +656,7 @@ git commit -m "feat(helm): label kubeclaw namespace istio-injection=enabled when
 
 The orchestrator is the trusted tier — it holds K8s API credentials and Redis credentials and must not be in the mesh dataplane. Under `mode=istio` the namespace-wide label would inject a sidecar into it unless explicitly excluded.
 
-- [ ] **Step 1: Add the inject=false annotation to the orchestrator pod template**
+- [x] **Step 1: Add the inject=false annotation to the orchestrator pod template**
 
 Open `helm/kubeclaw/templates/orchestrator.yaml`. Locate the orchestrator Deployment's `template.metadata` block (currently just has `labels`). Add a conditional `annotations` block:
 
@@ -676,7 +676,7 @@ Open `helm/kubeclaw/templates/orchestrator.yaml`. Locate the orchestrator Deploy
     spec:
 ```
 
-- [ ] **Step 2: Verify render**
+- [x] **Step 2: Verify render**
 
 Run: `helm template helm/kubeclaw --set credentialInjection.mode=istio | grep -A 2 "sidecar.istio.io/inject"`
 
@@ -689,7 +689,7 @@ Run: `helm template helm/kubeclaw --set credentialInjection.mode=sidecar | grep 
 
 Expected: empty output (annotation absent in sidecar mode).
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add helm/kubeclaw/templates/orchestrator.yaml
