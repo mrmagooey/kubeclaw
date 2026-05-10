@@ -917,7 +917,7 @@ By=spiffe://cluster.local/ns/istio-system/sa/istio-egressgateway-service-account
 ```
 Multiple semicolon-delimited fields; the `URI=` field carries the workload's SPIFFE ID. Multiple XFCCs may be comma-joined (chain of proxies). Parse the last/outermost SPIFFE URI in the chain.
 
-- [ ] **Step 1: Write the failing tests first**
+- [x] **Step 1: Write the failing tests first**
 
 Create `src/credential-broker/spiffe.test.ts`:
 
@@ -976,13 +976,13 @@ describe('parseXfccSpiffeId', () => {
 });
 ```
 
-- [ ] **Step 2: Run the tests to confirm they fail**
+- [x] **Step 2: Run the tests to confirm they fail**
 
 Run: `npm test -- src/credential-broker/spiffe.test.ts`
 
 Expected: `Cannot find module './spiffe.js'` or similar — test file exists but implementation does not yet.
 
-- [ ] **Step 3: Implement `spiffe.ts`**
+- [x] **Step 3: Implement `spiffe.ts`**
 
 Create `src/credential-broker/spiffe.ts`:
 
@@ -1093,13 +1093,13 @@ function spiffeUriToIdentity(uri: string): string {
 }
 ```
 
-- [ ] **Step 4: Run the tests to confirm they pass**
+- [x] **Step 4: Run the tests to confirm they pass**
 
 Run: `npm test -- src/credential-broker/spiffe.test.ts`
 
 Expected: all 6 tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/credential-broker/spiffe.ts src/credential-broker/spiffe.test.ts
