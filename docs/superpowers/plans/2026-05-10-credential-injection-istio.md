@@ -131,7 +131,7 @@ git commit -m "feat(helm): add CRD pre-flight check helper for mode=istio"
 **Files:**
 - Modify: `helm/kubeclaw/values.yaml`
 
-- [ ] **Step 1: Add the `istio` block to `values.yaml`**
+- [x] **Step 1: Add the `istio` block to `values.yaml`**
 
 Open `helm/kubeclaw/values.yaml`. After the `internalCA:` block (line 301), add:
 
@@ -158,13 +158,13 @@ Open `helm/kubeclaw/values.yaml`. After the `internalCA:` block (line 301), add:
     additionalDestinations: []
 ```
 
-- [ ] **Step 2: Verify render**
+- [x] **Step 2: Verify render**
 
 Run: `helm template helm/kubeclaw --set credentialInjection.mode=istio | grep -c "kind:"` 
 
 Expected: a non-zero count (chart renders without error).
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add helm/kubeclaw/values.yaml

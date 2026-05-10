@@ -305,6 +305,26 @@ credentialInjection:
     duration: 87600h    # 10y
     renewBefore: 720h   # 30d
 
+  # istio: settings for mode=istio (Istio egress gateway).
+  # Ignored when mode != "istio".
+  istio:
+    gateway:
+      # replicas: number of egress gateway pods. 2 for HA (recommended for production).
+      replicas: 2
+      resources:
+        requests: { cpu: 100m, memory: 128Mi }
+        limits:   { cpu: 500m, memory: 256Mi }
+
+    # ambientMode: ambient + waypoint support. MUST remain false — ambient mode is
+    # out of scope for Phase 2. A follow-up plan will cover waypoint-based header
+    # injection when Istio 1.26+ stabilises the API.
+    ambientMode: false
+
+    # additionalDestinations: hostnames beyond the built-in broker mappings that
+    # the egress gateway should allow and create ServiceEntry resources for.
+    # Example: ["my-mcp-server.internal:8443"]
+    additionalDestinations: []
+
   metrics:
     enabled: true
     # Metrics are served on a dedicated port separate from broker.port (8080)
