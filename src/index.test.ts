@@ -52,6 +52,7 @@ vi.mock('./logger.js', () => ({
     warn: vi.fn(),
     debug: vi.fn(),
     error: vi.fn(),
+    fatal: vi.fn(),
   },
 }));
 
@@ -106,6 +107,14 @@ vi.mock('./rag/retriever.js', () => ({
 
 vi.mock('./rag/indexer.js', () => ({
   indexConversationTurn: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock('./capabilities/index.js', () => ({
+  installCapability: vi.fn().mockResolvedValue(undefined),
+  startCapabilitySubsystem: vi.fn().mockResolvedValue(undefined),
+  startDiscoveryWatcher: vi.fn(),
+  stopDiscoveryWatcher: vi.fn(),
+  startHealthProbes: vi.fn(),
 }));
 
 const mockGetAllTasks = getAllTasks as ReturnType<typeof vi.fn>;

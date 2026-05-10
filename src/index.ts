@@ -74,6 +74,13 @@ import {
 import { logger } from './logger.js';
 import { augmentPrompt, getRagProvider } from './rag/provider.js';
 import { startHttpAdminServer } from './admin-shell.js';
+import {
+  installCapability,
+  startCapabilitySubsystem,
+  startDiscoveryWatcher,
+  stopDiscoveryWatcher,
+  startHealthProbes,
+} from './capabilities/index.js';
 import { handleSendFileMarkers } from './outbound-media.js';
 
 // Re-export for backwards compatibility during refactor
@@ -778,9 +785,6 @@ async function main(): Promise<void> {
     return;
   }
 
-  // Populated once the capabilities subsystem is dynamically imported below.
-  let stopDiscoveryWatcher: () => void = () => {};
-
   startOrchestratorHealthServer();
   await initDatabase();
   logger.info('Database initialized');
@@ -947,44 +951,52 @@ async function main(): Promise<void> {
     logger.error({ err }, 'Task request watcher crashed'),
   );
   // Start the unified capabilities subsystem.
-  const {
-    startCapabilitySubsystem,
-    startDiscoveryWatcher,
-    stopDiscoveryWatcher: _stopDiscoveryWatcher,
-    startHealthProbes,
-    installCapability,
-  } = await import('./capabilities/index.js');
-  stopDiscoveryWatcher = _stopDiscoveryWatcher;
   startDiscoveryWatcher();
   startHealthProbes();
   await startCapabilitySubsystem();
 
   // One-shot ingest of values.yaml-supplied specs (env: CAPABILITIES_VALUES, JSON array).
   // Backwards compat: also accept MCP_SERVERS_VALUES (kind injected as 'mcp').
-  try {
-    const capValuesJson = process.env.CAPABILITIES_VALUES;
-    if (capValuesJson) {
-      const specs = JSON.parse(capValuesJson) as Array<
-        Parameters<typeof installCapability>[0]
-      >;
-      for (const spec of specs) await installCapability(spec);
-      logger.info({ count: specs.length }, 'Synced capabilities from values.yaml');
+  const capValuesJson = process.env.CAPABILITIES_VALUES;
+  if (capValuesJson) {
+    let specs: Array<Parameters<typeof installCapability>[0]>;
+    try {
+      specs = JSON.parse(capValuesJson);
+    } catch (err) {
+      logger.fatal({ err }, 'CAPABILITIES_VALUES is not valid JSON; refusing to start');
+      process.exit(1);
     }
-    const mcpValuesJson = process.env.MCP_SERVERS_VALUES;
-    if (mcpValuesJson) {
-      const mcpSpecs = JSON.parse(mcpValuesJson) as Array<
-        Omit<Parameters<typeof installCapability>[0], 'kind'>
-      >;
-      for (const m of mcpSpecs) {
-        await installCapability({ ...m, kind: 'mcp' });
+    for (const spec of specs) {
+      try {
+        await installCapability(spec);
+      } catch (err) {
+        logger.error({ err, spec }, 'Failed to install capability from CAPABILITIES_VALUES');
+        // continue installing the remaining specs
       }
-      logger.info(
-        { count: mcpSpecs.length },
-        'Synced legacy MCP_SERVERS_VALUES (deprecated, use CAPABILITIES_VALUES)',
-      );
     }
-  } catch (err) {
-    logger.error({ err }, 'Failed to sync capabilities on startup');
+    logger.info({ count: specs.length }, 'Synced capabilities from values.yaml');
+  }
+
+  const mcpValuesJson = process.env.MCP_SERVERS_VALUES;
+  if (mcpValuesJson) {
+    let mcpSpecs: Array<Omit<Parameters<typeof installCapability>[0], 'kind'>>;
+    try {
+      mcpSpecs = JSON.parse(mcpValuesJson);
+    } catch (err) {
+      logger.fatal({ err }, 'MCP_SERVERS_VALUES is not valid JSON; refusing to start');
+      process.exit(1);
+    }
+    for (const m of mcpSpecs) {
+      try {
+        await installCapability({ ...m, kind: 'mcp' });
+      } catch (err) {
+        logger.error({ err, spec: m }, 'Failed to install MCP server from MCP_SERVERS_VALUES');
+      }
+    }
+    logger.warn(
+      { count: mcpSpecs.length },
+      'Synced legacy MCP_SERVERS_VALUES (deprecated, use CAPABILITIES_VALUES)',
+    );
   }
 
   // In orchestrator mode, channels handle their own LLM conversations.
