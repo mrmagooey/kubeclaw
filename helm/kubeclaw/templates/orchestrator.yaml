@@ -1,3 +1,15 @@
+{{- if eq .Values.credentialInjection.mode "istio" -}}
+# In mode=istio the kubeclaw namespace must be labeled for Istio sidecar injection.
+# This label causes istiod's mutating webhook to inject the istio-proxy sidecar
+# into every new pod in the namespace, giving each workload a SPIFFE identity.
+# The orchestrator pod opts back out via its own annotation (sidecar.istio.io/inject=false).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.namespace }}
+  labels:
+    istio-injection: enabled
+{{- end }}
 ---
 apiVersion: v1
 kind: ServiceAccount

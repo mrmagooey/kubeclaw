@@ -603,7 +603,7 @@ git commit -m "feat(helm): add EnvoyFilter wiring ext_authz on egress gateway (m
 
 The kubeclaw namespace must carry `istio-injection: enabled` so Istio's mutating admission webhook injects sidecars into all new pods. This label is added to the Namespace resource. KubeClaw's chart already manages the namespace via the orchestrator template's preamble; add the namespace manifest there.
 
-- [ ] **Step 1: Add a conditional Namespace resource at the top of `orchestrator.yaml`**
+- [x] **Step 1: Add a conditional Namespace resource at the top of `orchestrator.yaml`**
 
 Open `helm/kubeclaw/templates/orchestrator.yaml`. Insert at line 1 (before the existing `---`):
 
@@ -623,7 +623,7 @@ metadata:
 ---
 ```
 
-- [ ] **Step 2: Verify render**
+- [x] **Step 2: Verify render**
 
 Run: `helm template helm/kubeclaw --set credentialInjection.mode=istio | grep -A 5 "kind: Namespace"`
 
@@ -640,7 +640,7 @@ Run: `helm template helm/kubeclaw --set credentialInjection.mode=sidecar | grep 
 
 Expected: empty output (label not rendered in sidecar mode).
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add helm/kubeclaw/templates/orchestrator.yaml
