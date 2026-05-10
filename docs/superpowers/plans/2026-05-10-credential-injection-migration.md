@@ -724,7 +724,7 @@ const finalEnv =
 
 The new condition: strip when `(mode != off) && (auditOnly === false)`. The sidecar container and volumes are still injected in both `(mode=sidecar, auditOnly=true)` and `(mode=sidecar, auditOnly=false)` — only the env-var strip is gated on `auditOnly`.
 
-- [ ] **Step 6.1:** Write failing tests in `src/k8s/job-runner.test.ts`:
+- [x] **Step 6.1:** Write failing tests in `src/k8s/job-runner.test.ts`:
 
   ```typescript
   import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -800,7 +800,7 @@ The new condition: strip when `(mode != off) && (auditOnly === false)`. The side
   });
   ```
 
-- [ ] **Step 6.2:** Run the tests to confirm failure:
+- [x] **Step 6.2:** Run the tests to confirm failure:
 
   ```
   npx vitest run src/k8s/job-runner.test.ts --reporter=verbose
@@ -808,7 +808,7 @@ The new condition: strip when `(mode != off) && (auditOnly === false)`. The side
 
   Expected: `it 'does NOT strip API key envs when mode=sidecar and auditOnly=true'` fails (currently strips regardless of auditOnly).
 
-- [ ] **Step 6.3:** Update `generateJobManifest` in `src/k8s/job-runner.ts`. Import `getAuditOnly`:
+- [x] **Step 6.3:** Update `generateJobManifest` in `src/k8s/job-runner.ts`. Import `getAuditOnly`:
 
   ```typescript
   import {
@@ -843,7 +843,7 @@ The new condition: strip when `(mode != off) && (auditOnly === false)`. The side
 
   Note: `HTTPS_PROXY` via `workloadEnvForSidecar` is always added when mode=sidecar (including audit-only) so traffic flows through the sidecar for the broker to observe. Only the key stripping is conditional.
 
-- [ ] **Step 6.4:** Run the tests again to confirm all four pass:
+- [x] **Step 6.4:** Run the tests again to confirm all four pass:
 
   ```
   npx vitest run src/k8s/job-runner.test.ts --reporter=verbose
@@ -851,7 +851,7 @@ The new condition: strip when `(mode != off) && (auditOnly === false)`. The side
 
   Expected: 4 passing.
 
-- [ ] **Step 6.5:** Commit.
+- [x] **Step 6.5:** Commit.
 
   ```
   git add src/k8s/job-runner.ts src/k8s/job-runner.test.ts src/config.ts

@@ -35,6 +35,7 @@ import {
   REDIS_TOOL_SERVER_PASSWORD,
   REDIS_ADAPTER_PASSWORD,
   getInjectionMode,
+  getAuditOnly,
   CREDENTIAL_SIDECAR_IMAGE,
   CREDENTIAL_SIDECAR_PORT,
 } from '../config.js';
@@ -637,14 +638,22 @@ export class JobRunner {
       });
     }
 
-    // Credential injection: strip API keys and add proxy env when active
+    // Credential injection: strip API keys and add proxy env when active.
+    // Strip only when mode != off AND auditOnly=false.
+    // In audit-only mode the sidecar is still injected so the broker observes
+    // traffic, but workload env vars remain present so upstream calls still work
+    // via the env-var key during the observation window.
     const injectionMode = getInjectionMode();
-    const finalEnv =
-      injectionMode === 'sidecar' || injectionMode === 'istio'
-        ? [
-            ...envVars.filter((e) => !STRIPPED_WHEN_INJECTED.has(e.name)),
-            ...workloadEnvForSidecar({ port: CREDENTIAL_SIDECAR_PORT }),
-          ]
+    const auditOnly = getAuditOnly();
+    const shouldStrip =
+      (injectionMode === 'sidecar' || injectionMode === 'istio') && !auditOnly;
+    const finalEnv = shouldStrip
+      ? [
+          ...envVars.filter((e) => !STRIPPED_WHEN_INJECTED.has(e.name)),
+          ...workloadEnvForSidecar({ port: CREDENTIAL_SIDECAR_PORT }),
+        ]
+      : injectionMode === 'sidecar' || injectionMode === 'istio'
+        ? [...envVars, ...workloadEnvForSidecar({ port: CREDENTIAL_SIDECAR_PORT })]
         : envVars;
 
     // Build resource limits — include GPU/device requests when specified
