@@ -245,7 +245,7 @@ The destination list must be shared between the broker config ConfigMap (already
 
 Design decision: use a `_helpers.tpl` function (not `lookup`) because `helm template` must work offline in CI. The helper returns the hardcoded built-in destinations plus any entries in `.Values.credentialInjection.istio.additionalDestinations`.
 
-- [ ] **Step 1: Add `kubeclaw.egressDestinations` helper to `_helpers.tpl`**
+- [x] **Step 1: Add `kubeclaw.egressDestinations` helper to `_helpers.tpl`**
 
 Append to `helm/kubeclaw/templates/_helpers.tpl`:
 
@@ -277,7 +277,7 @@ in .Values.credentialInjection.istio.additionalDestinations.
 {{- end -}}
 ```
 
-- [ ] **Step 2: Create `istio-serviceentries.yaml`**
+- [x] **Step 2: Create `istio-serviceentries.yaml`**
 
 Create `helm/kubeclaw/templates/istio-serviceentries.yaml`:
 
@@ -306,7 +306,7 @@ spec:
 {{- end }}
 ```
 
-- [ ] **Step 3: Verify render**
+- [x] **Step 3: Verify render**
 
 Run: `helm template helm/kubeclaw --set credentialInjection.mode=istio | grep "kind: ServiceEntry" | wc -l`
 
@@ -320,7 +320,7 @@ Run: `helm template helm/kubeclaw --set credentialInjection.mode=sidecar | grep 
 
 Expected: empty output.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add helm/kubeclaw/templates/_helpers.tpl helm/kubeclaw/templates/istio-serviceentries.yaml

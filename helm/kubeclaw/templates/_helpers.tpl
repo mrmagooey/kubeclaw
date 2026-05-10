@@ -122,3 +122,31 @@ cluster is reachable but Istio CRDs are absent. Silent when running offline.
   {{- end -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+kubeclaw.egressDestinations — returns a JSON object {"items":[...]} containing
+all egress destinations that the credential broker handles, suitable for
+ServiceEntry generation. Each item has keys: host (string), port (number),
+protocol (string). Includes built-in destinations (anthropic, openai, openrouter,
+voyage) plus any entries in .Values.credentialInjection.istio.additionalDestinations.
+Wrapped in {"items":[...]} so that fromJson produces a traversable map rather
+than a bare slice (Helm's fromJson cannot range over a top-level JSON array).
+*/}}
+{{- define "kubeclaw.egressDestinations" -}}
+{{- $built_in := list
+      (dict "host" "api.anthropic.com"  "port" 443 "protocol" "HTTPS")
+      (dict "host" "api.openai.com"     "port" 443 "protocol" "HTTPS")
+      (dict "host" "openrouter.ai"      "port" 443 "protocol" "HTTPS")
+      (dict "host" "api.voyageai.com"   "port" 443 "protocol" "HTTPS") -}}
+{{- $extra := list -}}
+{{- range .Values.credentialInjection.istio.additionalDestinations -}}
+  {{- $parts := splitList ":" . -}}
+  {{- $h := index $parts 0 -}}
+  {{- $p := 443 -}}
+  {{- if gt (len $parts) 1 -}}
+    {{- $p = index $parts 1 | int -}}
+  {{- end -}}
+  {{- $extra = append $extra (dict "host" $h "port" $p "protocol" "HTTPS") -}}
+{{- end -}}
+{{- toJson (dict "items" (concat $built_in $extra)) -}}
+{{- end -}}
