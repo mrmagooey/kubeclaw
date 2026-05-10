@@ -336,7 +336,7 @@ git commit -m "feat(helm): add ServiceEntry resources for external destinations 
 
 The Gateway resource creates a logical ingress/egress point on the egress gateway pod. The VirtualService routes matching traffic from the mesh sidecars (via the Sidecar resource) through the gateway.
 
-- [ ] **Step 1: Create `istio-egress.yaml`**
+- [x] **Step 1: Create `istio-egress.yaml`**
 
 Create `helm/kubeclaw/templates/istio-egress.yaml`:
 
@@ -474,7 +474,7 @@ spec:
 {{- end }}
 ```
 
-- [ ] **Step 2: Verify render**
+- [x] **Step 2: Verify render**
 
 Run: `helm template helm/kubeclaw --set credentialInjection.mode=istio | grep "kind:" | sort | uniq -c`
 
@@ -491,7 +491,7 @@ Run: `helm template helm/kubeclaw --set credentialInjection.mode=sidecar | grep 
 
 Expected: empty output.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add helm/kubeclaw/templates/istio-egress.yaml

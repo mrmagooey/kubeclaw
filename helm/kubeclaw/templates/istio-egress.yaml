@@ -1,0 +1,131 @@
+{{- if eq .Values.credentialInjection.mode "istio" -}}
+{{- $destinations := (include "kubeclaw.egressDestinations" . | fromJson).items -}}
+# Egress Gateway Deployment — owned by the KubeClaw Helm chart (not by the
+# Istio platform team). Labeled istio: kubeclaw-egressgateway so EnvoyFilter
+# selectors and NetworkPolicy selectors can target it independently of the
+# platform-level istio-egressgateway (if any).
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kubeclaw-istio-egressgateway
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: kubeclaw-istio-egressgateway
+    istio: kubeclaw-egressgateway
+spec:
+  replicas: {{ .Values.credentialInjection.istio.gateway.replicas }}
+  selector:
+    matchLabels:
+      app: kubeclaw-istio-egressgateway
+      istio: kubeclaw-egressgateway
+  template:
+    metadata:
+      labels:
+        app: kubeclaw-istio-egressgateway
+        istio: kubeclaw-egressgateway
+      annotations:
+        # Force Istio sidecar injection on the gateway pod itself so Envoy picks
+        # up the gateway listener configuration from istiod.
+        sidecar.istio.io/inject: "true"
+    spec:
+      serviceAccountName: kubeclaw-istio-egressgateway
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: istio-proxy
+          # The istio-proxy image is injected by the Istio mutating webhook;
+          # this placeholder is overwritten. Kept here so the Deployment is
+          # syntactically valid for helm lint.
+          image: auto
+          resources: {{ toYaml .Values.credentialInjection.istio.gateway.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+            runAsNonRoot: true
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kubeclaw-istio-egressgateway
+  namespace: {{ .Values.namespace }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kubeclaw-istio-egressgateway
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: kubeclaw-istio-egressgateway
+    istio: kubeclaw-egressgateway
+spec:
+  selector:
+    app: kubeclaw-istio-egressgateway
+    istio: kubeclaw-egressgateway
+  ports:
+    - name: https
+      port: 443
+      targetPort: 8443
+---
+# Gateway — configures the egress gateway Envoy to accept connections from
+# mesh sidecars for each external host.
+apiVersion: networking.istio.io/v1
+kind: Gateway
+metadata:
+  name: kubeclaw-egressgateway
+  namespace: {{ .Values.namespace }}
+spec:
+  selector:
+    istio: kubeclaw-egressgateway
+  servers:
+{{- range $dest := $destinations }}
+    - port:
+        number: {{ index $dest "port" }}
+        name: https-{{ index $dest "host" | replace "." "-" }}
+        protocol: HTTPS
+      hosts:
+        - {{ index $dest "host" }}
+      tls:
+        # PASSTHROUGH: the egress gateway does not terminate the upstream TLS.
+        # It terminates the mesh mTLS from the workload sidecar. The
+        # re-originated upstream connection uses the public CA bundle.
+        mode: PASSTHROUGH
+{{- end }}
+---
+# VirtualService — routes traffic for each external host from the mesh
+# through the egress gateway before it leaves the cluster.
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: kubeclaw-egress-routing
+  namespace: {{ .Values.namespace }}
+spec:
+  hosts:
+{{- range $dest := $destinations }}
+    - {{ index $dest "host" }}
+{{- end }}
+  gateways:
+    - mesh
+    - kubeclaw-egressgateway
+  tls:
+{{- range $dest := $destinations }}
+    - match:
+        - gateways: [mesh]
+          port: {{ index $dest "port" }}
+          sniHosts: [{{ index $dest "host" }}]
+      route:
+        - destination:
+            host: kubeclaw-istio-egressgateway.{{ $.Values.namespace }}.svc.cluster.local
+            port: { number: 443 }
+    - match:
+        - gateways: [kubeclaw-egressgateway]
+          port: {{ index $dest "port" }}
+          sniHosts: [{{ index $dest "host" }}]
+      route:
+        - destination:
+            host: {{ index $dest "host" }}
+            port: { number: {{ index $dest "port" }} }
+{{- end }}
+{{- end }}
