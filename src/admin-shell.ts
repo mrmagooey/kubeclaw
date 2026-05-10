@@ -19,12 +19,19 @@ import readline from 'readline';
 import OpenAI from 'openai';
 import * as k8s from '@kubernetes/client-node';
 
+import { execSync } from 'child_process';
 import { initDatabase } from './db.js';
 import * as db from './db.js';
 import { logger } from './logger.js';
 import { createLLMClient, DEFAULT_DIRECT_MODEL } from './runtime/llm-client.js';
 import { setupChannel } from './skills/orchestrator/channel-setup.js';
 import type { ChannelSetupInput } from './skills/orchestrator/types.js';
+import {
+  installCapability,
+  removeCapability,
+  listCapabilities,
+} from './capabilities/index.js';
+import { getCapabilityStatus } from './capabilities/db.js';
 
 // K8s clients (in-cluster config, auto-detected from service account)
 const kc = new k8s.KubeConfig();
@@ -241,6 +248,62 @@ export const TOOLS: OpenAI.ChatCompletionTool[] = [
       parameters: { type: 'object', properties: {}, required: [] },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'install_capability',
+      description:
+        'Install or update a long-lived capability pod. Spec is a JSON object with kind ("mcp" | "rag" | "http"), name, image, and kind-specific fields.',
+      parameters: {
+        type: 'object',
+        required: ['spec'],
+        properties: {
+          spec: {
+            type: 'object',
+            description: 'CapabilitySpec — see docs/SPEC.md',
+          },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'remove_capability',
+      description: 'Remove a capability pod and its persistent storage.',
+      parameters: {
+        type: 'object',
+        required: ['name'],
+        properties: {
+          name: { type: 'string' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_capabilities',
+      description:
+        'List all installed capabilities with their lifecycle status.',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_capability_logs',
+      description: 'Fetch the last N log lines from a capability pod.',
+      parameters: {
+        type: 'object',
+        required: ['name'],
+        properties: {
+          name: { type: 'string' },
+          lines: { type: 'number', default: 200 },
+        },
+      },
+    },
+  },
 ];
 
 // ---- Tool handlers ----
@@ -407,6 +470,48 @@ async function handleRestartOrchestrator(): Promise<string> {
   return 'Rolling restart triggered. The orchestrator will be back in ~30 seconds.';
 }
 
+// ---- Capability tool handlers ----
+
+async function handleInstallCapability(input: ToolInput): Promise<string> {
+  const spec = input.spec as Parameters<typeof installCapability>[0];
+  if (!spec || typeof spec !== 'object') {
+    return 'Error: spec is required (JSON object).';
+  }
+  await installCapability(spec);
+  return `Installed capability ${spec.name} (kind=${spec.kind}).`;
+}
+
+async function handleRemoveCapability(input: ToolInput): Promise<string> {
+  const name = input.name as string | undefined;
+  if (!name) return 'Error: name is required.';
+  await removeCapability(name);
+  return `Removed capability ${name}.`;
+}
+
+async function handleListCapabilities(): Promise<string> {
+  const all = listCapabilities().map((spec) => ({
+    spec,
+    status: getCapabilityStatus(spec.name),
+  }));
+  return JSON.stringify(all, null, 2);
+}
+
+async function handleGetCapabilityLogs(input: ToolInput): Promise<string> {
+  const name = input.name as string | undefined;
+  const lines = (input.lines as number | undefined) ?? 200;
+  if (!name) return 'Error: name is required.';
+  const dep = `kubeclaw-cap-${name}`;
+  try {
+    const out = execSync(
+      `kubectl logs deployment/${dep} -n kubeclaw --tail=${lines}`,
+      { encoding: 'utf8' },
+    );
+    return out;
+  } catch (err) {
+    return `Failed to fetch logs: ${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+
 export async function executeTool(
   name: string,
   input: ToolInput,
@@ -432,6 +537,14 @@ export async function executeTool(
       return handleGetOrchestratorStatus();
     case 'restart_orchestrator':
       return handleRestartOrchestrator();
+    case 'install_capability':
+      return handleInstallCapability(input);
+    case 'remove_capability':
+      return handleRemoveCapability(input);
+    case 'list_capabilities':
+      return handleListCapabilities();
+    case 'get_capability_logs':
+      return handleGetCapabilityLogs(input);
     default:
       return `Unknown tool: ${name}`;
   }
