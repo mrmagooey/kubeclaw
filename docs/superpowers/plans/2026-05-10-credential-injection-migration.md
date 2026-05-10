@@ -945,7 +945,7 @@ The Helm templates currently strip API key env vars under `{{- if eq $.Values.cr
 **Files:**
 - Modify: `helm/kubeclaw/templates/credential-broker.yaml`
 
-- [ ] **Step 8.1:** Add `BROKER_AUDIT_ONLY` to the broker Deployment's env list in `credential-broker.yaml`. After the existing `BROKER_CONFIG_PATH` entry:
+- [x] **Step 8.1:** Add `BROKER_AUDIT_ONLY` to the broker Deployment's env list in `credential-broker.yaml`. After the existing `BROKER_CONFIG_PATH` entry:
 
   ```yaml
   env:
@@ -957,7 +957,7 @@ The Helm templates currently strip API key env vars under `{{- if eq $.Values.cr
     - { name: BROKER_AUDIT_ONLY, value: {{ .Values.credentialInjection.auditOnly | quote }} }
   ```
 
-- [ ] **Step 8.2:** Render-test:
+- [x] **Step 8.2:** Render-test:
 
   ```bash
   helm template helm/kubeclaw \
@@ -977,7 +977,7 @@ The Helm templates currently strip API key env vars under `{{- if eq $.Values.cr
   #     value: "false"
   ```
 
-- [ ] **Step 8.3:** Commit.
+- [x] **Step 8.3:** Commit.
 
   ```
   git add helm/kubeclaw/templates/credential-broker.yaml
