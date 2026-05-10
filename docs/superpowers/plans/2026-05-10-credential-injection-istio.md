@@ -2336,7 +2336,7 @@ git commit -m "test(e2e): add Istio mode e2e test and GitHub Actions workflow"
 **Files:**
 - Modify: `docs/CREDENTIAL_INJECTION.md`
 
-- [ ] **Step 1: Add `mode=istio` section to the operator doc**
+- [x] **Step 1: Add `mode=istio` section to the operator doc**
 
 Open `docs/CREDENTIAL_INJECTION.md`. Append the following section after the existing `mode=sidecar` content:
 
@@ -2428,7 +2428,7 @@ Do not set `ambientMode: true` — it is accepted by the chart but has no effect
 | Broker shows `no credentials: both authorization and xfcc are absent` | Traffic not going through Istio proxy | Verify iptables redirection: `kubectl exec <pod> -c istio-proxy -- pilot-agent request GET /config_dump` |
 ```
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 git add docs/CREDENTIAL_INJECTION.md

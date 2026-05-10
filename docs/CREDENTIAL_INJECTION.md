@@ -287,6 +287,92 @@ helm upgrade kubeclaw helm/kubeclaw -n kubeclaw -f your-values.yaml --wait
 - The sidecar adds 2-5 seconds to pod cold start (Envoy bootstrap, projected token mount, initial broker handshake).
 - The orchestrator pod is excluded by design. It is the trusted tier; its credentials remain in environment variables.
 
+## mode=istio (Istio egress gateway)
+
+### When to use
+
+Choose `mode=istio` if your cluster already runs **Istio 1.24 LTS or later**.
+This mode replaces the per-pod Envoy sidecar from `mode=sidecar` with a single
+namespace-level egress gateway, which gives:
+
+- **Genuine iptables-enforced egress.** In `mode=sidecar`, the workload and the
+  Envoy sidecar share a network namespace. NetworkPolicy cannot distinguish
+  their traffic, so a workload process can theoretically open raw sockets.
+  In `mode=istio`, the Istio init container installs iptables rules inside the
+  workload's netns that force all egress through the mesh proxy. A workload
+  cannot bypass the proxy without root access to the netns.
+- **Fewer per-pod resources.** One gateway for the namespace instead of one
+  sidecar per pod.
+- **Istio observability integration.** Egress traffic shows up in Kiali,
+  Jaeger, and Prometheus dashboards automatically.
+
+### Prerequisites
+
+1. Istio installed: `istioctl install --set profile=minimal -y`
+2. Minimum Istio version: **1.24 LTS** (1.24.x recommended).
+3. `kubectl get crd virtualservices.networking.istio.io` must return a result.
+
+### Enabling
+
+```yaml
+credentialInjection:
+  mode: "istio"
+  istio:
+    gateway:
+      replicas: 2  # Set to 1 for dev, 2+ for production HA
+      resources:
+        requests: { cpu: 100m, memory: 128Mi }
+        limits:   { cpu: 500m, memory: 256Mi }
+    ambientMode: false   # Must remain false — see below
+    additionalDestinations: []  # Add extra hostnames if needed
+```
+
+After `helm upgrade`, verify:
+```bash
+kubectl -n kubeclaw get sidecar
+kubectl -n kubeclaw get serviceentry
+kubectl -n kubeclaw get gateway
+kubectl -n kubeclaw get virtualservice
+kubectl -n kubeclaw get envoyfilter
+```
+
+### How it works
+
+1. The kubeclaw namespace is labeled `istio-injection: enabled`.
+2. All workload pods receive an `istio-proxy` sidecar. The orchestrator is
+   excluded via `sidecar.istio.io/inject: "false"`.
+3. The `Sidecar` resource restricts namespace egress to in-namespace services
+   and ServiceEntry-declared upstreams.
+4. One `ServiceEntry` per external API (Anthropic, OpenAI, etc.) declares the
+   upstream to the Istio registry.
+5. The `VirtualService` routes matching traffic from mesh sidecars through the
+   `kubeclaw-istio-egressgateway` Deployment.
+6. The `EnvoyFilter` on the gateway calls the credential-broker via `ext_authz`
+   before forwarding. The broker reads the workload's SPIFFE identity from the
+   `x-forwarded-client-cert` header populated by Istio's mTLS.
+7. The broker returns an `Authorization` header; the gateway stamps it on the
+   upstream request.
+
+### Ambient mode
+
+**Ambient mode (ztunnel + waypoint proxy) is out of scope for this release.**
+Ambient's waypoint proxy supports header mutation via `EnvoyFilter`, but the
+API stabilised only in Istio 1.26+. A follow-up plan will cover ambient mode.
+Do not set `ambientMode: true` — it is accepted by the chart but has no effect.
+
+### Troubleshooting
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| `helm upgrade` fails: "credentialInjection.mode=istio requires Istio CRDs" | Istio not installed in cluster | Run `istioctl install --set profile=minimal -y` first |
+| Egress gateway pod in `CrashLoopBackOff` | istiod not available or CRDs not ready | Check `kubectl get pods -n istio-system`; wait for istiod |
+| Gateway 5xx responses | `EnvoyFilter` misconfigured or broker unreachable | Check `kubectl logs -n kubeclaw -l istio=kubeclaw-egressgateway`; verify `credential-broker` Service resolves |
+| Broker returns 401 for XFCC requests | XFCC header not forwarded by Istio | Verify Istio version >= 1.24; check `EnvoyFilter` `allowed_headers` includes `x-forwarded-client-cert` |
+| `Sidecar` resource hosts mismatch | ServiceEntry missing for a destination | Add host to `credentialInjection.istio.additionalDestinations` |
+| Missing `VirtualService` after upgrade | Helm render error (Istio CRDs absent at template time) | Run `helm template` and check for errors; ensure CRDs present |
+| Workload pod missing `istio-proxy` container | Namespace label not applied | Check `kubectl get namespace kubeclaw -o yaml`; re-run `helm upgrade` |
+| Broker shows `no credentials: both authorization and xfcc are absent` | Traffic not going through Istio proxy | Verify iptables redirection: `kubectl exec <pod> -c istio-proxy -- pilot-agent request GET /config_dump` |
+
 ## Cross-references
 
 - Implementation plan: `docs/superpowers/plans/2026-05-02-credential-injection.md`
