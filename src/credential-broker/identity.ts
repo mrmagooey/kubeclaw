@@ -1,3 +1,5 @@
+import { parseXfccSpiffeId } from './spiffe.js';
+
 export interface TokenReviewStatus {
   authenticated: boolean;
   user?: { username?: string };
@@ -13,14 +15,41 @@ export interface IdentityVerifierOpts {
     audiences: string[],
   ) => Promise<TokenReviewResponse>;
   audience: string;
+  /** When set, bearer-path tokens from other namespaces are rejected. */
   namespace?: string;
+}
+
+export interface VerifyInput {
+  /** Raw Authorization header value (bearer path). */
+  authorization?: string;
+  /** Raw x-forwarded-client-cert header value (SPIFFE/XFCC path). */
+  xfcc?: string;
 }
 
 export class IdentityVerifier {
   constructor(private readonly opts: IdentityVerifierOpts) {}
 
-  async verify(authorizationHeader: string | undefined): Promise<string> {
-    if (!authorizationHeader) throw new Error('missing Authorization header');
+  /**
+   * Verify caller identity and return it as "sa/<serviceAccountName>".
+   *
+   * Dispatch order:
+   *   1. If xfcc is present: parse SPIFFE URI from the XFCC header.
+   *   2. Else if authorization is present: call the TokenReview API.
+   *   3. Both absent: throw "no credentials".
+   */
+  async verify(input: VerifyInput): Promise<string> {
+    if (input.xfcc) {
+      return parseXfccSpiffeId(input.xfcc);
+    }
+
+    if (input.authorization) {
+      return this.verifyBearer(input.authorization);
+    }
+
+    throw new Error('no credentials: both authorization and xfcc are absent');
+  }
+
+  private async verifyBearer(authorizationHeader: string): Promise<string> {
     if (!authorizationHeader.startsWith('Bearer ')) {
       throw new Error('Authorization header must use Bearer scheme');
     }

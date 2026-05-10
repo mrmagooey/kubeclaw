@@ -1116,7 +1116,7 @@ git commit -m "feat(broker): add SPIFFE/XFCC parser for Istio identity path"
 
 Change the `verify()` signature to accept `{ authorization?: string; xfcc?: string }`. When `xfcc` is present, use the SPIFFE path. When absent, use the existing bearer TokenReview path. Both absent → throw. The namespace-mismatch check is not applicable to the SPIFFE path (the broker trusts Istio's mTLS; the SPIFFE URI's namespace is informational but the trust boundary is the mesh).
 
-- [ ] **Step 1: Write failing tests first**
+- [x] **Step 1: Write failing tests first**
 
 Append to `src/credential-broker/identity.test.ts` (the existing tests use the old `verify(string)` signature — update them first, then add XFCC cases):
 
@@ -1254,13 +1254,13 @@ describe('IdentityVerifier.verify — no credentials', () => {
 });
 ```
 
-- [ ] **Step 2: Run the tests to confirm they fail**
+- [x] **Step 2: Run the tests to confirm they fail**
 
 Run: `npm test -- src/credential-broker/identity.test.ts`
 
 Expected: compile error or runtime error — old `verify(string)` signature doesn't match new `verify({})` call shape.
 
-- [ ] **Step 3: Update `identity.ts`**
+- [x] **Step 3: Update `identity.ts`**
 
 Replace the contents of `src/credential-broker/identity.ts`:
 
@@ -1340,13 +1340,13 @@ export class IdentityVerifier {
 }
 ```
 
-- [ ] **Step 4: Run the tests to confirm they pass**
+- [x] **Step 4: Run the tests to confirm they pass**
 
 Run: `npm test -- src/credential-broker/identity.test.ts`
 
 Expected: all tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/credential-broker/identity.ts src/credential-broker/identity.test.ts
