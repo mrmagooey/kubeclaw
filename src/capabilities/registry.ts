@@ -97,9 +97,7 @@ export function getEntriesForChannel(
   channelName: string,
 ): CapabilityDiscoveryEntry[] {
   return getAllCapabilities()
-    .filter(
-      (c) => !c.channels?.length || c.channels.includes(channelName),
-    )
+    .filter((c) => !c.channels?.length || c.channels.includes(channelName))
     .map(specToDiscoveryEntry);
 }
 
@@ -122,14 +120,16 @@ export async function removeCapability(name: string): Promise<void> {
   await deleteSpec(spec);
   dbDelete(name);
   logger.info({ name }, 'Capability removed');
-  await notifyAllChannels();
+  await notifyAllChannels(spec.channels ?? []);
 }
 
 /**
  * Publish the per-channel capability set to each known channel pod's
  * control channel. Phase 4 retires the legacy `mcp_update` alias.
  */
-export async function notifyAllChannels(): Promise<void> {
+export async function notifyAllChannels(
+  extraChannels: string[] = [],
+): Promise<void> {
   const redis = getRedisClient();
   const all = getAllCapabilities();
 
@@ -137,7 +137,8 @@ export async function notifyAllChannels(): Promise<void> {
   // also broadcast to known channels for unrestricted entries.
   // Always include KNOWN_CHANNELS so that removals (leaving an empty list)
   // still reach all channel pods.
-  const targeted = new Set<string>(KNOWN_CHANNELS);
+  // extraChannels covers non-standard names whose spec was just removed.
+  const targeted = new Set<string>([...KNOWN_CHANNELS, ...extraChannels]);
   for (const spec of all) {
     if (spec.channels?.length) {
       for (const c of spec.channels) targeted.add(c);
@@ -152,6 +153,10 @@ export async function notifyAllChannels(): Promise<void> {
     });
     await redis.publish(getControlChannel(channelName), payload);
 
+    // The casts below are required because Array.filter doesn't narrow a
+    // discriminated union without a type predicate. This block is deleted
+    // in Phase 4 (Task 4.4), so we accept the cast rather than introduce a
+    // helper that will be removed.
     // Phase 4 deletes this MCP-only alias.
     const mcpEntries = entries.filter((e) => e.kind === 'mcp');
     if (mcpEntries.length > 0) {
