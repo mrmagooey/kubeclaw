@@ -1,7 +1,8 @@
 import type { CapabilitySpec } from '../types.js';
 import { buildMcpYaml } from './mcp.js';
 import { buildHttpYaml } from './http.js';
-// rag-qdrant and rag-lightrag added in Phase 3
+import { buildRagQdrantYaml } from './rag-qdrant.js';
+import { buildRagLightRagYaml } from './rag-lightrag.js';
 
 export function buildYaml(spec: CapabilitySpec): string {
   switch (spec.kind) {
@@ -10,9 +11,9 @@ export function buildYaml(spec: CapabilitySpec): string {
     case 'http':
       return buildHttpYaml(spec);
     case 'rag':
-      throw new Error(
-        `RAG builder not yet implemented (added in Phase 3): ${spec.name}`,
-      );
+      if (spec.backend === 'qdrant') return buildRagQdrantYaml(spec);
+      if (spec.backend === 'lightrag') return buildRagLightRagYaml(spec);
+      throw new Error(`Unknown RAG backend: ${(spec as { backend: string }).backend}`);
     default: {
       // Exhaustiveness check
       const _exhaustive: never = spec;
