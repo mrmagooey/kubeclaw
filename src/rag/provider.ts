@@ -7,6 +7,7 @@
  */
 
 import { logger } from '../logger.js';
+import { getRagEntry } from '../capabilities/client.js';
 
 export interface RagProvider {
   /** Human-readable name for logging */
@@ -145,27 +146,68 @@ let _provider: RagProvider | undefined;
  * Get the active RAG provider.
  *
  * Selection order:
- *   1. LIGHTRAG_URL env var → LightRagProvider
- *   2. QDRANT_URL env var  → QdrantRagProvider
- *   3. Neither             → NullRagProvider (no-op)
+ *   1. Capability registry (preferred) — consults getRagEntry() for the
+ *      current channel pod, then selects LightRagProvider or QdrantRagProvider
+ *      based on the backend field.
+ *   2. LIGHTRAG_URL env var → LightRagProvider  (deprecated; removed in Task 4.4)
+ *   3. QDRANT_URL env var  → QdrantRagProvider  (deprecated; removed in Task 4.4)
+ *   4. Neither             → NullRagProvider (no-op)
  */
 export function getRagProvider(): RagProvider {
   if (!_provider) {
+    // 1. Capability registry (preferred). Falls back to env vars if registry is empty.
+    try {
+      const channelName = process.env.CHANNEL_NAME ?? '*';
+      const entry = getRagEntry(channelName);
+      if (entry) {
+        if (entry.kindMetadata.backend === 'lightrag') {
+          _provider = new LightRagProvider(entry.endpoint);
+          logger.info(
+            { url: entry.endpoint, source: 'capability' },
+            'RAG provider: LightRAG',
+          );
+          return _provider;
+        }
+        if (entry.kindMetadata.backend === 'qdrant') {
+          // QdrantRagProvider reads QDRANT_URL internally; populate it from the
+          // capability endpoint so the existing indexer/retriever pipeline works.
+          process.env.QDRANT_URL = process.env.QDRANT_URL ?? entry.endpoint;
+          _provider = new QdrantRagProvider();
+          logger.info(
+            { url: entry.endpoint, source: 'capability' },
+            'RAG provider: Qdrant',
+          );
+          return _provider;
+        }
+      }
+    } catch (err) {
+      logger.debug(
+        { err },
+        'Capability lookup unavailable; falling back to env vars',
+      );
+    }
+
+    // 2. Env-var fallback (deprecated; removed in Task 4.4).
     const lightragUrl = process.env.LIGHTRAG_URL;
     const qdrantUrl = process.env.QDRANT_URL;
 
     if (lightragUrl) {
       _provider = new LightRagProvider(lightragUrl);
-      logger.info({ url: lightragUrl }, 'RAG provider: LightRAG');
+      logger.info({ url: lightragUrl, source: 'env' }, 'RAG provider: LightRAG');
     } else if (qdrantUrl && process.env.EMBEDDING_PROVIDER !== 'none') {
       _provider = new QdrantRagProvider();
-      logger.info({ url: qdrantUrl }, 'RAG provider: Qdrant');
+      logger.info({ url: qdrantUrl, source: 'env' }, 'RAG provider: Qdrant');
     } else {
       _provider = new NullRagProvider();
       logger.info('RAG provider: none (disabled)');
     }
   }
   return _provider;
+}
+
+/** Test-only: drop the cached provider so the next call re-selects. */
+export function __resetRagProviderForTest(): void {
+  _provider = undefined;
 }
 
 /**
