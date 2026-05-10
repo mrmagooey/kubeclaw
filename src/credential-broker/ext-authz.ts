@@ -29,6 +29,8 @@ export interface Deps {
 export interface AuthzRequest {
   authorization?: string;
   'x-forwarded-authority'?: string;
+  /** Populated by Istio mTLS for SPIFFE identity; absent in sidecar/bearer mode. */
+  'x-forwarded-client-cert'?: string;
 }
 
 export interface AuthzResponse {
@@ -51,7 +53,10 @@ export async function handleExtAuthz(
 
   let identity: string;
   try {
-    identity = await deps.identityVerifier.verify(req.authorization);
+    identity = await deps.identityVerifier.verify({
+        authorization: req.authorization,
+        xfcc: req['x-forwarded-client-cert'],
+      });
   } catch {
     deps.audit.record({ destination, status: 401, auditOnly: deps.auditOnly });
     deps.metrics?.recordAuthz({ status: 401, auditOnly: deps.auditOnly, durationMs: Date.now() - startMs });

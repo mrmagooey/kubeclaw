@@ -184,3 +184,57 @@ describe('audit-only mode', () => {
     expect(d.secretSource.read).toHaveBeenCalled();
   });
 });
+
+describe('handleExtAuthz — XFCC/SPIFFE path', () => {
+  const XFCC =
+    'By=spiffe://cluster.local/ns/istio-system/sa/kubeclaw-istio-egressgateway;' +
+    'Hash=abc123;Subject="";' +
+    'URI=spiffe://cluster.local/ns/kubeclaw/sa/kubeclaw-tool-job';
+
+  it('200 when valid XFCC supplied instead of bearer', async () => {
+    const d = deps();
+    const res = await handleExtAuthz(
+      {
+        'x-forwarded-client-cert': XFCC,
+        'x-forwarded-authority': 'api.anthropic.com',
+      },
+      d,
+    );
+    expect(res.status).toBe(200);
+    expect(d.identityVerifier.verify).toHaveBeenCalledWith({
+      authorization: undefined,
+      xfcc: XFCC,
+    });
+  });
+
+  it('401 when XFCC is malformed (verifier rejects)', async () => {
+    const d = deps();
+    (d.identityVerifier.verify as any) = vi
+      .fn()
+      .mockRejectedValue(new Error('malformed SPIFFE URI'));
+    const res = await handleExtAuthz(
+      {
+        'x-forwarded-client-cert': 'bad-xfcc-value',
+        'x-forwarded-authority': 'api.anthropic.com',
+      },
+      d,
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it('passes both XFCC and authorization to verifier when both present', async () => {
+    const d = deps();
+    await handleExtAuthz(
+      {
+        authorization: 'Bearer some-token',
+        'x-forwarded-client-cert': XFCC,
+        'x-forwarded-authority': 'api.anthropic.com',
+      },
+      d,
+    );
+    expect(d.identityVerifier.verify).toHaveBeenCalledWith({
+      authorization: 'Bearer some-token',
+      xfcc: XFCC,
+    });
+  });
+});

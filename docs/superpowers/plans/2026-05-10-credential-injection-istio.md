@@ -1361,7 +1361,7 @@ git commit -m "feat(broker): extend IdentityVerifier to dispatch on XFCC (SPIFFE
 - Modify: `src/credential-broker/ext-authz.ts`
 - Modify: `src/credential-broker/ext-authz.test.ts`
 
-- [ ] **Step 1: Update the `AuthzRequest` type and `handleExtAuthz` to pass XFCC**
+- [x] **Step 1: Update the `AuthzRequest` type and `handleExtAuthz` to pass XFCC**
 
 Replace the contents of `src/credential-broker/ext-authz.ts`:
 
@@ -1448,7 +1448,7 @@ export async function handleExtAuthz(
 }
 ```
 
-- [ ] **Step 2: Update `ext-authz.test.ts` to cover XFCC path**
+- [x] **Step 2: Update `ext-authz.test.ts` to cover XFCC path**
 
 Read the existing ext-authz tests and append XFCC-specific cases. Replace the file with the full updated version:
 
@@ -1591,13 +1591,13 @@ describe('handleExtAuthz — XFCC/SPIFFE path', () => {
 });
 ```
 
-- [ ] **Step 3: Run tests**
+- [x] **Step 3: Run tests**
 
 Run: `npm test -- src/credential-broker/ext-authz.test.ts`
 
 Expected: all tests pass.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add src/credential-broker/ext-authz.ts src/credential-broker/ext-authz.test.ts
