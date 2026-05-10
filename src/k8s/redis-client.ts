@@ -153,10 +153,6 @@ export function getChannelStatusChannel(channelName: string): string {
   return `kubeclaw:channel-status:${channelName}`;
 }
 
-export function getCapabilityRegisterStream(): string {
-  return 'kubeclaw:capability:register';
-}
-
 export function getDiscoveryRequestStream(): string {
   return 'kubeclaw:discovery:request';
 }
