@@ -9,7 +9,7 @@ import {
   getCapabilityStatus,
 } from './db.js';
 import type { CapabilitySpec } from './types.js';
-import { _initTestDatabase, __resetDbForTest } from '../db.js';
+import { _initTestDatabase, __resetDbForTest, db } from '../db.js';
 
 const mcpSpec: CapabilitySpec = {
   kind: 'mcp',
@@ -76,5 +76,44 @@ describe('capabilities/db', () => {
       lastProbeAt: '2026-05-10T12:00:00Z',
       lastError: null,
     });
+  });
+
+  it('preserves created_at on upsert', () => {
+    setCapability(mcpSpec);
+    // Read raw created_at via db.exec — there's no public accessor
+    const initial = db.exec(
+      `SELECT created_at FROM capabilities WHERE name = ?`,
+      ['weather'],
+    );
+    const initialCreatedAt = initial[0].values[0][0] as string;
+
+    // Wait a tick so a buggy implementation (that overwrote created_at)
+    // would produce a different timestamp.
+    const before = Date.now();
+    while (Date.now() - before < 5) {
+      // busy-wait: sql.js Date.now resolution is ms, 5ms is enough
+    }
+
+    setCapability({ ...mcpSpec, image: 'mcp/weather:2.0' });
+    const after = db.exec(
+      `SELECT created_at, updated_at FROM capabilities WHERE name = ?`,
+      ['weather'],
+    );
+    const afterCreatedAt = after[0].values[0][0] as string;
+    const afterUpdatedAt = after[0].values[0][1] as string;
+
+    expect(afterCreatedAt).toBe(initialCreatedAt);
+    expect(afterUpdatedAt).not.toBe(initialCreatedAt);
+  });
+
+  it('updateCapabilityStatus is a silent no-op on missing row', () => {
+    expect(() =>
+      updateCapabilityStatus('does-not-exist', {
+        lifecycle: 'ready',
+        lastProbeAt: '2026-05-10T12:00:00Z',
+        lastError: null,
+      }),
+    ).not.toThrow();
+    expect(getCapabilityStatus('does-not-exist')).toBeUndefined();
   });
 });

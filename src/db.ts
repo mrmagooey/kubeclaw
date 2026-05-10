@@ -25,6 +25,7 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+/** @internal Test/integration use only — do not import from feature modules. Use the curated CRUD functions in this file or in src/capabilities/db.ts. */
 export let db: SqlJsDatabase;
 let dbPath: string;
 
@@ -213,6 +214,7 @@ function createSchema(database: SqlJsDatabase): void {
   }
 }
 
+/** @internal Test/integration use only. */
 export function saveDatabase(): void {
   const data = db.export();
   const buffer = Buffer.from(data);
@@ -268,15 +270,17 @@ export async function _initTestDatabase(): Promise<void> {
 }
 
 /**
- * Test-only: reset the in-memory database. Drops and recreates all tables.
+ * Test-only: clears every user table so each test starts clean.
+ * @internal
  */
 export function __resetDbForTest(): void {
-  for (const t of ['capabilities', 'mcp_servers']) {
-    try {
-      db.run(`DELETE FROM ${t}`);
-    } catch {
-      // table may not exist yet
-    }
+  const tables = db.exec(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'`,
+  );
+  if (tables.length === 0) return;
+  for (const row of tables[0].values) {
+    const name = row[0] as string;
+    db.run(`DELETE FROM ${name}`);
   }
   saveDatabase();
 }
