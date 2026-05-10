@@ -1613,7 +1613,7 @@ git commit -m "feat(broker): thread x-forwarded-client-cert through ext-authz ha
 
 The HTTP server must read the `x-forwarded-client-cert` header from the incoming request and pass it to `handleExtAuthz`.
 
-- [ ] **Step 1: Update the `createServer` handler in `index.ts`**
+- [x] **Step 1: Update the `createServer` handler in `index.ts`**
 
 Open `src/credential-broker/index.ts`. Find the `http.createServer` handler:
 
@@ -1646,13 +1646,13 @@ Replace with:
     )
 ```
 
-- [ ] **Step 2: Run the full broker test suite**
+- [x] **Step 2: Run the full broker test suite**
 
 Run: `npm test -- src/credential-broker/`
 
 Expected: all broker tests pass (identity, ext-authz, spiffe, resolver, config).
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add src/credential-broker/index.ts

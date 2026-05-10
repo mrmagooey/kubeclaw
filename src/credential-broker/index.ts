@@ -114,6 +114,9 @@ export async function startBroker(): Promise<http.Server> {
         'x-forwarded-authority': req.headers['x-forwarded-authority'] as
           | string
           | undefined,
+        'x-forwarded-client-cert': req.headers['x-forwarded-client-cert'] as
+          | string
+          | undefined,
       },
       { resolver, identityVerifier, secretSource, audit, auditOnly: AUDIT_ONLY, metrics },
     )
