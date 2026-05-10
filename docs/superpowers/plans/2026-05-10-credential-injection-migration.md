@@ -151,7 +151,7 @@ The master plan (`docs/superpowers/plans/2026-05-02-credential-injection.md` lin
 - Modify: `src/config.ts`
 - Test: `src/credential-injection/mode.test.ts` (create if absent, otherwise extend)
 
-- [ ] **Step 2.1:** Create `src/credential-injection/mode.test.ts` with failing tests for `getAuditOnly`:
+- [x] **Step 2.1:** Create `src/credential-injection/mode.test.ts` with failing tests for `getAuditOnly`:
 
   ```typescript
   import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -190,7 +190,7 @@ The master plan (`docs/superpowers/plans/2026-05-02-credential-injection.md` lin
   });
   ```
 
-- [ ] **Step 2.2:** Run the tests to confirm they fail (function not exported yet):
+- [x] **Step 2.2:** Run the tests to confirm they fail (function not exported yet):
 
   ```
   npx vitest run src/credential-injection/mode.test.ts
@@ -198,7 +198,7 @@ The master plan (`docs/superpowers/plans/2026-05-02-credential-injection.md` lin
 
   Expected: 4 failures — `getAuditOnly is not a function` or similar import error.
 
-- [ ] **Step 2.3:** Add `getAuditOnly` to `src/credential-injection/mode.ts`:
+- [x] **Step 2.3:** Add `getAuditOnly` to `src/credential-injection/mode.ts`:
 
   ```typescript
   export type InjectionMode = 'off' | 'sidecar' | 'istio';
@@ -229,7 +229,7 @@ The master plan (`docs/superpowers/plans/2026-05-02-credential-injection.md` lin
   }
   ```
 
-- [ ] **Step 2.4:** Run the tests again to confirm they pass:
+- [x] **Step 2.4:** Run the tests again to confirm they pass:
 
   ```
   npx vitest run src/credential-injection/mode.test.ts
@@ -237,7 +237,7 @@ The master plan (`docs/superpowers/plans/2026-05-02-credential-injection.md` lin
 
   Expected: 4 passing.
 
-- [ ] **Step 2.5:** Add `getAuditOnly` to the re-export block at the bottom of `src/config.ts`:
+- [x] **Step 2.5:** Add `getAuditOnly` to the re-export block at the bottom of `src/config.ts`:
 
   ```typescript
   export {
@@ -247,7 +247,7 @@ The master plan (`docs/superpowers/plans/2026-05-02-credential-injection.md` lin
   } from './credential-injection/mode.js';
   ```
 
-- [ ] **Step 2.6:** Commit.
+- [x] **Step 2.6:** Commit.
 
   ```
   git add src/credential-injection/mode.ts src/credential-injection/mode.test.ts src/config.ts

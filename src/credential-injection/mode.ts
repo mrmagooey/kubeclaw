@@ -15,3 +15,12 @@ export function getInjectionMode(): InjectionMode {
   }
   return raw;
 }
+
+/**
+ * Returns true when CREDENTIAL_INJECTION_AUDIT_ONLY=true.
+ * Any other value (including unset, "false", "1") returns false.
+ * Parsed at call-time so tests can override process.env.
+ */
+export function getAuditOnly(): boolean {
+  return process.env.CREDENTIAL_INJECTION_AUDIT_ONLY === 'true';
+}
