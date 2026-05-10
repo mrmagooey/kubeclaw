@@ -1845,7 +1845,7 @@ git commit -m "feat(helm): add NetworkPolicies for mode=istio (egress gateway on
 **Files:**
 - Modify: `e2e/helm-chart.test.ts`
 
-- [ ] **Step 1: Add mode=istio render checks**
+- [x] **Step 1: Add mode=istio render checks**
 
 Open `e2e/helm-chart.test.ts`. Locate the existing render-all-modes section. Add an `istio` render test alongside `off` and `sidecar`:
 
@@ -1962,13 +1962,13 @@ describe('helm template — mode=off (no regression)', () => {
 });
 ```
 
-- [ ] **Step 2: Run the helm chart tests**
+- [x] **Step 2: Run the helm chart tests**
 
 Run: `npm test -- e2e/helm-chart.test.ts`
 
 Expected: all render tests pass for all three modes.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add e2e/helm-chart.test.ts
