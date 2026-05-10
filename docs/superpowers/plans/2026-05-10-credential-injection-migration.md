@@ -492,7 +492,7 @@ The four audit-only cases from the pre-decisions:
 | C | true | yes | fail | skipped | 401 | auditOnly:true (identity not stamped) |
 | D | false | yes | OK | OK | 200, Authorization header set | auditOnly:false, wouldStamp:true |
 
-- [ ] **Step 5.1:** Add four new `describe('audit-only mode')` tests to `src/credential-broker/ext-authz.test.ts`. Add after the existing describe block:
+- [x] **Step 5.1:** Add four new `describe('audit-only mode')` tests to `src/credential-broker/ext-authz.test.ts`. Add after the existing describe block:
 
   ```typescript
   describe('audit-only mode', () => {
@@ -594,7 +594,7 @@ The four audit-only cases from the pre-decisions:
   });
   ```
 
-- [ ] **Step 5.2:** Run the new tests to confirm they fail (audit-only branch not yet implemented):
+- [x] **Step 5.2:** Run the new tests to confirm they fail (audit-only branch not yet implemented):
 
   ```
   npx vitest run src/credential-broker/ext-authz.test.ts
@@ -602,7 +602,7 @@ The four audit-only cases from the pre-decisions:
 
   Expected: 4 new failures (case A fails because `authorization` header is present and secret is read; case B may pass by coincidence; cases C and D may pass — confirm case A and the `secretReadSkipped` assertion are definitely failing).
 
-- [ ] **Step 5.3:** Implement the audit-only branch in `handleExtAuthz` in `src/credential-broker/ext-authz.ts`. Insert the branch after identity verification and before the existing mapping-not-found block:
+- [x] **Step 5.3:** Implement the audit-only branch in `handleExtAuthz` in `src/credential-broker/ext-authz.ts`. Insert the branch after identity verification and before the existing mapping-not-found block:
 
   ```typescript
   export async function handleExtAuthz(
@@ -686,7 +686,7 @@ The four audit-only cases from the pre-decisions:
   }
   ```
 
-- [ ] **Step 5.4:** Run the full broker test suite to confirm all 9 tests pass:
+- [x] **Step 5.4:** Run the full broker test suite to confirm all 9 tests pass:
 
   ```
   npx vitest run src/credential-broker/ext-authz.test.ts
@@ -694,7 +694,7 @@ The four audit-only cases from the pre-decisions:
 
   Expected: 9 passing (5 original + 4 new).
 
-- [ ] **Step 5.5:** Commit.
+- [x] **Step 5.5:** Commit.
 
   ```
   git add src/credential-broker/ext-authz.ts src/credential-broker/ext-authz.test.ts

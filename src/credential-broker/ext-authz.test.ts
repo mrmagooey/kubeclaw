@@ -86,3 +86,101 @@ describe('handleExtAuthz', () => {
     );
   });
 });
+
+describe('audit-only mode', () => {
+  const auditDeps = (): Deps => ({
+    resolver: new Resolver([
+      {
+        id: 'anthropic',
+        destinations: ['api.anthropic.com'],
+        identities: ['*'],
+        credentialRef: {
+          kind: 'Secret',
+          name: 'kubeclaw-secrets',
+          key: 'anthropic-api-key',
+        },
+        headerScheme: 'bearer',
+      },
+    ]),
+    identityVerifier: {
+      verify: vi.fn().mockResolvedValue('sa/kubeclaw-tool-job'),
+    } as any,
+    secretSource: { read: vi.fn().mockResolvedValue('sk-ant-xxx') } as any,
+    audit: { record: vi.fn() } as any,
+    auditOnly: true,
+  });
+
+  it('case A: mapping found → 200 with NO authorization header, secretReadSkipped logged', async () => {
+    const d = auditDeps();
+    const res = await handleExtAuthz(
+      {
+        authorization: 'Bearer fake-sa-token',
+        'x-forwarded-authority': 'api.anthropic.com',
+      },
+      d,
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers['authorization']).toBeUndefined();
+    expect(d.secretSource.read).not.toHaveBeenCalled();
+    expect(d.audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: 200,
+        auditOnly: true,
+        wouldStamp: true,
+        secretReadSkipped: true,
+      }),
+    );
+  });
+
+  it('case B: mapping not found → 403, wouldStamp: false', async () => {
+    const d = auditDeps();
+    const res = await handleExtAuthz(
+      {
+        authorization: 'Bearer fake-sa-token',
+        'x-forwarded-authority': 'evil.example.com',
+      },
+      d,
+    );
+    expect(res.status).toBe(403);
+    expect(d.audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: 403,
+        auditOnly: true,
+        wouldStamp: false,
+      }),
+    );
+  });
+
+  it('case C: identity verification fails → 401 even in audit-only', async () => {
+    const d = auditDeps();
+    (d.identityVerifier.verify as any) = vi
+      .fn()
+      .mockRejectedValue(new Error('bad token'));
+    const res = await handleExtAuthz(
+      {
+        authorization: 'Bearer bad-token',
+        'x-forwarded-authority': 'api.anthropic.com',
+      },
+      d,
+    );
+    expect(res.status).toBe(401);
+    expect(d.audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 401, auditOnly: true }),
+    );
+  });
+
+  it('case D: auditOnly=false still stamps the Authorization header normally', async () => {
+    const d = auditDeps();
+    d.auditOnly = false;
+    const res = await handleExtAuthz(
+      {
+        authorization: 'Bearer fake-sa-token',
+        'x-forwarded-authority': 'api.anthropic.com',
+      },
+      d,
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers['authorization']).toBe('Bearer sk-ant-xxx');
+    expect(d.secretSource.read).toHaveBeenCalled();
+  });
+});

@@ -53,8 +53,36 @@ export async function handleExtAuthz(
   }
 
   const mapping = deps.resolver.find({ destination, identity });
+
+  // Audit-only branch: broker is in the path but does not strip env vars or stamp
+  // the Authorization header. Logs what would have happened.
+  if (deps.auditOnly) {
+    if (!mapping) {
+      deps.audit.record({
+        identity,
+        destination,
+        status: 403,
+        auditOnly: true,
+        wouldStamp: false,
+      });
+      return { status: 403, headers: {} };
+    }
+    // Mapping found: would have stamped. Skip secret read entirely.
+    deps.audit.record({
+      identity,
+      destination,
+      mappingId: mapping.id,
+      status: 200,
+      auditOnly: true,
+      wouldStamp: true,
+      secretReadSkipped: true,
+    });
+    return { status: 200, headers: {} };
+  }
+
+  // Enforcement path (auditOnly=false).
   if (!mapping) {
-    deps.audit.record({ identity, destination, status: 403, auditOnly: deps.auditOnly, wouldStamp: false });
+    deps.audit.record({ identity, destination, status: 403, auditOnly: false, wouldStamp: false });
     return { status: 403, headers: {} };
   }
 
@@ -67,7 +95,7 @@ export async function handleExtAuthz(
       destination,
       mappingId: mapping.id,
       status: 503,
-      auditOnly: deps.auditOnly,
+      auditOnly: false,
     });
     return { status: 503, headers: {} };
   }
@@ -80,7 +108,7 @@ export async function handleExtAuthz(
     destination,
     mappingId: mapping.id,
     status: 200,
-    auditOnly: deps.auditOnly,
+    auditOnly: false,
     wouldStamp: true,
   });
   return { status: 200, headers: { authorization: headerValue } };
