@@ -2,13 +2,18 @@ import type { Resolver } from './resolver.js';
 import type { IdentityVerifier } from './identity.js';
 import type { K8sSecretSource } from './k8s-secret-source.js';
 
+export interface AuditEvent {
+  identity?: string;
+  destination: string;
+  mappingId?: string;
+  status: number;
+  auditOnly?: boolean;
+  wouldStamp?: boolean;
+  secretReadSkipped?: boolean;
+}
+
 export interface Audit {
-  record(event: {
-    identity?: string;
-    destination: string;
-    mappingId?: string;
-    status: number;
-  }): void;
+  record(event: AuditEvent): void;
 }
 
 export interface Deps {
@@ -16,6 +21,7 @@ export interface Deps {
   identityVerifier: IdentityVerifier;
   secretSource: K8sSecretSource;
   audit: Audit;
+  auditOnly: boolean;
 }
 
 export interface AuthzRequest {
@@ -34,7 +40,7 @@ export async function handleExtAuthz(
 ): Promise<AuthzResponse> {
   const destination = req['x-forwarded-authority'];
   if (!destination) {
-    deps.audit.record({ destination: '<missing>', status: 400 });
+    deps.audit.record({ destination: '<missing>', status: 400, auditOnly: deps.auditOnly });
     return { status: 400, headers: {} };
   }
 
@@ -42,13 +48,13 @@ export async function handleExtAuthz(
   try {
     identity = await deps.identityVerifier.verify(req.authorization);
   } catch {
-    deps.audit.record({ destination, status: 401 });
+    deps.audit.record({ destination, status: 401, auditOnly: deps.auditOnly });
     return { status: 401, headers: {} };
   }
 
   const mapping = deps.resolver.find({ destination, identity });
   if (!mapping) {
-    deps.audit.record({ identity, destination, status: 403 });
+    deps.audit.record({ identity, destination, status: 403, auditOnly: deps.auditOnly, wouldStamp: false });
     return { status: 403, headers: {} };
   }
 
@@ -61,6 +67,7 @@ export async function handleExtAuthz(
       destination,
       mappingId: mapping.id,
       status: 503,
+      auditOnly: deps.auditOnly,
     });
     return { status: 503, headers: {} };
   }
@@ -73,6 +80,8 @@ export async function handleExtAuthz(
     destination,
     mappingId: mapping.id,
     status: 200,
+    auditOnly: deps.auditOnly,
+    wouldStamp: true,
   });
   return { status: 200, headers: { authorization: headerValue } };
 }

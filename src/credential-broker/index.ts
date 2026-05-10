@@ -21,6 +21,7 @@ const PORT = parseInt(process.env.BROKER_PORT ?? '8080', 10);
 const NAMESPACE = process.env.BROKER_NAMESPACE ?? 'kubeclaw';
 const AUDIENCE = process.env.BROKER_AUDIENCE ?? 'kubeclaw-credential-broker';
 const SECRET_TTL_MS = parseInt(process.env.BROKER_SECRET_TTL_MS ?? '60000', 10);
+const AUDIT_ONLY = process.env.BROKER_AUDIT_ONLY === 'true';
 
 function loadConfigOrThrow(path: string) {
   let text: string;
@@ -45,6 +46,10 @@ function loadConfigOrThrow(path: string) {
 export async function startBroker(): Promise<http.Server> {
   const config = loadConfigOrThrow(CONFIG_PATH);
   let resolver = new Resolver(config.mappings);
+  logger.info(
+    { auditOnly: AUDIT_ONLY, port: PORT, configPath: CONFIG_PATH },
+    'credential broker starting',
+  );
 
   fs.watchFile(CONFIG_PATH, { interval: 5000 }, () => {
     try {
@@ -103,7 +108,7 @@ export async function startBroker(): Promise<http.Server> {
           | string
           | undefined,
       },
-      { resolver, identityVerifier, secretSource, audit },
+      { resolver, identityVerifier, secretSource, audit, auditOnly: AUDIT_ONLY },
     )
       .then((out) => {
         for (const [k, v] of Object.entries(out.headers)) res.setHeader(k, v);

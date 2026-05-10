@@ -261,7 +261,7 @@ The master plan (`docs/superpowers/plans/2026-05-02-credential-injection.md` lin
 **Files:**
 - Modify: `src/credential-broker/index.ts`
 
-- [ ] **Step 3.1:** Add `BROKER_AUDIT_ONLY` parsing near the other `BROKER_*` constants at the top of `src/credential-broker/index.ts`. The full updated constants block:
+- [x] **Step 3.1:** Add `BROKER_AUDIT_ONLY` parsing near the other `BROKER_*` constants at the top of `src/credential-broker/index.ts`. The full updated constants block:
 
   ```typescript
   const CONFIG_PATH =
@@ -273,7 +273,7 @@ The master plan (`docs/superpowers/plans/2026-05-02-credential-injection.md` lin
   const AUDIT_ONLY = process.env.BROKER_AUDIT_ONLY === 'true';
   ```
 
-- [ ] **Step 3.2:** In `startBroker()`, add a boot-time log entry after the resolver is created (after `let resolver = new Resolver(config.mappings);`):
+- [x] **Step 3.2:** In `startBroker()`, add a boot-time log entry after the resolver is created (after `let resolver = new Resolver(config.mappings);`):
 
   ```typescript
   logger.info(
@@ -282,7 +282,7 @@ The master plan (`docs/superpowers/plans/2026-05-02-credential-injection.md` lin
   );
   ```
 
-- [ ] **Step 3.3:** Thread `auditOnly` into the `handleExtAuthz` call in the HTTP server handler. The full updated call site in the `http.createServer` callback:
+- [x] **Step 3.3:** Thread `auditOnly` into the `handleExtAuthz` call in the HTTP server handler. The full updated call site in the `http.createServer` callback:
 
   ```typescript
   handleExtAuthz(
@@ -298,7 +298,7 @@ The master plan (`docs/superpowers/plans/2026-05-02-credential-injection.md` lin
 
   (The `Deps` interface will be updated in Task 4 to include `auditOnly`.)
 
-- [ ] **Step 3.4:** Build to confirm no TypeScript errors yet (the `auditOnly` field will be added to `Deps` in Task 4 — at this point we expect a type error, which is fine since Tasks 3 and 4 will be committed together):
+- [x] **Step 3.4:** Build to confirm no TypeScript errors yet (the `auditOnly` field will be added to `Deps` in Task 4 — at this point we expect a type error, which is fine since Tasks 3 and 4 will be committed together):
 
   ```
   npx tsc --noEmit
@@ -315,7 +315,7 @@ The master plan (`docs/superpowers/plans/2026-05-02-credential-injection.md` lin
 - Modify: `src/credential-broker/audit.ts`
 - Test: confirm `ext-authz.test.ts` still passes after interface updates
 
-- [ ] **Step 4.1:** Update the `Audit` interface and `Deps` in `src/credential-broker/ext-authz.ts` to include `auditOnly` on the event and on deps:
+- [x] **Step 4.1:** Update the `Audit` interface and `Deps` in `src/credential-broker/ext-authz.ts` to include `auditOnly` on the event and on deps:
 
   ```typescript
   import type { Resolver } from './resolver.js';
@@ -355,7 +355,7 @@ The master plan (`docs/superpowers/plans/2026-05-02-credential-injection.md` lin
   }
   ```
 
-- [ ] **Step 4.2:** Update all existing `deps.audit.record` call sites in `handleExtAuthz` to pass `auditOnly: false` (preserving current behavior for the non-audit path). The full updated function body for the existing path only (audit-only branch is added in Task 5):
+- [x] **Step 4.2:** Update all existing `deps.audit.record` call sites in `handleExtAuthz` to pass `auditOnly: false` (preserving current behavior for the non-audit path). The full updated function body for the existing path only (audit-only branch is added in Task 5):
 
   ```typescript
   export async function handleExtAuthz(
@@ -413,7 +413,7 @@ The master plan (`docs/superpowers/plans/2026-05-02-credential-injection.md` lin
 
   Note: this step only updates the existing non-audit-only path. The audit-only branch is added in Task 5. For now `deps.auditOnly` is threaded but not used to alter behavior yet.
 
-- [ ] **Step 4.3:** Update `PinoAudit.record` in `src/credential-broker/audit.ts` to accept the extended event type:
+- [x] **Step 4.3:** Update `PinoAudit.record` in `src/credential-broker/audit.ts` to accept the extended event type:
 
   ```typescript
   import { logger } from '../logger.js';
@@ -429,7 +429,7 @@ The master plan (`docs/superpowers/plans/2026-05-02-credential-injection.md` lin
   }
   ```
 
-- [ ] **Step 4.4:** Update the `deps()` factory in `src/credential-broker/ext-authz.test.ts` to supply `auditOnly: false` so existing tests continue to compile and pass:
+- [x] **Step 4.4:** Update the `deps()` factory in `src/credential-broker/ext-authz.test.ts` to supply `auditOnly: false` so existing tests continue to compile and pass:
 
   ```typescript
   const deps = (): Deps => ({
@@ -455,7 +455,7 @@ The master plan (`docs/superpowers/plans/2026-05-02-credential-injection.md` lin
   });
   ```
 
-- [ ] **Step 4.5:** Run existing tests to confirm no regressions:
+- [x] **Step 4.5:** Run existing tests to confirm no regressions:
 
   ```
   npx vitest run src/credential-broker/ext-authz.test.ts
@@ -463,11 +463,11 @@ The master plan (`docs/superpowers/plans/2026-05-02-credential-injection.md` lin
 
   Expected: 5 passing (all original tests).
 
-- [ ] **Step 4.6:** Run `npx tsc --noEmit` to confirm the Task 3 type error is now resolved.
+- [x] **Step 4.6:** Run `npx tsc --noEmit` to confirm the Task 3 type error is now resolved.
 
   Expected: zero errors.
 
-- [ ] **Step 4.7:** Commit Tasks 3 and 4 together.
+- [x] **Step 4.7:** Commit Tasks 3 and 4 together.
 
   ```
   git add src/credential-broker/ext-authz.ts src/credential-broker/audit.ts \

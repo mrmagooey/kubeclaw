@@ -1,12 +1,8 @@
 import { logger } from '../logger.js';
+import type { AuditEvent } from './ext-authz.js';
 
 export class PinoAudit {
-  record(event: {
-    identity?: string;
-    destination: string;
-    mappingId?: string;
-    status: number;
-  }): void {
+  record(event: AuditEvent): void {
     logger.info(
       { kind: 'credential-broker.authz', ...event },
       'authz decision',

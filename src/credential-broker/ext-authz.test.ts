@@ -21,6 +21,7 @@ const deps = (): Deps => ({
   } as any,
   secretSource: { read: vi.fn().mockResolvedValue('sk-ant-xxx') } as any,
   audit: { record: vi.fn() } as any,
+  auditOnly: false,
 });
 
 describe('handleExtAuthz', () => {
