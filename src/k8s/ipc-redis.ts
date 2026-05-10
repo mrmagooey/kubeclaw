@@ -1283,7 +1283,8 @@ export async function startTaskRequestWatcher(): Promise<void> {
  */
 export interface ControlMessage {
   command: string;
-  servers?: string; // JSON-encoded McpServerStatus[] for mcp_update
+  /** JSON-encoded CapabilityDiscoveryEntry[] for capabilities_update */
+  capabilities?: string;
   /** Channel type for configure command (e.g. telegram, discord) */
   channelType?: string;
   /** Skill document content for channel self-configuration */

@@ -13,9 +13,6 @@ import { getRagEntry } from '../capabilities/client.js';
 beforeEach(() => {
   __resetRagProviderForTest();
   vi.mocked(getRagEntry).mockReset();
-  delete process.env.LIGHTRAG_URL;
-  delete process.env.QDRANT_URL;
-  delete process.env.EMBEDDING_PROVIDER;
   delete process.env.CHANNEL_NAME;
 });
 
@@ -39,19 +36,6 @@ describe('getRagProvider', () => {
     } as never);
     expect(getRagProvider().name).toBe('qdrant');
     expect(process.env.QDRANT_URL).toBe('http://q');
-  });
-
-  it('falls back to env LIGHTRAG_URL when capability registry has nothing', () => {
-    vi.mocked(getRagEntry).mockReturnValue(undefined);
-    process.env.LIGHTRAG_URL = 'http://env-lr';
-    expect(getRagProvider().name).toBe('lightrag');
-  });
-
-  it('falls back to env QDRANT_URL', () => {
-    vi.mocked(getRagEntry).mockReturnValue(undefined);
-    process.env.QDRANT_URL = 'http://env-q';
-    process.env.EMBEDDING_PROVIDER = 'openai';
-    expect(getRagProvider().name).toBe('qdrant');
   });
 
   it('returns NullRagProvider when nothing configured', () => {

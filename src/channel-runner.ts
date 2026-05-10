@@ -732,13 +732,31 @@ async function main(): Promise<void> {
       await connectWithRetry(newChannel);
       channels.push(newChannel);
       logger.info('Channel reloaded successfully');
-    } else if (msg.command === 'mcp_update') {
+    } else if (msg.command === 'capabilities_update') {
       try {
-        const servers = JSON.parse(msg.servers || '[]');
-        await getDirectLLMRunner().configureMcp(servers);
-        logger.info({ count: servers.length }, 'MCP servers reconfigured');
+        const capabilities = JSON.parse(msg.capabilities || '[]') as Array<{
+          name: string;
+          kind: string;
+          endpoint: string;
+          kindMetadata: { path?: string; allowedTools?: string[]; backend?: string };
+        }>;
+        const mcpServers = capabilities
+          .filter((c) => c.kind === 'mcp')
+          .map((c) => ({
+            name: c.name,
+            url: `${c.endpoint}${c.kindMetadata.path ?? '/mcp'}`,
+            allowedTools: c.kindMetadata.allowedTools,
+          }));
+        await getDirectLLMRunner().configureMcp(mcpServers);
+        logger.info(
+          { count: mcpServers.length },
+          'MCP servers reconfigured from capabilities_update',
+        );
       } catch (err) {
-        logger.error({ err }, 'Failed to reconfigure MCP servers');
+        logger.error(
+          { err },
+          'Failed to reconfigure MCP servers from capabilities_update',
+        );
       }
     } else if (msg.command === 'configure') {
       await handleConfigure(msg, channelOpts, channels);

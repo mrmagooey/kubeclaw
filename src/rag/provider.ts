@@ -2,8 +2,7 @@
  * RAG provider interface.
  *
  * Channels program against this interface. The concrete backend (Qdrant,
- * LightRAG, or none) is selected at startup based on environment variables
- * or capability discovery.
+ * LightRAG, or none) is selected at startup based on capability discovery.
  */
 
 import { logger } from '../logger.js';
@@ -146,12 +145,10 @@ let _provider: RagProvider | undefined;
  * Get the active RAG provider.
  *
  * Selection order:
- *   1. Capability registry (preferred) — consults getRagEntry() for the
- *      current channel pod, then selects LightRagProvider or QdrantRagProvider
- *      based on the backend field.
- *   2. LIGHTRAG_URL env var → LightRagProvider  (deprecated; removed in Task 4.4)
- *   3. QDRANT_URL env var  → QdrantRagProvider  (deprecated; removed in Task 4.4)
- *   4. Neither             → NullRagProvider (no-op)
+ *   1. Capability registry — consults getRagEntry() for the current channel
+ *      pod, then selects LightRagProvider or QdrantRagProvider based on the
+ *      backend field.
+ *   2. No capability registered → NullRagProvider (no-op)
  */
 export function getRagProvider(): RagProvider {
   if (!_provider) {
@@ -181,26 +178,11 @@ export function getRagProvider(): RagProvider {
         }
       }
     } catch (err) {
-      logger.debug(
-        { err },
-        'Capability lookup unavailable; falling back to env vars',
-      );
+      logger.debug({ err }, 'Capability lookup unavailable');
     }
 
-    // 2. Env-var fallback (deprecated; removed in Task 4.4).
-    const lightragUrl = process.env.LIGHTRAG_URL;
-    const qdrantUrl = process.env.QDRANT_URL;
-
-    if (lightragUrl) {
-      _provider = new LightRagProvider(lightragUrl);
-      logger.info(
-        { url: lightragUrl, source: 'env' },
-        'RAG provider: LightRAG',
-      );
-    } else if (qdrantUrl && process.env.EMBEDDING_PROVIDER !== 'none') {
-      _provider = new QdrantRagProvider();
-      logger.info({ url: qdrantUrl, source: 'env' }, 'RAG provider: Qdrant');
-    } else {
+    // No capability registered → no-op provider.
+    if (!_provider) {
       _provider = new NullRagProvider();
       logger.info('RAG provider: none (disabled)');
     }

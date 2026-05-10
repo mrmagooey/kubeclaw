@@ -154,27 +154,6 @@ export async function notifyAllChannels(
     });
     await redis.publish(getControlChannel(channelName), payload);
 
-    // The casts below are required because Array.filter doesn't narrow a
-    // discriminated union without a type predicate. This block is deleted
-    // in Phase 4 (Task 4.4), so we accept the cast rather than introduce a
-    // helper that will be removed.
-    // Phase 4 deletes this MCP-only alias.
-    const mcpEntries = entries.filter((e) => e.kind === 'mcp');
-    if (mcpEntries.length > 0) {
-      const legacy = JSON.stringify({
-        command: 'mcp_update',
-        servers: JSON.stringify(
-          mcpEntries.map((e) => ({
-            name: e.name,
-            url: `${e.endpoint}${(e as { kindMetadata: { path: string } }).kindMetadata.path}`,
-            allowedTools: (e as { kindMetadata: { allowedTools?: string[] } })
-              .kindMetadata.allowedTools,
-          })),
-        ),
-      });
-      await redis.publish(getControlChannel(channelName), legacy);
-    }
-
     logger.debug(
       { channel: channelName, count: entries.length },
       'Published capabilities_update',
@@ -186,4 +165,3 @@ export async function startCapabilitySubsystem(): Promise<void> {
   await reconcileAllOnStartup(getAllCapabilities());
   await notifyAllChannels();
 }
-
