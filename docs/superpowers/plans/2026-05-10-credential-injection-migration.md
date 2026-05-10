@@ -1177,7 +1177,7 @@ The Helm templates currently strip API key env vars under `{{- if eq $.Values.cr
 - Modify: `src/credential-broker/ext-authz.test.ts`
 - Modify: `src/credential-broker/index.ts`
 
-- [ ] **Step 10.1:** Add `metrics` as an optional field on `Deps` in `src/credential-broker/ext-authz.ts` (optional so existing tests don't need to supply it):
+- [x] **Step 10.1:** Add `metrics` as an optional field on `Deps` in `src/credential-broker/ext-authz.ts` (optional so existing tests don't need to supply it):
 
   ```typescript
   import type { BrokerMetrics } from './metrics.js';
@@ -1192,7 +1192,7 @@ The Helm templates currently strip API key env vars under `{{- if eq $.Values.cr
   }
   ```
 
-- [ ] **Step 10.2:** Thread metrics calls into `handleExtAuthz`. Track wall-clock start time at the top of the function and call `deps.metrics?.recordAuthz(...)` at each return site. Full updated function:
+- [x] **Step 10.2:** Thread metrics calls into `handleExtAuthz`. Track wall-clock start time at the top of the function and call `deps.metrics?.recordAuthz(...)` at each return site. Full updated function:
 
   ```typescript
   export async function handleExtAuthz(
@@ -1273,7 +1273,7 @@ The Helm templates currently strip API key env vars under `{{- if eq $.Values.cr
   }
   ```
 
-- [ ] **Step 10.3:** Run the full broker test suite to confirm no regressions (metrics is optional, existing tests pass `undefined` implicitly):
+- [x] **Step 10.3:** Run the full broker test suite to confirm no regressions (metrics is optional, existing tests pass `undefined` implicitly):
 
   ```
   npx vitest run src/credential-broker/ext-authz.test.ts
@@ -1281,7 +1281,7 @@ The Helm templates currently strip API key env vars under `{{- if eq $.Values.cr
 
   Expected: 9 passing.
 
-- [ ] **Step 10.4:** Wire metrics into `startBroker()` in `src/credential-broker/index.ts`. Import `createMetrics` and `Registry`, create a registry, pass it into `handleExtAuthz` deps:
+- [x] **Step 10.4:** Wire metrics into `startBroker()` in `src/credential-broker/index.ts`. Import `createMetrics` and `Registry`, create a registry, pass it into `handleExtAuthz` deps:
 
   ```typescript
   import { Registry } from 'prom-client';
@@ -1328,7 +1328,7 @@ The Helm templates currently strip API key env vars under `{{- if eq $.Values.cr
   });
   ```
 
-- [ ] **Step 10.5:** Commit.
+- [x] **Step 10.5:** Commit.
 
   ```
   git add src/credential-broker/ext-authz.ts src/credential-broker/ext-authz.test.ts src/credential-broker/index.ts

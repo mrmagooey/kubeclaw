@@ -14,6 +14,8 @@ import { IdentityVerifier } from './identity.js';
 import { K8sSecretSource } from './k8s-secret-source.js';
 import { PinoAudit } from './audit.js';
 import { handleExtAuthz } from './ext-authz.js';
+import { Registry } from 'prom-client';
+import { createMetrics } from './metrics.js';
 
 const CONFIG_PATH =
   process.env.BROKER_CONFIG_PATH ?? '/etc/credential-broker/config.yaml';
@@ -22,6 +24,7 @@ const NAMESPACE = process.env.BROKER_NAMESPACE ?? 'kubeclaw';
 const AUDIENCE = process.env.BROKER_AUDIENCE ?? 'kubeclaw-credential-broker';
 const SECRET_TTL_MS = parseInt(process.env.BROKER_SECRET_TTL_MS ?? '60000', 10);
 const AUDIT_ONLY = process.env.BROKER_AUDIT_ONLY === 'true';
+const METRICS_PORT = parseInt(process.env.BROKER_METRICS_PORT ?? '9090', 10);
 
 function loadConfigOrThrow(path: string) {
   let text: string;
@@ -46,6 +49,8 @@ function loadConfigOrThrow(path: string) {
 export async function startBroker(): Promise<http.Server> {
   const config = loadConfigOrThrow(CONFIG_PATH);
   let resolver = new Resolver(config.mappings);
+  const metricsRegistry = new Registry();
+  const metrics = createMetrics(metricsRegistry);
   logger.info(
     { auditOnly: AUDIT_ONLY, port: PORT, configPath: CONFIG_PATH },
     'credential broker starting',
@@ -56,8 +61,10 @@ export async function startBroker(): Promise<http.Server> {
       const next = loadConfigOrThrow(CONFIG_PATH);
       resolver = new Resolver(next.mappings);
       logger.info({ count: next.mappings.length }, 'broker config reloaded');
+      metrics.recordConfigReload({ result: 'success' });
     } catch (e) {
       logger.error({ err: e }, 'failed to reload broker config');
+      metrics.recordConfigReload({ result: 'failure' });
     }
   });
 
@@ -108,7 +115,7 @@ export async function startBroker(): Promise<http.Server> {
           | string
           | undefined,
       },
-      { resolver, identityVerifier, secretSource, audit, auditOnly: AUDIT_ONLY },
+      { resolver, identityVerifier, secretSource, audit, auditOnly: AUDIT_ONLY, metrics },
     )
       .then((out) => {
         for (const [k, v] of Object.entries(out.headers)) res.setHeader(k, v);

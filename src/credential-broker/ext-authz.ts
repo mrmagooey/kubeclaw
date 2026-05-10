@@ -1,6 +1,7 @@
 import type { Resolver } from './resolver.js';
 import type { IdentityVerifier } from './identity.js';
 import type { K8sSecretSource } from './k8s-secret-source.js';
+import type { BrokerMetrics } from './metrics.js';
 
 export interface AuditEvent {
   identity?: string;
@@ -22,6 +23,7 @@ export interface Deps {
   secretSource: K8sSecretSource;
   audit: Audit;
   auditOnly: boolean;
+  metrics?: BrokerMetrics;
 }
 
 export interface AuthzRequest {
@@ -38,9 +40,12 @@ export async function handleExtAuthz(
   req: AuthzRequest,
   deps: Deps,
 ): Promise<AuthzResponse> {
+  const startMs = Date.now();
   const destination = req['x-forwarded-authority'];
+
   if (!destination) {
     deps.audit.record({ destination: '<missing>', status: 400, auditOnly: deps.auditOnly });
+    deps.metrics?.recordAuthz({ status: 400, auditOnly: deps.auditOnly, durationMs: Date.now() - startMs });
     return { status: 400, headers: {} };
   }
 
@@ -49,25 +54,18 @@ export async function handleExtAuthz(
     identity = await deps.identityVerifier.verify(req.authorization);
   } catch {
     deps.audit.record({ destination, status: 401, auditOnly: deps.auditOnly });
+    deps.metrics?.recordAuthz({ status: 401, auditOnly: deps.auditOnly, durationMs: Date.now() - startMs });
     return { status: 401, headers: {} };
   }
 
   const mapping = deps.resolver.find({ destination, identity });
 
-  // Audit-only branch: broker is in the path but does not strip env vars or stamp
-  // the Authorization header. Logs what would have happened.
   if (deps.auditOnly) {
     if (!mapping) {
-      deps.audit.record({
-        identity,
-        destination,
-        status: 403,
-        auditOnly: true,
-        wouldStamp: false,
-      });
+      deps.audit.record({ identity, destination, status: 403, auditOnly: true, wouldStamp: false });
+      deps.metrics?.recordAuthz({ status: 403, identity, auditOnly: true, durationMs: Date.now() - startMs });
       return { status: 403, headers: {} };
     }
-    // Mapping found: would have stamped. Skip secret read entirely.
     deps.audit.record({
       identity,
       destination,
@@ -77,12 +75,19 @@ export async function handleExtAuthz(
       wouldStamp: true,
       secretReadSkipped: true,
     });
+    deps.metrics?.recordAuthz({
+      status: 200,
+      mappingId: mapping.id,
+      identity,
+      auditOnly: true,
+      durationMs: Date.now() - startMs,
+    });
     return { status: 200, headers: {} };
   }
 
-  // Enforcement path (auditOnly=false).
   if (!mapping) {
     deps.audit.record({ identity, destination, status: 403, auditOnly: false, wouldStamp: false });
+    deps.metrics?.recordAuthz({ status: 403, identity, auditOnly: false, durationMs: Date.now() - startMs });
     return { status: 403, headers: {} };
   }
 
@@ -90,26 +95,20 @@ export async function handleExtAuthz(
   try {
     credential = await deps.secretSource.read(mapping.credentialRef);
   } catch {
-    deps.audit.record({
-      identity,
-      destination,
-      mappingId: mapping.id,
-      status: 503,
-      auditOnly: false,
-    });
+    deps.audit.record({ identity, destination, mappingId: mapping.id, status: 503, auditOnly: false });
+    deps.metrics?.recordSecretFailure({ secretName: mapping.credentialRef.name });
+    deps.metrics?.recordAuthz({ status: 503, mappingId: mapping.id, identity, auditOnly: false, durationMs: Date.now() - startMs });
     return { status: 503, headers: {} };
   }
-  const headerValue = deps.resolver.formatHeader(
-    mapping.headerScheme,
-    credential,
-  );
-  deps.audit.record({
-    identity,
-    destination,
-    mappingId: mapping.id,
+
+  const headerValue = deps.resolver.formatHeader(mapping.headerScheme, credential);
+  deps.audit.record({ identity, destination, mappingId: mapping.id, status: 200, auditOnly: false, wouldStamp: true });
+  deps.metrics?.recordAuthz({
     status: 200,
+    mappingId: mapping.id,
+    identity,
     auditOnly: false,
-    wouldStamp: true,
+    durationMs: Date.now() - startMs,
   });
   return { status: 200, headers: { authorization: headerValue } };
 }
