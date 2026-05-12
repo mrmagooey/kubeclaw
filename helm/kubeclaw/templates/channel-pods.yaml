@@ -72,7 +72,7 @@ spec:
                 secretKeyRef:
                   name: kubeclaw-redis
                   key: channel-password
-            {{- if eq $.Values.credentialInjection.mode "off" }}
+            {{- if or (eq $.Values.credentialInjection.mode "off") $.Values.credentialInjection.auditOnly }}
             - name: OPENAI_API_KEY
               valueFrom:
                 secretKeyRef:
@@ -105,7 +105,7 @@ spec:
               value: {{ $.Values.rag.topK | quote }}
             - name: RAG_SCORE_THRESHOLD
               value: {{ $.Values.rag.scoreThreshold | quote }}
-            {{- if and (eq $.Values.rag.provider "voyage") (eq $.Values.credentialInjection.mode "off") }}
+            {{- if and (eq $.Values.rag.provider "voyage") (or (eq $.Values.credentialInjection.mode "off") $.Values.credentialInjection.auditOnly) }}
             - name: VOYAGE_API_KEY
               valueFrom:
                 secretKeyRef:
@@ -113,7 +113,7 @@ spec:
                   key: voyage-api-key
             {{- end }}
             {{- end }}
-            {{- if eq $.Values.credentialInjection.mode "off" }}
+            {{- if or (eq $.Values.credentialInjection.mode "off") $.Values.credentialInjection.auditOnly }}
             {{- range $cfg.envVars }}
             - name: {{ .name }}
               valueFrom:
@@ -125,6 +125,11 @@ spec:
             {{- end }}
             {{- if eq $.Values.credentialInjection.mode "sidecar" }}
             {{- include "kubeclaw.credentialSidecarEnv" $ | nindent 12 }}
+            {{- end }}
+            {{- if eq $.Values.credentialInjection.mode "istio" }}
+            # In istio mode, Istio captures all egress via iptables redirection.
+            # No HTTPS_PROXY env is needed; the mesh sidecar routes traffic automatically.
+            # API keys are stripped above (under mode != off) and injected by the broker.
             {{- end }}
           ports:
             {{- if $cfg.httpPort }}

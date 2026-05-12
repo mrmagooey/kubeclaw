@@ -14,6 +14,8 @@ import { IdentityVerifier } from './identity.js';
 import { K8sSecretSource } from './k8s-secret-source.js';
 import { PinoAudit } from './audit.js';
 import { handleExtAuthz } from './ext-authz.js';
+import { Registry } from 'prom-client';
+import { createMetrics } from './metrics.js';
 
 const CONFIG_PATH =
   process.env.BROKER_CONFIG_PATH ?? '/etc/credential-broker/config.yaml';
@@ -21,6 +23,8 @@ const PORT = parseInt(process.env.BROKER_PORT ?? '8080', 10);
 const NAMESPACE = process.env.BROKER_NAMESPACE ?? 'kubeclaw';
 const AUDIENCE = process.env.BROKER_AUDIENCE ?? 'kubeclaw-credential-broker';
 const SECRET_TTL_MS = parseInt(process.env.BROKER_SECRET_TTL_MS ?? '60000', 10);
+const AUDIT_ONLY = process.env.BROKER_AUDIT_ONLY === 'true';
+const METRICS_PORT = parseInt(process.env.BROKER_METRICS_PORT ?? '9090', 10);
 
 function loadConfigOrThrow(path: string) {
   let text: string;
@@ -45,14 +49,22 @@ function loadConfigOrThrow(path: string) {
 export async function startBroker(): Promise<http.Server> {
   const config = loadConfigOrThrow(CONFIG_PATH);
   let resolver = new Resolver(config.mappings);
+  const metricsRegistry = new Registry();
+  const metrics = createMetrics(metricsRegistry);
+  logger.info(
+    { auditOnly: AUDIT_ONLY, port: PORT, configPath: CONFIG_PATH },
+    'credential broker starting',
+  );
 
   fs.watchFile(CONFIG_PATH, { interval: 5000 }, () => {
     try {
       const next = loadConfigOrThrow(CONFIG_PATH);
       resolver = new Resolver(next.mappings);
       logger.info({ count: next.mappings.length }, 'broker config reloaded');
+      metrics.recordConfigReload({ result: 'success' });
     } catch (e) {
       logger.error({ err: e }, 'failed to reload broker config');
+      metrics.recordConfigReload({ result: 'failure' });
     }
   });
 
@@ -91,7 +103,7 @@ export async function startBroker(): Promise<http.Server> {
 
   const audit = new PinoAudit();
 
-  const server = http.createServer((req, res) => {
+  const authzServer = http.createServer((req, res) => {
     if (req.method !== 'POST' || req.url !== '/authz') {
       res.writeHead(404).end();
       return;
@@ -102,8 +114,11 @@ export async function startBroker(): Promise<http.Server> {
         'x-forwarded-authority': req.headers['x-forwarded-authority'] as
           | string
           | undefined,
+        'x-forwarded-client-cert': req.headers['x-forwarded-client-cert'] as
+          | string
+          | undefined,
       },
-      { resolver, identityVerifier, secretSource, audit },
+      { resolver, identityVerifier, secretSource, audit, auditOnly: AUDIT_ONLY, metrics },
     )
       .then((out) => {
         for (const [k, v] of Object.entries(out.headers)) res.setHeader(k, v);
@@ -115,12 +130,36 @@ export async function startBroker(): Promise<http.Server> {
       });
   });
 
-  return new Promise((resolve) => {
-    server.listen(PORT, () => {
-      logger.info({ port: PORT }, 'credential broker listening');
-      resolve(server);
+  const metricsServer = http.createServer(async (req, res) => {
+    if (req.url !== '/metrics') {
+      res.writeHead(404).end();
+      return;
+    }
+    try {
+      const body = await metricsRegistry.metrics();
+      res.setHeader('Content-Type', metricsRegistry.contentType);
+      res.writeHead(200).end(body);
+    } catch (err) {
+      logger.error({ err }, 'metrics handler crashed');
+      res.writeHead(500).end();
+    }
+  });
+
+  await new Promise<void>((resolve) => {
+    authzServer.listen(PORT, () => {
+      logger.info({ port: PORT }, 'credential broker authz listening');
+      resolve();
     });
   });
+
+  await new Promise<void>((resolve) => {
+    metricsServer.listen(METRICS_PORT, () => {
+      logger.info({ port: METRICS_PORT }, 'credential broker metrics listening');
+      resolve();
+    });
+  });
+
+  return authzServer;
 }
 
 // Direct-run guard: only invoke startBroker() when this module is the

@@ -141,13 +141,144 @@ kubectl exec <pod-name> -n kubeclaw -- ls -la /etc/ssl/certs/kubeclaw-egress-ca.
 
 ## Migration from `mode: off` to `mode: sidecar`
 
-1. Confirm that `kubeclaw-secrets` contains all required keys. The broker reads from this same Secret, so no new Secret is needed — only the keys the mappings reference must exist.
-2. Confirm cert-manager is installed in the cluster (`kubectl get crds | grep cert-manager.io`).
-3. Set `credentialInjection.mode: "sidecar"` in your values overrides.
-4. Run `helm upgrade kubeclaw helm/kubeclaw -n kubeclaw -f your-values.yaml`.
-5. The broker Deployment and internal CA resources are created. Existing workload pods restart with the Envoy sidecar attached and without API key env vars.
-6. Verify with `kubectl logs deployment/kubeclaw-credential-broker -n kubeclaw` — look for `authz decision` log entries as workloads start making API calls.
-7. If something breaks: set `credentialInjection.mode: "off"` and run `helm upgrade` again. The broker Deployment and sidecar containers are removed; env-var injection resumes. This is a full backout.
+This guide walks an operator safely from environment-variable credential injection
+(`mode: off`) to broker-stamped header injection (`mode: sidecar`) using `auditOnly`
+as an observation window before cutting over enforcement.
+
+### Prerequisites
+
+- cert-manager is installed in the cluster:
+
+  ```bash
+  kubectl get crds | grep cert-manager.io
+  # Expected: cert-manager.io CRDs listed
+  ```
+
+  If not installed: `helm install cert-manager jetstack/cert-manager --namespace cert-manager --create-namespace --set installCRDs=true`
+
+- `kubeclaw-secrets` contains all keys referenced by your broker mappings. The broker
+  reads from the same Secret the orchestrator uses, so no new Secret is needed.
+
+---
+
+### Step A — Enable audit-only mode
+
+Set `mode: sidecar` and `auditOnly: true` together. This deploys the broker and
+Envoy sidecar but does **not** strip workload env vars and does **not** stamp the
+`Authorization` header. Workloads continue to use their env-var API keys. The broker
+logs every routing decision it **would** have made.
+
+In your values override file:
+
+```yaml
+credentialInjection:
+  mode: sidecar
+  auditOnly: true
+```
+
+Then upgrade:
+
+```bash
+helm upgrade kubeclaw helm/kubeclaw -n kubeclaw -f your-values.yaml --wait
+```
+
+Pods restart with the Envoy sidecar injected and `HTTPS_PROXY` set. Upstream API calls
+continue to work (the workload env-var key is still present and the broker returns `200`
+with no `Authorization` header, so the workload's own header wins).
+
+---
+
+### Step B — Observe broker logs and metrics for ≥24 hours
+
+Tail the broker logs and watch for `auditOnly: true` entries:
+
+```bash
+kubectl logs -f deployment/kubeclaw-credential-broker -n kubeclaw | grep auditOnly
+```
+
+Each line represents a request that flowed through the sidecar. Compare the count to
+your expected upstream call volume. If the counts diverge, investigate missing or
+extra routes.
+
+Watch for `403` decisions (mapping not found for a destination):
+
+```bash
+kubectl logs deployment/kubeclaw-credential-broker -n kubeclaw | \
+  python3 -c "import sys,json; [print(l) for l in sys.stdin if json.loads(l).get('status')==403]"
+```
+
+A `403` in audit-only mode means the broker would have blocked that request when
+enforcement is on. Add a mapping in `credentialInjection.broker.config.mappings` for
+any legitimate destination that appears.
+
+If you have Prometheus Operator installed, enable the ServiceMonitor:
+
+```yaml
+credentialInjection:
+  metrics:
+    serviceMonitor:
+      enabled: true
+```
+
+Then watch `credential_broker_authz_total` in Grafana. Once the counter is stable and
+all `403`s are resolved, proceed to Step C.
+
+---
+
+### Step C — Flip to enforcement
+
+Set `auditOnly: false`. Pods restart with API key env vars stripped. The broker now
+stamps the `Authorization` header on every matched request.
+
+```yaml
+credentialInjection:
+  mode: sidecar
+  auditOnly: false
+```
+
+```bash
+helm upgrade kubeclaw helm/kubeclaw -n kubeclaw -f your-values.yaml --wait
+```
+
+---
+
+### Step D — Verify enforcement
+
+Confirm upstream calls still succeed (broker stamps the header):
+
+```bash
+kubectl logs deployment/kubeclaw-credential-broker -n kubeclaw --tail=20
+# Look for: "status":200, "auditOnly":false, "wouldStamp":true
+```
+
+Confirm API key env vars are absent from workload pods:
+
+```bash
+kubectl exec -n kubeclaw <tool-job-pod> -- env | grep -E 'ANTHROPIC|OPENAI|OPENROUTER'
+# Expected: no output
+```
+
+---
+
+### Rollback options
+
+**Partial rollback (return to audit-only):** set `auditOnly: true` and upgrade. The
+broker stays deployed, env vars return to workload pods, and upstream calls continue
+to work via env-var keys. No service disruption.
+
+**Full rollback (return to mode=off):** set `mode: off` and upgrade. The broker
+Deployment and Envoy sidecars are removed. Env-var credential injection resumes.
+This is a clean backout with no data loss.
+
+```yaml
+# Full backout
+credentialInjection:
+  mode: off
+```
+
+```bash
+helm upgrade kubeclaw helm/kubeclaw -n kubeclaw -f your-values.yaml --wait
+```
 
 ## Limitations
 
@@ -155,6 +286,92 @@ kubectl exec <pod-name> -n kubeclaw -- ls -la /etc/ssl/certs/kubeclaw-egress-ca.
 - Only `headerScheme: bearer` is currently supported. OAuth token refresh, AWS SigV4, and similar schemes are on the roadmap.
 - The sidecar adds 2-5 seconds to pod cold start (Envoy bootstrap, projected token mount, initial broker handshake).
 - The orchestrator pod is excluded by design. It is the trusted tier; its credentials remain in environment variables.
+
+## mode=istio (Istio egress gateway)
+
+### When to use
+
+Choose `mode=istio` if your cluster already runs **Istio 1.24 LTS or later**.
+This mode replaces the per-pod Envoy sidecar from `mode=sidecar` with a single
+namespace-level egress gateway, which gives:
+
+- **Genuine iptables-enforced egress.** In `mode=sidecar`, the workload and the
+  Envoy sidecar share a network namespace. NetworkPolicy cannot distinguish
+  their traffic, so a workload process can theoretically open raw sockets.
+  In `mode=istio`, the Istio init container installs iptables rules inside the
+  workload's netns that force all egress through the mesh proxy. A workload
+  cannot bypass the proxy without root access to the netns.
+- **Fewer per-pod resources.** One gateway for the namespace instead of one
+  sidecar per pod.
+- **Istio observability integration.** Egress traffic shows up in Kiali,
+  Jaeger, and Prometheus dashboards automatically.
+
+### Prerequisites
+
+1. Istio installed: `istioctl install --set profile=minimal -y`
+2. Minimum Istio version: **1.24 LTS** (1.24.x recommended).
+3. `kubectl get crd virtualservices.networking.istio.io` must return a result.
+
+### Enabling
+
+```yaml
+credentialInjection:
+  mode: "istio"
+  istio:
+    gateway:
+      replicas: 2  # Set to 1 for dev, 2+ for production HA
+      resources:
+        requests: { cpu: 100m, memory: 128Mi }
+        limits:   { cpu: 500m, memory: 256Mi }
+    ambientMode: false   # Must remain false — see below
+    additionalDestinations: []  # Add extra hostnames if needed
+```
+
+After `helm upgrade`, verify:
+```bash
+kubectl -n kubeclaw get sidecar
+kubectl -n kubeclaw get serviceentry
+kubectl -n kubeclaw get gateway
+kubectl -n kubeclaw get virtualservice
+kubectl -n kubeclaw get envoyfilter
+```
+
+### How it works
+
+1. The kubeclaw namespace is labeled `istio-injection: enabled`.
+2. All workload pods receive an `istio-proxy` sidecar. The orchestrator is
+   excluded via `sidecar.istio.io/inject: "false"`.
+3. The `Sidecar` resource restricts namespace egress to in-namespace services
+   and ServiceEntry-declared upstreams.
+4. One `ServiceEntry` per external API (Anthropic, OpenAI, etc.) declares the
+   upstream to the Istio registry.
+5. The `VirtualService` routes matching traffic from mesh sidecars through the
+   `kubeclaw-istio-egressgateway` Deployment.
+6. The `EnvoyFilter` on the gateway calls the credential-broker via `ext_authz`
+   before forwarding. The broker reads the workload's SPIFFE identity from the
+   `x-forwarded-client-cert` header populated by Istio's mTLS.
+7. The broker returns an `Authorization` header; the gateway stamps it on the
+   upstream request.
+
+### Ambient mode
+
+**Ambient mode (ztunnel + waypoint proxy) is out of scope for this release.**
+Ambient's waypoint proxy supports header mutation via `EnvoyFilter`, but the
+API stabilised only in Istio 1.26+. A follow-up plan will cover ambient mode.
+Do not set `ambientMode: true` — it is accepted by the chart but has no effect.
+
+### Troubleshooting
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| `helm upgrade` fails: "credentialInjection.mode=istio requires Istio CRDs" | Istio not installed in cluster | Run `istioctl install --set profile=minimal -y` first |
+| Egress gateway pod in `CrashLoopBackOff` | istiod not available or CRDs not ready | Check `kubectl get pods -n istio-system`; wait for istiod |
+| Gateway 5xx responses | `EnvoyFilter` misconfigured or broker unreachable | Check `kubectl logs -n kubeclaw -l istio=kubeclaw-egressgateway`; verify `credential-broker` Service resolves |
+| Broker returns 401 for XFCC requests | XFCC header not forwarded by Istio | Verify Istio version >= 1.24; check `EnvoyFilter` `allowed_headers` includes `x-forwarded-client-cert` |
+| `Sidecar` resource hosts mismatch | ServiceEntry missing for a destination | Add host to `credentialInjection.istio.additionalDestinations` |
+| Missing `VirtualService` after upgrade | Helm render error (Istio CRDs absent at template time) | Run `helm template` and check for errors; ensure CRDs present |
+| Workload pod missing `istio-proxy` container | Namespace label not applied | Check `kubectl get namespace kubeclaw -o yaml`; re-run `helm upgrade` |
+| Broker shows `no credentials: both authorization and xfcc are absent` | Traffic not going through Istio proxy | Verify iptables redirection: `kubectl exec <pod> -c istio-proxy -- pilot-agent request GET /config_dump` |
 
 ## Cross-references
 

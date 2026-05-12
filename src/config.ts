@@ -315,5 +315,6 @@ export const CREDENTIAL_SIDECAR_PORT = parseInt(
 
 export {
   getInjectionMode,
+  getAuditOnly,
   type InjectionMode,
 } from './credential-injection/mode.js';

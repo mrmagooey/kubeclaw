@@ -96,3 +96,57 @@ Caller must have already gated on .Values.credentialInjection.mode == "sidecar".
 - { name: NODE_EXTRA_CA_CERTS, value: "/etc/ssl/certs/kubeclaw-egress-ca.crt" }
 - { name: SSL_CERT_FILE,       value: "/etc/ssl/certs/kubeclaw-egress-ca.crt" }
 {{- end -}}
+
+{{/*
+istioInstalled — returns "true" when the networking.istio.io/v1 CRD group is
+present in the cluster. Returns "" when running offline (helm template) because
+lookup returns an empty map without cluster access.
+Usage: {{- if include "kubeclaw.istioInstalled" . }}
+*/}}
+{{- define "kubeclaw.istioInstalled" -}}
+{{- $crd := lookup "apiextensions.k8s.io/v1" "CustomResourceDefinition" "" "virtualservices.networking.istio.io" -}}
+{{- if $crd.metadata -}}
+true
+{{- end -}}
+{{- end -}}
+
+{{/*
+kubeclaw.requireIstio — fails with a clear message when mode=istio and the
+cluster is reachable but Istio CRDs are absent. Silent when running offline.
+*/}}
+{{- define "kubeclaw.requireIstio" -}}
+{{- if eq .Values.credentialInjection.mode "istio" -}}
+  {{- $crd := lookup "apiextensions.k8s.io/v1" "CustomResourceDefinition" "" "virtualservices.networking.istio.io" -}}
+  {{- if and (not $crd.metadata) (lookup "v1" "Namespace" "" "kube-system").metadata -}}
+    {{- fail "credentialInjection.mode=istio requires Istio CRDs. Install Istio >= 1.24 first, or use mode=sidecar." -}}
+  {{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+kubeclaw.egressDestinations — returns a JSON object {"items":[...]} containing
+all egress destinations that the credential broker handles, suitable for
+ServiceEntry generation. Each item has keys: host (string), port (number),
+protocol (string). Includes built-in destinations (anthropic, openai, openrouter,
+voyage) plus any entries in .Values.credentialInjection.istio.additionalDestinations.
+Wrapped in {"items":[...]} so that fromJson produces a traversable map rather
+than a bare slice (Helm's fromJson cannot range over a top-level JSON array).
+*/}}
+{{- define "kubeclaw.egressDestinations" -}}
+{{- $built_in := list
+      (dict "host" "api.anthropic.com"  "port" 443 "protocol" "HTTPS")
+      (dict "host" "api.openai.com"     "port" 443 "protocol" "HTTPS")
+      (dict "host" "openrouter.ai"      "port" 443 "protocol" "HTTPS")
+      (dict "host" "api.voyageai.com"   "port" 443 "protocol" "HTTPS") -}}
+{{- $extra := list -}}
+{{- range .Values.credentialInjection.istio.additionalDestinations -}}
+  {{- $parts := splitList ":" . -}}
+  {{- $h := index $parts 0 -}}
+  {{- $p := 443 -}}
+  {{- if gt (len $parts) 1 -}}
+    {{- $p = index $parts 1 | int -}}
+  {{- end -}}
+  {{- $extra = append $extra (dict "host" $h "port" $p "protocol" "HTTPS") -}}
+{{- end -}}
+{{- toJson (dict "items" (concat $built_in $extra)) -}}
+{{- end -}}

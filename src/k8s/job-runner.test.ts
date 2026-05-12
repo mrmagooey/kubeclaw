@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { EventEmitter } from 'events';
 import type { RegisteredGroup } from '../types.js';
-import type { JobInput, AgentOutputMessage, ToolPodJobSpec } from './types.js';
+import type { JobInput, AgentOutputMessage, ToolJobSpec, ToolPodJobSpec } from './types.js';
 
 // Store original env vars for cleanup
 const originalRedisUrl = process.env.REDIS_URL;
@@ -31,7 +31,12 @@ vi.mock('../config.js', () => ({
     }
     return 'kubeclaw-agent:claude';
   }),
-  getInjectionMode: vi.fn(() => 'off'),
+  getInjectionMode: vi.fn(() => {
+    const raw = process.env.CREDENTIAL_INJECTION_MODE;
+    if (raw === 'sidecar' || raw === 'istio') return raw;
+    return 'off';
+  }),
+  getAuditOnly: vi.fn(() => process.env.CREDENTIAL_INJECTION_AUDIT_ONLY === 'true'),
 }));
 
 // Mock logger
@@ -115,6 +120,21 @@ vi.mock('@kubernetes/client-node', () => {
 // Now import after mocks are set up
 import { JobRunner, buildJobName } from './job-runner.js';
 import * as configModule from '../config.js';
+
+function makeSpec(overrides: Partial<ToolJobSpec> = {}): ToolJobSpec {
+  return {
+    name: 'test-job',
+    groupFolder: 'test-group',
+    chatJid: 'test@chat',
+    isMain: false,
+    prompt: 'hello',
+    sessionId: 'sess1',
+    assistantName: 'Andy',
+    timeout: 60000,
+    provider: 'claude',
+    ...overrides,
+  };
+}
 
 const testGroup: RegisteredGroup = {
   name: 'Test Group',
@@ -1470,14 +1490,14 @@ describe('JobRunner', () => {
       vi.mocked(configModule.getInjectionMode).mockReturnValue('istio');
     });
 
-    it('strips API key envs and adds HTTPS_PROXY when mode=istio', () => {
+    it('strips API key envs but does NOT add HTTPS_PROXY when mode=istio', () => {
       const manifest = jobRunner.generateJobManifest(credInjectionSpec);
       const envNames = (
         manifest.spec?.template?.spec?.containers?.[0]?.env ?? []
       ).map((e) => e.name);
       expect(envNames).not.toContain('ANTHROPIC_API_KEY');
       expect(envNames).not.toContain('OPENAI_API_KEY');
-      expect(envNames).toContain('HTTPS_PROXY');
+      expect(envNames).not.toContain('HTTPS_PROXY');
     });
 
     it('does NOT add a credential-sidecar container when mode=istio', () => {
@@ -1504,6 +1524,95 @@ describe('JobRunner', () => {
       expect(manifest.spec?.template?.spec?.serviceAccountName).toBe(
         'kubeclaw-tool-job',
       );
+    });
+  });
+
+  describe('generateJobManifest: credential injection env stripping', () => {
+    const runner = new JobRunner();
+
+    beforeEach(() => {
+      // Reset mocks to their original env-reading implementations so that
+      // process.env assignments in each test control the behaviour.
+      vi.mocked(configModule.getInjectionMode).mockImplementation(() => {
+        const raw = process.env.CREDENTIAL_INJECTION_MODE;
+        if (raw === 'sidecar' || raw === 'istio') return raw;
+        return 'off';
+      });
+      vi.mocked(configModule.getAuditOnly).mockImplementation(
+        () => process.env.CREDENTIAL_INJECTION_AUDIT_ONLY === 'true',
+      );
+    });
+
+    afterEach(() => {
+      delete process.env.CREDENTIAL_INJECTION_MODE;
+      delete process.env.CREDENTIAL_INJECTION_AUDIT_ONLY;
+    });
+
+    it('strips API key envs when mode=sidecar and auditOnly=false', () => {
+      process.env.CREDENTIAL_INJECTION_MODE = 'sidecar';
+      process.env.CREDENTIAL_INJECTION_AUDIT_ONLY = 'false';
+      const manifest = runner.generateJobManifest(makeSpec());
+      const agentEnv = manifest.spec!.template.spec!.containers[0].env as Array<{ name: string }>;
+      const names = agentEnv.map((e) => e.name);
+      expect(names).not.toContain('ANTHROPIC_API_KEY');
+      expect(names).not.toContain('OPENROUTER_API_KEY');
+    });
+
+    it('does NOT strip API key envs when mode=sidecar and auditOnly=true', () => {
+      process.env.CREDENTIAL_INJECTION_MODE = 'sidecar';
+      process.env.CREDENTIAL_INJECTION_AUDIT_ONLY = 'true';
+      const manifest = runner.generateJobManifest(makeSpec());
+      const agentEnv = manifest.spec!.template.spec!.containers[0].env as Array<{ name: string }>;
+      const names = agentEnv.map((e) => e.name);
+      expect(names).toContain('ANTHROPIC_API_KEY');
+      expect(names).toContain('OPENROUTER_API_KEY');
+    });
+
+    it('still injects the Envoy sidecar container when mode=sidecar and auditOnly=true', () => {
+      process.env.CREDENTIAL_INJECTION_MODE = 'sidecar';
+      process.env.CREDENTIAL_INJECTION_AUDIT_ONLY = 'true';
+      const manifest = runner.generateJobManifest(makeSpec());
+      const containerNames = manifest.spec!.template.spec!.containers.map(
+        (c: any) => c.name,
+      );
+      expect(containerNames).toContain('credential-sidecar');
+    });
+
+    it('does NOT inject sidecar or strip envs when mode=off', () => {
+      process.env.CREDENTIAL_INJECTION_MODE = 'off';
+      process.env.CREDENTIAL_INJECTION_AUDIT_ONLY = 'false';
+      const manifest = runner.generateJobManifest(makeSpec());
+      const containerNames = manifest.spec!.template.spec!.containers.map(
+        (c: any) => c.name,
+      );
+      expect(containerNames).not.toContain('credential-sidecar');
+      const agentEnv = manifest.spec!.template.spec!.containers[0].env as Array<{ name: string }>;
+      const names = agentEnv.map((e) => e.name);
+      expect(names).toContain('ANTHROPIC_API_KEY');
+    });
+
+    it('mode=istio: strips API keys but no HTTPS_PROXY and no credential-sidecar container', () => {
+      process.env.CREDENTIAL_INJECTION_MODE = 'istio';
+      process.env.CREDENTIAL_INJECTION_AUDIT_ONLY = 'false';
+      const manifest = runner.generateJobManifest(makeSpec());
+      const agentEnv = manifest.spec!.template.spec!.containers[0].env as Array<{ name: string }>;
+      const names = agentEnv.map((e) => e.name);
+      expect(names).not.toContain('ANTHROPIC_API_KEY');
+      expect(names).not.toContain('HTTPS_PROXY');
+      const containerNames = manifest.spec!.template.spec!.containers.map((c: any) => c.name);
+      expect(containerNames).not.toContain('credential-sidecar');
+    });
+
+    it('mode=istio + auditOnly=true: keeps API keys, no HTTPS_PROXY, no credential-sidecar', () => {
+      process.env.CREDENTIAL_INJECTION_MODE = 'istio';
+      process.env.CREDENTIAL_INJECTION_AUDIT_ONLY = 'true';
+      const manifest = runner.generateJobManifest(makeSpec());
+      const agentEnv = manifest.spec!.template.spec!.containers[0].env as Array<{ name: string }>;
+      const names = agentEnv.map((e) => e.name);
+      expect(names).toContain('ANTHROPIC_API_KEY');
+      expect(names).not.toContain('HTTPS_PROXY');
+      const containerNames = manifest.spec!.template.spec!.containers.map((c: any) => c.name);
+      expect(containerNames).not.toContain('credential-sidecar');
     });
   });
 });

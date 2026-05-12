@@ -35,6 +35,7 @@ import {
   REDIS_TOOL_SERVER_PASSWORD,
   REDIS_ADAPTER_PASSWORD,
   getInjectionMode,
+  getAuditOnly,
   CREDENTIAL_SIDECAR_IMAGE,
   CREDENTIAL_SIDECAR_PORT,
 } from '../config.js';
@@ -637,14 +638,27 @@ export class JobRunner {
       });
     }
 
-    // Credential injection: strip API keys and add proxy env when active
+    // Credential injection: strip API keys when active (sidecar or istio).
+    // In istio mode, Istio's iptables-based redirection routes egress automatically;
+    // no HTTPS_PROXY env is needed. In sidecar mode, HTTPS_PROXY points at the
+    // per-pod Envoy sidecar so traffic flows through it.
+    // In audit-only mode (sidecar only), keys are kept and HTTPS_PROXY is still set
+    // so the broker observes traffic via the sidecar.
     const injectionMode = getInjectionMode();
-    const finalEnv =
-      injectionMode === 'sidecar' || injectionMode === 'istio'
-        ? [
-            ...envVars.filter((e) => !STRIPPED_WHEN_INJECTED.has(e.name)),
-            ...workloadEnvForSidecar({ port: CREDENTIAL_SIDECAR_PORT }),
-          ]
+    const auditOnly = getAuditOnly();
+    const stripsCredentials =
+      (injectionMode === 'sidecar' || injectionMode === 'istio') && !auditOnly;
+    const addsSidecarProxy = injectionMode === 'sidecar';
+
+    const finalEnv = stripsCredentials
+      ? [
+          ...envVars.filter((e) => !STRIPPED_WHEN_INJECTED.has(e.name)),
+          ...(addsSidecarProxy
+            ? workloadEnvForSidecar({ port: CREDENTIAL_SIDECAR_PORT })
+            : []),
+        ]
+      : addsSidecarProxy
+        ? [...envVars, ...workloadEnvForSidecar({ port: CREDENTIAL_SIDECAR_PORT })]
         : envVars;
 
     // Build resource limits — include GPU/device requests when specified

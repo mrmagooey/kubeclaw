@@ -1,0 +1,92 @@
+name: e2e / Istio mode
+
+on:
+  pull_request:
+    types: [labeled]
+  schedule:
+    - cron: "30 2 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  e2e-istio:
+    if: >
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && github.event.label.name == 'e2e:istio')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Install kind v0.23.0
+        run: |
+          curl -Lo /usr/local/bin/kind \
+            https://kind.sigs.k8s.io/dl/v0.23.0/kind-linux-amd64
+          chmod +x /usr/local/bin/kind
+
+      - name: Install kubectl
+        run: |
+          curl -Lo /usr/local/bin/kubectl \
+            "https://dl.k8s.io/release/v1.31.0/bin/linux/amd64/kubectl"
+          chmod +x /usr/local/bin/kubectl
+
+      - name: Install helm 3
+        uses: azure/setup-helm@v4
+        with:
+          version: "v3.16.0"
+
+      - name: Install istioctl 1.24.x
+        run: |
+          curl -L https://istio.io/downloadIstio | ISTIO_VERSION=1.24.3 sh -
+          echo "${GITHUB_WORKSPACE}/istio-1.24.3/bin" >> "$GITHUB_PATH"
+
+      - name: Create kind cluster
+        run: |
+          kind create cluster \
+            --name kubeclaw-e2e-istio \
+            --wait 60s
+
+      - name: Install Istio (minimal profile)
+        run: |
+          istioctl install \
+            --set profile=minimal \
+            --set values.global.proxy.resources.requests.cpu=10m \
+            --set values.global.proxy.resources.requests.memory=40Mi \
+            -y
+          kubectl wait \
+            --for=condition=Ready pods \
+            --all -n istio-system \
+            --timeout=180s
+
+      - name: Build e2e test image
+        run: |
+          docker build -t kubeclaw-orchestrator:e2e-test .
+          kind load docker-image \
+            kubeclaw-orchestrator:e2e-test \
+            --name kubeclaw-e2e-istio
+
+      - name: Run Istio e2e tests
+        run: |
+          npm run test:e2e -- e2e/credential-injection-istio.test.ts \
+            --reporter=verbose
+
+      - name: Collect logs on failure
+        if: failure()
+        run: |
+          echo "=== Pods ===" && kubectl get pods -n kubeclaw -o wide || true
+          echo "=== Broker logs ===" && kubectl logs -n kubeclaw -l app=kubeclaw-credential-broker --tail=100 || true
+          echo "=== Gateway logs ===" && kubectl logs -n kubeclaw -l istio=kubeclaw-egressgateway --tail=100 || true
+          echo "=== Istio pods ===" && kubectl get pods -n istio-system || true
+
+      - name: Delete kind cluster
+        if: always()
+        run: kind delete cluster --name kubeclaw-e2e-istio

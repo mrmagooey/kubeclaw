@@ -2107,7 +2107,11 @@ Tasks the next sub-plan must produce bite-sized steps for:
 
 ---
 
-## Phase 3: Migration cutover — spec for follow-up sub-plan
+## Phase 3: Migration cutover — sub-plan
+
+→ **Sub-plan:** `docs/superpowers/plans/2026-05-10-credential-injection-migration.md`
+
+**Reframed:** The original stage-3 spec called for three sequential stages: audit-only, enforce, then decommission env vars. In practice, the `mode` default was flipped to `sidecar` ahead of schedule (commits `850933d`/`9c6d9dd`), collapsing stages 1 and 2. The sub-plan therefore focuses on the operator safety net (audit-only mode as an opt-in migration aid, Prometheus metrics, and a migration runbook) rather than a project-level rollout gate. The decommission tasks (removing the `SECRET_ENV_VARS` strip-list and pruning `kubeclaw-secrets` defaults) are explicitly dropped — the strip-list is kept as defense-in-depth and the orchestrator still needs the keys. See the sub-plan rationale section for full details.
 
 **Status:** architecture fixed; bite-sized task breakdown to be produced via `superpowers:writing-plans` after Phase 1 has been deployed by ≥3 distinct operators.
 

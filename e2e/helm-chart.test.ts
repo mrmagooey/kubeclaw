@@ -20,7 +20,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { spawnSync, spawn, type ChildProcess } from 'child_process';
+import { spawnSync, spawn, execSync, type ChildProcess } from 'child_process';
 import { requireKubernetes } from './setup.js';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -758,5 +758,114 @@ describe('helm upgrade', () => {
     ]).stdout;
 
     expect(after).toBe(before);
+  });
+});
+
+describe('helm template — mode=istio', () => {
+  const render = (extraArgs = '') =>
+    execSync(
+      `helm template helm/kubeclaw --set credentialInjection.mode=istio --set namespace=kubeclaw ${extraArgs}`,
+      { encoding: 'utf8' },
+    );
+
+  it('renders cleanly without errors', () => {
+    expect(() => render()).not.toThrow();
+  });
+
+  it('renders Sidecar resource', () => {
+    expect(render()).toContain('kind: Sidecar');
+  });
+
+  it('renders all 4 built-in ServiceEntry resources', () => {
+    const out = render();
+    const count = (out.match(/kind: ServiceEntry/g) ?? []).length;
+    expect(count).toBe(4);
+  });
+
+  it('renders Gateway and VirtualService', () => {
+    const out = render();
+    expect(out).toContain('kind: Gateway');
+    expect(out).toContain('kind: VirtualService');
+  });
+
+  it('renders EnvoyFilter for ext_authz', () => {
+    const out = render();
+    expect(out).toContain('kind: EnvoyFilter');
+    expect(out).toContain('ext_authz');
+  });
+
+  it('renders 5 ServiceEntry resources with one additionalDestination', () => {
+    const out = render(
+      '--set "credentialInjection.istio.additionalDestinations[0]=my-mcp.internal:8443"',
+    );
+    const count = (out.match(/kind: ServiceEntry/g) ?? []).length;
+    expect(count).toBe(5);
+  });
+
+  it('renders Namespace with istio-injection=enabled label', () => {
+    const out = render();
+    expect(out).toMatch(/istio-injection:\s*enabled/);
+  });
+
+  it('renders orchestrator with sidecar.istio.io/inject=false annotation', () => {
+    const out = render();
+    expect(out).toContain('sidecar.istio.io/inject: "false"');
+  });
+
+  it('does NOT render the credential-sidecar Envoy container', () => {
+    const out = render();
+    expect(out).not.toContain('credential-sidecar');
+  });
+
+  it('renders istio-mode NetworkPolicies', () => {
+    const out = render();
+    expect(out).toContain('kubeclaw-broker-ingress-istio');
+  });
+
+  it('renders egress gateway Deployment', () => {
+    const out = render();
+    expect(out).toContain('kubeclaw-istio-egressgateway');
+  });
+});
+
+describe('helm template — mode=sidecar (no Istio regression)', () => {
+  const render = () =>
+    execSync(
+      `helm template helm/kubeclaw --set credentialInjection.mode=sidecar --set namespace=kubeclaw --set channels.http.enabled=true`,
+      { encoding: 'utf8' },
+    );
+
+  it('does NOT render Istio resources', () => {
+    const out = render();
+    expect(out).not.toContain('kind: Sidecar');
+    expect(out).not.toContain('kind: ServiceEntry');
+    expect(out).not.toContain('kind: Gateway');
+    expect(out).not.toContain('kind: VirtualService');
+    expect(out).not.toContain('kind: EnvoyFilter');
+  });
+
+  it('renders credential-sidecar container', () => {
+    expect(render()).toContain('credential-sidecar');
+  });
+});
+
+describe('helm template — mode=off (no regression)', () => {
+  const render = () =>
+    execSync(
+      `helm template helm/kubeclaw --set credentialInjection.mode=off --set namespace=kubeclaw`,
+      { encoding: 'utf8' },
+    );
+
+  it('renders cleanly', () => {
+    expect(() => render()).not.toThrow();
+  });
+
+  it('does NOT render credential-broker', () => {
+    const out = render();
+    expect(out).not.toContain('credential-broker');
+  });
+
+  it('does NOT render any EnvoyFilter', () => {
+    expect(render()).not.toContain('kind: EnvoyFilter');
   });
 });

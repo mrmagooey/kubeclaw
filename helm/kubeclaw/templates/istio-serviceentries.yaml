@@ -1,0 +1,22 @@
+{{- if eq .Values.credentialInjection.mode "istio" -}}
+{{- $destinations := (include "kubeclaw.egressDestinations" . | fromJson).items -}}
+{{- range $dest := $destinations }}
+---
+# ServiceEntry for {{ index $dest "host" }} — allows Istio mesh to route traffic to this
+# external host through the kubeclaw egress gateway.
+apiVersion: networking.istio.io/v1
+kind: ServiceEntry
+metadata:
+  name: kubeclaw-egress-{{ index $dest "host" | replace "." "-" | replace ":" "-" }}
+  namespace: {{ $.Values.namespace }}
+spec:
+  hosts:
+    - {{ index $dest "host" }}
+  ports:
+    - number: {{ index $dest "port" }}
+      name: https
+      protocol: {{ index $dest "protocol" }}
+  location: MESH_EXTERNAL
+  resolution: DNS
+{{- end }}
+{{- end }}
