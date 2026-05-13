@@ -132,6 +132,10 @@ describe('credential-injection mode=istio e2e', { timeout: TIMEOUT_MS }, () => {
     const overrides = JSON.stringify({
       spec: { serviceAccountName: 'kubeclaw-tool-job' },
     });
+    // NB: each line is joined with "; " and embedded inside an outer
+    // sh -c '...' single-quoted string in kubectl run. Do NOT use
+    // single-quotes inside these lines — they will terminate the outer
+    // quoting and break the spawned shell.
     const script = [
       'set -e',
       'resp=$(curl -sS -H "Authorization: Bearer placeholder" http://mock-upstream.kubeclaw-test/echo)',
