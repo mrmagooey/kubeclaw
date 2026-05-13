@@ -74,6 +74,15 @@ jobs:
             kubeclaw-orchestrator:e2e-test \
             --name kubeclaw-e2e-istio
 
+      - name: Preload curl + echo images into kind
+        run: |
+          docker pull mendhak/http-https-echo:31
+          kind load docker-image mendhak/http-https-echo:31 \
+            --name kubeclaw-e2e-istio
+          docker pull curlimages/curl:8.10.1
+          kind load docker-image curlimages/curl:8.10.1 \
+            --name kubeclaw-e2e-istio
+
       - name: Run Istio e2e tests
         run: |
           npm run test:e2e -- e2e/credential-injection-istio.test.ts \
