@@ -17,9 +17,11 @@ spec:
     - number: {{ index $dest "port" }}
       name: http
       protocol: HTTP
+    {{- if ne (index $dest "upstreamPort") (index $dest "port") }}
     - number: {{ index $dest "upstreamPort" }}
       name: tls
       protocol: {{ index $dest "upstreamProtocol" }}
+    {{- end }}
   location: MESH_EXTERNAL
   resolution: DNS
   {{- if hasKey $dest "endpointAddress" }}
