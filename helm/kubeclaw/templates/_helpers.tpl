@@ -170,9 +170,16 @@ than a bare slice (Helm's fromJson cannot range over a top-level JSON array).
 {{- end -}}
 
 {{/*
-kubeclaw.istioBaseUrlEnv — emits an env block setting the four built-in
-provider base URLs to http:// hostnames, for pods that egress through the
-istio gateway. Render only when credentialInjection.mode == "istio" and
+kubeclaw.istioBaseUrlEnv — emits env entries for three of the four built-in
+broker providers (openai, anthropic, openrouter) pointing at http:// hostnames,
+so workload SDKs route through the istio egress gateway for credential stamping.
+
+Voyage is intentionally omitted: its SDK doesn't standardise on a VOYAGE_BASE_URL
+env, so an injected default could either be ignored (most Python SDKs use
+`VOYAGEAI_API_URL`) or actively conflict with operator config. Operators using
+voyage should set the appropriate base-URL env on their workload pod themselves.
+
+Render only when credentialInjection.mode == "istio" and
 credentialInjection.auditOnly == false.
 */}}
 {{- define "kubeclaw.istioBaseUrlEnv" -}}
