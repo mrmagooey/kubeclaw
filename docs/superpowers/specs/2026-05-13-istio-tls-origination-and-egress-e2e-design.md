@@ -153,8 +153,14 @@ their base URLs from configurable envs. Not chosen.
   This single change makes all downstream templates (`ServiceEntry`, Gateway,
   VirtualService, DestinationRule) pick up the test destination automatically;
   no template duplication.
-- New helper `kubeclaw.istioBaseUrlEnv` returns an env block for the four
-  built-in destinations with `http://<host>` values, for use in pod specs.
+- New helper `kubeclaw.istioBaseUrlEnv` returns an env block for three of
+  the four built-in destinations (openai, anthropic, openrouter) with
+  `http://<host>` values, for use in pod specs. Voyage is intentionally
+  omitted: its SDK doesn't standardise on a `VOYAGE_BASE_URL` env
+  (most Python SDKs use `VOYAGEAI_API_URL`), so an injected default
+  could either be ignored or actively conflict with operator config.
+  Operators using voyage set the appropriate base-URL env on their
+  workload pod themselves.
 
 `helm/kubeclaw/templates/channel-pods.yaml`, `capability-pods.yaml`
 

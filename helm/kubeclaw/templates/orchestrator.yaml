@@ -179,6 +179,12 @@ spec:
                   name: {{ include "kubeclaw.secretName" . }}
                   key: claude-code-oauth-token
                   optional: true
+            # The orchestrator does NOT call LLM providers directly — per the
+            # four-tier architecture, channels own LLM conversations. These
+            # envs are reserved for future use and are intentionally not
+            # rewritten by kubeclaw.istioBaseUrlEnv in mode=istio. If the
+            # orchestrator ever starts making provider calls, gate these
+            # behind mode=sidecar / mode=off and inject istioBaseUrlEnv here.
             - name: OPENAI_API_KEY
               valueFrom:
                 secretKeyRef:
