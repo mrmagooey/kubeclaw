@@ -826,6 +826,92 @@ describe('helm template — mode=istio', () => {
     const out = render();
     expect(out).toContain('kubeclaw-istio-egressgateway');
   });
+
+  it('renders Gateway with HTTP listener on port 80 (not HTTPS PASSTHROUGH)', () => {
+    const out = render();
+    expect(out).toMatch(/protocol:\s*HTTP\b(?!S)/);
+    expect(out).toContain('number: 80');
+    expect(out).not.toContain('mode: PASSTHROUGH');
+  });
+
+  it('renders VirtualService http: routes (not tls:)', () => {
+    const out = render();
+    expect(out).toContain('kind: VirtualService');
+    expect(out).toMatch(/kind:\s*VirtualService[\s\S]+http:/);
+    expect(out).not.toMatch(/kind:\s*VirtualService[\s\S]+\n\s+tls:/);
+  });
+
+  it('renders one DestinationRule per built-in HTTPS destination', () => {
+    const out = render();
+    for (const slug of [
+      'api-anthropic-com',
+      'api-openai-com',
+      'openrouter-ai',
+      'api-voyageai-com',
+    ]) {
+      expect(out).toContain(`kubeclaw-egress-tls-${slug}`);
+    }
+    expect(out).toMatch(/mode:\s*SIMPLE/);
+    expect(out).toMatch(/caCertificates:\s*\/etc\/ssl\/certs\/ca-certificates\.crt/);
+  });
+
+  it('renders ServiceEntry with two ports per destination (workload http + upstream tls)', () => {
+    const out = render();
+    expect(out).toMatch(
+      /name:\s*kubeclaw-egress-api-openai-com[\s\S]+number:\s*80[\s\S]+protocol:\s*HTTP[\s\S]+number:\s*443[\s\S]+protocol:\s*HTTPS/,
+    );
+  });
+
+  it('Service kubeclaw-istio-egressgateway exposes port 80 (not 443)', () => {
+    const out = render();
+    expect(out).toMatch(
+      /name:\s*kubeclaw-istio-egressgateway[\s\S]+?ports:\s*\n\s+-\s*name:\s*http\s*\n\s+port:\s*80/,
+    );
+  });
+
+  describe('with testFixture.enabled=true', () => {
+    let renderWithFixture: () => string;
+    beforeAll(() => {
+      renderWithFixture = () =>
+        execSync(
+          `helm template helm/kubeclaw \
+            --set credentialInjection.mode=istio \
+            --set namespace=kubeclaw \
+            --set credentialInjection.istio.testFixture.enabled=true`,
+          { encoding: 'utf8' },
+        );
+    });
+
+    it('renders the mock-upstream Deployment and Service', () => {
+      const out = renderWithFixture();
+      expect(out).toContain('name: kubeclaw-mock-upstream');
+      expect(out).toContain('mendhak/http-https-echo');
+      expect(out).toContain('sidecar.istio.io/inject: "false"');
+    });
+
+    it('appends a ServiceEntry + Gateway server + VS routes for mock-upstream.kubeclaw-test', () => {
+      const out = renderWithFixture();
+      expect(out).toContain('mock-upstream.kubeclaw-test');
+      expect(out).toContain('kubeclaw-egress-mock-upstream-kubeclaw-test');
+    });
+
+    it('appends a test-mock mapping to the broker ConfigMap', () => {
+      const out = renderWithFixture();
+      expect(out).toMatch(/id:\s*test-mock/);
+      expect(out).toContain('mock-upstream.kubeclaw-test');
+      expect(out).toContain('test-mock-token');
+    });
+
+    it('renders test-mock-token in the kubeclaw-secrets Secret', () => {
+      const out = renderWithFixture();
+      expect(out).toMatch(/test-mock-token:\s*(test-token-12345|dGVzdC10b2tlbi0xMjM0NQ==)/);
+    });
+
+    it('does NOT render a DestinationRule for the mock (HTTP upstream)', () => {
+      const out = renderWithFixture();
+      expect(out).not.toContain('kubeclaw-egress-tls-mock-upstream-kubeclaw-test');
+    });
+  });
 });
 
 describe('helm template — mode=sidecar (no Istio regression)', () => {
@@ -846,6 +932,19 @@ describe('helm template — mode=sidecar (no Istio regression)', () => {
 
   it('renders credential-sidecar container', () => {
     expect(render()).toContain('credential-sidecar');
+  });
+
+  it('does NOT render the test fixture even if requested', () => {
+    const out = execSync(
+      `helm template helm/kubeclaw \
+        --set credentialInjection.mode=sidecar \
+        --set namespace=kubeclaw \
+        --set credentialInjection.istio.testFixture.enabled=true`,
+      { encoding: 'utf8' },
+    );
+    expect(out).not.toContain('name: kubeclaw-mock-upstream');
+    expect(out).not.toContain('mock-upstream.kubeclaw-test');
+    expect(out).not.toMatch(/id:\s*test-mock/);
   });
 });
 
