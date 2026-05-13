@@ -2497,3 +2497,33 @@ Before marking this plan complete, verify all of the following:
 2. **Gateway TLS mode:** Initial draft used `MUTUAL` TLS on the Gateway server block. Corrected to `PASSTHROUGH` — the egress gateway does not terminate upstream TLS; it only terminates mesh mTLS from the workload sidecar and re-originates a fresh TLS connection to the upstream host. `MUTUAL` would require the gateway to present a client cert to Anthropic's API, which is not the intent.
 3. **`helm template` offline safety for `kubeclaw.requireIstio`:** The `fail` call is guarded by also checking that `kube-system` namespace is resolvable via `lookup` — if that returns empty, we know we're offline and skip the failure. This prevents breaking `helm template` in CI.
 4. **Missing `ServiceAccount` for egress gateway:** The `istio-egress.yaml` Deployment references `serviceAccountName: kubeclaw-istio-egressgateway`. The ServiceAccount resource is included in the same file. Verified present in Task 5.
+
+---
+
+## Addendum — 2026-05-13: Superseded by TLS-origination spec
+
+The "Gateway TLS mode: PASSTHROUGH" decision in §2497 of this plan was
+incorrect. PASSTHROUGH listeners in Envoy are realised as a
+`tcp_proxy` + `tls_inspector` filter chain, with no
+`http_connection_manager`; the EnvoyFilter that installs `ext_authz`
+matches an HCM-based filter chain that never exists on that listener,
+so ext_authz was never instantiated and no `Authorization` stamping
+occurred. No e2e test exercised the request path, so the defect shipped
+unobserved.
+
+The corrected design — HTTP listener at the gateway, per-host
+`DestinationRule` for upstream TLS origination, workload SDKs using
+`http://` URLs, end-to-end test against an in-cluster mock upstream —
+is specified in:
+
+→ `docs/superpowers/specs/2026-05-13-istio-tls-origination-and-egress-e2e-design.md`
+
+and implemented per:
+
+→ `docs/superpowers/plans/2026-05-13-istio-tls-origination.md`
+
+Sections of this plan that remain correct: Sidecar resource, namespace
+egress restriction, NetworkPolicy shape, SPIFFE-via-XFCC dispatch in
+the broker, ambient-mode exclusion, additionalDestinations concept.
+Sections superseded: Gateway TLS mode (§2497), Tasks 5–6 acceptance
+criteria specifics, and the rendered-manifest-only validation strategy.
