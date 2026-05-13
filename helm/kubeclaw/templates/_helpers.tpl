@@ -125,28 +125,58 @@ cluster is reachable but Istio CRDs are absent. Silent when running offline.
 
 {{/*
 kubeclaw.egressDestinations — returns a JSON object {"items":[...]} containing
-all egress destinations that the credential broker handles, suitable for
-ServiceEntry generation. Each item has keys: host (string), port (number),
-protocol (string). Includes built-in destinations (anthropic, openai, openrouter,
-voyage) plus any entries in .Values.credentialInjection.istio.additionalDestinations.
-Wrapped in {"items":[...]} so that fromJson produces a traversable map rather
+all egress destinations the credential broker handles. Each item has keys:
+  host             string  — destination hostname
+  port             number  — workload-facing port (always 80, HTTP)
+  upstreamPort     number  — port the gateway originates TLS to (443 default)
+  upstreamProtocol string  — "HTTPS" (built-ins, additionalDestinations) or
+                             "HTTP" (test fixture mock upstream only)
+  endpointAddress  string  — optional STATIC/DNS endpoint override (test fixture)
+
+Built-ins are anthropic/openai/openrouter/voyage. additionalDestinations
+contributes entries with configurable upstreamPort (default 443).
+When credentialInjection.istio.testFixture.enabled=true, one extra entry is
+appended for the in-cluster mock-upstream.
+
+Wrapped in {"items":[...]} so fromJson produces a traversable map rather
 than a bare slice (Helm's fromJson cannot range over a top-level JSON array).
 */}}
 {{- define "kubeclaw.egressDestinations" -}}
 {{- $built_in := list
-      (dict "host" "api.anthropic.com"  "port" 443 "protocol" "HTTPS")
-      (dict "host" "api.openai.com"     "port" 443 "protocol" "HTTPS")
-      (dict "host" "openrouter.ai"      "port" 443 "protocol" "HTTPS")
-      (dict "host" "api.voyageai.com"   "port" 443 "protocol" "HTTPS") -}}
+      (dict "host" "api.anthropic.com" "port" 80 "upstreamPort" 443 "upstreamProtocol" "HTTPS")
+      (dict "host" "api.openai.com"    "port" 80 "upstreamPort" 443 "upstreamProtocol" "HTTPS")
+      (dict "host" "openrouter.ai"     "port" 80 "upstreamPort" 443 "upstreamProtocol" "HTTPS")
+      (dict "host" "api.voyageai.com"  "port" 80 "upstreamPort" 443 "upstreamProtocol" "HTTPS") -}}
 {{- $extra := list -}}
 {{- range .Values.credentialInjection.istio.additionalDestinations -}}
   {{- $parts := splitList ":" . -}}
   {{- $h := index $parts 0 -}}
-  {{- $p := 443 -}}
+  {{- $up := 443 -}}
   {{- if gt (len $parts) 1 -}}
-    {{- $p = index $parts 1 | int -}}
+    {{- $up = index $parts 1 | int -}}
   {{- end -}}
-  {{- $extra = append $extra (dict "host" $h "port" $p "protocol" "HTTPS") -}}
+  {{- $extra = append $extra (dict "host" $h "port" 80 "upstreamPort" $up "upstreamProtocol" "HTTPS") -}}
 {{- end -}}
-{{- toJson (dict "items" (concat $built_in $extra)) -}}
+{{- $test := list -}}
+{{- if ((.Values.credentialInjection.istio.testFixture).enabled) -}}
+  {{- $test = list (dict
+        "host" "mock-upstream.kubeclaw-test"
+        "port" 80
+        "upstreamPort" 80
+        "upstreamProtocol" "HTTP"
+        "endpointAddress" (printf "kubeclaw-mock-upstream.%s.svc.cluster.local" .Values.namespace)) -}}
+{{- end -}}
+{{- toJson (dict "items" (concat $built_in $extra $test)) -}}
+{{- end -}}
+
+{{/*
+kubeclaw.istioBaseUrlEnv — emits an env block setting the four built-in
+provider base URLs to http:// hostnames, for pods that egress through the
+istio gateway. Render only when credentialInjection.mode == "istio" and
+credentialInjection.auditOnly == false.
+*/}}
+{{- define "kubeclaw.istioBaseUrlEnv" -}}
+- { name: OPENAI_BASE_URL,     value: "http://api.openai.com" }
+- { name: ANTHROPIC_BASE_URL,  value: "http://api.anthropic.com" }
+- { name: OPENROUTER_BASE_URL, value: "http://openrouter.ai" }
 {{- end -}}
