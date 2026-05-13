@@ -325,6 +325,13 @@ credentialInjection:
     # Example: ["my-mcp-server.internal:8443"]
     additionalDestinations: []
 
+    # testFixture: e2e-only knob. Renders an in-cluster mock upstream and
+    # adds a broker mapping for it. Never enable in production — the broker
+    # mapping accepts the kubeclaw-tool-job identity and stamps a literal
+    # test token, which is harmless in isolation but pollutes the audit log.
+    testFixture:
+      enabled: false
+
   metrics:
     enabled: true
     # Metrics are served on a dedicated port separate from broker.port (8080)

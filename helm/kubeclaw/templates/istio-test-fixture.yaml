@@ -1,0 +1,67 @@
+{{- if and (eq .Values.credentialInjection.mode "istio") .Values.credentialInjection.istio.testFixture.enabled -}}
+# Mock upstream for the e2e egress test — renders only when
+# credentialInjection.istio.testFixture.enabled is true. The Service is
+# referenced by name from the kubeclaw.egressDestinations helper, which
+# appends a record for mock-upstream.kubeclaw-test pointing at this Service.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kubeclaw-mock-upstream
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: kubeclaw-mock-upstream
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kubeclaw-mock-upstream
+  template:
+    metadata:
+      labels:
+        app: kubeclaw-mock-upstream
+      annotations:
+        # The mock is "outside" the mesh from the gateway's POV. We don't
+        # want a sidecar on it (it would route via mesh mTLS rather than
+        # accept the gateway's plain HTTP).
+        sidecar.istio.io/inject: "false"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: echo
+          image: mendhak/http-https-echo:31
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          env:
+            - { name: HTTP_PORT,  value: "8080" }
+            - { name: HTTPS_PORT, value: "8443" }
+          ports:
+            - { name: http, containerPort: 8080 }
+          readinessProbe:
+            httpGet: { path: /, port: http }
+            initialDelaySeconds: 1
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits:   { cpu: 100m, memory: 64Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kubeclaw-mock-upstream
+  namespace: {{ .Values.namespace }}
+spec:
+  selector:
+    app: kubeclaw-mock-upstream
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+{{- end }}
