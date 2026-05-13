@@ -353,6 +353,53 @@ kubectl -n kubeclaw get envoyfilter
 7. The broker returns an `Authorization` header; the gateway stamps it on the
    upstream request.
 
+### How requests flow in `mode=istio`
+
+Workloads in pods with the Istio sidecar (anything in the `kubeclaw`
+namespace except the orchestrator) make outbound requests as plain HTTP
+to the destination hostname:
+
+```bash
+curl http://api.openai.com/v1/chat/completions
+```
+
+The chart injects `OPENAI_BASE_URL`, `ANTHROPIC_BASE_URL`, and
+`OPENROUTER_BASE_URL` with `http://` values into channel, capability,
+and tool-job pods automatically — most SDKs pick these up.
+
+The Istio sidecar intercepts the request, wraps it in mesh mTLS, and
+forwards to `kubeclaw-istio-egressgateway`. The gateway terminates the
+mTLS, runs ext_authz against `kubeclaw-credential-broker`, and the
+broker returns an `Authorization: Bearer <secret>` header. Envoy
+stamps it onto the request and originates TLS to the real upstream
+(`api.openai.com:443`) per the `DestinationRule` for that host.
+
+Workload-supplied `Authorization` headers (e.g. from a hard-coded
+`OPENAI_API_KEY`) are overwritten by the gateway. In `mode=istio` the
+chart sets the API-key envs to the literal string
+`injected-by-broker` so SDKs that enforce client-side key presence
+(OpenAI's official SDK, for example) construct successfully; the
+placeholder is never used as a credential.
+
+Voyage is not auto-injected because its SDK doesn't standardise on a
+`VOYAGE_BASE_URL` env. Operators using voyage should set the
+appropriate base-URL env on their workload pod themselves.
+
+### `additionalDestinations` schema
+
+Each entry is `"host[:upstreamPort]"`. The workload-facing listener is
+always HTTP on port 80; `upstreamPort` (default 443) is what the
+gateway originates TLS to. Examples:
+
+| Value | Meaning |
+|---|---|
+| `"my-mcp.internal"` | HTTP on port 80 (workload), HTTPS on port 443 (upstream) |
+| `"my-mcp.internal:8443"` | HTTP on port 80 (workload), HTTPS on port 8443 (upstream) |
+
+Workloads targeting a custom destination must use `http://my-mcp.internal/`
+(not `https://`). Set the matching `*_BASE_URL` env on your workload
+spec if the SDK doesn't already read one of the auto-injected envs.
+
 ### Ambient mode
 
 **Ambient mode (ztunnel + waypoint proxy) is out of scope for this release.**
