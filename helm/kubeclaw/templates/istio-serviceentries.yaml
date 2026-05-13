@@ -2,8 +2,9 @@
 {{- $destinations := (include "kubeclaw.egressDestinations" . | fromJson).items -}}
 {{- range $dest := $destinations }}
 ---
-# ServiceEntry for {{ index $dest "host" }} — allows Istio mesh to route traffic to this
-# external host through the kubeclaw egress gateway.
+# ServiceEntry for {{ index $dest "host" }} — registers this host in the Istio
+# mesh registry. Workloads call it as http://{{ index $dest "host" }} (port 80);
+# the gateway originates TLS to port {{ index $dest "upstreamPort" }} upstream.
 apiVersion: networking.istio.io/v1
 kind: ServiceEntry
 metadata:
@@ -14,9 +15,16 @@ spec:
     - {{ index $dest "host" }}
   ports:
     - number: {{ index $dest "port" }}
-      name: https
-      protocol: {{ index $dest "protocol" }}
+      name: http
+      protocol: HTTP
+    - number: {{ index $dest "upstreamPort" }}
+      name: tls
+      protocol: {{ index $dest "upstreamProtocol" }}
   location: MESH_EXTERNAL
   resolution: DNS
+  {{- if hasKey $dest "endpointAddress" }}
+  endpoints:
+    - address: {{ index $dest "endpointAddress" }}
+  {{- end }}
 {{- end }}
 {{- end }}
