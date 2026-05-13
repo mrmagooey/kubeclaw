@@ -25,8 +25,6 @@ spec:
         app: kubeclaw-istio-egressgateway
         istio: kubeclaw-egressgateway
       annotations:
-        # Force Istio sidecar injection on the gateway pod itself so Envoy picks
-        # up the gateway listener configuration from istiod.
         sidecar.istio.io/inject: "true"
     spec:
       serviceAccountName: kubeclaw-istio-egressgateway
@@ -36,9 +34,6 @@ spec:
           type: RuntimeDefault
       containers:
         - name: istio-proxy
-          # The istio-proxy image is injected by the Istio mutating webhook;
-          # this placeholder is overwritten. Kept here so the Deployment is
-          # syntactically valid for helm lint.
           image: auto
           resources: {{ toYaml .Values.credentialInjection.istio.gateway.resources | nindent 12 }}
           securityContext:
@@ -65,12 +60,14 @@ spec:
     app: kubeclaw-istio-egressgateway
     istio: kubeclaw-egressgateway
   ports:
-    - name: https
-      port: 443
-      targetPort: 8443
+    - name: http
+      port: 80
+      targetPort: 8080
 ---
-# Gateway — configures the egress gateway Envoy to accept connections from
-# mesh sidecars for each external host.
+# Gateway — HTTP listener on port 80. Workload sidecars route to this gateway
+# over mesh mTLS; the gateway terminates that mTLS and presents plaintext HTTP
+# to its filter chain (where ext_authz fires per the EnvoyFilter), then
+# originates TLS to the real upstream per the per-host DestinationRules.
 apiVersion: networking.istio.io/v1
 kind: Gateway
 metadata:
@@ -83,19 +80,16 @@ spec:
 {{- range $dest := $destinations }}
     - port:
         number: {{ index $dest "port" }}
-        name: https-{{ index $dest "host" | replace "." "-" }}
-        protocol: HTTPS
+        name: http-{{ index $dest "host" | replace "." "-" }}
+        protocol: HTTP
       hosts:
         - {{ index $dest "host" }}
-      tls:
-        # PASSTHROUGH: the egress gateway does not terminate the upstream TLS.
-        # It terminates the mesh mTLS from the workload sidecar. The
-        # re-originated upstream connection uses the public CA bundle.
-        mode: PASSTHROUGH
 {{- end }}
 ---
-# VirtualService — routes traffic for each external host from the mesh
-# through the egress gateway before it leaves the cluster.
+# VirtualService — routes traffic for each external host from the mesh through
+# the egress gateway. The mesh leg matches workload-side HTTP and forwards to
+# the gateway Service; the gateway leg matches inside the gateway pod and
+# routes to the upstream host on its upstreamPort.
 apiVersion: networking.istio.io/v1
 kind: VirtualService
 metadata:
@@ -109,23 +103,49 @@ spec:
   gateways:
     - mesh
     - kubeclaw-egressgateway
-  tls:
+  http:
 {{- range $dest := $destinations }}
     - match:
         - gateways: [mesh]
           port: {{ index $dest "port" }}
-          sniHosts: [{{ index $dest "host" }}]
+          authority:
+            exact: {{ index $dest "host" }}
       route:
         - destination:
             host: kubeclaw-istio-egressgateway.{{ $.Values.namespace }}.svc.cluster.local
-            port: { number: 443 }
+            port: { number: 80 }
     - match:
         - gateways: [kubeclaw-egressgateway]
           port: {{ index $dest "port" }}
-          sniHosts: [{{ index $dest "host" }}]
+          authority:
+            exact: {{ index $dest "host" }}
       route:
         - destination:
             host: {{ index $dest "host" }}
-            port: { number: {{ index $dest "port" }} }
+            port: { number: {{ index $dest "upstreamPort" }} }
+{{- end }}
+{{- range $dest := $destinations }}
+{{- if eq (index $dest "upstreamProtocol") "HTTPS" }}
+---
+# DestinationRule — gateway originates TLS to the real upstream on
+# upstreamPort. SNI must match the destination host so upstream's cert is
+# accepted; the gateway pod's filesystem ships the standard public CA bundle
+# at /etc/ssl/certs/ca-certificates.crt.
+apiVersion: networking.istio.io/v1
+kind: DestinationRule
+metadata:
+  name: kubeclaw-egress-tls-{{ index $dest "host" | replace "." "-" | replace ":" "-" }}
+  namespace: {{ $.Values.namespace }}
+spec:
+  host: {{ index $dest "host" }}
+  trafficPolicy:
+    portLevelSettings:
+      - port:
+          number: {{ index $dest "upstreamPort" }}
+        tls:
+          mode: SIMPLE
+          sni: {{ index $dest "host" }}
+          caCertificates: /etc/ssl/certs/ca-certificates.crt
+{{- end }}
 {{- end }}
 {{- end }}
