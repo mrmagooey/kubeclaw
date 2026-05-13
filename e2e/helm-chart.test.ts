@@ -869,6 +869,18 @@ describe('helm template — mode=istio', () => {
     );
   });
 
+  it('injects http:// base URL envs into channel and capability pods', () => {
+    const out = render(
+      '--set channels.http.enabled=true --set "capabilities.memory.image=kubeclaw-memory:latest"',
+    );
+    expect(out).toContain('value: "http://api.openai.com"');
+    expect(out).toContain('value: "http://api.anthropic.com"');
+    expect(out).toContain('value: "http://openrouter.ai"');
+    // Both pod families must carry them; the simplest check is two distinct
+    // occurrences of OPENAI_BASE_URL in the rendered output.
+    expect((out.match(/OPENAI_BASE_URL/g) ?? []).length).toBeGreaterThanOrEqual(2);
+  });
+
   describe('with testFixture.enabled=true', () => {
     let renderWithFixture: () => string;
     beforeAll(() => {

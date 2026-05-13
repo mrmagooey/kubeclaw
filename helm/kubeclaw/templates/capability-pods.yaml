@@ -54,7 +54,11 @@ spec:
             {{- include "kubeclaw.credentialSidecarEnv" $ | nindent 12 }}
             {{- end }}
             {{- if eq $.Values.credentialInjection.mode "istio" }}
-            # In istio mode, iptables redirection handles egress; no HTTPS_PROXY needed.
+            # Istio captures all egress via iptables redirection; no
+            # HTTPS_PROXY is needed. The base URL overrides below route
+            # workload SDKs through the egress gateway, which stamps the
+            # broker-supplied Authorization header.
+            {{- include "kubeclaw.istioBaseUrlEnv" $ | nindent 12 }}
             {{- end }}
           ports:
             - name: http
