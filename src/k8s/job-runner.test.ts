@@ -1490,13 +1490,18 @@ describe('JobRunner', () => {
       vi.mocked(configModule.getInjectionMode).mockReturnValue('istio');
     });
 
-    it('strips API key envs but does NOT add HTTPS_PROXY when mode=istio', () => {
+    it('substitutes API key envs with placeholder and does NOT add HTTPS_PROXY when mode=istio', () => {
       const manifest = jobRunner.generateJobManifest(credInjectionSpec);
-      const envNames = (
-        manifest.spec?.template?.spec?.containers?.[0]?.env ?? []
-      ).map((e) => e.name);
-      expect(envNames).not.toContain('ANTHROPIC_API_KEY');
-      expect(envNames).not.toContain('OPENAI_API_KEY');
+      const env = manifest.spec?.template?.spec?.containers?.[0]?.env ?? [];
+      const envNames = env.map((e) => e.name);
+      // Keys must still be present (as placeholder) so SDK constructors don't throw
+      expect(envNames).toContain('ANTHROPIC_API_KEY');
+      expect(envNames).toContain('OPENAI_API_KEY');
+      // Values must be the placeholder, not the real secret
+      const anthropicKey = env.find((e) => e.name === 'ANTHROPIC_API_KEY');
+      expect(anthropicKey?.value).toBe('injected-by-broker');
+      expect(anthropicKey?.valueFrom).toBeUndefined();
+      // istio mode does not add HTTPS_PROXY (Istio iptables handles routing)
       expect(envNames).not.toContain('HTTPS_PROXY');
     });
 
@@ -1524,6 +1529,44 @@ describe('JobRunner', () => {
       expect(manifest.spec?.template?.spec?.serviceAccountName).toBe(
         'kubeclaw-tool-job',
       );
+    });
+
+    it('substitutes API key envs with the literal "injected-by-broker" placeholder', () => {
+      const manifest = jobRunner.generateJobManifest(credInjectionSpec);
+      const env = manifest.spec?.template?.spec?.containers?.[0]?.env ?? [];
+      const named = (n: string) => env.find((e: any) => e.name === n);
+      // credInjectionSpec uses provider=claude; keys present for that provider:
+      for (const key of [
+        'OPENAI_API_KEY',
+        'ANTHROPIC_API_KEY',
+        'OPENROUTER_API_KEY',
+      ]) {
+        const entry = named(key);
+        expect(entry, `${key} entry exists`).toBeDefined();
+        expect(entry).toMatchObject({ name: key, value: 'injected-by-broker' });
+        expect(entry!.valueFrom).toBeUndefined();
+      }
+    });
+
+    it('substitutes BASE_URL envs with http:// literal values', () => {
+      const manifest = jobRunner.generateJobManifest(credInjectionSpec);
+      const env = manifest.spec?.template?.spec?.containers?.[0]?.env ?? [];
+      const named = (n: string) => env.find((e: any) => e.name === n);
+      expect(named('OPENAI_BASE_URL')).toMatchObject({ value: 'http://api.openai.com' });
+      expect(named('ANTHROPIC_BASE_URL')).toMatchObject({ value: 'http://api.anthropic.com' });
+      expect(named('OPENROUTER_BASE_URL')).toMatchObject({ value: 'http://openrouter.ai' });
+      for (const key of ['OPENAI_BASE_URL', 'ANTHROPIC_BASE_URL', 'OPENROUTER_BASE_URL']) {
+        expect(named(key)!.valueFrom).toBeUndefined();
+      }
+    });
+
+    it('does NOT substitute when auditOnly=true (preserves valueFrom secretKeyRefs)', () => {
+      vi.mocked(configModule.getAuditOnly).mockReturnValue(true);
+      const manifest = jobRunner.generateJobManifest(credInjectionSpec);
+      const env = manifest.spec?.template?.spec?.containers?.[0]?.env ?? [];
+      const openai = env.find((e: any) => e.name === 'OPENAI_API_KEY');
+      expect(openai?.valueFrom?.secretKeyRef).toBeDefined();
+      expect(openai?.value).toBeUndefined();
     });
   });
 
@@ -1591,13 +1634,18 @@ describe('JobRunner', () => {
       expect(names).toContain('ANTHROPIC_API_KEY');
     });
 
-    it('mode=istio: strips API keys but no HTTPS_PROXY and no credential-sidecar container', () => {
+    it('mode=istio: substitutes API keys with placeholder, no HTTPS_PROXY, no credential-sidecar container', () => {
       process.env.CREDENTIAL_INJECTION_MODE = 'istio';
       process.env.CREDENTIAL_INJECTION_AUDIT_ONLY = 'false';
       const manifest = runner.generateJobManifest(makeSpec());
-      const agentEnv = manifest.spec!.template.spec!.containers[0].env as Array<{ name: string }>;
+      const agentEnv = manifest.spec!.template.spec!.containers[0].env as Array<{ name: string; value?: string; valueFrom?: object }>;
       const names = agentEnv.map((e) => e.name);
-      expect(names).not.toContain('ANTHROPIC_API_KEY');
+      // Keys must be present with placeholder value (not stripped)
+      expect(names).toContain('ANTHROPIC_API_KEY');
+      const anthropicKey = agentEnv.find((e) => e.name === 'ANTHROPIC_API_KEY');
+      expect(anthropicKey?.value).toBe('injected-by-broker');
+      expect(anthropicKey?.valueFrom).toBeUndefined();
+      // istio mode does not add HTTPS_PROXY
       expect(names).not.toContain('HTTPS_PROXY');
       const containerNames = manifest.spec!.template.spec!.containers.map((c: any) => c.name);
       expect(containerNames).not.toContain('credential-sidecar');

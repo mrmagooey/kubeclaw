@@ -117,6 +117,59 @@ const STRIPPED_WHEN_INJECTED = new Set([
   'VOYAGE_API_KEY',
 ]);
 
+/**
+ * In mode=istio, API key envs are replaced with this literal string instead of
+ * being stripped.  SDKs like the OpenAI client enforce client-side key presence
+ * and throw at construction if the env is absent.  The gateway's ext_authz
+ * response overwrites the Authorization header on every request, so this
+ * placeholder never leaves the cluster.
+ */
+const ISTIO_API_KEY_PLACEHOLDER = 'injected-by-broker';
+
+/** API key env vars to substitute with the placeholder in istio mode. */
+const ISTIO_PLACEHOLDER_KEYS = new Set([
+  'OPENAI_API_KEY',
+  'ANTHROPIC_API_KEY',
+  'OPENROUTER_API_KEY',
+  'VOYAGE_API_KEY',
+  'CLAUDE_CODE_OAUTH_TOKEN',
+  'ANTHROPIC_AUTH_TOKEN',
+]);
+
+/**
+ * Provider BASE_URL envs that must point at the http:// (non-TLS) hostname so
+ * traffic routes through the Istio egress gateway rather than being sent
+ * directly over TLS (which would bypass the gateway's ext_authz filter).
+ */
+const ISTIO_BASE_URLS: Record<string, string> = {
+  OPENAI_BASE_URL: 'http://api.openai.com',
+  ANTHROPIC_BASE_URL: 'http://api.anthropic.com',
+  OPENROUTER_BASE_URL: 'http://openrouter.ai',
+};
+
+/**
+ * Substitute credential envs for mode=istio workloads.
+ *
+ * - API key envs: replaced with the literal placeholder string so SDK
+ *   constructors are satisfied, but the gateway overwrites the header before
+ *   the request reaches the upstream provider.
+ * - BASE_URL envs: replaced with http:// literals so the SDK targets the
+ *   egress gateway listener (which expects plain HTTP from the sidecar).
+ */
+function applyIstioModeEnvSubstitution(
+  env: Array<{ name: string; value?: string; valueFrom?: object }>,
+): Array<{ name: string; value?: string; valueFrom?: object }> {
+  return env.map((e) => {
+    if (ISTIO_PLACEHOLDER_KEYS.has(e.name) && e.valueFrom) {
+      return { name: e.name, value: ISTIO_API_KEY_PLACEHOLDER };
+    }
+    if (e.name in ISTIO_BASE_URLS) {
+      return { name: e.name, value: ISTIO_BASE_URLS[e.name] };
+    }
+    return e;
+  });
+}
+
 // Job constants
 const JOB_TTL_SECONDS_AFTER_FINISHED = 3600;
 const JOB_ACTIVE_DEADLINE_SECONDS = 1800; // 30 min
@@ -638,28 +691,33 @@ export class JobRunner {
       });
     }
 
-    // Credential injection: strip API keys when active (sidecar or istio).
-    // In istio mode, Istio's iptables-based redirection routes egress automatically;
-    // no HTTPS_PROXY env is needed. In sidecar mode, HTTPS_PROXY points at the
-    // per-pod Envoy sidecar so traffic flows through it.
-    // In audit-only mode (sidecar only), keys are kept and HTTPS_PROXY is still set
-    // so the broker observes traffic via the sidecar.
+    // Credential injection env transformation.
+    // - sidecar mode: strip API key envs entirely; add HTTPS_PROXY to route
+    //   traffic through the per-pod Envoy sidecar.  In audit-only mode the
+    //   keys are kept but HTTPS_PROXY is still set so the broker can observe.
+    // - istio mode: substitute API key envs with a literal placeholder string
+    //   (so SDK constructors don't throw) and set provider BASE_URL envs to
+    //   http:// hostnames (so the SDK targets the egress gateway listener).
+    //   The gateway's ext_authz response overwrites Authorization on every
+    //   request, so the placeholder never reaches the upstream provider.
+    //   In audit-only mode no substitution is performed.
     const injectionMode = getInjectionMode();
     const auditOnly = getAuditOnly();
-    const stripsCredentials =
-      (injectionMode === 'sidecar' || injectionMode === 'istio') && !auditOnly;
-    const addsSidecarProxy = injectionMode === 'sidecar';
 
-    const finalEnv = stripsCredentials
-      ? [
-          ...envVars.filter((e) => !STRIPPED_WHEN_INJECTED.has(e.name)),
-          ...(addsSidecarProxy
-            ? workloadEnvForSidecar({ port: CREDENTIAL_SIDECAR_PORT })
-            : []),
-        ]
-      : addsSidecarProxy
-        ? [...envVars, ...workloadEnvForSidecar({ port: CREDENTIAL_SIDECAR_PORT })]
-        : envVars;
+    let finalEnv: Array<{ name: string; value?: string; valueFrom?: object }>;
+    if (injectionMode === 'istio' && !auditOnly) {
+      finalEnv = applyIstioModeEnvSubstitution(envVars);
+    } else if (injectionMode === 'sidecar' && !auditOnly) {
+      finalEnv = [
+        ...envVars.filter((e) => !STRIPPED_WHEN_INJECTED.has(e.name)),
+        ...workloadEnvForSidecar({ port: CREDENTIAL_SIDECAR_PORT }),
+      ];
+    } else if (injectionMode === 'sidecar') {
+      // auditOnly=true: keep keys, but still add HTTPS_PROXY for broker observation
+      finalEnv = [...envVars, ...workloadEnvForSidecar({ port: CREDENTIAL_SIDECAR_PORT })];
+    } else {
+      finalEnv = envVars;
+    }
 
     // Build resource limits — include GPU/device requests when specified
     const resourceLimits: Record<string, string> = {
