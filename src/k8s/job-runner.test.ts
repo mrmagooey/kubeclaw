@@ -1490,6 +1490,10 @@ describe('JobRunner', () => {
       vi.mocked(configModule.getInjectionMode).mockReturnValue('istio');
     });
 
+    afterEach(() => {
+      vi.mocked(configModule.getAuditOnly).mockReturnValue(false);
+    });
+
     it('substitutes API key envs with placeholder and does NOT add HTTPS_PROXY when mode=istio', () => {
       const manifest = jobRunner.generateJobManifest(credInjectionSpec);
       const env = manifest.spec?.template?.spec?.containers?.[0]?.env ?? [];

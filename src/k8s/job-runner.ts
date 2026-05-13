@@ -101,12 +101,12 @@ export function buildJobName(folder: string): string {
 }
 
 /**
- * API key env var names that must be stripped from the main container when the
- * credential-injection sidecar is active.  The sidecar (Envoy + credential
- * broker) fetches and injects these at request time, so they must NOT be
- * present in the pod spec (defense-in-depth; the tool-server strip-list in
- * container/agent-runner/src/tool-server.ts:SECRET_ENV_VARS is kept as a
- * separate layer).
+ * Credential env-var names the chart manages. In mode=sidecar these are
+ * stripped (the per-pod Envoy adds Authorization on every request via
+ * ext_authz); in mode=istio (auditOnly=false) they are SUBSTITUTED with
+ * a placeholder so SDKs that enforce client-side key presence still
+ * construct, with the real credential added by the gateway's ext_authz
+ * response on each request.
  */
 const STRIPPED_WHEN_INJECTED = new Set([
   'OPENAI_API_KEY',
@@ -125,16 +125,6 @@ const STRIPPED_WHEN_INJECTED = new Set([
  * placeholder never leaves the cluster.
  */
 const ISTIO_API_KEY_PLACEHOLDER = 'injected-by-broker';
-
-/** API key env vars to substitute with the placeholder in istio mode. */
-const ISTIO_PLACEHOLDER_KEYS = new Set([
-  'OPENAI_API_KEY',
-  'ANTHROPIC_API_KEY',
-  'OPENROUTER_API_KEY',
-  'VOYAGE_API_KEY',
-  'CLAUDE_CODE_OAUTH_TOKEN',
-  'ANTHROPIC_AUTH_TOKEN',
-]);
 
 /**
  * Provider BASE_URL envs that must point at the http:// (non-TLS) hostname so
@@ -160,7 +150,7 @@ function applyIstioModeEnvSubstitution(
   env: Array<{ name: string; value?: string; valueFrom?: object }>,
 ): Array<{ name: string; value?: string; valueFrom?: object }> {
   return env.map((e) => {
-    if (ISTIO_PLACEHOLDER_KEYS.has(e.name) && e.valueFrom) {
+    if (STRIPPED_WHEN_INJECTED.has(e.name) && e.valueFrom) {
       return { name: e.name, value: ISTIO_API_KEY_PLACEHOLDER };
     }
     if (e.name in ISTIO_BASE_URLS) {
