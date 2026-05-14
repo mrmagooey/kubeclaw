@@ -108,6 +108,67 @@ describe('registry', () => {
     ).toEqual(['public-mcp']);
   });
 
+  describe('RAG uniqueness', () => {
+    const rag = (name: string, channels?: string[]) => ({
+      kind: 'rag' as const,
+      name,
+      image: `rag/${name}:1.0`,
+      backend: 'qdrant' as const,
+      ...(channels ? { channels } : {}),
+    });
+
+    it('rejects a second unscoped RAG', async () => {
+      await installCapability(rag('rag-a'));
+      await expect(installCapability(rag('rag-b'))).rejects.toThrow(
+        /conflicts with already-installed RAG 'rag-a'/,
+      );
+      expect(listCapabilities()).toHaveLength(1);
+      // Side-effects must not have fired for the rejected install.
+      expect(mockApply).toHaveBeenCalledOnce();
+    });
+
+    it('rejects a RAG when an unscoped RAG already exists, even if the new one is scoped', async () => {
+      await installCapability(rag('rag-a'));
+      await expect(installCapability(rag('rag-b', ['slack']))).rejects.toThrow(
+        /unscoped \(applies to all channels\)/,
+      );
+    });
+
+    it('rejects a RAG when the existing scoped RAG covers the same channel', async () => {
+      await installCapability(rag('rag-a', ['slack', 'telegram']));
+      await expect(
+        installCapability(rag('rag-b', ['telegram', 'discord'])),
+      ).rejects.toThrow(/on channel\(s\): telegram/);
+    });
+
+    it('allows two RAGs with disjoint channel ACLs', async () => {
+      await installCapability(rag('rag-a', ['slack']));
+      await installCapability(rag('rag-b', ['telegram']));
+      expect(listCapabilities()).toHaveLength(2);
+    });
+
+    it('allows updating an existing RAG (same name) even when unscoped', async () => {
+      await installCapability(rag('rag-a'));
+      await installCapability({
+        ...rag('rag-a'),
+        image: 'rag/rag-a:2.0',
+      });
+      const list = listCapabilities();
+      expect(list).toHaveLength(1);
+      expect(list[0].image).toBe('rag/rag-a:2.0');
+    });
+
+    it('does not block an MCP install when a RAG is present', async () => {
+      await installCapability(rag('rag-a'));
+      await installCapability({
+        kind: 'mcp',
+        name: 'weather',
+        image: 'mcp/weather:1.0',
+      });
+      expect(listCapabilities()).toHaveLength(2);
+    });
+  });
+
   it("remove notifies a non-standard channel name that was ACL'd to the removed spec", async () => {
     await installCapability({
       kind: 'mcp',

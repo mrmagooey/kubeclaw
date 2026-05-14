@@ -102,7 +102,50 @@ export function getEntriesForChannel(
     .map(specToDiscoveryEntry);
 }
 
+/**
+ * Reject a RAG install that would leave any channel resolving to more than one
+ * RAG entry. getRagEntry() picks the first match, so without this guard the
+ * second pod is silently orphaned — bytes burned, no queries served.
+ *
+ * Two RAGs may coexist only if their `channels` ACLs are disjoint. An empty
+ * or absent ACL means "all channels" and therefore conflicts with any other.
+ * Updates to an existing spec (matched by name) are exempt.
+ */
+function assertNoConflictingRag(spec: CapabilitySpec): void {
+  if (spec.kind !== 'rag') return;
+  const others = listCapabilitiesByKind('rag').filter(
+    (c) => c.name !== spec.name,
+  );
+  if (others.length === 0) return;
+
+  const incoming = spec.channels?.length ? new Set(spec.channels) : null;
+  for (const other of others) {
+    const otherChannels = other.channels?.length
+      ? new Set(other.channels)
+      : null;
+    if (incoming === null || otherChannels === null) {
+      const universal = incoming === null ? spec.name : other.name;
+      throw new Error(
+        `RAG '${spec.name}' conflicts with already-installed RAG '${other.name}': ` +
+          `'${universal}' is unscoped (applies to all channels). ` +
+          'Each channel may bind at most one RAG. Give both specs disjoint `channels` ACLs, ' +
+          `or remove '${other.name}' first.`,
+      );
+    }
+    const overlap = [...incoming].filter((c) => otherChannels.has(c));
+    if (overlap.length > 0) {
+      throw new Error(
+        `RAG '${spec.name}' conflicts with already-installed RAG '${other.name}' ` +
+          `on channel(s): ${overlap.join(', ')}. ` +
+          'Each channel may bind at most one RAG. Adjust the `channels` ACLs so they are disjoint, ' +
+          `or remove '${other.name}' first.`,
+      );
+    }
+  }
+}
+
 export async function installCapability(spec: CapabilitySpec): Promise<void> {
+  assertNoConflictingRag(spec);
   setCapability(spec);
   await applySpec(spec);
   logger.info(
