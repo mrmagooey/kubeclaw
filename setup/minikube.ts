@@ -13,6 +13,7 @@
  *   npm run setup:minikube -- --reset          # delete & recreate cluster
  *   npm run setup:minikube -- --skip-build     # skip image build
  *   npm run setup:minikube -- --skip-falco     # skip Falco install
+ *   npm run setup:minikube -- --skip-cert-manager  # skip cert-manager install
  *   npm run setup:minikube -- --cpus 6 --memory 8192
  *   npm run setup:minikube -- --profile kubeclaw  # use a named minikube profile
  *   npm run setup:minikube -- --cni=cilium     # opt-in to Cilium CNI
@@ -25,6 +26,7 @@ import path from 'path';
 import { logger } from '../src/logger.js';
 import { emitStatus } from './status.js';
 import { runKubectl, truncateText, waitForDaemonSet, waitForPodRunning } from './k8s-utils.js';
+import { installCertManager } from './cert-manager.js';
 
 type CniMode = 'cilium' | 'bridge' | 'auto';
 
@@ -35,6 +37,7 @@ export interface MinikubeOpts {
   reset: boolean;
   skipBuild: boolean;
   skipFalco: boolean;
+  skipCertManager: boolean;
   profile: string; // named minikube profile; empty = default profile
   cni: CniMode;
 }
@@ -46,6 +49,7 @@ export function parseArgs(args: string[]): MinikubeOpts {
   let reset = false;
   let skipBuild = false;
   let skipFalco = false;
+  let skipCertManager = false;
   let profile = '';
   let cni: CniMode = 'auto';
 
@@ -53,6 +57,7 @@ export function parseArgs(args: string[]): MinikubeOpts {
     if (args[i] === '--reset') reset = true;
     else if (args[i] === '--skip-build') skipBuild = true;
     else if (args[i] === '--skip-falco') skipFalco = true;
+    else if (args[i] === '--skip-cert-manager') skipCertManager = true;
     else if (args[i] === '--with-cilium') cni = 'cilium';
     else if (args[i] === '--cpus' && args[i + 1]) { cpus = parseInt(args[++i], 10); }
     else if (args[i] === '--memory' && args[i + 1]) { memory = parseInt(args[++i], 10); }
@@ -75,7 +80,7 @@ export function parseArgs(args: string[]): MinikubeOpts {
     }
   }
 
-  return { cpus, memory, disk, reset, skipBuild, skipFalco, profile, cni };
+  return { cpus, memory, disk, reset, skipBuild, skipFalco, skipCertManager, profile, cni };
 }
 
 /** Returns `['-p', profile]` when a named profile is set, otherwise `[]`. */
@@ -500,6 +505,29 @@ export async function run(args: string[]): Promise<void> {
   } else {
     logger.info('Skipping Falco install (--skip-falco)');
     emitStatus('SETUP_MINIKUBE_FALCO', { STATUS: 'skipped' });
+  }
+
+  // Phase 3.5: cert-manager
+  // Required by the kubeclaw chart's credentialInjection internal-CA template
+  // (Issuer + Certificate CRDs). The installer is idempotent: production
+  // clusters with cert-manager already installed get a no-op.
+  try {
+    const certManagerResult = await installCertManager({
+      skip: opts.skipCertManager,
+    });
+    emitStatus('SETUP_MINIKUBE_CERT_MANAGER', {
+      STATUS: certManagerResult === 'skipped' ? 'skipped' : 'ok',
+      RESULT: certManagerResult,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const diag = runKubectl(['get', 'pods', '-n', 'cert-manager'], 10);
+    emitStatus('SETUP_MINIKUBE_CERT_MANAGER', {
+      STATUS: 'failed',
+      ERROR: msg,
+      ...(diag ? { CERT_MANAGER_PODS: truncateText(diag) } : {}),
+    });
+    process.exit(1);
   }
 
   // Phase 4: deploy
