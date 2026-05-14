@@ -66,8 +66,7 @@ function setInotifyValues(instances: number | null, watches: number | null) {
 describe('parseArgs', () => {
   let parseArgs: (args: string[]) => {
     cpus: number; memory: number; disk: string;
-    reset: boolean; skipBuild: boolean; skipFalco: boolean;
-    skipCertManager: boolean;
+    reset: boolean; skipBuild: boolean; skipFalco: boolean; skipCertManager: boolean;
     profile: string;
     cni: 'cilium' | 'bridge' | 'auto';
   };

@@ -5,6 +5,7 @@
  *   1. Start minikube (bridge CNI by default, Cilium opt-in)
  *   2. Build container images into minikube's Docker daemon
  *   3. Install Falco (runtime security)
+ *   3.5 Install cert-manager (Issuer/Certificate CRDs for credentialInjection)
  *   4. Deploy KubeClaw via Helm (laptop-optimised values)
  *   5. Verify everything is running
  *
