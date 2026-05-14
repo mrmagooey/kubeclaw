@@ -36,6 +36,7 @@ After ~10 minutes (mostly Falco's eBPF probe compilation) you'll have:
 
 - A minikube cluster (bridge CNI by default, or Cilium if requested via `--cni=cilium`)
 - Falco monitoring tool job behaviour (unless skipped with `--skip-falco`)
+- cert-manager managing the internal CA used by `credentialInjection` (unless skipped with `--skip-cert-manager`)
 - KubeClaw orchestrator and Redis deployed and ready
 
 Then run `/setup` in Claude Code to configure your API keys and channels.
@@ -47,6 +48,7 @@ Then run `/setup` in Claude Code to configure your API keys and channels.
 | `--reset` | off | Delete and recreate the minikube cluster from scratch |
 | `--skip-build` | off | Skip container image build (use existing images in the minikube daemon) |
 | `--skip-falco` | off | Skip Falco installation (Cilium network policy enforcement still active) |
+| `--skip-cert-manager` | off | Skip cert-manager installation. Pass when cert-manager is managed elsewhere or when running with `credentialInjection.mode=off`. |
 | `--cpus N` | `4` | Number of CPUs to allocate to the minikube VM |
 | `--memory N` | `6144` | RAM to allocate in MiB (e.g. `--memory 8192` for 8 GB) |
 | `--disk SIZE` | `20g` | Disk size for the minikube VM (e.g. `--disk 40g`) |
@@ -68,6 +70,7 @@ npm run setup:minikube -- --reset             # delete and recreate the minikube
 npm run setup:minikube -- --skip-build        # skip container image build (use existing)
 npm run setup:minikube -- --skip-falco        # skip Falco install (faster, less security monitoring)
 npm run setup:minikube -- --skip-falco --skip-build  # fastest re-deploy
+npm run setup:minikube -- --skip-cert-manager # skip cert-manager install (e.g. credentialInjection.mode=off, or cert-manager managed elsewhere)
 npm run setup:minikube -- --cpus 6            # use 6 CPUs (default: 4)
 npm run setup:minikube -- --memory 8192       # use 8 GB RAM (default: 6144 MiB)
 npm run setup:minikube -- --profile kubeclaw  # use a named minikube profile (default: minikube)
@@ -81,7 +84,7 @@ npm run setup:minikube -- --cni=auto          # auto-detect based on host iptabl
 
 ## What It Does
 
-The script runs five phases in order:
+The script runs six phases in order:
 
 ### Phase 1 — Start minikube
 
@@ -130,6 +133,12 @@ Four custom rules are deployed for KubeClaw agent pods:
 View alerts: `kubectl logs -n falco daemonset/falco --follow`
 
 **Skip with `--skip-falco`** — Cilium network policy enforcement remains active. Use this for faster re-deploys or when you don't need runtime syscall monitoring.
+
+### Phase 3.5 — Install cert-manager (idempotent)
+
+Installs cert-manager v1.16.x from the [jetstack Helm chart](https://artifacthub.io/packages/helm/cert-manager/cert-manager) into the `cert-manager` namespace, then waits up to 60 seconds for the admission webhook to become Ready. cert-manager provides the `cert-manager.io/v1` Issuer and Certificate CRDs that the KubeClaw chart's credentialInjection internal-CA references — without them, the next phase's helm install fails with "no matches for kind Certificate".
+
+The installer is idempotent: if a cert-manager release is already present, this phase is a no-op. Pass `--skip-cert-manager` to bypass entirely when you have cert-manager managed elsewhere, or when running with `credentialInjection.mode=off` (env-var injection of API keys, no broker/sidecar required).
 
 ### Phase 4 — Deploy KubeClaw via Helm
 

@@ -66,7 +66,7 @@ function setInotifyValues(instances: number | null, watches: number | null) {
 describe('parseArgs', () => {
   let parseArgs: (args: string[]) => {
     cpus: number; memory: number; disk: string;
-    reset: boolean; skipBuild: boolean; skipFalco: boolean;
+    reset: boolean; skipBuild: boolean; skipFalco: boolean; skipCertManager: boolean;
     profile: string;
     cni: 'cilium' | 'bridge' | 'auto';
   };
@@ -84,6 +84,7 @@ describe('parseArgs', () => {
     expect(opts.reset).toBe(false);
     expect(opts.skipBuild).toBe(false);
     expect(opts.skipFalco).toBe(false);
+    expect(opts.skipCertManager).toBe(false);
     expect(opts.profile).toBe('');
     expect(opts.cni).toBe('auto');
   });
@@ -98,6 +99,17 @@ describe('parseArgs', () => {
 
   it('parses --skip-falco flag', () => {
     expect(parseArgs(['--skip-falco']).skipFalco).toBe(true);
+  });
+
+  it('parses --skip-cert-manager flag', () => {
+    expect(parseArgs(['--skip-cert-manager']).skipCertManager).toBe(true);
+  });
+
+  it('parses --skip-cert-manager alongside other skip flags', () => {
+    const opts = parseArgs(['--skip-falco', '--skip-cert-manager', '--skip-build']);
+    expect(opts.skipFalco).toBe(true);
+    expect(opts.skipCertManager).toBe(true);
+    expect(opts.skipBuild).toBe(true);
   });
 
   it('parses --cpus value', () => {

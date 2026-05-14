@@ -2,6 +2,8 @@ import { execSync, spawn, spawnSync } from 'child_process';
 import { existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 
+import { installCertManager } from '../setup/cert-manager.js';
+
 // Port used to forward kubeclaw-redis to the host for e2e tests
 // We use a non-standard port to avoid colliding with any host-local Redis.
 export const KUBECLAW_REDIS_LOCAL_PORT = 16379;
@@ -171,6 +173,23 @@ export default async function setup() {
   } catch (err) {
     console.warn(`⚠️  Could not build agent image: ${err}\n`);
     // Non-fatal — tests that spawn agent jobs will skip or fail gracefully
+  }
+
+  // Ensure cert-manager is available before the kubeclaw helm install. The
+  // chart's credentialInjection internal-CA template references
+  // cert-manager.io/v1 CRDs; without them, `helm install` fails with
+  // "no matches for kind Certificate". Idempotent — a no-op if cert-manager
+  // is already installed (the common case after `npm run setup:minikube`).
+  try {
+    await installCertManager();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(
+      `⚠️  cert-manager install/check failed: ${msg}\n` +
+        '   The kubeclaw helm install may fail if credentialInjection.mode ' +
+        '!= off and the chart references Certificate/Issuer resources.\n' +
+        '   Run `kubectl get pods -n cert-manager` to check the installation state.\n',
+    );
   }
 
   // ── Install kubeclaw via Helm ────────────────────────────────────────────

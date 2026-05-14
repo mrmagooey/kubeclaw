@@ -147,14 +147,36 @@ as an observation window before cutting over enforcement.
 
 ### Prerequisites
 
-- cert-manager is installed in the cluster:
+- cert-manager is installed in the cluster. The standard KubeClaw setup
+  (`npm run setup:minikube`) installs cert-manager v1.16.x automatically in
+  Phase 3.5; production clusters typically already have cert-manager
+  managed at the cluster level, in which case the setup step is a no-op.
+
+  Verify:
 
   ```bash
   kubectl get crds | grep cert-manager.io
   # Expected: cert-manager.io CRDs listed
   ```
 
-  If not installed: `helm install cert-manager jetstack/cert-manager --namespace cert-manager --create-namespace --set installCRDs=true`
+  To bypass cert-manager entirely (env-var injection of API keys instead
+  of broker/sidecar TLS interception), run:
+
+  ```bash
+  helm upgrade kubeclaw helm/kubeclaw -n kubeclaw \
+    --set credentialInjection.mode=off
+  ```
+
+  If you prefer to manage cert-manager yourself, install any v1.15+ (which
+  introduced the `crds.enabled` value):
+
+  ```bash
+  helm install cert-manager jetstack/cert-manager \
+    --namespace cert-manager --create-namespace \
+    --set crds.enabled=true
+  ```
+
+  Then run KubeClaw's setup with `--skip-cert-manager`.
 
 - `kubeclaw-secrets` contains all keys referenced by your broker mappings. The broker
   reads from the same Secret the orchestrator uses, so no new Secret is needed.
