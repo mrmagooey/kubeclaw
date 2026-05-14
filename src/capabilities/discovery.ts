@@ -1,5 +1,6 @@
 import {
   getRedisClient,
+  getRedisStreamWatcher,
   getDiscoveryRequestStream,
   getDiscoveryResponseKey,
 } from '../k8s/redis-client.js';
@@ -75,7 +76,9 @@ export async function __handleRequestForTest(
 }
 
 async function watchRequests(): Promise<void> {
-  const redis = getRedisClient();
+  // Use the dedicated stream-watcher connection so XREAD BLOCK does not
+  // queue commands on the shared client and starve pub/sub operations.
+  const redis = getRedisStreamWatcher();
   const stream = getDiscoveryRequestStream();
   let lastId = await resolveStreamTip(stream);
 

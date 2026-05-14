@@ -121,11 +121,18 @@ vi.mock('./redis-client.js', () => ({
         ) => void;
     }),
   })),
+  // Dedicated stream-watcher connection — same mock shape as the shared client.
+  getRedisStreamWatcher: vi.fn(() => ({
+    xadd: mockXadd,
+    xread: mockXread,
+    xrevrange: vi.fn().mockResolvedValue([]),
+  })),
   getOutputChannel: vi.fn((folder: string) => `kubeclaw:messages:${folder}`),
   getTaskChannel: vi.fn((folder: string) => `kubeclaw:tasks:${folder}`),
   getInputStream: vi.fn((jobId: string) => `kubeclaw:input:${jobId}`),
   getSpawnToolPodStream: vi.fn(() => 'kubeclaw:spawn-tool-pod'),
   getSpawnToolJobStream: vi.fn(() => 'kubeclaw:spawn-agent-job'),
+  getTaskRequestStream: vi.fn(() => 'kubeclaw:task-requests'),
   getToolJobResultStream: vi.fn(
     (id: string) => `kubeclaw:agent-job-result:${id}`,
   ),

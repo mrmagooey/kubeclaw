@@ -189,19 +189,23 @@ export async function notifyAllChannels(
     }
   }
 
-  for (const channelName of targeted) {
-    const entries = getEntriesForChannel(channelName);
-    const payload = JSON.stringify({
-      command: 'capabilities_update',
-      capabilities: JSON.stringify(entries),
-    });
-    await redis.publish(getControlChannel(channelName), payload);
-
-    logger.debug(
-      { channel: channelName, count: entries.length },
-      'Published capabilities_update',
-    );
-  }
+  // Publish to all targeted channels concurrently — serial awaits would
+  // queue behind any blocking XREAD on the same client connection and add
+  // multiple seconds of latency per install/remove operation.
+  await Promise.all(
+    [...targeted].map(async (channelName) => {
+      const entries = getEntriesForChannel(channelName);
+      const payload = JSON.stringify({
+        command: 'capabilities_update',
+        capabilities: JSON.stringify(entries),
+      });
+      await redis.publish(getControlChannel(channelName), payload);
+      logger.debug(
+        { channel: channelName, count: entries.length },
+        'Published capabilities_update',
+      );
+    }),
+  );
 }
 
 export async function startCapabilitySubsystem(): Promise<void> {

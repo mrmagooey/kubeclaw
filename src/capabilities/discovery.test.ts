@@ -12,6 +12,12 @@ vi.mock('../k8s/redis-client.js', () => ({
     set: mockSet,
     publish: vi.fn().mockResolvedValue(1),
   })),
+  // Dedicated stream-watcher connection used by watchRequests().
+  getRedisStreamWatcher: vi.fn(() => ({
+    xread: mockXread,
+    xrevrange: mockXrevrange,
+    set: mockSet,
+  })),
   getControlChannel: (n: string) => `kubeclaw:control:${n}`,
   getDiscoveryRequestStream: () => 'kubeclaw:discovery:request',
   getDiscoveryResponseKey: (id: string) => `kubeclaw:discovery:response:${id}`,

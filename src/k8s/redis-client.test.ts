@@ -23,6 +23,7 @@ import {
   createRedisClient,
   getRedisClient,
   getRedisSubscriber,
+  getRedisStreamWatcher,
   closeRedisConnections,
   getOutputChannel,
   getTaskChannel,
@@ -108,6 +109,32 @@ describe('getRedisSubscriber', () => {
   });
 });
 
+describe('getRedisStreamWatcher', () => {
+  beforeEach(async () => {
+    vi.resetModules();
+    vi.clearAllMocks();
+    const module = await import('./redis-client.js');
+    await module.closeRedisConnections();
+  });
+
+  it('returns singleton stream-watcher client', async () => {
+    const { getRedisStreamWatcher } = await import('./redis-client.js');
+    const w1 = getRedisStreamWatcher();
+    const w2 = getRedisStreamWatcher();
+    expect(w1).toBe(w2);
+  });
+
+  it('is distinct from the shared client and the subscriber', async () => {
+    const { getRedisClient, getRedisSubscriber, getRedisStreamWatcher } =
+      await import('./redis-client.js');
+    const client = getRedisClient();
+    const subscriber = getRedisSubscriber();
+    const watcher = getRedisStreamWatcher();
+    expect(watcher).not.toBe(client);
+    expect(watcher).not.toBe(subscriber);
+  });
+});
+
 describe('closeRedisConnections', () => {
   beforeEach(async () => {
     vi.resetModules();
@@ -116,16 +143,22 @@ describe('closeRedisConnections', () => {
     await module.closeRedisConnections();
   });
 
-  it('closes both client and subscriber connections', async () => {
-    const { getRedisClient, getRedisSubscriber, closeRedisConnections } =
-      await import('./redis-client.js');
+  it('closes client, subscriber, and stream-watcher connections', async () => {
+    const {
+      getRedisClient,
+      getRedisSubscriber,
+      getRedisStreamWatcher,
+      closeRedisConnections,
+    } = await import('./redis-client.js');
     const client = getRedisClient();
     const subscriber = getRedisSubscriber();
+    const watcher = getRedisStreamWatcher();
 
     await closeRedisConnections();
 
     expect(client.quit).toHaveBeenCalled();
     expect(subscriber.quit).toHaveBeenCalled();
+    expect(watcher.quit).toHaveBeenCalled();
   });
 
   it('handles closing when clients are null', async () => {

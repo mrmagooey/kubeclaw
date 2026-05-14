@@ -9,6 +9,11 @@ import { RedisConfig } from './types.js';
 
 let redisClient: Redis | null = null;
 let redisSubscriber: Redis | null = null;
+// Dedicated connections for long-lived stream watchers that use XREAD BLOCK.
+// Keeping them separate from the shared client prevents blocking I/O
+// (e.g. XREAD BLOCK 5000) from queueing pub/sub or other commands on the
+// same single-connection client, which would cause multi-second delays.
+let redisStreamWatcher: Redis | null = null;
 
 export function getRedisConfig(): RedisConfig {
   return {
@@ -70,10 +75,28 @@ export function getRedisSubscriber(): Redis {
   return redisSubscriber;
 }
 
+/**
+ * Returns a dedicated Redis connection for stream watchers that issue
+ * blocking XREAD commands (BLOCK N). Using a separate connection keeps the
+ * shared `getRedisClient()` connection free for pub/sub and other commands,
+ * which would otherwise be queued behind the blocking XREAD and experience
+ * multi-second delays proportional to the BLOCK timeout.
+ */
+export function getRedisStreamWatcher(): Redis {
+  if (!redisStreamWatcher) {
+    redisStreamWatcher = createRedisClient();
+  }
+  return redisStreamWatcher;
+}
+
 export async function closeRedisConnections(): Promise<void> {
   if (redisSubscriber) {
     await redisSubscriber.quit();
     redisSubscriber = null;
+  }
+  if (redisStreamWatcher) {
+    await redisStreamWatcher.quit();
+    redisStreamWatcher = null;
   }
   if (redisClient) {
     await redisClient.quit();

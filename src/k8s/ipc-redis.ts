@@ -29,6 +29,7 @@ import {
   getSpawnToolPodStream,
   getTaskChannel,
   getTaskRequestStream,
+  getRedisStreamWatcher,
 } from './redis-client.js';
 import { TaskRequest } from './types.js';
 import { jobRunner } from './job-runner.js';
@@ -737,7 +738,9 @@ async function resolveStreamTip(redis: Redis, stream: string): Promise<string> {
 }
 
 export async function startToolPodSpawnWatcher(): Promise<void> {
-  const redis = getRedisClient();
+  // Use the dedicated stream-watcher connection so XREAD BLOCK does not
+  // queue commands on the shared client and starve pub/sub operations.
+  const redis = getRedisStreamWatcher();
   const stream = getSpawnToolPodStream();
   // Resolve to the actual last-entry ID before entering the loop.
   // Using '$' raw would cause a race condition: if a message is added between
@@ -861,7 +864,9 @@ export async function startToolPodSpawnWatcher(): Promise<void> {
  * kubeclaw:agent-job-result:{agentJobId} so the channel pod can return it.
  */
 export async function startToolJobSpawnWatcher(): Promise<void> {
-  const redis = getRedisClient();
+  // Use the dedicated stream-watcher connection so XREAD BLOCK does not
+  // queue commands on the shared client and starve pub/sub operations.
+  const redis = getRedisStreamWatcher();
   const stream = getSpawnToolJobStream();
   let lastId = await resolveStreamTip(redis, stream);
 
@@ -989,7 +994,9 @@ export async function startToolJobSpawnWatcher(): Promise<void> {
  * orchestrator knows about.
  */
 export async function startTaskRequestWatcher(): Promise<void> {
-  const redis = getRedisClient();
+  // Use the dedicated stream-watcher connection so XREAD BLOCK does not
+  // queue commands on the shared client and starve pub/sub operations.
+  const redis = getRedisStreamWatcher();
   const stream = getTaskRequestStream();
   let lastId = await resolveStreamTip(redis, stream);
 
