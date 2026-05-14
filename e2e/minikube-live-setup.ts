@@ -365,16 +365,28 @@ async function startRedisPortForward(): Promise<void> {
 /**
  * Exported for tests that restart the channel pod — `kubectl port-forward`
  * dies when its backing pod is deleted, so the test re-runs setup.
+ *
+ * Kills the entire process group (bash wrapper + kubectl child) rather than
+ * just the bash parent, then waits for the OS to release the listen port
+ * before starting a new wrapper. Without this, the new kubectl fails with
+ * "bind: address already in use" and the loop spins until TIME_WAIT expires.
  */
 export async function restartChannelPortForward(): Promise<void> {
-  if (portForwardProcess) {
+  if (portForwardProcess?.pid) {
     try {
-      portForwardProcess.kill();
+      process.kill(-portForwardProcess.pid, 'SIGTERM');
     } catch {
-      // ignore
+      try { portForwardProcess.kill(); } catch { /* ignore */ }
     }
     portForwardProcess = null;
   }
+  // Belt-and-braces: kill any stray kubectl holding the HTTP port.
+  spawnSync('bash', [
+    '-c',
+    `pkill -f 'kubectl port-forward.*${KUBECLAW_LIVE_HTTP_LOCAL_PORT}:80' || true`,
+  ]);
+  // Give the OS TIME_WAIT to clear the listen socket (typically <1 s).
+  await sleep(1000);
   await startPortForward();
 }
 
