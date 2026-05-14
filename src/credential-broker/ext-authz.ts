@@ -46,20 +46,32 @@ export async function handleExtAuthz(
   const destination = req['x-forwarded-authority'];
 
   if (!destination) {
-    deps.audit.record({ destination: '<missing>', status: 400, auditOnly: deps.auditOnly });
-    deps.metrics?.recordAuthz({ status: 400, auditOnly: deps.auditOnly, durationMs: Date.now() - startMs });
+    deps.audit.record({
+      destination: '<missing>',
+      status: 400,
+      auditOnly: deps.auditOnly,
+    });
+    deps.metrics?.recordAuthz({
+      status: 400,
+      auditOnly: deps.auditOnly,
+      durationMs: Date.now() - startMs,
+    });
     return { status: 400, headers: {} };
   }
 
   let identity: string;
   try {
     identity = await deps.identityVerifier.verify({
-        authorization: req.authorization,
-        xfcc: req['x-forwarded-client-cert'],
-      });
+      authorization: req.authorization,
+      xfcc: req['x-forwarded-client-cert'],
+    });
   } catch {
     deps.audit.record({ destination, status: 401, auditOnly: deps.auditOnly });
-    deps.metrics?.recordAuthz({ status: 401, auditOnly: deps.auditOnly, durationMs: Date.now() - startMs });
+    deps.metrics?.recordAuthz({
+      status: 401,
+      auditOnly: deps.auditOnly,
+      durationMs: Date.now() - startMs,
+    });
     return { status: 401, headers: {} };
   }
 
@@ -67,8 +79,19 @@ export async function handleExtAuthz(
 
   if (deps.auditOnly) {
     if (!mapping) {
-      deps.audit.record({ identity, destination, status: 403, auditOnly: true, wouldStamp: false });
-      deps.metrics?.recordAuthz({ status: 403, identity, auditOnly: true, durationMs: Date.now() - startMs });
+      deps.audit.record({
+        identity,
+        destination,
+        status: 403,
+        auditOnly: true,
+        wouldStamp: false,
+      });
+      deps.metrics?.recordAuthz({
+        status: 403,
+        identity,
+        auditOnly: true,
+        durationMs: Date.now() - startMs,
+      });
       return { status: 403, headers: {} };
     }
     deps.audit.record({
@@ -91,8 +114,19 @@ export async function handleExtAuthz(
   }
 
   if (!mapping) {
-    deps.audit.record({ identity, destination, status: 403, auditOnly: false, wouldStamp: false });
-    deps.metrics?.recordAuthz({ status: 403, identity, auditOnly: false, durationMs: Date.now() - startMs });
+    deps.audit.record({
+      identity,
+      destination,
+      status: 403,
+      auditOnly: false,
+      wouldStamp: false,
+    });
+    deps.metrics?.recordAuthz({
+      status: 403,
+      identity,
+      auditOnly: false,
+      durationMs: Date.now() - startMs,
+    });
     return { status: 403, headers: {} };
   }
 
@@ -100,14 +134,38 @@ export async function handleExtAuthz(
   try {
     credential = await deps.secretSource.read(mapping.credentialRef);
   } catch {
-    deps.audit.record({ identity, destination, mappingId: mapping.id, status: 503, auditOnly: false });
-    deps.metrics?.recordSecretFailure({ secretName: mapping.credentialRef.name });
-    deps.metrics?.recordAuthz({ status: 503, mappingId: mapping.id, identity, auditOnly: false, durationMs: Date.now() - startMs });
+    deps.audit.record({
+      identity,
+      destination,
+      mappingId: mapping.id,
+      status: 503,
+      auditOnly: false,
+    });
+    deps.metrics?.recordSecretFailure({
+      secretName: mapping.credentialRef.name,
+    });
+    deps.metrics?.recordAuthz({
+      status: 503,
+      mappingId: mapping.id,
+      identity,
+      auditOnly: false,
+      durationMs: Date.now() - startMs,
+    });
     return { status: 503, headers: {} };
   }
 
-  const headerValue = deps.resolver.formatHeader(mapping.headerScheme, credential);
-  deps.audit.record({ identity, destination, mappingId: mapping.id, status: 200, auditOnly: false, wouldStamp: true });
+  const headerValue = deps.resolver.formatHeader(
+    mapping.headerScheme,
+    credential,
+  );
+  deps.audit.record({
+    identity,
+    destination,
+    mappingId: mapping.id,
+    status: 200,
+    auditOnly: false,
+    wouldStamp: true,
+  });
   deps.metrics?.recordAuthz({
     status: 200,
     mappingId: mapping.id,

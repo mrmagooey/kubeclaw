@@ -704,7 +704,10 @@ export class JobRunner {
       ];
     } else if (injectionMode === 'sidecar') {
       // auditOnly=true: keep keys, but still add HTTPS_PROXY for broker observation
-      finalEnv = [...envVars, ...workloadEnvForSidecar({ port: CREDENTIAL_SIDECAR_PORT })];
+      finalEnv = [
+        ...envVars,
+        ...workloadEnvForSidecar({ port: CREDENTIAL_SIDECAR_PORT }),
+      ];
     } else {
       finalEnv = envVars;
     }

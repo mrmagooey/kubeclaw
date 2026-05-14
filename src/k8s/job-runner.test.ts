@@ -1,7 +1,12 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { EventEmitter } from 'events';
 import type { RegisteredGroup } from '../types.js';
-import type { JobInput, AgentOutputMessage, ToolJobSpec, ToolPodJobSpec } from './types.js';
+import type {
+  JobInput,
+  AgentOutputMessage,
+  ToolJobSpec,
+  ToolPodJobSpec,
+} from './types.js';
 
 // Store original env vars for cleanup
 const originalRedisUrl = process.env.REDIS_URL;
@@ -36,7 +41,9 @@ vi.mock('../config.js', () => ({
     if (raw === 'sidecar' || raw === 'istio') return raw;
     return 'off';
   }),
-  getAuditOnly: vi.fn(() => process.env.CREDENTIAL_INJECTION_AUDIT_ONLY === 'true'),
+  getAuditOnly: vi.fn(
+    () => process.env.CREDENTIAL_INJECTION_AUDIT_ONLY === 'true',
+  ),
 }));
 
 // Mock logger
@@ -1556,10 +1563,20 @@ describe('JobRunner', () => {
       const manifest = jobRunner.generateJobManifest(credInjectionSpec);
       const env = manifest.spec?.template?.spec?.containers?.[0]?.env ?? [];
       const named = (n: string) => env.find((e: any) => e.name === n);
-      expect(named('OPENAI_BASE_URL')).toMatchObject({ value: 'http://api.openai.com' });
-      expect(named('ANTHROPIC_BASE_URL')).toMatchObject({ value: 'http://api.anthropic.com' });
-      expect(named('OPENROUTER_BASE_URL')).toMatchObject({ value: 'http://openrouter.ai' });
-      for (const key of ['OPENAI_BASE_URL', 'ANTHROPIC_BASE_URL', 'OPENROUTER_BASE_URL']) {
+      expect(named('OPENAI_BASE_URL')).toMatchObject({
+        value: 'http://api.openai.com',
+      });
+      expect(named('ANTHROPIC_BASE_URL')).toMatchObject({
+        value: 'http://api.anthropic.com',
+      });
+      expect(named('OPENROUTER_BASE_URL')).toMatchObject({
+        value: 'http://openrouter.ai',
+      });
+      for (const key of [
+        'OPENAI_BASE_URL',
+        'ANTHROPIC_BASE_URL',
+        'OPENROUTER_BASE_URL',
+      ]) {
         expect(named(key)!.valueFrom).toBeUndefined();
       }
     });
@@ -1599,7 +1616,8 @@ describe('JobRunner', () => {
       process.env.CREDENTIAL_INJECTION_MODE = 'sidecar';
       process.env.CREDENTIAL_INJECTION_AUDIT_ONLY = 'false';
       const manifest = runner.generateJobManifest(makeSpec());
-      const agentEnv = manifest.spec!.template.spec!.containers[0].env as Array<{ name: string }>;
+      const agentEnv = manifest.spec!.template.spec!.containers[0]
+        .env as Array<{ name: string }>;
       const names = agentEnv.map((e) => e.name);
       expect(names).not.toContain('ANTHROPIC_API_KEY');
       expect(names).not.toContain('OPENROUTER_API_KEY');
@@ -1609,7 +1627,8 @@ describe('JobRunner', () => {
       process.env.CREDENTIAL_INJECTION_MODE = 'sidecar';
       process.env.CREDENTIAL_INJECTION_AUDIT_ONLY = 'true';
       const manifest = runner.generateJobManifest(makeSpec());
-      const agentEnv = manifest.spec!.template.spec!.containers[0].env as Array<{ name: string }>;
+      const agentEnv = manifest.spec!.template.spec!.containers[0]
+        .env as Array<{ name: string }>;
       const names = agentEnv.map((e) => e.name);
       expect(names).toContain('ANTHROPIC_API_KEY');
       expect(names).toContain('OPENROUTER_API_KEY');
@@ -1633,7 +1652,8 @@ describe('JobRunner', () => {
         (c: any) => c.name,
       );
       expect(containerNames).not.toContain('credential-sidecar');
-      const agentEnv = manifest.spec!.template.spec!.containers[0].env as Array<{ name: string }>;
+      const agentEnv = manifest.spec!.template.spec!.containers[0]
+        .env as Array<{ name: string }>;
       const names = agentEnv.map((e) => e.name);
       expect(names).toContain('ANTHROPIC_API_KEY');
     });
@@ -1642,7 +1662,8 @@ describe('JobRunner', () => {
       process.env.CREDENTIAL_INJECTION_MODE = 'istio';
       process.env.CREDENTIAL_INJECTION_AUDIT_ONLY = 'false';
       const manifest = runner.generateJobManifest(makeSpec());
-      const agentEnv = manifest.spec!.template.spec!.containers[0].env as Array<{ name: string; value?: string; valueFrom?: object }>;
+      const agentEnv = manifest.spec!.template.spec!.containers[0]
+        .env as Array<{ name: string; value?: string; valueFrom?: object }>;
       const names = agentEnv.map((e) => e.name);
       // Keys must be present with placeholder value (not stripped)
       expect(names).toContain('ANTHROPIC_API_KEY');
@@ -1651,7 +1672,9 @@ describe('JobRunner', () => {
       expect(anthropicKey?.valueFrom).toBeUndefined();
       // istio mode does not add HTTPS_PROXY
       expect(names).not.toContain('HTTPS_PROXY');
-      const containerNames = manifest.spec!.template.spec!.containers.map((c: any) => c.name);
+      const containerNames = manifest.spec!.template.spec!.containers.map(
+        (c: any) => c.name,
+      );
       expect(containerNames).not.toContain('credential-sidecar');
     });
 
@@ -1659,11 +1682,14 @@ describe('JobRunner', () => {
       process.env.CREDENTIAL_INJECTION_MODE = 'istio';
       process.env.CREDENTIAL_INJECTION_AUDIT_ONLY = 'true';
       const manifest = runner.generateJobManifest(makeSpec());
-      const agentEnv = manifest.spec!.template.spec!.containers[0].env as Array<{ name: string }>;
+      const agentEnv = manifest.spec!.template.spec!.containers[0]
+        .env as Array<{ name: string }>;
       const names = agentEnv.map((e) => e.name);
       expect(names).toContain('ANTHROPIC_API_KEY');
       expect(names).not.toContain('HTTPS_PROXY');
-      const containerNames = manifest.spec!.template.spec!.containers.map((c: any) => c.name);
+      const containerNames = manifest.spec!.template.spec!.containers.map(
+        (c: any) => c.name,
+      );
       expect(containerNames).not.toContain('credential-sidecar');
     });
   });

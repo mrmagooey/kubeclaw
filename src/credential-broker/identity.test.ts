@@ -93,7 +93,9 @@ describe('IdentityVerifier.verify — XFCC/SPIFFE path', () => {
   it('throws when XFCC has malformed SPIFFE URI', async () => {
     const v = makeVerifier();
     await expect(
-      v.verify({ xfcc: 'By=spiffe://x;Hash=abc;Subject="";URI=not-a-spiffe-uri' }),
+      v.verify({
+        xfcc: 'By=spiffe://x;Hash=abc;Subject="";URI=not-a-spiffe-uri',
+      }),
     ).rejects.toThrow(/malformed SPIFFE URI/i);
   });
 
@@ -104,7 +106,10 @@ describe('IdentityVerifier.verify — XFCC/SPIFFE path', () => {
       audience: 'kubeclaw-credential-broker',
       namespace: 'kubeclaw',
     });
-    const id = await v.verify({ xfcc: XFCC, authorization: 'Bearer some-token' });
+    const id = await v.verify({
+      xfcc: XFCC,
+      authorization: 'Bearer some-token',
+    });
     expect(id).toBe('sa/kubeclaw-tool-job');
     expect(fakeReview).not.toHaveBeenCalled();
   });

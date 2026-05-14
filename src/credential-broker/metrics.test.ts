@@ -32,13 +32,24 @@ describe('createMetrics', () => {
   });
 
   it('increments authz_total on record()', async () => {
-    metrics.recordAuthz({ status: 200, mappingId: 'anthropic', identity: 'sa/tool-job', auditOnly: false });
+    metrics.recordAuthz({
+      status: 200,
+      mappingId: 'anthropic',
+      identity: 'sa/tool-job',
+      auditOnly: false,
+    });
     const text = await registry.metrics();
     expect(text).toMatch(/credential_broker_authz_total\{[^}]+\} 1/);
   });
 
   it('observes authz_duration_seconds on record()', async () => {
-    metrics.recordAuthz({ status: 200, mappingId: 'anthropic', identity: 'sa/tool-job', auditOnly: false, durationMs: 42 });
+    metrics.recordAuthz({
+      status: 200,
+      mappingId: 'anthropic',
+      identity: 'sa/tool-job',
+      auditOnly: false,
+      durationMs: 42,
+    });
     const text = await registry.metrics();
     expect(text).toContain('credential_broker_authz_duration_seconds_sum');
   });
@@ -46,7 +57,9 @@ describe('createMetrics', () => {
   it('increments secret_read_failures_total on recordSecretFailure()', async () => {
     metrics.recordSecretFailure({ secretName: 'kubeclaw-secrets' });
     const text = await registry.metrics();
-    expect(text).toMatch(/credential_broker_secret_read_failures_total\{[^}]+\} 1/);
+    expect(text).toMatch(
+      /credential_broker_secret_read_failures_total\{[^}]+\} 1/,
+    );
   });
 
   it('increments config_reloads_total on recordConfigReload()', async () => {
