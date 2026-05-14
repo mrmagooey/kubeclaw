@@ -96,3 +96,36 @@ export async function waitForDaemonSet(
   }
   return false;
 }
+
+/**
+ * Wait for a Deployment to have all desired replicas ready.
+ * Returns true if ready within timeoutMs. Treats replicas=0 as not-ready so
+ * a scaled-down deployment never satisfies the wait.
+ */
+export async function waitForDeployment(
+  namespace: string,
+  name: string,
+  timeoutMs = 120_000,
+  intervalMs = 3_000,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const result = spawnSync(
+      'kubectl',
+      [
+        'get', 'deployment', name,
+        '-n', namespace,
+        '-o', 'jsonpath={.status.readyReplicas}/{.status.replicas}',
+      ],
+      { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] },
+    );
+    if (result.status === 0) {
+      const [readyStr, desiredStr] = result.stdout.trim().split('/');
+      const ready = Number(readyStr) || 0;
+      const desired = Number(desiredStr) || 0;
+      if (desired > 0 && ready >= desired) return true;
+    }
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+  return false;
+}
