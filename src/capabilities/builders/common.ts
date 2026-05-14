@@ -103,6 +103,7 @@ spec:
       containers:
         - name: ${a.component}
           image: ${a.image}
+          imagePullPolicy: IfNotPresent
 ${commandBlock}${argsBlock}          ports:
             - containerPort: ${a.port}
               name: http
