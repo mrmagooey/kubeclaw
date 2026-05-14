@@ -11,7 +11,7 @@
  * Triggered via: .github/workflows/e2e-istio.yml (label e2e:istio or nightly).
  */
 import { describe, it, beforeAll, afterAll, expect } from 'vitest';
-import { execSync } from 'child_process';
+import { execSync, spawnSync } from 'child_process';
 
 const NS = 'kubeclaw';
 const TIMEOUT_MS = 8 * 60 * 1000;
@@ -32,7 +32,26 @@ function helm(args: string): string {
   return execSync(`helm ${args}`, { encoding: 'utf8' }).trim();
 }
 
-describe('credential-injection mode=istio e2e', { timeout: TIMEOUT_MS }, () => {
+// This suite requires an Istio-equipped cluster (see header comment). When the
+// CRDs are missing — the regular vitest e2e suite case — skip the whole
+// describe so beforeAll/afterAll never run. Without this guard, beforeAll
+// throws on the helm install and afterAll still fires, uninstalling whatever
+// other kubeclaw release happens to live in the kubeclaw namespace.
+const hasIstio = spawnSync('kubectl', [
+  'get', 'crd', 'virtualservices.networking.istio.io',
+], { stdio: 'pipe' }).status === 0;
+
+// Same risk if someone runs this on a real Istio cluster that already has a
+// kubeclaw release: the teardown would wipe their install. Skip in that case
+// too — these tests are designed for a fresh ephemeral cluster.
+const hasExistingRelease = spawnSync('helm', [
+  'status', 'kubeclaw', '--namespace', NS,
+], { stdio: 'pipe' }).status === 0;
+
+describe.skipIf(!hasIstio || hasExistingRelease)('credential-injection mode=istio e2e', { timeout: TIMEOUT_MS }, () => {
+  // Only run teardown for what beforeAll actually installed.
+  let installed = false;
+
   beforeAll(() => {
     helm(
       [
@@ -45,6 +64,7 @@ describe('credential-injection mode=istio e2e', { timeout: TIMEOUT_MS }, () => {
         '--wait --timeout 5m',
       ].join(' '),
     );
+    installed = true;
     execSync(
       `kubectl -n ${NS} rollout status deployment/kubeclaw-mock-upstream --timeout=120s`,
       { stdio: 'inherit' },
@@ -52,6 +72,7 @@ describe('credential-injection mode=istio e2e', { timeout: TIMEOUT_MS }, () => {
   });
 
   afterAll(() => {
+    if (!installed) return;
     execSync('helm uninstall kubeclaw --namespace kubeclaw', {
       encoding: 'utf8',
       stdio: 'inherit',

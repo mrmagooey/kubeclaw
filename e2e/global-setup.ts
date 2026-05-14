@@ -11,7 +11,7 @@ export const KUBECLAW_REDIS_LOCAL_PORT = 16379;
 const CHART_DIR = './helm/kubeclaw';
 const RELEASE = 'kubeclaw';
 const NAMESPACE = 'kubeclaw';
-const E2E_REDIS_PASSWORD = 'kubeclaw-e2e-redis-pass';
+let E2E_REDIS_PASSWORD = 'kubeclaw-e2e-redis-pass';
 const REDIS_READY_TIMEOUT = 90_000;
 
 // Keep a reference so teardown can kill the port-forward process
@@ -206,6 +206,22 @@ export default async function setup() {
         '(teardown will also skip uninstall to preserve the live installation)\n',
     );
     kubeclawInstalledBySetup = false;
+    // The live release auto-generated its own Redis admin password; the test
+    // default would fail auth. Read the real password out of the secret so
+    // every fork uses the same one the orchestrator pod is using.
+    const livePwdLookup = spawnSync(
+      'kubectl',
+      ['get', 'secret', '-n', NAMESPACE, 'kubeclaw-redis',
+       '-o', 'jsonpath={.data.admin-password}'],
+      { encoding: 'utf8', stdio: 'pipe' },
+    );
+    if (livePwdLookup.status === 0 && livePwdLookup.stdout) {
+      const decoded = Buffer.from(livePwdLookup.stdout, 'base64').toString('utf8');
+      if (decoded) {
+        E2E_REDIS_PASSWORD = decoded;
+        console.log('🔑 Using live kubeclaw-redis admin password from secret\n');
+      }
+    }
   } else {
     // Pre-create the namespace with Helm ownership metadata so that helm can
     // manage it (the chart's namespace.yaml PATCHes it with pod-security labels).

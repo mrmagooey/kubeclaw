@@ -76,6 +76,13 @@ describe('HTTP Channel End-to-End', () => {
           added_at: new Date().toISOString(),
           requiresTrigger: false,
         },
+        'http:bob': {
+          name: 'Bob HTTP',
+          folder: 'http-bob',
+          trigger: '@Andy',
+          added_at: new Date().toISOString(),
+          requiresTrigger: false,
+        },
       }),
     };
   }
@@ -93,16 +100,16 @@ describe('HTTP Channel End-to-End', () => {
     receivedMetadata = [];
   });
 
-  afterEach(async () => {
-    if (channel) {
-      await channel.disconnect();
-      channel = null;
-    }
-  });
-
   // ── Connection Lifecycle ──────────────────────────────────────────────────
 
   describe('Connection Lifecycle', () => {
+    afterEach(async () => {
+      if (channel) {
+        await channel.disconnect();
+        channel = null;
+      }
+    });
+
     it('should start HTTP server and report connected', async () => {
       channel = createChannel();
       await channel.connect();
@@ -365,6 +372,13 @@ describe('HTTP Channel End-to-End', () => {
   // ── Full Roundtrip ────────────────────────────────────────────────────────
 
   describe('Full Message Roundtrip', () => {
+    afterEach(async () => {
+      if (channel) {
+        await channel.disconnect();
+        channel = null;
+      }
+    });
+
     it('should handle POST → onMessage → sendMessage → SSE delivery', async () => {
       channel = createChannel();
       await channel.connect();
@@ -434,6 +448,13 @@ describe('HTTP Channel End-to-End', () => {
   // ── Multiple Users ────────────────────────────────────────────────────────
 
   describe('Multiple Users', () => {
+    afterEach(async () => {
+      if (channel) {
+        await channel.disconnect();
+        channel = null;
+      }
+    });
+
     it('should isolate messages between users', async () => {
       channel = createChannel();
       await channel.connect();
