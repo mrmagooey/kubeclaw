@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'events';
 
 class FakeSubscriber extends EventEmitter {
@@ -167,6 +167,13 @@ describe('configureChannel', () => {
 });
 
 describe('waitForChannelStatus', () => {
+  // Belt-and-braces: any test using fake timers below should restore real
+  // timers explicitly, but if an assertion throws first, this guarantees we
+  // do not leak fake timers into subsequent tests.
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('resolves with the event when the target status arrives', async () => {
     const { startChannelStatusWatcher, waitForChannelStatus } =
       await loadModule();

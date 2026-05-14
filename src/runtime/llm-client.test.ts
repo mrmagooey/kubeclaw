@@ -10,7 +10,8 @@ vi.mock('openai', () => ({
 }));
 
 describe('createLLMClient', () => {
-  const originalEnv = { ...process.env };
+  const originalApiKey = process.env.OPENAI_API_KEY;
+  const originalBaseUrl = process.env.OPENAI_BASE_URL;
 
   beforeEach(() => {
     openAICtor.mockReset();
@@ -20,7 +21,10 @@ describe('createLLMClient', () => {
   });
 
   afterEach(() => {
-    process.env = { ...originalEnv };
+    if (originalApiKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = originalApiKey;
+    if (originalBaseUrl === undefined) delete process.env.OPENAI_BASE_URL;
+    else process.env.OPENAI_BASE_URL = originalBaseUrl;
   });
 
   it('uses the OPENAI_API_KEY env var when set', async () => {
