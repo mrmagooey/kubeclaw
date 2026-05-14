@@ -183,10 +183,12 @@ export default async function setup() {
   try {
     await installCertManager();
   } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
     console.warn(
-      `⚠️  cert-manager install/check failed: ${err}\n` +
+      `⚠️  cert-manager install/check failed: ${msg}\n` +
         '   The kubeclaw helm install may fail if credentialInjection.mode ' +
-        '!= off and the chart references Certificate/Issuer resources.\n',
+        '!= off and the chart references Certificate/Issuer resources.\n' +
+        '   Run `kubectl get pods -n cert-manager` to check the installation state.\n',
     );
   }
 
