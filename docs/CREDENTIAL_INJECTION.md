@@ -167,10 +167,16 @@ as an observation window before cutting over enforcement.
     --set credentialInjection.mode=off
   ```
 
-  If you prefer to manage cert-manager yourself, install any v1.13+
-  (`helm install cert-manager jetstack/cert-manager --namespace cert-manager
-  --create-namespace --set crds.enabled=true`) and run KubeClaw's setup with
-  `--skip-cert-manager`.
+  If you prefer to manage cert-manager yourself, install any v1.15+ (which
+  introduced the `crds.enabled` value):
+
+  ```bash
+  helm install cert-manager jetstack/cert-manager \
+    --namespace cert-manager --create-namespace \
+    --set crds.enabled=true
+  ```
+
+  Then run KubeClaw's setup with `--skip-cert-manager`.
 
 - `kubeclaw-secrets` contains all keys referenced by your broker mappings. The broker
   reads from the same Secret the orchestrator uses, so no new Secret is needed.

@@ -36,7 +36,7 @@ After ~10 minutes (mostly Falco's eBPF probe compilation) you'll have:
 
 - A minikube cluster (bridge CNI by default, or Cilium if requested via `--cni=cilium`)
 - Falco monitoring tool job behaviour (unless skipped with `--skip-falco`)
-- cert-manager managing the internal CA used by credentialInjection (unless skipped with `--skip-cert-manager`)
+- cert-manager managing the internal CA used by `credentialInjection` (unless skipped with `--skip-cert-manager`)
 - KubeClaw orchestrator and Redis deployed and ready
 
 Then run `/setup` in Claude Code to configure your API keys and channels.
@@ -136,7 +136,7 @@ View alerts: `kubectl logs -n falco daemonset/falco --follow`
 
 ### Phase 3.5 — Install cert-manager (idempotent)
 
-Installs cert-manager v1.16.x from the [jetstack Helm chart](https://artifacthub.io/packages/helm/cert-manager/cert-manager) into the `cert-manager` namespace, then waits for the admission webhook to become Ready. cert-manager provides the `cert-manager.io/v1` Issuer and Certificate CRDs that the KubeClaw chart's credentialInjection internal-CA references — without them, the next phase's helm install fails with "no matches for kind Certificate".
+Installs cert-manager v1.16.x from the [jetstack Helm chart](https://artifacthub.io/packages/helm/cert-manager/cert-manager) into the `cert-manager` namespace, then waits up to 60 seconds for the admission webhook to become Ready. cert-manager provides the `cert-manager.io/v1` Issuer and Certificate CRDs that the KubeClaw chart's credentialInjection internal-CA references — without them, the next phase's helm install fails with "no matches for kind Certificate".
 
 The installer is idempotent: if a cert-manager release is already present, this phase is a no-op. Pass `--skip-cert-manager` to bypass entirely when you have cert-manager managed elsewhere, or when running with `credentialInjection.mode=off` (env-var injection of API keys, no broker/sidecar required).
 
