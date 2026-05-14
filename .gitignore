@@ -44,3 +44,6 @@ agents-sdk-docs
 # Worktrees for parallel agent work
 .claude/worktrees/
 .worktrees/
+
+# Harness runtime state
+.claude/scheduled_tasks.lock
