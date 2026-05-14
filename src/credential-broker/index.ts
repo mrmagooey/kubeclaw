@@ -26,7 +26,7 @@ const SECRET_TTL_MS = parseInt(process.env.BROKER_SECRET_TTL_MS ?? '60000', 10);
 const AUDIT_ONLY = process.env.BROKER_AUDIT_ONLY === 'true';
 const METRICS_PORT = parseInt(process.env.BROKER_METRICS_PORT ?? '9090', 10);
 
-function loadConfigOrThrow(path: string) {
+export function loadConfigOrThrow(path: string) {
   let text: string;
   try {
     text = fs.readFileSync(path, 'utf8');
@@ -118,7 +118,14 @@ export async function startBroker(): Promise<http.Server> {
           | string
           | undefined,
       },
-      { resolver, identityVerifier, secretSource, audit, auditOnly: AUDIT_ONLY, metrics },
+      {
+        resolver,
+        identityVerifier,
+        secretSource,
+        audit,
+        auditOnly: AUDIT_ONLY,
+        metrics,
+      },
     )
       .then((out) => {
         for (const [k, v] of Object.entries(out.headers)) res.setHeader(k, v);
@@ -154,7 +161,10 @@ export async function startBroker(): Promise<http.Server> {
 
   await new Promise<void>((resolve) => {
     metricsServer.listen(METRICS_PORT, () => {
-      logger.info({ port: METRICS_PORT }, 'credential broker metrics listening');
+      logger.info(
+        { port: METRICS_PORT },
+        'credential broker metrics listening',
+      );
       resolve();
     });
   });
