@@ -167,12 +167,15 @@ as an observation window before cutting over enforcement.
     --set credentialInjection.mode=off
   ```
 
-  If you prefer to manage cert-manager yourself, install any v1.15+ (which
-  introduced the `crds.enabled` value):
+  If you prefer to manage cert-manager yourself, v1.15+ is the chart minimum
+  (the `crds.enabled` install value landed in v1.15; earlier releases used the
+  legacy `installCRDs` key). KubeClaw's auto-managed Phase 3.5 pins v1.16.2
+  for parity with what's exercised in CI — pin to the same when you can.
 
   ```bash
   helm install cert-manager jetstack/cert-manager \
     --namespace cert-manager --create-namespace \
+    --version v1.16.2 \
     --set crds.enabled=true
   ```
 

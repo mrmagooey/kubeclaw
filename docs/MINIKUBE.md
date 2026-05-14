@@ -52,13 +52,6 @@ Then run `/setup` in Claude Code to configure your API keys and channels.
 | `--cpus N` | `4` | Number of CPUs to allocate to the minikube VM |
 | `--memory N` | `6144` | RAM to allocate in MiB (e.g. `--memory 8192` for 8 GB) |
 | `--disk SIZE` | `20g` | Disk size for the minikube VM (e.g. `--disk 40g`) |
-
-### Planned flags
-
-These flags are in active development across other PRs and may not be available on `main` yet — see the issue tracker for status.
-
-| Flag | Default | Description |
-|---|---|---|
 | `--profile <name>` | minikube default | Name the minikube profile/cluster. Useful for running multiple kubeclaw clusters on one machine. |
 | `--cni <auto\|bridge\|cilium>` | `auto` | Choose the CNI. `auto` detects the host iptables backend and falls back to `bridge` on iptables-nft hosts. `cilium` enables FQDN egress policies but requires an iptables-legacy compatible host. |
 | `--with-cilium` | off | Shortcut for `--cni=cilium`. |
