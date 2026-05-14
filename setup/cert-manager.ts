@@ -27,6 +27,13 @@ export interface InstallCertManagerOptions {
   timeout?: string;
 }
 
+/**
+ * Detect whether the canonical cert-manager helm release is installed
+ * (release name `cert-manager` in namespace `cert-manager`). Returns
+ * `false` if the release is absent, *or* if helm itself isn't on PATH —
+ * the install path will then attempt the install and surface the binary
+ * error there. Synchronous; uses `helm status` with stdio piped.
+ */
 export function isCertManagerInstalled(): boolean {
   const r = spawnSync(
     'helm',
@@ -36,6 +43,18 @@ export function isCertManagerInstalled(): boolean {
   return r.status === 0;
 }
 
+/**
+ * Install cert-manager into the current kube-context if it isn't already
+ * present. Idempotent — returns `'present'` when a release already exists
+ * and `'skipped'` when the caller opts out via `opts.skip`. Otherwise
+ * installs cert-manager at the pinned `CERT_MANAGER_VERSION`, then waits
+ * for the admission webhook to be Ready before returning `'installed'`.
+ *
+ * Throws distinct named errors per failure point so callers can
+ * differentiate (`cert_manager_repo_add_failed`,
+ * `cert_manager_repo_update_failed`, `cert_manager_install_failed`,
+ * `cert_manager_webhook_not_ready`).
+ */
 export async function installCertManager(
   opts: InstallCertManagerOptions = {},
 ): Promise<'installed' | 'present' | 'skipped'> {

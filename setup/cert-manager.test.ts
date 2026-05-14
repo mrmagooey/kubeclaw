@@ -15,7 +15,7 @@ vi.mock('./k8s-utils.js', () => ({
   waitForDeployment: mockWaitForDeployment,
 }));
 
-function spawnResult(stdout = '', status = 0) {
+function spawnResult(stdout: string = '', status = 0) {
   return { status, stdout, stderr: '', error: undefined };
 }
 
@@ -126,5 +126,33 @@ describe('installCertManager', () => {
       .mockReturnValueOnce(spawnResult('', 1));  // helm repo add fails
 
     await expect(installCertManager()).rejects.toThrow('cert_manager_repo_add_failed');
+  });
+
+  it('throws cert_manager_repo_update_failed when repo update fails', async () => {
+    mockSpawnSync
+      .mockReturnValueOnce(spawnResult('', 1))   // helm status -> not installed
+      .mockReturnValueOnce(spawnResult('', 0))   // helm repo add ok
+      .mockReturnValueOnce(spawnResult('', 1));  // helm repo update fails
+
+    await expect(installCertManager()).rejects.toThrow('cert_manager_repo_update_failed');
+    expect(mockWaitForDeployment).not.toHaveBeenCalled();
+  });
+
+  it('passes opts.timeout through to helm upgrade --install', async () => {
+    mockSpawnSync
+      .mockReturnValueOnce(spawnResult('', 1))   // status
+      .mockReturnValueOnce(spawnResult('', 0))   // repo add
+      .mockReturnValueOnce(spawnResult('', 0))   // repo update
+      .mockReturnValueOnce(spawnResult('', 0));  // install
+    mockWaitForDeployment.mockResolvedValueOnce(true);
+
+    await installCertManager({ timeout: '5m' });
+
+    const installCall = mockSpawnSync.mock.calls.find(
+      (c) => Array.isArray(c[1]) && c[1][0] === 'upgrade',
+    );
+    const timeoutIdx = installCall![1].indexOf('--timeout');
+    expect(timeoutIdx).toBeGreaterThan(-1);
+    expect(installCall![1][timeoutIdx + 1]).toBe('5m');
   });
 });
