@@ -123,7 +123,12 @@ const JPEG_MAGIC = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]);
 
 function buildMultipartBody(
   boundary: string,
-  parts: Array<{ name: string; filename?: string; contentType?: string; data: Buffer | string }>,
+  parts: Array<{
+    name: string;
+    filename?: string;
+    contentType?: string;
+    data: Buffer | string;
+  }>,
 ): Buffer {
   const chunks: Buffer[] = [];
   for (const part of parts) {
@@ -134,7 +139,9 @@ function buildMultipartBody(
     if (part.contentType) header += `Content-Type: ${part.contentType}\r\n`;
     header += '\r\n';
     chunks.push(Buffer.from(header));
-    chunks.push(typeof part.data === 'string' ? Buffer.from(part.data) : part.data);
+    chunks.push(
+      typeof part.data === 'string' ? Buffer.from(part.data) : part.data,
+    );
     chunks.push(Buffer.from('\r\n'));
   }
   chunks.push(Buffer.from(`--${boundary}--\r\n`));
@@ -875,7 +882,12 @@ describe('HttpChannel', () => {
 
       const boundary = 'testboundary123';
       const body = buildMultipartBody(boundary, [
-        { name: 'image', filename: 'photo.jpg', contentType: 'image/jpeg', data: JPEG_MAGIC },
+        {
+          name: 'image',
+          filename: 'photo.jpg',
+          contentType: 'image/jpeg',
+          data: JPEG_MAGIC,
+        },
       ]);
       const req = makeMultipartReq({ boundary, body });
       const res = makeRes();
@@ -885,7 +897,9 @@ describe('HttpChannel', () => {
       expect(opts.onMessage).toHaveBeenCalledWith(
         'http:alice',
         expect.objectContaining({
-          content: expect.stringMatching(/^\[ImageAttachment: attachments\/raw\//),
+          content: expect.stringMatching(
+            /^\[ImageAttachment: attachments\/raw\//,
+          ),
         }),
       );
       await channel.disconnect();
@@ -913,7 +927,12 @@ describe('HttpChannel', () => {
 
       const boundary = 'testboundary456';
       const body = buildMultipartBody(boundary, [
-        { name: 'image', filename: 'first.jpg', contentType: 'image/jpeg', data: JPEG_MAGIC },
+        {
+          name: 'image',
+          filename: 'first.jpg',
+          contentType: 'image/jpeg',
+          data: JPEG_MAGIC,
+        },
       ]);
       const req = makeMultipartReq({ boundary, body });
       const res = makeRes();
@@ -931,7 +950,9 @@ describe('HttpChannel', () => {
       expect(opts.onMessage).toHaveBeenCalledWith(
         'http:alice',
         expect.objectContaining({
-          content: expect.stringMatching(/^\[ImageAttachment: attachments\/raw\//),
+          content: expect.stringMatching(
+            /^\[ImageAttachment: attachments\/raw\//,
+          ),
         }),
       );
       expect(res._status).toBe(200);
@@ -946,7 +967,12 @@ describe('HttpChannel', () => {
       const boundary = 'captionboundary';
       const body = buildMultipartBody(boundary, [
         { name: 'text', data: 'Look at this' },
-        { name: 'image', filename: 'shot.jpg', contentType: 'image/jpeg', data: JPEG_MAGIC },
+        {
+          name: 'image',
+          filename: 'shot.jpg',
+          contentType: 'image/jpeg',
+          data: JPEG_MAGIC,
+        },
       ]);
       const req = makeMultipartReq({ boundary, body });
       const res = makeRes();
@@ -967,7 +993,11 @@ describe('HttpChannel', () => {
 
       const boundary = 'badboundary';
       const body = buildMultipartBody(boundary, [
-        { name: 'image', filename: 'file.bin', data: Buffer.from([0x00, 0x01, 0x02]) },
+        {
+          name: 'image',
+          filename: 'file.bin',
+          data: Buffer.from([0x00, 0x01, 0x02]),
+        },
       ]);
       const req = makeMultipartReq({ boundary, body });
       const res = makeRes();
@@ -1005,7 +1035,12 @@ describe('HttpChannel', () => {
       const boundary = 'historyboundary';
       const body = buildMultipartBody(boundary, [
         { name: 'text', data: 'my caption' },
-        { name: 'image', filename: 'snap.jpg', contentType: 'image/jpeg', data: JPEG_MAGIC },
+        {
+          name: 'image',
+          filename: 'snap.jpg',
+          contentType: 'image/jpeg',
+          data: JPEG_MAGIC,
+        },
       ]);
       const req = makeMultipartReq({ boundary, body });
       const res = makeRes();
@@ -1020,7 +1055,8 @@ describe('HttpChannel', () => {
         expect.stringMatching(/^\[ImageAttachment: attachments\/raw\//),
       );
       // The caption must also be present in the stored marker.
-      const calls = (appendConversationMessage as ReturnType<typeof vi.fn>).mock.calls;
+      const calls = (appendConversationMessage as ReturnType<typeof vi.fn>).mock
+        .calls;
       const [, , content] = calls[0];
       expect(content).toContain('caption="my caption"');
       await channel.disconnect();

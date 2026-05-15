@@ -255,7 +255,10 @@ export class McpManager {
         await this.connectServer(failed.status);
         // Success: remove from failed set.
         this.failedServers.delete(name);
-        logger.debug({ server: name }, 'MCP server reconnected via background retry tick');
+        logger.debug(
+          { server: name },
+          'MCP server reconnected via background retry tick',
+        );
       } catch (err) {
         const retries = failed.retries + 1;
         const delay = nextRetryDelay(retries);

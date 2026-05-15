@@ -23,9 +23,7 @@ export function getRedisConfig(): RedisConfig {
   };
 }
 
-export function createRedisClient(
-  overrides: Partial<RedisConfig> = {},
-): Redis {
+export function createRedisClient(overrides: Partial<RedisConfig> = {}): Redis {
   const config = { ...getRedisConfig(), ...overrides };
 
   const client = new Redis(config.url, {

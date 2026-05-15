@@ -198,9 +198,7 @@ function syncCapabilitiesToLocalDb(entries: DiscoveryEntryLite[]): void {
         spec = {
           ...common,
           kind: 'mcp',
-          ...(entry.kindMetadata.path
-            ? { path: entry.kindMetadata.path }
-            : {}),
+          ...(entry.kindMetadata.path ? { path: entry.kindMetadata.path } : {}),
           ...(entry.kindMetadata.allowedTools
             ? { allowedTools: entry.kindMetadata.allowedTools }
             : {}),
