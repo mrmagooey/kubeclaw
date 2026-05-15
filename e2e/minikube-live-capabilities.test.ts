@@ -927,6 +927,29 @@ describe('Minikube-live: capability installed at runtime + used by channel', () 
           `Deployment ${filterDeployment} did not appear within 120 s`,
         ).toBe(true);
 
+        // The Deployment object exists but the cap pod may still be in
+        // ContainerCreating. The MCP server probe below needs a Running+Ready
+        // pod with a Service endpoint, so block until the pod's Ready
+        // condition is true (up to 120 s) before continuing.
+        const podReadyDeadline = Date.now() + 120_000;
+        let capPodReady = false;
+        while (Date.now() < podReadyDeadline) {
+          const r = kubectl([
+            'get', 'pods', '-n', NAMESPACE,
+            '-l', `app=${filterDeployment}`,
+            '-o', 'jsonpath={.items[*].status.conditions[?(@.type=="Ready")].status}',
+          ]);
+          if (r.ok && r.stdout.trim() === 'True') {
+            capPodReady = true;
+            break;
+          }
+          await new Promise((res) => setTimeout(res, 2000));
+        }
+        expect(
+          capPodReady,
+          `capability pod for ${filterDeployment} was not Ready within 120 s`,
+        ).toBe(true);
+
         // Wait for the channel pod to sync and attempt connection.
         await new Promise((r) => setTimeout(r, 6000));
 
@@ -987,25 +1010,41 @@ describe('Minikube-live: capability installed at runtime + used by channel', () 
           `expected the MCP server to list record_test_message: ${probeExec.stdout}`,
         ).toMatch(/server-has-tool:record_test_message/);
 
-        // Now check channel pod logs for toolCount=0 for mcp-allow-filter.
+        // Now poll channel pod logs for toolCount=0 for mcp-allow-filter.
         // The log line is emitted by McpManager.discoverAndRegister in
         // src/runtime/mcp-manager.ts:230-237:
         //   logger.info({ server, toolCount, totalDiscovered }, 'Connected to MCP server')
         // We expect toolCount=0 because allowedTools:["nonexistent_tool"] strips everything.
-        const logsAfterSync = kubectl([
-          'logs', '-n', NAMESPACE,
-          'deployment/kubeclaw-channel-http', '--tail=5000',
-        ]);
-        expect(logsAfterSync.ok).toBe(true);
-
-        // The JSON log line will contain: "server":"mcp-allow-filter","toolCount":0
+        //
+        // The initial connection often hits ECONNREFUSED because the channel
+        // pod tries to connect before the MCP server endpoint is route-able.
+        // McpManager retries on a 5/15/30s backoff (BUG-2 fix), so the success
+        // log line may not appear until ~15-30s after the install. Poll for
+        // up to 90s.
         const toolCount0Pattern = new RegExp(
           `${filterName}[^\\n]*toolCount.*?0|toolCount.*?0[^\\n]*${filterName}`,
         );
+        const toolCountDeadline = Date.now() + 90_000;
+        let toolCountMatched = false;
+        let lastLogTail = '';
+        while (Date.now() < toolCountDeadline) {
+          const logs = kubectl([
+            'logs', '-n', NAMESPACE,
+            'deployment/kubeclaw-channel-http', '--tail=5000',
+          ]);
+          if (logs.ok) {
+            lastLogTail = logs.stdout;
+            if (toolCount0Pattern.test(logs.stdout)) {
+              toolCountMatched = true;
+              break;
+            }
+          }
+          await new Promise((res) => setTimeout(res, 3000));
+        }
         expect(
-          logsAfterSync.stdout,
-          `expected toolCount=0 for ${filterName} in channel logs: ${logsAfterSync.stdout.slice(-2000)}`,
-        ).toMatch(toolCount0Pattern);
+          toolCountMatched,
+          `expected toolCount=0 for ${filterName} in channel logs within 90s: ${lastLogTail.slice(-2000)}`,
+        ).toBe(true);
       } finally {
         // Cleanup: remove the capability and confirm it is gone before returning.
         await cleanupCapability(redis!, filterName, NAMESPACE, 30_000);
