@@ -420,6 +420,16 @@ export class HttpChannel implements Channel {
           }
 
           const jid = `http:${username}`;
+          // Trigger auto-registration (same as the text path via handleInbound)
+          // before checking for the group, so a first-ever image POST from an
+          // unregistered user is not silently dropped.
+          this.opts.onChatMetadata(
+            jid,
+            new Date().toISOString(),
+            username,
+            'http',
+            false,
+          );
           const group = this.opts.registeredGroups()[jid];
           if (!group) {
             logger.debug({ jid }, 'HTTP image from unregistered user');

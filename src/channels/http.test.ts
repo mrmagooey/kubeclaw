@@ -8,6 +8,7 @@ vi.mock('../env.js', () => ({ readEnvFile: vi.fn(() => ({})) }));
 vi.mock('../config.js', () => ({
   ASSISTANT_NAME: 'Andy',
   TRIGGER_PATTERN: /^@Andy\b/i,
+  GROUPS_DIR: '/tmp/test-groups',
 }));
 vi.mock('../logger.js', () => ({
   logger: {
@@ -16,6 +17,15 @@ vi.mock('../logger.js', () => ({
     warn: vi.fn(),
     error: vi.fn(),
   },
+}));
+
+vi.mock('node:fs', () => ({
+  default: {
+    mkdirSync: vi.fn(),
+    writeFileSync: vi.fn(),
+  },
+  mkdirSync: vi.fn(),
+  writeFileSync: vi.fn(),
 }));
 
 // Mock the built-in http module so we don't actually bind a port
@@ -103,6 +113,57 @@ function makeReq(overrides: {
     );
   }
 
+  return req;
+}
+
+/** Minimal JPEG magic bytes for media-type detection */
+const JPEG_MAGIC = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]);
+
+function buildMultipartBody(
+  boundary: string,
+  parts: Array<{ name: string; filename?: string; contentType?: string; data: Buffer | string }>,
+): Buffer {
+  const chunks: Buffer[] = [];
+  for (const part of parts) {
+    let header = `--${boundary}\r\n`;
+    header += `Content-Disposition: form-data; name="${part.name}"`;
+    if (part.filename) header += `; filename="${part.filename}"`;
+    header += '\r\n';
+    if (part.contentType) header += `Content-Type: ${part.contentType}\r\n`;
+    header += '\r\n';
+    chunks.push(Buffer.from(header));
+    chunks.push(typeof part.data === 'string' ? Buffer.from(part.data) : part.data);
+    chunks.push(Buffer.from('\r\n'));
+  }
+  chunks.push(Buffer.from(`--${boundary}--\r\n`));
+  return Buffer.concat(chunks);
+}
+
+function makeMultipartReq(opts: {
+  auth?: string;
+  boundary: string;
+  body: Buffer;
+}): IncomingMessage {
+  const boundary = opts.boundary;
+  const auth = opts.auth ?? 'alice:secret';
+  const headers: Record<string, string> = {
+    authorization: `Basic ${b64(auth)}`,
+    'content-type': `multipart/form-data; boundary=${boundary}`,
+  };
+  const body = opts.body;
+  const req = {
+    method: 'POST',
+    url: '/message',
+    headers,
+    on: vi.fn(),
+    destroy: vi.fn(),
+  } as unknown as IncomingMessage;
+  (req.on as ReturnType<typeof vi.fn>).mockImplementation(
+    (event: string, cb: (...args: unknown[]) => void) => {
+      if (event === 'data') cb(body);
+      if (event === 'end') cb();
+    },
+  );
   return req;
 }
 
@@ -799,6 +860,135 @@ describe('HttpChannel', () => {
     it('does not own IRC JIDs', () => {
       const channel = new HttpChannel(makeConfig(), makeOpts());
       expect(channel.ownsJid('irc:#general@irc.example.com:6697')).toBe(false);
+    });
+  });
+
+  // ── POST /message — multipart image upload ───────────────────────────────
+
+  describe('POST /message multipart image upload', () => {
+    it('delivers ImageAttachment marker for registered user', async () => {
+      const opts = makeOpts();
+      const channel = new HttpChannel(makeConfig(), opts);
+      await channel.connect();
+
+      const boundary = 'testboundary123';
+      const body = buildMultipartBody(boundary, [
+        { name: 'image', filename: 'photo.jpg', contentType: 'image/jpeg', data: JPEG_MAGIC },
+      ]);
+      const req = makeMultipartReq({ boundary, body });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'http:alice',
+        expect.objectContaining({
+          content: expect.stringMatching(/^\[ImageAttachment: attachments\/raw\//),
+        }),
+      );
+      await channel.disconnect();
+    });
+
+    it('calls onChatMetadata before group check for first-ever image POST (regression: unregistered user silently dropped)', async () => {
+      // This is the core regression: before the fix, the multipart handler
+      // returned early without calling onChatMetadata, so auto-registration
+      // never fired and the image was silently dropped.
+      const groups: Record<string, unknown> = {};
+      const opts = makeOpts({
+        registeredGroups: vi.fn(() => groups as any),
+        onChatMetadata: vi.fn((_jid: string) => {
+          // Simulate what channel-runner's onChatMetadata does: auto-register the group
+          groups['http:alice'] = {
+            name: 'alice',
+            folder: 'alice',
+            trigger: '',
+            added_at: new Date().toISOString(),
+          };
+        }),
+      });
+      const channel = new HttpChannel(makeConfig(), opts);
+      await channel.connect();
+
+      const boundary = 'testboundary456';
+      const body = buildMultipartBody(boundary, [
+        { name: 'image', filename: 'first.jpg', contentType: 'image/jpeg', data: JPEG_MAGIC },
+      ]);
+      const req = makeMultipartReq({ boundary, body });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      // onChatMetadata must be called even when the group wasn't registered yet
+      expect(opts.onChatMetadata).toHaveBeenCalledWith(
+        'http:alice',
+        expect.any(String),
+        'alice',
+        'http',
+        false,
+      );
+      // After auto-registration the message must be delivered
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'http:alice',
+        expect.objectContaining({
+          content: expect.stringMatching(/^\[ImageAttachment: attachments\/raw\//),
+        }),
+      );
+      expect(res._status).toBe(200);
+      await channel.disconnect();
+    });
+
+    it('includes caption in ImageAttachment marker when text part is present', async () => {
+      const opts = makeOpts();
+      const channel = new HttpChannel(makeConfig(), opts);
+      await channel.connect();
+
+      const boundary = 'captionboundary';
+      const body = buildMultipartBody(boundary, [
+        { name: 'text', data: 'Look at this' },
+        { name: 'image', filename: 'shot.jpg', contentType: 'image/jpeg', data: JPEG_MAGIC },
+      ]);
+      const req = makeMultipartReq({ boundary, body });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'http:alice',
+        expect.objectContaining({
+          content: expect.stringMatching(/caption="Look at this"/),
+        }),
+      );
+      await channel.disconnect();
+    });
+
+    it('returns 415 for unrecognised image format', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const boundary = 'badboundary';
+      const body = buildMultipartBody(boundary, [
+        { name: 'image', filename: 'file.bin', data: Buffer.from([0x00, 0x01, 0x02]) },
+      ]);
+      const req = makeMultipartReq({ boundary, body });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(415);
+      await channel.disconnect();
+    });
+
+    it('returns 400 when image part is missing', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const boundary = 'noboundary';
+      const body = buildMultipartBody(boundary, [
+        { name: 'text', data: 'no image here' },
+      ]);
+      const req = makeMultipartReq({ boundary, body });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(400);
+      await channel.disconnect();
     });
   });
 
