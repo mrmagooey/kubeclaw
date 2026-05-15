@@ -4,6 +4,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 // ── Mocks ──────────────────────────────────────────────────────────────────
 
 vi.mock('./registry.js', () => ({ registerChannel: vi.fn() }));
+vi.mock('../db.js', () => ({ appendConversationMessage: vi.fn() }));
 vi.mock('../env.js', () => ({ readEnvFile: vi.fn(() => ({})) }));
 vi.mock('../config.js', () => ({
   ASSISTANT_NAME: 'Andy',
@@ -52,6 +53,7 @@ vi.mock('node:http', async (importOriginal) => {
 });
 
 import { HttpChannel, HttpChannelOpts } from './http.js';
+import { appendConversationMessage } from '../db.js';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -988,6 +990,39 @@ describe('HttpChannel', () => {
       await dispatch(channel, req, res);
 
       expect(res._status).toBe(400);
+      await channel.disconnect();
+    });
+
+    it('writes ImageAttachment marker directly to conversation_history at upload time', async () => {
+      // Regression: the e2e test probes conversation_history within 2 s of the
+      // POST — before the async LLM pipeline runs. The multipart handler must
+      // call appendConversationMessage synchronously so the row is visible
+      // immediately, independent of LLM processing speed.
+      const opts = makeOpts();
+      const channel = new HttpChannel(makeConfig(), opts);
+      await channel.connect();
+
+      const boundary = 'historyboundary';
+      const body = buildMultipartBody(boundary, [
+        { name: 'text', data: 'my caption' },
+        { name: 'image', filename: 'snap.jpg', contentType: 'image/jpeg', data: JPEG_MAGIC },
+      ]);
+      const req = makeMultipartReq({ boundary, body });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      // appendConversationMessage must be called with the group folder and the
+      // [ImageAttachment:] marker so the row appears before the LLM runs.
+      expect(appendConversationMessage).toHaveBeenCalledWith(
+        'alice', // group.folder from makeOpts()
+        'user',
+        expect.stringMatching(/^\[ImageAttachment: attachments\/raw\//),
+      );
+      // The caption must also be present in the stored marker.
+      const calls = (appendConversationMessage as ReturnType<typeof vi.fn>).mock.calls;
+      const [, , content] = calls[0];
+      expect(content).toContain('caption="my caption"');
       await channel.disconnect();
     });
   });

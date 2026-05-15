@@ -8,6 +8,7 @@ import {
 import path from 'node:path';
 
 import { ASSISTANT_NAME, GROUPS_DIR } from '../config.js';
+import { appendConversationMessage } from '../db.js';
 import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
 import { registerChannel, ChannelOpts } from './registry.js';
@@ -448,6 +449,10 @@ export class HttpChannel implements Channel {
           const marker = caption
             ? `[ImageAttachment: attachments/raw/${filename} caption="${caption}"]`
             : `[ImageAttachment: attachments/raw/${filename}]`;
+          // Write the attachment marker directly to conversation_history so the
+          // row is visible immediately (before the LLM pipeline processes the
+          // message from the messages table).
+          appendConversationMessage(group.folder, 'user', marker);
           this.handleInbound(username, marker);
 
           res.writeHead(200, { 'Content-Type': 'text/plain' });
