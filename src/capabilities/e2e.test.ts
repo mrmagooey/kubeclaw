@@ -80,6 +80,7 @@ import {
 } from './registry.js';
 import { handleCapabilitiesUpdate } from '../channel-runner.js';
 import { _initTestDatabase, __resetDbForTest } from '../db.js';
+import { getAllCapabilities } from './db.js';
 import type { ControlMessage } from '../k8s/types.js';
 
 beforeEach(async () => {
@@ -243,6 +244,66 @@ describe('capabilities subsystem — end-to-end', () => {
       'kubeclaw-cap-main-rag-data',
       'kubeclaw',
     );
+  });
+
+  it('handleCapabilitiesUpdate with RAG entry syncs it to local DB so getRagEntry can resolve it', async () => {
+    // Simulate a capabilities_update message arriving at the channel pod with a
+    // Qdrant RAG entry. The channel pod has no prior knowledge of this entry.
+    const msg: ControlMessage = {
+      command: 'capabilities_update',
+      capabilities: JSON.stringify([
+        {
+          name: 'test-rag',
+          kind: 'rag',
+          endpoint: 'http://kubeclaw-cap-test-rag:6333',
+          kindMetadata: { backend: 'qdrant' },
+        },
+      ]),
+    };
+
+    // Initially the channel-side DB is empty.
+    expect(getAllCapabilities()).toHaveLength(0);
+
+    await handleCapabilitiesUpdate(msg);
+
+    // syncCapabilitiesToLocalDb should have written the RAG entry so
+    // DirectLLMRunner.runAgent → getRagProvider() → getRagEntry() can find it.
+    const caps = getAllCapabilities();
+    expect(caps).toHaveLength(1);
+    expect(caps[0].kind).toBe('rag');
+    expect(caps[0].name).toBe('test-rag');
+    expect((caps[0] as { backend?: string }).backend).toBe('qdrant');
+
+    // The provider cache was also reset.
+    expect(mockResetRag).toHaveBeenCalledOnce();
+  });
+
+  it('handleCapabilitiesUpdate removes stale entries no longer in the update', async () => {
+    // Seed the channel-side DB with an old RAG entry.
+    const seedMsg: ControlMessage = {
+      command: 'capabilities_update',
+      capabilities: JSON.stringify([
+        {
+          name: 'old-rag',
+          kind: 'rag',
+          endpoint: 'http://kubeclaw-cap-old-rag:6333',
+          kindMetadata: { backend: 'qdrant' },
+        },
+      ]),
+    };
+    await handleCapabilitiesUpdate(seedMsg);
+    expect(getAllCapabilities()).toHaveLength(1);
+
+    // A subsequent update without old-rag should remove it.
+    const updateMsg: ControlMessage = {
+      command: 'capabilities_update',
+      capabilities: JSON.stringify([]),
+    };
+    mockResetRag.mockClear();
+    await handleCapabilitiesUpdate(updateMsg);
+
+    expect(getAllCapabilities()).toHaveLength(0);
+    expect(mockResetRag).toHaveBeenCalledOnce();
   });
 
   it('two installs aggregate so the channel sees both MCP servers in one update', async () => {

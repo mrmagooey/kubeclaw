@@ -13,7 +13,8 @@ import { getRagEntry } from '../capabilities/client.js';
 beforeEach(() => {
   __resetRagProviderForTest();
   vi.mocked(getRagEntry).mockReset();
-  delete process.env.CHANNEL_NAME;
+  delete process.env.KUBECLAW_CHANNEL;
+  delete process.env.QDRANT_URL;
 });
 
 describe('getRagProvider', () => {
@@ -41,5 +42,18 @@ describe('getRagProvider', () => {
   it('returns NullRagProvider when nothing configured', () => {
     vi.mocked(getRagEntry).mockReturnValue(undefined);
     expect(getRagProvider().name).toBe('none');
+  });
+
+  it('passes KUBECLAW_CHANNEL env var to getRagEntry (not CHANNEL_NAME)', () => {
+    process.env.KUBECLAW_CHANNEL = 'telegram';
+    vi.mocked(getRagEntry).mockReturnValue(undefined);
+    getRagProvider();
+    expect(vi.mocked(getRagEntry)).toHaveBeenCalledWith('telegram');
+  });
+
+  it('falls back to wildcard channel name when KUBECLAW_CHANNEL is unset', () => {
+    vi.mocked(getRagEntry).mockReturnValue(undefined);
+    getRagProvider();
+    expect(vi.mocked(getRagEntry)).toHaveBeenCalledWith('*');
   });
 });

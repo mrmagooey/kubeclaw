@@ -154,7 +154,7 @@ export function getRagProvider(): RagProvider {
   if (!_provider) {
     // 1. Capability registry (preferred). Falls back to env vars if registry is empty.
     try {
-      const channelName = process.env.CHANNEL_NAME ?? '*';
+      const channelName = process.env.KUBECLAW_CHANNEL ?? '*';
       const entry = getRagEntry(channelName);
       if (entry) {
         if (entry.kindMetadata.backend === 'lightrag') {
