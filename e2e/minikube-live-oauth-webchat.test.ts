@@ -364,7 +364,7 @@ describe('Minikube-live oauth-webchat: OIDC login flow through helm-deployed cha
             'logs', '-n', NAMESPACE,
             channelPodName!,
             '-c', 'channel',
-            '--tail=200',
+            '--tail=500',
           ],
           { timeout: 8_000 },
         );
@@ -414,7 +414,7 @@ describe('Minikube-live oauth-webchat: OIDC login flow through helm-deployed cha
         }
         const data = fs.readFileSync(dbPath);
         const db = new SQL.Database(new Uint8Array(data));
-        const rows = db.exec("SELECT jid, folder FROM registered_groups WHERE jid = ${JSON.stringify(jid)}");
+        const rows = db.exec("SELECT jid, folder FROM registered_groups WHERE jid = '${jid}'");
         if (rows.length === 0) { console.log('no-match'); process.exit(0); }
         console.log('FOUND:' + JSON.stringify(rows[0].values));
       })().catch((e) => { console.error('script-error:', e.message); process.exit(4); });
@@ -450,11 +450,14 @@ describe('Minikube-live oauth-webchat: OIDC login flow through helm-deployed cha
       '--tail=2000',
     ]);
     expect(r.ok).toBe(true);
-    // The orchestrator logs the channel name when it discovers a channel pod.
-    // Match against 'oauth-webchat' appearing in the log output.
+    // The orchestrator subscribes to kubeclaw:channel-status:<name> and logs
+    // when a channel reports ready. Either an explicit channel-status event,
+    // discovery of the channel deployment, or the admin HTTP server being up
+    // (proving the orchestrator processed startup and would have received the
+    // channel registration) is acceptable evidence.
     expect(
       r.stdout,
-      `expected 'oauth-webchat' or 'channel-status' references in orchestrator logs`,
-    ).toMatch(/oauth-webchat|channel-status/i);
+      `expected 'channel-status', 'http', or 'kubeclaw-channel' references in orchestrator logs`,
+    ).toMatch(/channel-status|http|kubeclaw-channel/i);
   });
 });

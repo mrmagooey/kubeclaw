@@ -44,10 +44,10 @@ rules:
   - apiGroups: [""]
     resources: ["services"]
     verbs: ["get", "list", "create", "replace", "delete"]
-  # Admin shell: create per-channel PVCs
+  # Admin shell: create per-channel PVCs; RAG capability removal deletes them
   - apiGroups: [""]
     resources: ["persistentvolumeclaims"]
-    verbs: ["get", "create"]
+    verbs: ["get", "list", "watch", "create", "delete"]
   # Admin shell: manage per-channel Ingress objects (namespace-scoped)
   - apiGroups: ["networking.k8s.io"]
     resources: ["ingresses"]
