@@ -837,10 +837,23 @@ describe('Minikube-live: capability installed at runtime + used by channel', () 
                 return false;
               }
             });
-            if (
-              postRemovalSyncs.length > 0 &&
-              postRemovalSyncs.every((l) => !l.includes(removeName))
-            ) {
+            // Check the `written` JSON field specifically — the channel-runner
+            // also logs `deleted: [removeName]` on removal (commit 9fd0019),
+            // so a substring match on the whole line would falsely match the
+            // deleted observability field. Parse and check `written` only.
+            const writtenExcludesRemoved = postRemovalSyncs.every((l) => {
+              try {
+                const parsed = JSON.parse(l) as {
+                  written?: Array<{ name: string }>;
+                };
+                return !(parsed.written ?? []).some(
+                  (e) => e.name === removeName,
+                );
+              } catch {
+                return false;
+              }
+            });
+            if (postRemovalSyncs.length > 0 && writtenExcludesRemoved) {
               postRemoveSyncOk = true;
               break;
             }
