@@ -21,6 +21,22 @@ interface ConnectedServer {
   tools: OpenAI.ChatCompletionTool[];
 }
 
+/** Tracks a server that failed to connect with backoff state. */
+interface FailedServer {
+  status: McpServerStatus;
+  /** Monotonically increasing retry count (0 = never connected). */
+  retries: number;
+  /** Timestamp (ms) after which the next retry is allowed. */
+  retryAfter: number;
+}
+
+/** Backoff schedule: index = retry number, value = delay in ms (capped at 30 s). */
+const RETRY_DELAYS_MS = [5_000, 15_000, 30_000];
+
+function nextRetryDelay(retries: number): number {
+  return RETRY_DELAYS_MS[Math.min(retries, RETRY_DELAYS_MS.length - 1)];
+}
+
 function isToolAllowed(toolName: string, allowedTools: string[]): boolean {
   for (const pattern of allowedTools) {
     if (pattern === toolName) return true;
@@ -35,6 +51,8 @@ function isToolAllowed(toolName: string, allowedTools: string[]): boolean {
 export class McpManager {
   private servers = new Map<string, ConnectedServer>();
   private toolToServer = new Map<string, string>();
+  /** Servers that failed to connect and are waiting for a retry window. */
+  private failedServers = new Map<string, FailedServer>();
 
   /**
    * Connect to MCP servers and discover their tools.
@@ -48,12 +66,18 @@ export class McpManager {
           { server: status.name, url: status.url, err },
           'Failed to connect to MCP server, skipping',
         );
+        this.failedServers.set(status.name, {
+          status,
+          retries: 0,
+          retryAfter: Date.now() + nextRetryDelay(0),
+        });
       }
     }
   }
 
   /**
-   * Reconfigure: disconnect removed servers, connect new ones.
+   * Reconfigure: disconnect removed servers, connect new ones, and retry
+   * previously-failed servers whose backoff window has elapsed.
    */
   async reconfigure(serverStatuses: McpServerStatus[]): Promise<void> {
     const newNames = new Set(serverStatuses.map((s) => s.name));
@@ -71,17 +95,58 @@ export class McpManager {
       }
     }
 
-    // Connect new servers
+    // Remove failed-server entries that are no longer requested
+    for (const name of this.failedServers.keys()) {
+      if (!newNames.has(name)) {
+        this.failedServers.delete(name);
+      }
+    }
+
+    const now = Date.now();
+
+    // Connect new servers, and retry failed servers whose backoff has elapsed
     for (const status of serverStatuses) {
-      if (!this.servers.has(status.name)) {
-        try {
-          await this.connectServer(status);
-        } catch (err) {
-          logger.warn(
-            { server: status.name, url: status.url, err },
-            'Failed to connect to MCP server during reconfigure, skipping',
-          );
-        }
+      if (this.servers.has(status.name)) {
+        // Already connected — nothing to do.
+        continue;
+      }
+
+      const failed = this.failedServers.get(status.name);
+      if (failed && now < failed.retryAfter) {
+        // Still within the backoff window — skip.
+        logger.debug(
+          {
+            server: status.name,
+            retryAfter: new Date(failed.retryAfter).toISOString(),
+            retries: failed.retries,
+          },
+          'MCP server in backoff, skipping retry',
+        );
+        continue;
+      }
+
+      try {
+        await this.connectServer(status);
+        // Success: clear any previous failure record.
+        this.failedServers.delete(status.name);
+      } catch (err) {
+        const retries = (failed?.retries ?? 0) + 1;
+        const delay = nextRetryDelay(retries);
+        logger.warn(
+          {
+            server: status.name,
+            url: status.url,
+            err,
+            retries,
+            nextRetryInMs: delay,
+          },
+          'Failed to connect to MCP server during reconfigure, will retry',
+        );
+        this.failedServers.set(status.name, {
+          status,
+          retries,
+          retryAfter: now + delay,
+        });
       }
     }
   }
@@ -144,6 +209,7 @@ export class McpManager {
     }
     this.servers.clear();
     this.toolToServer.clear();
+    this.failedServers.clear();
   }
 
   private async connectServer(status: McpServerStatus): Promise<void> {

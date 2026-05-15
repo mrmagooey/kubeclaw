@@ -3,16 +3,14 @@
  *
  * Covers the install-then-modify-then-reapply update path:
  *
- *   Test 1 — reapply with different port: verifies the Deployment is NOT
- *             duplicated and the DB holds the new spec. The K8s Deployment
- *             spec itself is not updated because the orchestrator RBAC role
- *             lacks `update` on Deployment resources (PRODUCT BUG — see note
- *             in test body). The no-duplicate guarantee is verified instead.
+ *   Test 1 — reapply with different port: verifies the Deployment spec IS
+ *             updated (containerPort changes to 3001) after the second install,
+ *             no 403 RBAC errors are logged, and the channel pod receives a
+ *             capabilities_update after re-install (BUG-1 fixed).
  *
  *   Test 2 — install with allowedTools: verifies capabilities_update with
  *             count=1 reaches the http channel and the discovery entry in
- *             list_capabilities contains the allowedTools restriction. Full
- *             channel reconnect is blocked by BUG-1+BUG-2 (documented).
+ *             list_capabilities contains the allowedTools restriction.
  *
  *   Test 3 — ACL change via remove+reinstall (http→irc): verifies http
  *             channel count drops from ≥1 to 0 when capability is re-scoped
@@ -25,25 +23,6 @@
  * both code paths in src/k8s/ipc-redis.ts ultimately call installCapability()
  * directly; isolating them from an e2e context without modifying src is not
  * feasible.
- *
- * KNOWN PRODUCT BUGS surfaced by this suite
- * ─────────────────────────────────────────
- * BUG-1 (RBAC): The orchestrator service account lacks the `update` verb on
- *   Deployment resources. applyYamlToK8s tries create-then-replace; the
- *   replace call returns HTTP 403. The error is swallowed (catch in
- *   applyYamlToK8s does not rethrow), so the capability's DB row is updated
- *   but the K8s Deployment spec remains stale. Fix: add `update` (and
- *   optionally `patch`) to the Helm RBAC Role for the orchestrator.
- *
- * BUG-2 (MCP retry): McpManager.reconfigure() does not retry servers that
- *   failed to connect (ECONNREFUSED) on the previous capabilities_update.
- *   If the pod starts slower than the capabilities_update round-trip, the
- *   channel never connects until a SECOND capabilities_update arrives.
- *   Additionally, when a second install_capability XADD hits an existing
- *   Deployment, applyYamlToK8s throws (HTTP 403 from BUG-1) before
- *   notifyAllChannels is called — so no retry notification is ever sent.
- *   Test 2 verifies the first install path (capabilities_update + DB) rather
- *   than the retry cycle, which remains blocked until BUG-1 is fixed.
  *
  * Pattern follows e2e/minikube-live-capabilities.test.ts for Redis/setup/
  * cleanup boilerplate.
@@ -279,20 +258,15 @@ describe('Minikube-live: capability lifecycle (install → update → reapply)',
   }, 240_000);
 
   // ── 1. Re-install with same image but different port ─────────────────────
-  // Verify: a second install_capability with the same name does NOT create a
-  // second Deployment. The create-then-replace pattern in applyYamlToK8s
-  // means the replace call is issued, even if it fails (RBAC BUG-1).
-  // The no-duplicate invariant is what we can assert deterministically here.
-  //
-  // NOTE (BUG-1): The orchestrator service account lacks the `update` verb on
-  // Deployment resources (HTTP 403 on replaceNamespacedDeployment). The port
-  // therefore does NOT change in K8s. This is a known RBAC configuration bug
-  // that must be fixed in the Helm chart. This test asserts:
-  //   a) Deployment count stays at 1 after both installs (no duplication)
-  //   b) The orchestrator logged the 403 error from the replace call
-  //   c) The DB holds the updated spec (list_capabilities returns the new port)
+  // Verify that a second install_capability with the same name:
+  //   a) Does NOT create a second Deployment (no duplication)
+  //   b) DOES update the K8s Deployment containerPort to 3001 (BUG-1 fixed:
+  //      RBAC role now has `update` verb on Deployment resources)
+  //   c) Does NOT log any 403 RBAC errors in orchestrator after second install
+  //   d) Sends a capabilities_update to the http channel after second install
+  //   e) DB holds the updated spec (list_capabilities returns the new port)
   it(
-    'reapply with new port: no duplicate Deployment; DB reflects new spec; 403 RBAC error logged (BUG-1)',
+    'reapply with new port: Deployment updated; no 403 logged; channel notified; DB reflects new spec',
     async () => {
       expect(provisioned, 'cluster not provisioned — check beforeAll').toBe(true);
       const deployName = `kubeclaw-cap-${CAP_PORT_UPDATE}`;
@@ -315,7 +289,7 @@ describe('Minikube-live: capability lifecycle (install → update → reapply)',
           `expected containerPort=3000 after first install, got ${portAfterFirst}`,
         ).toBe(3000);
 
-        // Record time before second install to timestamp-filter orchestrator logs.
+        // Record time before second install to timestamp-filter logs.
         const secondInstallTime = Date.now();
 
         // Second install: same name, port 3001.
@@ -337,30 +311,68 @@ describe('Minikube-live: capability lifecycle (install → update → reapply)',
           `expected exactly 1 Deployment for ${deployName} after second install, found ${count}`,
         ).toBe(1);
 
-        // Assert b: orchestrator logged the RBAC 403 error from replaceNamespacedDeployment.
-        // This confirms BUG-1 is present: the update verb is missing from the RBAC role.
-        // When/if BUG-1 is fixed, this assertion will FAIL (no 403 logged) and should be
-        // removed once the RBAC fix is confirmed.
+        // Assert b: the Deployment containerPort was updated to 3001 (BUG-1 fixed).
+        const portAfterSecond = getDeploymentContainerPort(deployName, NAMESPACE);
+        expect(
+          portAfterSecond,
+          `expected containerPort=3001 after second install (BUG-1 fix: RBAC update verb). ` +
+          `Got ${portAfterSecond}. If this fails, the Helm RBAC role is missing the 'update' verb.`,
+        ).toBe(3001);
+
+        // Assert c: no 403 RBAC errors in orchestrator logs after second install.
         const orchLogs = kubectl([
           'logs', '-n', NAMESPACE, 'deployment/kubeclaw-orchestrator', '--tail=5000',
         ]);
         expect(orchLogs.ok, `kubectl logs failed: ${orchLogs.stderr}`).toBe(true);
-        const bug1LogFound = orchLogs.stdout.split('\n').some((l) => {
+        const has403 = orchLogs.stdout.split('\n').some((l) => {
           if (!l.includes('403') || !l.includes(CAP_PORT_UPDATE)) return false;
           try {
             const parsed = JSON.parse(l) as { time?: number };
             return (parsed.time ?? 0) >= secondInstallTime;
           } catch {
-            return true; // non-JSON line: accept if it mentions both 403 and the cap name
+            return true; // non-JSON line mentioning both 403 and cap name
           }
         });
         expect(
-          bug1LogFound,
-          `BUG-1: expected orchestrator to log a 403 RBAC error for ${CAP_PORT_UPDATE} on the second install. ` +
-          'If this assertion fails, the RBAC role was fixed — remove this check.',
+          has403,
+          `BUG-1 regression: orchestrator logged a 403 RBAC error for ${CAP_PORT_UPDATE} on the second install. ` +
+          'The RBAC role must include the "update" verb on Deployment resources.',
+        ).toBe(false);
+
+        // Assert d: http channel receives capabilities_update after second install.
+        const channelNotifyDeadline = Date.now() + 30_000;
+        let channelNotified = false;
+        while (Date.now() < channelNotifyDeadline) {
+          const logs = kubectl([
+            'logs', '-n', NAMESPACE,
+            'deployment/kubeclaw-channel-http', '--tail=5000',
+          ]);
+          if (logs.ok) {
+            const reconfLines = logs.stdout
+              .split('\n')
+              .filter((l) => l.includes('MCP servers reconfigured from capabilities_update'));
+            const postInstall = reconfLines.find((l) => {
+              try {
+                const parsed = JSON.parse(l) as { time?: number };
+                return (parsed.time ?? 0) >= secondInstallTime;
+              } catch {
+                return true;
+              }
+            });
+            if (postInstall !== undefined) {
+              channelNotified = true;
+              break;
+            }
+          }
+          await new Promise((res) => setTimeout(res, 2000));
+        }
+        expect(
+          channelNotified,
+          `BUG-1 regression: http channel did not receive capabilities_update after second install of ` +
+          `${CAP_PORT_UPDATE}. notifyAllChannels must be called after successful applySpec.`,
         ).toBe(true);
 
-        // Assert c: DB holds the new spec (port 3001 in list_capabilities).
+        // Assert e: DB holds the new spec (port 3001 in list_capabilities).
         const resultStream = `kubeclaw:capabilities-list-result:${Date.now()}-port-test`;
         await redis!.xadd(
           'kubeclaw:task-requests',
@@ -391,7 +403,6 @@ describe('Minikube-live: capability lifecycle (install → update → reapply)',
             }
           }
         }
-        // The discovery entry's endpoint includes the port, confirming the DB was updated.
         expect(
           specInDb,
           `${CAP_PORT_UPDATE} not found in list_capabilities`,
@@ -410,20 +421,11 @@ describe('Minikube-live: capability lifecycle (install → update → reapply)',
   );
 
   // ── 2. Reapply with updated allowedTools: channel receives capabilities_update ──
-  // The create-then-replace in applyYamlToK8s fails with HTTP 403 when the
-  // Deployment already exists (BUG-1 — orchestrator RBAC missing `update`).
-  // The exception propagates through applySpec, causing installCapability to
-  // abort before calling notifyAllChannels (BUG-2 side-effect).
-  //
-  // This test verifies the FIRST install path:
+  // This test verifies the install path with allowedTools restriction:
   //   a) First install_capability XADD → capabilities_update reaches http channel
   //   b) Channel logs 'MCP servers reconfigured from capabilities_update' with count=1
-  //   c) Channel attempts connection (ECONNREFUSED is acceptable — BUG-2)
+  //   c) Channel attempts connection (ECONNREFUSED is acceptable — pod may still be starting)
   //   d) DB holds the updated spec: allowedTools in list_capabilities entry
-  //
-  // The full "update-then-channel-reconnects" round-trip is blocked by BUG-1
-  // (no notifyAllChannels after a failed replace). Tests for that behavior
-  // belong in a separate fix-verification suite after BUG-1 is patched.
   it(
     'install with allowedTools: channel receives capabilities_update and DB stores spec',
     async () => {
@@ -552,15 +554,12 @@ describe('Minikube-live: capability lifecycle (install → update → reapply)',
   //   a) First install (channels:['http']) → orchestrator notifies http channel
   //      → http channel logs 'MCP servers reconfigured' with count=1
   //   b) ACL change to channels:['irc'] via remove + reinstall
-  //      (direct replace is blocked by BUG-1 — RBAC 403 on update verb)
   //      → http channel logs 'MCP servers reconfigured' with count=0
   //        (the capability is no longer in the http payload)
   //   c) Deployment still exists after the ACL change (no delete+recreate)
   //
-  // BUG-1 forces a remove+reinstall approach for the ACL change itself.
-  // The test explicitly uses remove_capability + install_capability in sequence
-  // so that `notifyAllChannels` is called (it runs after removeCapability,
-  // and after the fresh install's applySpec succeeds with CREATE not REPLACE).
+  // The test uses remove_capability + install_capability in sequence to
+  // simulate an explicit channel ACL change workflow.
   it(
     'ACL change via remove+reinstall: http channel count drops from 1 to 0; Deployment survives',
     async () => {
@@ -617,11 +616,9 @@ describe('Minikube-live: capability lifecycle (install → update → reapply)',
           `expected http channel to receive capabilities_update with count >= 1 after first install`,
         ).toBe(true);
 
-        // Step b: Change ACL to irc only.
-        // Because BUG-1 prevents in-place Deployment update (RBAC 403), we use
-        // remove + reinstall. This also avoids the BUG-1-induced notifyAllChannels
-        // skip (removeCapability always calls notifyAllChannels, as does the fresh
-        // installCapability whose applySpec succeeds with CREATE).
+        // Step b: Change ACL to irc only via remove + reinstall.
+        // This mirrors the real-world workflow for changing channel scoping.
+        // removeCapability calls notifyAllChannels, as does the fresh installCapability.
         //
         // Step b1: Remove the capability.
         const removeTime = Date.now();

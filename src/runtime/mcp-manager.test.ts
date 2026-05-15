@@ -380,6 +380,132 @@ describe('McpManager', () => {
       expect(mockConnect.mock.calls.length).toBe(connectCallsBefore);
       expect(manager.hasTool('get_weather')).toBe(true);
     });
+
+    it('retries a previously-failed server when its backoff window has elapsed', async () => {
+      // Both StreamableHTTP and SSE transports must fail to mark the server as failed.
+      // connectServer tries StreamableHTTP first, then falls back to SSE on failure.
+      mockConnect
+        .mockRejectedValueOnce(new Error('ECONNREFUSED')) // StreamableHTTP attempt
+        .mockRejectedValueOnce(new Error('ECONNREFUSED')); // SSE fallback attempt
+      const manager = new McpManager();
+      await manager.initialize([weatherServer]);
+
+      expect(manager.getTools()).toHaveLength(0);
+      expect(manager.hasTool('get_weather')).toBe(false);
+
+      // Advance time past the first backoff window (5 s) using fake timers.
+      vi.useFakeTimers();
+      vi.setSystemTime(Date.now() + 6_000);
+
+      // Next reconfigure: server is now retryable — connection succeeds.
+      mockConnect.mockResolvedValueOnce(undefined);
+      mockListTools.mockResolvedValueOnce({
+        tools: [
+          {
+            name: 'get_weather',
+            description: 'Get current weather for a location',
+            inputSchema: {
+              type: 'object',
+              properties: { location: { type: 'string' } },
+            },
+          },
+        ],
+      });
+
+      await manager.reconfigure([weatherServer]);
+
+      vi.useRealTimers();
+
+      expect(manager.hasTool('get_weather')).toBe(true);
+      expect(manager.getTools()).toHaveLength(1);
+    });
+
+    it('does not retry a failed server before its backoff window elapses', async () => {
+      // Both StreamableHTTP and SSE transports must fail to mark the server as failed.
+      mockConnect
+        .mockRejectedValueOnce(new Error('ECONNREFUSED')) // StreamableHTTP attempt
+        .mockRejectedValueOnce(new Error('ECONNREFUSED')); // SSE fallback attempt
+      const manager = new McpManager();
+      await manager.initialize([weatherServer]);
+
+      // connect was called twice (HTTP + SSE fallback, both rejected).
+      const connectCallsAfterInit = mockConnect.mock.calls.length;
+      expect(connectCallsAfterInit).toBe(2);
+      expect(manager.getTools()).toHaveLength(0);
+
+      // Reconfigure immediately (within the 5 s backoff window) — should NOT retry.
+      await manager.reconfigure([weatherServer]);
+
+      // connect should NOT have been called again.
+      expect(mockConnect.mock.calls.length).toBe(connectCallsAfterInit);
+      expect(manager.getTools()).toHaveLength(0);
+    });
+
+    it('clears failed server entry on successful retry', async () => {
+      vi.useFakeTimers();
+      const startTime = Date.now();
+
+      // Both transports fail on initialize.
+      mockConnect
+        .mockRejectedValueOnce(new Error('ECONNREFUSED')) // init: HTTP
+        .mockRejectedValueOnce(new Error('ECONNREFUSED')); // init: SSE fallback
+      const manager = new McpManager();
+      await manager.initialize([weatherServer]);
+
+      // Advance past first backoff.
+      vi.setSystemTime(startTime + 6_000);
+
+      // Second attempt also fails (both transports again).
+      mockConnect
+        .mockRejectedValueOnce(new Error('ECONNREFUSED again')) // retry: HTTP
+        .mockRejectedValueOnce(new Error('ECONNREFUSED again')); // retry: SSE fallback
+      await manager.reconfigure([weatherServer]);
+      expect(manager.getTools()).toHaveLength(0);
+
+      // Advance past second backoff (15 s from start of second failure).
+      vi.setSystemTime(startTime + 6_000 + 16_000);
+
+      // Third attempt succeeds (StreamableHTTP succeeds — no SSE fallback needed).
+      mockConnect.mockResolvedValueOnce(undefined);
+      mockListTools.mockResolvedValueOnce({
+        tools: [
+          {
+            name: 'get_weather',
+            description: 'Weather',
+            inputSchema: { type: 'object', properties: {} },
+          },
+        ],
+      });
+
+      await manager.reconfigure([weatherServer]);
+
+      vi.useRealTimers();
+
+      expect(manager.hasTool('get_weather')).toBe(true);
+    });
+
+    it('removes failed server tracking when server is removed from list', async () => {
+      // Both transports fail — server is tracked as failed.
+      mockConnect
+        .mockRejectedValueOnce(new Error('ECONNREFUSED')) // HTTP
+        .mockRejectedValueOnce(new Error('ECONNREFUSED')); // SSE fallback
+      const manager = new McpManager();
+      await manager.initialize([weatherServer]);
+
+      const connectCallsAfterInit = mockConnect.mock.calls.length;
+
+      // Remove the server from the list — no retry should ever happen.
+      await manager.reconfigure([]);
+
+      // Advance time well past any backoff.
+      vi.useFakeTimers();
+      vi.setSystemTime(Date.now() + 60_000);
+      await manager.reconfigure([]);
+      vi.useRealTimers();
+
+      // connect should not have been called again after the initial failures.
+      expect(mockConnect.mock.calls.length).toBe(connectCallsAfterInit);
+    });
   });
 
   describe('shutdown', () => {

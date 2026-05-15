@@ -39,15 +39,15 @@ rules:
     verbs: ["get", "create", "patch"]
   - apiGroups: ["apps"]
     resources: ["deployments"]
-    verbs: ["get", "list", "create", "patch", "replace", "delete"]
-  # MCP server lifecycle: create/delete services
+    verbs: ["create", "get", "list", "watch", "update", "patch", "delete"]
+  # MCP server lifecycle: create/update/delete services
   - apiGroups: [""]
     resources: ["services"]
-    verbs: ["get", "list", "create", "replace", "delete"]
+    verbs: ["create", "get", "list", "watch", "update", "patch", "delete"]
   # Admin shell: create per-channel PVCs; RAG capability removal deletes them
   - apiGroups: [""]
     resources: ["persistentvolumeclaims"]
-    verbs: ["get", "list", "watch", "create", "delete"]
+    verbs: ["create", "get", "list", "watch", "update", "patch", "delete"]
   # Admin shell: manage per-channel Ingress objects (namespace-scoped)
   - apiGroups: ["networking.k8s.io"]
     resources: ["ingresses"]
