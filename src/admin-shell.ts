@@ -593,7 +593,8 @@ async function runAgenticTurn(
     history.push(msg);
 
     if (!msg.tool_calls || msg.tool_calls.length === 0) {
-      return msg.content ?? '';
+      const extended = msg as typeof msg & { reasoning_content?: string };
+      return msg.content || extended.reasoning_content || '';
     }
 
     for (const call of msg.tool_calls) {
