@@ -175,9 +175,11 @@ function syncCapabilitiesToLocalDb(entries: DiscoveryEntryLite[]): void {
   for (const e of entries) incoming.set(e.name, e);
 
   // Drop locally cached entries that are no longer in the authoritative list.
+  const deleted: string[] = [];
   for (const local of getAllCapabilities()) {
     if (!incoming.has(local.name)) {
       deleteCapability(local.name);
+      deleted.push(local.name);
     }
   }
 
@@ -223,7 +225,7 @@ function syncCapabilitiesToLocalDb(entries: DiscoveryEntryLite[]): void {
     written.push({ name: entry.name, kind: entry.kind });
   }
   logger.info(
-    { written, total: entries.length },
+    { written, deleted, total: entries.length },
     'Synced capabilities to local DB',
   );
 }
