@@ -47,3 +47,4 @@ agents-sdk-docs
 
 # Harness runtime state
 .claude/scheduled_tasks.lock
+e2e/.pre-merge-backup/
