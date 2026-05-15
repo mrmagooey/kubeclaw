@@ -1,0 +1,10 @@
+{
+  "name": "kubeclaw-test-oauth-provider",
+  "version": "1.0.0",
+  "description": "Minimal OIDC provider fixture for kubeclaw oauth-webchat e2e tests",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {}
+}

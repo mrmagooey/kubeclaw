@@ -30,6 +30,17 @@ export const KUBECLAW_LIVE_REDIS_LOCAL_PORT = 16381;
 export const KUBECLAW_LIVE_USER = 'alice';
 export const KUBECLAW_LIVE_PASS = 'livepass';
 
+// ── oauth-webchat channel constants ──────────────────────────────────────────
+// Port 14082 — non-clashing with HTTP (14081) and Redis (16381).
+// The test user alice@test.local is hardcoded in the test-oauth-provider fixture.
+export const KUBECLAW_LIVE_OAUTH_WEBCHAT_LOCAL_PORT = 14082;
+// Port 18090 — local port-forward for the in-cluster test OIDC provider.
+// Tests use this to follow the authorize redirect from the host.
+export const KUBECLAW_LIVE_TEST_OAUTH_LOCAL_PORT = 18090;
+export const KUBECLAW_LIVE_OAUTH_WEBCHAT_USER = 'alice@test.local';
+// Cookie secret must be ≥32 chars (enforced by parseConfig).
+export const KUBECLAW_LIVE_OAUTH_WEBCHAT_COOKIE_SECRET = 'kubeclaw-live-e2e-oauth-cookie-secret-32bytes!';
+
 // Read from a Secret at runtime (initialised inside setup()).
 export let KUBECLAW_LIVE_REDIS_URL = '';
 
@@ -41,6 +52,8 @@ const LIVE_API_KEY = process.env.LIVE_LLM_API_KEY || 'no-key';
 
 let portForwardProcess: ChildProcess | null = null;
 let redisPortForwardProcess: ChildProcess | null = null;
+let oauthWebchatPortForwardProcess: ChildProcess | null = null;
+let testOauthPortForwardProcess: ChildProcess | null = null;
 
 function sleep(ms: number) {
   return new Promise<void>((r) => setTimeout(r, ms));
@@ -210,6 +223,29 @@ async function helmInstall(): Promise<void> {
     '--from-literal=channels=#live-test',
   ]);
 
+  // Pre-create the oauth-webchat channel Secret. The chart has no auto-create
+  // path for this channel (unlike http which keys off secrets.httpChannelUsers).
+  // All OAUTH_WEBCHAT_* env vars are read by the channel pod from this Secret.
+  // The OIDC issuer URL points to the test-oauth capability pod (in-cluster).
+  // OAUTH_WEBCHAT_PUBLIC_URL is the port-forward address reachable by test
+  // clients on the host — used to build the redirect_uri in the OAuth flow.
+  run('kubectl', [
+    'delete', 'secret', 'kubeclaw-channel-oauth-webchat',
+    '-n', NAMESPACE, '--ignore-not-found',
+  ], { allowFail: true });
+  run('kubectl', [
+    'create', 'secret', 'generic', 'kubeclaw-channel-oauth-webchat',
+    '-n', NAMESPACE,
+    '--from-literal=oidc-issuer=http://kubeclaw-capability-test-oauth:8080',
+    '--from-literal=public-url=http://127.0.0.1:' + KUBECLAW_LIVE_OAUTH_WEBCHAT_LOCAL_PORT,
+    '--from-literal=client-id=test-client',
+    '--from-literal=client-secret=test-secret',
+    '--from-literal=allowed-emails=alice@test.local',
+    '--from-literal=cookie-secret=' + KUBECLAW_LIVE_OAUTH_WEBCHAT_COOKIE_SECRET,
+    '--from-literal=provider-name=TestOIDC',
+    '--from-literal=session-ttl-days=1',
+  ]);
+
   console.log(`📦 helm install ${RELEASE} → ${NAMESPACE} (LLM=${LIVE_BASE_URL}, model=${LIVE_MODEL})...`);
   const setArgs = [
     'upgrade', '--install', RELEASE, CHART_DIR,
@@ -269,6 +305,34 @@ async function helmInstall(): Promise<void> {
     '--set', 'channels.irc.envVars[2].key=nick',
     '--set', 'channels.irc.envVars[3].name=IRC_CHANNELS',
     '--set', 'channels.irc.envVars[3].key=channels',
+    // Deploy the test OIDC provider as a capability pod. It serves the
+    // OpenID Connect Authorization Code flow for the oauth-webchat channel.
+    // Port 8080 is already allowed by extraEgressPorts — no additional
+    // network-policy change needed. The test user is alice@test.local.
+    '--set', 'capabilities.test-oauth.image=kubeclaw-test-oauth:latest',
+    '--set', 'capabilities.test-oauth.port=8080',
+    // Deploy the oauth-webchat channel pod. The Secret kubeclaw-channel-oauth-webchat
+    // was pre-created above with all required OAUTH_WEBCHAT_* env vars.
+    '--set', 'channels.oauth-webchat.enabled=true',
+    '--set', 'channels.oauth-webchat.type=oauth-webchat',
+    '--set', 'channels.oauth-webchat.httpPort=4080',
+    '--set', 'channels.oauth-webchat.envVars[0].name=OAUTH_WEBCHAT_OIDC_ISSUER',
+    '--set', 'channels.oauth-webchat.envVars[0].key=oidc-issuer',
+    '--set', 'channels.oauth-webchat.envVars[1].name=OAUTH_WEBCHAT_PUBLIC_URL',
+    '--set', 'channels.oauth-webchat.envVars[1].key=public-url',
+    '--set', 'channels.oauth-webchat.envVars[2].name=OAUTH_WEBCHAT_CLIENT_ID',
+    '--set', 'channels.oauth-webchat.envVars[2].key=client-id',
+    '--set', 'channels.oauth-webchat.envVars[3].name=OAUTH_WEBCHAT_CLIENT_SECRET',
+    '--set', 'channels.oauth-webchat.envVars[3].key=client-secret',
+    '--set', 'channels.oauth-webchat.envVars[4].name=OAUTH_WEBCHAT_ALLOWED_EMAILS',
+    '--set', 'channels.oauth-webchat.envVars[4].key=allowed-emails',
+    '--set', 'channels.oauth-webchat.envVars[5].name=OAUTH_WEBCHAT_COOKIE_SECRET',
+    '--set', 'channels.oauth-webchat.envVars[5].key=cookie-secret',
+    '--set', 'channels.oauth-webchat.envVars[6].name=OAUTH_WEBCHAT_PROVIDER_NAME',
+    '--set', 'channels.oauth-webchat.envVars[6].key=provider-name',
+    '--set', 'channels.oauth-webchat.envVars[7].name=OAUTH_WEBCHAT_SESSION_TTL_DAYS',
+    '--set', 'channels.oauth-webchat.envVars[7].key=session-ttl-days',
+    '--set', 'channels.oauth-webchat.envVars[7].optional=true',
   ];
   const install = run('helm', setArgs, { timeout: 240_000, allowFail: true });
   if (!install.ok) {
@@ -362,6 +426,66 @@ async function startRedisPortForward(): Promise<void> {
   throw new Error('Redis port-forward did not come up within 15s');
 }
 
+async function startTestOauthPortForward(): Promise<void> {
+  console.log(
+    `🔌 Port-forward svc/kubeclaw-capability-test-oauth → localhost:${KUBECLAW_LIVE_TEST_OAUTH_LOCAL_PORT}`,
+  );
+  // Tests need to follow the /authorize redirect from the host machine, so we
+  // port-forward the in-cluster OIDC provider. This is read-only; no Secret
+  // or credentials are exposed.
+  testOauthPortForwardProcess = spawn(
+    'bash',
+    [
+      '-c',
+      // The capability Service exposes port 8080 (same as the container port).
+      `while true; do >&2 echo "[port-forward restart $(date +%T)] test-oauth"; kubectl port-forward -n ${NAMESPACE} svc/kubeclaw-capability-test-oauth ${KUBECLAW_LIVE_TEST_OAUTH_LOCAL_PORT}:8080 || true; sleep 0.1; done`,
+    ],
+    { stdio: ['ignore', 'ignore', 'inherit'], detached: true },
+  );
+
+  for (let i = 0; i < 15; i++) {
+    await sleep(1000);
+    const nc = spawnSync(
+      'nc',
+      ['-z', 'localhost', String(KUBECLAW_LIVE_TEST_OAUTH_LOCAL_PORT)],
+      { stdio: 'pipe' },
+    );
+    if (nc.status === 0) {
+      console.log(`✅ Port-forward live on :${KUBECLAW_LIVE_TEST_OAUTH_LOCAL_PORT}\n`);
+      return;
+    }
+  }
+  throw new Error('test-oauth port-forward did not come up within 15s');
+}
+
+async function startOauthWebchatPortForward(): Promise<void> {
+  console.log(
+    `🔌 Port-forward svc/kubeclaw-channel-oauth-webchat → localhost:${KUBECLAW_LIVE_OAUTH_WEBCHAT_LOCAL_PORT}`,
+  );
+  oauthWebchatPortForwardProcess = spawn(
+    'bash',
+    [
+      '-c',
+      `while true; do >&2 echo "[port-forward restart $(date +%T)] oauth-webchat"; kubectl port-forward -n ${NAMESPACE} svc/kubeclaw-channel-oauth-webchat ${KUBECLAW_LIVE_OAUTH_WEBCHAT_LOCAL_PORT}:80 || true; sleep 0.1; done`,
+    ],
+    { stdio: ['ignore', 'ignore', 'inherit'], detached: true },
+  );
+
+  for (let i = 0; i < 15; i++) {
+    await sleep(1000);
+    const nc = spawnSync(
+      'nc',
+      ['-z', 'localhost', String(KUBECLAW_LIVE_OAUTH_WEBCHAT_LOCAL_PORT)],
+      { stdio: 'pipe' },
+    );
+    if (nc.status === 0) {
+      console.log(`✅ Port-forward live on :${KUBECLAW_LIVE_OAUTH_WEBCHAT_LOCAL_PORT}\n`);
+      return;
+    }
+  }
+  throw new Error('oauth-webchat port-forward did not come up within 15s');
+}
+
 /**
  * Exported for tests that restart the channel pod — `kubectl port-forward`
  * dies when its backing pod is deleted, so the test re-runs setup.
@@ -405,8 +529,14 @@ async function teardownImpl() {
   portForwardProcess = null;
   killTree(redisPortForwardProcess);
   redisPortForwardProcess = null;
+  killTree(oauthWebchatPortForwardProcess);
+  oauthWebchatPortForwardProcess = null;
+  killTree(testOauthPortForwardProcess);
+  testOauthPortForwardProcess = null;
   // Belt-and-braces: kill any lingering kubectl port-forward that targets our ports.
   spawnSync('bash', ['-c', `pkill -f 'kubectl port-forward.*${KUBECLAW_LIVE_HTTP_LOCAL_PORT}:80' || true`]);
+  spawnSync('bash', ['-c', `pkill -f 'kubectl port-forward.*${KUBECLAW_LIVE_OAUTH_WEBCHAT_LOCAL_PORT}:80' || true`]);
+  spawnSync('bash', ['-c', `pkill -f 'kubectl port-forward.*${KUBECLAW_LIVE_TEST_OAUTH_LOCAL_PORT}:8080' || true`]);
   spawnSync('bash', ['-c', `pkill -f 'kubectl port-forward.*${KUBECLAW_LIVE_REDIS_LOCAL_PORT}:6379' || true`]);
 
   // Always uninstall — this is our own isolated namespace.
@@ -439,6 +569,11 @@ export default async function setup() {
     'e2e/fixtures/test-ircd/Dockerfile',
     'e2e/fixtures/test-ircd',
   );
+  await ensureImage(
+    'kubeclaw-test-oauth:latest',
+    'e2e/fixtures/test-oauth-provider/Dockerfile',
+    'e2e/fixtures/test-oauth-provider',
+  );
 
   try {
     await installCertManager();
@@ -464,6 +599,10 @@ export default async function setup() {
   await waitForPod('app=kubeclaw-capability-test-ircd', 240_000);
   console.log('⏳ Waiting for IRC channel pod Ready...');
   await waitForPod('app=kubeclaw-channel-irc', 240_000);
+  console.log('⏳ Waiting for test oauth provider pod Ready...');
+  await waitForPod('app=kubeclaw-capability-test-oauth', 240_000);
+  console.log('⏳ Waiting for oauth-webchat channel pod Ready...');
+  await waitForPod('app=kubeclaw-channel-oauth-webchat', 240_000);
 
   // The channel pod often loses its first Redis subscribe attempt — the
   // Redis pod's readiness probe goes True before the server is actually
@@ -475,14 +614,22 @@ export default async function setup() {
     'rollout', 'restart', 'deployment/kubeclaw-channel-http',
     '-n', NAMESPACE,
   ]);
+  // Also restart the oauth-webchat channel pod for the same reason.
+  run('kubectl', [
+    'rollout', 'restart', 'deployment/kubeclaw-channel-oauth-webchat',
+    '-n', NAMESPACE,
+  ]);
   // Wait briefly for the old pod's termination then for the new one to be Ready.
   await sleep(3000);
   await waitForPod('app=kubeclaw-channel-http', 240_000);
+  await waitForPod('app=kubeclaw-channel-oauth-webchat', 240_000);
   // The test MCP capability is installed at runtime by the test itself,
   // so we don't wait for it here.
 
   await startPortForward();
   await startRedisPortForward();
+  await startOauthWebchatPortForward();
+  await startTestOauthPortForward();
 
   console.log('✅ minikube-live global setup complete\n');
 
