@@ -1544,6 +1544,57 @@ describe('startToolPodSpawnWatcher', () => {
     expect(jobRunner.createToolPodJob).toHaveBeenCalled();
     expect(jobRunner.createSidecarToolPodJob).not.toHaveBeenCalled();
   });
+
+  it('logs error and continues when createToolPodJob rejects (e.g. MODULE_NOT_FOUND in tool pod)', async () => {
+    // Regression test: if the tool-server image is stale or built from the
+    // wrong Dockerfile, the K8s Job pod exits with MODULE_NOT_FOUND for
+    // /app/dist/tool-server.js.  The orchestrator itself doesn't see the pod
+    // error directly — it only sees createToolPodJob resolve (the Job object
+    // was created successfully).  However, if Job *creation* itself fails (API
+    // error, quota exceeded, etc.) the watcher must log and not crash.
+    const { jobRunner } = await import('./job-runner.js');
+    const { logger } = await import('../logger.js');
+    startIpcWatcher(createMockDeps());
+
+    vi.mocked(jobRunner.createToolPodJob).mockRejectedValueOnce(
+      new Error('K8s API: forbidden'),
+    );
+
+    let callCount = 0;
+    mockXread.mockImplementation(async () => {
+      if (callCount++ === 0) {
+        return [
+          [
+            'kubeclaw:spawn-tool-pod',
+            [
+              [
+                '1-0',
+                [
+                  'agentJobId', 'j-fail',
+                  'groupFolder', 'g',
+                  'category', 'execution',
+                  'timeout', '60000',
+                  'channel', 'http',
+                ],
+              ],
+            ],
+          ],
+        ];
+      }
+      await stopIpcWatcher();
+      return null;
+    });
+
+    await startToolPodSpawnWatcher();
+
+    expect(jobRunner.createToolPodJob).toHaveBeenCalledWith(
+      expect.objectContaining({ agentJobId: 'j-fail', category: 'execution' }),
+    );
+    expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+      expect.objectContaining({ agentJobId: 'j-fail' }),
+      'Failed to spawn tool pod for channel pod',
+    );
+  });
 });
 
 describe('startToolJobSpawnWatcher', () => {

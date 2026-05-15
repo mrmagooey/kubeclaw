@@ -136,6 +136,7 @@ async function ensureImage(
   imageName: string,
   dockerfile: string,
   contextDir: string = '.',
+  requiredFiles: string[] = [],
 ): Promise<void> {
   console.log(`🐳 Checking for ${imageName} in minikube docker daemon...`);
   const check = spawnSync(
@@ -146,7 +147,32 @@ async function ensureImage(
     ],
     { encoding: 'utf8' },
   );
-  if (check.status === 0 && check.stdout.trim()) {
+
+  let needsBuild = !(check.status === 0 && check.stdout.trim());
+
+  // Even if the image exists, verify required files are present.
+  // A stale image built from the wrong Dockerfile may be missing expected
+  // artefacts (e.g. tool-server.js) causing tool pods to crash with
+  // MODULE_NOT_FOUND at runtime.
+  if (!needsBuild && requiredFiles.length > 0) {
+    for (const f of requiredFiles) {
+      const verify = spawnSync(
+        'bash',
+        [
+          '-c',
+          `eval $(minikube docker-env) && docker run --rm --entrypoint="" ${imageName} test -f ${f} 2>/dev/null`,
+        ],
+        { encoding: 'utf8' },
+      );
+      if (verify.status !== 0) {
+        console.log(`⚠️  ${imageName} exists but is missing ${f} — rebuilding...`);
+        needsBuild = true;
+        break;
+      }
+    }
+  }
+
+  if (!needsBuild) {
     console.log(`✅ ${imageName} already present\n`);
     return;
   }
@@ -614,7 +640,15 @@ async function teardownImpl() {
 export default async function setup() {
   console.log('🚀 minikube-live global setup starting...\n');
   await ensureMinikube();
-  await ensureImage('kubeclaw-agent:latest', 'container/Dockerfile');
+  await ensureImage(
+    'kubeclaw-agent:latest',
+    'container/Dockerfile',
+    '.',
+    // Verify tool-server.js is present — a stale image built from the
+    // orchestrator Dockerfile will be missing this file and cause tool
+    // pod jobs to fail with MODULE_NOT_FOUND at runtime.
+    ['/app/dist/tool-server.js'],
+  );
   // The orchestrator image is also used by channel pods (different command).
   await ensureImage('kubeclaw-orchestrator:latest', 'Dockerfile');
   await ensureImage('kubeclaw-test-mcp:latest', 'e2e/fixtures/test-mcp-server/Dockerfile', 'e2e/fixtures/test-mcp-server');
