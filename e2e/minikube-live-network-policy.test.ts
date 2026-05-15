@@ -273,6 +273,21 @@ describe('Minikube-live: NetworkPolicy enforcement', () => {
   it(
     'orchestrator admin port 9090 unreachable from channel pod (ingress policy)',
     () => {
+      if (!enforcingCni) {
+        console.warn(
+          'Skipping runtime 9090-blocked check: no enforcing CNI is installed. ' +
+          'Asserting that the helm-rendered policy *does not* whitelist port 9090.',
+        );
+        const rendered = kubectl([
+          'get', 'networkpolicy', 'kubeclaw-orchestrator-policy',
+          '-n', NAMESPACE, '-o', 'yaml',
+        ], { timeout: 10_000 });
+        expect(rendered.ok, 'orchestrator NetworkPolicy missing').toBe(true);
+        expect(rendered.stdout, 'orchestrator policy mentions port 9090 — should be 8080 only')
+          .not.toMatch(/port:\s*9090/);
+        return;
+      }
+
       expect(
         channelPod,
         'No running kubeclaw-channel-http pod found',

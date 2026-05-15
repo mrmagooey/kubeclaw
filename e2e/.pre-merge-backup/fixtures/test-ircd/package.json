@@ -1,0 +1,10 @@
+{
+  "name": "kubeclaw-test-ircd",
+  "version": "1.0.0",
+  "description": "Minimal in-cluster IRC server fixture for kubeclaw e2e tests",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {}
+}
