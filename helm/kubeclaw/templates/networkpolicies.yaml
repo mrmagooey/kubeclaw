@@ -40,7 +40,14 @@ spec:
     {{- end }}
 ---
 # Orchestrator: unrestricted egress (needs to create Jobs, call APIs, reach Redis).
-# Ingress restricted to port 8080 (health/metrics).
+# Ingress restricted to port 8080 (health/metrics); all other ports including
+# the admin shell (9090) are blocked from all in-cluster pods.  The admin shell
+# is reachable only via `kubectl port-forward` from the host, which bypasses
+# NetworkPolicy, so no in-cluster ingress rule for 9090 is needed.
+#
+# Explicit `podSelector: {}` (select all in-namespace pods) is used instead of
+# `from: []` to avoid an ambiguity that some CNIs resolve as "allow all ingress
+# on all ports" — an empty `from` list with ports is unambiguous as a pair.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -54,7 +61,8 @@ spec:
     - Ingress
     - Egress
   ingress:
-    - from: []
+    - from:
+        - podSelector: {}
       ports:
         - protocol: TCP
           port: 8080
