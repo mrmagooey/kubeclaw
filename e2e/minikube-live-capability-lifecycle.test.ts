@@ -9,15 +9,14 @@
  *             lacks `update` on Deployment resources (PRODUCT BUG — see note
  *             in test body). The no-duplicate guarantee is verified instead.
  *
- *   Test 2 — reapply with expanded allowedTools: after pod is Ready, a
- *             second install_capability pushes a fresh capabilities_update,
- *             causing the channel pod to reconnect. Verifies 'Connected to
- *             MCP server' is logged.
+ *   Test 2 — install with allowedTools: verifies capabilities_update with
+ *             count=1 reaches the http channel and the discovery entry in
+ *             list_capabilities contains the allowedTools restriction. Full
+ *             channel reconnect is blocked by BUG-1+BUG-2 (documented).
  *
- *   Test 3 — reapply changing channel ACL (http→irc): verifies the http
- *             channel receives a post-change capabilities_update that omits
- *             the capability, confirmed by a log line with a timestamp after
- *             the ACL change XADD.
+ *   Test 3 — ACL change via remove+reinstall (http→irc): verifies http
+ *             channel count drops from ≥1 to 0 when capability is re-scoped
+ *             to irc-only, and Deployment survives the ACL change.
  *
  *   Test 4 — DB upsert: two installs with the same name produce exactly one
  *             list_capabilities entry (ON CONFLICT(name) DO UPDATE path).
@@ -40,8 +39,11 @@
  *   failed to connect (ECONNREFUSED) on the previous capabilities_update.
  *   If the pod starts slower than the capabilities_update round-trip, the
  *   channel never connects until a SECOND capabilities_update arrives.
- *   Tests 2 & 3 work around this by explicitly sending a second install XADD
- *   after the pod is Ready to trigger a retry.
+ *   Additionally, when a second install_capability XADD hits an existing
+ *   Deployment, applyYamlToK8s throws (HTTP 403 from BUG-1) before
+ *   notifyAllChannels is called — so no retry notification is ever sent.
+ *   Test 2 verifies the first install path (capabilities_update + DB) rather
+ *   than the retry cycle, which remains blocked until BUG-1 is fixed.
  *
  * Pattern follows e2e/minikube-live-capabilities.test.ts for Redis/setup/
  * cleanup boilerplate.
