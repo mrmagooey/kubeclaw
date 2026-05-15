@@ -508,6 +508,107 @@ describe('McpManager', () => {
     });
   });
 
+  describe('background retry tick', () => {
+    it('retries a failed server automatically after backoff elapses (no reconfigure needed)', async () => {
+      vi.useFakeTimers();
+      const startTime = Date.now();
+
+      // Both transports fail on initialize — server goes into failedServers.
+      mockConnect
+        .mockRejectedValueOnce(new Error('EHOSTUNREACH')) // StreamableHTTP attempt
+        .mockRejectedValueOnce(new Error('EHOSTUNREACH')); // SSE fallback attempt
+
+      const manager = new McpManager();
+      await manager.initialize([weatherServer]);
+
+      expect(manager.getTools()).toHaveLength(0);
+      expect(manager.hasTool('get_weather')).toBe(false);
+
+      // Prepare a successful connection for the retry attempt.
+      mockConnect.mockResolvedValueOnce(undefined);
+      mockListTools.mockResolvedValueOnce({
+        tools: [
+          {
+            name: 'get_weather',
+            description: 'Get current weather for a location',
+            inputSchema: {
+              type: 'object',
+              properties: { location: { type: 'string' } },
+            },
+          },
+        ],
+      });
+
+      // Advance time past the first backoff window (5 s) and fire exactly one tick.
+      vi.setSystemTime(startTime + 6_000);
+      // advanceTimersByTimeAsync fires timers that fall within the window without looping forever.
+      await vi.advanceTimersByTimeAsync(6_000);
+
+      // Check before shutdown clears state.
+      expect(manager.hasTool('get_weather')).toBe(true);
+      expect(manager.getTools()).toHaveLength(1);
+
+      vi.useRealTimers();
+      await manager.shutdown();
+    });
+
+    it('does not retry a failed server before its backoff window elapses', async () => {
+      vi.useFakeTimers();
+      const startTime = Date.now();
+
+      // Both transports fail on initialize.
+      mockConnect
+        .mockRejectedValueOnce(new Error('EHOSTUNREACH')) // StreamableHTTP attempt
+        .mockRejectedValueOnce(new Error('EHOSTUNREACH')); // SSE fallback attempt
+
+      const manager = new McpManager();
+      await manager.initialize([weatherServer]);
+
+      const connectCallsAfterInit = mockConnect.mock.calls.length;
+      expect(connectCallsAfterInit).toBe(2);
+
+      // Advance time to just inside the backoff window (4 s < 5 s delay).
+      // The tick fires at 5 s intervals but the retryAfter is 5 s from startTime,
+      // so at t=4 s the retryAfter has not elapsed.
+      vi.setSystemTime(startTime + 4_000);
+      await vi.advanceTimersByTimeAsync(4_000);
+
+      vi.useRealTimers();
+      await manager.shutdown();
+
+      // No additional connect calls should have been made.
+      expect(mockConnect.mock.calls.length).toBe(connectCallsAfterInit);
+      expect(manager.getTools()).toHaveLength(0);
+    });
+
+    it('stops retrying after shutdown is called', async () => {
+      vi.useFakeTimers();
+      const startTime = Date.now();
+
+      // Both transports fail on initialize.
+      mockConnect
+        .mockRejectedValueOnce(new Error('EHOSTUNREACH'))
+        .mockRejectedValueOnce(new Error('EHOSTUNREACH'));
+
+      const manager = new McpManager();
+      await manager.initialize([weatherServer]);
+
+      // Shut down before the backoff elapses.
+      await manager.shutdown();
+
+      const connectCallsAfterShutdown = mockConnect.mock.calls.length;
+
+      // Advance time well past any backoff; timers should be cleared.
+      vi.setSystemTime(startTime + 60_000);
+      await vi.runAllTimersAsync();
+
+      vi.useRealTimers();
+
+      // No additional connect attempts after shutdown.
+      expect(mockConnect.mock.calls.length).toBe(connectCallsAfterShutdown);
+    });
+  });
+
   describe('shutdown', () => {
     it('closes all client connections', async () => {
       const manager = new McpManager();
