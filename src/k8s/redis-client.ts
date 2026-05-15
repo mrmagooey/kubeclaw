@@ -78,11 +78,12 @@ export function getRedisSubscriber(): Redis {
 }
 
 /**
- * Returns a dedicated Redis connection for stream watchers that issue
- * blocking XREAD commands (BLOCK N). Using a separate connection keeps the
- * shared `getRedisClient()` connection free for pub/sub and other commands,
- * which would otherwise be queued behind the blocking XREAD and experience
- * multi-second delays proportional to the BLOCK timeout.
+ * Returns the shared Redis stream-watcher singleton.
+ *
+ * @deprecated Multiple concurrent XREAD BLOCK callers must each call
+ * `createStreamWatcherClient()` to get their own dedicated connection.
+ * Sharing this singleton causes blocking contention — only one XREAD
+ * can be active per TCP connection at a time.
  *
  * maxRetriesPerRequest is null (infinite) so that transient DNS or network
  * blips — common in minikube and during pod restarts — do not permanently
@@ -95,6 +96,24 @@ export function getRedisStreamWatcher(): Redis {
     redisStreamWatcher = createRedisClient({ maxRetriesPerRequest: null });
   }
   return redisStreamWatcher;
+}
+
+/**
+ * Creates a **new, independent** Redis connection suitable for a single
+ * long-lived XREAD BLOCK watcher loop. Unlike `getRedisStreamWatcher()`,
+ * this is NOT a singleton — every call returns a fresh connection.
+ *
+ * Each blocking XREAD loop must own its own connection. Sharing a single
+ * connection across multiple concurrent XREAD BLOCK calls causes only one
+ * command to be active at a time, leaving the other watchers stalled until
+ * the active XREAD unblocks (up to BLOCK ms later).
+ *
+ * maxRetriesPerRequest is null (infinite) so transient DNS blips do not
+ * throw MaxRetriesPerRequestError and crash the watcher permanently.
+ * The caller is responsible for calling `.quit()` when it is done.
+ */
+export function createStreamWatcherClient(): Redis {
+  return createRedisClient({ maxRetriesPerRequest: null });
 }
 
 export async function closeRedisConnections(): Promise<void> {

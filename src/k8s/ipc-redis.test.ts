@@ -127,6 +127,12 @@ vi.mock('./redis-client.js', () => ({
     xread: mockXread,
     xrevrange: vi.fn().mockResolvedValue([]),
   })),
+  // Each blocking-XREAD watcher gets its own fresh connection via this factory.
+  createStreamWatcherClient: vi.fn(() => ({
+    xadd: mockXadd,
+    xread: mockXread,
+    xrevrange: vi.fn().mockResolvedValue([]),
+  })),
   getOutputChannel: vi.fn((folder: string) => `kubeclaw:messages:${folder}`),
   getTaskChannel: vi.fn((folder: string) => `kubeclaw:tasks:${folder}`),
   getInputStream: vi.fn((jobId: string) => `kubeclaw:input:${jobId}`),

@@ -29,7 +29,7 @@ import {
   getSpawnToolPodStream,
   getTaskChannel,
   getTaskRequestStream,
-  getRedisStreamWatcher,
+  createStreamWatcherClient,
 } from './redis-client.js';
 import { TaskRequest } from './types.js';
 import { jobRunner } from './job-runner.js';
@@ -738,9 +738,10 @@ async function resolveStreamTip(redis: Redis, stream: string): Promise<string> {
 }
 
 export async function startToolPodSpawnWatcher(): Promise<void> {
-  // Use the dedicated stream-watcher connection so XREAD BLOCK does not
-  // queue commands on the shared client and starve pub/sub operations.
-  const redis = getRedisStreamWatcher();
+  // Each blocking-XREAD watcher needs its own dedicated connection.
+  // Multiple watchers sharing one connection serialize behind each other's
+  // BLOCK timeout; a fresh connection per watcher lets them run concurrently.
+  const redis = createStreamWatcherClient();
   const stream = getSpawnToolPodStream();
   // Resolve to the actual last-entry ID before entering the loop.
   // Using '$' raw would cause a race condition: if a message is added between
@@ -864,9 +865,10 @@ export async function startToolPodSpawnWatcher(): Promise<void> {
  * kubeclaw:agent-job-result:{agentJobId} so the channel pod can return it.
  */
 export async function startToolJobSpawnWatcher(): Promise<void> {
-  // Use the dedicated stream-watcher connection so XREAD BLOCK does not
-  // queue commands on the shared client and starve pub/sub operations.
-  const redis = getRedisStreamWatcher();
+  // Each blocking-XREAD watcher needs its own dedicated connection.
+  // Multiple watchers sharing one connection serialize behind each other's
+  // BLOCK timeout; a fresh connection per watcher lets them run concurrently.
+  const redis = createStreamWatcherClient();
   const stream = getSpawnToolJobStream();
   let lastId = await resolveStreamTip(redis, stream);
 
@@ -1006,9 +1008,10 @@ export interface TaskRequestWatcherDeps {
 export async function startTaskRequestWatcher(
   deps?: TaskRequestWatcherDeps,
 ): Promise<void> {
-  // Use the dedicated stream-watcher connection so XREAD BLOCK does not
-  // queue commands on the shared client and starve pub/sub operations.
-  const redis = getRedisStreamWatcher();
+  // Each blocking-XREAD watcher needs its own dedicated connection.
+  // Multiple watchers sharing one connection serialize behind each other's
+  // BLOCK timeout; a fresh connection per watcher lets them run concurrently.
+  const redis = createStreamWatcherClient();
   const stream = getTaskRequestStream();
   let lastId = await resolveStreamTip(redis, stream);
 
@@ -1055,23 +1058,30 @@ export async function startTaskRequestWatcher(
             // auto-register groups only in their own per-channel SQLite;
             // the orchestrator's messages.db may not have the entry yet.
             if (deps?.registerGroup) {
-              const knownGroups = getAllRegisteredGroups();
-              const alreadyKnown = Object.values(knownGroups).some(
-                (g) => g.folder === groupFolder,
-              );
-              if (!alreadyKnown && isValidGroupFolder(groupFolder)) {
-                const syntheticGroup: RegisteredGroup = {
-                  name: chatJid,
-                  folder: groupFolder,
-                  trigger: '',
-                  added_at: new Date().toISOString(),
-                  requiresTrigger: false,
-                  containerConfig: { direct: true },
-                };
-                deps.registerGroup(chatJid, syntheticGroup);
-                logger.info(
-                  { chatJid, groupFolder },
-                  'Auto-registered group in orchestrator from task-request stream',
+              try {
+                const knownGroups = getAllRegisteredGroups();
+                const alreadyKnown = Object.values(knownGroups).some(
+                  (g) => g.folder === groupFolder,
+                );
+                if (!alreadyKnown && isValidGroupFolder(groupFolder)) {
+                  const syntheticGroup: RegisteredGroup = {
+                    name: chatJid,
+                    folder: groupFolder,
+                    trigger: '',
+                    added_at: new Date().toISOString(),
+                    requiresTrigger: false,
+                    containerConfig: { direct: true },
+                  };
+                  deps.registerGroup(chatJid, syntheticGroup);
+                  logger.info(
+                    { chatJid, groupFolder },
+                    'Auto-registered group in orchestrator from task-request stream',
+                  );
+                }
+              } catch (err) {
+                logger.warn(
+                  { chatJid, groupFolder, err },
+                  'Failed to auto-register group from task-request stream; task will still be created',
                 );
               }
             }

@@ -1,6 +1,6 @@
 import {
   getRedisClient,
-  getRedisStreamWatcher,
+  createStreamWatcherClient,
   getDiscoveryRequestStream,
   getDiscoveryResponseKey,
 } from '../k8s/redis-client.js';
@@ -76,9 +76,10 @@ export async function __handleRequestForTest(
 }
 
 async function watchRequests(): Promise<void> {
-  // Use the dedicated stream-watcher connection so XREAD BLOCK does not
-  // queue commands on the shared client and starve pub/sub operations.
-  const redis = getRedisStreamWatcher();
+  // Each blocking-XREAD watcher needs its own dedicated connection.
+  // Multiple watchers sharing one connection serialize behind each other's
+  // BLOCK timeout; a fresh connection per watcher lets them run concurrently.
+  const redis = createStreamWatcherClient();
   const stream = getDiscoveryRequestStream();
   let lastId = await resolveStreamTip(stream);
 

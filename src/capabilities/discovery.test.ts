@@ -18,6 +18,12 @@ vi.mock('../k8s/redis-client.js', () => ({
     xrevrange: mockXrevrange,
     set: mockSet,
   })),
+  // Each blocking-XREAD watcher gets its own fresh connection via this factory.
+  createStreamWatcherClient: vi.fn(() => ({
+    xread: mockXread,
+    xrevrange: mockXrevrange,
+    set: mockSet,
+  })),
   getControlChannel: (n: string) => `kubeclaw:control:${n}`,
   getDiscoveryRequestStream: () => 'kubeclaw:discovery:request',
   getDiscoveryResponseKey: (id: string) => `kubeclaw:discovery:response:${id}`,

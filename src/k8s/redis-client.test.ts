@@ -28,6 +28,7 @@ import {
   getRedisClient,
   getRedisSubscriber,
   getRedisStreamWatcher,
+  createStreamWatcherClient,
   closeRedisConnections,
   getOutputChannel,
   getTaskChannel,
@@ -152,6 +153,37 @@ describe('getRedisStreamWatcher', () => {
     const calls = RedisSpy.mock.calls;
     const lastCall = calls[calls.length - 1];
     // Constructor signature: new Redis(url, options)
+    const options = lastCall?.[1] as Record<string, unknown>;
+    expect(options?.maxRetriesPerRequest).toBeNull();
+
+    await closeRedisConnections();
+  });
+});
+
+describe('createStreamWatcherClient', () => {
+  it('returns a new instance on each call (not a singleton)', async () => {
+    vi.resetModules();
+    vi.clearAllMocks();
+    const { createStreamWatcherClient, closeRedisConnections } =
+      await import('./redis-client.js');
+    const w1 = createStreamWatcherClient();
+    const w2 = createStreamWatcherClient();
+    expect(w1).not.toBe(w2);
+    await closeRedisConnections();
+  });
+
+  it('uses maxRetriesPerRequest: null to survive transient DNS failures', async () => {
+    vi.resetModules();
+    vi.clearAllMocks();
+    const ioredis = await import('ioredis');
+    const RedisSpy = vi.spyOn(ioredis, 'Redis' as keyof typeof ioredis);
+
+    const { createStreamWatcherClient, closeRedisConnections } =
+      await import('./redis-client.js');
+    createStreamWatcherClient();
+
+    const calls = RedisSpy.mock.calls;
+    const lastCall = calls[calls.length - 1];
     const options = lastCall?.[1] as Record<string, unknown>;
     expect(options?.maxRetriesPerRequest).toBeNull();
 
