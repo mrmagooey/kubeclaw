@@ -27,8 +27,14 @@ const CHART_DIR = './helm/kubeclaw';
 
 export const KUBECLAW_LIVE_HTTP_LOCAL_PORT = 14081;
 export const KUBECLAW_LIVE_REDIS_LOCAL_PORT = 16381;
+// Primary user (kept for backward compatibility with existing test files).
 export const KUBECLAW_LIVE_USER = 'alice';
 export const KUBECLAW_LIVE_PASS = 'livepass';
+// Named aliases used by the multi-user isolation suite.
+export const KUBECLAW_LIVE_USER_A = 'alice';
+export const KUBECLAW_LIVE_PASS_A = 'livepass';
+export const KUBECLAW_LIVE_USER_B = 'bob';
+export const KUBECLAW_LIVE_PASS_B = 'bobpass';
 
 // ── oauth-webchat channel constants ──────────────────────────────────────────
 // Port 14082 — non-clashing with HTTP (14081) and Redis (16381).
@@ -258,8 +264,10 @@ async function helmInstall(): Promise<void> {
     '--set', `secrets.openaiApiKey=${LIVE_API_KEY}`,
     '--set-string', `secrets.openaiBaseUrl=${LIVE_BASE_URL}`,
     '--set-string', `secrets.directLlmModel=${LIVE_MODEL}`,
-    // Chart auto-creates kubeclaw-channel-http with these users.
-    '--set', `secrets.httpChannelUsers=${KUBECLAW_LIVE_USER}:${KUBECLAW_LIVE_PASS}`,
+    // Chart auto-creates kubeclaw-channel-http with these users (comma-separated user:pass pairs).
+    // Use --set-string to prevent helm from treating the value as a YAML list.
+    // Commas in --set-string values must be escaped as \, to prevent list-splitting.
+    '--set-string', `secrets.httpChannelUsers=${KUBECLAW_LIVE_USER_A}:${KUBECLAW_LIVE_PASS_A}\\,${KUBECLAW_LIVE_USER_B}:${KUBECLAW_LIVE_PASS_B}`,
     '--set', `credentialInjection.mode=off`,
     '--set', `networkPolicy.extraEgressPorts={8080,6333}`,
     // Note: the test MCP capability is installed at RUNTIME from the test
