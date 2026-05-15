@@ -865,7 +865,11 @@ export class DirectLLMRunner implements MessageRunner {
           msg.tool_calls?.filter((c) => c.type === 'function') ?? [];
 
         if (toolCalls.length === 0) {
-          fullResponse = msg.content ?? '';
+          // Some models (e.g. Gemma with extended thinking) return the answer in
+          // a non-standard `reasoning_content` field and leave `content` null.
+          // Fall back to that field so the response is not silently discarded.
+          const extended = msg as typeof msg & { reasoning_content?: string };
+          fullResponse = msg.content || extended.reasoning_content || '';
           break;
         }
 
@@ -960,6 +964,11 @@ export class DirectLLMRunner implements MessageRunner {
           input.groupFolder,
           input.prompt,
           fullResponse,
+        );
+      } else {
+        logger.debug(
+          { group: group.name, toolRounds },
+          'DirectLLMRunner: empty response — skipping RAG indexing',
         );
       }
 

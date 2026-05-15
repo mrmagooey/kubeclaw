@@ -424,6 +424,51 @@ describe('DirectLLMRunner', () => {
     expect(jobRunner.createToolPodJob).not.toHaveBeenCalled();
   });
 
+  it('runAgent uses reasoning_content as fallback when content is null (thinking models)', async () => {
+    mockCreate.mockResolvedValueOnce({
+      choices: [
+        {
+          message: {
+            role: 'assistant',
+            content: null,
+            // Non-standard field used by some models (e.g. Gemma with thinking)
+            reasoning_content: 'The answer is forty-two.',
+            tool_calls: [],
+          },
+        },
+      ],
+    });
+
+    const { DirectLLMRunner } = await import('./direct-llm-runner.js');
+    const runner = new DirectLLMRunner();
+    const result = await runner.runAgent(baseGroup, baseInput);
+
+    expect(result.status).toBe('success');
+    expect(result.result).toBe('The answer is forty-two.');
+  });
+
+  it('runAgent uses reasoning_content as fallback when content is empty string (thinking models)', async () => {
+    mockCreate.mockResolvedValueOnce({
+      choices: [
+        {
+          message: {
+            role: 'assistant',
+            content: '',
+            reasoning_content: 'Response from thinking model.',
+            tool_calls: [],
+          },
+        },
+      ],
+    });
+
+    const { DirectLLMRunner } = await import('./direct-llm-runner.js');
+    const runner = new DirectLLMRunner();
+    const result = await runner.runAgent(baseGroup, baseInput);
+
+    expect(result.status).toBe('success');
+    expect(result.result).toBe('Response from thinking model.');
+  });
+
   it('runAgent handles execute_agent with invalid JSON arguments gracefully', async () => {
     mockCreate.mockResolvedValueOnce({
       choices: [
