@@ -48,14 +48,20 @@ function isToolAllowed(toolName: string, allowedTools: string[]): boolean {
   return false;
 }
 
+/** Interval (ms) between background retry ticks. */
+const RETRY_TICK_INTERVAL_MS = 5_000;
+
 export class McpManager {
   private servers = new Map<string, ConnectedServer>();
   private toolToServer = new Map<string, string>();
   /** Servers that failed to connect and are waiting for a retry window. */
   private failedServers = new Map<string, FailedServer>();
+  /** Background timer that retries failed servers without waiting for reconfigure(). */
+  private retryTimer: ReturnType<typeof setInterval> | null = null;
 
   /**
    * Connect to MCP servers and discover their tools.
+   * Starts the background retry tick so failed servers are retried automatically.
    */
   async initialize(serverStatuses: McpServerStatus[]): Promise<void> {
     for (const status of serverStatuses) {
@@ -73,6 +79,7 @@ export class McpManager {
         });
       }
     }
+    this.startRetryTick();
   }
 
   /**
@@ -201,15 +208,74 @@ export class McpManager {
   }
 
   /**
-   * Shut down all connections.
+   * Shut down all connections and stop background retries.
    */
   async shutdown(): Promise<void> {
+    this.stopRetryTick();
     for (const server of this.servers.values()) {
       await this.disconnectServer(server);
     }
     this.servers.clear();
     this.toolToServer.clear();
     this.failedServers.clear();
+  }
+
+  /** Start background retry tick (idempotent — does nothing if already running). */
+  private startRetryTick(): void {
+    if (this.retryTimer !== null) return;
+    const timer = setInterval(async () => {
+      await this.tickRetries();
+    }, RETRY_TICK_INTERVAL_MS);
+    // Don't keep the process alive solely for retries.
+    timer.unref();
+    this.retryTimer = timer;
+  }
+
+  /** Stop the background retry tick. */
+  private stopRetryTick(): void {
+    if (this.retryTimer !== null) {
+      clearInterval(this.retryTimer);
+      this.retryTimer = null;
+    }
+  }
+
+  /**
+   * On each tick, attempt to reconnect failed servers whose backoff has elapsed.
+   * Operates on a snapshot of failedServers keys to avoid mutation-during-iteration issues.
+   */
+  private async tickRetries(): Promise<void> {
+    if (this.failedServers.size === 0) return;
+    const now = Date.now();
+    // Snapshot the keys so we don't iterate over a map we may mutate.
+    const names = Array.from(this.failedServers.keys());
+    for (const name of names) {
+      const failed = this.failedServers.get(name);
+      if (!failed || now < failed.retryAfter) continue;
+      try {
+        await this.connectServer(failed.status);
+        // Success: remove from failed set.
+        this.failedServers.delete(name);
+        logger.debug({ server: name }, 'MCP server reconnected via background retry tick');
+      } catch (err) {
+        const retries = failed.retries + 1;
+        const delay = nextRetryDelay(retries);
+        logger.warn(
+          {
+            server: name,
+            url: failed.status.url,
+            err,
+            retries,
+            nextRetryInMs: delay,
+          },
+          'Background retry tick: failed to connect to MCP server, will retry',
+        );
+        this.failedServers.set(name, {
+          status: failed.status,
+          retries,
+          retryAfter: Date.now() + delay,
+        });
+      }
+    }
   }
 
   private async connectServer(status: McpServerStatus): Promise<void> {
