@@ -27,6 +27,11 @@ import { getChannelFactory } from './channels/registry.js';
 import { loadChannelPlugins } from './channels/plugin-loader.js';
 import { getDirectLLMRunner, shutdownAllRunners } from './runtime/index.js';
 import {
+  setCapability,
+  deleteCapability,
+  getAllCapabilities,
+} from './capabilities/db.js';
+import {
   getAllChats,
   getAllRegisteredGroups,
   getAllSessions,
@@ -107,6 +112,30 @@ export async function handleCapabilitiesUpdate(
         backend?: string;
       };
     }>;
+
+    // Mirror the orchestrator's authoritative capability list into this
+    // channel pod's local SQLite. Channel-pod callers like getRagEntry()
+    // and getEntriesForChannel() (src/capabilities/client.ts,
+    // src/capabilities/registry.ts) read from the local DB; without this
+    // sync, runtime-installed RAG (and other) capabilities never become
+    // visible to DirectLLMRunner's getRagProvider() path.
+    //
+    // The discovery entries received here are a subset of full
+    // CapabilitySpec, so we synthesize the missing fields (image, etc.)
+    // with placeholders — they are never used in the channel pod,
+    // applySpec is only ever called on the orchestrator side.
+    //
+    // Wrapped: a failure here must NOT block the MCP runtime
+    // reconfigure that follows.
+    try {
+      syncCapabilitiesToLocalDb(capabilities);
+    } catch (err) {
+      logger.warn(
+        { err },
+        'Failed to mirror capabilities to local DB — RAG provider may still resolve to NullRagProvider',
+      );
+    }
+
     const mcpServers = capabilities
       .filter((c) => c.kind === 'mcp')
       .map((c) => ({
@@ -119,7 +148,7 @@ export async function handleCapabilitiesUpdate(
     // the new capability set (e.g. a newly installed Qdrant or LightRAG).
     resetRagProvider();
     logger.info(
-      { count: mcpServers.length },
+      { count: mcpServers.length, total: capabilities.length },
       'MCP servers reconfigured from capabilities_update',
     );
   } catch (err) {
@@ -128,6 +157,75 @@ export async function handleCapabilitiesUpdate(
       'Failed to reconfigure MCP servers from capabilities_update',
     );
   }
+}
+
+interface DiscoveryEntryLite {
+  name: string;
+  kind: string;
+  endpoint: string;
+  kindMetadata: {
+    path?: string;
+    allowedTools?: string[];
+    backend?: string;
+  };
+}
+
+function syncCapabilitiesToLocalDb(entries: DiscoveryEntryLite[]): void {
+  const incoming = new Map<string, DiscoveryEntryLite>();
+  for (const e of entries) incoming.set(e.name, e);
+
+  // Drop locally cached entries that are no longer in the authoritative list.
+  for (const local of getAllCapabilities()) {
+    if (!incoming.has(local.name)) {
+      deleteCapability(local.name);
+    }
+  }
+
+  const written: { name: string; kind: string }[] = [];
+  for (const entry of entries) {
+    const portMatch = entry.endpoint.match(/:(\d+)(?:\/|$)/);
+    const port = portMatch ? parseInt(portMatch[1], 10) : undefined;
+    const common = {
+      name: entry.name,
+      image: '__channel-side-placeholder__',
+      ...(port !== undefined ? { port } : {}),
+    };
+    let spec: import('./capabilities/types.js').CapabilitySpec;
+    switch (entry.kind) {
+      case 'mcp':
+        spec = {
+          ...common,
+          kind: 'mcp',
+          ...(entry.kindMetadata.path
+            ? { path: entry.kindMetadata.path }
+            : {}),
+          ...(entry.kindMetadata.allowedTools
+            ? { allowedTools: entry.kindMetadata.allowedTools }
+            : {}),
+        };
+        break;
+      case 'rag': {
+        const backend = entry.kindMetadata.backend;
+        if (backend !== 'qdrant' && backend !== 'lightrag') {
+          // Unknown backend — skip rather than write a malformed row.
+          continue;
+        }
+        spec = { ...common, kind: 'rag', backend };
+        break;
+      }
+      case 'http':
+        spec = { ...common, kind: 'http' };
+        break;
+      default:
+        continue;
+    }
+    setCapability(spec);
+    written.push({ name: entry.name, kind: entry.kind });
+  }
+  logger.info(
+    { written, total: entries.length },
+    'Synced capabilities to local DB',
+  );
 }
 
 /**

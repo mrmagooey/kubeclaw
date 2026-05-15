@@ -8,6 +8,10 @@
  * Environment variables:
  *   EMBEDDING_PROVIDER — "openai" | "voyage" (default: "openai")
  *   EMBEDDING_MODEL    — model name (uses provider default if empty)
+ *   EMBEDDING_BASE_URL — optional separate endpoint for embeddings (OpenAI
+ *                        provider only). Useful when the chat endpoint
+ *                        doesn't serve embeddings (e.g. self-hosted LLM).
+ *                        Defaults to OPENAI_BASE_URL if unset.
  *   OPENAI_API_KEY     — reused for OpenAI embeddings
  *   VOYAGE_API_KEY     — required when EMBEDDING_PROVIDER=voyage
  */
@@ -32,7 +36,9 @@ const DEFAULT_DIMS: Record<EmbeddingProvider, number> = {
 
 export const EMBEDDING_MODEL =
   process.env.EMBEDDING_MODEL || DEFAULT_MODELS[PROVIDER];
-export const EMBEDDING_DIM = DEFAULT_DIMS[PROVIDER];
+export const EMBEDDING_DIM = process.env.EMBEDDING_DIM
+  ? parseInt(process.env.EMBEDDING_DIM, 10)
+  : DEFAULT_DIMS[PROVIDER];
 export const RAG_ENABLED = !!(
   process.env.QDRANT_URL && process.env.EMBEDDING_PROVIDER !== 'none'
 );
@@ -42,11 +48,14 @@ export const RAG_ENABLED = !!(
 let _openaiClient: OpenAI | undefined;
 function getOpenAIClient(): OpenAI {
   if (!_openaiClient) {
+    // Prefer a dedicated embedding endpoint if configured, so a self-hosted
+    // chat LLM that doesn't serve embeddings can still be paired with a
+    // separate OpenAI-compatible embedding server.
+    const baseURL =
+      process.env.EMBEDDING_BASE_URL || process.env.OPENAI_BASE_URL;
     _openaiClient = new OpenAI({
       apiKey: process.env.OPENAI_API_KEY || 'no-key',
-      ...(process.env.OPENAI_BASE_URL
-        ? { baseURL: process.env.OPENAI_BASE_URL }
-        : {}),
+      ...(baseURL ? { baseURL } : {}),
     });
   }
   return _openaiClient;
@@ -54,9 +63,16 @@ function getOpenAIClient(): OpenAI {
 
 async function embedOpenAI(texts: string[]): Promise<number[][]> {
   const client = getOpenAIClient();
+  // Force `encoding_format: 'float'` because the OpenAI SDK defaults to
+  // 'base64' in recent versions for wire efficiency, then decodes on the
+  // client. Self-hosted OpenAI-compatible servers that don't implement
+  // base64 will return a plain float array; the SDK's auto-decode then
+  // mis-interprets the floats as packed bytes, yielding a smaller and
+  // garbage vector. Asking for floats explicitly avoids that whole path.
   const response = await client.embeddings.create({
     model: EMBEDDING_MODEL,
     input: texts,
+    encoding_format: 'float',
   });
   return response.data.map((d) => d.embedding);
 }

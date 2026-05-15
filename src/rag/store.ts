@@ -78,6 +78,12 @@ export async function ensureCollection(groupFolder: string): Promise<void> {
 
 /**
  * Upsert a batch of points. Creates the collection if it doesn't exist.
+ *
+ * Uses `?wait=true` so Qdrant validates and applies the upsert synchronously.
+ * Without it, Qdrant returns 200/acknowledged immediately and processes the
+ * upsert asynchronously — and silently drops the points on any validation
+ * issue (dimension mismatch, payload error). The 200 response makes the
+ * failure invisible to the channel pod, so subsequent searches return empty.
  */
 export async function upsertPoints(
   groupFolder: string,
@@ -85,10 +91,13 @@ export async function upsertPoints(
 ): Promise<void> {
   if (points.length === 0) return;
   await ensureCollection(groupFolder);
-  await qdrantFetch(`/collections/${collectionName(groupFolder)}/points`, {
-    method: 'PUT',
-    body: JSON.stringify({ points }),
-  });
+  await qdrantFetch(
+    `/collections/${collectionName(groupFolder)}/points?wait=true`,
+    {
+      method: 'PUT',
+      body: JSON.stringify({ points }),
+    },
+  );
 }
 
 /**

@@ -76,6 +76,19 @@ secrets:
   openaiApiKey: ""
   # Optional: override the API base URL (e.g. https://openrouter.ai/api/v1)
   openaiBaseUrl: ""
+  # Optional: separate base URL for OpenAI-compatible embeddings. Use this
+  # when the chat LLM (openaiBaseUrl) does not implement /v1/embeddings
+  # (e.g. a self-hosted llama.cpp server started without --embeddings).
+  # Defaults to openaiBaseUrl when empty.
+  embeddingBaseUrl: ""
+  # Optional: override the default embedding vector dimensionality. Only set
+  # when the embedding endpoint returns vectors of a non-default size (e.g.
+  # a self-hosted small embedding model with 384 dims). Defaults: 1536 for
+  # openai provider, 1024 for voyage.
+  embeddingDim: ""
+  # Optional: override the embedding model name. Defaults to provider's
+  # default (text-embedding-3-small for openai, voyage-3 for voyage).
+  embeddingModel: ""
   # Optional: default model for DirectLLMRunner / AdminShell (e.g. gpt-4o, openai/gpt-4o)
   directLlmModel: ""
   # Admin HTTP interface password. Auto-generated on first install if left empty.

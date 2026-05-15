@@ -101,6 +101,21 @@ spec:
             - name: EMBEDDING_MODEL
               value: {{ $.Values.rag.model | quote }}
             {{- end }}
+            # Optional: point embeddings at a separate endpoint when the
+            # chat LLM (OPENAI_BASE_URL) doesn't serve embeddings. Mounted
+            # as `optional: true` so the absence of the secret key is fine.
+            - name: EMBEDDING_BASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "kubeclaw.secretName" $ }}
+                  key: embedding-base-url
+                  optional: true
+            - name: EMBEDDING_DIM
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "kubeclaw.secretName" $ }}
+                  key: embedding-dim
+                  optional: true
             - name: RAG_TOP_K
               value: {{ $.Values.rag.topK | quote }}
             - name: RAG_SCORE_THRESHOLD

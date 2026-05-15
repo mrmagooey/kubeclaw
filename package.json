@@ -25,7 +25,9 @@
     "test:e2e:ci": "cd e2e && make test-ci",
     "test:e2e:report": "cd e2e && make report",
     "test:e2e:setup": "cd e2e && make setup",
-    "test:e2e:cleanup": "cd e2e && make cleanup"
+    "test:e2e:cleanup": "cd e2e && make cleanup",
+    "test:live-llm": "vitest run --config vitest.live-llm.config.ts",
+    "test:minikube-live": "vitest run --config vitest.minikube-live.config.ts"
   },
   "dependencies": {
     "@kubernetes/client-node": "^1.0.0",

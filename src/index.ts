@@ -990,7 +990,15 @@ async function main(): Promise<void> {
   if (mcpValuesJson) {
     let mcpSpecs: Array<Omit<Parameters<typeof installCapability>[0], 'kind'>>;
     try {
-      mcpSpecs = JSON.parse(mcpValuesJson);
+      const parsed = JSON.parse(mcpValuesJson);
+      // The helm chart renders `mcpServers:` (a map keyed by name) via toJson,
+      // so the env var arrives as an object: { name: { image, port, ... } }.
+      // Accept both that map form and the array form for back-compat.
+      mcpSpecs = Array.isArray(parsed)
+        ? parsed
+        : Object.entries(parsed as Record<string, Record<string, unknown>>).map(
+            ([name, spec]) => ({ name, ...spec }) as (typeof mcpSpecs)[number],
+          );
     } catch (err) {
       logger.fatal(
         { err },
