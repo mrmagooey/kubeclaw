@@ -3,8 +3,12 @@ import { Redis } from 'ioredis';
 
 vi.mock('ioredis', () => {
   class MockRedis {
+    constructorArgs: unknown[];
     on = vi.fn();
     quit = vi.fn().mockResolvedValue('OK');
+    constructor(...args: unknown[]) {
+      this.constructorArgs = args;
+    }
   }
   return { Redis: MockRedis };
 });
@@ -132,6 +136,26 @@ describe('getRedisStreamWatcher', () => {
     const watcher = getRedisStreamWatcher();
     expect(watcher).not.toBe(client);
     expect(watcher).not.toBe(subscriber);
+  });
+
+  it('uses maxRetriesPerRequest: null so transient DNS failures do not crash stream watchers', async () => {
+    vi.resetModules();
+    vi.clearAllMocks();
+    const ioredis = await import('ioredis');
+    const RedisSpy = vi.spyOn(ioredis, 'Redis' as keyof typeof ioredis);
+
+    const { getRedisStreamWatcher, closeRedisConnections } =
+      await import('./redis-client.js');
+    getRedisStreamWatcher();
+
+    // The last call to Redis constructor should have maxRetriesPerRequest: null
+    const calls = RedisSpy.mock.calls;
+    const lastCall = calls[calls.length - 1];
+    // Constructor signature: new Redis(url, options)
+    const options = lastCall?.[1] as Record<string, unknown>;
+    expect(options?.maxRetriesPerRequest).toBeNull();
+
+    await closeRedisConnections();
   });
 });
 

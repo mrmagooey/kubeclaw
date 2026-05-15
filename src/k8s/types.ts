@@ -104,7 +104,7 @@ export interface SidecarFileJobSpec extends ToolJobSpec {
 
 export interface RedisConfig {
   url: string;
-  maxRetriesPerRequest: number;
+  maxRetriesPerRequest: number | null;
   enableReadyCheck: boolean;
 }
 

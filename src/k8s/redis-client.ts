@@ -23,8 +23,10 @@ export function getRedisConfig(): RedisConfig {
   };
 }
 
-export function createRedisClient(): Redis {
-  const config = getRedisConfig();
+export function createRedisClient(
+  overrides: Partial<RedisConfig> = {},
+): Redis {
+  const config = { ...getRedisConfig(), ...overrides };
 
   const client = new Redis(config.url, {
     maxRetriesPerRequest: config.maxRetriesPerRequest,
@@ -81,10 +83,16 @@ export function getRedisSubscriber(): Redis {
  * shared `getRedisClient()` connection free for pub/sub and other commands,
  * which would otherwise be queued behind the blocking XREAD and experience
  * multi-second delays proportional to the BLOCK timeout.
+ *
+ * maxRetriesPerRequest is null (infinite) so that transient DNS or network
+ * blips — common in minikube and during pod restarts — do not permanently
+ * crash the stream watchers. ioredis will keep retrying the XREAD command
+ * until the connection is restored, instead of throwing MaxRetriesPerRequestError
+ * after just 3 attempts.
  */
 export function getRedisStreamWatcher(): Redis {
   if (!redisStreamWatcher) {
-    redisStreamWatcher = createRedisClient();
+    redisStreamWatcher = createRedisClient({ maxRetriesPerRequest: null });
   }
   return redisStreamWatcher;
 }
