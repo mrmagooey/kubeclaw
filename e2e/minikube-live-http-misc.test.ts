@@ -193,7 +193,15 @@ describe('Minikube-live: HTTP-misc (http capability deploy + image attachment)',
   // expected K8s wiring:
   //   a. Creates a Deployment named `kubeclaw-cap-test-http-echo`.
   //   b. Creates a Service named `kubeclaw-cap-test-http-echo`.
-  //   c. Channel pod logs mention the capability name (sync/discovery entry).
+  //   c. Orchestrator logs confirm the capability was installed
+  //      ('Capability installed via stream' with name=test-http-echo).
+  //
+  // NOTE on assertion (c): handleCapabilitiesUpdate() in channel-runner.ts
+  // only processes MCP-kind entries from the capabilities_update payload and
+  // does not log HTTP capability names. The orchestrator is the authoritative
+  // source of truth for the install event — it logs 'Capability installed via
+  // stream' with the name field whenever installCapability() succeeds via the
+  // task-request stream.
   //
   // NOTE: We test wiring only and do NOT assert pod readiness or HTTP
   // reachability. hashicorp/http-echo may CrashLoop under the capability
@@ -230,16 +238,21 @@ describe('Minikube-live: HTTP-misc (http capability deploy + image attachment)',
       ).toBe(true);
       expect(svc.stdout.trim()).toBe(HTTP_ECHO_SERVICE);
 
-      // (c) Channel pod logs mention the capability name.
-      const logs = kubectl([
+      // (c) Orchestrator logs confirm the capability install event.
+      // handleCapabilitiesUpdate() on the channel pod only processes MCP-kind
+      // entries and does not log HTTP capability names. Check the orchestrator
+      // logs instead — it emits 'Capability installed via stream' (info level,
+      // pino JSON) containing the name field whenever installCapability()
+      // succeeds via the kubeclaw:task-requests stream.
+      const orchLogs = kubectl([
         'logs', '-n', NAMESPACE,
-        'deployment/kubeclaw-channel-http',
+        'deployment/kubeclaw-orchestrator',
         '--tail=2000',
       ]);
-      expect(logs.ok, `kubectl logs failed: ${logs.stderr}`).toBe(true);
+      expect(orchLogs.ok, `kubectl logs (orchestrator) failed: ${orchLogs.stderr}`).toBe(true);
       expect(
-        logs.stdout,
-        `expected '${HTTP_ECHO_NAME}' in channel pod logs`,
+        orchLogs.stdout,
+        `expected '${HTTP_ECHO_NAME}' in orchestrator logs`,
       ).toContain(HTTP_ECHO_NAME);
     },
     30_000,
