@@ -1639,6 +1639,66 @@ describe('startToolJobSpawnWatcher', () => {
     await startToolJobSpawnWatcher();
     expect(mockXread).not.toHaveBeenCalled();
   });
+
+  it('sends a close signal to kubeclaw:input:{jobName} via onProcess so the agent pod exits', async () => {
+    // Regression test: startToolJobSpawnWatcher must pass an onProcess callback
+    // to runToolJob. The callback writes type=close to kubeclaw:input:{jobName}
+    // so the agent pod exits its follow-up loop and the K8s Job reaches Succeeded.
+    // Without this, waitForJobCompletion never resolves and the result stream is
+    // never written.
+    startIpcWatcher(createMockDeps());
+
+    const capturedOnProcess: Array<(jobName: string) => void> = [];
+    const { jobRunner: jrImported } = await import('./job-runner.js');
+    vi.mocked(jrImported.runToolJob).mockImplementation(
+      async (_group, _input, onProcess) => {
+        if (onProcess) capturedOnProcess.push(onProcess);
+        // Simulate the K8s Job creation firing onProcess immediately
+        onProcess?.('nc-test-group-abc123');
+        return { status: 'success', result: 'done' };
+      },
+    );
+
+    let callCount = 0;
+    mockXread.mockImplementation(async () => {
+      if (callCount++ === 0) {
+        return [
+          [
+            'kubeclaw:spawn-agent-job',
+            [
+              [
+                '3-0',
+                [
+                  'agentJobId', 'close-test-aj',
+                  'groupFolder', 'test-group',
+                  'chatJid', 'test@g.us',
+                  'prompt', 'say hi',
+                  'channel', 'http',
+                ],
+              ],
+            ],
+          ],
+        ];
+      }
+      await stopIpcWatcher();
+      return null;
+    });
+
+    await startToolJobSpawnWatcher();
+    // Allow the fire-and-forget callbacks to settle
+    await new Promise((r) => setTimeout(r, 20));
+
+    // Verify onProcess was registered and fired
+    expect(capturedOnProcess).toHaveLength(1);
+
+    // Verify the close signal was written to the correct input stream key
+    expect(mockXadd).toHaveBeenCalledWith(
+      'kubeclaw:input:nc-test-group-abc123',
+      '*',
+      'type',
+      'close',
+    );
+  });
 });
 
 describe('startTaskRequestWatcher: group auto-registration', () => {

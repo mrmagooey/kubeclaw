@@ -940,15 +940,41 @@ export async function startToolJobSpawnWatcher(): Promise<void> {
           };
 
           jobRunner
-            .runToolJob(group, {
-              groupFolder,
-              chatJid,
-              isMain: false,
-              prompt: resolvedPrompt,
-              assistantName: ASSISTANT_NAME,
-              groupsPvc,
-              sessionsPvc,
-            })
+            .runToolJob(
+              group,
+              {
+                groupFolder,
+                chatJid,
+                isMain: false,
+                prompt: resolvedPrompt,
+                assistantName: ASSISTANT_NAME,
+                groupsPvc,
+                sessionsPvc,
+              },
+              // onProcess: as soon as the K8s Job exists, write a close signal
+              // so the agent pod exits its follow-up loop after completing the
+              // initial prompt. Without this the pod waits indefinitely for a
+              // close message and the K8s Job never reaches Succeeded state,
+              // causing waitForJobCompletion — and therefore the result write to
+              // resultStream — to never fire.
+              (jobName: string) => {
+                const inputStream = getInputStream(jobName);
+                redis
+                  .xadd(inputStream, '*', 'type', 'close')
+                  .then(() =>
+                    logger.debug(
+                      { agentJobId, jobName },
+                      'Sent close signal to single-prompt tool job',
+                    ),
+                  )
+                  .catch((err) =>
+                    logger.warn(
+                      { agentJobId, jobName, err },
+                      'Failed to send close signal to tool job',
+                    ),
+                  );
+              },
+            )
             .then(async (output) => {
               const result =
                 output.result ?? output.error ?? 'Tool job completed';
