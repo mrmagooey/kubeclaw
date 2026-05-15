@@ -155,7 +155,13 @@ vi.mock('../capabilities/index.js', () => ({
 }));
 
 import { CronExpressionParser } from 'cron-parser';
-import { createTask, deleteTask, getTaskById, updateTask } from '../db.js';
+import {
+  createTask,
+  deleteTask,
+  getAllRegisteredGroups,
+  getTaskById,
+  updateTask,
+} from '../db.js';
 import { isValidGroupFolder } from '../group-folder.js';
 import {
   installCapability,
@@ -171,6 +177,7 @@ import {
   cleanupToolPods,
   startToolPodSpawnWatcher,
   startToolJobSpawnWatcher,
+  startTaskRequestWatcher,
 } from './ipc-redis.js';
 import type { RegisteredGroup } from '../types.js';
 
@@ -1625,5 +1632,141 @@ describe('startToolJobSpawnWatcher', () => {
   it('exits immediately when ipcWatcherRunning is false', async () => {
     await startToolJobSpawnWatcher();
     expect(mockXread).not.toHaveBeenCalled();
+  });
+});
+
+describe('startTaskRequestWatcher: group auto-registration', () => {
+  // Regression test for: "Group not found for task" when the scheduler fires
+  // a task created via the task-request stream for a group that was
+  // auto-registered only in the channel pod's SQLite (never in the
+  // orchestrator's registered_groups table).
+  //
+  // Fix: startTaskRequestWatcher calls deps.registerGroup when it processes
+  // a schedule_task for a group folder not yet present in getAllRegisteredGroups().
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    await stopIpcWatcher();
+    mockRegisteredGroups.mockReturnValue({});
+    // Re-establish mock implementations that clearAllMocks may have cleared.
+    mockXadd.mockResolvedValue('mock-id');
+    mockXread.mockResolvedValue(null);
+    // isValidGroupFolder may have been set to false by register_group tests;
+    // reset it to true so group-folder validation passes in our tests.
+    vi.mocked(isValidGroupFolder).mockReturnValue(true);
+  });
+
+  it('calls registerGroup for an unknown groupFolder on schedule_task', async () => {
+    startIpcWatcher(createMockDeps());
+
+    // getAllRegisteredGroups returns empty — group is unknown to the orchestrator
+    (getAllRegisteredGroups as ReturnType<typeof vi.fn>).mockReturnValue({});
+
+    const registerGroup = vi.fn();
+    let callCount = 0;
+
+    mockXread.mockImplementation(async () => {
+      if (callCount++ === 0) {
+        return [
+          [
+            'kubeclaw:task-requests',
+            [
+              [
+                '3-0',
+                [
+                  'type',
+                  'schedule_task',
+                  'groupFolder',
+                  'http-http-alice',
+                  'chatJid',
+                  'http:alice',
+                  'prompt',
+                  'say hello',
+                  'schedule_type',
+                  'interval',
+                  'schedule_value',
+                  '60000',
+                  'context_mode',
+                  'isolated',
+                ],
+              ],
+            ],
+          ],
+        ];
+      }
+      await stopIpcWatcher();
+      return null;
+    });
+
+    await startTaskRequestWatcher({ registerGroup });
+
+    expect(registerGroup).toHaveBeenCalledWith(
+      'http:alice',
+      expect.objectContaining({
+        folder: 'http-http-alice',
+        containerConfig: expect.objectContaining({ direct: true }),
+      }),
+    );
+    expect(createTask).toHaveBeenCalledWith(
+      expect.objectContaining({ group_folder: 'http-http-alice' }),
+    );
+  });
+
+  it('does not call registerGroup when groupFolder is already known', async () => {
+    startIpcWatcher(createMockDeps());
+
+    // getAllRegisteredGroups returns the group as already known
+    (getAllRegisteredGroups as ReturnType<typeof vi.fn>).mockReturnValue({
+      'http:alice': {
+        name: 'alice',
+        folder: 'http-http-alice',
+        trigger: '',
+        added_at: '2026-01-01T00:00:00.000Z',
+        containerConfig: { direct: true },
+      },
+    });
+
+    const registerGroup = vi.fn();
+    let callCount = 0;
+
+    mockXread.mockImplementation(async () => {
+      if (callCount++ === 0) {
+        return [
+          [
+            'kubeclaw:task-requests',
+            [
+              [
+                '4-0',
+                [
+                  'type',
+                  'schedule_task',
+                  'groupFolder',
+                  'http-http-alice',
+                  'chatJid',
+                  'http:alice',
+                  'prompt',
+                  'say hello again',
+                  'schedule_type',
+                  'interval',
+                  'schedule_value',
+                  '60000',
+                  'context_mode',
+                  'isolated',
+                ],
+              ],
+            ],
+          ],
+        ];
+      }
+      await stopIpcWatcher();
+      return null;
+    });
+
+    await startTaskRequestWatcher({ registerGroup });
+
+    expect(registerGroup).not.toHaveBeenCalled();
+    expect(createTask).toHaveBeenCalledWith(
+      expect.objectContaining({ group_folder: 'http-http-alice' }),
+    );
   });
 });

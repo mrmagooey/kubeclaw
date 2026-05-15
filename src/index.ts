@@ -947,7 +947,7 @@ async function main(): Promise<void> {
   startToolJobSpawnWatcher().catch((err) =>
     logger.error({ err }, 'Tool job spawn watcher crashed'),
   );
-  startTaskRequestWatcher().catch((err) =>
+  startTaskRequestWatcher({ registerGroup }).catch((err) =>
     logger.error({ err }, 'Task request watcher crashed'),
   );
   // Start the unified capabilities subsystem.

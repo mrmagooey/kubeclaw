@@ -987,13 +987,25 @@ export async function startToolJobSpawnWatcher(): Promise<void> {
   }
 }
 
+export interface TaskRequestWatcherDeps {
+  /**
+   * Called when a schedule_task arrives for a group that is not yet registered
+   * in the orchestrator's in-memory state. Implementations should persist the
+   * group to the orchestrator's DB and update its in-memory registry so the
+   * task scheduler can find the group when the task fires.
+   */
+  registerGroup: (jid: string, group: RegisteredGroup) => void;
+}
+
 /**
  * Watch the kubeclaw:task-requests stream for task creation requests from
  * channel pods (via DirectLLMRunner). Unlike the per-group pub/sub task
  * channels, this stream is always watched regardless of which groups the
  * orchestrator knows about.
  */
-export async function startTaskRequestWatcher(): Promise<void> {
+export async function startTaskRequestWatcher(
+  deps?: TaskRequestWatcherDeps,
+): Promise<void> {
   // Use the dedicated stream-watcher connection so XREAD BLOCK does not
   // queue commands on the shared client and starve pub/sub operations.
   const redis = getRedisStreamWatcher();
@@ -1037,6 +1049,32 @@ export async function startTaskRequestWatcher(): Promise<void> {
             } = obj;
             if (!prompt || !schedule_type || !schedule_value || !chatJid)
               continue;
+
+            // Ensure the group is registered in the orchestrator's DB so the
+            // task scheduler can find it when the task fires.  Channel pods
+            // auto-register groups only in their own per-channel SQLite;
+            // the orchestrator's messages.db may not have the entry yet.
+            if (deps?.registerGroup) {
+              const knownGroups = getAllRegisteredGroups();
+              const alreadyKnown = Object.values(knownGroups).some(
+                (g) => g.folder === groupFolder,
+              );
+              if (!alreadyKnown && isValidGroupFolder(groupFolder)) {
+                const syntheticGroup: RegisteredGroup = {
+                  name: chatJid,
+                  folder: groupFolder,
+                  trigger: '',
+                  added_at: new Date().toISOString(),
+                  requiresTrigger: false,
+                  containerConfig: { direct: true },
+                };
+                deps.registerGroup(chatJid, syntheticGroup);
+                logger.info(
+                  { chatJid, groupFolder },
+                  'Auto-registered group in orchestrator from task-request stream',
+                );
+              }
+            }
 
             const existingTasks = getTasksForGroup(groupFolder);
             const activeTasks = existingTasks.filter(
