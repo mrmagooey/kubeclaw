@@ -580,6 +580,7 @@ async function runAgenticTurn(
   userInput: string,
 ): Promise<string> {
   history.push({ role: 'user', content: userInput });
+  let lastToolResult = '';
 
   while (true) {
     const response = await client.chat.completions.create({
@@ -594,7 +595,11 @@ async function runAgenticTurn(
 
     if (!msg.tool_calls || msg.tool_calls.length === 0) {
       const extended = msg as typeof msg & { reasoning_content?: string };
-      return msg.content || extended.reasoning_content || '';
+      const text = msg.content || extended.reasoning_content || '';
+      // Small local models (e.g. Gemma) sometimes return an empty final
+      // message after a successful tool call. Surface the last tool output
+      // so the user gets something actionable instead of a blank reply.
+      return text || lastToolResult;
     }
 
     for (const call of msg.tool_calls) {
@@ -611,6 +616,7 @@ async function runAgenticTurn(
       } catch (err) {
         result = `Error: ${err instanceof Error ? err.message : String(err)}`;
       }
+      lastToolResult = result;
       history.push({ role: 'tool', tool_call_id: call.id, content: result });
     }
   }
