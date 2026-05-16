@@ -7,6 +7,25 @@ function makeNoopSrc(): K8sSecretSource {
   return new K8sSecretSource({ readSecret: vi.fn(), cacheTtlMs: 0 });
 }
 
+function makeIdentityVerifier(
+  identity = 'sa/kubeclaw-tool-job',
+  ownerGroup: string | null = null,
+) {
+  const resolveResult = { identity, ownerGroup, podUid: null };
+  return {
+    verify: vi.fn().mockResolvedValue(identity),
+    resolveOwnerGroup: vi.fn().mockResolvedValue(resolveResult),
+  };
+}
+
+function makeRejectingVerifier(message = 'bad') {
+  const err = new Error(message);
+  return {
+    verify: vi.fn().mockRejectedValue(err),
+    resolveOwnerGroup: vi.fn().mockRejectedValue(err),
+  };
+}
+
 const deps = (): Deps => ({
   resolver: new Resolver({
     mappings: [
@@ -26,9 +45,7 @@ const deps = (): Deps => ({
     groupSource: makeNoopSrc(),
     operatorSecretReader: vi.fn(),
   }),
-  identityVerifier: {
-    verify: vi.fn().mockResolvedValue('sa/kubeclaw-tool-job'),
-  } as any,
+  identityVerifier: makeIdentityVerifier() as any,
   secretSource: { read: vi.fn().mockResolvedValue('sk-ant-xxx') } as any,
   audit: { record: vi.fn() } as any,
   auditOnly: false,
@@ -47,7 +64,7 @@ describe('handleExtAuthz', () => {
     expect(res.headers['authorization']).toBe('Bearer sk-ant-xxx');
   });
 
-  it('403 on no mapping', async () => {
+  it('403 on no mapping and no catalog entry', async () => {
     const res = await handleExtAuthz(
       { authorization: 'Bearer t', 'x-forwarded-authority': 'evil.example' },
       deps(),
@@ -57,9 +74,7 @@ describe('handleExtAuthz', () => {
 
   it('401 on bad identity', async () => {
     const d = deps();
-    (d.identityVerifier.verify as any) = vi
-      .fn()
-      .mockRejectedValue(new Error('bad'));
+    d.identityVerifier = makeRejectingVerifier('bad') as any;
     const res = await handleExtAuthz(
       {
         authorization: 'Bearer t',
@@ -117,9 +132,7 @@ describe('audit-only mode', () => {
       groupSource: makeNoopSrc(),
       operatorSecretReader: vi.fn(),
     }),
-    identityVerifier: {
-      verify: vi.fn().mockResolvedValue('sa/kubeclaw-tool-job'),
-    } as any,
+    identityVerifier: makeIdentityVerifier() as any,
     secretSource: { read: vi.fn().mockResolvedValue('sk-ant-xxx') } as any,
     audit: { record: vi.fn() } as any,
     auditOnly: true,
@@ -168,9 +181,7 @@ describe('audit-only mode', () => {
 
   it('case C: identity verification fails → 401 even in audit-only', async () => {
     const d = auditDeps();
-    (d.identityVerifier.verify as any) = vi
-      .fn()
-      .mockRejectedValue(new Error('bad token'));
+    d.identityVerifier = makeRejectingVerifier('bad token') as any;
     const res = await handleExtAuthz(
       {
         authorization: 'Bearer bad-token',
@@ -216,17 +227,15 @@ describe('handleExtAuthz — XFCC/SPIFFE path', () => {
       d,
     );
     expect(res.status).toBe(200);
-    expect(d.identityVerifier.verify).toHaveBeenCalledWith({
-      authorization: undefined,
-      xfcc: XFCC,
-    });
+    // resolveOwnerGroup is now called (instead of verify) with xfcc
+    expect(d.identityVerifier.resolveOwnerGroup).toHaveBeenCalledWith(
+      expect.objectContaining({ xfcc: XFCC }),
+    );
   });
 
   it('401 when XFCC is malformed (verifier rejects)', async () => {
     const d = deps();
-    (d.identityVerifier.verify as any) = vi
-      .fn()
-      .mockRejectedValue(new Error('malformed SPIFFE URI'));
+    d.identityVerifier = makeRejectingVerifier('malformed SPIFFE URI') as any;
     const res = await handleExtAuthz(
       {
         'x-forwarded-client-cert': 'bad-xfcc-value',
@@ -237,7 +246,7 @@ describe('handleExtAuthz — XFCC/SPIFFE path', () => {
     expect(res.status).toBe(401);
   });
 
-  it('passes both XFCC and authorization to verifier when both present', async () => {
+  it('passes both XFCC and authorization to resolveOwnerGroup when both present', async () => {
     const d = deps();
     await handleExtAuthz(
       {
@@ -247,9 +256,11 @@ describe('handleExtAuthz — XFCC/SPIFFE path', () => {
       },
       d,
     );
-    expect(d.identityVerifier.verify).toHaveBeenCalledWith({
-      authorization: 'Bearer some-token',
-      xfcc: XFCC,
-    });
+    expect(d.identityVerifier.resolveOwnerGroup).toHaveBeenCalledWith(
+      expect.objectContaining({
+        authorization: 'Bearer some-token',
+        xfcc: XFCC,
+      }),
+    );
   });
 });
