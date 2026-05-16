@@ -28,30 +28,31 @@ const TOOL_SERVER_BIN = path.resolve(
 
 /**
  * Ensure container/agent-runner is built before any test in this file runs.
- * Runs npm install only when node_modules is absent; always runs tsc build.
+ * Runs npm install only when node_modules/.package-lock.json is absent (written
+ * by npm only on successful install completion, so partial installs are detected).
+ * Always runs tsc build — it is fast (~1s when up-to-date) and avoids silently
+ * running tests against stale output when src/ has changed.
  * Throws with a clear message if the expected output is still missing after build.
  */
 function ensureToolServerBuilt(): void {
-  const nodeModulesDir = path.join(AGENT_RUNNER_DIR, 'node_modules');
-  if (!fs.existsSync(nodeModulesDir)) {
-    console.log('[sidecar-tool-pod] node_modules missing — running npm install in container/agent-runner ...');
+  const installComplete = path.join(AGENT_RUNNER_DIR, 'node_modules', '.package-lock.json');
+  if (!fs.existsSync(installComplete)) {
+    console.log('[sidecar-tool-pod] node_modules/.package-lock.json missing — running npm install in container/agent-runner ...');
     execSync('npm install', { cwd: AGENT_RUNNER_DIR, stdio: 'inherit', timeout: 120_000 });
   }
 
-  if (!fs.existsSync(TOOL_SERVER_BIN)) {
-    console.log('[sidecar-tool-pod] dist/tool-server.js missing — running npm run build in container/agent-runner ...');
-    execSync('npm run build', { cwd: AGENT_RUNNER_DIR, stdio: 'inherit', timeout: 120_000 });
-  }
+  // Always build — tsc is fast (~1s when up-to-date) and the alternative
+  // is silently running against stale output if src/ changed.
+  execSync('npm run build', { cwd: AGENT_RUNNER_DIR, stdio: 'inherit', timeout: 120_000 });
 
   if (!fs.existsSync(TOOL_SERVER_BIN)) {
     throw new Error(
-      `container/agent-runner build did not produce dist/tool-server.js — ` +
-      `run \`cd container/agent-runner && npm install && npm run build\` manually`,
+      `container/agent-runner build did not produce ${TOOL_SERVER_BIN}. Run \`cd container/agent-runner && npm install && npm run build\` manually.`,
     );
   }
 }
 
-// Bootstrap: build container/agent-runner if dist/tool-server.js is absent.
+// Bootstrap: install deps if needed, always build container/agent-runner.
 // Runs once before any test in this file.
 beforeAll(() => {
   ensureToolServerBuilt();
