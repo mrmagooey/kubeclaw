@@ -396,7 +396,9 @@ async function helmInstall(): Promise<void> {
     // Commas in --set-string values must be escaped as \, to prevent list-splitting.
     '--set-string', `secrets.httpChannelUsers=${KUBECLAW_LIVE_USER_A}:${KUBECLAW_LIVE_PASS_A}\\,${KUBECLAW_LIVE_USER_B}:${KUBECLAW_LIVE_PASS_B}`,
     '--set', `credentialInjection.mode=off`,
-    '--set', `networkPolicy.extraEgressPorts={8080,6333}`,
+    // 8080 = local LLM endpoint, 6333 = Qdrant (RAG), 6667 = test IRC daemon,
+    // 3000 = MCP capability pods (channel→capability for tools tests).
+    '--set', `networkPolicy.extraEgressPorts={8080,6333,6667,3000}`,
     // Note: the test MCP capability is installed at RUNTIME from the test
     // file (via Redis IPC), not at helm time — this avoids a startup-time race
     // where the orchestrator publishes capabilities_update before the channel
