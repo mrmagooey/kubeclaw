@@ -169,6 +169,18 @@ function createSchema(database: SqlJsDatabase): void {
     ON conversation_history(group_folder, created_at)
   `);
 
+  // Additive migration — safe to run repeatedly:
+  try {
+    database.run(
+      `ALTER TABLE conversation_history ADD COLUMN session_key TEXT`,
+    );
+  } catch {
+    /* column already exists */
+  }
+  database.run(
+    `CREATE INDEX IF NOT EXISTS idx_conv_session_key ON conversation_history (session_key, created_at)`,
+  );
+
   database.run(`
     CREATE TABLE IF NOT EXISTS skill_usage (
       id TEXT PRIMARY KEY,
@@ -259,6 +271,7 @@ export async function initDatabase(): Promise<void> {
   }
 
   createSchema(db);
+  runSessionKeyBackfill();
   saveDatabase();
   migrateJsonState();
 }
@@ -1017,23 +1030,52 @@ function migrateJsonState(): void {
 // --- Conversation History Functions ---
 
 /**
- * Return the most recent conversation messages for a group.
- * Older context is available via RAG retrieval when configured.
+ * Backfill existing conversation_history rows that have a NULL session_key
+ * by setting session_key = group_folder. Safe to run multiple times.
+ */
+export function runSessionKeyBackfill(): void {
+  db.run(
+    `UPDATE conversation_history SET session_key = group_folder WHERE session_key IS NULL`,
+  );
+  saveDatabase();
+}
+
+/**
+ * Return the most recent conversation messages for a group or session.
  *
- * @param limit  Max messages to return (default: 20). Set to 0 for unlimited.
- *               Configurable via MAX_CONVERSATION_HISTORY env var.
+ * Accepts either:
+ *  - `getConversationHistory(groupFolder, limit?)` — legacy positional form; queries by group_folder
+ *  - `getConversationHistory({ sessionKey, limit? })` — new object form; queries by session_key
+ *
+ * @param limitOrArgs  Either a numeric limit or an object `{ sessionKey, limit? }`
  */
 export function getConversationHistory(
-  groupFolder: string,
+  groupFolderOrArgs: string | { sessionKey: string; limit?: number },
   limit?: number,
 ): { role: 'user' | 'assistant'; content: string }[] {
-  const maxMessages =
-    limit ?? (parseInt(process.env.MAX_CONVERSATION_HISTORY || '20', 10) || 0);
+  let column: string;
+  let key: string;
+  let maxMessages: number;
+
+  if (typeof groupFolderOrArgs === 'string') {
+    column = 'group_folder';
+    key = groupFolderOrArgs;
+    maxMessages =
+      limit ??
+      (parseInt(process.env.MAX_CONVERSATION_HISTORY || '20', 10) || 0);
+  } else {
+    column = 'session_key';
+    key = groupFolderOrArgs.sessionKey;
+    maxMessages =
+      groupFolderOrArgs.limit ??
+      (parseInt(process.env.MAX_CONVERSATION_HISTORY || '20', 10) || 0);
+  }
+
   const query =
     maxMessages > 0
-      ? 'SELECT role, content FROM conversation_history WHERE group_folder = ? ORDER BY created_at DESC LIMIT ?'
-      : 'SELECT role, content FROM conversation_history WHERE group_folder = ? ORDER BY created_at ASC';
-  const params = maxMessages > 0 ? [groupFolder, maxMessages] : [groupFolder];
+      ? `SELECT role, content FROM conversation_history WHERE ${column} = ? ORDER BY created_at DESC LIMIT ?`
+      : `SELECT role, content FROM conversation_history WHERE ${column} = ? ORDER BY created_at ASC`;
+  const params = maxMessages > 0 ? [key, maxMessages] : [key];
   const result = db.exec(query, params);
   if (result.length === 0) return [];
   const rows = result[0].values.map((row: unknown[]) => ({
@@ -1043,6 +1085,39 @@ export function getConversationHistory(
   // DESC query returns newest-first; reverse to chronological order
   if (maxMessages > 0) rows.reverse();
   return rows;
+}
+
+export interface AppendConversationArgs {
+  groupFolder: string;
+  sessionKey: string;
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+/**
+ * Append a conversation message with explicit session scoping.
+ * Prefer this over appendConversationMessage for new call sites that
+ * distinguish session_key from group_folder (e.g. isolated specialists).
+ */
+export function appendConversationHistory(args: AppendConversationArgs): void {
+  const id =
+    args.groupFolder +
+    '-' +
+    Date.now() +
+    '-' +
+    Math.random().toString(36).slice(2, 8);
+  db.run(
+    'INSERT INTO conversation_history (id, group_folder, session_key, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+    [
+      id,
+      args.groupFolder,
+      args.sessionKey,
+      args.role,
+      args.content,
+      new Date().toISOString(),
+    ],
+  );
+  saveDatabase();
 }
 
 export function appendConversationMessage(
@@ -1057,12 +1132,17 @@ export function appendConversationMessage(
     '-' +
     Math.random().toString(36).slice(2, 8);
   db.run(
-    'INSERT INTO conversation_history (id, group_folder, role, content, created_at) VALUES (?, ?, ?, ?, ?)',
-    [id, groupFolder, role, content, new Date().toISOString()],
+    'INSERT INTO conversation_history (id, group_folder, session_key, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+    [id, groupFolder, groupFolder, role, content, new Date().toISOString()],
   );
   saveDatabase();
 }
 
+/**
+ * Deletes ALL conversation_history rows for a group, including rows written
+ * by isolated specialists (where session_key differs from group_folder).
+ * Group-level wipe; session-key scoping does not protect specialist rows.
+ */
 export function clearConversationHistory(groupFolder: string): void {
   db.run('DELETE FROM conversation_history WHERE group_folder = ?', [
     groupFolder,
