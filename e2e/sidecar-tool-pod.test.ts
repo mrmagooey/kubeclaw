@@ -12,17 +12,58 @@
  * "user container" is a tiny in-process server / file watcher.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { spawn, ChildProcess } from 'child_process';
+import { spawn, execSync, ChildProcess } from 'child_process';
 import { createServer, IncomingMessage, ServerResponse, Server } from 'http';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { getSharedRedis, getRedisUrlForTests } from './setup.js';
 
+const AGENT_RUNNER_DIR = path.resolve(process.cwd(), 'container/agent-runner');
+
 const TOOL_SERVER_BIN = path.resolve(
-  process.cwd(),
-  'container/agent-runner/dist/tool-server.js',
+  AGENT_RUNNER_DIR,
+  'dist/tool-server.js',
 );
+
+/**
+ * Ensure container/agent-runner is built before any test in this file runs.
+ * Runs npm install only when node_modules is absent; always runs tsc build.
+ * Throws with a clear message if the expected output is still missing after build.
+ */
+function ensureToolServerBuilt(): void {
+  const nodeModulesDir = path.join(AGENT_RUNNER_DIR, 'node_modules');
+  if (!fs.existsSync(nodeModulesDir)) {
+    console.log('[sidecar-tool-pod] node_modules missing — running npm install in container/agent-runner ...');
+    execSync('npm install', { cwd: AGENT_RUNNER_DIR, stdio: 'inherit', timeout: 120_000 });
+  }
+
+  if (!fs.existsSync(TOOL_SERVER_BIN)) {
+    console.log('[sidecar-tool-pod] dist/tool-server.js missing — running npm run build in container/agent-runner ...');
+    execSync('npm run build', { cwd: AGENT_RUNNER_DIR, stdio: 'inherit', timeout: 120_000 });
+  }
+
+  if (!fs.existsSync(TOOL_SERVER_BIN)) {
+    throw new Error(
+      `container/agent-runner build did not produce dist/tool-server.js — ` +
+      `run \`cd container/agent-runner && npm install && npm run build\` manually`,
+    );
+  }
+}
+
+// Bootstrap: build container/agent-runner if dist/tool-server.js is absent.
+// Runs once before any test in this file.
+beforeAll(() => {
+  ensureToolServerBuilt();
+}, 180_000);
+
+// ---- Regression: tool-server binary must exist on disk ----------------------
+
+describe('Sidecar Tool Pod — build artifact', () => {
+  it('dist/tool-server.js exists after beforeAll bootstrap', () => {
+    expect(fs.existsSync(TOOL_SERVER_BIN)).toBe(true);
+  });
+});
 
 // Helper: wait for a Redis stream entry matching requestId
 async function waitForToolResult(
