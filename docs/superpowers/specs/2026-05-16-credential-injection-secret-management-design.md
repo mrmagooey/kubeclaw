@@ -76,15 +76,17 @@ Request-time (workload SDK in tool-job):
         │   resolution:
         │     match host against catalog; reject if unmapped
         │     emit substitution map for (group, host) → list of authorized (placeholder, value)
-        │   return: 200 + header x-kubeclaw-substitute: <base64-encoded JSON map>
+        │   return: 200 + two response headers:
+        │     x-kubeclaw-substitutions: <placeholder>=<base64-value>;<placeholder>=<base64-value>;...
+        │     x-kubeclaw-policy: positions=header,body;per=10;total=50
         │
         ▼
   Envoy Lua filter (colocated; new):
-        - reads x-kubeclaw-substitute header
+        - reads x-kubeclaw-substitutions and x-kubeclaw-policy headers
         - skip body scan if Content-Type binary or body > 1MB
         - inline replace each placeholder → real value in request body and headers
         - enforce substitution counter limits (default: ≤10 per individual placeholder; ≤50 total per request)
-        - strip x-kubeclaw-substitute header before sending upstream
+        - strip both x-kubeclaw-substitutions and x-kubeclaw-policy headers before sending upstream
         │
         ▼
   Upstream (jenkins.example.com:8080) — receives request with real cleartext credential
@@ -100,7 +102,7 @@ Request-time (workload SDK in tool-job):
 | **Channel-runner** | Receives raw `/secret add` line from user transport. Forwards cleartext over Redis IPC to orchestrator. Heap residency ~milliseconds; zeroed in `finally` block. Inserts system event into transcript memory; raw user line is dropped entirely (not redacted). |
 | **Tool-job** | Holds placeholder strings only — never the real value. Composes outbound requests using placeholders. Lua filter at egress substitutes. The workload's pre-substitution request contains literal placeholder text, which is not the credential. |
 | **LLM (channel-runner-driven)** | Never sees `/secret add` line. Sees: system event describing what was registered (catalog ID, host, env var names, instructions). Sees: results of `list_credentials` tool calls (metadata only). Sees: failure context when tool-job requests are rejected (`no_credential`, `unknown_destination`, etc.) with operator-defined hints. |
-| **Envoy Lua filter** | Receives substitution map in `x-kubeclaw-substitute` header, applies inline string replacement, strips the header before upstream send. Co-located in Envoy; substitution map lives in filter context only for the request lifetime. |
+| **Envoy Lua filter** | Receives substitution map in `x-kubeclaw-substitutions` header and policy constraints in `x-kubeclaw-policy` header, applies inline string replacement, strips both headers before upstream send. Co-located in Envoy; substitution map lives in filter context only for the request lifetime. |
 
 ### Security invariants
 
@@ -411,17 +413,20 @@ broker /authz:
    ├── audit log: { ts, ownerGroup: "family", catalogId: "jenkins",
    │                destination: "jenkins.example.com", keySource: "groupSecret",
    │                placeholderCount: 2 }
-   └── 200 + response_headers_to_add: x-kubeclaw-substitute: <base64-encoded JSON of map>
-                                           (header is base64'd to avoid raw JSON in headers
-                                            and to handle any value characters safely)
+   └── 200 + two response headers in the OkResponse headers_to_add block:
+         x-kubeclaw-substitutions: KC_PH_u_<>=<base64("alice")>;KC_PH_p_<>=<base64("hunter2")>
+         x-kubeclaw-policy: positions=header,body;per=10;total=50
+         (Two headers are used because Envoy's Lua sandbox does not support require('json'),
+          making a single base64-encoded JSON blob impractical to decode in the filter.)
    │
    ▼
 Envoy:
-   - reads x-kubeclaw-substitute
-   - Lua filter: parse map; check Content-Type (text/JSON/form OK; binary skip);
+   - reads x-kubeclaw-substitutions (semicolon-delimited key=base64value pairs)
+   - reads x-kubeclaw-policy (positions and counter limits)
+   - Lua filter: parse pairs; check Content-Type (text/JSON/form OK; binary skip);
                  check body size ≤ 1MB; scan headers + body for each placeholder;
-                 count substitutions (reject if > 10); replace inline
-   - strip x-kubeclaw-substitute header
+                 count substitutions (reject if > per or total limit); replace inline
+   - strip x-kubeclaw-substitutions and x-kubeclaw-policy headers
    - in mode=istio: per-destination DestinationRule originates TLS to jenkins.example.com:8080
    - in mode=sidecar: Envoy independently originates TLS to upstream
    │
@@ -492,7 +497,7 @@ Cleartext is zeroed from channel-runner heap on every code path (`finally` block
 | Substitution position disallowed by `allowedPositions` | 403 `substitution_position_disallowed` | Logged | Indicates misconfigured workload or attack |
 | Substitution counter exceeded | 503 `substitution_limit_exceeded` | Logged | Workload retries; persistent failure indicates attack |
 
-Failure mode is closed everywhere: any error path returns 4xx/5xx without `x-kubeclaw-substitute`, so the workload's request goes out with literal placeholder text and upstream rejects.
+Failure mode is closed everywhere: any error path returns 4xx/5xx without `x-kubeclaw-substitutions` or `x-kubeclaw-policy`, so the workload's request goes out with literal placeholder text and upstream rejects.
 
 #### Catalog & Secret drift
 
@@ -509,7 +514,7 @@ Failure mode is closed everywhere: any error path returns 4xx/5xx without `x-kub
 The existing `credentialInjection.auditOnly: true` flag interacts:
 - `/secret add` is accepted normally (storage is real; users pre-stage during audit).
 - `list_credentials` returns real state.
-- Tool-job calls keep using existing env-var keys (today's audit-only semantics). The broker logs the would-substitute decision but does not return `x-kubeclaw-substitute`.
+- Tool-job calls keep using existing env-var keys (today's audit-only semantics). The broker logs the would-substitute decision but does not return `x-kubeclaw-substitutions` or `x-kubeclaw-policy`.
 - Flipping `auditOnly: false` makes registered credentials live with no further action.
 
 ## Tests at three levels
@@ -533,7 +538,7 @@ The existing `credentialInjection.auditOnly: true` flag interacts:
 | Test file | Cases |
 |---|---|
 | `e2e/helm-chart.test.ts` *(extend)* | (1) Catalog ConfigMap renders. (2) Broker RBAC renders with namespace-wide `secrets` verbs. (3) Orchestrator RBAC renders with write verbs. (4) Lua filter renders in `envoy-sidecar-config` and `istio-envoyfilter`. (5) Mode=sidecar regression: built-in mappings unchanged. (6) `testFixture.enabled` regression. |
-| `src/credential-broker/index.test.ts` *(extend)* | (1) Full ext_authz flow returns expected `x-kubeclaw-substitute` shape. (2) Substitution map JSON validates. |
+| `src/credential-broker/index.test.ts` *(extend)* | (1) Full ext_authz flow returns `x-kubeclaw-substitutions` and `x-kubeclaw-policy` headers with correct format. (2) Substitution map parses correctly from the semicolon-delimited wire format. |
 | `src/k8s/ipc-redis.test.ts` *(extend)* | (1) `secret.add` → Secret created with correct labels and placeholders. (2) `secret.list` returns names only. (3) `secret.remove` patches Secret; deletes if last. (4) `catalog.list` returns catalog. |
 
 ### End-to-end tests (full system; minikube/kind; real Envoy/Istio)
