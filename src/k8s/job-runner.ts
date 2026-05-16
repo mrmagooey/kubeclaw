@@ -13,6 +13,8 @@ import {
 
 import { RegisteredGroup } from '../types.js';
 import { logger } from '../logger.js';
+import type { CatalogInformer } from './catalog.js';
+import type { SecretManager } from './secret-manager.js';
 import {
   getContainerImage,
   CONTAINER_TIMEOUT,
@@ -53,6 +55,7 @@ import {
   SidecarToolPodJobSpec,
   RawAttachment,
 } from './types.js';
+import type { CatalogEntry } from '../credential-broker/resolver.js';
 import { ContainerOutput } from '../runtime/types.js';
 import {
   getRedisSubscriber,
@@ -160,6 +163,59 @@ function applyIstioModeEnvSubstitution(
   });
 }
 
+/** Sentinel stamped when a catalog entry has `allowOperatorFallback: true` and the group
+ * has not registered its own credential. The broker maps this to the operator's key from
+ * `kubeclaw-secrets` at request time. */
+const FALLBACK_SENTINEL_PREFIX = 'KC_PH_FALLBACK_';
+
+/**
+ * Build the catalog-driven env list for a tool-job pod.
+ *
+ * For each catalog entry:
+ *   - credentialFields: env value = per-group placeholder | fallback sentinel | "injected-by-broker"
+ *   - baseUrlEnvs: stamped unconditionally with the operator-configured URL value
+ *
+ * Returns both the new envs and the set of env var names that the catalog covers,
+ * so the caller can remove duplicate hardcoded built-in entries.
+ */
+function buildCatalogEnvs(
+  catalogEntries: CatalogEntry[],
+  groupPlaceholders: Record<string, Record<string, string>>,
+): {
+  envs: Array<{ name: string; value: string }>;
+  coveredEnvNames: Set<string>;
+} {
+  const envs: Array<{ name: string; value: string }> = [];
+  const coveredEnvNames = new Set<string>();
+
+  for (const entry of catalogEntries) {
+    const fieldPlaceholders = groupPlaceholders[entry.id] ?? {};
+
+    for (const field of entry.credentialFields) {
+      coveredEnvNames.add(field.envVar);
+      let value: string;
+      if (fieldPlaceholders[field.name]) {
+        // Group has a registered credential — use its per-field placeholder
+        value = fieldPlaceholders[field.name];
+      } else if (entry.allowOperatorFallback) {
+        // Unregistered + operator fallback allowed — static sentinel; broker maps to operator key
+        value = `${FALLBACK_SENTINEL_PREFIX}${entry.id}`;
+      } else {
+        // Unregistered + no fallback — fail-closed literal
+        value = ISTIO_API_KEY_PLACEHOLDER;
+      }
+      envs.push({ name: field.envVar, value });
+    }
+
+    for (const [envName, envValue] of Object.entries(entry.baseUrlEnvs)) {
+      coveredEnvNames.add(envName);
+      envs.push({ name: envName, value: envValue });
+    }
+  }
+
+  return { envs, coveredEnvNames };
+}
+
 // Job constants
 const JOB_TTL_SECONDS_AFTER_FINISHED = 3600;
 const JOB_ACTIVE_DEADLINE_SECONDS = 1800; // 30 min
@@ -167,14 +223,23 @@ const JOB_BACKOFF_LIMIT = 0;
 const JOB_LABELS = { app: 'kubeclaw-agent' };
 const NAMESPACE = KUBECLAW_NAMESPACE;
 
+export interface JobRunnerOpts {
+  /** Optional catalog informer; when provided, generateJobManifest stamps catalog-driven envs. */
+  catalog?: CatalogInformer;
+  /** Optional secret manager; when provided (with catalog), per-group placeholders are fetched. */
+  secretManager?: SecretManager;
+}
+
 export class JobRunner {
   private coreApi: CoreV1Api;
   private batchApi: BatchV1Api;
   private appsApi: AppsV1Api;
   private namespace: string;
   private activeSubscriptions: Map<string, () => void>;
+  private catalog?: CatalogInformer;
+  private secretManager?: SecretManager;
 
-  constructor() {
+  constructor(opts: JobRunnerOpts = {}) {
     const kc = new KubeConfig();
     kc.loadFromDefault();
     this.coreApi = kc.makeApiClient(CoreV1Api);
@@ -182,6 +247,8 @@ export class JobRunner {
     this.appsApi = kc.makeApiClient(AppsV1Api);
     this.namespace = NAMESPACE;
     this.activeSubscriptions = new Map();
+    this.catalog = opts.catalog;
+    this.secretManager = opts.secretManager;
   }
 
   /**
@@ -282,7 +349,7 @@ export class JobRunner {
 
     try {
       // Generate and create the job
-      const jobSpec = this.buildToolJobSpec(group, input, jobId);
+      const jobSpec = await this.buildToolJobSpec(group, input, jobId);
       const jobManifest = this.generateJobManifest(jobSpec);
 
       logger.debug(
@@ -375,12 +442,25 @@ export class JobRunner {
   /**
    * Build the ToolJobSpec from input parameters
    */
-  private buildToolJobSpec(
+  private async buildToolJobSpec(
     group: RegisteredGroup,
     input: JobInput,
     jobId: string,
-  ): ToolJobSpec {
+  ): Promise<ToolJobSpec> {
     const configTimeout = group.containerConfig?.timeout || CONTAINER_TIMEOUT;
+
+    // Fetch catalog and per-group placeholders if the optional dependencies are wired in.
+    const catalogEntries = this.catalog?.getCatalog()
+      ? [...this.catalog.getCatalog()]
+      : undefined;
+    let groupPlaceholders: Record<string, Record<string, string>> | undefined;
+    if (this.secretManager && group.folder) {
+      try {
+        groupPlaceholders = await this.secretManager.getGroupPlaceholders(group.folder);
+      } catch (err) {
+        logger.warn({ err, group: group.folder }, 'getGroupPlaceholders failed; omitting catalog envs');
+      }
+    }
 
     return {
       name: jobId,
@@ -403,6 +483,9 @@ export class JobRunner {
       additionalMounts: group.containerConfig?.additionalMounts,
       groupsPvc: input.groupsPvc,
       sessionsPvc: input.sessionsPvc,
+      ownerGroup: group.folder,
+      catalogEntries,
+      groupPlaceholders,
     };
   }
 
@@ -691,26 +774,53 @@ export class JobRunner {
     //   The gateway's ext_authz response overwrites Authorization on every
     //   request, so the placeholder never reaches the upstream provider.
     //   In audit-only mode no substitution is performed.
+    //
+    // When catalog entries are present (operator has a catalog configured),
+    // catalog-driven env substitution replaces hard-coded per-built-in logic.
     const injectionMode = getInjectionMode();
     const auditOnly = getAuditOnly();
 
+    // Catalog-driven env injection: applies when spec.catalogEntries is present and
+    // injection is active (any mode != off) and not in audit-only mode.
+    // Catalog entries whose envVar names overlap with hard-coded built-ins take precedence.
+    let baseEnvVars = envVars;
+    if (spec.catalogEntries && spec.catalogEntries.length > 0 && injectionMode !== 'off' && !auditOnly) {
+      const { envs: catalogEnvs, coveredEnvNames } = buildCatalogEnvs(
+        spec.catalogEntries,
+        spec.groupPlaceholders ?? {},
+      );
+      // Remove built-in hardcoded entries whose names the catalog now covers
+      baseEnvVars = envVars.filter((e) => !coveredEnvNames.has(e.name));
+      // Append catalog-driven envs
+      baseEnvVars = [...baseEnvVars, ...catalogEnvs];
+    }
+
     let finalEnv: Array<{ name: string; value?: string; valueFrom?: object }>;
     if (injectionMode === 'istio' && !auditOnly) {
-      finalEnv = applyIstioModeEnvSubstitution(envVars);
+      finalEnv = applyIstioModeEnvSubstitution(baseEnvVars);
     } else if (injectionMode === 'sidecar' && !auditOnly) {
       finalEnv = [
-        ...envVars.filter((e) => !STRIPPED_WHEN_INJECTED.has(e.name)),
+        ...baseEnvVars.filter((e) => !STRIPPED_WHEN_INJECTED.has(e.name)),
         ...workloadEnvForSidecar({ port: CREDENTIAL_SIDECAR_PORT }),
       ];
     } else if (injectionMode === 'sidecar') {
       // auditOnly=true: keep keys, but still add HTTPS_PROXY for broker observation
       finalEnv = [
-        ...envVars,
+        ...baseEnvVars,
         ...workloadEnvForSidecar({ port: CREDENTIAL_SIDECAR_PORT }),
       ];
     } else {
-      finalEnv = envVars;
+      finalEnv = baseEnvVars;
     }
+
+    // Stamp owner-group annotation on the pod template so the broker can resolve
+    // the group for identity propagation. Stamped whenever ownerGroup is set,
+    // regardless of injection mode. Skipped in audit-only mode to preserve
+    // existing behaviour.
+    const podTemplateAnnotations: Record<string, string> | undefined =
+      spec.ownerGroup && !auditOnly
+        ? { 'kubeclaw.io/owner-group': spec.ownerGroup }
+        : undefined;
 
     // Build resource limits — include GPU/device requests when specified
     const resourceLimits: Record<string, string> = {
@@ -799,6 +909,7 @@ export class JobRunner {
         template: {
           metadata: {
             labels: JOB_LABELS,
+            ...(podTemplateAnnotations && { annotations: podTemplateAnnotations }),
           },
           spec: {
             restartPolicy: 'Never',

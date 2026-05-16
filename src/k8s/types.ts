@@ -10,6 +10,7 @@ import {
   ContainerSecurityContext,
   ToolSpec,
 } from '../types.js';
+import type { CatalogEntry } from '../credential-broker/resolver.js';
 
 export interface JobInput extends ContainerInput {
   jobId?: string;
@@ -56,6 +57,12 @@ export interface ToolJobSpec {
   // PVC override — used when tool job runs on behalf of a channel pod
   groupsPvc?: string; // defaults to 'kubeclaw-groups'
   sessionsPvc?: string; // defaults to 'kubeclaw-sessions'
+  // Per-group credential injection (Task 11).
+  // When present, the job manifest stamps catalog-driven envs and owner-group annotation.
+  ownerGroup?: string; // group name for kubeclaw.io/owner-group annotation
+  catalogEntries?: CatalogEntry[]; // catalog snapshot at pod-create time
+  // placeholders: { [catalogId]: { [fieldName]: placeholderString } }
+  groupPlaceholders?: Record<string, Record<string, string>>;
 }
 
 export interface SidecarJobSpec extends ToolJobSpec {
@@ -139,7 +146,11 @@ export interface TaskRequest {
     | 'control_channel'
     | 'install_capability'
     | 'remove_capability'
-    | 'list_capabilities';
+    | 'list_capabilities'
+    | 'secret.add'
+    | 'secret.remove'
+    | 'secret.list'
+    | 'catalog.list';
   taskId?: string;
   yaml?: string; // deploy_channel: Kubernetes YAML to apply
   channelName?: string; // control_channel: target channel pod name (e.g. 'telegram')
@@ -161,8 +172,40 @@ export interface TaskRequest {
   agentJobId?: string;
   // Capability fields
   spec?: string; // JSON-stringified CapabilitySpec for install_capability
-  resultStream?: string; // for list_capabilities result
+  resultStream?: string; // for list_capabilities / secret.* result
+  // Secret management fields
+  catalogId?: string; // secret.add / secret.remove: catalog entry ID
+  fields?: string; // secret.add: JSON-stringified Record<string, string>
+  group?: string; // secret.add / secret.remove / secret.list: group name
 }
+
+/** IPC message type interfaces for credential management */
+export interface SecretAddIpc {
+  type: 'secret.add';
+  group: string;
+  catalogId: string;
+  fields: Record<string, string>;
+}
+
+export interface SecretRemoveIpc {
+  type: 'secret.remove';
+  group: string;
+  catalogId: string;
+}
+
+export interface SecretListIpc {
+  type: 'secret.list';
+  group: string;
+}
+
+export interface CatalogListIpc {
+  type: 'catalog.list';
+}
+
+/** IPC response envelope for secret/catalog operations */
+export type IpcResponse =
+  | { ok: true; result?: unknown }
+  | { ok: false; error: string };
 
 export interface ToolPodJobSpec {
   agentJobId: string;

@@ -54,6 +54,14 @@ data:
                               allowed_upstream_headers:
                                 patterns:
                                   - exact: "authorization"
+                                  - exact: "x-kubeclaw-substitutions"
+                                  - exact: "x-kubeclaw-policy"
+                      - name: envoy.filters.http.lua
+                        typed_config:
+                          "@type": type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
+                          default_source_code:
+                            inline_string: |
+{{ .Files.Get "files/envoy-substitution-filter.lua" | indent 30 }}
                       - name: envoy.filters.http.dynamic_forward_proxy
                         typed_config:
                           "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_forward_proxy.v3.FilterConfig

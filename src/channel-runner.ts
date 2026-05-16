@@ -33,6 +33,7 @@ import {
   getAllCapabilities,
 } from './capabilities/db.js';
 import {
+  appendConversationMessage,
   getAllChats,
   getAllRegisteredGroups,
   getAllSessions,
@@ -66,7 +67,7 @@ import {
   startControlChannelWatcher,
   type ControlMessage,
 } from './k8s/ipc-redis.js';
-import { getRedisClient, getChannelStatusChannel } from './k8s/redis-client.js';
+import { getRedisClient, getChannelStatusChannel, getTaskRequestStream } from './k8s/redis-client.js';
 import { registerChannel } from './channels/registry.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { AvailableGroup, ContainerOutput } from './runtime/types.js';
@@ -74,6 +75,14 @@ import { logger } from './logger.js';
 import { runCurator, CuratorLLMFn, CuratorProposal } from './runtime/skill-curator.js';
 import { createLLMClient, DEFAULT_DIRECT_MODEL } from './runtime/llm-client.js';
 import { handleSkillsCommand, isSkillsCommand } from './runtime/skills-commands.js';
+import type { CatalogEntry } from './credential-broker/resolver.js';
+import { randomBytes } from 'node:crypto';
+import {
+  listCredentialsTool,
+  buildCredentialSystemBlock,
+  LIST_CREDENTIALS_TOOL_DEF,
+  type IpcClient,
+} from './tools/list-credentials.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -523,6 +532,398 @@ export async function dispatchSkillsCommandIfApplicable(
   return true;
 }
 
+// ── /secret command types ─────────────────────────────────────────────────────
+
+/** IPC response envelope returned by the orchestrator for secret.* operations. */
+export type IpcResponse<T = unknown> =
+  | { ok: true; result?: T }
+  | { ok: false; error: string };
+
+/** Parsed /secret add command */
+export interface SecretAddCommand {
+  catalogId: string;
+  fields: Record<string, string>;
+}
+
+// ── Coarse-regex backstop ─────────────────────────────────────────────────────
+
+/** Default credential patterns to scan for in every user message. */
+const DEFAULT_BACKSTOP_PATTERNS: RegExp[] = [
+  /sk-[A-Za-z0-9]{20,}/g,
+  /r8_[A-Za-z0-9]{20,}/g,
+  /AIza[A-Za-z0-9_\-]{30,}/g,
+  /Bearer\s+[A-Za-z0-9_\-\.]{20,}/g,
+];
+
+/** Build additional backstop patterns from catalog apiKeyShape entries. */
+export function buildCatalogBackstopPatterns(catalog: readonly CatalogEntry[]): RegExp[] {
+  const patterns: RegExp[] = [];
+  for (const entry of catalog) {
+    if (entry.apiKeyShape) {
+      const { prefix, minLength } = entry.apiKeyShape;
+      // Escape regex metacharacters in the prefix
+      const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      patterns.push(new RegExp(`${escapedPrefix}[A-Za-z0-9_\\-]{${minLength},}`, 'g'));
+    }
+  }
+  return patterns;
+}
+
+/**
+ * Apply the coarse-regex backstop to a user message. Returns the message with
+ * any credential-shaped strings replaced by `[possible secret redacted]`.
+ *
+ * This runs independently of the slash-command parser and is applied to every
+ * inbound user message before any LLM call.
+ */
+export function applyCredentialBackstop(
+  text: string,
+  extraPatterns: RegExp[] = [],
+): string {
+  const patterns = [...DEFAULT_BACKSTOP_PATTERNS, ...extraPatterns];
+  let result = text;
+  for (const pattern of patterns) {
+    // Reset lastIndex since we're reusing regex objects (global flag)
+    pattern.lastIndex = 0;
+    result = result.replace(pattern, '[possible secret redacted]');
+  }
+  return result;
+}
+
+// ── /secret command parser ────────────────────────────────────────────────────
+
+export function isSecretCommand(message: string): boolean {
+  return /^\/secret(\s|$)/.test(message.trim());
+}
+
+/**
+ * Parse `/secret add <id> <value>` or `/secret add <id> <field>=<value> [...]`
+ * Returns null if the command is not parseable (wrong subcommand, etc.)
+ */
+export function parseSecretAddCommand(message: string): SecretAddCommand | null {
+  // Match: /secret add <catalogId> <rest>
+  const match = /^\/secret\s+add\s+(\S+)\s+(.+)$/i.exec(message.trim());
+  if (!match) return null;
+
+  const catalogId = match[1];
+  const rest = match[2].trim();
+
+  // Check if rest looks like key=value pairs
+  const kvPattern = /^(\S+=\S+)(\s+\S+=\S+)*$/;
+  if (kvPattern.test(rest)) {
+    // Multi-field form: field1=value1 field2=value2 ...
+    const fields: Record<string, string> = {};
+    const kvRegex = /(\S+)=(\S+)/g;
+    let m: RegExpExecArray | null;
+    while ((m = kvRegex.exec(rest)) !== null) {
+      fields[m[1]] = m[2];
+    }
+    return { catalogId, fields };
+  }
+
+  // Single-field shorthand: the whole rest is the value
+  // The field name will be resolved from the catalog's single credentialField
+  return { catalogId, fields: { __single__: rest } };
+}
+
+/** Parse `/secret remove <id>` */
+export function parseSecretRemoveCommand(message: string): string | null {
+  const match = /^\/secret\s+remove\s+(\S+)$/i.exec(message.trim());
+  return match ? match[1] : null;
+}
+
+// ── Redis IPC helper for secret operations ────────────────────────────────────
+
+/**
+ * Send a secret-management IPC request to the orchestrator via the
+ * task-request stream and await the response with a 5-second timeout.
+ *
+ * Injected in tests via `_secretIpcFn`; uses real Redis in production.
+ */
+export type SecretIpcFn = (
+  fields: Record<string, string>,
+) => Promise<IpcResponse>;
+
+/**
+ * Create a real Redis-backed IPC function for a given IPC type.
+ * The caller provides any additional fields beyond `type`.
+ */
+export function createSecretIpcFn(
+  type: string,
+  baseFields: Record<string, string>,
+): SecretIpcFn {
+  return async (_fields: Record<string, string>) => {
+    const redis = getRedisClient();
+    const resultStream = `kubeclaw:secret-result:${Date.now()}-${randomBytes(4).toString('hex')}`;
+
+    // Build the flat field list for XADD
+    const allFields: string[] = ['type', type, 'resultStream', resultStream];
+    for (const [k, v] of Object.entries(baseFields)) {
+      allFields.push(k, v);
+    }
+    for (const [k, v] of Object.entries(_fields)) {
+      allFields.push(k, v);
+    }
+
+    await redis.xadd(getTaskRequestStream(), '*', ...allFields);
+
+    // Wait up to 5s for orchestrator response
+    const deadline = Date.now() + 5000;
+    let lastId = '0-0';
+    while (Date.now() < deadline) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) break;
+      const response = await redis.xread(
+        'COUNT', 1,
+        'BLOCK', Math.min(remaining, 1000),
+        'STREAMS', resultStream, lastId,
+      );
+      if (!response) continue;
+      for (const [, messages] of response as [string, [string, string[]][]][]) {
+        for (const [, flds] of messages) {
+          const obj: Record<string, string> = {};
+          for (let i = 0; i < flds.length; i += 2) obj[flds[i]] = flds[i + 1];
+          if (obj.result) {
+            return JSON.parse(obj.result) as IpcResponse;
+          }
+        }
+      }
+    }
+    return { ok: false, error: 'timeout' };
+  };
+}
+
+// ── /secret command help text ─────────────────────────────────────────────────
+
+const SECRET_HELP = [
+  'Secret commands:',
+  '  /secret add <id> <value>                    — single-field shorthand',
+  '  /secret add <id> <field>=<value> [...]      — multi-field form',
+  '  /secret remove <id>',
+  '  /secret list',
+  '  /secret catalog',
+  '  /secret help',
+].join('\n');
+
+// ── /secret command handler ───────────────────────────────────────────────────
+
+/**
+ * Handle a /secret slash command.
+ *
+ * Returns a result object describing what happened so the caller can:
+ *  - send the `reply` to the user
+ *  - inject `systemEvent` into transcript memory (if present)
+ *  - append `assistantTurn` to transcript memory (if present)
+ *
+ * Cleartext values are zeroed in a `finally` block.
+ *
+ * The `ipc` parameter is the function used to send IPC requests. In production
+ * this is built from createSecretIpcFn(); in tests it is injected as a mock.
+ */
+export interface SecretCommandResult {
+  /** Message to send to the user */
+  reply: string;
+  /** If set, insert this as a SYSTEM event in transcript memory */
+  systemEvent?: string;
+  /** If set, append this as an assistant turn in transcript memory */
+  assistantTurn?: string;
+}
+
+export interface SecretCommandDeps {
+  /** Catalog from most-recent IPC catalog.list (may be empty if unavailable) */
+  catalog: readonly CatalogEntry[];
+  /**
+   * IPC function for secret operations. Called with the per-request extra
+   * fields (e.g. `{ fields: JSON.stringify(...) }`).
+   */
+  ipc: (
+    type: 'secret.add' | 'secret.remove' | 'secret.list' | 'catalog.list',
+    fields: Record<string, string>,
+  ) => Promise<IpcResponse>;
+}
+
+export async function handleSecretCommand(
+  group: string,
+  message: string,
+  deps: SecretCommandDeps,
+): Promise<SecretCommandResult> {
+  const parts = message.trim().split(/\s+/);
+  if (parts[0] !== '/secret')
+    return { reply: SECRET_HELP };
+
+  const verb = parts[1];
+
+  switch (verb) {
+    case undefined:
+    case 'help':
+      return { reply: SECRET_HELP };
+
+    case 'catalog': {
+      let res: IpcResponse;
+      try {
+        res = await deps.ipc('catalog.list', {});
+      } catch {
+        return { reply: "Couldn't reach the orchestrator. Try again." };
+      }
+      if (!res.ok) return { reply: `Failed to retrieve catalog: ${res.error}` };
+      const catalog = res.result as CatalogEntry[];
+      if (!catalog || catalog.length === 0)
+        return { reply: 'No catalog entries configured.' };
+      const lines = catalog.map((e) => {
+        const fields = e.credentialFields.map((f) => `${f.name} (${f.envVar})`).join(', ');
+        return `  ${e.id} — ${e.host} — fields: ${fields}`;
+      });
+      return { reply: `Catalog:\n${lines.join('\n')}` };
+    }
+
+    case 'list': {
+      let res: IpcResponse;
+      try {
+        res = await deps.ipc('secret.list', { group });
+      } catch {
+        return { reply: "Couldn't reach the orchestrator. Try again." };
+      }
+      if (!res.ok) return { reply: `Failed to list secrets: ${res.error}` };
+      const entries = res.result as Array<{ catalogId: string; registeredAt: string }>;
+      if (!entries || entries.length === 0)
+        return { reply: 'No credentials registered for this group.' };
+      const lines = entries.map((e) => `  ${e.catalogId} (registered ${e.registeredAt})`);
+      return { reply: `Registered credentials:\n${lines.join('\n')}` };
+    }
+
+    case 'remove': {
+      const catalogId = parseSecretRemoveCommand(message);
+      if (!catalogId)
+        return { reply: 'Usage: /secret remove <id>' };
+
+      let res: IpcResponse;
+      try {
+        res = await deps.ipc('secret.remove', { group, catalogId });
+      } catch {
+        return { reply: "Couldn't reach the orchestrator. The credential was NOT removed. Try again." };
+      }
+      if (!res.ok) return { reply: `Failed to remove credential: ${res.error}` };
+
+      const systemEvent = `[SYSTEM] User removed credential for catalog entry '${catalogId}'. Tool-jobs will no longer use credentials for this entry.`;
+      const assistantTurn = `Removed — credentials for '${catalogId}' have been cleared for this group.`;
+      return {
+        reply: assistantTurn,
+        systemEvent,
+        assistantTurn,
+      };
+    }
+
+    case 'add': {
+      let cleartextFields: Record<string, string> | null = null;
+      try {
+        const parsed = parseSecretAddCommand(message);
+        if (!parsed)
+          return { reply: 'Usage: /secret add <id> <value>  OR  /secret add <id> <field>=<value> [...]' };
+
+        const { catalogId, fields: rawFields } = parsed;
+
+        // Validate catalogId against catalog
+        const catalogEntry = deps.catalog.find((e) => e.id === catalogId);
+        if (!catalogEntry) {
+          const available = deps.catalog.map((e) => e.id).join(', ') || 'none';
+          return {
+            reply: `Unknown API '${catalogId}'. Available: ${available}. Use \`/secret catalog\` for full list.`,
+          };
+        }
+
+        // Resolve single-field shorthand
+        let resolvedFields: Record<string, string>;
+        if ('__single__' in rawFields) {
+          if (catalogEntry.credentialFields.length !== 1) {
+            const fieldNames = catalogEntry.credentialFields.map((f) => f.name).join(', ');
+            return {
+              reply: `'${catalogId}' requires multiple fields: ${fieldNames}. Use: /secret add ${catalogId} ${fieldNames.replace(/, /g, '=<value> ')}=<value>`,
+            };
+          }
+          const fieldName = catalogEntry.credentialFields[0].name;
+          resolvedFields = { [fieldName]: rawFields['__single__'] };
+        } else {
+          resolvedFields = rawFields;
+        }
+
+        // Validate that all required fields are present
+        const requiredFields = catalogEntry.credentialFields.map((f) => f.name);
+        const missingFields = requiredFields.filter((f) => !(f in resolvedFields));
+        if (missingFields.length > 0) {
+          return {
+            reply: `'${catalogId}' requires fields: ${requiredFields.join(', ')}. Got: ${Object.keys(resolvedFields).join(', ')}. Missing: ${missingFields.join(', ')}.`,
+          };
+        }
+
+        // Validate values non-empty
+        for (const [fieldName, value] of Object.entries(resolvedFields)) {
+          if (!value || value.trim() === '') {
+            return { reply: `Value for field '${fieldName}' is empty.` };
+          }
+        }
+
+        // Keep cleartext in scope for zeroing
+        cleartextFields = resolvedFields;
+
+        let res: IpcResponse;
+        try {
+          res = await deps.ipc('secret.add', {
+            group,
+            catalogId,
+            fields: JSON.stringify(resolvedFields),
+          });
+        } catch {
+          return {
+            reply: "Couldn't reach the orchestrator. The credential was NOT stored. Try again.",
+          };
+        }
+
+        if (!res.ok) {
+          const errMsg = res.error ?? 'unknown error';
+          // Friendly messages for known orchestrator errors
+          if (errMsg.includes('timeout')) {
+            return {
+              reply: "Couldn't reach the orchestrator. The credential was NOT stored. Try again.",
+            };
+          }
+          return { reply: `Failed to store credential: ${errMsg}` };
+        }
+
+        // Build system event (metadata only — no values)
+        const envVarNames = catalogEntry.credentialFields.map((f) => f.envVar).join(', ');
+        const systemEvent =
+          `[SYSTEM] User registered credential for catalog entry '${catalogId}' ` +
+          `(host: ${catalogEntry.host}). ` +
+          `Tool-jobs will receive envs ${envVarNames} with placeholder values. ` +
+          `The broker will substitute the real credential on outbound requests to ${catalogEntry.host}.`;
+
+        const assistantTurn = `Got it — ${catalogEntry.id} is now configured for this group.`;
+
+        return {
+          reply: assistantTurn,
+          systemEvent,
+          assistantTurn,
+        };
+      } finally {
+        // Reassign cleartext to empty string; JS string immutability means the original
+        // heap allocation cannot be wiped in-place, but residency is bounded by GC.
+        // Documented as accepted risk in docs/SECURITY.md threat model.
+        if (cleartextFields) {
+          for (const key of Object.keys(cleartextFields)) {
+            const buf = Buffer.from(cleartextFields[key], 'utf8');
+            buf.fill(0);
+            cleartextFields[key] = '';
+          }
+          cleartextFields = null;
+        }
+      }
+    }
+
+    default:
+      return { reply: `Unknown subcommand: ${verb}\n\n${SECRET_HELP}` };
+  }
+}
+
 async function runAgent(
   group: RegisteredGroup,
   prompt: string,
@@ -628,10 +1029,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     if (!hasTrigger) return true;
   }
 
-  // /skills chat command: handle locally without invoking the LLM.
-  // The intercept must live here — BEFORE formatMessages wraps the content
-  // in XML, which would break the isSkillsCommand regex match.
+  // Slash command intercepts: /skills and /secret must live here — BEFORE
+  // formatMessages wraps the content in XML, which would break the regex match.
   const lastMsg = missedMessages[missedMessages.length - 1];
+
+  // /skills chat command: handle locally without invoking the LLM.
   if (lastMsg && isSkillsCommand(lastMsg.content)) {
     const reply = handleSkillsCommand(
       GROUPS_DIR,
@@ -650,18 +1052,102 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     return true;
   }
 
-  const prompt = formatMessages(missedMessages, TIMEZONE);
+  // /secret command: handle upstream of LLM; raw user line is dropped from
+  // transcript memory and a SYSTEM event is injected in its place.
+  if (lastMsg && isSecretCommand(lastMsg.content)) {
+    // Build a minimal IPC function backed by the real Redis task-request stream
+    const secretIpc: SecretCommandDeps['ipc'] = async (type, fields) => {
+      const ipcFn = createSecretIpcFn(type, {});
+      return ipcFn(fields);
+    };
+
+    // Fetch catalog for validation (best-effort; empty catalog means unknown-id errors)
+    let catalog: readonly CatalogEntry[] = [];
+    try {
+      const catalogRes = await secretIpc('catalog.list', {});
+      if (catalogRes.ok && Array.isArray(catalogRes.result)) {
+        catalog = catalogRes.result as CatalogEntry[];
+      }
+    } catch {
+      // Catalog unavailable; proceed with empty catalog (will report unknown-id error)
+    }
+
+    const result = await handleSecretCommand(group.folder, lastMsg.content.trim(), {
+      catalog,
+      ipc: secretIpc,
+    });
+
+    // Persist the system event and assistant turn so subsequent LLM turns see
+    // the credential-registration context in conversation history. The raw
+    // /secret line is intentionally NOT stored (already dropped by the
+    // getMessagesSince query never being called for it).
+    if (result.systemEvent) {
+      appendConversationMessage(group.folder, 'user', result.systemEvent);
+    }
+    if (result.assistantTurn) {
+      appendConversationMessage(group.folder, 'assistant', result.assistantTurn);
+    }
+
+    lastAgentTimestamp[chatJid] = lastMsg.timestamp;
+    saveState();
+    await channel.setTyping?.(chatJid, true);
+    try {
+      await channel.sendMessage(chatJid, result.reply);
+    } finally {
+      await channel.setTyping?.(chatJid, false);
+    }
+    return true;
+  }
+
+  // Coarse-regex backstop: scrub credential-shaped strings from all messages
+  // before passing them to the LLM. The backstop is independent of the
+  // slash-command parser — if the parser already handled the message, we
+  // never reach here.
+  const backstopMessages = missedMessages.map((m) =>
+    m.is_from_me
+      ? m
+      : { ...m, content: applyCredentialBackstop(m.content) },
+  );
+
+  const prompt = formatMessages(backstopMessages, TIMEZONE);
   const specialists = loadSpecialists(group.folder);
   const mentionedSpecialists = specialists
     ? detectMentionedSpecialists(prompt, specialists)
     : [];
 
+  // ── Per-turn credential system block ─────────────────────────────────────
+  // Rebuild fresh on each turn so that newly registered credentials (via
+  // /secret add in this conversation) are reflected immediately. The block
+  // is prepended to the prompt so the LLM sees it as part of the user turn.
+  let credentialSystemBlock = '';
+  try {
+    const credIpc = buildCredentialIpcClient();
+    const credEntries = await listCredentialsTool(
+      { group: group.folder },
+      { ipc: credIpc },
+    );
+    credentialSystemBlock = buildCredentialSystemBlock(
+      credEntries,
+      group.folder,
+    );
+  } catch {
+    // Catalog unavailable — omit the block rather than failing the turn.
+  }
+
   const agentRuns =
     mentionedSpecialists.length > 0
       ? mentionedSpecialists.map((s) => ({
-          prompt: `<specialist name="${s.name}">\n${s.prompt}\n</specialist>\n\n${prompt}`,
+          prompt: credentialSystemBlock
+            ? `${credentialSystemBlock}\n\n<specialist name="${s.name}">\n${s.prompt}\n</specialist>\n\n${prompt}`
+            : `<specialist name="${s.name}">\n${s.prompt}\n</specialist>\n\n${prompt}`,
         }))
-      : [{ prompt }];
+      : [
+          {
+            prompt: credentialSystemBlock
+              ? `${credentialSystemBlock}\n\n${prompt}`
+              : prompt,
+          },
+        ];
 
   const previousCursor = lastAgentTimestamp[chatJid] || '';
   lastAgentTimestamp[chatJid] =
@@ -860,6 +1346,45 @@ function startSkillCuratorInterval(): void {
   }, CURATOR_INTERVAL_MS).unref();
 }
 
+/**
+ * Build the reusable IPC client for credential tool calls.
+ * Wraps createSecretIpcFn to match the IpcClient call signature.
+ */
+function buildCredentialIpcClient(): IpcClient {
+  return async (type, fields) => {
+    const fn = createSecretIpcFn(type, {});
+    return fn(fields);
+  };
+}
+
+/**
+ * Register channel-resident credential tools with the DirectLLMRunner singleton.
+ * Called once at startup before the first runAgent() invocation.
+ *
+ * The list_credentials tool is intercepted locally — no K8s tool pod is spawned.
+ */
+export function registerCredentialTools(
+  runner: ReturnType<typeof getDirectLLMRunner>,
+  ipcOverride?: IpcClient,
+): void {
+  const ipc = ipcOverride ?? buildCredentialIpcClient();
+  runner.registerLocalTool('list_credentials', {
+    def: LIST_CREDENTIALS_TOOL_DEF,
+    handler: async (_args, input) => {
+      try {
+        const entries = await listCredentialsTool(
+          { group: input.groupFolder },
+          { ipc },
+        );
+        return JSON.stringify(entries);
+      } catch (err) {
+        return `list_credentials error: ${err instanceof Error ? err.message : String(err)}`;
+      }
+    },
+  });
+  logger.debug('Registered list_credentials local tool');
+}
+
 async function main(): Promise<void> {
   startHealthServer();
   await initDatabase();
@@ -867,6 +1392,7 @@ async function main(): Promise<void> {
   startSkillCuratorInterval();
   loadState();
   await loadChannelPlugins('/workspace/plugins');
+  registerCredentialTools(getDirectLLMRunner());
 
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');

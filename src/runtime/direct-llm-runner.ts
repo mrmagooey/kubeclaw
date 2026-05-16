@@ -810,12 +810,41 @@ function loadSystemPrompt(groupFolder: string, groupsDir: string = GROUPS_DIR): 
   }
 }
 
+/** A locally-intercepted tool: definition for the LLM + async handler. */
+export interface LocalTool {
+  def: OpenAI.ChatCompletionTool;
+  handler: (
+    args: Record<string, unknown>,
+    input: ContainerInput,
+  ) => Promise<string>;
+}
+
 export class DirectLLMRunner implements MessageRunner {
   private client: OpenAI;
   private mcpManager: McpManager | null = null;
+  /** Channel-resident tools intercepted locally (no K8s pod spawned). */
+  private localTools: Map<string, LocalTool> = new Map();
 
   constructor(client?: OpenAI) {
     this.client = client ?? createLLMClient();
+  }
+
+  /**
+   * Register a locally-intercepted tool.
+   *
+   * The tool definition is added to the LLM's effective tool list. When the
+   * LLM calls the tool, the handler is invoked in-process — no K8s tool pod
+   * is spawned. Call this before the first runAgent() invocation.
+   */
+  registerLocalTool(name: string, tool: LocalTool): void {
+    this.localTools.set(name, tool);
+  }
+
+  /**
+   * Return the names of all registered local tools (for testing).
+   */
+  getLocalToolNames(): string[] {
+    return [...this.localTools.keys()];
   }
 
   /**
@@ -866,7 +895,13 @@ export class DirectLLMRunner implements MessageRunner {
       },
     }));
     const mcpTools = this.mcpManager?.getTools() ?? [];
-    const effectiveTools = [...TOOLS, ...customToolDefs, ...mcpTools];
+    const localToolDefs = [...this.localTools.values()].map((lt) => lt.def);
+    const effectiveTools = [
+      ...TOOLS,
+      ...customToolDefs,
+      ...mcpTools,
+      ...localToolDefs,
+    ];
 
     logger.debug(
       { group: group.name, model, historyLen: history.length },
@@ -988,6 +1023,11 @@ export class DirectLLMRunner implements MessageRunner {
                   : proposeResult.kind === 'duplicate'
                     ? `Duplicate of '${proposeResult.existing}'. ${proposeResult.suggestion}`
                     : `Error: ${proposeResult.message}`;
+            } else if (this.localTools.has(call.function.name)) {
+              result = await this.localTools.get(call.function.name)!.handler(
+                args,
+                input,
+              );
             } else if (this.mcpManager?.hasTool(call.function.name)) {
               result = await this.mcpManager.callTool(call.function.name, args);
             } else {

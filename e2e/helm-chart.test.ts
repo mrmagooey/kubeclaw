@@ -510,6 +510,39 @@ describe('RBAC', () => {
     ]);
     expect(result.stdout).toBe('no');
   });
+
+  it('broker Role widens to namespace-wide secrets and pods get', () => {
+    const role = getJson('role/kubeclaw-credential-broker') as {
+      rules: Array<{
+        apiGroups: string[];
+        resources: string[];
+        verbs: string[];
+        resourceNames?: string[];
+      }>;
+    };
+    const secretsRule = role.rules.find((r) => r.resources?.includes('secrets'));
+    expect(secretsRule).toBeDefined();
+    expect(secretsRule!.verbs).toEqual(expect.arrayContaining(['get', 'list', 'watch']));
+    expect(secretsRule!.resourceNames).toBeUndefined();
+    const podsRule = role.rules.find((r) => r.resources?.includes('pods'));
+    expect(podsRule).toBeDefined();
+    expect(podsRule!.verbs).toEqual(expect.arrayContaining(['get', 'list', 'watch']));
+  });
+
+  it('orchestrator Role adds secret write verbs', () => {
+    const role = getJson('role/kubeclaw-job-manager') as {
+      rules: Array<{
+        apiGroups: string[];
+        resources: string[];
+        verbs: string[];
+      }>;
+    };
+    const secretsRule = role.rules.find((r) => r.resources?.includes('secrets'));
+    expect(secretsRule).toBeDefined();
+    expect(secretsRule!.verbs).toEqual(
+      expect.arrayContaining(['create', 'update', 'patch', 'delete', 'get', 'list']),
+    );
+  });
 });
 
 // ─── 8. Redis ─────────────────────────────────────────────────────────────────
@@ -794,6 +827,16 @@ describe('helm template — mode=istio', () => {
     expect(out).toContain('ext_authz');
   });
 
+  it('Lua substitution filter in istio EnvoyFilter', () => {
+    const out = render();
+    expect(out).toContain('envoy.filters.http.lua');
+    expect(out).toContain('x-kubeclaw-substitutions');
+    // Lua filter must appear after ext_authz (INSERT_AFTER) in the same EnvoyFilter
+    const luaIdx = out.indexOf('envoy.filters.http.lua');
+    const authzIdx = out.indexOf('envoy.filters.http.ext_authz');
+    expect(luaIdx).toBeGreaterThan(authzIdx);
+  });
+
   it('renders 5 ServiceEntry resources with one additionalDestination', () => {
     const out = render(
       '--set "credentialInjection.istio.additionalDestinations[0]=my-mcp.internal:8443"',
@@ -926,6 +969,35 @@ describe('helm template — mode=istio', () => {
   });
 });
 
+describe('helm template — Lua substitution filter', () => {
+  it('renders Lua substitution filter in sidecar mode ConfigMap', () => {
+    const out = execSync(
+      `helm template helm/kubeclaw --set credentialInjection.mode=sidecar --set namespace=kubeclaw`,
+      { encoding: 'utf8' },
+    );
+    expect(out).toContain('envoy.filters.http.lua');
+    expect(out).toContain('x-kubeclaw-substitutions');
+    expect(out).toContain('x-kubeclaw-policy');
+  });
+
+  it('sidecar mode Lua filter appears inside the kubeclaw-envoy-sidecar ConfigMap', () => {
+    const out = execSync(
+      `helm template helm/kubeclaw --set credentialInjection.mode=sidecar --set namespace=kubeclaw`,
+      { encoding: 'utf8' },
+    );
+    // Split by document separator and find the sidecar ConfigMap
+    const docs = out.split(/\n---\n/);
+    const sidecarCmDoc = docs.find(
+      (d) =>
+        d.includes('kind: ConfigMap') &&
+        d.includes('name: kubeclaw-envoy-sidecar'),
+    );
+    expect(sidecarCmDoc).toBeDefined();
+    expect(sidecarCmDoc).toContain('envoy.filters.http.lua');
+    expect(sidecarCmDoc).toContain('x-kubeclaw-substitutions');
+  });
+});
+
 describe('helm template — mode=sidecar (no Istio regression)', () => {
   const render = () =>
     execSync(
@@ -957,6 +1029,20 @@ describe('helm template — mode=sidecar (no Istio regression)', () => {
     expect(out).not.toContain('name: kubeclaw-mock-upstream');
     expect(out).not.toContain('mock-upstream.kubeclaw-test');
     expect(out).not.toMatch(/id:\s*test-mock/);
+  });
+
+  it('renders catalog entries in credential-broker ConfigMap', () => {
+    const out = execSync(
+      `helm template helm/kubeclaw \
+        --set credentialInjection.mode=sidecar \
+        --set 'credentialInjection.catalog[0].id=replicate' \
+        --set 'credentialInjection.catalog[0].host=api.replicate.com' \
+        --set 'credentialInjection.catalog[0].credentialFields[0].name=token' \
+        --set 'credentialInjection.catalog[0].credentialFields[0].envVar=REPLICATE_API_TOKEN'`,
+      { encoding: 'utf8' },
+    );
+    expect(out).toContain('id: "replicate"');
+    expect(out).toContain('envVar: "REPLICATE_API_TOKEN"');
   });
 });
 
