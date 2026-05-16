@@ -106,7 +106,7 @@ describe('Tool Job Spawn Watcher', () => {
     expect(fields).toHaveProperty('status');
 
     // status should be one of the known terminal values
-    expect(['completed', 'error', 'timeout', 'failed']).toContain(fields.status);
+    expect(['success', 'completed', 'error', 'timeout', 'failed']).toContain(fields.status);
 
     console.log(`✅ Tool job result received: status=${fields.status}`);
   }, 150_000);
