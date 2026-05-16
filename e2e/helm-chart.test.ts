@@ -958,6 +958,20 @@ describe('helm template — mode=sidecar (no Istio regression)', () => {
     expect(out).not.toContain('mock-upstream.kubeclaw-test');
     expect(out).not.toMatch(/id:\s*test-mock/);
   });
+
+  it('renders catalog entries in credential-broker ConfigMap', () => {
+    const out = execSync(
+      `helm template helm/kubeclaw \
+        --set credentialInjection.mode=sidecar \
+        --set 'credentialInjection.catalog[0].id=replicate' \
+        --set 'credentialInjection.catalog[0].host=api.replicate.com' \
+        --set 'credentialInjection.catalog[0].credentialFields[0].name=token' \
+        --set 'credentialInjection.catalog[0].credentialFields[0].envVar=REPLICATE_API_TOKEN'`,
+      { encoding: 'utf8' },
+    );
+    expect(out).toContain('id: "replicate"');
+    expect(out).toContain('envVar: "REPLICATE_API_TOKEN"');
+  });
 });
 
 describe('helm template — mode=off (no regression)', () => {
