@@ -169,6 +169,15 @@ function createSchema(database: SqlJsDatabase): void {
     ON conversation_history(group_folder, created_at)
   `);
 
+  database.run(`
+    CREATE TABLE IF NOT EXISTS specialist_overrides (
+      name        TEXT PRIMARY KEY,
+      spec_json   TEXT NOT NULL,
+      created_at  INTEGER NOT NULL,
+      updated_at  INTEGER NOT NULL
+    )
+  `);
+
   // Additive migration — safe to run repeatedly:
   try {
     database.run(
