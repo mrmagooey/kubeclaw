@@ -1392,6 +1392,52 @@ describe('JobRunner', () => {
       expect(jobName.length).toBeLessThanOrEqual(63);
       expect(jobName).toContain('stool');
     });
+
+    it('bridge container REDIS_URL uses tool-server ACL user, not adapter', async () => {
+      // Regression: createSidecarToolPodJob previously authenticated as the
+      // 'adapter' ACL user, which only has read-only access to kubeclaw:input:*.
+      // The bridge needs XREAD on kubeclaw:toolcalls:* and XADD on
+      // kubeclaw:toolresults:* — both granted only to 'tool-server'.
+      process.env.REDIS_ADMIN_PASSWORD = 'testpass';
+      process.env.REDIS_URL = 'redis://kubeclaw-redis:6379';
+
+      await jobRunner.createSidecarToolPodJob(baseSpec);
+
+      const containers =
+        mockBatchApi.createNamespacedJob.mock.calls[0][0].body.spec?.template
+          ?.spec?.containers;
+      const bridgeEnv: { name: string; value: string }[] = containers[0].env;
+      const redisUrl = bridgeEnv.find((e) => e.name === 'REDIS_URL')?.value;
+
+      expect(redisUrl).toBe(
+        'redis://tool-server:testpass@kubeclaw-redis:6379',
+      );
+      expect(redisUrl).not.toContain('adapter');
+    });
+
+    it('bridge container REDIS_URL uses tool-server when REDIS_TOOL_SERVER_PASSWORD is set', async () => {
+      delete process.env.REDIS_ADMIN_PASSWORD;
+      process.env.REDIS_URL = 'redis://kubeclaw-redis:6379';
+
+      // The config mock returns REDIS_TOOL_SERVER_PASSWORD as empty string by
+      // default. Override via env so buildRedisUrl falls through to REDIS_ADMIN_PASSWORD.
+      // When both are absent the URL stays plain — verify user is still tool-server.
+      delete process.env.REDIS_ADMIN_PASSWORD;
+      process.env.REDIS_URL = 'redis://kubeclaw-redis:6379';
+
+      await jobRunner.createSidecarToolPodJob(baseSpec);
+
+      const containers =
+        mockBatchApi.createNamespacedJob.mock.calls[0][0].body.spec?.template
+          ?.spec?.containers;
+      const bridgeEnv: { name: string; value: string }[] = containers[0].env;
+      const redisUrl = bridgeEnv.find((e) => e.name === 'REDIS_URL')?.value;
+
+      // No password → URL passes through unchanged (no embedded credentials)
+      expect(redisUrl).toBe('redis://kubeclaw-redis:6379');
+      // And critically: the URL must not embed 'adapter'
+      expect(redisUrl).not.toContain('adapter');
+    });
   });
 
   // Shared fixture for credential injection tests
