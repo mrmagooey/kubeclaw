@@ -48,25 +48,12 @@ export function loadConfigOrThrow(path: string) {
 
 export async function startBroker(): Promise<http.Server> {
   const config = loadConfigOrThrow(CONFIG_PATH);
-  let resolver = new Resolver(config.mappings);
   const metricsRegistry = new Registry();
   const metrics = createMetrics(metricsRegistry);
   logger.info(
     { auditOnly: AUDIT_ONLY, port: PORT, configPath: CONFIG_PATH },
     'credential broker starting',
   );
-
-  fs.watchFile(CONFIG_PATH, { interval: 5000 }, () => {
-    try {
-      const next = loadConfigOrThrow(CONFIG_PATH);
-      resolver = new Resolver(next.mappings);
-      logger.info({ count: next.mappings.length }, 'broker config reloaded');
-      metrics.recordConfigReload({ result: 'success' });
-    } catch (e) {
-      logger.error({ err: e }, 'failed to reload broker config');
-      metrics.recordConfigReload({ result: 'failure' });
-    }
-  });
 
   const kc = new KubeConfig();
   kc.loadFromCluster();
@@ -99,6 +86,33 @@ export async function startBroker(): Promise<http.Server> {
       return { data: res.data ?? {} };
     },
     cacheTtlMs: SECRET_TTL_MS,
+  });
+
+  // operatorSecretReader stub — Task 9 wires the real implementation.
+  const operatorSecretReader = async (_key: string): Promise<string | null> => null;
+
+  let resolver = new Resolver({
+    mappings: config.mappings,
+    catalog: config.catalog,
+    groupSource: secretSource,
+    operatorSecretReader,
+  });
+
+  fs.watchFile(CONFIG_PATH, { interval: 5000 }, () => {
+    try {
+      const next = loadConfigOrThrow(CONFIG_PATH);
+      resolver = new Resolver({
+        mappings: next.mappings,
+        catalog: next.catalog,
+        groupSource: secretSource,
+        operatorSecretReader,
+      });
+      logger.info({ count: next.mappings.length }, 'broker config reloaded');
+      metrics.recordConfigReload({ result: 'success' });
+    } catch (e) {
+      logger.error({ err: e }, 'failed to reload broker config');
+      metrics.recordConfigReload({ result: 'failure' });
+    }
   });
 
   const audit = new PinoAudit();
