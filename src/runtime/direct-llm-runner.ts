@@ -38,6 +38,8 @@ import {
   getToolCallsStream,
   getToolResultsStream,
 } from '../k8s/redis-client.js';
+import { loadSkills } from './skill-loader.js';
+import { proposeSkill, DupCheckFn } from './tools/propose-skill.js';
 
 const DEFAULT_SYSTEM_PROMPT =
   'You are a helpful assistant. Be concise and direct in your responses.';
@@ -283,6 +285,24 @@ const TOOLS: OpenAI.ChatCompletionTool[] = [
       parameters: {
         type: 'object',
         properties: {},
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'propose_skill',
+      description:
+        'Capture a reusable instruction or pattern as a skill candidate. Use when the user has just taught you something they want remembered for future conversations (a correction, a preferred tool, a non-obvious pattern). Will stage a candidate that the user reviews via /skills review.',
+      parameters: {
+        type: 'object',
+        properties: {
+          proposed_name: { type: 'string', description: 'kebab-case slug (e.g. prefer-rg-over-grep)' },
+          description: { type: 'string', description: 'one-line, specific, what triggers it' },
+          body: { type: 'string', description: 'markdown body of the instruction' },
+          rationale: { type: 'string', description: 'why this is worth keeping; shown to the user' },
+        },
+        required: ['proposed_name', 'description', 'body', 'rationale'],
       },
     },
   },
@@ -772,15 +792,22 @@ function getModel(group: RegisteredGroup): string {
   return DEFAULT_DIRECT_MODEL;
 }
 
-function loadSystemPrompt(groupFolder: string): string {
-  const claudeMd = path.join(GROUPS_DIR, groupFolder, 'CLAUDE.md');
+function loadSystemPrompt(groupFolder: string, groupsDir: string = GROUPS_DIR): string {
+  const claudeMd = path.join(groupsDir, groupFolder, 'CLAUDE.md');
+  let base = DEFAULT_SYSTEM_PROMPT;
   try {
     const content = fs.readFileSync(claudeMd, 'utf-8');
-    if (content.trim()) return content.trim();
+    if (content.trim()) base = content.trim();
   } catch {
-    // File missing — use default
+    // file missing — use default
   }
-  return DEFAULT_SYSTEM_PROMPT;
+  try {
+    const { promptSuffix } = loadSkills(groupsDir, groupFolder);
+    return promptSuffix ? base + promptSuffix : base;
+  } catch (err) {
+    logger.warn({ err, groupFolder }, 'skill-loader failed; using base prompt');
+    return base;
+  }
 }
 
 export class DirectLLMRunner implements MessageRunner {
@@ -930,6 +957,37 @@ export class DirectLLMRunner implements MessageRunner {
                 call.function.name,
                 args,
               );
+            } else if (call.function.name === 'propose_skill') {
+              const proposeArgs = JSON.parse(call.function.arguments) as Parameters<typeof proposeSkill>[2];
+              const dupCheck: DupCheckFn = async (a, existing) => {
+                if (existing.length === 0) return { duplicate: false };
+                const sys = 'You judge whether a proposed skill is a duplicate of any existing skill. Reply JSON: {"duplicate": boolean, "existing": "<name>"|null, "suggestion": "<short>"|null}';
+                const listing = existing
+                  .map((s) => `- ${s.frontmatter.name}: ${s.frontmatter.description}`)
+                  .join('\n');
+                const user = `Existing skills:\n${listing}\n\nProposed:\nname: ${a.proposed_name}\ndescription: ${a.description}\n`;
+                const completion = await this.client.chat.completions.create({
+                  model,
+                  messages: [
+                    { role: 'system', content: sys },
+                    { role: 'user', content: user },
+                  ],
+                  response_format: { type: 'json_object' },
+                  max_tokens: 200,
+                });
+                try {
+                  return JSON.parse(completion.choices[0].message.content ?? '{"duplicate":false}');
+                } catch {
+                  return { duplicate: false };
+                }
+              };
+              const proposeResult = await proposeSkill(GROUPS_DIR, input.groupFolder, proposeArgs, dupCheck);
+              result =
+                proposeResult.kind === 'staged'
+                  ? `Staged candidate ${proposeResult.candidateId}. Tell the user: ${proposeResult.preview}\n\nThey can reply '/skills review' to triage.`
+                  : proposeResult.kind === 'duplicate'
+                    ? `Duplicate of '${proposeResult.existing}'. ${proposeResult.suggestion}`
+                    : `Error: ${proposeResult.message}`;
             } else if (this.mcpManager?.hasTool(call.function.name)) {
               result = await this.mcpManager.callTool(call.function.name, args);
             } else {
@@ -1009,3 +1067,8 @@ export class DirectLLMRunner implements MessageRunner {
     this.mcpManager = null;
   }
 }
+
+export const __testing__ = {
+  loadSystemPromptForTest: (group: string, groupsDir: string) => loadSystemPrompt(group, groupsDir),
+  toolsForTest: () => TOOLS,
+};

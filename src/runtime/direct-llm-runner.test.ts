@@ -1,7 +1,10 @@
 /**
  * Tests for DirectLLMRunner — in-process LLM runner
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 
 // ---- Shared mock state (hoisted so vi.mock factories can reference it) ----
 
@@ -12,6 +15,10 @@ const mockRedisInstance = vi.hoisted(() => ({
 }));
 
 const mockCreate = vi.hoisted(() => vi.fn());
+
+const mockLoadSkills = vi.hoisted(() =>
+  vi.fn().mockReturnValue({ promptSuffix: '', loadedSkills: [] }),
+);
 
 // ---- Mocks ----------------------------------------------------------------
 
@@ -82,6 +89,14 @@ vi.mock('./llm-client.js', () => ({
     chat: { completions: { create: mockCreate } },
   })),
   DEFAULT_DIRECT_MODEL: 'claude-3-5-haiku-20241022',
+}));
+
+vi.mock('./skill-loader.js', () => ({
+  loadSkills: mockLoadSkills,
+}));
+
+vi.mock('./tools/propose-skill.js', () => ({
+  proposeSkill: vi.fn().mockResolvedValue({ kind: 'staged', candidateId: 'c1', preview: 'preview' }),
 }));
 
 // ---- Tests ----------------------------------------------------------------
@@ -514,5 +529,57 @@ describe('DirectLLMRunner', () => {
 
     // Bad JSON args should be handled gracefully (empty args)
     expect(result.status).toBe('success');
+  });
+});
+
+describe('loadSystemPrompt — skill composition', () => {
+  let tmpGroupsDir: string;
+
+  beforeEach(() => {
+    tmpGroupsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'runner-skills-'));
+    fs.mkdirSync(path.join(tmpGroupsDir, 'g1'), { recursive: true });
+    fs.writeFileSync(path.join(tmpGroupsDir, 'g1', 'CLAUDE.md'), 'BASE PROMPT');
+    // Reset skill-loader mock to default (no suffix)
+    mockLoadSkills.mockReturnValue({ promptSuffix: '', loadedSkills: [] });
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpGroupsDir, { recursive: true, force: true });
+  });
+
+  it('returns CLAUDE.md unchanged when no skills are loaded', async () => {
+    const { __testing__ } = await import('./direct-llm-runner.js');
+    const out = __testing__.loadSystemPromptForTest('g1', tmpGroupsDir);
+    expect(out).toContain('BASE PROMPT');
+    expect(out).not.toContain('Learned skills');
+  });
+
+  it('appends skill bodies under Learned skills when skill-loader returns a suffix', async () => {
+    mockLoadSkills.mockReturnValue({
+      promptSuffix: '\n\n## Learned skills\n\nALPHA BODY\n',
+      loadedSkills: ['alpha'],
+    });
+    const { __testing__ } = await import('./direct-llm-runner.js');
+    const out = __testing__.loadSystemPromptForTest('g1', tmpGroupsDir);
+    expect(out).toContain('BASE PROMPT');
+    expect(out).toContain('## Learned skills');
+    expect(out).toContain('ALPHA BODY');
+  });
+
+  it('falls back to base prompt when skill-loader throws', async () => {
+    mockLoadSkills.mockImplementation(() => {
+      throw new Error('skill-loader exploded');
+    });
+    const { __testing__ } = await import('./direct-llm-runner.js');
+    const out = __testing__.loadSystemPromptForTest('g1', tmpGroupsDir);
+    expect(out).toBe('BASE PROMPT');
+  });
+});
+
+describe('TOOLS — propose_skill registration', () => {
+  it('includes propose_skill in the built-in tool list', async () => {
+    const { __testing__ } = await import('./direct-llm-runner.js');
+    const names = __testing__.toolsForTest().map((t: any) => t.function.name);
+    expect(names).toContain('propose_skill');
   });
 });
