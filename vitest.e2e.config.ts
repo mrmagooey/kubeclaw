@@ -6,7 +6,14 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     include: ['e2e/**/*.test.ts', 'e2e/**/*.spec.ts'],
-    exclude: ['node_modules', 'dist', 'e2e/ci', 'e2e/results'],
+    exclude: [
+      'node_modules',
+      'dist',
+      'e2e/ci',
+      'e2e/results',
+      'e2e/.pre-merge-backup/**',
+      'e2e/minikube-live*.test.ts',
+    ],
     testTimeout: 120000, // 2 minutes for e2e tests
     hookTimeout: 120000,
     teardownTimeout: 30000,
