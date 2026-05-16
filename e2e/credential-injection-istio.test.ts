@@ -210,9 +210,21 @@ const hasIstio =
     stdio: 'pipe',
   }).status === 0;
 
-// Same risk if someone runs this on a real Istio cluster that already has a
-// kubeclaw release: the teardown would wipe their install. Skip in that case
-// too — these tests are designed for a fresh ephemeral cluster.
+// The istio suite installs kubeclaw with credentialInjection.mode=istio, which
+// requires an Istio-equipped cluster and a fresh (no pre-existing) release.
+// When the regular e2e suite's global-setup has already installed the kubeclaw
+// release (mode=sidecar or off), we must skip this entire suite — running
+// beforeAll would collide on the hardcoded kubeclaw-credential-broker-
+// tokenreview ClusterRoleBinding, and afterAll would destroy the global-setup
+// release out from under the rest of the test run.
+//
+// This guard is the correct mitigation for the ClusterRoleBinding collision
+// described in the credential-injection per-group test fix:
+//   e2e/credential-injection.test.ts layers on global-setup's kubeclaw release
+//   via `helm upgrade --reuse-values`; this istio suite requires its own fresh
+//   install with Istio mode enabled and therefore runs only in the dedicated
+//   istio CI workflow (e2e-istio.yml), where no global-setup kubeclaw release
+//   pre-exists.
 const hasExistingRelease =
   spawnSync('helm', ['status', 'kubeclaw', '--namespace', NS], {
     stdio: 'pipe',

@@ -15,9 +15,13 @@ function k(args: string): string {
  * Build the orchestrator image from the current worktree so that the
  * credential-broker entrypoint (KUBECLAW_MODE=credential-broker) is present.
  * Uses a distinct non-latest tag so kubelet uses IfNotPresent rather than Always.
+ *
+ * Set KC_E2E_SKIP_BUILD=1 to skip the build when the image is already loaded
+ * into the cluster (non-minikube clusters, CI pre-build, etc.).
  */
 function buildBrokerImage(): string {
   const tag = 'kubeclaw-orchestrator:e2e-injection';
+  if (process.env.KC_E2E_SKIP_BUILD === '1') return tag;
   execSync(
     `eval $(minikube -p kubeclaw docker-env) && docker build -t ${tag} .`,
     { encoding: 'utf8', shell: '/bin/bash', stdio: 'inherit' },
@@ -282,10 +286,13 @@ describe('audit-only mode (mode=sidecar, auditOnly=true)', () => {
 
 // ── Per-group secrets e2e (mode=sidecar) ─────────────────────────────────────
 //
-// This suite installs a separate helm release with a pre-configured credential
-// catalog, deploys a plain-HTTP mock echo upstream, creates per-group K8s
-// Secrets directly (the same format SecretManager writes), and drives probe
-// pods that exercise the full broker → resolver → substitution pipeline.
+// This suite layers on top of the existing kubeclaw helm release that
+// global-setup installs (release=kubeclaw, namespace=kubeclaw, mode=sidecar).
+// It uses `helm upgrade --reuse-values` to add the catalog entries needed for
+// per-group credential tests, deploys a plain-HTTP mock echo upstream into
+// the kubeclaw namespace, creates per-group K8s Secrets directly (the same
+// format SecretManager writes), and drives probe pods that exercise the full
+// broker → resolver → substitution pipeline.
 //
 // Test strategy:
 //   Tests 1–4 and 6–7: probe pod reads its own projected SA token and calls
@@ -301,11 +308,13 @@ describe('audit-only mode (mode=sidecar, auditOnly=true)', () => {
 //     Lua filter returns 503 before the request reaches the upstream.  The
 //     test Envoy ConfigMap connects to the mock over plain HTTP (no TLS).
 //
-// Prerequisites: kubectl pointing at a cluster with minikube docker-env.
+// Prerequisites: kubectl pointing at a cluster; global-setup must have
+//   installed the kubeclaw release in sidecar mode.
 // Guard: the describe block is skipped when kubectl cluster-info fails.
 
-const PG_NS = 'ke2e-pg';
-const PG_RELEASE = 'ke2e-pg';
+// Re-use global-setup's existing release — do NOT install a parallel release.
+const PG_NS = 'kubeclaw';
+const PG_RELEASE = 'kubeclaw';
 
 // Check cluster accessibility once at module evaluation time.
 const hasCluster =
@@ -335,6 +344,10 @@ function kg(args: string): string {
 
 function buildPgBrokerImage(): string {
   const tag = 'kubeclaw-orchestrator:e2e-pg';
+  // Set KC_E2E_SKIP_BUILD=1 to skip the docker build step when the image is
+  // already loaded into the cluster (e.g. CI that pre-builds the image, or
+  // non-minikube clusters where eval $(minikube docker-env) would fail).
+  if (process.env.KC_E2E_SKIP_BUILD === '1') return tag;
   execSync(
     `eval $(minikube -p kubeclaw docker-env) && docker build -t ${tag} .`,
     { encoding: 'utf8', shell: '/bin/bash', stdio: 'inherit' },
@@ -720,51 +733,12 @@ describe.skipIf(!hasCluster)(
   { timeout: 600_000 },
   () => {
     beforeAll(async () => {
-      // Wait for the namespace to be fully gone from any previous run.
-      execSync(
-        `kubectl wait --for=delete ns/${PG_NS} --timeout=60s 2>/dev/null || true`,
-        { stdio: 'pipe' },
-      );
-      execSync(`kubectl create ns ${PG_NS}`, { stdio: 'pipe' });
-
-      // Operator secrets (required by the broker Role's resourceName grant).
-      execSync(
-        `kubectl -n ${PG_NS} create secret generic kubeclaw-secrets ` +
-          `--from-literal=anthropic-api-key=sk-ant-test ` +
-          `--from-literal=openai-api-key=sk-test ` +
-          `--from-literal=openrouter-api-key=or-test ` +
-          `--from-literal=voyage-api-key=v-test ` +
-          `--dry-run=client -o yaml | kubectl apply -f -`,
-        { stdio: 'pipe' },
-      );
-
-      // CA Secret: required so the Envoy sidecar volume mounts don't fail on
-      // missing Secret (even in probes that don't use the sidecar).
-      const caDir = mkdtempSync(path.join(tmpdir(), 'ke2e-pg-ca-'));
-      try {
-        execSync(
-          `openssl req -x509 -nodes -newkey ec -pkeyopt ec_paramgen_curve:P-256 ` +
-            `-keyout ${caDir}/tls.key -out ${caDir}/tls.crt -days 1 ` +
-            `-subj "/CN=kubeclaw-egress-ca-pg-test"`,
-          { stdio: 'pipe' },
-        );
-        execSync(
-          `kubectl -n ${PG_NS} create secret tls kubeclaw-egress-ca-tls ` +
-            `--cert=${caDir}/tls.crt --key=${caDir}/tls.key ` +
-            `--dry-run=client -o yaml | kubectl apply -f -`,
-          { stdio: 'pipe' },
-        );
-        const crtB64 = execSync(`base64 -w0 ${caDir}/tls.crt`, {
-          encoding: 'utf8',
-        }).trim();
-        execSync(
-          `kubectl -n ${PG_NS} patch secret kubeclaw-egress-ca-tls --type=merge ` +
-            `--patch '${JSON.stringify({ data: { 'ca.crt': crtB64 } })}'`,
-          { stdio: 'pipe' },
-        );
-      } finally {
-        rmSync(caDir, { recursive: true, force: true });
-      }
+      // The kubeclaw namespace and release already exist — they were installed by
+      // global-setup.  Do NOT create a new release (that would collide with the
+      // hardcoded kubeclaw-credential-broker-tokenreview ClusterRoleBinding).
+      //
+      // Instead, upgrade the existing release with --reuse-values so that only
+      // the catalog entries are added; everything else is left unchanged.
 
       const image = buildPgBrokerImage();
 
@@ -846,16 +820,15 @@ describe.skipIf(!hasCluster)(
         rmSync(tmpMock, { recursive: true, force: true });
       }
 
-      // ── Helm install ───────────────────────────────────────────────────────
+      // ── Helm upgrade (reuse-values + add catalog) ──────────────────────────
+      // Layer the per-group catalog entries onto the existing release so the
+      // broker serves these hosts.  --reuse-values preserves all existing
+      // values (redis password, secrets, mode, etc.).
       execSync(
         [
-          `helm upgrade --install ${PG_RELEASE} ./helm/kubeclaw -n ${PG_NS}`,
-          `--set namespace=${PG_NS}`,
-          `--set credentialInjection.mode=sidecar`,
-          `--set credentialInjection.internalCA.autoProvision=false`,
+          `helm upgrade ${PG_RELEASE} ./helm/kubeclaw -n ${PG_NS}`,
+          `--reuse-values`,
           `--set credentialInjection.broker.image=${image}`,
-          `--set secrets.existingSecret=kubeclaw-secrets`,
-          `--set orchestrator.admin.enabled=false`,
           // Catalog entry 1: single-field bearer, positions: header+body
           `--set credentialInjection.catalog[0].id=testbearer`,
           `--set credentialInjection.catalog[0].host=${MOCK_SVC}`,
@@ -920,12 +893,31 @@ describe.skipIf(!hasCluster)(
     }, 600_000);
 
     afterAll(() => {
-      execSync(`helm uninstall ${PG_RELEASE} -n ${PG_NS} 2>/dev/null || true`, {
-        stdio: 'pipe',
-      });
-      execSync(`kubectl delete ns ${PG_NS} --wait=false 2>/dev/null || true`, {
-        stdio: 'pipe',
-      });
+      // Do NOT uninstall the kubeclaw release — global-setup owns it and will
+      // handle teardown.  Only clean up the per-group test resources that we
+      // created on top of the existing release.
+
+      // Delete per-group Secrets created by tests.
+      execSync(
+        `kubectl -n ${PG_NS} delete secret -l kubeclaw.io/group-secrets=true --ignore-not-found 2>/dev/null || true`,
+        { stdio: 'pipe' },
+      );
+
+      // Delete the mock upstream Deployment, Service, and ExternalName aliases.
+      execSync(
+        `kubectl -n ${PG_NS} delete deploy mock-upstream --ignore-not-found 2>/dev/null || true`,
+        { stdio: 'pipe' },
+      );
+      execSync(
+        `kubectl -n ${PG_NS} delete svc mock-upstream testbasic testbody --ignore-not-found 2>/dev/null || true`,
+        { stdio: 'pipe' },
+      );
+
+      // Delete the test-only Envoy ConfigMap.
+      execSync(
+        `kubectl -n ${PG_NS} delete configmap kubeclaw-envoy-sidecar-pg --ignore-not-found 2>/dev/null || true`,
+        { stdio: 'pipe' },
+      );
     }, 60_000);
 
     // ── Test 1: Single-field bearer substitution ─────────────────────────────
