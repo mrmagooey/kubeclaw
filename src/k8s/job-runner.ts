@@ -1432,11 +1432,15 @@ export class JobRunner {
     const jobName = `kubeclaw-stool-${agentSuffix}-${safeTool}`;
 
     const timeoutSeconds = Math.floor(spec.timeout / 1000);
-    // Sidecar tool pods (file-bridge) use the 'adapter' ACL user.
+    // Sidecar tool pods use the 'tool-server' ACL user, which has XREAD on
+    // kubeclaw:toolcalls:* and XADD on kubeclaw:toolresults:* — the two
+    // operations the bridge performs.  The 'adapter' user (previously used
+    // here) only has read-only access to kubeclaw:input:* and cannot read
+    // toolcalls or write toolresults, causing the bridge to fail silently.
     const redisUrl = buildRedisUrl(
       process.env.REDIS_URL || 'redis://kubeclaw-redis:6379',
-      'adapter',
-      REDIS_ADAPTER_PASSWORD || process.env.REDIS_ADMIN_PASSWORD,
+      'tool-server',
+      REDIS_TOOL_SERVER_PASSWORD || process.env.REDIS_ADMIN_PASSWORD,
     );
 
     const bridgeEnv = [
