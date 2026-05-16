@@ -445,6 +445,203 @@ Do not set `ambientMode: true` — it is accepted by the chart but has no effect
 | Workload pod missing `istio-proxy` container | Namespace label not applied | Check `kubectl get namespace kubeclaw -o yaml`; re-run `helm upgrade` |
 | Broker shows `no credentials: both authorization and xfcc are absent` | Traffic not going through Istio proxy | Verify iptables redirection: `kubectl exec <pod> -c istio-proxy -- pilot-agent request GET /config_dump` |
 
+## Per-group user-supplied credentials
+
+### Overview
+
+By default the credential injection system serves only the four operator-provisioned API keys (Anthropic, OpenAI, OpenRouter, Voyage) baked into `kubeclaw-secrets` via Helm values. End users have no way to bring their own credentials into the running system without operator intervention.
+
+The per-group credential feature closes that gap. End users register API credentials for their group via the `/secret` chat slash command. The channel-runner intercepts the command before any LLM call, forwards the credential to the orchestrator over Redis IPC, and the orchestrator writes a high-entropy placeholder to a per-group Kubernetes Secret. Tool-job pods receive the placeholder as an environment variable — never the cleartext value. The credential broker resolves the placeholder to the real value at request time and signals the Envoy Lua filter to perform the byte-level substitution before the request reaches the upstream API. The workload never holds cleartext.
+
+```
+End user   /secret add jenkins user=alice password=hunter2
+               │  (channel-runner intercepts; LLM never sees this line)
+               ▼
+          Orchestrator
+               ├── validates against catalog
+               ├── generates placeholder per field: KC_PH_u_<64 hex chars>, KC_PH_p_<64 hex chars>
+               └── writes kubeclaw-group-secrets-<group> K8s Secret
+                                  │
+                         K8s Secret informer fires
+                                  ▼
+          Credential broker — substitution-map cache updated:
+               (group, jenkins.example.com, KC_PH_u_…) → "alice"
+               (group, jenkins.example.com, KC_PH_p_…) → "hunter2"
+─────────────────────────────────────────────────────────────────────
+Tool-job pod (next request):
+  envs:  JENKINS_USER=KC_PH_u_<…>  JENKINS_PASSWORD=KC_PH_p_<…>  (placeholders)
+  annotation: kubeclaw.io/owner-group: family
+               │
+               ▼ workload builds HTTP request using placeholder envs
+  Envoy sidecar / Istio egress gateway
+               │ ext_authz POST /authz → broker resolves substitution map
+               │ Lua filter substitutes placeholders with real values in headers + body
+               └──► jenkins.example.com receives Authorization: Basic alice:hunter2
+```
+
+The cleartext credential traverses the channel-runner heap for ~milliseconds (while the IPC call is in-flight) and is zeroed in a `finally` block. It is never present in any log, any LLM context, or any tool-job environment.
+
+### Catalog: operator-curated destinations
+
+Operators publish the set of destinations end users may register credentials for via `credentialInjection.catalog` in the Helm values file. Each entry is rendered into the `kubeclaw-credential-broker-config` ConfigMap alongside the existing `mappings:` section, and is hot-reloaded by both the broker and orchestrator via ConfigMap informers — no restart required.
+
+Full catalog reference: `helm/kubeclaw/values.yaml` (the `credentialInjection.catalog` key). The rendered ConfigMap template is at [`helm/kubeclaw/templates/credential-broker-config.yaml`](../helm/kubeclaw/templates/credential-broker-config.yaml).
+
+**Example entries:**
+
+```yaml
+credentialInjection:
+  catalog:
+    # Single-field bearer token (e.g. Replicate)
+    - id: replicate
+      host: api.replicate.com
+      upstreamPort: 443
+      credentialFields:
+        - { name: token, envVar: REPLICATE_API_TOKEN }
+      baseUrlEnvs:
+        REPLICATE_API_URL: "http://api.replicate.com"
+      allowOperatorFallback: false
+      allowedPositions: [header, body]
+      apiKeyShape: { prefix: "r8_", minLength: 30 }
+
+    # Multi-field Basic auth (e.g. Jenkins)
+    - id: jenkins
+      host: jenkins.example.com
+      upstreamPort: 8080
+      credentialFields:
+        - { name: user,     envVar: JENKINS_USER }
+        - { name: password, envVar: JENKINS_PASSWORD }
+      baseUrlEnvs:
+        JENKINS_URL: "http://jenkins.example.com"
+      allowOperatorFallback: false
+      allowedPositions: [header, body]
+
+    # Cookie/custom-header scheme with operator fallback
+    - id: internal-api
+      host: api.internal.example.com
+      upstreamPort: 443
+      credentialFields:
+        - { name: token, envVar: INTERNAL_API_TOKEN }
+      baseUrlEnvs:
+        INTERNAL_API_BASE_URL: "http://api.internal.example.com"
+      allowOperatorFallback: true   # must be single-field; kubeclaw-secrets["internal-api"] used when no per-group key
+      allowedPositions: [header]    # token goes in a custom header; body substitution not needed
+      apiKeyShape: { prefix: "iat_", minLength: 40 }
+```
+
+**Catalog field reference:**
+
+| Field | Required | Description |
+|---|---|---|
+| `id` | Yes | Unique identifier; lowercase alphanumeric + hyphens. User-visible in `/secret` commands. |
+| `host` | Yes | Exact destination hostname matched at the broker. |
+| `upstreamPort` | No (default 443) | TLS origination port for mode=sidecar and DestinationRule in mode=istio. |
+| `credentialFields` | Yes | One or more `{ name, envVar }` pairs. `name` is the key users supply in `/secret add`; `envVar` is the env variable stamped on tool-job pods. |
+| `baseUrlEnvs` | No | Env vars stamped unconditionally on tool-job pods pointing the SDK at the right base URL (always `http://` in mode=istio; Envoy handles TLS). |
+| `allowOperatorFallback` | No (default false) | Single-field entries only. When true and no per-group key is registered, the broker substitutes the operator's value from `kubeclaw-secrets.data["<id>"]`. |
+| `allowedPositions` | No (default `[header, body]`) | Restricts where the Lua filter may substitute: `header`, `body`, or both. |
+| `apiKeyShape` | No | `{ prefix, minLength }` — teaches the channel-runner's backstop regex to redact credential-shaped strings before any LLM call. |
+
+`allowOperatorFallback` requires exactly one `credentialField` (enforced at schema parse time). Multi-field entries cannot use fallback.
+
+### Slash command UX
+
+The `/secret` command is intercepted by the channel-runner strictly upstream of any LLM call. The user's raw line is removed from transcript memory; a system event is inserted describing the registration (catalog ID, host, env var names — never the value). The assistant's reply is a templated string generated by the channel-runner; the LLM is not involved.
+
+| Command | Description |
+|---|---|
+| `/secret add <id> <value>` | Single-field shorthand. `<value>` is the credential. |
+| `/secret add <id> <field>=<value> [<field>=<value> ...]` | Multi-field form. All required fields must be present; missing fields are rejected with a list of expected names. |
+| `/secret remove <id>` | Remove the named credential. Pods created after this lose the placeholder envs; in-flight pods using stale placeholders fail closed (upstream rejects the literal placeholder text). |
+| `/secret list` | List registered catalog IDs for the current group with `registeredAt` timestamps. Never returns values. |
+| `/secret catalog` | List the full operator-curated catalog: destinations, field names, and whether a credential is registered. |
+| `/secret help` | Print usage. |
+
+**Backstop:** independent of the parser, every inbound user message is scanned for strings matching known API-key shapes (catalog-driven via `apiKeyShape`, plus built-in patterns for common providers). Matches are replaced with `[possible secret redacted]` before any LLM call. The backstop is intentionally conservative.
+
+**Rejection errors:** unknown catalog ID, missing required field, empty value, value exceeding 4 KB, value containing control characters, or IPC timeout (5 s) — each produces a user-visible error message; cleartext is zeroed on every code path.
+
+### Placeholder and substitution mechanism
+
+At `/secret add` time, the orchestrator generates one high-entropy placeholder per credential field using `crypto.randomBytes(32)` (256-bit entropy, hex-encoded):
+
+```
+KC_PH_<short-field-token>_<64 hex chars>
+```
+
+The `KC_PH_` prefix makes placeholders greppable in pod env dumps (`kubectl exec <pod> -- env | grep KC_PH_`). The 256-bit body makes accidental collision with any real request content vanishingly unlikely.
+
+Placeholders are stored in a per-group Kubernetes Secret named `kubeclaw-group-secrets-<group>`, labelled `kubeclaw.io/group-secrets=true`. The `data` map key is the catalog ID; the value is a JSON blob:
+
+```json
+{
+  "fields": {
+    "user":     { "value": "alice",   "placeholder": "KC_PH_u_<64 hex chars>" },
+    "password": { "value": "hunter2", "placeholder": "KC_PH_p_<64 hex chars>" }
+  },
+  "registeredAt": "2026-05-16T14:22:11Z"
+}
+```
+
+Tool-job pods are stamped with the placeholder strings (not the real values) as environment variables, plus `baseUrlEnvs` from the catalog entry. The orchestrator also stamps the annotation `kubeclaw.io/owner-group: <group>` on every tool-job pod; the broker uses this to derive the group at request time.
+
+**At request time**, Envoy calls the broker via `ext_authz POST /authz`. The broker:
+
+1. Resolves the caller's owner-group from the pod annotation (sidecar: via `TokenReview` extras → pod UID → annotation lookup; istio: via source IP → pod-informer → annotation, with A1 mitigations — see [SECURITY.md](SECURITY.md#per-group-credential-injection-threats)).
+2. Looks up the host in the catalog; rejects unknown destinations.
+3. Loads the per-group Secret from its informer cache and builds a substitution map.
+4. Returns HTTP 200 with two response headers:
+   - `x-kubeclaw-substitutions: <placeholder>=<base64-value>;<placeholder>=<base64-value>;...`
+   - `x-kubeclaw-policy: positions=header,body;per=10;total=50`
+
+The Lua filter colocated with Envoy reads these two headers, decodes each base64 value, performs byte-level string substitution in request headers and body (within the position and counter limits declared by the policy header), and strips both headers before forwarding to the upstream. The upstream receives the real credential in whatever position the workload's SDK chose.
+
+The `per=10` limit means any single placeholder may appear at most 10 times in one request; `total=50` is the ceiling across all placeholders. Requests exceeding these limits are rejected with `503 substitution_limit_exceeded`. The limits guard against flood-write exfil patterns; legitimate requests rarely need more than a handful of substitutions.
+
+### Lifecycle
+
+- **Add:** `/secret add <id> ...` generates new placeholders and writes (or overwrites) the per-group Secret entry. The broker's informer fires within ~100–500 ms; subsequent tool-job requests use the new credential. In-flight tool-jobs already spawned retain the old placeholder envs; if the old credential was removed first, their requests fail closed.
+- **Remove:** `/secret remove <id>` patches the Secret to delete the catalog entry key. If it was the last key, the Secret is deleted. In-flight pods carry stale placeholder envs; the broker no longer holds the matching substitution — requests pass the literal placeholder to the upstream, which rejects it (fail-closed). The error is surfaced to the LLM as a tool failure with a `no_credential` hint.
+- **Rotate:** There is no `/secret rotate`. Rotation is `/secret remove` followed by `/secret add`. Any in-flight tool-job using the old credential fails closed for the interstitial period.
+- **Group deletion:** the orchestrator's group-deletion path deletes `kubeclaw-group-secrets-<group>`; the broker informer evicts the entries.
+
+### Operator fallback
+
+For catalog entries with `allowOperatorFallback: true` (single-field entries only), the operator may place a default credential in `kubeclaw-secrets.data["<catalogId>"]` (the same Secret that holds the built-in LLM keys). Tool-job pods belonging to groups that have *not* registered their own credential are stamped with the stable sentinel `KC_PH_FALLBACK_<catalogId>` as the env value. The broker maps this sentinel to the operator's value at request time. The source is recorded in the audit log as `keySource: operatorFallback`.
+
+Groups that have registered their own credential always use it in preference to the operator fallback; the operator value is not visible to them.
+
+For entries with `allowOperatorFallback: false`, unregistered groups receive the literal string `injected-by-broker` as the env value. The broker does not substitute this literal; the upstream rejects the request. The LLM sees a `no_credential` error and can prompt the user to run `/secret add`.
+
+### `list_credentials` tool
+
+A `list_credentials` tool is registered in the channel LLM's tool list at startup. It takes no arguments and returns metadata only:
+
+```json
+[
+  {
+    "catalogId": "replicate",
+    "host": "api.replicate.com",
+    "fields": ["token"],
+    "hasCredential": true,
+    "registeredAt": "2026-05-16T14:22:11Z"
+  },
+  {
+    "catalogId": "jenkins",
+    "host": "jenkins.example.com",
+    "fields": ["user", "password"],
+    "hasCredential": false,
+    "registeredAt": null
+  }
+]
+```
+
+No values, hashes, previews, or last-4 digits are ever present in the return shape. The tool description guides the LLM: "Use when user asks what's available, when a tool call fails with `no_credential`, or when you're unsure whether a destination is configured."
+
+### Per-turn system block
+
+On every conversation turn, the channel-runner prepends a system message summarising the operator-curated catalog and which entries have credentials registered for the current group. The block is rebuilt fresh each turn so that credentials added within the same conversation are reflected immediately. This gives the LLM up-front context without requiring a `list_credentials` call.
+
 ## Cross-references
 
 - Implementation plan: `docs/superpowers/plans/2026-05-02-credential-injection.md`
