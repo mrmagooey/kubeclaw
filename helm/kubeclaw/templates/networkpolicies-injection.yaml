@@ -1,4 +1,4 @@
-{{- if eq .Values.credentialInjection.mode "sidecar" -}}
+{{- if and .Values.networkPolicy.enabled (eq .Values.credentialInjection.mode "sidecar") -}}
 # When credential injection is in sidecar mode, workload pods (tool-pod,
 # sidecar-tool, channel, capability) are restricted to:
 #   - DNS (UDP 53)
