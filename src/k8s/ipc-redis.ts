@@ -7,6 +7,8 @@ import { Redis } from 'ioredis';
 
 import { SIDECAR_FILE_POLL_INTERVAL, TIMEZONE } from '../config.js';
 import { AvailableGroup } from '../runtime/types.js';
+import type { CatalogInformer } from './catalog.js';
+import type { SecretManager } from './secret-manager.js';
 import {
   createTask,
   deleteTask,
@@ -57,6 +59,22 @@ export interface IpcDeps {
 
 let ipcWatcherRunning = false;
 let subscribers: Redis[] = [];
+
+// Secret management deps — set by registerSecretDeps() called from index.ts
+let _secretManager: SecretManager | null = null;
+let _catalogInformer: CatalogInformer | null = null;
+
+/**
+ * Register secret-management dependencies used by the secret.* and catalog.*
+ * IPC handlers. Must be called before startTaskRequestWatcher().
+ */
+export function registerSecretDeps(
+  secretManager: SecretManager,
+  catalogInformer: CatalogInformer,
+): void {
+  _secretManager = secretManager;
+  _catalogInformer = catalogInformer;
+}
 
 function channelPvcNames(channel: string): {
   groupsPvc: string;
@@ -1345,6 +1363,75 @@ export async function startTaskRequestWatcher(
             } catch (err) {
               logger.error({ err }, 'Failed to list capabilities');
             }
+          } else if (type === 'secret.add') {
+            const { group, catalogId, fields: fieldsJson, resultStream } = obj;
+            if (!group || !catalogId || !fieldsJson || !resultStream) continue;
+            let response: string;
+            try {
+              const fields = JSON.parse(fieldsJson) as Record<string, string>;
+              if (!_secretManager) throw new Error('SecretManager not initialised');
+              await _secretManager.setGroupSecret(group, catalogId, fields);
+              logger.info(
+                { group, catalogId },
+                'secret.add: credential stored via IPC',
+              );
+              response = JSON.stringify({ ok: true });
+            } catch (err) {
+              const error =
+                err instanceof Error ? err.message : String(err);
+              logger.warn({ group, catalogId, error }, 'secret.add failed');
+              response = JSON.stringify({ ok: false, error });
+            }
+            await redis.xadd(resultStream, '*', 'result', response);
+          } else if (type === 'secret.remove') {
+            const { group, catalogId, resultStream } = obj;
+            if (!group || !catalogId || !resultStream) continue;
+            let response: string;
+            try {
+              if (!_secretManager) throw new Error('SecretManager not initialised');
+              await _secretManager.deleteGroupSecret(group, catalogId);
+              logger.info(
+                { group, catalogId },
+                'secret.remove: credential deleted via IPC',
+              );
+              response = JSON.stringify({ ok: true });
+            } catch (err) {
+              const error =
+                err instanceof Error ? err.message : String(err);
+              logger.warn({ group, catalogId, error }, 'secret.remove failed');
+              response = JSON.stringify({ ok: false, error });
+            }
+            await redis.xadd(resultStream, '*', 'result', response);
+          } else if (type === 'secret.list') {
+            const { group, resultStream } = obj;
+            if (!group || !resultStream) continue;
+            let response: string;
+            try {
+              if (!_secretManager) throw new Error('SecretManager not initialised');
+              const entries = await _secretManager.listGroupSecrets(group);
+              response = JSON.stringify({ ok: true, result: entries });
+            } catch (err) {
+              const error =
+                err instanceof Error ? err.message : String(err);
+              logger.warn({ group, error }, 'secret.list failed');
+              response = JSON.stringify({ ok: false, error });
+            }
+            await redis.xadd(resultStream, '*', 'result', response);
+          } else if (type === 'catalog.list') {
+            const { resultStream } = obj;
+            if (!resultStream) continue;
+            let response: string;
+            try {
+              if (!_catalogInformer) throw new Error('CatalogInformer not initialised');
+              const catalog = _catalogInformer.getCatalog();
+              response = JSON.stringify({ ok: true, result: catalog });
+            } catch (err) {
+              const error =
+                err instanceof Error ? err.message : String(err);
+              logger.warn({ error }, 'catalog.list failed');
+              response = JSON.stringify({ ok: false, error });
+            }
+            await redis.xadd(resultStream, '*', 'result', response);
           }
         }
       }
