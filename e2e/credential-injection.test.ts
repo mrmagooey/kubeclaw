@@ -22,8 +22,11 @@ function k(args: string): string {
 function buildBrokerImage(): string {
   const tag = 'kubeclaw-orchestrator:e2e-injection';
   if (process.env.KC_E2E_SKIP_BUILD === '1') return tag;
+  const profileFlag = process.env.KUBECLAW_MINIKUBE_PROFILE
+    ? `-p ${process.env.KUBECLAW_MINIKUBE_PROFILE}`
+    : '';
   execSync(
-    `eval $(minikube -p kubeclaw docker-env) && docker build -t ${tag} .`,
+    `eval $(minikube ${profileFlag} docker-env) && docker build -t ${tag} .`,
     { encoding: 'utf8', shell: '/bin/bash', stdio: 'inherit' },
   );
   return tag;
@@ -213,6 +216,7 @@ describe('audit-only mode (mode=sidecar, auditOnly=true)', () => {
     writeFileSync(
       valuesFile,
       [
+        `namespace: ${NS}`,
         'credentialInjection:',
         '  mode: sidecar',
         '  auditOnly: true',
@@ -348,8 +352,11 @@ function buildPgBrokerImage(): string {
   // already loaded into the cluster (e.g. CI that pre-builds the image, or
   // non-minikube clusters where eval $(minikube docker-env) would fail).
   if (process.env.KC_E2E_SKIP_BUILD === '1') return tag;
+  const profileFlag = process.env.KUBECLAW_MINIKUBE_PROFILE
+    ? `-p ${process.env.KUBECLAW_MINIKUBE_PROFILE}`
+    : '';
   execSync(
-    `eval $(minikube -p kubeclaw docker-env) && docker build -t ${tag} .`,
+    `eval $(minikube ${profileFlag} docker-env) && docker build -t ${tag} .`,
     { encoding: 'utf8', shell: '/bin/bash', stdio: 'inherit' },
   );
   return tag;
