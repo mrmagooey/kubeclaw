@@ -35,6 +35,14 @@ describe('skill-format', () => {
       const raw = `---\nname: x\ndescription: x\ncreated: 2026-05-16\nsource: manual\n---\n\n${body}`;
       expect(parseSkill(raw).body.trimEnd()).toBe(body.trimEnd());
     });
+
+    it('parses file that ends without trailing newline', () => {
+      const raw =
+        '---\nname: foo\ndescription: bar\ncreated: 2026-05-16\nsource: manual\n---';
+      const parsed = parseSkill(raw);
+      expect(parsed.frontmatter.name).toBe('foo');
+      expect(parsed.body).toBe('');
+    });
   });
 
   describe('serializeSkill', () => {

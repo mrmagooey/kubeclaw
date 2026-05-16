@@ -10,7 +10,7 @@ export interface SkillFile {
   body: string;
 }
 
-const FRONTMATTER_RE = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/;
+const FRONTMATTER_RE = /^---\n([\s\S]*?)\n---\n?([\s\S]*)$/;
 
 export function parseSkill(raw: string): SkillFile {
   const m = raw.match(FRONTMATTER_RE);
