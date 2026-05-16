@@ -10,6 +10,7 @@ import {
   ContainerSecurityContext,
   ToolSpec,
 } from '../types.js';
+import type { CatalogEntry } from '../credential-broker/resolver.js';
 
 export interface JobInput extends ContainerInput {
   jobId?: string;
@@ -56,6 +57,12 @@ export interface ToolJobSpec {
   // PVC override — used when tool job runs on behalf of a channel pod
   groupsPvc?: string; // defaults to 'kubeclaw-groups'
   sessionsPvc?: string; // defaults to 'kubeclaw-sessions'
+  // Per-group credential injection (Task 11).
+  // When present, the job manifest stamps catalog-driven envs and owner-group annotation.
+  ownerGroup?: string; // group name for kubeclaw.io/owner-group annotation
+  catalogEntries?: CatalogEntry[]; // catalog snapshot at pod-create time
+  // placeholders: { [catalogId]: { [fieldName]: placeholderString } }
+  groupPlaceholders?: Record<string, Record<string, string>>;
 }
 
 export interface SidecarJobSpec extends ToolJobSpec {

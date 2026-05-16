@@ -1589,6 +1589,103 @@ describe('JobRunner', () => {
       expect(openai?.valueFrom?.secretKeyRef).toBeDefined();
       expect(openai?.value).toBeUndefined();
     });
+
+    // --- Task 11: catalog-driven env + annotation tests ---
+
+    const replicateCatalogEntry = {
+      id: 'replicate',
+      host: 'api.replicate.com',
+      upstreamPort: 443,
+      credentialFields: [{ name: 'token', envVar: 'REPLICATE_API_TOKEN' }],
+      baseUrlEnvs: { REPLICATE_API_URL: 'http://api.replicate.com' },
+      allowOperatorFallback: false,
+      allowedPositions: ['header' as const, 'body' as const],
+    };
+
+    const jenkinsCatalogEntry = {
+      id: 'jenkins',
+      host: 'jenkins.example.com',
+      upstreamPort: 8080,
+      credentialFields: [
+        { name: 'user', envVar: 'JENKINS_USER' },
+        { name: 'password', envVar: 'JENKINS_PASSWORD' },
+      ],
+      baseUrlEnvs: { JENKINS_URL: 'http://jenkins.example.com' },
+      allowOperatorFallback: false,
+      allowedPositions: ['header' as const, 'body' as const],
+    };
+
+    it('stamps kubeclaw.io/owner-group annotation on pod template', () => {
+      const spec = {
+        ...credInjectionSpec,
+        ownerGroup: 'family',
+      };
+      const manifest = jobRunner.generateJobManifest(spec);
+      const annotations = manifest.spec?.template?.metadata?.annotations;
+      expect(annotations?.['kubeclaw.io/owner-group']).toBe('family');
+    });
+
+    it('stamps per-field placeholder envs when group has registered creds', () => {
+      const placeholder = 'KC_PH_token_' + 'a'.repeat(64);
+      const spec = {
+        ...credInjectionSpec,
+        ownerGroup: 'family',
+        catalogEntries: [replicateCatalogEntry],
+        groupPlaceholders: {
+          replicate: { token: placeholder },
+        },
+      };
+      const manifest = jobRunner.generateJobManifest(spec);
+      const env = manifest.spec?.template?.spec?.containers?.[0]?.env ?? [];
+      const tokenEnv = env.find((e: any) => e.name === 'REPLICATE_API_TOKEN');
+      expect(tokenEnv?.value).toBe(placeholder);
+      expect(tokenEnv?.value).toMatch(/^KC_PH_token_[0-9a-f]{64}$/);
+    });
+
+    it('stamps KC_PH_FALLBACK_<id> when entry allows fallback and group has no registered cred', () => {
+      const fallbackEntry = {
+        ...replicateCatalogEntry,
+        allowOperatorFallback: true,
+      };
+      const spec = {
+        ...credInjectionSpec,
+        ownerGroup: 'family',
+        catalogEntries: [fallbackEntry],
+        groupPlaceholders: {}, // no registered cred for replicate
+      };
+      const manifest = jobRunner.generateJobManifest(spec);
+      const env = manifest.spec?.template?.spec?.containers?.[0]?.env ?? [];
+      const tokenEnv = env.find((e: any) => e.name === 'REPLICATE_API_TOKEN');
+      expect(tokenEnv?.value).toBe('KC_PH_FALLBACK_replicate');
+    });
+
+    it('stamps "injected-by-broker" when entry disallows fallback and no registered cred', () => {
+      const spec = {
+        ...credInjectionSpec,
+        ownerGroup: 'family',
+        catalogEntries: [replicateCatalogEntry], // allowOperatorFallback: false
+        groupPlaceholders: {}, // no registered cred
+      };
+      const manifest = jobRunner.generateJobManifest(spec);
+      const env = manifest.spec?.template?.spec?.containers?.[0]?.env ?? [];
+      const tokenEnv = env.find((e: any) => e.name === 'REPLICATE_API_TOKEN');
+      expect(tokenEnv?.value).toBe('injected-by-broker');
+    });
+
+    it('stamps baseUrlEnvs unconditionally per catalog entry', () => {
+      const spec = {
+        ...credInjectionSpec,
+        ownerGroup: 'family',
+        catalogEntries: [jenkinsCatalogEntry],
+        groupPlaceholders: {
+          jenkins: { user: 'KC_PH_user_' + 'b'.repeat(64), password: 'KC_PH_password_' + 'c'.repeat(64) },
+        },
+      };
+      const manifest = jobRunner.generateJobManifest(spec);
+      const env = manifest.spec?.template?.spec?.containers?.[0]?.env ?? [];
+      const urlEnv = env.find((e: any) => e.name === 'JENKINS_URL');
+      expect(urlEnv?.value).toBe('http://jenkins.example.com');
+    });
   });
 
   describe('generateJobManifest: credential injection env stripping', () => {
