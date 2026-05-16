@@ -59,6 +59,7 @@ export type ResolveResult =
       substitutions: Array<{ placeholder: string; value: string }>;
       keySource: 'groupSecret' | 'operatorFallback';
       catalogId: string;
+      allowedPositions: Array<'header' | 'body'>;
     }
   | { status: 'no_credential'; catalogId: string }
   | { status: 'unknown_destination' }
@@ -107,7 +108,13 @@ export class Resolver {
         if (!f) continue; // schema mismatch — fail-closed at request time
         subs.push({ placeholder: f.placeholder, value: f.value });
       }
-      return { status: 'ok', substitutions: subs, keySource: 'groupSecret', catalogId: entry.id };
+      return {
+        status: 'ok',
+        substitutions: subs,
+        keySource: 'groupSecret',
+        catalogId: entry.id,
+        allowedPositions: entry.allowedPositions,
+      };
     }
     return { status: 'no_credential', catalogId: entry.id };
   }
@@ -125,6 +132,7 @@ export class Resolver {
       substitutions: [{ placeholder: `KC_PH_FALLBACK_${entry.id}`, value: opVal }],
       keySource: 'operatorFallback',
       catalogId: entry.id,
+      allowedPositions: entry.allowedPositions,
     };
   }
 }
