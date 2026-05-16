@@ -958,7 +958,7 @@ export class DirectLLMRunner implements MessageRunner {
                 args,
               );
             } else if (call.function.name === 'propose_skill') {
-              const proposeArgs = JSON.parse(call.function.arguments) as Parameters<typeof proposeSkill>[2];
+              const proposeArgs = args as unknown as Parameters<typeof proposeSkill>[2];
               const dupCheck: DupCheckFn = async (a, existing) => {
                 if (existing.length === 0) return { duplicate: false };
                 const sys = 'You judge whether a proposed skill is a duplicate of any existing skill. Reply JSON: {"duplicate": boolean, "existing": "<name>"|null, "suggestion": "<short>"|null}';
