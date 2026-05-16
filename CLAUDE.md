@@ -19,7 +19,17 @@ Four-tier pod architecture: **Orchestrator** (high priv, only K8s API access, Re
 | `src/config.ts`                     | Trigger pattern, paths, intervals                          |
 | `src/task-scheduler.ts`             | Runs scheduled tasks                                       |
 | `src/db.ts`                         | SQLite operations                                          |
+| `src/group-queue.ts`                | Per-group message queue with global concurrency limit       |
+| `src/specialists.ts`                | Loads `agents.json` specialist defs for agent-swarm support |
+| `src/credential-broker/`            | Stamps `Authorization` headers via Envoy `ext_authz`; orchestrator-side secret holder |
+| `src/credential-injection/`         | Mode flag (`sidecar`/`istio`/`off`) + Envoy sidecar spec for tool-job pods |
 | `groups/{name}/CLAUDE.md`           | Per-group memory (isolated)                                |
+| `src/runtime/skill-curator.ts`      | 24h auto-harvester: scans `conversation_history`, proposes skill candidates |
+| `src/runtime/skill-store.ts`        | Skill filesystem store: accepted / `_candidates/` / `_archive/` |
+| `src/runtime/skill-loader.ts`       | Injects accepted skills into system prompt (cap 20/group)  |
+| `src/runtime/tools/propose-skill.ts`| On-demand `propose_skill` tool the channel LLM can call mid-turn |
+| `src/runtime/skills-commands.ts`    | `/skills review`/`accept`/`reject` chat commands           |
+| `groups/{name}/skills/{slug}.md`    | Accepted learned skills (git-trackable markdown)           |
 
 ## Skills
 

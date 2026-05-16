@@ -24,7 +24,7 @@ Tell it in plain English: `"set up Telegram"` — it will ask for your credentia
 
 ## Philosophy
 
-**Secure by isolation.** Four-tier pod model with clear privilege separation. Only the orchestrator has K8s API access. Channels, capabilities, and tool jobs run in isolated pods and can only see what's explicitly mounted.
+**Secure by isolation.** Four-tier pod model with clear privilege separation. Only the orchestrator has K8s API access. Channels, capabilities, and tool jobs run in isolated pods and can only see what's explicitly mounted. Tool jobs additionally never see LLM or third-party API keys directly — a [credential broker](docs/CREDENTIAL_INJECTION.md) holds the secrets and stamps outbound requests via an Envoy sidecar (or Istio egress gateway), so a prompt-injection attack can't exfiltrate the key value itself.
 
 **Operator-installable.** Channels are first-class TypeScript modules in `src/channels/`. Operators install the ones they want via the orchestrator's admin shell — see [docs/INSTALLING_A_CHANNEL.md](docs/INSTALLING_A_CHANNEL.md). Capabilities (MCP servers, model servers, RAG) are configured via Helm values. Source-code customizations (new channel TYPES, behavior tweaks) use the `/customize` Claude Code skill.
 
@@ -37,7 +37,8 @@ Tell it in plain English: `"set up Telegram"` — it will ask for your credentia
 - **Main channel** - Your private channel (self-chat) for admin control; every group is completely isolated
 - **Scheduled tasks** - Recurring jobs that run Claude and can message you back
 - **Web access** - Search and fetch content from the Web
-- **Agent Swarms** - Spin up teams of specialized agents that collaborate on complex tasks. KubeClaw is the first personal AI assistant to support agent swarms.
+- **Agent Swarms** - Spin up teams of specialized agents that collaborate on complex tasks. Specialists are declared per-group in `groups/{group}/agents.json` (name, prompt, optional `@-trigger` aliases, optional LLM provider override, optional memory isolation). See [docs/SPECIALISTS.md](docs/SPECIALISTS.md) for the schema and setup. KubeClaw is the first personal AI assistant to support agent swarms.
+- **Learned skills (skill harvest)** - The assistant proposes new skills from your conversations — either on-demand mid-chat (`propose_skill`) or via a nightly curator that reviews the last 24h of transcripts. Every proposal is staged as a candidate for you to review with `/skills review` and `/skills accept` / `/skills reject`. Accepted skills are plain markdown at `groups/{group}/skills/{slug}.md`, git-trackable, and auto-injected into the system prompt on every future turn. See [docs/superpowers/specs/2026-05-16-skill-harvest-design.md](docs/superpowers/specs/2026-05-16-skill-harvest-design.md).
 - **Multi-provider LLM support** - Route groups to any of 20+ providers including Anthropic, OpenAI, Google, Groq, Ollama, OpenRouter, and more. Mix and match models per group for cost or capability.
 - **Optional integrations** - Gmail and more via the admin shell installer
 
