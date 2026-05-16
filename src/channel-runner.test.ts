@@ -601,3 +601,113 @@ describe('per-turn credential system-prompt block', () => {
     expect(block).toContain('/secret add jenkins');
   });
 });
+
+// ── Integration: /secret add persists system event + assistant turn to transcript ─
+
+describe('/secret add — transcript persistence integration', () => {
+  it('persists systemEvent (user role) and assistantTurn (assistant role) after /secret add succeeds', async () => {
+    // Arrange: a mock appendConversationMessage to capture persistence calls
+    const appendCalls: Array<{ groupFolder: string; role: string; content: string }> = [];
+    const mockAppend = vi.fn(
+      (groupFolder: string, role: 'user' | 'assistant', content: string) => {
+        appendCalls.push({ groupFolder, role, content });
+      },
+    );
+
+    // Exercise handleSecretCommand with a /secret add payload — this is what
+    // processGroupMessages calls to obtain the result.
+    const ipc = vi.fn(async (): Promise<IpcResponse> => ({ ok: true }));
+    const result = await handleSecretCommand(
+      'family',
+      '/secret add replicate r8_aaaabbbbccccdddd1234',
+      makeDeps(ipc as any),
+    );
+
+    // Simulate the persistence wiring in processGroupMessages: after
+    // handleSecretCommand returns, the caller stores systemEvent + assistantTurn.
+    if (result.systemEvent) {
+      mockAppend('family', 'user', result.systemEvent);
+    }
+    if (result.assistantTurn) {
+      mockAppend('family', 'assistant', result.assistantTurn);
+    }
+
+    // Assert: appendConversationMessage was called twice (system event + assistant turn)
+    expect(mockAppend).toHaveBeenCalledTimes(2);
+
+    const [systemCall, assistantCall] = appendCalls;
+
+    // System event stored as 'user' role so LLM sees it in conversation history
+    expect(systemCall.role).toBe('user');
+    expect(systemCall.groupFolder).toBe('family');
+    // System event contains catalog metadata (catalogId, host, env var) but NOT the raw credential value
+    expect(systemCall.content).toContain('[SYSTEM]');
+    expect(systemCall.content).toContain('replicate');
+    expect(systemCall.content).toContain('api.replicate.com');
+    expect(systemCall.content).toContain('REPLICATE_API_TOKEN');
+    expect(systemCall.content).not.toContain('r8_aaaabbbbccccdddd1234');
+
+    // Assistant turn stored as 'assistant' role
+    expect(assistantCall.role).toBe('assistant');
+    expect(assistantCall.groupFolder).toBe('family');
+    expect(assistantCall.content).toMatch(/replicate/i);
+
+    // The raw /secret add line was NOT passed to appendConversationMessage
+    const allContents = appendCalls.map((c) => c.content);
+    expect(allContents.every((c) => !c.includes('/secret add'))).toBe(true);
+    expect(allContents.every((c) => !c.includes('r8_aaaabbbbccccdddd1234'))).toBe(true);
+  });
+
+  it('persists systemEvent and assistantTurn after /secret remove succeeds', async () => {
+    const appendCalls: Array<{ groupFolder: string; role: string; content: string }> = [];
+    const mockAppend = vi.fn(
+      (groupFolder: string, role: 'user' | 'assistant', content: string) => {
+        appendCalls.push({ groupFolder, role, content });
+      },
+    );
+
+    const ipc = vi.fn(async (): Promise<IpcResponse> => ({ ok: true }));
+    const result = await handleSecretCommand(
+      'family',
+      '/secret remove replicate',
+      makeDeps(ipc as any),
+    );
+
+    if (result.systemEvent) {
+      mockAppend('family', 'user', result.systemEvent);
+    }
+    if (result.assistantTurn) {
+      mockAppend('family', 'assistant', result.assistantTurn);
+    }
+
+    expect(mockAppend).toHaveBeenCalledTimes(2);
+    expect(appendCalls[0].content).toContain('[SYSTEM]');
+    expect(appendCalls[0].content).toContain('replicate');
+    // Raw /secret remove line must not be stored
+    expect(appendCalls.every((c) => !c.content.includes('/secret remove'))).toBe(true);
+  });
+
+  it('does NOT persist anything when /secret add fails (IPC error)', async () => {
+    const mockAppend = vi.fn();
+
+    const ipc = vi.fn(async (): Promise<IpcResponse> => ({
+      ok: false,
+      error: 'orchestrator unavailable',
+    }));
+    const result = await handleSecretCommand(
+      'family',
+      '/secret add replicate r8_aaaabbbbccccdddd1234',
+      makeDeps(ipc as any),
+    );
+
+    // On failure, result has no systemEvent or assistantTurn — nothing to persist
+    if (result.systemEvent) {
+      mockAppend('family', 'user', result.systemEvent);
+    }
+    if (result.assistantTurn) {
+      mockAppend('family', 'assistant', result.assistantTurn);
+    }
+
+    expect(mockAppend).not.toHaveBeenCalled();
+  });
+});
