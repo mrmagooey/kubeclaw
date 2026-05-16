@@ -20,7 +20,7 @@ import {
   getAvailableGroups,
 } from './index.js';
 import { getToolJobRunner, getRunnerForGroup } from './runtime/index.js';
-import { loadSpecialists, detectMentionedSpecialists } from './specialists.js';
+// detectMentionedSpecialists no longer imported in index.ts (specialist dispatch moved to channel-runner)
 import { findChannel } from './router.js';
 import { getMessagesSince } from './db.js';
 
@@ -56,14 +56,7 @@ vi.mock('./logger.js', () => ({
   },
 }));
 
-vi.mock('./specialists.js', async (importOriginal) => {
-  const actual = await importOriginal();
-  return {
-    ...(actual as any),
-    loadSpecialists: vi.fn(),
-    detectMentionedSpecialists: vi.fn(),
-  };
-});
+// specialists.js mock removed — specialists are no longer used in index.ts (dispatch moved to channel-runner)
 
 vi.mock('./router.js', async (importOriginal) => {
   const actual = await importOriginal();
@@ -129,10 +122,7 @@ const mockSetRegisteredGroup = setRegisteredGroup as ReturnType<typeof vi.fn>;
 const mockFs = await import('fs');
 const mockGetToolJobRunner = getToolJobRunner as ReturnType<typeof vi.fn>;
 const mockGetRunnerForGroup = getRunnerForGroup as ReturnType<typeof vi.fn>;
-const mockLoadSpecialists = loadSpecialists as ReturnType<typeof vi.fn>;
-const mockDetectMentionedSpecialists = detectMentionedSpecialists as ReturnType<
-  typeof vi.fn
->;
+// mockDetectMentionedSpecialists removed — no longer needed
 const mockFindChannel = findChannel as ReturnType<typeof vi.fn>;
 const mockGetMessagesSince = getMessagesSince as ReturnType<typeof vi.fn>;
 
@@ -455,8 +445,6 @@ describe('index.ts internal functions', () => {
           is_bot_message: false,
         },
       ]);
-      mockLoadSpecialists.mockReturnValue(null);
-      mockDetectMentionedSpecialists.mockReturnValue([]);
 
       _setRegisteredGroups({ [chatJid]: group });
       _pushChannel(mockChannel as any);
@@ -495,8 +483,6 @@ describe('index.ts internal functions', () => {
           is_bot_message: false,
         },
       ]);
-      mockLoadSpecialists.mockReturnValue(null);
-      mockDetectMentionedSpecialists.mockReturnValue([]);
 
       _setRegisteredGroups({ [chatJid]: group });
       _pushChannel(mockChannel as any);
@@ -537,8 +523,6 @@ describe('index.ts internal functions', () => {
           is_bot_message: false,
         },
       ]);
-      mockLoadSpecialists.mockReturnValue(null);
-      mockDetectMentionedSpecialists.mockReturnValue([]);
 
       _setRegisteredGroups({ [chatJid]: group });
       _pushChannel(mockChannel as any);
@@ -600,8 +584,6 @@ describe('index.ts internal functions', () => {
           is_bot_message: false,
         },
       ]);
-      mockLoadSpecialists.mockReturnValue(null);
-      mockDetectMentionedSpecialists.mockReturnValue([]);
 
       _setRegisteredGroups({ [chatJid]: group });
       _pushChannel(mockChannel as any);
@@ -666,8 +648,6 @@ describe('index.ts internal functions', () => {
           is_bot_message: false,
         },
       ]);
-      mockLoadSpecialists.mockReturnValue(null);
-      mockDetectMentionedSpecialists.mockReturnValue([]);
 
       _setRegisteredGroups({ [chatJid]: group });
       _pushChannel(mockChannel as any);
@@ -721,8 +701,6 @@ describe('index.ts internal functions', () => {
           is_bot_message: false,
         },
       ]);
-      mockLoadSpecialists.mockReturnValue(null);
-      mockDetectMentionedSpecialists.mockReturnValue([]);
 
       _setRegisteredGroups({ [chatJid]: group });
       _pushChannel(mockChannel as any);
@@ -784,8 +762,6 @@ describe('index.ts internal functions', () => {
           is_bot_message: false,
         },
       ]);
-      mockLoadSpecialists.mockReturnValue(null);
-      mockDetectMentionedSpecialists.mockReturnValue([]);
 
       _setRegisteredGroups({ [chatJid]: group });
       _pushChannel(mockChannel as any);
@@ -885,62 +861,15 @@ describe('index.ts internal functions', () => {
       _pushChannel(mockChannel as any);
     });
 
-    it('calls runAgent once with original prompt when loadSpecialists returns null', async () => {
-      mockLoadSpecialists.mockReturnValue(null);
-      mockDetectMentionedSpecialists.mockReturnValue([]);
+    it('calls runAgent once with original prompt (Path B always passes empty catalog)', async () => {
+      // Path B (orchestrator mode) no longer loads per-group agents.json.
+      // detectMentionedSpecialists receives [] and always returns [].
 
       await _processGroupMessages(chatJid);
 
       expect(mockRunAgent).toHaveBeenCalledTimes(1);
       const callArgs = mockRunAgent.mock.calls[0];
       expect(callArgs[1].prompt).toBe('formatted prompt');
-    });
-
-    it('calls runAgent once with original prompt when no specialists are mentioned', async () => {
-      const specialists = [
-        { name: 'Research', prompt: 'You are a researcher.' },
-      ];
-      mockLoadSpecialists.mockReturnValue(specialists);
-      mockDetectMentionedSpecialists.mockReturnValue([]);
-
-      await _processGroupMessages(chatJid);
-
-      expect(mockRunAgent).toHaveBeenCalledTimes(1);
-      const callArgs = mockRunAgent.mock.calls[0];
-      expect(callArgs[1].prompt).toBe('formatted prompt');
-    });
-
-    it('calls runAgent once with specialist-prefixed prompt when one specialist is mentioned', async () => {
-      const specialists = [
-        { name: 'Research', prompt: 'You are a researcher.' },
-      ];
-      mockLoadSpecialists.mockReturnValue(specialists);
-      mockDetectMentionedSpecialists.mockReturnValue([specialists[0]]);
-
-      await _processGroupMessages(chatJid);
-
-      expect(mockRunAgent).toHaveBeenCalledTimes(1);
-      const callArgs = mockRunAgent.mock.calls[0];
-      expect(callArgs[1].prompt).toContain('<specialist name="Research">');
-      expect(callArgs[1].prompt).toContain('You are a researcher.');
-      expect(callArgs[1].prompt).toContain('formatted prompt');
-    });
-
-    it('calls runAgent twice when two specialists are mentioned', async () => {
-      const specialists = [
-        { name: 'Research', prompt: 'You are a researcher.' },
-        { name: 'Writer', prompt: 'You are a writer.' },
-      ];
-      mockLoadSpecialists.mockReturnValue(specialists);
-      mockDetectMentionedSpecialists.mockReturnValue(specialists);
-
-      await _processGroupMessages(chatJid);
-
-      expect(mockRunAgent).toHaveBeenCalledTimes(2);
-      const firstCallPrompt = mockRunAgent.mock.calls[0][1].prompt;
-      const secondCallPrompt = mockRunAgent.mock.calls[1][1].prompt;
-      expect(firstCallPrompt).toContain('<specialist name="Research">');
-      expect(secondCallPrompt).toContain('<specialist name="Writer">');
     });
   });
 

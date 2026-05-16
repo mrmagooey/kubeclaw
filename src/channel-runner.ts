@@ -58,7 +58,9 @@ import {
   loadSenderAllowlist,
   shouldDropMessage,
 } from './sender-allowlist.js';
-import { detectMentionedSpecialists, loadSpecialists } from './specialists.js';
+import { detectMentionedSpecialists } from './specialists.js';
+import { SpecialistCatalogLoader } from './specialists/catalog-loader.js';
+import type { RunAgentOverrides } from './runtime/types.js';
 import { resetRagProvider } from './rag/provider.js';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
@@ -468,6 +470,10 @@ let messageLoopRunning = false;
 
 const channels: Channel[] = [];
 const queue = new GroupQueue();
+
+// Specialist catalog — loaded from ConfigMap at startup; hot-reloaded via fs.watch.
+// In tests this is replaced via _setSpecialistCatalogForTesting.
+let specialistCatalog: Pick<SpecialistCatalogLoader, 'getAll'> = new SpecialistCatalogLoader('/etc/kubeclaw/specialists/specialists.json');
 
 function loadState(): void {
   lastTimestamp = getRouterState('last_timestamp') || '';
@@ -970,6 +976,7 @@ async function runAgent(
   prompt: string,
   chatJid: string,
   onOutput?: (output: ContainerOutput) => Promise<void>,
+  overrides: RunAgentOverrides = {},
 ): Promise<'success' | 'error'> {
   const isMain = group.isMain === true;
   const sessionId = sessions[group.folder];
@@ -1023,7 +1030,7 @@ async function runAgent(
       },
       undefined,
       wrappedOnOutput,
-      {},
+      overrides,
     );
 
     if (output.newSessionId) {
@@ -1042,7 +1049,7 @@ async function runAgent(
   }
 }
 
-async function processGroupMessages(chatJid: string): Promise<boolean> {
+export async function processGroupMessages(chatJid: string): Promise<boolean> {
   const group = registeredGroups[chatJid];
   if (!group) return true;
 
@@ -1158,10 +1165,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   );
 
   const prompt = formatMessages(backstopMessages, TIMEZONE);
-  const specialists = loadSpecialists(group.folder);
-  const mentionedSpecialists = specialists
-    ? detectMentionedSpecialists(prompt, specialists)
-    : [];
+  const catalog = specialistCatalog.getAll();
+  const mentionedSpecialists = detectMentionedSpecialists(prompt, catalog);
 
   // ── Per-turn credential system block ─────────────────────────────────────
   // Rebuild fresh on each turn so that newly registered credentials (via
@@ -1182,18 +1187,31 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     // Catalog unavailable — omit the block rather than failing the turn.
   }
 
-  const agentRuns =
+  interface DispatchRun {
+    specialistName?: string;
+    prompt: string;
+    overrides: RunAgentOverrides;
+  }
+
+  const runs: DispatchRun[] =
     mentionedSpecialists.length > 0
       ? mentionedSpecialists.map((s) => ({
+          specialistName: s.name,
           prompt: credentialSystemBlock
-            ? `${credentialSystemBlock}\n\n<specialist name="${s.name}">\n${s.prompt}\n</specialist>\n\n${prompt}`
-            : `<specialist name="${s.name}">\n${s.prompt}\n</specialist>\n\n${prompt}`,
+            ? `${credentialSystemBlock}\n\n<specialist name="${s.name}">\n${s.prompt}${s.claudemd ? `\n\n${s.claudemd}` : ''}\n</specialist>\n\n${prompt}`
+            : `<specialist name="${s.name}">\n${s.prompt}${s.claudemd ? `\n\n${s.claudemd}` : ''}\n</specialist>\n\n${prompt}`,
+          overrides: {
+            sessionKey: s.memory?.isolated ? `${group.folder}:${s.name}` : group.folder,
+            llmProvider: s.llmProvider,
+            toolFilter: s.tools && s.tools.length > 0 ? new Set(s.tools) : undefined,
+          },
         }))
       : [
           {
             prompt: credentialSystemBlock
               ? `${credentialSystemBlock}\n\n${prompt}`
               : prompt,
+            overrides: {},
           },
         ];
 
@@ -1210,10 +1228,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   let hadError = false;
   let outputSentToUser = false;
 
-  for (const agentRun of agentRuns) {
-    const output = await runAgent(
+  // Named helper so Task 11 (telemetry) has a stable extension point.
+  async function runOne(run: DispatchRun): Promise<void> {
+    await runAgent(
       group,
-      agentRun.prompt,
+      run.prompt,
       chatJid,
       async (result) => {
         if (result.result) {
@@ -1225,18 +1244,24 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             .replace(/<internal>[\s\S]*?<\/internal>/g, '')
             .trim();
           if (text) {
-            await channel.sendMessage(chatJid, text);
+            const out = run.specialistName ? `[@${run.specialistName}] ${text}` : text;
+            await channel!.sendMessage(chatJid, out);
             outputSentToUser = true;
           }
         }
         if (result.status === 'success') queue.notifyIdle(chatJid);
         if (result.status === 'error') hadError = true;
       },
+      run.overrides,
     );
+  }
 
-    if (output === 'error' || hadError) {
+  const results = await Promise.allSettled(runs.map(runOne));
+
+  for (const [i, r] of results.entries()) {
+    if (r.status === 'rejected') {
       hadError = true;
-      break;
+      logger.error({ err: r.reason, specialist: runs[i].specialistName }, 'specialist run failed');
     }
   }
 
@@ -1439,7 +1464,33 @@ export function registerCredentialTools(
   logger.debug('Registered list_credentials local tool');
 }
 
+// ── Test-only exports ────────────────────────────────────────────────────────
+// These are prefixed with _ and must not be called in production code.
+
+export function _setRegisteredGroupsForTesting(groups: Record<string, RegisteredGroup>): void {
+  registeredGroups = groups;
+}
+
+export function _pushChannelForTesting(ch: Channel): void {
+  channels.push(ch);
+}
+
+export function _resetStateForTesting(): void {
+  registeredGroups = {};
+  lastAgentTimestamp = {};
+  sessions = {};
+  channels.length = 0;
+}
+
+export function _setSpecialistCatalogForTesting(catalog: Pick<SpecialistCatalogLoader, 'getAll'>): void {
+  specialistCatalog = catalog;
+}
+
+// ── Main ─────────────────────────────────────────────────────────────────────
+
 async function main(): Promise<void> {
+  // Start the specialist catalog watcher before the message loop.
+  (specialistCatalog as SpecialistCatalogLoader).start?.();
   startHealthServer();
   await initDatabase();
   logger.info(`Database initialized (channel: ${KUBECLAW_CHANNEL})`);

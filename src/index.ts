@@ -69,7 +69,7 @@ import {
   shouldDropMessage,
 } from './sender-allowlist.js';
 import { startSchedulerLoop } from './task-scheduler.js';
-import { detectMentionedSpecialists, loadSpecialists } from './specialists.js';
+// specialists.js import removed — Path B specialist dispatch deleted in Task 12
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { RawAttachment } from './k8s/types.js';
 import {
@@ -450,46 +450,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   const prompt = formatMessages(missedMessages, TIMEZONE);
 
-  // Load specialist agents for this group (if any defined)
-  const specialists = loadSpecialists(group.folder);
-  const mentionedSpecialists = specialists
-    ? detectMentionedSpecialists(prompt, specialists)
-    : [];
-
-  // Build agent runs: one per mentioned specialist, or a single main agent run
-  const agentRuns =
-    mentionedSpecialists.length > 0
-      ? mentionedSpecialists.map((s) => {
-          // Merge specialist overrides onto the base group
-          const specialistGroup: RegisteredGroup = {
-            ...group,
-            // Override llmProvider if specialist specifies one
-            ...(s.llmProvider !== undefined && {
-              llmProvider: s.llmProvider as RegisteredGroup['llmProvider'],
-            }),
-            // Merge containerConfig: specialist's partial overrides win
-            containerConfig: s.containerConfig
-              ? {
-                  ...group.containerConfig,
-                  ...(s.containerConfig as RegisteredGroup['containerConfig']),
-                }
-              : group.containerConfig,
-          };
-          // Isolated memory: use specialist-scoped session key
-          const sessionKey = s.memory?.isolated
-            ? `${group.folder}:${s.name}`
-            : group.folder;
-          // Append claudemd to the specialist prompt block if provided
-          const claudemdSection = s.claudemd
-            ? `\n<specialist_instructions>\n${s.claudemd}\n</specialist_instructions>`
-            : '';
-          return {
-            group: specialistGroup,
-            sessionKey,
-            prompt: `<specialist name="${s.name}">\n${s.prompt}\n</specialist>${claudemdSection}\n\n${prompt}`,
-          };
-        })
-      : [{ group, sessionKey: group.folder, prompt }];
+  // Specialist dispatch is handled in channel-runner (Path A); Path B always uses main agent.
+  // Task 12 will delete _processGroupMessages entirely.
+  const agentRuns = [{ group, sessionKey: group.folder, prompt }];
 
   // Advance cursor in memory so the piping path in startMessageLoop sends
   // only new messages as deltas rather than re-fetching the full history.

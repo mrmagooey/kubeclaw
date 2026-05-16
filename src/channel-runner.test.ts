@@ -1,10 +1,75 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // channel-runner.ts has a module-level `if (!KUBECLAW_CHANNEL) process.exit(1)`
 // guard. Hoist the env stub above the import so the guard passes.
 vi.hoisted(() => {
   process.env.KUBECLAW_CHANNEL = 'test';
 });
+
+// ── Module mocks needed by processGroupMessages dispatch tests ────────────────
+// These are hoisted by vitest and affect the whole file; they are safe for the
+// existing tests because those tests exercise pure exported functions that do not
+// call getDirectLLMRunner / db / redis directly.
+
+vi.mock('./runtime/index.js', () => ({
+  getDirectLLMRunner: vi.fn(),
+  shutdownAllRunners: vi.fn(),
+}));
+
+vi.mock('./db.js', async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...(actual as any),
+    getMessagesSince: vi.fn().mockReturnValue([]),
+    getAllTasks: vi.fn().mockReturnValue([]),
+    getAllChats: vi.fn().mockReturnValue([]),
+    getAllSessions: vi.fn().mockReturnValue({}),
+    getAllRegisteredGroups: vi.fn().mockReturnValue({}),
+    getRouterState: vi.fn().mockReturnValue(''),
+    setRouterState: vi.fn(),
+    setRegisteredGroup: vi.fn(),
+    setSession: vi.fn(),
+    initDatabase: vi.fn().mockResolvedValue(undefined),
+    storeMessage: vi.fn(),
+    storeChatMetadata: vi.fn(),
+    getConversationHistory: vi.fn().mockReturnValue([]),
+    appendConversationHistory: vi.fn(),
+    appendConversationMessage: vi.fn(),
+    getNewMessages: vi.fn().mockReturnValue({ messages: [], newTimestamp: '' }),
+  };
+});
+
+vi.mock('./k8s/redis-client.js', () => ({
+  getRedisClient: vi.fn().mockReturnValue({
+    publish: vi.fn().mockResolvedValue(0),
+    quit: vi.fn(),
+  }),
+  getChannelStatusChannel: vi.fn().mockReturnValue('ch'),
+  getTaskRequestStream: vi.fn().mockReturnValue('ts'),
+  getSpawnToolPodStream: vi.fn().mockReturnValue('sp'),
+}));
+
+vi.mock('./k8s/ipc-redis.js', () => ({
+  startIpcWatcher: vi.fn(),
+  startControlChannelWatcher: vi.fn(),
+  createSecretIpcFn: vi.fn().mockReturnValue(vi.fn().mockResolvedValue({ ok: true, result: [] })),
+}));
+
+vi.mock('./router.js', async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...(actual as any),
+    // Include message content so @Mention detection works in dispatch tests.
+    formatMessages: vi.fn().mockImplementation((msgs: Array<{ content: string }>) =>
+      msgs.map((m) => m.content).join('\n'),
+    ),
+    findChannel: vi.fn(),
+  };
+});
+
+// list-credentials is NOT mocked globally — let the real module through.
+// listCredentialsTool uses IPC (Redis) only when called without an ipcOverride;
+// in processGroupMessages the call is wrapped in try/catch so Redis failures are silent.
 
 import {
   folderPrefixForChannel,
@@ -709,5 +774,200 @@ describe('/secret add — transcript persistence integration', () => {
     }
 
     expect(mockAppend).not.toHaveBeenCalled();
+  });
+});
+
+// ── processGroupMessages dispatch tests ───────────────────────────────────────
+
+import {
+  processGroupMessages,
+  _setRegisteredGroupsForTesting,
+  _pushChannelForTesting,
+  _resetStateForTesting,
+  _setSpecialistCatalogForTesting,
+} from './channel-runner.js';
+import { getDirectLLMRunner } from './runtime/index.js';
+import { getMessagesSince } from './db.js';
+import { findChannel } from './router.js';
+import type { GlobalSpecialist } from './specialists/types.js';
+
+const mockGetDirectLLMRunner = getDirectLLMRunner as ReturnType<typeof vi.fn>;
+const mockGetMessagesSince = getMessagesSince as ReturnType<typeof vi.fn>;
+const mockFindChannel = findChannel as ReturnType<typeof vi.fn>;
+
+/** Build a fake catalog that can be overridden in each test. */
+function makeCatalog(specialists: GlobalSpecialist[]) {
+  return { getAll: () => specialists };
+}
+
+/** Minimal message fixture that satisfies getMessagesSince return type. */
+function makeMessage(content: string, ts = '2026-01-01T00:00:00.000Z') {
+  return {
+    id: 1,
+    chat_jid: 'chat@g.us',
+    sender: 'user@s.whatsapp.net',
+    content,
+    timestamp: ts,
+    is_from_me: false,
+    is_bot_message: false,
+  };
+}
+
+describe('processGroupMessages dispatch', () => {
+  const chatJid = 'chat@g.us';
+  const group = {
+    name: 'Test',
+    folder: 'test-group',
+    trigger: '',
+    added_at: '2026-01-01T00:00:00.000Z',
+    isMain: true,
+    requiresTrigger: false,
+  };
+
+  let sentMessages: string[];
+  let fakeRunner: { runAgent: ReturnType<typeof vi.fn>; writeTasksSnapshot: ReturnType<typeof vi.fn>; writeGroupsSnapshot: ReturnType<typeof vi.fn> };
+  let mockChannel: { sendMessage: ReturnType<typeof vi.fn>; setTyping: ReturnType<typeof vi.fn>; owns: ReturnType<typeof vi.fn> };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    _resetStateForTesting();
+    sentMessages = [];
+
+    fakeRunner = {
+      runAgent: vi.fn().mockResolvedValue({ status: 'success', result: null }),
+      writeTasksSnapshot: vi.fn(),
+      writeGroupsSnapshot: vi.fn(),
+    };
+    mockGetDirectLLMRunner.mockReturnValue(fakeRunner);
+
+    mockChannel = {
+      sendMessage: vi.fn().mockImplementation(async (_jid: string, text: string) => {
+        sentMessages.push(text);
+      }),
+      setTyping: vi.fn().mockResolvedValue(undefined),
+      owns: vi.fn().mockReturnValue(true),
+    };
+    mockFindChannel.mockReturnValue(mockChannel);
+
+    mockGetMessagesSince.mockReturnValue([makeMessage('hello')]);
+
+    _setRegisteredGroupsForTesting({ [chatJid]: group as any });
+    _pushChannelForTesting(mockChannel as any);
+  });
+
+  it('runs the main agent when no specialist mentioned (overrides empty)', async () => {
+    _setSpecialistCatalogForTesting(makeCatalog([{ name: 'CodeReview', prompt: 'p' }]));
+
+    const runCalls: { prompt: string; overrides: any }[] = [];
+    fakeRunner.runAgent = vi.fn().mockImplementation(async (_g: any, input: any, _spec: any, _onOutput: any, overrides: any) => {
+      runCalls.push({ prompt: input.prompt, overrides });
+      return { status: 'success', result: null };
+    });
+
+    await processGroupMessages(chatJid);
+
+    expect(runCalls).toHaveLength(1);
+    // Main agent path — overrides is empty object (no sessionKey override)
+    expect(runCalls[0].overrides.sessionKey).toBeUndefined();
+  });
+
+  it('runs mentioned specialists in parallel', async () => {
+    _setSpecialistCatalogForTesting(makeCatalog([
+      { name: 'A', prompt: 'pa' },
+      { name: 'B', prompt: 'pb' },
+    ]));
+    mockGetMessagesSince.mockReturnValue([makeMessage('@A @B do thing')]);
+
+    const started: string[] = [];
+    const releaseFns: Record<string, () => void> = {};
+
+    fakeRunner.runAgent = vi.fn().mockImplementation(async (_g: any, input: any, _spec: any, _onOutput: any) => {
+      const nameMatch = /name="([^"]+)"/.exec(input.prompt);
+      const name = nameMatch?.[1] ?? 'main';
+      started.push(name);
+      await new Promise<void>((resolve) => { releaseFns[name] = resolve; });
+      return { status: 'success', result: null };
+    });
+
+    const p = processGroupMessages(chatJid);
+    // Give the event loop a tick so both runAgent calls are initiated
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(started.sort()).toEqual(['A', 'B']); // both started before either resolves
+
+    releaseFns['A']?.();
+    releaseFns['B']?.();
+    await p;
+  });
+
+  it('error in one specialist does not abort the others', async () => {
+    _setSpecialistCatalogForTesting(makeCatalog([
+      { name: 'A', prompt: 'pa' },
+      { name: 'B', prompt: 'pb' },
+    ]));
+    mockGetMessagesSince.mockReturnValue([makeMessage('@A @B please')]);
+
+    let bRan = false;
+    fakeRunner.runAgent = vi.fn().mockImplementation(async (_g: any, input: any) => {
+      if (input.prompt.includes('name="A"')) throw new Error('boom');
+      bRan = true;
+      return { status: 'success', result: null };
+    });
+
+    await processGroupMessages(chatJid);
+
+    expect(bRan).toBe(true);
+  });
+
+  it('passes per-specialist sessionKey/llmProvider/toolFilter to runAgent', async () => {
+    _setSpecialistCatalogForTesting(makeCatalog([{
+      name: 'Iso',
+      prompt: 'p',
+      memory: { isolated: true },
+      llmProvider: 'claude',
+      tools: ['mcp:fetch'],
+    }]));
+    mockGetMessagesSince.mockReturnValue([makeMessage('@Iso question')]);
+
+    let captured: any;
+    fakeRunner.runAgent = vi.fn().mockImplementation(async (_g: any, _input: any, _spec: any, _onOutput: any, overrides: any) => {
+      captured = overrides;
+      return { status: 'success', result: null };
+    });
+
+    await processGroupMessages(chatJid);
+
+    expect(captured.sessionKey).toBe(`${group.folder}:Iso`);
+    expect(captured.llmProvider).toBe('claude');
+    expect([...captured.toolFilter]).toEqual(['mcp:fetch']);
+  });
+
+  it('prefixes replies with [@Name] when a specialist is mentioned', async () => {
+    _setSpecialistCatalogForTesting(makeCatalog([{ name: 'A', prompt: 'p' }]));
+    mockGetMessagesSince.mockReturnValue([makeMessage('@A hi')]);
+
+    fakeRunner.runAgent = vi.fn().mockImplementation(async (_g: any, _input: any, _spec: any, onOutput: any) => {
+      if (onOutput) await onOutput({ status: 'success', result: 'hello back' });
+      return { status: 'success', result: null };
+    });
+
+    await processGroupMessages(chatJid);
+
+    expect(sentMessages).toEqual(['[@A] hello back']);
+  });
+
+  it('does not prefix when no specialist is mentioned', async () => {
+    _setSpecialistCatalogForTesting(makeCatalog([{ name: 'A', prompt: 'p' }]));
+    // No @A mention → main agent path
+    mockGetMessagesSince.mockReturnValue([makeMessage('no mention here')]);
+
+    fakeRunner.runAgent = vi.fn().mockImplementation(async (_g: any, _input: any, _spec: any, onOutput: any) => {
+      if (onOutput) await onOutput({ status: 'success', result: 'hello' });
+      return { status: 'success', result: null };
+    });
+
+    await processGroupMessages(chatJid);
+
+    expect(sentMessages).toEqual(['hello']);
   });
 });
