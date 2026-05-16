@@ -53,6 +53,12 @@ describe('credential-broker e2e', () => {
 
     const image = buildBrokerImage();
 
+    // Install without --wait so helm does not block on the orchestrator
+    // Deployment and Redis StatefulSet (which need PVC provisioning and
+    // can take > 3 min on a shared minikube cluster). The broker itself
+    // has no PVC dependencies and starts in seconds; we wait for it
+    // explicitly below. orchestrator.replicas=0 prevents the orchestrator
+    // pod from being scheduled at all, keeping the test namespace lean.
     execSync(
       `helm upgrade --install ${RELEASE} ./helm/kubeclaw -n ${NS} ` +
         `--set namespace=${NS} ` +
@@ -61,7 +67,14 @@ describe('credential-broker e2e', () => {
         `--set credentialInjection.broker.image=${image} ` +
         `--set secrets.existingSecret=kubeclaw-secrets ` +
         `--set orchestrator.admin.enabled=false ` +
-        `--wait --timeout 3m`,
+        `--set orchestrator.replicas=0`,
+      { stdio: 'inherit' },
+    );
+
+    // Wait only for the credential broker — it is the sole subject of this
+    // test suite. The orchestrator and Redis are not exercised here.
+    execSync(
+      `kubectl rollout status deployment/kubeclaw-credential-broker -n ${NS} --timeout=120s`,
       { stdio: 'inherit' },
     );
   }, 240_000);
