@@ -3,6 +3,7 @@ export interface SkillFrontmatter {
   description: string;
   created: string; // ISO date YYYY-MM-DD
   source: string; // "manual" | "propose-skill-<id>" | "harvest-curator-<date>"
+  target?: string; // for curator-staged edits: the existing skill this proposes to replace
 }
 
 export interface SkillFile {
@@ -27,7 +28,7 @@ export function parseSkill(raw: string): SkillFile {
     if (idx === -1) continue;
     const key = line.slice(0, idx).trim();
     const value = line.slice(idx + 1).trim();
-    if (key === 'name' || key === 'description' || key === 'created' || key === 'source') {
+    if (key === 'name' || key === 'description' || key === 'created' || key === 'source' || key === 'target') {
       fm[key] = value;
     }
   }
@@ -39,7 +40,8 @@ export function parseSkill(raw: string): SkillFile {
 
 export function serializeSkill(skill: SkillFile): string {
   const fm = skill.frontmatter;
-  return `---\nname: ${fm.name}\ndescription: ${fm.description}\ncreated: ${fm.created}\nsource: ${fm.source}\n---\n\n${skill.body}`;
+  const targetLine = fm.target !== undefined ? `target: ${fm.target}\n` : '';
+  return `---\nname: ${fm.name}\ndescription: ${fm.description}\ncreated: ${fm.created}\nsource: ${fm.source}\n${targetLine}---\n\n${skill.body}`;
 }
 
 const SLUG_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;

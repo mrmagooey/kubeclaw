@@ -64,6 +64,22 @@ describe('runCurator', () => {
     expect(listAcceptedSkills(root, GROUP)[0].body).toContain('old body');
   });
 
+  it('edit proposal candidate carries target in frontmatter', async () => {
+    const id = writeCandidate(root, GROUP, {
+      frontmatter: { name: 'foo', description: 'foo', created: '2026-05-16', source: 'manual' },
+      body: 'old',
+    });
+    acceptCandidate(root, GROUP, id);
+    const transcript = Array.from({ length: 5 }, (_, i) => ({ role: 'user', content: `t${i}` }));
+    const llm: CuratorLLMFn = async () => [
+      { action: 'edit', target: 'foo', name: 'foo-edit', description: 'better foo', body: 'new content' },
+    ];
+    await runCurator(GROUP, deps(transcript, llm));
+    const cands = listCandidates(root, GROUP);
+    expect(cands).toHaveLength(1);
+    expect(cands[0].skill.frontmatter.target).toBe('foo');
+  });
+
   it('ignores entries with missing required fields', async () => {
     const transcript = Array.from({ length: 5 }, (_, i) => ({ role: 'user', content: `t${i}` }));
     const llm: CuratorLLMFn = async () =>

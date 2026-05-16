@@ -43,6 +43,20 @@ describe('skill-format', () => {
       expect(parsed.frontmatter.name).toBe('foo');
       expect(parsed.body).toBe('');
     });
+
+    it('parses optional target field', () => {
+      const raw =
+        '---\nname: foo\ndescription: d\ncreated: 2026-05-16\nsource: manual\ntarget: original\n---\n\nbody\n';
+      const parsed = parseSkill(raw);
+      expect(parsed.frontmatter.target).toBe('original');
+    });
+
+    it('parses without target field (undefined)', () => {
+      const raw =
+        '---\nname: foo\ndescription: d\ncreated: 2026-05-16\nsource: manual\n---\n\nbody\n';
+      const parsed = parseSkill(raw);
+      expect(parsed.frontmatter.target).toBeUndefined();
+    });
   });
 
   describe('serializeSkill', () => {
@@ -60,6 +74,23 @@ describe('skill-format', () => {
       const reparsed = parseSkill(serialized);
       expect(reparsed.frontmatter).toEqual(skill.frontmatter);
       expect(reparsed.body.trim()).toBe(skill.body.trim());
+    });
+
+    it('round-trips with target field', () => {
+      const skill: SkillFile = {
+        frontmatter: { name: 'foo', description: 'd', created: '2026-05-16', source: 'manual', target: 'orig' },
+        body: 'body\n',
+      };
+      const reparsed = parseSkill(serializeSkill(skill));
+      expect(reparsed.frontmatter.target).toBe('orig');
+    });
+
+    it('omits target line when undefined', () => {
+      const skill: SkillFile = {
+        frontmatter: { name: 'foo', description: 'd', created: '2026-05-16', source: 'manual' },
+        body: 'body\n',
+      };
+      expect(serializeSkill(skill)).not.toContain('target:');
     });
   });
 

@@ -52,15 +52,16 @@ export async function runCurator(group: string, deps: CuratorDeps): Promise<Cura
   for (const p of proposals) {
     if (!p || !p.name || !p.description || !p.body) continue;
     if (!validateSlug(p.name)) continue;
-    const skill: SkillFile = {
-      frontmatter: {
-        name: p.name,
-        description: p.description,
-        created: today,
-        source: `harvest-curator-${today}`,
-      },
-      body: p.body.trim() + '\n',
+    const frontmatter: SkillFile['frontmatter'] = {
+      name: p.name,
+      description: p.description,
+      created: today,
+      source: `harvest-curator-${today}`,
     };
+    if ((p.action === 'edit' || p.action === 'tune-description') && p.target) {
+      frontmatter.target = p.target;
+    }
+    const skill: SkillFile = { frontmatter, body: p.body.trim() + '\n' };
     try {
       writeCandidate(deps.groupsRoot, group, skill);
       written++;
