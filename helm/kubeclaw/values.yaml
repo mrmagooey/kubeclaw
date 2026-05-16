@@ -345,6 +345,22 @@ credentialInjection:
     testFixture:
       enabled: false
 
+  # Operator-curated catalog of destinations users can register their own credentials for.
+  # Each entry declares the destination host, what credential fields it needs, and which
+  # env vars on tool-job pods will carry the placeholders. The broker substitutes the real
+  # credential value at egress.
+  catalog: []
+  #   - id: replicate
+  #     host: api.replicate.com
+  #     upstreamPort: 443
+  #     credentialFields:
+  #       - { name: token, envVar: REPLICATE_API_TOKEN }
+  #     baseUrlEnvs:
+  #       REPLICATE_API_URL: "http://api.replicate.com"
+  #     allowOperatorFallback: false
+  #     allowedPositions: [header, body]
+  #     apiKeyShape: { prefix: "r8_", minLength: 30 }
+
   metrics:
     enabled: true
     # Metrics are served on a dedicated port separate from broker.port (8080)
