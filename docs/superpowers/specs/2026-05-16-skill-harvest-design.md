@@ -152,7 +152,7 @@ The curator LLM's system prompt enumerates:
 
 ### Chat commands — `/skills ...`
 
-**v1 scope: wired into `src/channels/http.ts` only.** Other channels (irc, oauth-webchat) gain `/skills` support as a follow-up by adding the same pre-LLM intercept. The handler logic itself (`skills-commands.ts`) is channel-agnostic — only the dispatch point is per-channel.
+**Intercept point:** `runAgent` in `src/channel-runner.ts:499`. This is the single function that every channel's inbound message flows through before reaching the LLM, so wiring `/skills` here makes it work universally with no per-channel changes. Handler logic lives in `skills-commands.ts` and is channel-agnostic.
 
 Channel-side message handler recognizes these and routes to local handlers (not LLM):
 
@@ -219,7 +219,7 @@ e2e/skill-harvest.test.ts               # full end-to-end happy path
 - `src/runtime/direct-llm-runner.ts:775` — `loadSystemPrompt` calls `skill-loader.loadSkills(groupFolder)` and appends to prompt; adds `propose_skill` to the channel-side tool list
 - `src/db.ts` — add `skill_usage` table to `createSchema`; add typed accessors (`recordSkillLoad`, `getSkillLoadStats`, `getSkillsLoadedSince`)
 - `src/channel-runner.ts` — start the curator interval after `initDatabase()`
-- `src/channels/http.ts` — intercept messages whose body starts with `/skills ` (or equals `/skills`) **before** they reach the LLM runner; dispatch to `skills-commands.ts`. v1 wires http only; other channels follow the same pattern when extended.
+- `src/channel-runner.ts:499` (`runAgent`) — at the top of the function, if the incoming prompt starts with `/skills` (or equals `/skills`), dispatch to `skills-commands.ts` instead of calling the LLM runner. This works for all channels because every inbound message flows through this function.
 
 ## Testing strategy
 
