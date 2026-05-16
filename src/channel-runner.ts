@@ -67,14 +67,25 @@ import {
   startControlChannelWatcher,
   type ControlMessage,
 } from './k8s/ipc-redis.js';
-import { getRedisClient, getChannelStatusChannel, getTaskRequestStream } from './k8s/redis-client.js';
+import {
+  getRedisClient,
+  getChannelStatusChannel,
+  getTaskRequestStream,
+} from './k8s/redis-client.js';
 import { registerChannel } from './channels/registry.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { AvailableGroup, ContainerOutput } from './runtime/types.js';
 import { logger } from './logger.js';
-import { runCurator, CuratorLLMFn, CuratorProposal } from './runtime/skill-curator.js';
+import {
+  runCurator,
+  CuratorLLMFn,
+  CuratorProposal,
+} from './runtime/skill-curator.js';
 import { createLLMClient, DEFAULT_DIRECT_MODEL } from './runtime/llm-client.js';
-import { handleSkillsCommand, isSkillsCommand } from './runtime/skills-commands.js';
+import {
+  handleSkillsCommand,
+  isSkillsCommand,
+} from './runtime/skills-commands.js';
 import type { CatalogEntry } from './credential-broker/resolver.js';
 import { randomBytes } from 'node:crypto';
 import {
@@ -556,14 +567,18 @@ const DEFAULT_BACKSTOP_PATTERNS: RegExp[] = [
 ];
 
 /** Build additional backstop patterns from catalog apiKeyShape entries. */
-export function buildCatalogBackstopPatterns(catalog: readonly CatalogEntry[]): RegExp[] {
+export function buildCatalogBackstopPatterns(
+  catalog: readonly CatalogEntry[],
+): RegExp[] {
   const patterns: RegExp[] = [];
   for (const entry of catalog) {
     if (entry.apiKeyShape) {
       const { prefix, minLength } = entry.apiKeyShape;
       // Escape regex metacharacters in the prefix
       const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      patterns.push(new RegExp(`${escapedPrefix}[A-Za-z0-9_\\-]{${minLength},}`, 'g'));
+      patterns.push(
+        new RegExp(`${escapedPrefix}[A-Za-z0-9_\\-]{${minLength},}`, 'g'),
+      );
     }
   }
   return patterns;
@@ -600,7 +615,9 @@ export function isSecretCommand(message: string): boolean {
  * Parse `/secret add <id> <value>` or `/secret add <id> <field>=<value> [...]`
  * Returns null if the command is not parseable (wrong subcommand, etc.)
  */
-export function parseSecretAddCommand(message: string): SecretAddCommand | null {
+export function parseSecretAddCommand(
+  message: string,
+): SecretAddCommand | null {
   // Match: /secret add <catalogId> <rest>
   const match = /^\/secret\s+add\s+(\S+)\s+(.+)$/i.exec(message.trim());
   if (!match) return null;
@@ -674,9 +691,13 @@ export function createSecretIpcFn(
       const remaining = deadline - Date.now();
       if (remaining <= 0) break;
       const response = await redis.xread(
-        'COUNT', 1,
-        'BLOCK', Math.min(remaining, 1000),
-        'STREAMS', resultStream, lastId,
+        'COUNT',
+        1,
+        'BLOCK',
+        Math.min(remaining, 1000),
+        'STREAMS',
+        resultStream,
+        lastId,
       );
       if (!response) continue;
       for (const [, messages] of response as [string, [string, string[]][]][]) {
@@ -748,8 +769,7 @@ export async function handleSecretCommand(
   deps: SecretCommandDeps,
 ): Promise<SecretCommandResult> {
   const parts = message.trim().split(/\s+/);
-  if (parts[0] !== '/secret')
-    return { reply: SECRET_HELP };
+  if (parts[0] !== '/secret') return { reply: SECRET_HELP };
 
   const verb = parts[1];
 
@@ -770,7 +790,9 @@ export async function handleSecretCommand(
       if (!catalog || catalog.length === 0)
         return { reply: 'No catalog entries configured.' };
       const lines = catalog.map((e) => {
-        const fields = e.credentialFields.map((f) => `${f.name} (${f.envVar})`).join(', ');
+        const fields = e.credentialFields
+          .map((f) => `${f.name} (${f.envVar})`)
+          .join(', ');
         return `  ${e.id} — ${e.host} — fields: ${fields}`;
       });
       return { reply: `Catalog:\n${lines.join('\n')}` };
@@ -784,25 +806,33 @@ export async function handleSecretCommand(
         return { reply: "Couldn't reach the orchestrator. Try again." };
       }
       if (!res.ok) return { reply: `Failed to list secrets: ${res.error}` };
-      const entries = res.result as Array<{ catalogId: string; registeredAt: string }>;
+      const entries = res.result as Array<{
+        catalogId: string;
+        registeredAt: string;
+      }>;
       if (!entries || entries.length === 0)
         return { reply: 'No credentials registered for this group.' };
-      const lines = entries.map((e) => `  ${e.catalogId} (registered ${e.registeredAt})`);
+      const lines = entries.map(
+        (e) => `  ${e.catalogId} (registered ${e.registeredAt})`,
+      );
       return { reply: `Registered credentials:\n${lines.join('\n')}` };
     }
 
     case 'remove': {
       const catalogId = parseSecretRemoveCommand(message);
-      if (!catalogId)
-        return { reply: 'Usage: /secret remove <id>' };
+      if (!catalogId) return { reply: 'Usage: /secret remove <id>' };
 
       let res: IpcResponse;
       try {
         res = await deps.ipc('secret.remove', { group, catalogId });
       } catch {
-        return { reply: "Couldn't reach the orchestrator. The credential was NOT removed. Try again." };
+        return {
+          reply:
+            "Couldn't reach the orchestrator. The credential was NOT removed. Try again.",
+        };
       }
-      if (!res.ok) return { reply: `Failed to remove credential: ${res.error}` };
+      if (!res.ok)
+        return { reply: `Failed to remove credential: ${res.error}` };
 
       const systemEvent = `[SYSTEM] User removed credential for catalog entry '${catalogId}'. Tool-jobs will no longer use credentials for this entry.`;
       const assistantTurn = `Removed — credentials for '${catalogId}' have been cleared for this group.`;
@@ -818,7 +848,10 @@ export async function handleSecretCommand(
       try {
         const parsed = parseSecretAddCommand(message);
         if (!parsed)
-          return { reply: 'Usage: /secret add <id> <value>  OR  /secret add <id> <field>=<value> [...]' };
+          return {
+            reply:
+              'Usage: /secret add <id> <value>  OR  /secret add <id> <field>=<value> [...]',
+          };
 
         const { catalogId, fields: rawFields } = parsed;
 
@@ -835,7 +868,9 @@ export async function handleSecretCommand(
         let resolvedFields: Record<string, string>;
         if ('__single__' in rawFields) {
           if (catalogEntry.credentialFields.length !== 1) {
-            const fieldNames = catalogEntry.credentialFields.map((f) => f.name).join(', ');
+            const fieldNames = catalogEntry.credentialFields
+              .map((f) => f.name)
+              .join(', ');
             return {
               reply: `'${catalogId}' requires multiple fields: ${fieldNames}. Use: /secret add ${catalogId} ${fieldNames.replace(/, /g, '=<value> ')}=<value>`,
             };
@@ -848,7 +883,9 @@ export async function handleSecretCommand(
 
         // Validate that all required fields are present
         const requiredFields = catalogEntry.credentialFields.map((f) => f.name);
-        const missingFields = requiredFields.filter((f) => !(f in resolvedFields));
+        const missingFields = requiredFields.filter(
+          (f) => !(f in resolvedFields),
+        );
         if (missingFields.length > 0) {
           return {
             reply: `'${catalogId}' requires fields: ${requiredFields.join(', ')}. Got: ${Object.keys(resolvedFields).join(', ')}. Missing: ${missingFields.join(', ')}.`,
@@ -874,7 +911,8 @@ export async function handleSecretCommand(
           });
         } catch {
           return {
-            reply: "Couldn't reach the orchestrator. The credential was NOT stored. Try again.",
+            reply:
+              "Couldn't reach the orchestrator. The credential was NOT stored. Try again.",
           };
         }
 
@@ -883,14 +921,17 @@ export async function handleSecretCommand(
           // Friendly messages for known orchestrator errors
           if (errMsg.includes('timeout')) {
             return {
-              reply: "Couldn't reach the orchestrator. The credential was NOT stored. Try again.",
+              reply:
+                "Couldn't reach the orchestrator. The credential was NOT stored. Try again.",
             };
           }
           return { reply: `Failed to store credential: ${errMsg}` };
         }
 
         // Build system event (metadata only — no values)
-        const envVarNames = catalogEntry.credentialFields.map((f) => f.envVar).join(', ');
+        const envVarNames = catalogEntry.credentialFields
+          .map((f) => f.envVar)
+          .join(', ');
         const systemEvent =
           `[SYSTEM] User registered credential for catalog entry '${catalogId}' ` +
           `(host: ${catalogEntry.host}). ` +
@@ -982,6 +1023,7 @@ async function runAgent(
       },
       undefined,
       wrappedOnOutput,
+      {},
     );
 
     if (output.newSessionId) {
@@ -1072,10 +1114,14 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       // Catalog unavailable; proceed with empty catalog (will report unknown-id error)
     }
 
-    const result = await handleSecretCommand(group.folder, lastMsg.content.trim(), {
-      catalog,
-      ipc: secretIpc,
-    });
+    const result = await handleSecretCommand(
+      group.folder,
+      lastMsg.content.trim(),
+      {
+        catalog,
+        ipc: secretIpc,
+      },
+    );
 
     // Persist the system event and assistant turn so subsequent LLM turns see
     // the credential-registration context in conversation history. The raw
@@ -1085,7 +1131,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       appendConversationMessage(group.folder, 'user', result.systemEvent);
     }
     if (result.assistantTurn) {
-      appendConversationMessage(group.folder, 'assistant', result.assistantTurn);
+      appendConversationMessage(
+        group.folder,
+        'assistant',
+        result.assistantTurn,
+      );
     }
 
     lastAgentTimestamp[chatJid] = lastMsg.timestamp;
@@ -1104,9 +1154,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // slash-command parser — if the parser already handled the message, we
   // never reach here.
   const backstopMessages = missedMessages.map((m) =>
-    m.is_from_me
-      ? m
-      : { ...m, content: applyCredentialBackstop(m.content) },
+    m.is_from_me ? m : { ...m, content: applyCredentialBackstop(m.content) },
   );
 
   const prompt = formatMessages(backstopMessages, TIMEZONE);
@@ -1280,7 +1328,9 @@ function recoverPendingMessages(): void {
   }
 }
 
-const CURATOR_INTERVAL_MS = Number(process.env.SKILL_CURATOR_INTERVAL_MS ?? 24 * 60 * 60 * 1000);
+const CURATOR_INTERVAL_MS = Number(
+  process.env.SKILL_CURATOR_INTERVAL_MS ?? 24 * 60 * 60 * 1000,
+);
 
 function startSkillCuratorInterval(): void {
   if (CURATOR_INTERVAL_MS <= 0) {
@@ -1335,7 +1385,11 @@ function startSkillCuratorInterval(): void {
         });
         if (res.candidatesWritten > 0) {
           logger.info(
-            { group: group.name, folder: group.folder, candidates: res.candidatesWritten },
+            {
+              group: group.name,
+              folder: group.folder,
+              candidates: res.candidatesWritten,
+            },
             'skill curator staged candidates',
           );
         }

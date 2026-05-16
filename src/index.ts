@@ -657,6 +657,7 @@ async function runAgent(
       },
       undefined,
       wrappedOnOutput,
+      {},
     );
 
     if (output.newSessionId) {
@@ -825,7 +826,10 @@ async function main(): Promise<void> {
     namespace: KUBECLAW_NAMESPACE,
     configMapName: 'kubeclaw-credential-broker-config',
     readConfigMap: async (ns, name) => {
-      const res = await coreApi.readNamespacedConfigMap({ name, namespace: ns });
+      const res = await coreApi.readNamespacedConfigMap({
+        name,
+        namespace: ns,
+      });
       return { data: res.data as Record<string, string> | undefined };
     },
   });
