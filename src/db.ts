@@ -169,6 +169,23 @@ function createSchema(database: SqlJsDatabase): void {
     ON conversation_history(group_folder, created_at)
   `);
 
+  database.run(`
+    CREATE TABLE IF NOT EXISTS skill_usage (
+      id TEXT PRIMARY KEY,
+      group_folder TEXT NOT NULL,
+      skill_name TEXT NOT NULL,
+      loaded_at INTEGER NOT NULL
+    )
+  `);
+  database.run(`
+    CREATE INDEX IF NOT EXISTS idx_skill_usage_group_skill
+    ON skill_usage(group_folder, skill_name)
+  `);
+  database.run(`
+    CREATE INDEX IF NOT EXISTS idx_skill_usage_loaded_at
+    ON skill_usage(loaded_at)
+  `);
+
   try {
     database.run(
       `ALTER TABLE scheduled_tasks ADD COLUMN context_mode TEXT DEFAULT 'isolated'`,
@@ -1161,4 +1178,53 @@ export function cleanupExpiredACLs(): string[] {
   }
 
   return revokedJobIds;
+}
+
+// --- Skill Usage Functions ---
+
+export interface SkillLoadStat {
+  skill_name: string;
+  load_count: number;
+  last_loaded: number;
+}
+
+export function recordSkillLoad(
+  groupFolder: string,
+  skillName: string,
+  loadedAt: number = Date.now(),
+): void {
+  const id = `${groupFolder}-${skillName}-${loadedAt}-${Math.random().toString(36).slice(2, 8)}`;
+  db.run(
+    'INSERT INTO skill_usage (id, group_folder, skill_name, loaded_at) VALUES (?, ?, ?, ?)',
+    [id, groupFolder, skillName, loadedAt],
+  );
+  saveDatabase();
+}
+
+export function getSkillLoadStats(groupFolder: string): SkillLoadStat[] {
+  const rows = db.exec(
+    `SELECT skill_name, COUNT(*) as load_count, MAX(loaded_at) as last_loaded
+     FROM skill_usage WHERE group_folder = ? GROUP BY skill_name
+     ORDER BY last_loaded DESC`,
+    [groupFolder],
+  );
+  if (rows.length === 0) return [];
+  return rows[0].values.map((r: unknown[]) => ({
+    skill_name: r[0] as string,
+    load_count: r[1] as number,
+    last_loaded: r[2] as number,
+  }));
+}
+
+export function getSkillsLoadedSince(
+  groupFolder: string,
+  sinceMs: number,
+): string[] {
+  const rows = db.exec(
+    `SELECT DISTINCT skill_name FROM skill_usage
+     WHERE group_folder = ? AND loaded_at >= ?`,
+    [groupFolder, sinceMs],
+  );
+  if (rows.length === 0) return [];
+  return rows[0].values.map((r: unknown[]) => r[0] as string);
 }

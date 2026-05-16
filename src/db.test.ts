@@ -40,6 +40,9 @@ import {
   updateGroupProvider,
   clearInvalidProviders,
   deleteRegisteredGroup,
+  recordSkillLoad,
+  getSkillLoadStats,
+  getSkillsLoadedSince,
 } from './db.js';
 import { JobACL } from './types.js';
 
@@ -1508,5 +1511,45 @@ describe('deleteRegisteredGroup', () => {
 
     expect(getRegisteredGroup('keep-me@g.us')).toBeDefined();
     expect(getRegisteredGroup('remove-me@g.us')).toBeUndefined();
+  });
+});
+
+// --- skill_usage / recordSkillLoad / getSkillLoadStats / getSkillsLoadedSince ---
+
+describe('recordSkillLoad / getSkillLoadStats / getSkillsLoadedSince', () => {
+  beforeEach(async () => {
+    await _initTestDatabase();
+  });
+
+  it('records a load and returns it in stats', () => {
+    recordSkillLoad('g1', 'skill-a', 1000);
+    const stats = getSkillLoadStats('g1');
+    expect(stats).toHaveLength(1);
+    expect(stats[0].skill_name).toBe('skill-a');
+    expect(stats[0].load_count).toBe(1);
+    expect(stats[0].last_loaded).toBe(1000);
+  });
+
+  it('aggregates multiple loads of same skill', () => {
+    recordSkillLoad('g1', 'skill-a', 1000);
+    recordSkillLoad('g1', 'skill-a', 2000);
+    recordSkillLoad('g1', 'skill-a', 3000);
+    const stats = getSkillLoadStats('g1');
+    expect(stats[0].load_count).toBe(3);
+    expect(stats[0].last_loaded).toBe(3000);
+  });
+
+  it('isolates by group', () => {
+    recordSkillLoad('g1', 'skill-a', 1000);
+    recordSkillLoad('g2', 'skill-b', 2000);
+    expect(getSkillLoadStats('g1').map((s) => s.skill_name)).toEqual(['skill-a']);
+    expect(getSkillLoadStats('g2').map((s) => s.skill_name)).toEqual(['skill-b']);
+  });
+
+  it('getSkillsLoadedSince returns distinct skills loaded after cutoff', () => {
+    recordSkillLoad('g1', 'old', 1000);
+    recordSkillLoad('g1', 'recent', 5000);
+    recordSkillLoad('g1', 'recent', 6000);
+    expect(getSkillsLoadedSince('g1', 4000)).toEqual(['recent']);
   });
 });
