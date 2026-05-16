@@ -235,18 +235,25 @@ export async function handleExtAuthz(
     return { status: 403, headers: {} };
   }
 
-  // Step (d): ok — emit x-kubeclaw-substitute header.
-  // allowedPositions is included in the ok result from resolver.
-  const substitutePayload = {
-    substitutions: subResult.substitutions,
-    allowedPositions: subResult.allowedPositions,
-    perPlaceholderMax: 10,
-    totalMax: 50,
-  };
-  const substituteHeaderValue = Buffer.from(
-    JSON.stringify(substitutePayload),
-    'utf8',
-  ).toString('base64');
+  // Step (d): ok — emit x-kubeclaw-substitutions and x-kubeclaw-policy headers.
+  //
+  // Wire format (two headers, no JSON parser needed in Envoy Lua):
+  //   x-kubeclaw-substitutions: placeholder1=<b64value1>;placeholder2=<b64value2>;...
+  //   x-kubeclaw-policy: positions=header,body;per=10;total=50
+  //
+  // Values are base64-encoded so they can contain any character safely in an HTTP header.
+  const PER_PLACEHOLDER_MAX = 10;
+  const TOTAL_MAX = 50;
+
+  const substitutionsParts = subResult.substitutions.map(({ placeholder, value }) => {
+    const b64Value = Buffer.from(value, 'utf8').toString('base64');
+    return `${placeholder}=${b64Value}`;
+  });
+  const substitutionsHeaderValue = substitutionsParts.join(';');
+
+  const allowedPositions = subResult.allowedPositions ?? ['header', 'body'];
+  const policyHeaderValue =
+    `positions=${allowedPositions.join(',')};per=${PER_PLACEHOLDER_MAX};total=${TOTAL_MAX}`;
 
   // Step (f): Audit log — values NEVER logged.
   deps.audit.record({
@@ -269,6 +276,9 @@ export async function handleExtAuthz(
 
   return {
     status: 200,
-    headers: { 'x-kubeclaw-substitute': substituteHeaderValue },
+    headers: {
+      'x-kubeclaw-substitutions': substitutionsHeaderValue,
+      'x-kubeclaw-policy': policyHeaderValue,
+    },
   };
 }
