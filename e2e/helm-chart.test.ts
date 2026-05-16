@@ -376,7 +376,7 @@ describe('network policies', () => {
     expect(out).toContain('kubeclaw-orchestrator-policy');
   });
 
-  it('agent policy permits DNS(53), Redis(6379), HTTPS(443) only', () => {
+  it('agent policy permits DNS(53) and Redis(6379) in sidecar mode (port 443 is gated to broker)', () => {
     const policy = getJson('networkpolicy/kubeclaw-agent-policy') as {
       spec: {
         egress: Array<{ ports: Array<{ port: number }> }>;
@@ -385,7 +385,7 @@ describe('network policies', () => {
     const ports = policy.spec.egress.flatMap((r) => r.ports.map((p) => p.port));
     expect(ports).toContain(53);
     expect(ports).toContain(6379);
-    expect(ports).toContain(443);
+    expect(ports).not.toContain(443);
     expect(ports).not.toContain(80);
     expect(ports).not.toContain(22);
   });
@@ -1008,7 +1008,7 @@ describe('helm template — mode=istio', () => {
 
     it('renders test-mock-token in the kubeclaw-secrets Secret', () => {
       const out = renderWithFixture();
-      expect(out).toMatch(/test-mock-token:\s*(test-token-12345|dGVzdC10b2tlbi0xMjM0NQ==)/);
+      expect(out).toMatch(/test-mock-token:\s*"?(test-token-12345|dGVzdC10b2tlbi0xMjM0NQ==)"?/);
     });
 
     it('does NOT render a DestinationRule for the mock (HTTP upstream)', () => {
