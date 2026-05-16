@@ -510,6 +510,39 @@ describe('RBAC', () => {
     ]);
     expect(result.stdout).toBe('no');
   });
+
+  it('broker Role widens to namespace-wide secrets and pods get', () => {
+    const role = getJson('role/kubeclaw-credential-broker') as {
+      rules: Array<{
+        apiGroups: string[];
+        resources: string[];
+        verbs: string[];
+        resourceNames?: string[];
+      }>;
+    };
+    const secretsRule = role.rules.find((r) => r.resources?.includes('secrets'));
+    expect(secretsRule).toBeDefined();
+    expect(secretsRule!.verbs).toEqual(expect.arrayContaining(['get', 'list', 'watch']));
+    expect(secretsRule!.resourceNames).toBeUndefined();
+    const podsRule = role.rules.find((r) => r.resources?.includes('pods'));
+    expect(podsRule).toBeDefined();
+    expect(podsRule!.verbs).toEqual(expect.arrayContaining(['get', 'list', 'watch']));
+  });
+
+  it('orchestrator Role adds secret write verbs', () => {
+    const role = getJson('role/kubeclaw-job-manager') as {
+      rules: Array<{
+        apiGroups: string[];
+        resources: string[];
+        verbs: string[];
+      }>;
+    };
+    const secretsRule = role.rules.find((r) => r.resources?.includes('secrets'));
+    expect(secretsRule).toBeDefined();
+    expect(secretsRule!.verbs).toEqual(
+      expect.arrayContaining(['create', 'update', 'patch', 'delete', 'get', 'list']),
+    );
+  });
 });
 
 // ─── 8. Redis ─────────────────────────────────────────────────────────────────

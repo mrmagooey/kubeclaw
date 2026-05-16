@@ -34,9 +34,10 @@ rules:
     resources: ["pods/log"]
     verbs: ["get"]
   # Admin shell: create/patch per-channel secrets and trigger rolling restarts
+  # Credential injection: create/update/delete per-group Secrets for user-supplied credentials
   - apiGroups: [""]
     resources: ["secrets"]
-    verbs: ["get", "create", "patch"]
+    verbs: ["create", "update", "patch", "delete", "get", "list"]
   - apiGroups: ["apps"]
     resources: ["deployments"]
     verbs: ["create", "get", "list", "watch", "update", "patch", "delete"]
