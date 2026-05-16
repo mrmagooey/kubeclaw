@@ -21,8 +21,11 @@ function k(args: string): string {
  */
 function buildBrokerImage(): string {
   const tag = 'kubeclaw-orchestrator:e2e-broker';
+  const profileFlag = process.env.KUBECLAW_MINIKUBE_PROFILE
+    ? `-p ${process.env.KUBECLAW_MINIKUBE_PROFILE}`
+    : '';
   execSync(
-    `eval $(minikube -p kubeclaw docker-env) && docker build -t ${tag} .`,
+    `eval $(minikube ${profileFlag} docker-env) && docker build -t ${tag} .`,
     { encoding: 'utf8', shell: '/bin/bash', stdio: 'inherit' },
   );
   return tag;
