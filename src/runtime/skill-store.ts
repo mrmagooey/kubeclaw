@@ -97,12 +97,39 @@ export function acceptCandidate(root: string, group: string, id: string): void {
   const src = path.join(candidatesDir(root, group), `${id}.md`);
   if (!fs.existsSync(src)) throw new Error(`candidate not found: ${id}`);
   const skill = readSkillFile(src);
-  const dest = path.join(skillsDir(root, group), `${skill.frontmatter.name}.md`);
+  // When the candidate has `target`, it is an edit/tune-description of an
+  // existing accepted skill. Use the target slug as the accepted filename so
+  // the new version replaces the old one.
+  const targetName = skill.frontmatter.target || skill.frontmatter.name;
+  if (!validateSlug(targetName)) {
+    throw new Error(`invalid target slug: ${targetName}`);
+  }
+  const dest = path.join(skillsDir(root, group), `${targetName}.md`);
   if (fs.existsSync(dest)) {
-    throw new Error(`skill already exists: ${skill.frontmatter.name}`);
+    if (!skill.frontmatter.target) {
+      throw new Error(`skill already exists: ${targetName}`);
+    }
+    // Edit candidate: archive the existing accepted skill before replacing it.
+    ensureDir(archiveDir(root, group));
+    const archivePath = path.join(
+      archiveDir(root, group),
+      `${targetName}.${Date.now()}.md`,
+    );
+    fs.renameSync(dest, archivePath);
   }
   ensureDir(skillsDir(root, group));
-  fs.renameSync(src, dest);
+  if (skill.frontmatter.target) {
+    // Rewrite the file so the accepted version carries `name: <target>` and
+    // has no `target` field (target only makes sense while a candidate).
+    const cleaned: SkillFile = {
+      frontmatter: { ...skill.frontmatter, name: targetName, target: undefined },
+      body: skill.body,
+    };
+    fs.writeFileSync(dest, serializeSkill(cleaned));
+    fs.unlinkSync(src);
+  } else {
+    fs.renameSync(src, dest);
+  }
 }
 
 export function rejectCandidate(root: string, group: string, id: string): void {

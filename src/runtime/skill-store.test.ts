@@ -118,6 +118,45 @@ describe('skill-store', () => {
     expect(() => rejectCandidate(groupsRoot, GROUP, 'nope')).toThrow(/not found/);
   });
 
+  it('acceptCandidate with target archives existing skill and writes candidate at target slug', () => {
+    // Create and accept an initial skill named 'foo'
+    const id1 = writeCandidate(groupsRoot, GROUP, mkSkill({ name: 'foo' }));
+    acceptCandidate(groupsRoot, GROUP, id1);
+    expect(listAcceptedSkills(groupsRoot, GROUP)).toHaveLength(1);
+    expect(listAcceptedSkills(groupsRoot, GROUP)[0].frontmatter.name).toBe('foo');
+
+    // Stage an edit candidate that targets 'foo' but has a different candidate name
+    const id2 = writeCandidate(groupsRoot, GROUP, {
+      frontmatter: {
+        name: 'foo-edit-candidate',
+        description: 'updated description',
+        created: '2026-05-16',
+        source: 'curator',
+        target: 'foo',
+      },
+      body: 'NEW BODY\n',
+    });
+    acceptCandidate(groupsRoot, GROUP, id2);
+
+    // After accepting, exactly one accepted skill exists at the target slug
+    const accepted = listAcceptedSkills(groupsRoot, GROUP);
+    expect(accepted).toHaveLength(1);
+    expect(accepted[0].frontmatter.name).toBe('foo');
+    expect(accepted[0].frontmatter.target).toBeUndefined();
+    expect(accepted[0].body).toContain('NEW BODY');
+
+    // The superseded version is in the archive
+    const archived = listArchived(groupsRoot, GROUP);
+    expect(archived.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('acceptCandidate with target does not overwrite when no target field — still throws', () => {
+    const id1 = writeCandidate(groupsRoot, GROUP, mkSkill({ name: 'dup' }));
+    acceptCandidate(groupsRoot, GROUP, id1);
+    const id2 = writeCandidate(groupsRoot, GROUP, mkSkill({ name: 'dup' }));
+    expect(() => acceptCandidate(groupsRoot, GROUP, id2)).toThrow(/already exists/);
+  });
+
   it('listCandidates ignores underscore- and dot-prefixed files', () => {
     const id = writeCandidate(groupsRoot, GROUP, mkSkill({ name: 'real' }));
     const dir = path.join(groupsRoot, GROUP, 'skills', '_candidates');

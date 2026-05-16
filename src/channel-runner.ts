@@ -501,6 +501,14 @@ function getAvailableGroups(): AvailableGroup[] {
     }));
 }
 
+/**
+ * NOT ON THE PRODUCTION PATH — kept for unit-test coverage only.
+ *
+ * The live intercept now lives in processGroupMessages (before formatMessages)
+ * so that isSkillsCommand can match the raw user text. This helper is retained
+ * because src/channel-runner.test.ts exercises it directly; calling it from
+ * runAgent would never fire because prompt is already XML-wrapped by then.
+ */
 export async function dispatchSkillsCommandIfApplicable(
   group: RegisteredGroup,
   prompt: string,
@@ -521,10 +529,6 @@ async function runAgent(
   chatJid: string,
   onOutput?: (output: ContainerOutput) => Promise<void>,
 ): Promise<'success' | 'error'> {
-  if (await dispatchSkillsCommandIfApplicable(group, prompt, chatJid, onOutput)) {
-    return 'success';
-  }
-
   const isMain = group.isMain === true;
   const sessionId = sessions[group.folder];
 
@@ -622,6 +626,28 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         (m.is_from_me || isTriggerAllowed(chatJid, m.sender, allowlistCfg)),
     );
     if (!hasTrigger) return true;
+  }
+
+  // /skills chat command: handle locally without invoking the LLM.
+  // The intercept must live here — BEFORE formatMessages wraps the content
+  // in XML, which would break the isSkillsCommand regex match.
+  const lastMsg = missedMessages[missedMessages.length - 1];
+  if (lastMsg && isSkillsCommand(lastMsg.content)) {
+    const reply = handleSkillsCommand(
+      GROUPS_DIR,
+      group.folder,
+      chatJid,
+      lastMsg.content.trim(),
+    );
+    lastAgentTimestamp[chatJid] = lastMsg.timestamp;
+    saveState();
+    await channel.setTyping?.(chatJid, true);
+    try {
+      await channel.sendMessage(chatJid, reply);
+    } finally {
+      await channel.setTyping?.(chatJid, false);
+    }
+    return true;
   }
 
   const prompt = formatMessages(missedMessages, TIMEZONE);
@@ -780,7 +806,10 @@ function startSkillCuratorInterval(): void {
       const groups = Object.values(registeredGroups);
       const client = createLLMClient();
       for (const group of groups) {
-        const transcript = getConversationHistory(group.folder).slice(-200);
+        // Pass limit=0 for an unlimited DB query, then cap at 200 turns to bound
+        // token cost. This approximates "last 24h"; precise time windowing
+        // (e.g. WHERE created_at >= now-24h) is a future enhancement.
+        const transcript = getConversationHistory(group.folder, 0).slice(-200);
         const llm: CuratorLLMFn = async (tx, existing) => {
           const sys = `You analyze a recent assistant-user transcript and propose at most 3 skill candidates. Reply JSON: {"proposals": [{"action":"new"|"edit"|"tune-description","target":string|null,"name":string,"description":string,"body":string}]}. Prefer "edit" over "new" when the topic overlaps an existing skill. Skip project-specific facts (those belong elsewhere) and one-off solutions.`;
           const existingDigest = existing
