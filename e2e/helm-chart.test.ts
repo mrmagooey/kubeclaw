@@ -827,6 +827,16 @@ describe('helm template — mode=istio', () => {
     expect(out).toContain('ext_authz');
   });
 
+  it('Lua substitution filter in istio EnvoyFilter', () => {
+    const out = render();
+    expect(out).toContain('envoy.filters.http.lua');
+    expect(out).toContain('x-kubeclaw-substitutions');
+    // Lua filter must appear after ext_authz (INSERT_AFTER) in the same EnvoyFilter
+    const luaIdx = out.indexOf('envoy.filters.http.lua');
+    const authzIdx = out.indexOf('envoy.filters.http.ext_authz');
+    expect(luaIdx).toBeGreaterThan(authzIdx);
+  });
+
   it('renders 5 ServiceEntry resources with one additionalDestination', () => {
     const out = render(
       '--set "credentialInjection.istio.additionalDestinations[0]=my-mcp.internal:8443"',
