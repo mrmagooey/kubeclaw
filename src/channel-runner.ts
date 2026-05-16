@@ -33,6 +33,7 @@ import {
   getAllCapabilities,
 } from './capabilities/db.js';
 import {
+  appendConversationMessage,
   getAllChats,
   getAllRegisteredGroups,
   getAllSessions,
@@ -904,7 +905,9 @@ export async function handleSecretCommand(
           assistantTurn,
         };
       } finally {
-        // Zero cleartext values from heap
+        // Reassign cleartext to empty string; JS string immutability means the original
+        // heap allocation cannot be wiped in-place, but residency is bounded by GC.
+        // Documented as accepted risk in docs/SECURITY.md threat model.
         if (cleartextFields) {
           for (const key of Object.keys(cleartextFields)) {
             const buf = Buffer.from(cleartextFields[key], 'utf8');
@@ -1073,6 +1076,17 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       catalog,
       ipc: secretIpc,
     });
+
+    // Persist the system event and assistant turn so subsequent LLM turns see
+    // the credential-registration context in conversation history. The raw
+    // /secret line is intentionally NOT stored (already dropped by the
+    // getMessagesSince query never being called for it).
+    if (result.systemEvent) {
+      appendConversationMessage(group.folder, 'user', result.systemEvent);
+    }
+    if (result.assistantTurn) {
+      appendConversationMessage(group.folder, 'assistant', result.assistantTurn);
+    }
 
     lastAgentTimestamp[chatJid] = lastMsg.timestamp;
     saveState();
