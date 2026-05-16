@@ -99,39 +99,90 @@ function run(
   };
 }
 
-async function ensureMinikube(): Promise<void> {
-  // Try kubectl first — if a cluster is reachable, we don't care if it's
-  // minikube specifically.
-  const cluster = run('kubectl', ['cluster-info'], { allowFail: true });
-  if (cluster.ok) {
-    console.log('✅ Kubernetes cluster is reachable');
-    return;
-  }
+// CNI required for NetworkPolicy enforcement. The live suite's
+// minikube-live-network-policy tests assume Cilium (or another enforcing CNI)
+// is installed; minikube's default bridge CNI silently ignores
+// NetworkPolicies, which lets policy regressions ship without a test signal.
+const REQUIRED_CNI = 'cilium';
 
+function isEnforcingCniReady(): boolean {
+  // Detect by checking for a Cilium DaemonSet in kube-system.
+  const r = spawnSync(
+    'kubectl',
+    [
+      'get', 'daemonset', 'cilium', '-n', 'kube-system',
+      '-o', 'jsonpath={.status.numberReady}',
+    ],
+    { encoding: 'utf8' },
+  );
+  if (r.status !== 0) return false;
+  const ready = parseInt(r.stdout.trim() || '0', 10);
+  return ready > 0;
+}
+
+async function ensureMinikube(): Promise<void> {
   const which = run('which', ['minikube'], { allowFail: true });
   if (!which.ok) {
     throw new Error(
-      'No reachable Kubernetes cluster and minikube is not installed.',
+      'minikube is not installed and the live suite requires it for CNI control.',
     );
   }
 
-  console.log('🚀 Starting minikube...');
+  // Probe current minikube status. If running with the wrong CNI, recreate.
+  const status = run(
+    'minikube', ['status', '--format={{.Host}}'], { allowFail: true },
+  );
+  const isRunning = status.ok && status.stdout.trim() === 'Running';
+
+  if (isRunning && isEnforcingCniReady()) {
+    console.log(`✅ minikube running with ${REQUIRED_CNI} CNI`);
+    return;
+  }
+
+  if (isRunning) {
+    console.log(
+      `⚠️  minikube is running but ${REQUIRED_CNI} DaemonSet is not present — ` +
+      'recreating cluster so NetworkPolicy enforcement is active.',
+    );
+    const del = run('minikube', ['delete'], { timeout: 120_000, allowFail: true });
+    if (!del.ok) {
+      console.warn('⚠️  minikube delete reported non-zero; continuing to start anyway.');
+    }
+  }
+
+  console.log(`🚀 Starting minikube with --cni=${REQUIRED_CNI}...`);
   // 8 GB / 4 CPU — the live-suite now installs ~6 capabilities at runtime
   // across the test files; under 4 GB/2 CPU the orchestrator's task-request
   // queue backs up and downstream test beforeAlls time out waiting for
-  // Deployments. If the cluster already exists with smaller resources,
-  // `minikube start` is a no-op for resource config — the operator must
-  // `minikube delete` then re-run for the new size to take effect.
+  // Deployments.
   const start = run(
     'minikube',
-    ['start', '--driver=docker', '--memory=8192', '--cpus=4', '--wait=all'],
-    { timeout: 300_000 },
+    [
+      'start',
+      '--driver=docker',
+      '--memory=8192',
+      '--cpus=4',
+      `--cni=${REQUIRED_CNI}`,
+      '--wait=all',
+    ],
+    { timeout: 600_000 },
   );
   if (!start.ok) {
     throw new Error('minikube start failed');
   }
   run('kubectl', ['config', 'use-context', 'minikube']);
   run('kubectl', ['cluster-info']);
+
+  console.log(`⏳ Waiting for ${REQUIRED_CNI} DaemonSet to be ready...`);
+  const cniDeadline = Date.now() + 180_000;
+  while (Date.now() < cniDeadline) {
+    if (isEnforcingCniReady()) {
+      console.log(`✅ ${REQUIRED_CNI} ready`);
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 3000));
+  }
+  throw new Error(`${REQUIRED_CNI} DaemonSet did not become Ready within 180s`);
 }
 
 function latestMtimeUnder(dir: string, exclude: Set<string> = new Set(['node_modules', '.git', '.claude', 'dist'])): number {
