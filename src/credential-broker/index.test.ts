@@ -122,10 +122,10 @@ function makeIdentityVerifier(
   };
 }
 
-// ─── x-kubeclaw-substitute header tests ──────────────────────────────────────
+// ─── x-kubeclaw-substitutions / x-kubeclaw-policy header tests ───────────────
 
 describe('handleExtAuthz — per-group substitution header', () => {
-  it('200 ext_authz response includes x-kubeclaw-substitute when group-cred hits', async () => {
+  it('200 ext_authz response includes x-kubeclaw-substitutions when group-cred hits', async () => {
     const groupSrc = makeGroupSrc('family', 'replicate', {
       token: { value: 'r8_secret-token', placeholder: 'KC_PH_token_aabbcc' },
     });
@@ -152,25 +152,27 @@ describe('handleExtAuthz — per-group substitution header', () => {
     );
 
     expect(res.status).toBe(200);
-    const headerValue = res.headers['x-kubeclaw-substitute'];
-    expect(headerValue).toBeDefined();
 
-    // Decode and validate the JSON shape
-    const decoded = JSON.parse(
-      Buffer.from(headerValue!, 'base64').toString('utf8'),
-    );
-    expect(decoded.substitutions).toBeInstanceOf(Array);
-    expect(decoded.substitutions).toHaveLength(1);
-    expect(decoded.substitutions[0]).toEqual({
-      placeholder: 'KC_PH_token_aabbcc',
-      value: 'r8_secret-token',
-    });
-    expect(decoded.allowedPositions).toEqual(['header', 'body']);
-    expect(decoded.perPlaceholderMax).toBe(10);
-    expect(decoded.totalMax).toBe(50);
+    // x-kubeclaw-substitutions: placeholder=<base64value>;...
+    const subsHeader = res.headers['x-kubeclaw-substitutions'];
+    expect(subsHeader).toBeDefined();
+    // Parse: "KC_PH_token_aabbcc=<b64>"
+    const [placeholder, b64Value] = subsHeader!.split('=');
+    expect(placeholder).toBe('KC_PH_token_aabbcc');
+    expect(Buffer.from(b64Value, 'base64').toString('utf8')).toBe('r8_secret-token');
+
+    // x-kubeclaw-policy: positions=header,body;per=10;total=50
+    const policyHeader = res.headers['x-kubeclaw-policy'];
+    expect(policyHeader).toBeDefined();
+    expect(policyHeader).toContain('positions=header,body');
+    expect(policyHeader).toContain('per=10');
+    expect(policyHeader).toContain('total=50');
+
+    // Old single-header must be absent
+    expect(res.headers['x-kubeclaw-substitute']).toBeUndefined();
   });
 
-  it('403 path emits no x-kubeclaw-substitute header (no_credential)', async () => {
+  it('403 path emits no substitution headers (no_credential)', async () => {
     // No creds in K8sSecretSource — will hit no_credential
     const emptySrc = new K8sSecretSource({ readSecret: vi.fn(), cacheTtlMs: 0 });
 
@@ -197,6 +199,8 @@ describe('handleExtAuthz — per-group substitution header', () => {
 
     expect(res.status).toBe(403);
     expect(res.headers['x-kubeclaw-substitute']).toBeUndefined();
+    expect(res.headers['x-kubeclaw-substitutions']).toBeUndefined();
+    expect(res.headers['x-kubeclaw-policy']).toBeUndefined();
   });
 
   it('audit log records ownerGroup, catalogId, keySource, substitutionCount for per-group hit', async () => {

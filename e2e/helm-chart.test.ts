@@ -959,6 +959,35 @@ describe('helm template — mode=istio', () => {
   });
 });
 
+describe('helm template — Lua substitution filter', () => {
+  it('renders Lua substitution filter in sidecar mode ConfigMap', () => {
+    const out = execSync(
+      `helm template helm/kubeclaw --set credentialInjection.mode=sidecar --set namespace=kubeclaw`,
+      { encoding: 'utf8' },
+    );
+    expect(out).toContain('envoy.filters.http.lua');
+    expect(out).toContain('x-kubeclaw-substitutions');
+    expect(out).toContain('x-kubeclaw-policy');
+  });
+
+  it('sidecar mode Lua filter appears inside the kubeclaw-envoy-sidecar ConfigMap', () => {
+    const out = execSync(
+      `helm template helm/kubeclaw --set credentialInjection.mode=sidecar --set namespace=kubeclaw`,
+      { encoding: 'utf8' },
+    );
+    // Split by document separator and find the sidecar ConfigMap
+    const docs = out.split(/\n---\n/);
+    const sidecarCmDoc = docs.find(
+      (d) =>
+        d.includes('kind: ConfigMap') &&
+        d.includes('name: kubeclaw-envoy-sidecar'),
+    );
+    expect(sidecarCmDoc).toBeDefined();
+    expect(sidecarCmDoc).toContain('envoy.filters.http.lua');
+    expect(sidecarCmDoc).toContain('x-kubeclaw-substitutions');
+  });
+});
+
 describe('helm template — mode=sidecar (no Istio regression)', () => {
   const render = () =>
     execSync(
