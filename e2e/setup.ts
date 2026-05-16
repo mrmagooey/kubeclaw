@@ -89,7 +89,10 @@ beforeAll(async () => {
   }
 
   testNamespace = `test-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-}, 60000);
+  // 180s, not the 120s config default. The Redis connect retry budget alone
+  // is ~58s (5 × 10s connect + 4 × 2s wait), and under e2e fork contention
+  // the mock-LLM lock acquisition and port-forward warmup eat additional seconds.
+}, 180000);
 
 afterAll(async () => {
   if (mockLlmPort) {
