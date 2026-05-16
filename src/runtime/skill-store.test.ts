@@ -113,4 +113,17 @@ describe('skill-store', () => {
   it('writeCandidate rejects invalid slug', () => {
     expect(() => writeCandidate(groupsRoot, GROUP, mkSkill({ name: 'Bad Name' }))).toThrow(/slug/);
   });
+
+  it('rejectCandidate throws on missing id', () => {
+    expect(() => rejectCandidate(groupsRoot, GROUP, 'nope')).toThrow(/not found/);
+  });
+
+  it('listCandidates ignores underscore- and dot-prefixed files', () => {
+    const id = writeCandidate(groupsRoot, GROUP, mkSkill({ name: 'real' }));
+    const dir = path.join(groupsRoot, GROUP, 'skills', '_candidates');
+    fs.writeFileSync(path.join(dir, '_hidden.md'), 'noise');
+    fs.writeFileSync(path.join(dir, '.dotfile.md'), 'noise');
+    const cands = listCandidates(groupsRoot, GROUP);
+    expect(cands.map((c) => c.id)).toEqual([id]);
+  });
 });

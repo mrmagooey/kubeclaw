@@ -55,7 +55,7 @@ export function listCandidates(root: string, group: string): Candidate[] {
   if (!fs.existsSync(dir)) return [];
   return fs
     .readdirSync(dir)
-    .filter((f) => f.endsWith('.md'))
+    .filter((f) => f.endsWith('.md') && !f.startsWith('_') && !f.startsWith('.'))
     .map((f) => {
       const id = f.replace(/\.md$/, '');
       const skill = readSkillFile(path.join(dir, f));
@@ -107,7 +107,8 @@ export function acceptCandidate(root: string, group: string, id: string): void {
 
 export function rejectCandidate(root: string, group: string, id: string): void {
   const src = path.join(candidatesDir(root, group), `${id}.md`);
-  if (fs.existsSync(src)) fs.unlinkSync(src);
+  if (!fs.existsSync(src)) throw new Error(`candidate not found: ${id}`);
+  fs.unlinkSync(src);
 }
 
 export function disableSkill(root: string, group: string, name: string): void {
