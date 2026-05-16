@@ -26,7 +26,12 @@ export const CatalogEntrySchema = z
     host: z.string().min(1),
     upstreamPort: z.number().int().positive().default(443),
     credentialFields: z.array(CredentialFieldSchema).min(1),
-    baseUrlEnvs: z.record(z.string(), z.string()).default({}),
+    // Defensive: chart may render `baseUrlEnvs:` with no body when empty,
+    // which YAML parses as null. Coerce null → {} before validation.
+    baseUrlEnvs: z.preprocess(
+      (v) => (v == null ? {} : v),
+      z.record(z.string(), z.string()),
+    ),
     allowOperatorFallback: z.boolean().default(false),
     allowedPositions: z.array(z.enum(['header', 'body'])).default(['header', 'body']),
     apiKeyShape: z

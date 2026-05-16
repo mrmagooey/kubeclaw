@@ -2,10 +2,16 @@ import { z } from 'zod';
 import YAML from 'yaml';
 import { MappingSchema, CatalogEntrySchema } from './resolver.js';
 
+// Defensive: accept null (YAML "catalog:" with no body renders as null) and
+// coerce to [] before validation. Distinct from `.default([])` which only
+// applies when the key is missing.
+const NullableArray = <T extends z.ZodTypeAny>(item: T) =>
+  z.preprocess((v) => (v == null ? [] : v), z.array(item));
+
 const ConfigSchema = z
   .object({
-    mappings: z.array(MappingSchema).default([]),
-    catalog: z.array(CatalogEntrySchema).default([]),
+    mappings: NullableArray(MappingSchema),
+    catalog: NullableArray(CatalogEntrySchema),
   })
   .refine(
     (c) => {
