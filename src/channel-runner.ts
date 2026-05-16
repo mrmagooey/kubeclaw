@@ -76,6 +76,12 @@ import { createLLMClient, DEFAULT_DIRECT_MODEL } from './runtime/llm-client.js';
 import { handleSkillsCommand, isSkillsCommand } from './runtime/skills-commands.js';
 import type { CatalogEntry } from './credential-broker/resolver.js';
 import { randomBytes } from 'node:crypto';
+import {
+  listCredentialsTool,
+  buildCredentialSystemBlock,
+  LIST_CREDENTIALS_TOOL_DEF,
+  type IpcClient,
+} from './tools/list-credentials.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -1095,12 +1101,39 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     ? detectMentionedSpecialists(prompt, specialists)
     : [];
 
+  // ── Per-turn credential system block ─────────────────────────────────────
+  // Rebuild fresh on each turn so that newly registered credentials (via
+  // /secret add in this conversation) are reflected immediately. The block
+  // is prepended to the prompt so the LLM sees it as part of the user turn.
+  let credentialSystemBlock = '';
+  try {
+    const credIpc = buildCredentialIpcClient();
+    const credEntries = await listCredentialsTool(
+      { group: group.folder },
+      { ipc: credIpc },
+    );
+    credentialSystemBlock = buildCredentialSystemBlock(
+      credEntries,
+      group.folder,
+    );
+  } catch {
+    // Catalog unavailable — omit the block rather than failing the turn.
+  }
+
   const agentRuns =
     mentionedSpecialists.length > 0
       ? mentionedSpecialists.map((s) => ({
-          prompt: `<specialist name="${s.name}">\n${s.prompt}\n</specialist>\n\n${prompt}`,
+          prompt: credentialSystemBlock
+            ? `${credentialSystemBlock}\n\n<specialist name="${s.name}">\n${s.prompt}\n</specialist>\n\n${prompt}`
+            : `<specialist name="${s.name}">\n${s.prompt}\n</specialist>\n\n${prompt}`,
         }))
-      : [{ prompt }];
+      : [
+          {
+            prompt: credentialSystemBlock
+              ? `${credentialSystemBlock}\n\n${prompt}`
+              : prompt,
+          },
+        ];
 
   const previousCursor = lastAgentTimestamp[chatJid] || '';
   lastAgentTimestamp[chatJid] =
@@ -1299,6 +1332,45 @@ function startSkillCuratorInterval(): void {
   }, CURATOR_INTERVAL_MS).unref();
 }
 
+/**
+ * Build the reusable IPC client for credential tool calls.
+ * Wraps createSecretIpcFn to match the IpcClient call signature.
+ */
+function buildCredentialIpcClient(): IpcClient {
+  return async (type, fields) => {
+    const fn = createSecretIpcFn(type, {});
+    return fn(fields);
+  };
+}
+
+/**
+ * Register channel-resident credential tools with the DirectLLMRunner singleton.
+ * Called once at startup before the first runAgent() invocation.
+ *
+ * The list_credentials tool is intercepted locally — no K8s tool pod is spawned.
+ */
+export function registerCredentialTools(
+  runner: ReturnType<typeof getDirectLLMRunner>,
+  ipcOverride?: IpcClient,
+): void {
+  const ipc = ipcOverride ?? buildCredentialIpcClient();
+  runner.registerLocalTool('list_credentials', {
+    def: LIST_CREDENTIALS_TOOL_DEF,
+    handler: async (_args, input) => {
+      try {
+        const entries = await listCredentialsTool(
+          { group: input.groupFolder },
+          { ipc },
+        );
+        return JSON.stringify(entries);
+      } catch (err) {
+        return `list_credentials error: ${err instanceof Error ? err.message : String(err)}`;
+      }
+    },
+  });
+  logger.debug('Registered list_credentials local tool');
+}
+
 async function main(): Promise<void> {
   startHealthServer();
   await initDatabase();
@@ -1306,6 +1378,7 @@ async function main(): Promise<void> {
   startSkillCuratorInterval();
   loadState();
   await loadChannelPlugins('/workspace/plugins');
+  registerCredentialTools(getDirectLLMRunner());
 
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
