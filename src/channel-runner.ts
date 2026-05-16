@@ -73,6 +73,7 @@ import { AvailableGroup, ContainerOutput } from './runtime/types.js';
 import { logger } from './logger.js';
 import { runCurator, CuratorLLMFn, CuratorProposal } from './runtime/skill-curator.js';
 import { createLLMClient, DEFAULT_DIRECT_MODEL } from './runtime/llm-client.js';
+import { handleSkillsCommand, isSkillsCommand } from './runtime/skills-commands.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -500,12 +501,30 @@ function getAvailableGroups(): AvailableGroup[] {
     }));
 }
 
+export async function dispatchSkillsCommandIfApplicable(
+  group: RegisteredGroup,
+  prompt: string,
+  jid: string,
+  onOutput?: (output: ContainerOutput) => Promise<void>,
+): Promise<boolean> {
+  if (!isSkillsCommand(prompt)) return false;
+  const reply = handleSkillsCommand(GROUPS_DIR, group.folder, jid, prompt);
+  if (onOutput) {
+    await onOutput({ status: 'success', result: reply });
+  }
+  return true;
+}
+
 async function runAgent(
   group: RegisteredGroup,
   prompt: string,
   chatJid: string,
   onOutput?: (output: ContainerOutput) => Promise<void>,
 ): Promise<'success' | 'error'> {
+  if (await dispatchSkillsCommandIfApplicable(group, prompt, chatJid, onOutput)) {
+    return 'success';
+  }
+
   const isMain = group.isMain === true;
   const sessionId = sessions[group.folder];
 

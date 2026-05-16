@@ -6,7 +6,7 @@ vi.hoisted(() => {
   process.env.KUBECLAW_CHANNEL = 'test';
 });
 
-import { folderPrefixForChannel } from './channel-runner.js';
+import { folderPrefixForChannel, dispatchSkillsCommandIfApplicable } from './channel-runner.js';
 
 describe('folderPrefixForChannel', () => {
   it('returns "oauth" for oauth-webchat', () => {
@@ -20,5 +20,35 @@ describe('folderPrefixForChannel', () => {
 
   it('falls back to first 3 chars for unknown channels', () => {
     expect(folderPrefixForChannel('matrix')).toBe('mat');
+  });
+});
+
+describe('runAgent — /skills intercept', () => {
+  it('dispatches /skills commands without invoking the LLM runner', async () => {
+    const outputs: string[] = [];
+    const handled = await dispatchSkillsCommandIfApplicable(
+      { folder: 'g1' } as any,
+      '/skills list',
+      'jid1',
+      async (o: any) => {
+        outputs.push(o.result ?? o.message ?? o.text ?? o.raw ?? '');
+      },
+    );
+    expect(handled).toBe(true);
+    expect(outputs.join('\n')).toMatch(/no skills/i);
+  });
+
+  it('returns false (and does not output) for non-/skills prompts', async () => {
+    const outputs: string[] = [];
+    const handled = await dispatchSkillsCommandIfApplicable(
+      { folder: 'g1' } as any,
+      'hello',
+      'jid1',
+      async (o: any) => {
+        outputs.push(o.result ?? o.message ?? o.text ?? o.raw ?? '');
+      },
+    );
+    expect(handled).toBe(false);
+    expect(outputs).toEqual([]);
   });
 });
