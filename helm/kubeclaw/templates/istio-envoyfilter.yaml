@@ -46,9 +46,33 @@ spec:
                 allowed_upstream_headers:
                   patterns:
                     - exact: authorization
+                    - exact: x-kubeclaw-substitutions
+                    - exact: x-kubeclaw-policy
             failure_mode_allow: false
             with_request_body:
               max_request_bytes: 0
               allow_partial_message: false
               pack_as_bytes: false
+    # Insert Lua substitution filter immediately after ext_authz so it sees
+    # the broker's x-kubeclaw-substitutions / x-kubeclaw-policy response headers,
+    # performs placeholder substitution in request headers and body, then strips
+    # both headers before the request continues to the upstream.
+    - applyTo: HTTP_FILTER
+      match:
+        context: GATEWAY
+        listener:
+          filterChain:
+            filter:
+              name: envoy.filters.network.http_connection_manager
+              subFilter:
+                name: envoy.filters.http.ext_authz
+      patch:
+        operation: INSERT_AFTER
+        value:
+          name: envoy.filters.http.lua
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
+            default_source_code:
+              inline_string: |
+{{ .Files.Get "files/envoy-substitution-filter.lua" | indent 16 }}
 {{- end }}
