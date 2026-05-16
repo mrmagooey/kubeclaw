@@ -14,10 +14,13 @@ import {
   parseSecretAddCommand,
   applyCredentialBackstop,
   buildCatalogBackstopPatterns,
+  registerCredentialTools,
   type SecretCommandDeps,
   type IpcResponse,
 } from './channel-runner.js';
 import type { CatalogEntry } from './credential-broker/resolver.js';
+import { buildCredentialSystemBlock } from './tools/list-credentials.js';
+import type { CredentialEntry } from './tools/list-credentials.js';
 
 describe('folderPrefixForChannel', () => {
   it('returns "oauth" for oauth-webchat', () => {
@@ -404,5 +407,197 @@ describe('/secret add — multi-field parser', () => {
     // Should be resolved to the catalog field name 'token', not '__single__'
     expect(parsedFields).toEqual({ token: 'r8_mytoken123456789012' });
     expect(parsedFields['__single__']).toBeUndefined();
+  });
+});
+
+// ── list_credentials tool registration ───────────────────────────────────────
+
+describe('registerCredentialTools — list_credentials in agent tool list', () => {
+  it('registers list_credentials in the DirectLLMRunner tool list', () => {
+    // Create a minimal mock of the DirectLLMRunner's interface
+    const registeredTools: string[] = [];
+    const mockRunner = {
+      registerLocalTool: (name: string, _tool: unknown) => {
+        registeredTools.push(name);
+      },
+    } as any;
+
+    registerCredentialTools(mockRunner);
+
+    expect(registeredTools).toContain('list_credentials');
+  });
+
+  it('registers list_credentials with a handler that accepts group from input', async () => {
+    let capturedName = '';
+    let capturedHandler: ((args: unknown, input: unknown) => Promise<string>) | null = null;
+
+    const mockRunner = {
+      registerLocalTool: (name: string, tool: { def: unknown; handler: (args: unknown, input: unknown) => Promise<string> }) => {
+        capturedName = name;
+        capturedHandler = tool.handler;
+      },
+    } as any;
+
+    // Inject a mock IPC that returns empty results
+    const mockIpc = vi.fn(async (): Promise<IpcResponse> => ({
+      ok: true,
+      result: [],
+    }));
+
+    registerCredentialTools(mockRunner, mockIpc as any);
+
+    expect(capturedName).toBe('list_credentials');
+    expect(capturedHandler).not.toBeNull();
+
+    // Invoke the handler to verify it calls the IPC client
+    const result = await capturedHandler!({}, { groupFolder: 'ops' });
+    expect(result).toBeDefined();
+    // Empty catalog → empty array returned as JSON
+    expect(JSON.parse(result)).toEqual([]);
+  });
+
+  it('list_credentials handler returns JSON array', async () => {
+    let capturedHandler: ((args: unknown, input: { groupFolder: string }) => Promise<string>) | null = null;
+
+    const mockRunner = {
+      registerLocalTool: (_name: string, tool: { def: unknown; handler: (args: unknown, input: { groupFolder: string }) => Promise<string> }) => {
+        capturedHandler = tool.handler;
+      },
+    } as any;
+
+    const mockIpc = vi.fn(async (type: string): Promise<IpcResponse> => {
+      if (type === 'secret.list') {
+        return {
+          ok: true,
+          result: [{ catalogId: 'replicate', registeredAt: '2026-05-16T14:22:11Z' }],
+        };
+      }
+      if (type === 'catalog.list') {
+        return {
+          ok: true,
+          result: [
+            {
+              id: 'replicate',
+              host: 'api.replicate.com',
+              credentialFields: [{ name: 'token', envVar: 'REPLICATE_API_TOKEN' }],
+            },
+          ],
+        };
+      }
+      return { ok: false, error: 'unexpected' };
+    });
+
+    registerCredentialTools(mockRunner, mockIpc as any);
+
+    const result = await capturedHandler!({}, { groupFolder: 'family' });
+    const parsed = JSON.parse(result);
+    expect(Array.isArray(parsed)).toBe(true);
+    expect(parsed[0].catalogId).toBe('replicate');
+    expect(parsed[0].hasCredential).toBe(true);
+    // Values must never appear
+    expect(result).not.toContain('r8_');
+    expect(result).not.toContain('hunter2');
+  });
+
+  it('list_credentials handler returns error string on IPC failure (not exception)', async () => {
+    let capturedHandler: ((args: unknown, input: { groupFolder: string }) => Promise<string>) | null = null;
+
+    const mockRunner = {
+      registerLocalTool: (_name: string, tool: { def: unknown; handler: (args: unknown, input: { groupFolder: string }) => Promise<string> }) => {
+        capturedHandler = tool.handler;
+      },
+    } as any;
+
+    const mockIpc = vi.fn(async (): Promise<never> => {
+      throw new Error('redis down');
+    });
+
+    registerCredentialTools(mockRunner, mockIpc as any);
+
+    // Handler should NOT re-throw — it returns an error string to the LLM
+    const result = await capturedHandler!({}, { groupFolder: 'family' });
+    expect(typeof result).toBe('string');
+    expect(result).toMatch(/list_credentials error/i);
+  });
+});
+
+// ── Per-turn system-prompt block ──────────────────────────────────────────────
+
+describe('per-turn credential system-prompt block', () => {
+  it('buildCredentialSystemBlock returns empty string for empty catalog', () => {
+    const block = buildCredentialSystemBlock([], 'family');
+    expect(block).toBe('');
+  });
+
+  it('buildCredentialSystemBlock includes group name and [SYSTEM] header', () => {
+    const entries: CredentialEntry[] = [
+      {
+        catalogId: 'replicate',
+        host: 'api.replicate.com',
+        fields: ['token'],
+        hasCredential: true,
+        registeredAt: '2026-05-16T14:22:11Z',
+      },
+    ];
+    const block = buildCredentialSystemBlock(entries, 'my-group');
+    expect(block.startsWith('[SYSTEM]')).toBe(true);
+    expect(block).toContain('"my-group"');
+  });
+
+  it('buildCredentialSystemBlock shows "credential registered" for registered entries', () => {
+    const entries: CredentialEntry[] = [
+      {
+        catalogId: 'replicate',
+        host: 'api.replicate.com',
+        fields: ['token'],
+        hasCredential: true,
+        registeredAt: '2026-05-16T14:22:11Z',
+      },
+    ];
+    const block = buildCredentialSystemBlock(entries, 'family');
+    expect(block).toContain('replicate');
+    expect(block).toContain('api.replicate.com');
+    expect(block).toContain('credential registered');
+  });
+
+  it('buildCredentialSystemBlock shows /secret add hint for unregistered entries', () => {
+    const entries: CredentialEntry[] = [
+      {
+        catalogId: 'mistral',
+        host: 'api.mistral.ai',
+        fields: ['token'],
+        hasCredential: false,
+        registeredAt: null,
+      },
+    ];
+    const block = buildCredentialSystemBlock(entries, 'family');
+    expect(block).toContain('mistral');
+    expect(block).toContain('no credential');
+    expect(block).toContain('/secret add mistral');
+  });
+
+  it('buildCredentialSystemBlock includes both registered and unregistered entries', () => {
+    const entries: CredentialEntry[] = [
+      {
+        catalogId: 'replicate',
+        host: 'api.replicate.com',
+        fields: ['token'],
+        hasCredential: true,
+        registeredAt: '2026-05-16T14:22:11Z',
+      },
+      {
+        catalogId: 'jenkins',
+        host: 'jenkins.example.com',
+        fields: ['user', 'password'],
+        hasCredential: false,
+        registeredAt: null,
+      },
+    ];
+    const block = buildCredentialSystemBlock(entries, 'ops');
+    expect(block).toContain('replicate');
+    expect(block).toContain('credential registered');
+    expect(block).toContain('jenkins');
+    expect(block).toContain('no credential');
+    expect(block).toContain('/secret add jenkins');
   });
 });
