@@ -1897,3 +1897,242 @@ describe('startTaskRequestWatcher: group auto-registration', () => {
     );
   });
 });
+
+// ── Secret / catalog IPC handler tests ─────────────────────────────────────
+
+import { registerSecretDeps } from './ipc-redis.js';
+
+/** Build a single-message XREAD response for the task-request stream. */
+function makeTaskStreamMsg(
+  id: string,
+  fields: Record<string, string>,
+): [string, [string, string[]]][] {
+  const flatFields = Object.entries(fields).flat();
+  return [['kubeclaw:task-requests', [[id, flatFields]]]];
+}
+
+describe('secret/catalog IPC handlers via startTaskRequestWatcher', () => {
+  // Mock SecretManager and CatalogInformer
+  const mockSetGroupSecret = vi.fn().mockResolvedValue(undefined);
+  const mockDeleteGroupSecret = vi.fn().mockResolvedValue(undefined);
+  const mockListGroupSecrets = vi
+    .fn()
+    .mockResolvedValue([
+      { catalogId: 'replicate', registeredAt: '2026-05-16T00:00:00.000Z' },
+    ]);
+  const mockGetCatalog = vi.fn().mockReturnValue([
+    {
+      id: 'replicate',
+      host: 'api.replicate.com',
+      credentialFields: [{ name: 'token', envVar: 'REPLICATE_API_TOKEN' }],
+    },
+  ]);
+
+  const fakeSecretManager = {
+    setGroupSecret: mockSetGroupSecret,
+    deleteGroupSecret: mockDeleteGroupSecret,
+    listGroupSecrets: mockListGroupSecrets,
+  } as any;
+
+  const fakeCatalogInformer = {
+    getCatalog: mockGetCatalog,
+    getEntry: vi.fn(),
+    sync: vi.fn(),
+    start: vi.fn(),
+  } as any;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    await stopIpcWatcher();
+    mockRegisteredGroups.mockReturnValue({});
+    mockXadd.mockResolvedValue('mock-id');
+    mockXread.mockResolvedValue(null);
+    vi.mocked(isValidGroupFolder).mockReturnValue(true);
+
+    // Register the mocked deps before each test
+    registerSecretDeps(fakeSecretManager, fakeCatalogInformer);
+  });
+
+  afterEach(async () => {
+    await stopIpcWatcher();
+  });
+
+  it('secret.add handler invokes SecretManager.setGroupSecret and returns { ok: true }', async () => {
+    startIpcWatcher(createMockDeps());
+
+    const resultStream = 'kubeclaw:secret-result:test-add';
+    const fields = { token: 'r8_supersecret' };
+
+    let callCount = 0;
+    mockXread.mockImplementation(async () => {
+      if (callCount++ === 0) {
+        return makeTaskStreamMsg('10-0', {
+          type: 'secret.add',
+          groupFolder: 'family',
+          group: 'family',
+          catalogId: 'replicate',
+          fields: JSON.stringify(fields),
+          resultStream,
+        });
+      }
+      await stopIpcWatcher();
+      return null;
+    });
+
+    await startTaskRequestWatcher();
+
+    expect(mockSetGroupSecret).toHaveBeenCalledWith('family', 'replicate', fields);
+    expect(mockXadd).toHaveBeenCalledWith(
+      resultStream,
+      '*',
+      'result',
+      JSON.stringify({ ok: true }),
+    );
+  });
+
+  it('secret.add with unknown catalogId surfaces { ok: false, error }', async () => {
+    startIpcWatcher(createMockDeps());
+
+    mockSetGroupSecret.mockRejectedValueOnce(new Error('unknown_catalog_entry'));
+
+    const resultStream = 'kubeclaw:secret-result:test-add-fail';
+
+    let callCount = 0;
+    mockXread.mockImplementation(async () => {
+      if (callCount++ === 0) {
+        return makeTaskStreamMsg('11-0', {
+          type: 'secret.add',
+          groupFolder: 'family',
+          group: 'family',
+          catalogId: 'no-such-entry',
+          fields: JSON.stringify({ token: 'abc' }),
+          resultStream,
+        });
+      }
+      await stopIpcWatcher();
+      return null;
+    });
+
+    await startTaskRequestWatcher();
+
+    expect(mockXadd).toHaveBeenCalledWith(
+      resultStream,
+      '*',
+      'result',
+      JSON.stringify({ ok: false, error: 'unknown_catalog_entry' }),
+    );
+  });
+
+  it('secret.list handler returns metadata only (no values in payload)', async () => {
+    startIpcWatcher(createMockDeps());
+
+    const resultStream = 'kubeclaw:secret-result:test-list';
+
+    let callCount = 0;
+    mockXread.mockImplementation(async () => {
+      if (callCount++ === 0) {
+        return makeTaskStreamMsg('12-0', {
+          type: 'secret.list',
+          groupFolder: 'family',
+          group: 'family',
+          resultStream,
+        });
+      }
+      await stopIpcWatcher();
+      return null;
+    });
+
+    await startTaskRequestWatcher();
+
+    expect(mockListGroupSecrets).toHaveBeenCalledWith('family');
+    const expectedResult = [
+      { catalogId: 'replicate', registeredAt: '2026-05-16T00:00:00.000Z' },
+    ];
+    expect(mockXadd).toHaveBeenCalledWith(
+      resultStream,
+      '*',
+      'result',
+      JSON.stringify({ ok: true, result: expectedResult }),
+    );
+    // Verify no 'value' or 'fields' property in the result payload
+    const xaddCall = vi.mocked(mockXadd).mock.calls.find(
+      (c) => c[0] === resultStream,
+    );
+    const payload = JSON.parse(xaddCall![3] as string) as {
+      ok: boolean;
+      result: Array<Record<string, unknown>>;
+    };
+    expect(payload.ok).toBe(true);
+    for (const entry of payload.result) {
+      expect(entry).not.toHaveProperty('value');
+      expect(entry).not.toHaveProperty('fields');
+    }
+  });
+
+  it('catalog.list handler returns catalog entries', async () => {
+    startIpcWatcher(createMockDeps());
+
+    const resultStream = 'kubeclaw:secret-result:test-catalog';
+
+    let callCount = 0;
+    mockXread.mockImplementation(async () => {
+      if (callCount++ === 0) {
+        return makeTaskStreamMsg('13-0', {
+          type: 'catalog.list',
+          groupFolder: 'family',
+          resultStream,
+        });
+      }
+      await stopIpcWatcher();
+      return null;
+    });
+
+    await startTaskRequestWatcher();
+
+    expect(mockGetCatalog).toHaveBeenCalled();
+    const expectedCatalog = [
+      {
+        id: 'replicate',
+        host: 'api.replicate.com',
+        credentialFields: [{ name: 'token', envVar: 'REPLICATE_API_TOKEN' }],
+      },
+    ];
+    expect(mockXadd).toHaveBeenCalledWith(
+      resultStream,
+      '*',
+      'result',
+      JSON.stringify({ ok: true, result: expectedCatalog }),
+    );
+  });
+
+  it('secret.remove handler invokes SecretManager.deleteGroupSecret and returns { ok: true }', async () => {
+    startIpcWatcher(createMockDeps());
+
+    const resultStream = 'kubeclaw:secret-result:test-remove';
+
+    let callCount = 0;
+    mockXread.mockImplementation(async () => {
+      if (callCount++ === 0) {
+        return makeTaskStreamMsg('14-0', {
+          type: 'secret.remove',
+          groupFolder: 'family',
+          group: 'family',
+          catalogId: 'replicate',
+          resultStream,
+        });
+      }
+      await stopIpcWatcher();
+      return null;
+    });
+
+    await startTaskRequestWatcher();
+
+    expect(mockDeleteGroupSecret).toHaveBeenCalledWith('family', 'replicate');
+    expect(mockXadd).toHaveBeenCalledWith(
+      resultStream,
+      '*',
+      'result',
+      JSON.stringify({ ok: true }),
+    );
+  });
+});
