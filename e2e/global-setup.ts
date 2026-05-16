@@ -175,6 +175,32 @@ export default async function setup() {
     // Non-fatal — tests that spawn agent jobs will skip or fail gracefully
   }
 
+  // ── Build orchestrator container image into minikube Docker daemon ───────
+  console.log('🐳 Checking for kubeclaw-orchestrator:latest in minikube...');
+  try {
+    const checkResult = spawnSync(
+      'bash',
+      ['-c', 'eval $(minikube docker-env) && docker image inspect kubeclaw-orchestrator:latest -f "{{.Id}}" 2>/dev/null'],
+      { encoding: 'utf8', stdio: 'pipe' },
+    );
+    if (checkResult.status === 0 && checkResult.stdout.trim()) {
+      console.log('✅ kubeclaw-orchestrator:latest already present, skipping build\n');
+    } else {
+      console.log('🔨 Building kubeclaw-orchestrator:latest inside minikube Docker daemon...');
+      const buildResult = spawnSync(
+        'bash',
+        ['-c', 'eval $(minikube docker-env) && docker build -t kubeclaw-orchestrator:latest .'],
+        { encoding: 'utf8', stdio: 'inherit', timeout: 600_000 },
+      );
+      if (buildResult.status !== 0) {
+        throw new Error(`Orchestrator image build failed with exit code ${buildResult.status}`);
+      }
+      console.log('✅ kubeclaw-orchestrator:latest built\n');
+    }
+  } catch (err) {
+    console.warn(`⚠️  Could not build orchestrator image: ${err}\n`);
+  }
+
   // Ensure cert-manager is available before the kubeclaw helm install. The
   // chart's credentialInjection internal-CA template references
   // cert-manager.io/v1 CRDs; without them, `helm install` fails with
