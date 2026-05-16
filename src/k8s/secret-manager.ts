@@ -131,4 +131,39 @@ export class SecretManager {
       return { catalogId, registeredAt: blob.registeredAt };
     });
   }
+
+  /**
+   * Returns placeholders only (never values) for all registered catalog entries
+   * of the given group.
+   *
+   * Shape: `{ [catalogId]: { [fieldName]: placeholderString } }`
+   *
+   * Returns an empty object `{}` when the group has no registered credentials
+   * or when the Secret does not exist.
+   */
+  async getGroupPlaceholders(
+    group: string,
+  ): Promise<Record<string, Record<string, string>>> {
+    let secret: { data?: Record<string, string> };
+    try {
+      secret = await this.opts.k8s.readSecret(this.secretName(group));
+    } catch (err: unknown) {
+      const e = err as { statusCode?: number; response?: { statusCode?: number } };
+      if (e?.statusCode === 404 || e?.response?.statusCode === 404) return {};
+      throw err;
+    }
+    const result: Record<string, Record<string, string>> = {};
+    for (const [catalogId, b64] of Object.entries(secret.data ?? {})) {
+      const blob: CredentialBlob = JSON.parse(
+        Buffer.from(b64, 'base64').toString('utf8'),
+      );
+      result[catalogId] = Object.fromEntries(
+        Object.entries(blob.fields).map(([fieldName, { placeholder }]) => [
+          fieldName,
+          placeholder,
+        ]),
+      );
+    }
+    return result;
+  }
 }

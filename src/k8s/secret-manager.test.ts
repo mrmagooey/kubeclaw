@@ -130,6 +130,95 @@ catalog:
     expect(JSON.stringify(list)).not.toContain('r8_secret');
   });
 
+  describe('getGroupPlaceholders', () => {
+    it('returns map structure correctly when group has registered creds', async () => {
+      mockK8s.readSecret.mockResolvedValue({
+        data: {
+          replicate: Buffer.from(
+            JSON.stringify({
+              fields: {
+                token: { value: 'r8_secret_value', placeholder: 'KC_PH_token_abcd1234' },
+              },
+              registeredAt: '2026-05-16T10:00:00Z',
+            }),
+          ).toString('base64'),
+          jenkins: Buffer.from(
+            JSON.stringify({
+              fields: {
+                user: { value: 'alice_secret', placeholder: 'KC_PH_user_1111' },
+                password: { value: 'hunter2_secret', placeholder: 'KC_PH_password_2222' },
+              },
+              registeredAt: '2026-05-16T11:00:00Z',
+            }),
+          ).toString('base64'),
+        },
+      });
+
+      const result = await mgr.getGroupPlaceholders('family');
+
+      expect(result).toEqual({
+        replicate: { token: 'KC_PH_token_abcd1234' },
+        jenkins: {
+          user: 'KC_PH_user_1111',
+          password: 'KC_PH_password_2222',
+        },
+      });
+    });
+
+    it('returns empty object when group has nothing registered (404)', async () => {
+      mockK8s.readSecret.mockRejectedValue({ statusCode: 404 });
+
+      const result = await mgr.getGroupPlaceholders('empty-group');
+
+      expect(result).toEqual({});
+    });
+
+    it('returns empty object when group has nothing registered (response.statusCode 404)', async () => {
+      mockK8s.readSecret.mockRejectedValue({ response: { statusCode: 404 } });
+
+      const result = await mgr.getGroupPlaceholders('empty-group');
+
+      expect(result).toEqual({});
+    });
+
+    it('JSON-stringified return value does NOT contain any secret value strings', async () => {
+      const secretValue = 'r8_supersecret_value_that_must_not_leak';
+      const secretPassword = 'hunter2_supersecret_must_not_leak';
+      mockK8s.readSecret.mockResolvedValue({
+        data: {
+          replicate: Buffer.from(
+            JSON.stringify({
+              fields: {
+                token: { value: secretValue, placeholder: 'KC_PH_token_safe_placeholder' },
+              },
+              registeredAt: '2026-05-16T10:00:00Z',
+            }),
+          ).toString('base64'),
+          jenkins: Buffer.from(
+            JSON.stringify({
+              fields: {
+                user: { value: 'alice_secret_user', placeholder: 'KC_PH_user_safe' },
+                password: { value: secretPassword, placeholder: 'KC_PH_password_safe' },
+              },
+              registeredAt: '2026-05-16T11:00:00Z',
+            }),
+          ).toString('base64'),
+        },
+      });
+
+      const result = await mgr.getGroupPlaceholders('family');
+      const serialized = JSON.stringify(result);
+
+      expect(serialized).not.toContain(secretValue);
+      expect(serialized).not.toContain(secretPassword);
+      expect(serialized).not.toContain('alice_secret_user');
+      // Placeholders should be present
+      expect(serialized).toContain('KC_PH_token_safe_placeholder');
+      expect(serialized).toContain('KC_PH_user_safe');
+      expect(serialized).toContain('KC_PH_password_safe');
+    });
+  });
+
   it('deleteGroupSecret removes named entry; deletes Secret if last', async () => {
     mockK8s.readSecret.mockResolvedValueOnce({
       data: {
