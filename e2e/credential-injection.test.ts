@@ -1139,7 +1139,12 @@ describe.skipIf(!hasCluster)(
           // 51 occurrences exceeds Lua filter total=50 limit.
           const repeats = Array(51).fill(placeholder).join(' ');
           const script = [
-            'sleep 4',
+            // Wait for the Envoy sidecar proxy to be listening on 8443 before
+            // sending traffic.  Envoy can take 10-30 s to pull its image and
+            // initialize on a cold cluster; 4 s was not enough.  Poll with a
+            // short curl health-check against the Envoy admin port (9901) which
+            // comes up before the proxy port (8443).
+            'i=0; until curl -sf http://127.0.0.1:9901/ready >/dev/null 2>&1 || [ $i -ge 30 ]; do sleep 2; i=$((i+1)); done',
             `status=$(curl -sS -x http://127.0.0.1:8443 -X POST -H "Content-Type: text/plain" --data-binary '${repeats}' -o /dev/null -w "%{http_code}" http://${MOCK_SVC}/echo)`,
             'echo "HTTP_STATUS=$status"',
           ].join('; ');
