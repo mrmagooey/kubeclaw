@@ -49,7 +49,12 @@ import {
   startToolPodSpawnWatcher,
   startToolJobSpawnWatcher,
   startTaskRequestWatcher,
+  registerSecretDeps,
 } from './k8s/ipc-redis.js';
+import { CatalogInformer } from './k8s/catalog.js';
+import { SecretManager } from './k8s/secret-manager.js';
+import { KubeConfig, CoreV1Api } from '@kubernetes/client-node';
+import { KUBECLAW_NAMESPACE } from './config.js';
 import { getOutputChannel, getRedisClient } from './k8s/redis-client.js';
 import {
   findChannel,
@@ -811,9 +816,66 @@ async function main(): Promise<void> {
     healthRedisReady = false;
   });
 
+  // Catalog informer + SecretManager — initialised before IPC handlers start
+  const kc = new KubeConfig();
+  kc.loadFromDefault();
+  const coreApi = kc.makeApiClient(CoreV1Api);
+
+  const catalogInformer = new CatalogInformer({
+    namespace: KUBECLAW_NAMESPACE,
+    configMapName: 'kubeclaw-credential-broker-config',
+    readConfigMap: async (ns, name) => {
+      const res = await coreApi.readNamespacedConfigMap({ name, namespace: ns });
+      return { data: res.data as Record<string, string> | undefined };
+    },
+  });
+  const stopCatalog = catalogInformer.start(30_000);
+
+  const secretClient = {
+    readSecret: async (name: string) => {
+      const res = await coreApi.readNamespacedSecret({
+        name,
+        namespace: KUBECLAW_NAMESPACE,
+      });
+      return {
+        data: res.data as Record<string, string> | undefined,
+        metadata: res.metadata,
+      };
+    },
+    createSecret: async (body: unknown) => {
+      await coreApi.createNamespacedSecret({
+        namespace: KUBECLAW_NAMESPACE,
+        body: body as any,
+      });
+    },
+    patchSecret: async (name: string, patch: unknown) => {
+      await coreApi.patchNamespacedSecret({
+        name,
+        namespace: KUBECLAW_NAMESPACE,
+        body: patch as any,
+      });
+    },
+    deleteSecret: async (name: string) => {
+      await coreApi.deleteNamespacedSecret({
+        name,
+        namespace: KUBECLAW_NAMESPACE,
+      });
+    },
+  };
+
+  const secretManager = new SecretManager({
+    namespace: KUBECLAW_NAMESPACE,
+    catalog: catalogInformer,
+    k8s: secretClient,
+  });
+
+  registerSecretDeps(secretManager, catalogInformer);
+  logger.info('CatalogInformer and SecretManager initialised');
+
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
+    stopCatalog();
     stopDiscoveryWatcher();
     await queue.shutdown(10000);
     await shutdownAllRunners();
