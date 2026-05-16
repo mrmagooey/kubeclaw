@@ -95,4 +95,17 @@ describe('handleSkillsCommand', () => {
     const reply = handleSkillsCommand(root, GROUP, JID, '/skills');
     expect(reply).toMatch(/list|review|show|accept|reject|disable|enable|prune/);
   });
+
+  it('prune-confirm — usage when no arg', () => {
+    const reply = handleSkillsCommand(root, GROUP, JID, '/skills prune-confirm');
+    expect(reply).toMatch(/usage/i);
+  });
+
+  it('prune-confirm — deletes the skill', () => {
+    const id = writeCandidate(root, GROUP, mkSkill('alpha'));
+    acceptCandidate(root, GROUP, id);
+    const reply = handleSkillsCommand(root, GROUP, JID, '/skills prune-confirm alpha');
+    expect(reply).toMatch(/pruned/i);
+    expect(handleSkillsCommand(root, GROUP, JID, '/skills list')).toMatch(/no skills/i);
+  });
 });

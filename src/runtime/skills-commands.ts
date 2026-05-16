@@ -27,6 +27,7 @@ const HELP = [
   '  /skills disable <name>',
   '  /skills enable <name>',
   '  /skills prune',
+  '  /skills prune-confirm <name>',
 ].join('\n');
 
 export function handleSkillsCommand(
