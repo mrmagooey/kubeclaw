@@ -376,15 +376,59 @@ describe('Real Orchestrator E2E', () => {
     }
 
     if (!orchestratorRunning) {
-      console.log('\n🔨 Building orchestrator image...');
-      try {
-        execSync('docker build -t kubeclaw-orchestrator:latest .', {
-          stdio: 'inherit',
-          cwd: process.cwd(),
-        });
+      console.log('\n🔨 Building orchestrator image into minikube daemon...');
+      {
+        // Build directly into minikube's Docker daemon so the image is available
+        // to pods without a registry pull.  Without `eval $(minikube docker-env)`
+        // the build targets the host daemon and the image is invisible to minikube.
+        const orchBuild = spawnSync(
+          'bash',
+          ['-c', 'eval $(minikube docker-env) && docker build -t kubeclaw-orchestrator:latest .'],
+          { stdio: 'inherit', cwd: process.cwd() },
+        );
+        if (orchBuild.status !== 0) {
+          throw new Error(`Orchestrator image build failed with exit code ${orchBuild.status}`);
+        }
         console.log('✅ Build complete');
+      }
+
+      // ── Build and load IRC mock image into minikube ─────────────────────
+      // k8s/15-irc-mock.yaml uses imagePullPolicy: Never, so kubeclaw-irc-mock:latest
+      // must exist inside minikube's Docker daemon before the Deployment is applied.
+      // Without this step the pod stays stuck in ErrImageNeverPull and the
+      // orchestrator crashloops with "No channels connected".
+      console.log('🔨 Building kubeclaw-irc-mock:latest...');
+      try {
+        const ircMockCheck = spawnSync(
+          'bash',
+          ['-c', 'eval $(minikube docker-env) && docker image inspect kubeclaw-irc-mock:latest -f "{{.Id}}" 2>/dev/null'],
+          { encoding: 'utf8', stdio: 'pipe' },
+        );
+        if (ircMockCheck.status === 0 && ircMockCheck.stdout.trim()) {
+          console.log('✅ kubeclaw-irc-mock:latest already present in minikube, skipping build');
+        } else {
+          // Build to host daemon via the existing helper script, then load into minikube.
+          const buildResult = spawnSync(
+            'bash',
+            ['-c', 'scripts/build-irc-mock.sh latest'],
+            { stdio: 'inherit', cwd: process.cwd() },
+          );
+          if (buildResult.status !== 0) {
+            throw new Error(`IRC mock image build failed with exit code ${buildResult.status}`);
+          }
+          console.log('📤 Loading kubeclaw-irc-mock:latest into minikube...');
+          const loadResult = spawnSync(
+            'minikube',
+            ['image', 'load', 'kubeclaw-irc-mock:latest'],
+            { stdio: 'inherit' },
+          );
+          if (loadResult.status !== 0) {
+            throw new Error(`minikube image load failed with exit code ${loadResult.status}`);
+          }
+          console.log('✅ kubeclaw-irc-mock:latest loaded into minikube');
+        }
       } catch (error) {
-        console.error('❌ Failed to build orchestrator image:', error);
+        console.error('❌ Failed to build/load IRC mock image:', error);
         throw error;
       }
 
