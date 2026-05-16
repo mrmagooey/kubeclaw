@@ -1,9 +1,17 @@
+import { logger } from '../../logger.js';
 import { db } from '../../db.js';
-import { GlobalSpecialist, validateSpecialist } from '../../specialists/types.js';
+import {
+  GlobalSpecialist,
+  validateSpecialist,
+} from '../../specialists/types.js';
 
 export type Result = { ok: true } | { ok: false; error: string };
+export type ReconcileFn = () => Promise<void>;
 
-export function registerSpecialist(s: GlobalSpecialist): Result {
+export function registerSpecialist(
+  s: GlobalSpecialist,
+  reconcile?: ReconcileFn,
+): Result {
   const v = validateSpecialist(s);
   if (!v.ok) return v;
 
@@ -20,13 +28,17 @@ export function registerSpecialist(s: GlobalSpecialist): Result {
     `INSERT INTO specialist_overrides (name, spec_json, created_at, updated_at) VALUES (?, ?, ?, ?)`,
     [s.name, JSON.stringify(s), now, now],
   );
+  reconcile?.().catch((err) => {
+    // Log but do not surface — mutation already succeeded
+    logger.warn({ err }, 'reconcile after specialist mutation failed');
+  });
   return { ok: true };
 }
 
-export function editSpecialist(args: {
-  name: string;
-  patch: Partial<GlobalSpecialist>;
-}): Result {
+export function editSpecialist(
+  args: { name: string; patch: Partial<GlobalSpecialist> },
+  reconcile?: ReconcileFn,
+): Result {
   const rows = db.exec(
     `SELECT spec_json FROM specialist_overrides WHERE name = ?`,
     [args.name],
@@ -49,10 +61,16 @@ export function editSpecialist(args: {
     `UPDATE specialist_overrides SET spec_json = ?, updated_at = ? WHERE name = ?`,
     [JSON.stringify(merged), Date.now(), args.name],
   );
+  reconcile?.().catch((err) => {
+    logger.warn({ err }, 'reconcile after specialist mutation failed');
+  });
   return { ok: true };
 }
 
-export function removeSpecialist(args: { name: string }): Result {
+export function removeSpecialist(
+  args: { name: string },
+  reconcile?: ReconcileFn,
+): Result {
   const existing = db.exec(
     `SELECT 1 FROM specialist_overrides WHERE name = ?`,
     [args.name],
@@ -62,6 +80,9 @@ export function removeSpecialist(args: { name: string }): Result {
   }
 
   db.run(`DELETE FROM specialist_overrides WHERE name = ?`, [args.name]);
+  reconcile?.().catch((err) => {
+    logger.warn({ err }, 'reconcile after specialist mutation failed');
+  });
   return { ok: true };
 }
 
@@ -70,5 +91,7 @@ export function listSpecialistOverrides(): GlobalSpecialist[] {
     `SELECT spec_json FROM specialist_overrides ORDER BY name`,
   );
   if (rows.length === 0) return [];
-  return rows[0].values.map((row) => JSON.parse(row[0] as string) as GlobalSpecialist);
+  return rows[0].values.map(
+    (row) => JSON.parse(row[0] as string) as GlobalSpecialist,
+  );
 }
