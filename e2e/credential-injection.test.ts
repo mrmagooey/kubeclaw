@@ -104,10 +104,10 @@ describe('credential-injection sidecar mode (e2e)', () => {
         `--set credentialInjection.broker.image=${image} ` +
         `--set secrets.existingSecret=kubeclaw-secrets ` +
         `--set orchestrator.admin.enabled=false ` +
-        `--wait --timeout 3m`,
+        `--wait --timeout 5m`,
       { stdio: 'inherit' },
     );
-  }, 300_000);
+  }, 480_000);
 
   afterAll(() => {
     execSync(`helm uninstall ${RELEASE} -n ${NS} 2>/dev/null || true`);
@@ -222,15 +222,20 @@ describe('audit-only mode (mode=sidecar, auditOnly=true)', () => {
         '  auditOnly: true',
         `  broker:`,
         `    image: ${buildBrokerImage()}`,
+        'secrets:',
+        '  existingSecret: kubeclaw-secrets',
+        'orchestrator:',
+        '  admin:',
+        '    enabled: false',
       ].join('\n'),
     );
     execSync(
       `helm upgrade --install ${AUDIT_RELEASE} helm/kubeclaw ` +
         `--namespace ${NS} --create-namespace ` +
-        `-f ${valuesFile} --wait --timeout 120s`,
+        `-f ${valuesFile} --wait --timeout 5m`,
       { stdio: 'inherit' },
     );
-  });
+  }, 480_000);
 
   afterAll(() => {
     execSync(`helm uninstall ${AUDIT_RELEASE} --namespace ${NS}`, {
