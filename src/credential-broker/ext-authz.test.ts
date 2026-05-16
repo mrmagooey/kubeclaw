@@ -1,21 +1,31 @@
 import { describe, it, expect, vi } from 'vitest';
 import { handleExtAuthz, type Deps } from './ext-authz.js';
 import { Resolver } from './resolver.js';
+import { K8sSecretSource } from './k8s-secret-source.js';
+
+function makeNoopSrc(): K8sSecretSource {
+  return new K8sSecretSource({ readSecret: vi.fn(), cacheTtlMs: 0 });
+}
 
 const deps = (): Deps => ({
-  resolver: new Resolver([
-    {
-      id: 'anthropic',
-      destinations: ['api.anthropic.com'],
-      identities: ['*'],
-      credentialRef: {
-        kind: 'Secret',
-        name: 'kubeclaw-secrets',
-        key: 'anthropic-api-key',
+  resolver: new Resolver({
+    mappings: [
+      {
+        id: 'anthropic',
+        destinations: ['api.anthropic.com'],
+        identities: ['*'],
+        credentialRef: {
+          kind: 'Secret',
+          name: 'kubeclaw-secrets',
+          key: 'anthropic-api-key',
+        },
+        headerScheme: 'bearer',
       },
-      headerScheme: 'bearer',
-    },
-  ]),
+    ],
+    catalog: [],
+    groupSource: makeNoopSrc(),
+    operatorSecretReader: vi.fn(),
+  }),
   identityVerifier: {
     verify: vi.fn().mockResolvedValue('sa/kubeclaw-tool-job'),
   } as any,
@@ -89,19 +99,24 @@ describe('handleExtAuthz', () => {
 
 describe('audit-only mode', () => {
   const auditDeps = (): Deps => ({
-    resolver: new Resolver([
-      {
-        id: 'anthropic',
-        destinations: ['api.anthropic.com'],
-        identities: ['*'],
-        credentialRef: {
-          kind: 'Secret',
-          name: 'kubeclaw-secrets',
-          key: 'anthropic-api-key',
+    resolver: new Resolver({
+      mappings: [
+        {
+          id: 'anthropic',
+          destinations: ['api.anthropic.com'],
+          identities: ['*'],
+          credentialRef: {
+            kind: 'Secret',
+            name: 'kubeclaw-secrets',
+            key: 'anthropic-api-key',
+          },
+          headerScheme: 'bearer',
         },
-        headerScheme: 'bearer',
-      },
-    ]),
+      ],
+      catalog: [],
+      groupSource: makeNoopSrc(),
+      operatorSecretReader: vi.fn(),
+    }),
     identityVerifier: {
       verify: vi.fn().mockResolvedValue('sa/kubeclaw-tool-job'),
     } as any,

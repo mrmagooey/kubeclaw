@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { K8sSecretSource } from './k8s-secret-source.js';
 
 export const MappingSchema = z.object({
   id: z.string().min(1),
@@ -46,11 +47,36 @@ export interface ResolveQuery {
   identity: string;
 }
 
-export class Resolver {
-  constructor(private readonly mappings: ReadonlyArray<Mapping>) {}
+export interface ResolveSubMapQuery {
+  identity: string;
+  ownerGroup: string | null;
+  host: string;
+}
 
+export type ResolveResult =
+  | {
+      status: 'ok';
+      substitutions: Array<{ placeholder: string; value: string }>;
+      keySource: 'groupSecret' | 'operatorFallback';
+      catalogId: string;
+    }
+  | { status: 'no_credential'; catalogId: string }
+  | { status: 'unknown_destination' }
+  | { status: 'no_owner_group' };
+
+export interface ResolverOpts {
+  mappings: ReadonlyArray<Mapping>;
+  catalog: ReadonlyArray<CatalogEntry>;
+  groupSource: K8sSecretSource;
+  operatorSecretReader: (key: string) => Promise<string | null>;
+}
+
+export class Resolver {
+  constructor(private readonly opts: ResolverOpts) {}
+
+  // Legacy bearer path — unchanged callers (ext-authz bearer flow).
   find(q: ResolveQuery): Mapping | undefined {
-    return this.mappings.find(
+    return this.opts.mappings.find(
       (m) =>
         m.destinations.includes(q.destination) &&
         (m.identities.includes('*') || m.identities.includes(q.identity)),
@@ -66,5 +92,39 @@ export class Resolver {
         throw new Error(`unsupported header scheme: ${_exhaustive as string}`);
       }
     }
+  }
+
+  /** Synchronous: covers per-group hit, no-group miss, and no-fallback miss. */
+  resolveSubstitutionMap(q: ResolveSubMapQuery): ResolveResult {
+    const entry = this.opts.catalog.find((e) => e.host === q.host);
+    if (!entry) return { status: 'unknown_destination' };
+    if (!q.ownerGroup) return { status: 'no_owner_group' };
+    const blob = this.opts.groupSource.getGroupCredential(q.ownerGroup, entry.id);
+    if (blob) {
+      const subs: Array<{ placeholder: string; value: string }> = [];
+      for (const field of entry.credentialFields) {
+        const f = blob.fields[field.name];
+        if (!f) continue; // schema mismatch — fail-closed at request time
+        subs.push({ placeholder: f.placeholder, value: f.value });
+      }
+      return { status: 'ok', substitutions: subs, keySource: 'groupSecret', catalogId: entry.id };
+    }
+    return { status: 'no_credential', catalogId: entry.id };
+  }
+
+  /** Async variant: also tries operator fallback if catalog entry permits. */
+  async resolveSubstitutionMapAsync(q: ResolveSubMapQuery): Promise<ResolveResult> {
+    const sync = this.resolveSubstitutionMap(q);
+    if (sync.status !== 'no_credential') return sync;
+    const entry = this.opts.catalog.find((e) => e.host === q.host)!;
+    if (!entry.allowOperatorFallback) return sync;
+    const opVal = await this.opts.operatorSecretReader(entry.id);
+    if (!opVal) return sync;
+    return {
+      status: 'ok',
+      substitutions: [{ placeholder: `KC_PH_FALLBACK_${entry.id}`, value: opVal }],
+      keySource: 'operatorFallback',
+      catalogId: entry.id,
+    };
   }
 }
