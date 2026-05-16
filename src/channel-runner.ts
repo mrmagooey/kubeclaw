@@ -16,6 +16,7 @@ import path from 'path';
 
 import {
   ASSISTANT_NAME,
+  GROUPS_DIR,
   KUBECLAW_CHANNEL,
   KUBECLAW_CHANNEL_TYPE,
   POLL_INTERVAL,
@@ -36,6 +37,7 @@ import {
   getAllRegisteredGroups,
   getAllSessions,
   getAllTasks,
+  getConversationHistory,
   getMessagesSince,
   getNewMessages,
   getRouterState,
@@ -69,6 +71,8 @@ import { registerChannel } from './channels/registry.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { AvailableGroup, ContainerOutput } from './runtime/types.js';
 import { logger } from './logger.js';
+import { runCurator, CuratorLLMFn, CuratorProposal } from './runtime/skill-curator.js';
+import { createLLMClient, DEFAULT_DIRECT_MODEL } from './runtime/llm-client.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -745,10 +749,74 @@ function recoverPendingMessages(): void {
   }
 }
 
+const CURATOR_INTERVAL_MS = Number(process.env.SKILL_CURATOR_INTERVAL_MS ?? 24 * 60 * 60 * 1000);
+
+function startSkillCuratorInterval(): void {
+  if (CURATOR_INTERVAL_MS <= 0) {
+    logger.info('skill curator disabled (SKILL_CURATOR_INTERVAL_MS=0)');
+    return;
+  }
+  setInterval(async () => {
+    try {
+      const groups = Object.values(registeredGroups);
+      const client = createLLMClient();
+      for (const group of groups) {
+        const transcript = getConversationHistory(group.folder).slice(-200);
+        const llm: CuratorLLMFn = async (tx, existing) => {
+          const sys = `You analyze a recent assistant-user transcript and propose at most 3 skill candidates. Reply JSON: {"proposals": [{"action":"new"|"edit"|"tune-description","target":string|null,"name":string,"description":string,"body":string}]}. Prefer "edit" over "new" when the topic overlaps an existing skill. Skip project-specific facts (those belong elsewhere) and one-off solutions.`;
+          const existingDigest = existing
+            .map((s) => `- ${s.frontmatter.name}: ${s.frontmatter.description}`)
+            .join('\n');
+          const transcriptStr = tx
+            .map((t) => `[${t.role}] ${t.content}`)
+            .join('\n')
+            .slice(0, 12000);
+          const completion = await client.chat.completions.create({
+            model: DEFAULT_DIRECT_MODEL,
+            messages: [
+              { role: 'system', content: sys },
+              {
+                role: 'user',
+                content: `Existing skills:\n${existingDigest || '(none)'}\n\nTranscript:\n${transcriptStr}`,
+              },
+            ],
+            response_format: { type: 'json_object' },
+            max_tokens: 1200,
+          });
+          try {
+            const parsed = JSON.parse(
+              completion.choices[0].message.content ?? '{"proposals":[]}',
+            );
+            return Array.isArray(parsed.proposals)
+              ? (parsed.proposals as CuratorProposal[])
+              : [];
+          } catch {
+            return [];
+          }
+        };
+        const res = await runCurator(group.folder, {
+          groupsRoot: GROUPS_DIR,
+          getTranscript: () => transcript,
+          llm,
+        });
+        if (res.candidatesWritten > 0) {
+          logger.info(
+            { group: group.name, folder: group.folder, candidates: res.candidatesWritten },
+            'skill curator staged candidates',
+          );
+        }
+      }
+    } catch (err) {
+      logger.warn({ err }, 'skill curator interval iteration failed');
+    }
+  }, CURATOR_INTERVAL_MS).unref();
+}
+
 async function main(): Promise<void> {
   startHealthServer();
   await initDatabase();
   logger.info(`Database initialized (channel: ${KUBECLAW_CHANNEL})`);
+  startSkillCuratorInterval();
   loadState();
   await loadChannelPlugins('/workspace/plugins');
 
