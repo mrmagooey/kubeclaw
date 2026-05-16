@@ -794,6 +794,55 @@ describe('helm upgrade', () => {
   });
 });
 
+describe('ClusterRoleBinding name is release-scoped (collision regression)', () => {
+  it('CRB name contains the release name (not hardcoded)', () => {
+    const result = spawnSync(
+      'helm',
+      [
+        'template', 'my-release', CHART_DIR,
+        '--set', 'credentialInjection.mode=sidecar',
+        '--set', 'namespace=kubeclaw',
+        '--set', 'secrets.anthropicApiKey=test',
+        '--set', 'secrets.claudeCodeOauthToken=test',
+        '--set', 'redis.password=test',
+      ],
+      { encoding: 'utf8' },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain('name: my-release-credential-broker-tokenreview');
+    expect(result.stdout).not.toContain('name: kubeclaw-credential-broker-tokenreview');
+  });
+
+  it('two different release names produce two different CRB names', () => {
+    const renderAs = (releaseName: string) =>
+      spawnSync(
+        'helm',
+        [
+          'template', releaseName, CHART_DIR,
+          '--set', 'credentialInjection.mode=sidecar',
+          '--set', 'namespace=kubeclaw',
+          '--set', 'secrets.anthropicApiKey=test',
+          '--set', 'secrets.claudeCodeOauthToken=test',
+          '--set', 'redis.password=test',
+        ],
+        { encoding: 'utf8' },
+      );
+
+    const alpha = renderAs('alpha-release');
+    const beta = renderAs('beta-release');
+
+    expect(alpha.status, alpha.stderr).toBe(0);
+    expect(beta.status, beta.stderr).toBe(0);
+
+    expect(alpha.stdout).toContain('name: alpha-release-credential-broker-tokenreview');
+    expect(beta.stdout).toContain('name: beta-release-credential-broker-tokenreview');
+
+    // The two CRB names must differ so sibling installs never collide.
+    expect(alpha.stdout).not.toContain('name: beta-release-credential-broker-tokenreview');
+    expect(beta.stdout).not.toContain('name: alpha-release-credential-broker-tokenreview');
+  });
+});
+
 describe('helm template — mode=istio', () => {
   const render = (extraArgs = '') =>
     execSync(
