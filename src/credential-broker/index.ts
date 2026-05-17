@@ -240,7 +240,10 @@ export async function startBroker(): Promise<http.Server> {
   const audit = new PinoAudit();
 
   const authzServer = http.createServer((req, res) => {
-    if (req.method !== 'POST' || req.url !== '/authz') {
+    // Envoy ext_authz appends the original request path to path_prefix (/authz),
+    // so the auth request URL may be /authz, /authz/some/path, etc.
+    // Accept any POST whose URL starts with /authz.
+    if (req.method !== 'POST' || !req.url?.startsWith('/authz')) {
       res.writeHead(404).end();
       return;
     }

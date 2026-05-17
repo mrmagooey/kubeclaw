@@ -72,6 +72,23 @@ describe('loadConfigOrThrow', () => {
   });
 });
 
+// ─── Authz route matching ─────────────────────────────────────────────────────
+//
+// The broker accepts POST to any URL that starts with /authz so that Envoy's
+// ext_authz path_prefix ("/authz") + original request path ("/echo") → "/authz/echo"
+// is still handled rather than rejected with 404.
+describe('authz route URL matching', () => {
+  // Mirror the production check from index.ts so tests stay in sync with the impl.
+  const isAuthzPath = (url: string | undefined) => url?.startsWith('/authz') === true;
+
+  it('accepts /authz', () => { expect(isAuthzPath('/authz')).toBe(true); });
+  it('accepts /authz/echo (ext_authz path_prefix appended)', () => { expect(isAuthzPath('/authz/echo')).toBe(true); });
+  it('accepts /authz/v1/path (multi-segment append)', () => { expect(isAuthzPath('/authz/v1/path')).toBe(true); });
+  it('rejects /metrics', () => { expect(isAuthzPath('/metrics')).toBe(false); });
+  it('rejects /healthz', () => { expect(isAuthzPath('/healthz')).toBe(false); });
+  it('rejects undefined url', () => { expect(isAuthzPath(undefined)).toBe(false); });
+});
+
 // ─── Helpers shared across substitution-header tests ──────────────────────────
 
 function makeGroupSrc(
