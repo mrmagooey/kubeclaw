@@ -576,7 +576,31 @@ async function runAgent(
   }
 }
 
-async function processGroupMessages(chatJid: string): Promise<boolean> {
+/** @internal Test use only — inject fake state so processGroupMessages can be called in isolation. */
+export function _testInjectState(
+  groups: Record<string, RegisteredGroup>,
+  channelsArray: Channel[],
+): void {
+  for (const [jid, group] of Object.entries(groups)) {
+    registeredGroups[jid] = group;
+  }
+  for (const ch of channelsArray) {
+    channels.push(ch);
+  }
+}
+
+/** @internal Test use only — reset module-level state between tests. */
+export function _testResetState(): void {
+  for (const key of Object.keys(registeredGroups)) {
+    delete registeredGroups[key];
+  }
+  channels.length = 0;
+  for (const key of Object.keys(lastAgentTimestamp)) {
+    delete lastAgentTimestamp[key];
+  }
+}
+
+export async function processGroupMessages(chatJid: string): Promise<boolean> {
   const group = registeredGroups[chatJid];
   if (!group) return true;
 
