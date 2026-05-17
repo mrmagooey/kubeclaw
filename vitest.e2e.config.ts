@@ -29,6 +29,11 @@ export default defineConfig({
     },
     env: {
       KUBECLAW_NAMESPACE: process.env.NAMESPACE || 'kubeclaw',
+      // channel-runner.ts has a top-level `process.exit(1)` if this env
+      // var is unset. Any test importing channel-runner (directly or
+      // transitively) crashes without it. The value is only consumed
+      // inside function bodies, so a placeholder is harmless.
+      KUBECLAW_CHANNEL: process.env.KUBECLAW_CHANNEL || 'mock',
     },
     setupFiles: ['./e2e/setup.ts'],
     globalSetup: './e2e/global-setup.ts',

@@ -23,6 +23,8 @@ import type { RegisteredGroup } from '../src/types.js';
 
 // All mocks must be created with vi.hoisted() so they're available inside
 // the vi.mock() factory callbacks, which are hoisted to the top of the file.
+// (KUBECLAW_CHANNEL is set in vitest.e2e.config.ts so channel-runner's
+// top-level process.exit(1) guard doesn't fire when this file imports it.)
 const {
   mockRunAgent,
   mockWriteTasksSnapshot,
@@ -47,11 +49,17 @@ vi.mock('../src/runtime/index.js', () => {
     writeTasksSnapshot: mockWriteTasksSnapshot,
     writeGroupsSnapshot: mockWriteGroupsSnapshot,
     shutdown: vi.fn().mockResolvedValue(undefined),
+    configureMcp: vi.fn().mockResolvedValue(undefined),
+    registerTool: vi.fn(),
   };
   return {
     getToolJobRunner: vi.fn().mockReturnValue(mockRunner),
     getAgentRunner: vi.fn().mockReturnValue(mockRunner),
     getRunnerForGroup: vi.fn().mockReturnValue(mockRunner),
+    // Channel pods use DirectLLMRunner. processGroupMessages calls
+    // getDirectLLMRunner().runAgent — must return the same mock runner so
+    // the test's mockRunAgent assertions fire.
+    getDirectLLMRunner: vi.fn().mockReturnValue(mockRunner),
     shutdownAllRunners: vi.fn().mockResolvedValue(undefined),
     resetRunners: vi.fn(),
     resetAgentRunner: vi.fn(),
@@ -113,12 +121,16 @@ vi.mock('../src/logger.js', () => ({
   },
 }));
 
+// channel-runner owns the live message-processing state (registeredGroups,
+// channels). The orchestrator (src/index.ts) maintains its own copies for
+// other purposes (Helm chart sync, admin shell), but tests of message
+// processing must register against channel-runner's state.
 import {
-  _pushChannel,
-  _resetState,
-  _setRegisteredGroups,
-} from '../src/index.js';
-import { processGroupMessages as _processGroupMessages } from '../src/channel-runner.js';
+  processGroupMessages as _processGroupMessages,
+  _pushChannelForTesting as _pushChannel,
+  _resetStateForTesting as _resetState,
+  _setRegisteredGroupsForTesting as _setRegisteredGroups,
+} from '../src/channel-runner.js';
 import {
   storeChatMetadata,
   storeMessage,
@@ -492,8 +504,13 @@ describe('User Interaction: Error Handling', () => {
     _setRegisteredGroups({ [CHAT_JID]: makeGroup() });
 
     mockRunAgent.mockImplementation(async (_g, _i, _op, onOutput) => {
-      // Error with no output sent to user — cursor should be rolled back
-      return { status: 'error', result: null, error: 'K8s job failed' };
+      // Error with no output sent to user — cursor should be rolled back.
+      // Real runners (DirectLLMRunner) always invoke onOutput before
+      // returning the result, so replicate that contract here: result.result
+      // is null so processGroupMessages will not set outputSentToUser=true.
+      const result = { status: 'error' as const, result: null, error: 'K8s job failed' };
+      if (onOutput) await onOutput(result);
+      return result;
     });
 
     storeMessage(makeMessage(`@${ASSISTANT} do something`, 1));
