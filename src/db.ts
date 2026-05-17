@@ -335,6 +335,25 @@ function createSchema(database: SqlJsDatabase): void {
   } catch {
     /* column already exists */
   }
+
+  database.run(`
+    CREATE TABLE IF NOT EXISTS conversation_summaries (
+      id TEXT PRIMARY KEY,
+      group_folder TEXT NOT NULL,
+      session_key TEXT,
+      parent_summary_id TEXT,
+      message_start_id TEXT,
+      message_end_id TEXT,
+      summary_text TEXT NOT NULL,
+      token_count INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      model_used TEXT NOT NULL
+    )
+  `);
+  database.run(`
+    CREATE INDEX IF NOT EXISTS idx_conversation_summaries_group
+    ON conversation_summaries(group_folder, created_at)
+  `);
 }
 
 /**
@@ -1184,7 +1203,7 @@ function migrateJsonState(): void {
 export function getConversationHistory(
   groupFolderOrArgs: string | { sessionKey: string; limit?: number },
   limit?: number,
-): { role: 'user' | 'assistant'; content: string }[] {
+): { id: string; role: 'user' | 'assistant'; content: string }[] {
   return timedDbOp('getConversationHistory', () => {
     let column: string;
     let key: string;
@@ -1206,14 +1225,15 @@ export function getConversationHistory(
 
     const query =
       maxMessages > 0
-        ? `SELECT role, content FROM conversation_history WHERE ${column} = ? ORDER BY created_at DESC LIMIT ?`
-        : `SELECT role, content FROM conversation_history WHERE ${column} = ? ORDER BY created_at ASC`;
+        ? `SELECT id, role, content FROM conversation_history WHERE ${column} = ? ORDER BY created_at DESC LIMIT ?`
+        : `SELECT id, role, content FROM conversation_history WHERE ${column} = ? ORDER BY created_at ASC`;
     const params = maxMessages > 0 ? [key, maxMessages] : [key];
     const result = db.exec(query, params);
     if (result.length === 0) return [];
     const rows = result[0].values.map((row: unknown[]) => ({
-      role: row[0] as 'user' | 'assistant',
-      content: row[1] as string,
+      id: row[0] as string,
+      role: row[1] as 'user' | 'assistant',
+      content: row[2] as string,
     }));
     // DESC query returns newest-first; reverse to chronological order
     if (maxMessages > 0) rows.reverse();
@@ -1290,10 +1310,152 @@ export function appendConversationMessage(
  * by isolated specialists (where session_key differs from group_folder).
  * Group-level wipe; session-key scoping does not protect specialist rows.
  */
+/**
+ * Delete conversation_history rows by their IDs, atomically.
+ * Returns the number of rows deleted.
+ */
+export function deleteMessagesByIds(ids: string[]): number {
+  if (ids.length === 0) return 0;
+  const placeholders = ids.map(() => '?').join(',');
+  db.run('BEGIN');
+  try {
+    db.run(
+      `DELETE FROM conversation_history WHERE id IN (${placeholders})`,
+      ids,
+    );
+    db.run('COMMIT');
+  } catch (err) {
+    db.run('ROLLBACK');
+    throw err;
+  }
+  saveDatabase();
+  // sql.js doesn't expose affected row count directly; return ids.length as best estimate
+  return ids.length;
+}
+
 export function clearConversationHistory(groupFolder: string): void {
-  db.run('DELETE FROM conversation_history WHERE group_folder = ?', [
-    groupFolder,
-  ]);
+  db.run('BEGIN');
+  try {
+    db.run('DELETE FROM conversation_history WHERE group_folder = ?', [groupFolder]);
+    db.run('DELETE FROM conversation_summaries WHERE group_folder = ?', [groupFolder]);
+    db.run('COMMIT');
+  } catch (err) {
+    db.run('ROLLBACK');
+    throw err;
+  }
+  saveDatabase();
+}
+
+// --- Conversation Summary Functions ---
+
+export interface SummaryRecord {
+  id: string;
+  groupFolder: string;
+  sessionKey: string;
+  parentSummaryId: string | null;
+  messageStartId: string;
+  messageEndId: string;
+  summaryText: string;
+  modelUsed: string;
+  tokenCount: number;
+  createdAt: string;
+}
+
+export interface InsertSummaryArgs {
+  groupFolder: string;
+  sessionKey: string;
+  parentSummaryId: string | null;
+  messageStartId: string;
+  messageEndId: string;
+  summaryText: string;
+  modelUsed: string;
+  tokenCount: number;
+}
+
+export function insertSummary(args: InsertSummaryArgs): string {
+  const id =
+    args.groupFolder +
+    '-summary-' +
+    Date.now() +
+    '-' +
+    Math.random().toString(36).slice(2, 8);
+  const now = new Date().toISOString();
+  db.run(
+    `INSERT INTO conversation_summaries
+      (id, group_folder, session_key, parent_summary_id,
+       message_start_id, message_end_id, summary_text,
+       model_used, token_count, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      id,
+      args.groupFolder,
+      args.sessionKey,
+      args.parentSummaryId ?? null,
+      args.messageStartId,
+      args.messageEndId,
+      args.summaryText,
+      args.modelUsed,
+      args.tokenCount,
+      now,
+    ],
+  );
+  saveDatabase();
+  return id;
+}
+
+export function getLatestSummary(groupFolder: string): SummaryRecord | null {
+  const result = db.exec(
+    `SELECT id, group_folder, session_key, parent_summary_id,
+            message_start_id, message_end_id, summary_text,
+            model_used, token_count, created_at
+     FROM conversation_summaries
+     WHERE group_folder = ?
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [groupFolder],
+  );
+  if (result.length === 0 || result[0].values.length === 0) return null;
+  const [
+    id, gf, sk, parentId, startId, endId, text, model, tokens, createdAt,
+  ] = result[0].values[0] as [
+    string, string, string, string | null,
+    string, string, string, string, number, string,
+  ];
+  return {
+    id, groupFolder: gf, sessionKey: sk, parentSummaryId: parentId,
+    messageStartId: startId, messageEndId: endId,
+    summaryText: text, modelUsed: model,
+    tokenCount: tokens, createdAt,
+  };
+}
+
+export function getSummaryById(id: string): SummaryRecord | null {
+  const result = db.exec(
+    `SELECT id, group_folder, session_key, parent_summary_id,
+            message_start_id, message_end_id, summary_text,
+            model_used, token_count, created_at
+     FROM conversation_summaries
+     WHERE id = ?
+     LIMIT 1`,
+    [id],
+  );
+  if (result.length === 0 || result[0].values.length === 0) return null;
+  const [
+    rid, gf, sk, parentId, startId, endId, text, model, tokens, createdAt,
+  ] = result[0].values[0] as [
+    string, string, string, string | null,
+    string, string, string, string, number, string,
+  ];
+  return {
+    id: rid, groupFolder: gf, sessionKey: sk, parentSummaryId: parentId,
+    messageStartId: startId, messageEndId: endId,
+    summaryText: text, modelUsed: model,
+    tokenCount: tokens, createdAt,
+  };
+}
+
+export function deleteSummariesForGroup(groupFolder: string): void {
+  db.run('DELETE FROM conversation_summaries WHERE group_folder = ?', [groupFolder]);
   saveDatabase();
 }
 

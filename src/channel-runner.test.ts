@@ -100,6 +100,7 @@ import type { CatalogEntry } from './credential-broker/resolver.js';
 import { buildCredentialSystemBlock } from './tools/list-credentials.js';
 import type { CredentialEntry } from './tools/list-credentials.js';
 import * as db from './db.js';
+import { isCompactCommand } from './runtime/compression-commands.js';
 
 describe('folderPrefixForChannel', () => {
   it('returns "oauth" for oauth-webchat', () => {
@@ -1241,5 +1242,15 @@ describe('/search dispatch — malformed FTS query error handling', () => {
     expect(sendMessageSpy).toHaveBeenCalledOnce();
     const sentText: string = sendMessageSpy.mock.calls[0][1];
     expect(sentText).toMatch(/Search failed/i);
+  });
+});
+
+describe('channel-runner compression command dispatch', () => {
+  it('isCompactCommand is the right guard for /compact', () => {
+    expect(isCompactCommand('/compact')).toBe(true);
+    expect(isCompactCommand('/compact --keep 5')).toBe(true);
+    expect(isCompactCommand('/summary')).toBe(true);
+    expect(isCompactCommand('/clear')).toBe(true);
+    expect(isCompactCommand('/skills list')).toBe(false);
   });
 });

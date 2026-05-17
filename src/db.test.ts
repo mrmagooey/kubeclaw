@@ -1328,9 +1328,9 @@ describe('conversation history', () => {
 
     const history = getConversationHistory('group-x');
     expect(history).toHaveLength(3);
-    expect(history[0]).toEqual({ role: 'user', content: 'hello' });
-    expect(history[1]).toEqual({ role: 'assistant', content: 'hi there' });
-    expect(history[2]).toEqual({ role: 'user', content: 'how are you?' });
+    expect(history[0]).toMatchObject({ role: 'user', content: 'hello' });
+    expect(history[1]).toMatchObject({ role: 'assistant', content: 'hi there' });
+    expect(history[2]).toMatchObject({ role: 'user', content: 'how are you?' });
   });
 
   it('isolates history by group_folder', () => {

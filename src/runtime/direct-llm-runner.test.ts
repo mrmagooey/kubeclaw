@@ -60,6 +60,17 @@ vi.mock('../db.js', () => ({
   getConversationHistory: vi.fn().mockReturnValue([]),
   appendConversationMessage: vi.fn(),
   appendConversationHistory: vi.fn(),
+  getLatestSummary: vi.fn().mockReturnValue(null),
+  insertSummary: vi.fn().mockReturnValue('test-summary-id'),
+  deleteMessagesByIds: vi.fn().mockReturnValue(0),
+}));
+
+vi.mock('./compression/token-estimate.js', () => ({
+  estimateMessagesTokens: vi.fn().mockReturnValue(0),
+}));
+
+vi.mock('./compression/summarizer.js', () => ({
+  summarize: vi.fn().mockResolvedValue({ text: 'Summary text.', tokenCount: 10 }),
 }));
 
 vi.mock('../config.js', () => ({
@@ -105,6 +116,43 @@ vi.mock('./tools/propose-skill.js', () => ({
 }));
 
 // ---- Tests ----------------------------------------------------------------
+
+describe('shouldCompress', () => {
+  it('returns false when message count is below threshold', async () => {
+    const { shouldCompress } = await import('./direct-llm-runner.js');
+    expect(shouldCompress(10, 1000, 50, 32000)).toBe(false);
+  });
+
+  it('returns true when message count exceeds threshold', async () => {
+    const { shouldCompress } = await import('./direct-llm-runner.js');
+    expect(shouldCompress(51, 1000, 50, 32000)).toBe(true);
+  });
+
+  it('returns true when token count exceeds threshold even if messages are below', async () => {
+    const { shouldCompress } = await import('./direct-llm-runner.js');
+    expect(shouldCompress(10, 33000, 50, 32000)).toBe(true);
+  });
+
+  it('returns false when both are at exactly the threshold (not exceeded)', async () => {
+    const { shouldCompress } = await import('./direct-llm-runner.js');
+    expect(shouldCompress(50, 32000, 50, 32000)).toBe(false);
+  });
+
+  it('returns false when both thresholds are 0 (disabled)', async () => {
+    const { shouldCompress } = await import('./direct-llm-runner.js');
+    expect(shouldCompress(1000, 100000, 0, 0)).toBe(false);
+  });
+
+  it('returns true when only token threshold is active and exceeded', async () => {
+    const { shouldCompress } = await import('./direct-llm-runner.js');
+    expect(shouldCompress(1000, 100000, 0, 50000)).toBe(true);
+  });
+
+  it('returns true when only message threshold is active and exceeded', async () => {
+    const { shouldCompress } = await import('./direct-llm-runner.js');
+    expect(shouldCompress(1000, 100000, 500, 0)).toBe(true);
+  });
+});
 
 describe('DirectLLMRunner', () => {
   const baseGroup = {

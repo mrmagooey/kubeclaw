@@ -18,7 +18,12 @@ import {
   getConversationHistory,
   appendConversationMessage,
   appendConversationHistory,
+  getLatestSummary,
+  insertSummary,
+  deleteMessagesByIds,
 } from '../db.js';
+import { estimateMessagesTokens } from './compression/token-estimate.js';
+import { summarize } from './compression/summarizer.js';
 import { getRagProvider } from '../rag/provider.js';
 import { logger } from '../logger.js';
 import { RegisteredGroup } from '../types.js';
@@ -54,6 +59,29 @@ const DEFAULT_SYSTEM_PROMPT =
 const MAX_TOOL_ROUNDS = 10;
 const TOOL_TIMEOUT_MS = 60_000; // 60 s per tool call
 const TOOL_JOB_TIMEOUT_MS = 300_000; // 5 min for full tool jobs
+
+// ---- Context compression thresholds ----
+
+const COMPRESSION_THRESHOLD_MESSAGES = parseInt(
+  process.env.KUBECLAW_COMPRESSION_THRESHOLD_MESSAGES || '50',
+  10,
+);
+const COMPRESSION_THRESHOLD_TOKENS = parseInt(
+  process.env.KUBECLAW_COMPRESSION_THRESHOLD_TOKENS || '32000',
+  10,
+);
+
+/** Exported for unit testing only. */
+export function shouldCompress(
+  messageCount: number,
+  tokenEstimate: number,
+  thresholdMessages: number,
+  thresholdTokens: number,
+): boolean {
+  const msgCheck = thresholdMessages > 0 && messageCount > thresholdMessages;
+  const tokenCheck = thresholdTokens > 0 && tokenEstimate > thresholdTokens;
+  return msgCheck || tokenCheck;
+}
 
 // ---- Tool definitions ----
 
@@ -938,21 +966,95 @@ export class DirectLLMRunner implements MessageRunner {
     const useHistory = !(
       input.isScheduledTask && input.sessionId === undefined
     );
-    const history = useHistory
+    // Fetch all history (unlimited) so the compression check can count total
+    // messages. For sessionKey-scoped sessions (isolated specialists), we skip
+    // compression so the standard limit applies; for the main group we fetch
+    // unlimited so the compression check can see the full history.
+    const rawHistory = useHistory
       ? overrides.sessionKey
         ? getConversationHistory({ sessionKey: overrides.sessionKey })
-        : getConversationHistory(input.groupFolder)
+        : getConversationHistory(input.groupFolder, 0)
       : [];
 
     // Record conversation history size
     this.channelMetrics?.setConversationHistorySize(
       { group: input.groupFolder },
-      history.length,
+      rawHistory.length,
     );
+
+    // --- Context compression ---
+    // GroupQueue serializes all messages within a group (state.active = true for
+    // the duration of runForGroup), so this check and the summarization write
+    // cannot interleave with another runAgent call for the same group.
+    // Thresholds are re-read from env at call time (not cached at import time)
+    // so that tests and operators can override them at runtime.
+    const compressionThresholdMessages = parseInt(
+      process.env.KUBECLAW_COMPRESSION_THRESHOLD_MESSAGES || String(COMPRESSION_THRESHOLD_MESSAGES),
+      10,
+    );
+    const compressionThresholdTokens = parseInt(
+      process.env.KUBECLAW_COMPRESSION_THRESHOLD_TOKENS || String(COMPRESSION_THRESHOLD_TOKENS),
+      10,
+    );
+    let activeSummaryMarker: string | null = null;
+    // Only run compression on the main group-folder history (not isolated specialist sessions).
+    if (useHistory && !overrides.sessionKey) {
+      const tokenEst = estimateMessagesTokens(rawHistory);
+      if (
+        shouldCompress(
+          rawHistory.length,
+          tokenEst,
+          compressionThresholdMessages,
+          compressionThresholdTokens,
+        )
+      ) {
+        const keepWindow = parseInt(
+          process.env.MAX_CONVERSATION_HISTORY || '20',
+          10,
+        );
+        const toSummarize = rawHistory.slice(0, Math.max(0, rawHistory.length - keepWindow));
+        if (toSummarize.length > 0) {
+          try {
+            const prevSummary = getLatestSummary(input.groupFolder);
+            const { text, tokenCount } = await summarize(toSummarize, this.client, model);
+            const summaryId = insertSummary({
+              groupFolder: input.groupFolder,
+              sessionKey: input.sessionId ?? input.groupFolder,
+              parentSummaryId: prevSummary?.id ?? null,
+              messageStartId: toSummarize[0].id,
+              messageEndId: toSummarize[toSummarize.length - 1].id,
+              summaryText: text,
+              modelUsed: model,
+              tokenCount,
+            });
+            deleteMessagesByIds(toSummarize.map((m) => m.id));
+            activeSummaryMarker = `[summary_id=${summaryId}] ${text}`;
+            logger.info(
+              { groupFolder: input.groupFolder, summaryId, messagesCompressed: toSummarize.length },
+              'DirectLLMRunner: compressed conversation history',
+            );
+          } catch (err) {
+            logger.warn(
+              { groupFolder: input.groupFolder, err },
+              'DirectLLMRunner: summarization failed — falling back to sliding-window',
+            );
+          }
+        }
+      }
+    }
+
+    // After possible compression, slice to keep-window for the actual LLM call.
+    const keepWindow = parseInt(process.env.MAX_CONVERSATION_HISTORY || '20', 10);
+    const history = activeSummaryMarker
+      ? rawHistory.slice(Math.max(0, rawHistory.length - keepWindow))
+      : rawHistory;
 
     const messages: OpenAI.ChatCompletionMessageParam[] = [
       { role: 'system', content: systemPrompt },
-      ...history,
+      ...(activeSummaryMarker
+        ? [{ role: 'system' as const, content: activeSummaryMarker }]
+        : []),
+      ...history.map(({ role, content }) => ({ role, content })),
       { role: 'user', content: input.prompt },
     ];
 
