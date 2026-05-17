@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // channel-runner.ts has a module-level `if (!KUBECLAW_CHANNEL) process.exit(1)`
 // guard. Hoist the env stub above the import so the guard passes.
@@ -99,6 +99,7 @@ import {
 import type { CatalogEntry } from './credential-broker/resolver.js';
 import { buildCredentialSystemBlock } from './tools/list-credentials.js';
 import type { CredentialEntry } from './tools/list-credentials.js';
+import * as db from './db.js';
 
 describe('folderPrefixForChannel', () => {
   it('returns "oauth" for oauth-webchat', () => {
@@ -1048,5 +1049,197 @@ describe('processGroupMessages dispatch', () => {
     expect(recordSpecialistUsageCalls).toHaveLength(1);
     expect(recordSpecialistUsageCalls[0].specialistName).toBe('A');
     expect(recordSpecialistUsageCalls[0].status).toBe('error');
+  });
+});
+
+// ── /search dispatch tests (gap-3) ────────────────────────────────────────────
+
+import {
+  _testInjectState,
+  _testResetState,
+} from './channel-runner.js';
+import { isSearchCommand, handleSearchCommand } from './runtime/search-command.js';
+
+describe('/search dispatch', () => {
+  it('isSearchCommand identifies /search messages', () => {
+    expect(isSearchCommand('/search hello')).toBe(true);
+    expect(isSearchCommand('/skills list')).toBe(false);
+    expect(isSearchCommand('regular message')).toBe(false);
+  });
+
+  it('handleSearchCommand returns a no-results message for unknown query', async () => {
+    const { _initTestDatabase } = await import('./db.js');
+    await _initTestDatabase();
+    const out = handleSearchCommand('test-group', '/search xqzz_channel_runner_dispatch');
+    expect(out).toMatch(/no results/i);
+  });
+});
+
+describe('/search dispatch end-to-end via processGroupMessages', () => {
+  const CHAT_JID = 'dispatch-test@g.us';
+  const GROUP_FOLDER = 'tg_dispatch-test';
+  const sendMessageSpy = vi.fn().mockResolvedValue(undefined);
+
+  afterEach(() => {
+    _testResetState();
+    sendMessageSpy.mockClear();
+    vi.restoreAllMocks();
+  });
+
+  it('sends search result via channel.sendMessage and does NOT invoke the LLM', async () => {
+    // Initialize the real sql.js DB and seed conversation history for /search.
+    const { _initTestDatabase, appendConversationMessage } = await import('./db.js');
+    await _initTestDatabase();
+
+    // Seed conversation history so /search has rows to return.
+    appendConversationMessage(GROUP_FOLDER, 'user', 'the cluster uses kubernetes for scheduling');
+    appendConversationMessage(GROUP_FOLDER, 'assistant', 'yes kubernetes is configured');
+
+    // Make getMessagesSince (mocked) return a /search message.
+    const msgTimestamp = new Date(Date.now() - 1000).toISOString();
+    mockGetMessagesSince.mockReturnValueOnce([{
+      id: 'dispatch-search-msg-1',
+      chat_jid: CHAT_JID,
+      sender: 'user123',
+      sender_name: 'Alice',
+      content: '/search kubernetes',
+      timestamp: msgTimestamp,
+      is_from_me: false,
+    }]);
+
+    // Build a fake channel that owns the test JID.
+    const fakeChannel = {
+      ownsJid: (jid: string) => jid === CHAT_JID,
+      sendMessage: sendMessageSpy,
+      setTyping: vi.fn().mockResolvedValue(undefined),
+    };
+    mockFindChannel.mockReturnValueOnce(fakeChannel);
+
+    // Inject the registered group and fake channel into module-level state.
+    _testInjectState(
+      {
+        [CHAT_JID]: {
+          jid: CHAT_JID,
+          name: 'Dispatch Test Group',
+          folder: GROUP_FOLDER,
+          trigger: '@Claude',
+          added_at: new Date().toISOString(),
+          requiresTrigger: false, // bypass trigger check so /search is processed
+        },
+      },
+      [fakeChannel as any],
+    );
+
+    const result = await processGroupMessages(CHAT_JID);
+
+    // The function should complete successfully.
+    expect(result).toBe(true);
+
+    // sendMessage must have been called with a search result string.
+    expect(sendMessageSpy).toHaveBeenCalledOnce();
+    const sentText: string = sendMessageSpy.mock.calls[0][1];
+    expect(sentText).toMatch(/kubernetes/i);
+  });
+
+  it('forwards a non-search message without calling sendMessage directly', async () => {
+    // Make getMessagesSince return a normal message.
+    const msgTimestamp = new Date(Date.now() - 1000).toISOString();
+    mockGetMessagesSince.mockReturnValueOnce([{
+      id: 'dispatch-regular-msg-1',
+      chat_jid: CHAT_JID,
+      sender: 'user123',
+      sender_name: 'Alice',
+      content: 'hello world regular message',
+      timestamp: msgTimestamp,
+      is_from_me: false,
+    }]);
+
+    const fakeChannel = {
+      ownsJid: (jid: string) => jid === CHAT_JID,
+      sendMessage: sendMessageSpy,
+      setTyping: vi.fn().mockResolvedValue(undefined),
+    };
+    mockFindChannel.mockReturnValueOnce(fakeChannel);
+
+    _testInjectState(
+      {
+        [CHAT_JID]: {
+          jid: CHAT_JID,
+          name: 'Dispatch Test Group',
+          folder: GROUP_FOLDER,
+          trigger: '@Claude',
+          added_at: new Date().toISOString(),
+          requiresTrigger: false,
+        },
+      },
+      [fakeChannel as any],
+    );
+
+    await processGroupMessages(CHAT_JID);
+
+    // For a normal message sendMessage is NOT called directly (the LLM runner handles output).
+    expect(sendMessageSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('/search dispatch — malformed FTS query error handling', () => {
+  const CHAT_JID = 'fts-error-test@g.us';
+  const GROUP_FOLDER = 'tg_fts-error-test';
+  const sendMessageSpy = vi.fn().mockResolvedValue(undefined);
+
+  afterEach(() => {
+    _testResetState();
+    sendMessageSpy.mockClear();
+    vi.restoreAllMocks();
+  });
+
+  it('sends a friendly error message when FTS4 throws and does NOT invoke the LLM', async () => {
+    // Make getMessagesSince return a /search message with a malformed query.
+    const msgTimestamp = new Date(Date.now() - 1000).toISOString();
+    mockGetMessagesSince.mockReturnValueOnce([{
+      id: 'fts-error-msg-1',
+      chat_jid: CHAT_JID,
+      sender: 'user123',
+      sender_name: 'Alice',
+      content: '/search "unclosed',
+      timestamp: msgTimestamp,
+      is_from_me: false,
+    }]);
+
+    // Force searchConversations to throw as it would with a malformed FTS4 query.
+    vi.spyOn(db, 'searchConversations').mockImplementation(() => {
+      throw new Error('fts error: syntax error near end of input');
+    });
+
+    const fakeChannel = {
+      ownsJid: (jid: string) => jid === CHAT_JID,
+      sendMessage: sendMessageSpy,
+      setTyping: vi.fn().mockResolvedValue(undefined),
+    };
+    mockFindChannel.mockReturnValueOnce(fakeChannel);
+
+    _testInjectState(
+      {
+        [CHAT_JID]: {
+          jid: CHAT_JID,
+          name: 'FTS Error Group',
+          folder: GROUP_FOLDER,
+          trigger: '@Claude',
+          added_at: new Date().toISOString(),
+          requiresTrigger: false,
+        },
+      },
+      [fakeChannel as any],
+    );
+
+    const result = await processGroupMessages(CHAT_JID);
+
+    // processGroupMessages should still return true (the message was consumed).
+    expect(result).toBe(true);
+
+    // sendMessage must have been called with the friendly error string.
+    expect(sendMessageSpy).toHaveBeenCalledOnce();
+    const sentText: string = sendMessageSpy.mock.calls[0][1];
+    expect(sentText).toMatch(/Search failed/i);
   });
 });

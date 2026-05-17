@@ -63,6 +63,10 @@ import { detectMentionedSpecialists } from './specialists.js';
 import { SpecialistCatalogLoader } from './specialists/catalog-loader.js';
 import type { RunAgentOverrides } from './runtime/types.js';
 import { resetRagProvider } from './rag/provider.js';
+import {
+  handleSearchCommand,
+  isSearchCommand,
+} from './runtime/search-command.js';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import {
@@ -1075,6 +1079,30 @@ async function runAgent(
   }
 }
 
+/** @internal Test use only — inject fake state so processGroupMessages can be called in isolation. */
+export function _testInjectState(
+  groups: Record<string, RegisteredGroup>,
+  channelsArray: Channel[],
+): void {
+  for (const [jid, group] of Object.entries(groups)) {
+    registeredGroups[jid] = group;
+  }
+  for (const ch of channelsArray) {
+    channels.push(ch);
+  }
+}
+
+/** @internal Test use only — reset module-level state between tests. */
+export function _testResetState(): void {
+  for (const key of Object.keys(registeredGroups)) {
+    delete registeredGroups[key];
+  }
+  channels.length = 0;
+  for (const key of Object.keys(lastAgentTimestamp)) {
+    delete lastAgentTimestamp[key];
+  }
+}
+
 export async function processGroupMessages(chatJid: string): Promise<boolean> {
   const group = registeredGroups[chatJid];
   if (!group) return true;
@@ -1104,9 +1132,33 @@ export async function processGroupMessages(chatJid: string): Promise<boolean> {
     if (!hasTrigger) return true;
   }
 
-  // Slash command intercepts: /skills and /secret must live here — BEFORE
+  // Slash command intercepts: /search, /skills and /secret must live here — BEFORE
   // formatMessages wraps the content in XML, which would break the regex match.
   const lastMsg = missedMessages[missedMessages.length - 1];
+
+  // /search chat command: full-text search over conversation history.
+  if (lastMsg && isSearchCommand(lastMsg.content)) {
+    lastAgentTimestamp[chatJid] = lastMsg.timestamp;
+    saveState();
+    await channel.setTyping?.(chatJid, true);
+    try {
+      const reply = handleSearchCommand(group.folder, lastMsg.content.trim());
+      await channel.sendMessage(chatJid, reply);
+    } catch (err) {
+      logger.error({ err, chatJid }, 'Search command failed');
+      try {
+        await channel.sendMessage(
+          chatJid,
+          'Search failed: invalid query. Try simpler terms.',
+        );
+      } catch (sendErr) {
+        logger.error({ err: sendErr, chatJid }, 'Failed to send search error reply');
+      }
+    } finally {
+      await channel.setTyping?.(chatJid, false);
+    }
+    return true;
+  }
 
   // /skills chat command: handle locally without invoking the LLM.
   if (lastMsg && isSkillsCommand(lastMsg.content)) {

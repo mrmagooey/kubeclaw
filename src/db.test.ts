@@ -46,6 +46,8 @@ import {
   recordSkillLoad,
   getSkillLoadStats,
   getSkillsLoadedSince,
+  searchConversations,
+  backfillFts,
 } from './db.js';
 import { JobACL } from './types.js';
 
@@ -1356,6 +1358,236 @@ describe('conversation history', () => {
   });
 });
 
+// --- conversation_history_fts triggers ---
+
+describe('conversation_history_fts triggers', () => {
+  it('INSERT trigger populates FTS index', async () => {
+    await _initTestDatabase();
+    appendConversationMessage('main', 'user', 'the quick brown fox');
+    const result = db.exec(
+      `SELECT id FROM conversation_history_fts WHERE conversation_history_fts MATCH 'quick'`,
+    );
+    expect(result.length).toBe(1);
+    expect(result[0].values.length).toBe(1);
+  });
+
+  it('DELETE trigger removes row from FTS index', async () => {
+    await _initTestDatabase();
+    appendConversationMessage('main', 'user', 'unique canary phrase zqxw');
+    db.run(`DELETE FROM conversation_history WHERE group_folder = 'main'`);
+    const result = db.exec(
+      `SELECT id FROM conversation_history_fts WHERE conversation_history_fts MATCH 'zqxw'`,
+    );
+    expect(result.length).toBe(0);
+  });
+
+  it('UPDATE trigger replaces FTS entry on content change', async () => {
+    await _initTestDatabase();
+    appendConversationMessage('main', 'user', 'original phrase abc');
+    db.run(
+      `UPDATE conversation_history SET content = 'revised phrase xyz' WHERE group_folder = 'main'`,
+    );
+    const old = db.exec(
+      `SELECT id FROM conversation_history_fts WHERE conversation_history_fts MATCH 'abc'`,
+    );
+    const updated = db.exec(
+      `SELECT id FROM conversation_history_fts WHERE conversation_history_fts MATCH 'xyz'`,
+    );
+    expect(old.length).toBe(0);
+    expect(updated[0].values.length).toBe(1);
+  });
+
+  it('clearConversationHistory also empties FTS rows for that group', async () => {
+    await _initTestDatabase();
+    appendConversationMessage('main', 'user', 'searchable cleared word zqyy');
+    clearConversationHistory('main');
+    const result = db.exec(
+      `SELECT id FROM conversation_history_fts WHERE conversation_history_fts MATCH 'zqyy'`,
+    );
+    expect(result.length).toBe(0);
+  });
+});
+
+// --- searchConversations ---
+
+describe('searchConversations', () => {
+  beforeEach(async () => {
+    await _initTestDatabase();
+    const rows = [
+      { role: 'user' as const, content: 'hello world greetings' },
+      { role: 'assistant' as const, content: 'hello back from assistant' },
+      { role: 'user' as const, content: 'goodbye world farewell' },
+      { role: 'user' as const, content: 'completely unrelated content here' },
+    ];
+    for (const r of rows) {
+      appendConversationMessage('search-group', r.role, r.content);
+    }
+  });
+
+  it('returns rows matching the query term', () => {
+    const results = searchConversations({ groupFolder: 'search-group', query: 'hello' });
+    expect(results.length).toBe(2);
+  });
+
+  it('snippet contains the matched term wrapped in brackets', () => {
+    const results = searchConversations({ groupFolder: 'search-group', query: 'hello' });
+    expect(results.every((r) => r.snippet.includes('[hello]'))).toBe(true);
+  });
+
+  it('respects the limit parameter', () => {
+    const results = searchConversations({
+      groupFolder: 'search-group',
+      query: 'world',
+      limit: 1,
+    });
+    expect(results.length).toBe(1);
+  });
+
+  it('returns empty array when query matches nothing', () => {
+    const results = searchConversations({
+      groupFolder: 'search-group',
+      query: 'xyzzy_no_match',
+    });
+    expect(results.length).toBe(0);
+  });
+
+  it('does not return rows from a different group', () => {
+    appendConversationMessage('other-group', 'user', 'hello from other group');
+    const results = searchConversations({ groupFolder: 'search-group', query: 'hello' });
+    expect(results.every((r) => r.groupFolder === 'search-group')).toBe(true);
+  });
+
+  it('after filter excludes rows before the cutoff', () => {
+    const results = searchConversations({
+      groupFolder: 'search-group',
+      query: 'hello',
+      after: '2030-06-01',
+    });
+    expect(results.length).toBe(0);
+  });
+
+  it('before filter excludes rows after the cutoff', () => {
+    const results = searchConversations({
+      groupFolder: 'search-group',
+      query: 'hello',
+      before: '2020-01-01',
+    });
+    expect(results.length).toBe(0);
+  });
+});
+
+// --- backfillFts ---
+
+describe('backfillFts', () => {
+  it('populates FTS from existing conversation_history rows', async () => {
+    await _initTestDatabase();
+    // Insert via appendConversationMessage (trigger fires), then manually wipe
+    // the FTS table to simulate a pre-migration database where the FTS table
+    // was added after rows were already present in conversation_history.
+    appendConversationMessage('bf-group', 'user', 'backfill target word xqzz');
+    db.run(`DELETE FROM conversation_history_fts`);
+    // Confirm FTS is now empty
+    const before = db.exec(
+      `SELECT id FROM conversation_history_fts WHERE conversation_history_fts MATCH 'xqzz'`,
+    );
+    expect(before.length).toBe(0);
+
+    backfillFts();
+
+    const after = db.exec(
+      `SELECT id FROM conversation_history_fts WHERE conversation_history_fts MATCH 'xqzz'`,
+    );
+    expect(after[0].values.length).toBe(1);
+  });
+
+  it('is idempotent — running twice does not duplicate FTS rows', async () => {
+    await _initTestDatabase();
+    db.run(
+      `INSERT INTO conversation_history (id, group_folder, role, content, created_at)
+       VALUES ('bf-2', 'bf-group2', 'user', 'idempotent check word xqzy', '2026-01-02T00:00:00Z')`,
+    );
+    backfillFts();
+    backfillFts(); // second call must be a no-op
+    const result = db.exec(
+      `SELECT id FROM conversation_history_fts WHERE conversation_history_fts MATCH 'xqzy'`,
+    );
+    expect(result[0].values.length).toBe(1);
+  });
+
+  it('is a no-op when conversation_history is empty', async () => {
+    await _initTestDatabase();
+    expect(() => backfillFts()).not.toThrow();
+    const result = db.exec(`SELECT COUNT(*) FROM conversation_history_fts`);
+    expect(Number(result[0].values[0][0])).toBe(0);
+  });
+
+  it('bulk INSERT completes in under 2000ms for 3000 messages', async () => {
+    await _initTestDatabase();
+
+    // Insert 3000 messages directly (bypassing the trigger so we can wipe FTS cleanly).
+    const ROW_COUNT = 3000;
+    for (let i = 0; i < ROW_COUNT; i++) {
+      db.run(
+        `INSERT INTO conversation_history (id, group_folder, role, content, created_at)
+         VALUES (?, 'perf-group', 'user', ?, ?)`,
+        [
+          `perf-msg-${i}`,
+          `perf message content number ${i}`,
+          new Date(Date.now() - (ROW_COUNT - i) * 1000).toISOString(),
+        ],
+      );
+    }
+
+    // Wipe the FTS table so backfillFts sees an empty FTS table.
+    db.run(`DELETE FROM conversation_history_fts`);
+
+    const start = performance.now();
+    backfillFts();
+    const elapsed = performance.now() - start;
+
+    expect(elapsed).toBeLessThan(2000);
+
+    const result = db.exec(`SELECT COUNT(*) FROM conversation_history_fts`);
+    expect(Number(result[0].values[0][0])).toBe(ROW_COUNT);
+  });
+});
+
+// --- clearConversationHistory FTS regression ---
+
+describe('clearConversationHistory FTS regression', () => {
+  it('wiping a group removes all its FTS rows', async () => {
+    await _initTestDatabase();
+
+    // Insert three messages for the target group
+    for (let i = 0; i < 3; i++) {
+      appendConversationMessage(
+        'wipe-group',
+        'user',
+        `searchable token xqzg message number ${i}`,
+      );
+    }
+    // Insert one message for a bystander group that must NOT be deleted
+    appendConversationMessage(
+      'bystander-group',
+      'user',
+      'searchable token xqzg bystander',
+    );
+
+    clearConversationHistory('wipe-group');
+
+    const ftsRows = db.exec(
+      `SELECT id FROM conversation_history_fts WHERE group_folder = 'wipe-group'`,
+    );
+    expect(ftsRows.length).toBe(0);
+
+    // Bystander row must still be searchable
+    const bystander = db.exec(
+      `SELECT id FROM conversation_history_fts WHERE conversation_history_fts MATCH 'xqzg' AND group_folder = 'bystander-group'`,
+    );
+    expect(bystander[0].values.length).toBe(1);
+  });
+});
+
 // --- getRegisteredGroup ---
 
 describe('getRegisteredGroup', () => {
@@ -1601,5 +1833,286 @@ describe('recordSkillLoad / getSkillLoadStats / getSkillsLoadedSince', () => {
     recordSkillLoad('g1', 'recent', 5000);
     recordSkillLoad('g1', 'recent', 6000);
     expect(getSkillsLoadedSince('g1', 4000)).toEqual(['recent']);
+  });
+});
+
+// --- runSessionKeyBackfill ---
+
+describe('runSessionKeyBackfill', () => {
+  it('adds session_key column to conversation_history if missing', async () => {
+    await _initTestDatabase();
+    // Verify the column exists after runSessionKeyBackfill runs
+    // (createSchema calls ALTER TABLE ADD COLUMN which runSessionKeyBackfill may also add)
+    runSessionKeyBackfill();
+    const cols = db.exec(
+      `SELECT name FROM pragma_table_info('conversation_history') ORDER BY name`,
+    );
+    const colNames = cols[0].values.flat() as string[];
+    expect(colNames).toContain('session_key');
+  });
+
+  it('backfills NULL session_key with group_folder for pre-existing rows', async () => {
+    await _initTestDatabase();
+    // Insert a row without session_key (simulate pre-migration database row)
+    db.run(
+      `INSERT INTO conversation_history (id, group_folder, role, content, created_at)
+       VALUES ('sk-backfill-1', 'backfill-group', 'user', 'old message', '2025-01-01T00:00:00Z')`,
+    );
+    // Ensure session_key is NULL before backfill
+    const before = db.exec(
+      `SELECT session_key FROM conversation_history WHERE id = 'sk-backfill-1'`,
+    );
+    expect(before[0].values[0][0]).toBeNull();
+
+    runSessionKeyBackfill();
+
+    const after = db.exec(
+      `SELECT session_key FROM conversation_history WHERE id = 'sk-backfill-1'`,
+    );
+    expect(after[0].values[0][0]).toBe('backfill-group');
+  });
+
+  it('is idempotent — running twice does not error or corrupt data', async () => {
+    await _initTestDatabase();
+    db.run(
+      `INSERT INTO conversation_history (id, group_folder, role, content, created_at)
+       VALUES ('sk-idem-1', 'idem-group', 'user', 'idempotent check', '2025-01-02T00:00:00Z')`,
+    );
+    runSessionKeyBackfill();
+    expect(() => runSessionKeyBackfill()).not.toThrow();
+    const result = db.exec(
+      `SELECT session_key FROM conversation_history WHERE id = 'sk-idem-1'`,
+    );
+    expect(result[0].values[0][0]).toBe('idem-group');
+  });
+});
+
+// --- conversation_history_fts triggers ---
+
+describe('conversation_history_fts triggers', () => {
+  it('INSERT trigger populates FTS index', async () => {
+    await _initTestDatabase();
+    appendConversationMessage('main', 'user', 'the quick brown fox');
+    const result = db.exec(
+      `SELECT id FROM conversation_history_fts WHERE conversation_history_fts MATCH 'quick'`,
+    );
+    expect(result.length).toBe(1);
+    expect(result[0].values.length).toBe(1);
+  });
+
+  it('DELETE trigger removes row from FTS index', async () => {
+    await _initTestDatabase();
+    appendConversationMessage('main', 'user', 'unique canary phrase zqxw');
+    db.run(`DELETE FROM conversation_history WHERE group_folder = 'main'`);
+    const result = db.exec(
+      `SELECT id FROM conversation_history_fts WHERE conversation_history_fts MATCH 'zqxw'`,
+    );
+    expect(result.length).toBe(0);
+  });
+
+  it('UPDATE trigger replaces FTS entry on content change', async () => {
+    await _initTestDatabase();
+    appendConversationMessage('main', 'user', 'original phrase abc');
+    db.run(
+      `UPDATE conversation_history SET content = 'revised phrase xyz' WHERE group_folder = 'main'`,
+    );
+    const old = db.exec(
+      `SELECT id FROM conversation_history_fts WHERE conversation_history_fts MATCH 'abc'`,
+    );
+    const updated = db.exec(
+      `SELECT id FROM conversation_history_fts WHERE conversation_history_fts MATCH 'xyz'`,
+    );
+    expect(old.length).toBe(0);
+    expect(updated[0].values.length).toBe(1);
+  });
+
+  it('clearConversationHistory also empties FTS rows for that group', async () => {
+    await _initTestDatabase();
+    appendConversationMessage('main', 'user', 'searchable cleared word zqyy');
+    clearConversationHistory('main');
+    const result = db.exec(
+      `SELECT id FROM conversation_history_fts WHERE conversation_history_fts MATCH 'zqyy'`,
+    );
+    expect(result.length).toBe(0);
+  });
+});
+
+// --- searchConversations ---
+
+describe('searchConversations', () => {
+  beforeEach(async () => {
+    await _initTestDatabase();
+    const rows = [
+      { role: 'user' as const, content: 'hello world greetings' },
+      { role: 'assistant' as const, content: 'hello back from assistant' },
+      { role: 'user' as const, content: 'goodbye world farewell' },
+      { role: 'user' as const, content: 'completely unrelated content here' },
+    ];
+    for (const r of rows) {
+      appendConversationMessage('search-group', r.role, r.content);
+    }
+  });
+
+  it('returns rows matching the query term', () => {
+    const results = searchConversations({ groupFolder: 'search-group', query: 'hello' });
+    expect(results.length).toBe(2);
+  });
+
+  it('snippet contains the matched term wrapped in brackets', () => {
+    const results = searchConversations({ groupFolder: 'search-group', query: 'hello' });
+    expect(results.every((r) => r.snippet.includes('[hello]'))).toBe(true);
+  });
+
+  it('respects the limit parameter', () => {
+    const results = searchConversations({
+      groupFolder: 'search-group',
+      query: 'world',
+      limit: 1,
+    });
+    expect(results.length).toBe(1);
+  });
+
+  it('returns empty array when query matches nothing', () => {
+    const results = searchConversations({
+      groupFolder: 'search-group',
+      query: 'xyzzy_no_match',
+    });
+    expect(results.length).toBe(0);
+  });
+
+  it('does not return rows from a different group', () => {
+    appendConversationMessage('other-group', 'user', 'hello from other group');
+    const results = searchConversations({ groupFolder: 'search-group', query: 'hello' });
+    expect(results.every((r) => r.groupFolder === 'search-group')).toBe(true);
+  });
+
+  it('after filter excludes rows before the cutoff', () => {
+    const results = searchConversations({
+      groupFolder: 'search-group',
+      query: 'hello',
+      after: '2030-06-01',
+    });
+    expect(results.length).toBe(0);
+  });
+
+  it('before filter excludes rows after the cutoff', () => {
+    const results = searchConversations({
+      groupFolder: 'search-group',
+      query: 'hello',
+      before: '2020-01-01',
+    });
+    expect(results.length).toBe(0);
+  });
+});
+
+// --- backfillFts ---
+
+describe('backfillFts', () => {
+  it('populates FTS from existing conversation_history rows', async () => {
+    await _initTestDatabase();
+    // Insert via appendConversationMessage (trigger fires), then manually wipe
+    // the FTS table to simulate a pre-migration database where the FTS table
+    // was added after rows were already present in conversation_history.
+    appendConversationMessage('bf-group', 'user', 'backfill target word xqzz');
+    db.run(`DELETE FROM conversation_history_fts`);
+    // Confirm FTS is now empty
+    const before = db.exec(
+      `SELECT id FROM conversation_history_fts WHERE conversation_history_fts MATCH 'xqzz'`,
+    );
+    expect(before.length).toBe(0);
+
+    backfillFts();
+
+    const after = db.exec(
+      `SELECT id FROM conversation_history_fts WHERE conversation_history_fts MATCH 'xqzz'`,
+    );
+    expect(after[0].values.length).toBe(1);
+  });
+
+  it('is idempotent — running twice does not duplicate FTS rows', async () => {
+    await _initTestDatabase();
+    db.run(
+      `INSERT INTO conversation_history (id, group_folder, role, content, created_at)
+       VALUES ('bf-2', 'bf-group2', 'user', 'idempotent check word xqzy', '2026-01-02T00:00:00Z')`,
+    );
+    backfillFts();
+    backfillFts(); // second call must be a no-op
+    const result = db.exec(
+      `SELECT id FROM conversation_history_fts WHERE conversation_history_fts MATCH 'xqzy'`,
+    );
+    expect(result[0].values.length).toBe(1);
+  });
+
+  it('is a no-op when conversation_history is empty', async () => {
+    await _initTestDatabase();
+    expect(() => backfillFts()).not.toThrow();
+    const result = db.exec(`SELECT COUNT(*) FROM conversation_history_fts`);
+    expect(Number(result[0].values[0][0])).toBe(0);
+  });
+
+  it('bulk INSERT completes in under 2000ms for 3000 messages', async () => {
+    await _initTestDatabase();
+
+    // Insert 3000 messages directly (bypassing the trigger so we can wipe FTS cleanly).
+    const ROW_COUNT = 3000;
+    for (let i = 0; i < ROW_COUNT; i++) {
+      db.run(
+        `INSERT INTO conversation_history (id, group_folder, role, content, created_at)
+         VALUES (?, 'perf-group', 'user', ?, ?)`,
+        [
+          `perf-msg-${i}`,
+          `perf message content number ${i}`,
+          new Date(Date.now() - (ROW_COUNT - i) * 1000).toISOString(),
+        ],
+      );
+    }
+
+    // Wipe the FTS table so backfillFts sees an empty FTS table.
+    db.run(`DELETE FROM conversation_history_fts`);
+
+    const start = performance.now();
+    backfillFts();
+    const elapsed = performance.now() - start;
+
+    expect(elapsed).toBeLessThan(2000);
+
+    const result = db.exec(`SELECT COUNT(*) FROM conversation_history_fts`);
+    expect(Number(result[0].values[0][0])).toBe(ROW_COUNT);
+  });
+});
+
+// --- clearConversationHistory FTS regression ---
+
+describe('clearConversationHistory FTS regression', () => {
+  it('wiping a group removes all its FTS rows', async () => {
+    await _initTestDatabase();
+
+    // Insert three messages for the target group
+    for (let i = 0; i < 3; i++) {
+      appendConversationMessage(
+        'wipe-group',
+        'user',
+        `searchable token xqzg message number ${i}`,
+      );
+    }
+    // Insert one message for a bystander group that must NOT be deleted
+    appendConversationMessage(
+      'bystander-group',
+      'user',
+      'searchable token xqzg bystander',
+    );
+
+    clearConversationHistory('wipe-group');
+
+    const ftsRows = db.exec(
+      `SELECT id FROM conversation_history_fts WHERE group_folder = 'wipe-group'`,
+    );
+    expect(ftsRows.length).toBe(0);
+
+    // Bystander row must still be searchable
+    const bystander = db.exec(
+      `SELECT id FROM conversation_history_fts WHERE conversation_history_fts MATCH 'xqzg' AND group_folder = 'bystander-group'`,
+    );
+    expect(bystander[0].values.length).toBe(1);
   });
 });

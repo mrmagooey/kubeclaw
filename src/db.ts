@@ -242,6 +242,55 @@ function createSchema(database: SqlJsDatabase): void {
     ON skill_usage(loaded_at)
   `);
 
+  // FTS4 full-text index over conversation_history.content
+  // sql.js WASM includes FTS4 but not FTS5 — do not change to fts5.
+  // notindexed= keeps the stored columns out of the token index so only
+  // the content column is tokenised.
+  database.run(`
+    CREATE VIRTUAL TABLE IF NOT EXISTS conversation_history_fts
+    USING fts4(
+      id          TEXT,
+      group_folder TEXT,
+      role        TEXT,
+      content     TEXT,
+      created_at  TEXT,
+      notindexed=id,
+      notindexed=group_folder,
+      notindexed=role,
+      notindexed=created_at
+    )
+  `);
+
+  // AFTER INSERT: mirror the new row into FTS.
+  database.run(`
+    CREATE TRIGGER IF NOT EXISTS conv_fts_ai
+    AFTER INSERT ON conversation_history
+    BEGIN
+      INSERT INTO conversation_history_fts(id, group_folder, role, content, created_at)
+      VALUES (new.id, new.group_folder, new.role, new.content, new.created_at);
+    END
+  `);
+
+  // AFTER DELETE: remove the FTS row by id.
+  database.run(`
+    CREATE TRIGGER IF NOT EXISTS conv_fts_ad
+    AFTER DELETE ON conversation_history
+    BEGIN
+      DELETE FROM conversation_history_fts WHERE id = old.id;
+    END
+  `);
+
+  // AFTER UPDATE OF content: replace the FTS row so the index stays current.
+  database.run(`
+    CREATE TRIGGER IF NOT EXISTS conv_fts_au
+    AFTER UPDATE OF content ON conversation_history
+    BEGIN
+      DELETE FROM conversation_history_fts WHERE id = old.id;
+      INSERT INTO conversation_history_fts(id, group_folder, role, content, created_at)
+      VALUES (new.id, new.group_folder, new.role, new.content, new.created_at);
+    END
+  `);
+
   try {
     database.run(
       `ALTER TABLE scheduled_tasks ADD COLUMN context_mode TEXT DEFAULT 'isolated'`,
@@ -278,6 +327,28 @@ function createSchema(database: SqlJsDatabase): void {
   } catch {
     /* column already exists */
   }
+
+  try {
+    database.run(
+      `ALTER TABLE conversation_history ADD COLUMN session_key TEXT`,
+    );
+  } catch {
+    /* column already exists */
+  }
+}
+
+/**
+ * One-shot migration: adds the `session_key` column to `conversation_history`
+ * (if it doesn't exist) and backfills NULL values to match `group_folder`.
+ * Safe to call multiple times — idempotent.
+ */
+export function runSessionKeyBackfill(): void {
+  // The column is added via ALTER TABLE inside createSchema(), but on databases
+  // that existed before the column was introduced the values will be NULL.
+  // Backfill: set session_key = group_folder wherever it is still NULL.
+  db.run(
+    `UPDATE conversation_history SET session_key = group_folder WHERE session_key IS NULL`,
+  );
 }
 
 /** @internal Test/integration use only. */
@@ -285,6 +356,29 @@ export function saveDatabase(): void {
   const data = db.export();
   const buffer = Buffer.from(data);
   fs.writeFileSync(dbPath, buffer);
+}
+
+/**
+ * One-shot backfill: copies existing conversation_history rows into the FTS
+ * index. Safe to call multiple times — if the FTS table already has rows it
+ * returns immediately. Uses a single bulk INSERT...SELECT; sql.js executes
+ * synchronously so per-chunk OFFSET paging would only add overhead.
+ */
+export function backfillFts(): void {
+  // Guard: skip if FTS already has content (covers re-runs on restart).
+  const ftsCount = db.exec(`SELECT COUNT(*) FROM conversation_history_fts`);
+  if (Number(ftsCount[0].values[0][0]) > 0) return;
+
+  // Guard: skip if source table is empty (nothing to backfill).
+  const srcCount = db.exec(`SELECT COUNT(*) FROM conversation_history`);
+  if (Number(srcCount[0].values[0][0]) === 0) return;
+
+  db.run(
+    `INSERT OR IGNORE INTO conversation_history_fts (id, group_folder, role, content, created_at)
+     SELECT id, group_folder, role, content, created_at FROM conversation_history`,
+  );
+
+  saveDatabase();
 }
 
 export async function initDatabase(): Promise<void> {
@@ -316,6 +410,7 @@ export async function initDatabase(): Promise<void> {
 
   createSchema(db);
   runSessionKeyBackfill();
+  backfillFts();
   saveDatabase();
   migrateJsonState();
 }
@@ -1211,6 +1306,77 @@ export function clearConversationHistory(groupFolder: string): void {
     groupFolder,
   ]);
   saveDatabase();
+}
+
+export interface SearchResult {
+  id: string;
+  groupFolder: string;
+  role: 'user' | 'assistant';
+  content: string;
+  createdAt: string;
+  snippet: string;
+}
+
+export interface SearchConversationsArgs {
+  groupFolder: string;
+  query: string;
+  limit?: number;
+  before?: string; // ISO date prefix, e.g. '2026-04' or '2026-04-15'
+  after?: string; // ISO date prefix
+}
+
+/**
+ * Full-text search over conversation_history for a single group.
+ * Uses the FTS4 virtual table created in createSchema().
+ * Results are ordered by recency descending. Limit defaults to 10.
+ */
+export function searchConversations(args: SearchConversationsArgs): SearchResult[] {
+  const { groupFolder, query, limit = 10, before, after } = args;
+
+  // Build the date filter fragment for the JOIN side.
+  const whereClauses: string[] = ['f.group_folder = ?', 'f.conversation_history_fts MATCH ?'];
+  const params: (string | number)[] = [groupFolder, query];
+
+  if (after) {
+    whereClauses.push('h.created_at >= ?');
+    params.push(after);
+  }
+  if (before) {
+    whereClauses.push('h.created_at <= ?');
+    params.push(before);
+  }
+
+  const where = whereClauses.join(' AND ');
+
+  // snippet(table, startMatch, endMatch, ellipsis, columnIndex, numTokens)
+  // columnIndex 3 = content column (0-indexed: id, group_folder, role, content, created_at)
+  const sql = `
+    SELECT
+      f.id,
+      f.group_folder,
+      h.role,
+      h.content,
+      h.created_at,
+      snippet(conversation_history_fts, '[', ']', '...', 3, 20) AS snippet
+    FROM conversation_history_fts f
+    JOIN conversation_history h ON h.id = f.id
+    WHERE ${where}
+    ORDER BY h.created_at DESC
+    LIMIT ?
+  `;
+  params.push(limit);
+
+  const result = db.exec(sql, params);
+  if (result.length === 0) return [];
+
+  return result[0].values.map((row: unknown[]) => ({
+    id: row[0] as string,
+    groupFolder: row[1] as string,
+    role: row[2] as 'user' | 'assistant',
+    content: row[3] as string,
+    createdAt: row[4] as string,
+    snippet: row[5] as string,
+  }));
 }
 
 // --- Job ACL Functions ---
