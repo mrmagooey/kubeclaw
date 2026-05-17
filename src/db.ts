@@ -354,6 +354,23 @@ function createSchema(database: SqlJsDatabase): void {
     CREATE INDEX IF NOT EXISTS idx_conversation_summaries_group
     ON conversation_summaries(group_folder, created_at)
   `);
+
+  database.run(`
+    CREATE TABLE IF NOT EXISTS per_group_capability_instances (
+      group_folder      TEXT NOT NULL,
+      capability_name   TEXT NOT NULL,
+      group_hash        TEXT NOT NULL,
+      deployment_name   TEXT NOT NULL,
+      service_name      TEXT NOT NULL,
+      current_replicas  INTEGER NOT NULL DEFAULT 0,
+      last_used_at      INTEGER,
+      created_at        INTEGER NOT NULL,
+      PRIMARY KEY (group_folder, capability_name)
+    )
+  `);
+  database.run(
+    `CREATE INDEX IF NOT EXISTS idx_per_group_cap_hash ON per_group_capability_instances(group_hash)`,
+  );
 }
 
 /**
@@ -1261,7 +1278,13 @@ export function recordSpecialistUsage(args: {
 }): void {
   db.run(
     `INSERT INTO specialist_usage (group_folder, specialist_name, used_at, duration_ms, status) VALUES (?, ?, ?, ?, ?)`,
-    [args.groupFolder, args.specialistName, Date.now(), args.durationMs, args.status],
+    [
+      args.groupFolder,
+      args.specialistName,
+      Date.now(),
+      args.durationMs,
+      args.status,
+    ],
   );
   saveDatabase();
 }
@@ -1336,8 +1359,12 @@ export function deleteMessagesByIds(ids: string[]): number {
 export function clearConversationHistory(groupFolder: string): void {
   db.run('BEGIN');
   try {
-    db.run('DELETE FROM conversation_history WHERE group_folder = ?', [groupFolder]);
-    db.run('DELETE FROM conversation_summaries WHERE group_folder = ?', [groupFolder]);
+    db.run('DELETE FROM conversation_history WHERE group_folder = ?', [
+      groupFolder,
+    ]);
+    db.run('DELETE FROM conversation_summaries WHERE group_folder = ?', [
+      groupFolder,
+    ]);
     db.run('COMMIT');
   } catch (err) {
     db.run('ROLLBACK');
@@ -1415,17 +1442,30 @@ export function getLatestSummary(groupFolder: string): SummaryRecord | null {
     [groupFolder],
   );
   if (result.length === 0 || result[0].values.length === 0) return null;
-  const [
-    id, gf, sk, parentId, startId, endId, text, model, tokens, createdAt,
-  ] = result[0].values[0] as [
-    string, string, string, string | null,
-    string, string, string, string, number, string,
-  ];
+  const [id, gf, sk, parentId, startId, endId, text, model, tokens, createdAt] =
+    result[0].values[0] as [
+      string,
+      string,
+      string,
+      string | null,
+      string,
+      string,
+      string,
+      string,
+      number,
+      string,
+    ];
   return {
-    id, groupFolder: gf, sessionKey: sk, parentSummaryId: parentId,
-    messageStartId: startId, messageEndId: endId,
-    summaryText: text, modelUsed: model,
-    tokenCount: tokens, createdAt,
+    id,
+    groupFolder: gf,
+    sessionKey: sk,
+    parentSummaryId: parentId,
+    messageStartId: startId,
+    messageEndId: endId,
+    summaryText: text,
+    modelUsed: model,
+    tokenCount: tokens,
+    createdAt,
   };
 }
 
@@ -1441,21 +1481,46 @@ export function getSummaryById(id: string): SummaryRecord | null {
   );
   if (result.length === 0 || result[0].values.length === 0) return null;
   const [
-    rid, gf, sk, parentId, startId, endId, text, model, tokens, createdAt,
+    rid,
+    gf,
+    sk,
+    parentId,
+    startId,
+    endId,
+    text,
+    model,
+    tokens,
+    createdAt,
   ] = result[0].values[0] as [
-    string, string, string, string | null,
-    string, string, string, string, number, string,
+    string,
+    string,
+    string,
+    string | null,
+    string,
+    string,
+    string,
+    string,
+    number,
+    string,
   ];
   return {
-    id: rid, groupFolder: gf, sessionKey: sk, parentSummaryId: parentId,
-    messageStartId: startId, messageEndId: endId,
-    summaryText: text, modelUsed: model,
-    tokenCount: tokens, createdAt,
+    id: rid,
+    groupFolder: gf,
+    sessionKey: sk,
+    parentSummaryId: parentId,
+    messageStartId: startId,
+    messageEndId: endId,
+    summaryText: text,
+    modelUsed: model,
+    tokenCount: tokens,
+    createdAt,
   };
 }
 
 export function deleteSummariesForGroup(groupFolder: string): void {
-  db.run('DELETE FROM conversation_summaries WHERE group_folder = ?', [groupFolder]);
+  db.run('DELETE FROM conversation_summaries WHERE group_folder = ?', [
+    groupFolder,
+  ]);
   saveDatabase();
 }
 
@@ -1481,11 +1546,16 @@ export interface SearchConversationsArgs {
  * Uses the FTS4 virtual table created in createSchema().
  * Results are ordered by recency descending. Limit defaults to 10.
  */
-export function searchConversations(args: SearchConversationsArgs): SearchResult[] {
+export function searchConversations(
+  args: SearchConversationsArgs,
+): SearchResult[] {
   const { groupFolder, query, limit = 10, before, after } = args;
 
   // Build the date filter fragment for the JOIN side.
-  const whereClauses: string[] = ['f.group_folder = ?', 'f.conversation_history_fts MATCH ?'];
+  const whereClauses: string[] = [
+    'f.group_folder = ?',
+    'f.conversation_history_fts MATCH ?',
+  ];
   const params: (string | number)[] = [groupFolder, query];
 
   if (after) {
