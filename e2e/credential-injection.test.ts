@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { execSync, spawnSync } from 'child_process';
+import { execSync, spawn, spawnSync } from 'child_process';
 import { mkdtempSync, writeFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
@@ -277,19 +277,24 @@ describe('audit-only mode (mode=sidecar, auditOnly=true)', () => {
   });
 
   it('broker /metrics endpoint returns credential_broker_authz_total', async () => {
-    execSync(
-      `kubectl -n ${NS} port-forward deployment/kubeclaw-credential-broker 19090:9090 &`,
-      { shell: '/bin/bash', encoding: 'utf8' },
+    // Use spawn with detached + ignored stdio so port-forward truly backgrounds.
+    // The previous execSync('kubectl port-forward ... &') pattern hung Node
+    // because execSync waits on inherited stdio descriptors that kubectl holds.
+    const pf = spawn(
+      'kubectl',
+      ['-n', NS, 'port-forward', 'deployment/kubeclaw-credential-broker', '19090:9090'],
+      { stdio: 'ignore', detached: true },
     );
-    await new Promise((r) => setTimeout(r, 2000));
-    const metricsText = execSync(`curl -s http://localhost:19090/metrics`, {
-      encoding: 'utf8',
-    });
-    expect(metricsText).toContain('credential_broker_authz_total');
-    execSync(`kill $(lsof -t -i:19090) 2>/dev/null || true`, {
-      shell: '/bin/bash',
-      stdio: 'pipe',
-    });
+    pf.unref();
+    try {
+      await new Promise((r) => setTimeout(r, 2000));
+      const metricsText = execSync(`curl -s http://localhost:19090/metrics`, {
+        encoding: 'utf8',
+      });
+      expect(metricsText).toContain('credential_broker_authz_total');
+    } finally {
+      try { process.kill(pf.pid!); } catch { /* already gone */ }
+    }
   });
 });
 
