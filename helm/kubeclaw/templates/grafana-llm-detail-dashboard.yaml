@@ -35,7 +35,7 @@ data:
           },
           "options": {"tooltip": {"mode": "multi"}, "legend": {"displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]}},
           "targets": [
-            {"expr": "sum by (provider, model) (rate(kubeclaw_channel_llm_tokens_total{direction=\"in\",provider=~\"$provider\",model=~\"$model\"}[5m]))", "legendFormat": "{{`{{provider}}`}}/{{`{{model}}`}}", "refId": "A"}
+            {"expr": "sum by (provider, model) (rate(kubeclaw_channel_tokens_total{direction=\"input\",provider=~\"$provider\",model=~\"$model\"}[5m]))", "legendFormat": "{{`{{provider}}`}}/{{`{{model}}`}}", "refId": "A"}
           ]
         },
         {
@@ -50,7 +50,7 @@ data:
           },
           "options": {"tooltip": {"mode": "multi"}, "legend": {"displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]}},
           "targets": [
-            {"expr": "sum by (provider, model) (rate(kubeclaw_channel_llm_tokens_total{direction=\"out\",provider=~\"$provider\",model=~\"$model\"}[5m]))", "legendFormat": "{{`{{provider}}`}}/{{`{{model}}`}}", "refId": "A"}
+            {"expr": "sum by (provider, model) (rate(kubeclaw_channel_tokens_total{direction=\"output\",provider=~\"$provider\",model=~\"$model\"}[5m]))", "legendFormat": "{{`{{provider}}`}}/{{`{{model}}`}}", "refId": "A"}
           ]
         },
         {
@@ -66,8 +66,8 @@ data:
           },
           "options": {"tooltip": {"mode": "multi"}, "legend": {"displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]}},
           "targets": [
-            {"expr": "sum by (provider, model) (rate(kubeclaw_channel_llm_tokens_total{direction=\"in\",provider=~\"$provider\",model=~\"$model\"}[5m])) * ($cost_per_1k_input / 1000) * 3600", "legendFormat": "{{`{{provider}}`}}/{{`{{model}}`}} input cost/hr", "refId": "A"},
-            {"expr": "sum by (provider, model) (rate(kubeclaw_channel_llm_tokens_total{direction=\"out\",provider=~\"$provider\",model=~\"$model\"}[5m])) * ($cost_per_1k_output / 1000) * 3600", "legendFormat": "{{`{{provider}}`}}/{{`{{model}}`}} output cost/hr", "refId": "B"}
+            {"expr": "sum by (provider, model) (rate(kubeclaw_channel_tokens_total{direction=\"input\",provider=~\"$provider\",model=~\"$model\"}[5m])) * ($cost_per_1k_input / 1000) * 3600", "legendFormat": "{{`{{provider}}`}}/{{`{{model}}`}} input cost/hr", "refId": "A"},
+            {"expr": "sum by (provider, model) (rate(kubeclaw_channel_tokens_total{direction=\"output\",provider=~\"$provider\",model=~\"$model\"}[5m])) * ($cost_per_1k_output / 1000) * 3600", "legendFormat": "{{`{{provider}}`}}/{{`{{model}}`}} output cost/hr", "refId": "B"}
           ]
         },
         {
@@ -114,7 +114,7 @@ data:
           },
           "options": {"tooltip": {"mode": "multi"}, "legend": {"displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]}},
           "targets": [
-            {"expr": "sum by (provider, model) (rate(kubeclaw_channel_tool_calls_total{provider=~\"$provider\",model=~\"$model\"}[5m]))", "legendFormat": "{{`{{provider}}`}}/{{`{{model}}`}}", "refId": "A"}
+            {"expr": "sum by (tool) (rate(kubeclaw_channel_tool_calls_total[5m]))", "legendFormat": "{{`{{tool}}`}}", "refId": "A"}
           ]
         }
       ],
