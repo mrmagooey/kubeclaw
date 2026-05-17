@@ -1516,6 +1516,36 @@ describe('backfillFts', () => {
     const result = db.exec(`SELECT COUNT(*) FROM conversation_history_fts`);
     expect(Number(result[0].values[0][0])).toBe(0);
   });
+
+  it('bulk INSERT completes in under 2000ms for 3000 messages', async () => {
+    await _initTestDatabase();
+
+    // Insert 3000 messages directly (bypassing the trigger so we can wipe FTS cleanly).
+    const ROW_COUNT = 3000;
+    for (let i = 0; i < ROW_COUNT; i++) {
+      db.run(
+        `INSERT INTO conversation_history (id, group_folder, role, content, created_at)
+         VALUES (?, 'perf-group', 'user', ?, ?)`,
+        [
+          `perf-msg-${i}`,
+          `perf message content number ${i}`,
+          new Date(Date.now() - (ROW_COUNT - i) * 1000).toISOString(),
+        ],
+      );
+    }
+
+    // Wipe the FTS table so backfillFts sees an empty FTS table.
+    db.run(`DELETE FROM conversation_history_fts`);
+
+    const start = performance.now();
+    backfillFts();
+    const elapsed = performance.now() - start;
+
+    expect(elapsed).toBeLessThan(2000);
+
+    const result = db.exec(`SELECT COUNT(*) FROM conversation_history_fts`);
+    expect(Number(result[0].values[0][0])).toBe(ROW_COUNT);
+  });
 });
 
 // --- clearConversationHistory FTS regression ---

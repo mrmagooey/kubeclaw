@@ -288,8 +288,8 @@ export function saveDatabase(): void {
 /**
  * One-shot backfill: copies existing conversation_history rows into the FTS
  * index. Safe to call multiple times — if the FTS table already has rows it
- * returns immediately. Processes in chunks of 1000 to avoid blocking the
- * event loop on large databases.
+ * returns immediately. Uses a single bulk INSERT...SELECT; sql.js executes
+ * synchronously so per-chunk OFFSET paging would only add overhead.
  */
 export function backfillFts(): void {
   // Guard: skip if FTS already has content (covers re-runs on restart).
@@ -300,29 +300,10 @@ export function backfillFts(): void {
   const srcCount = db.exec(`SELECT COUNT(*) FROM conversation_history`);
   if (Number(srcCount[0].values[0][0]) === 0) return;
 
-  const CHUNK = 1000;
-  let offset = 0;
-
-  for (;;) {
-    const rows = db.exec(
-      `SELECT id, group_folder, role, content, created_at
-       FROM conversation_history
-       ORDER BY created_at
-       LIMIT ${CHUNK} OFFSET ${offset}`,
-    );
-    if (rows.length === 0 || rows[0].values.length === 0) break;
-
-    for (const row of rows[0].values) {
-      db.run(
-        `INSERT OR IGNORE INTO conversation_history_fts(id, group_folder, role, content, created_at)
-         VALUES (?, ?, ?, ?, ?)`,
-        row as string[],
-      );
-    }
-
-    if (rows[0].values.length < CHUNK) break;
-    offset += CHUNK;
-  }
+  db.run(
+    `INSERT OR IGNORE INTO conversation_history_fts (id, group_folder, role, content, created_at)
+     SELECT id, group_folder, role, content, created_at FROM conversation_history`,
+  );
 
   saveDatabase();
 }
