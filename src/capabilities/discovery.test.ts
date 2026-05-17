@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { _initTestDatabase } from '../db.js';
 
 const mockXread = vi.hoisted(() => vi.fn());
@@ -41,9 +41,16 @@ import {
   startDiscoveryWatcher,
   stopDiscoveryWatcher,
   __handleRequestForTest,
+  setDiscoveryDeps,
+  _resetDiscoveryDepsForTest,
 } from './discovery.js';
 import { __resetDbForTest } from '../db.js';
 import { installCapability } from './registry.js';
+import { setCapability } from './db.js';
+import { FakePerGroupK8sClient } from '../per-group-capabilities/k8s-client.js';
+import { upsertInstance } from '../per-group-capabilities/db.js';
+import { groupHash } from '../per-group-capabilities/hash.js';
+import type { CapabilityDiscoveryEntry } from './types.js';
 
 beforeEach(async () => {
   // Initialize the in-memory DB once before each test
@@ -153,5 +160,119 @@ describe('discovery', () => {
     const response = JSON.parse(mockSet.mock.calls[0][1]);
     expect(response).toHaveLength(1);
     expect(response[0].name).toBe('public');
+  });
+});
+
+describe('discovery for group-scoped capability', () => {
+  afterEach(() => {
+    _resetDiscoveryDepsForTest();
+  });
+
+  it('triggers scale-up and returns the per-group endpoint', async () => {
+    setCapability({
+      kind: 'mcp',
+      name: 'echo',
+      image: 'echo:1',
+      scope: 'group',
+    });
+
+    const client = new FakePerGroupK8sClient();
+    const hash = groupHash('Family');
+    const depName = `mcp-echo-${hash}`;
+    upsertInstance({
+      groupFolder: 'Family',
+      capabilityName: 'echo',
+      groupHash: hash,
+      deploymentName: depName,
+      serviceName: depName,
+    });
+    await client.applyDeployment({
+      apiVersion: 'apps/v1',
+      kind: 'Deployment',
+      metadata: { name: depName, namespace: 'kubeclaw' },
+      spec: {
+        replicas: 0,
+        selector: { matchLabels: {} },
+        template: { metadata: {}, spec: { containers: [] } },
+      },
+    });
+    // Mark the deployment ready after a short delay so scale-up resolves.
+    setTimeout(() => client.markReady('kubeclaw', depName), 10);
+
+    setDiscoveryDeps({
+      perGroupK8sClient: client,
+      namespace: 'kubeclaw',
+      discoveryTimeoutMs: 1000,
+    });
+
+    mockSet.mockClear();
+    await __handleRequestForTest({
+      requestId: 'grp-ready',
+      capability: 'echo',
+      group: 'Family',
+    });
+
+    expect(mockSet).toHaveBeenCalledOnce();
+    const response = JSON.parse(
+      mockSet.mock.calls[0][1],
+    ) as CapabilityDiscoveryEntry[];
+    expect(response).toHaveLength(1);
+    const entry = response[0];
+    expect(entry.state).toBe('ready');
+    expect(entry.endpoint).toContain(depName);
+    expect(entry.endpoint).toContain('kubeclaw');
+  });
+
+  it('returns state=failed when the per-group Deployment never becomes ready', async () => {
+    setCapability({
+      kind: 'mcp',
+      name: 'echo',
+      image: 'echo:1',
+      scope: 'group',
+    });
+
+    const client = new FakePerGroupK8sClient();
+    const hash = groupHash('Family');
+    const depName = `mcp-echo-${hash}`;
+    upsertInstance({
+      groupFolder: 'Family',
+      capabilityName: 'echo',
+      groupHash: hash,
+      deploymentName: depName,
+      serviceName: depName,
+    });
+    await client.applyDeployment({
+      apiVersion: 'apps/v1',
+      kind: 'Deployment',
+      metadata: { name: depName, namespace: 'kubeclaw' },
+      spec: {
+        replicas: 0,
+        selector: { matchLabels: {} },
+        template: { metadata: {}, spec: { containers: [] } },
+      },
+    });
+    // Never mark ready → waitForReady will timeout.
+
+    setDiscoveryDeps({
+      perGroupK8sClient: client,
+      namespace: 'kubeclaw',
+      discoveryTimeoutMs: 50,
+    });
+
+    mockSet.mockClear();
+    await __handleRequestForTest({
+      requestId: 'grp-fail',
+      capability: 'echo',
+      group: 'Family',
+    });
+
+    expect(mockSet).toHaveBeenCalledOnce();
+    const response = JSON.parse(
+      mockSet.mock.calls[0][1],
+    ) as CapabilityDiscoveryEntry[];
+    expect(response).toHaveLength(1);
+    const entry = response[0];
+    expect(entry.state).toBe('failed');
+    expect(entry.error).toBeTruthy();
   });
 });

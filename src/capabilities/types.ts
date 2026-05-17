@@ -105,6 +105,11 @@ export interface CapabilityStatus {
 /**
  * Entry returned to a channel via discovery. The kindMetadata field
  * carries kind-specific data (allowedTools for MCP, backend for RAG).
+ *
+ * `state` is unset for cluster-scoped capabilities (treat as `'ready'`).
+ * Set explicitly for group-scoped discovery responses where the orchestrator
+ * scaled a pod up on demand. `'warming'` is reserved for future non-blocking
+ * variants — Phase A always blocks until ready or failed.
  */
 export type CapabilityDiscoveryEntry =
   | {
@@ -112,16 +117,22 @@ export type CapabilityDiscoveryEntry =
       kind: 'mcp';
       endpoint: string;
       kindMetadata: { path: string; allowedTools?: string[] };
+      state?: 'ready' | 'warming' | 'failed';
+      error?: string;
     }
   | {
       name: string;
       kind: 'rag';
       endpoint: string;
       kindMetadata: { backend: 'qdrant' | 'lightrag' };
+      state?: 'ready' | 'warming' | 'failed';
+      error?: string;
     }
   | {
       name: string;
       kind: 'http';
       endpoint: string;
       kindMetadata: Record<string, never>;
+      state?: 'ready' | 'warming' | 'failed';
+      error?: string;
     };
