@@ -1,0 +1,151 @@
+{{- if .Values.dashboards.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kubeclaw-overview-dashboard
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: kubeclaw
+    grafana_dashboard: "1"
+data:
+  kubeclaw-overview.json: |
+    {
+      "__inputs": [],
+      "__requires": [
+        {"type": "grafana", "id": "grafana", "name": "Grafana", "version": "10.0.0"},
+        {"type": "datasource", "id": "prometheus", "name": "Prometheus", "version": "1.0.0"}
+      ],
+      "annotations": {"list": []},
+      "description": "Kubeclaw system overview — tier health, LLM activity, tool jobs, queue depth",
+      "editable": true,
+      "fiscalYearStartMonth": 0,
+      "graphTooltip": 1,
+      "id": null,
+      "links": [],
+      "panels": [
+        {
+          "id": 1,
+          "title": "Tier Up/Down",
+          "type": "stat",
+          "gridPos": {"h": 4, "w": 24, "x": 0, "y": 0},
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "fieldConfig": {
+            "defaults": {
+              "mappings": [
+                {"type": "value", "options": {"0": {"text": "DOWN", "color": "red", "index": 0}, "1": {"text": "UP", "color": "green", "index": 1}}}
+              ],
+              "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]},
+              "color": {"mode": "thresholds"}
+            },
+            "overrides": []
+          },
+          "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "orientation": "horizontal", "textMode": "auto", "colorMode": "background"},
+          "targets": [
+            {"expr": "up{job=\"kubeclaw-orchestrator\"}", "legendFormat": "Orchestrator", "refId": "A"},
+            {"expr": "up{job=~\"kubeclaw-channel.*\"}", "legendFormat": "Channel {{`{{job}}`}}", "refId": "B"},
+            {"expr": "up{job=\"kubeclaw-rag\"}", "legendFormat": "RAG", "refId": "C"}
+          ]
+        },
+        {
+          "id": 2,
+          "title": "LLM Call Rate by Provider (req/s)",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "fieldConfig": {
+            "defaults": {"unit": "reqps", "color": {"mode": "palette-classic"}},
+            "overrides": []
+          },
+          "options": {"tooltip": {"mode": "multi"}, "legend": {"displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]}},
+          "targets": [
+            {"expr": "sum by (provider) (rate(kubeclaw_channel_llm_call_duration_seconds_count[5m]))", "legendFormat": "{{`{{provider}}`}}", "refId": "A"}
+          ]
+        },
+        {
+          "id": 3,
+          "title": "Tool-Job Spawn Rate and Failure Rate",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "fieldConfig": {
+            "defaults": {"unit": "reqps", "color": {"mode": "palette-classic"}},
+            "overrides": [{"matcher": {"id": "byName", "options": "Failed"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "red"}}]}]
+          },
+          "options": {"tooltip": {"mode": "multi"}, "legend": {"displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]}},
+          "targets": [
+            {"expr": "sum(rate(kubeclaw_tool_job_spawned_total[5m]))", "legendFormat": "Total", "refId": "A"},
+            {"expr": "sum(rate(kubeclaw_tool_job_failures_total[5m]))", "legendFormat": "Failed", "refId": "B"}
+          ]
+        },
+        {
+          "id": 4,
+          "title": "Group Queue Depth",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12},
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "fieldConfig": {
+            "defaults": {"unit": "short", "color": {"mode": "palette-classic"}},
+            "overrides": []
+          },
+          "options": {"tooltip": {"mode": "multi"}, "legend": {"displayMode": "table", "placement": "bottom", "calcs": ["max"]}},
+          "targets": [
+            {"expr": "kubeclaw_group_queue_depth", "legendFormat": "{{`{{group}}`}}", "refId": "A"}
+          ]
+        },
+        {
+          "id": 5,
+          "title": "LLM Call p95 Latency by Provider (s)",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12},
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "fieldConfig": {
+            "defaults": {"unit": "s", "color": {"mode": "palette-classic"}},
+            "overrides": []
+          },
+          "options": {"tooltip": {"mode": "multi"}, "legend": {"displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]}},
+          "targets": [
+            {"expr": "histogram_quantile(0.95, sum by (provider, le) (rate(kubeclaw_channel_llm_call_duration_seconds_bucket[5m])))", "legendFormat": "p95 {{`{{provider}}`}}", "refId": "A"}
+          ]
+        },
+        {
+          "id": 6,
+          "title": "Top Error Sources (errors/s)",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 24, "x": 0, "y": 20},
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "fieldConfig": {
+            "defaults": {"unit": "reqps", "color": {"mode": "palette-classic"}},
+            "overrides": []
+          },
+          "options": {"tooltip": {"mode": "multi"}, "legend": {"displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]}},
+          "targets": [
+            {"expr": "sum by (provider) (rate(kubeclaw_channel_llm_call_duration_seconds_count{success=\"false\"}[5m]))", "legendFormat": "LLM error {{`{{provider}}`}}", "refId": "A"},
+            {"expr": "sum(rate(kubeclaw_tool_job_failures_total[5m]))", "legendFormat": "Tool-job failure", "refId": "B"},
+            {"expr": "rate(kubeclaw_rag_backend_errors_total[5m])", "legendFormat": "RAG error {{`{{backend}}`}}", "refId": "C"}
+          ]
+        }
+      ],
+      "refresh": "30s",
+      "schemaVersion": 38,
+      "tags": ["kubeclaw"],
+      "templating": {
+        "list": [
+          {
+            "name": "datasource",
+            "type": "datasource",
+            "pluginId": "prometheus",
+            "label": "Prometheus datasource",
+            "hide": 0,
+            "refresh": 1,
+            "query": "prometheus"
+          }
+        ]
+      },
+      "time": {"from": "now-1h", "to": "now"},
+      "timepicker": {},
+      "timezone": "browser",
+      "title": "Kubeclaw Overview",
+      "uid": "kubeclaw-overview",
+      "version": 1
+    }
+{{- end }}

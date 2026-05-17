@@ -1,0 +1,153 @@
+{{- if .Values.alerts.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: kubeclaw-alerts
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: kubeclaw
+    release: {{ .Release.Name }}
+spec:
+  groups:
+    - name: kubeclaw.infrastructure
+      interval: 30s
+      rules:
+        - alert: KubeclawOrchestratorDown
+          expr: |
+            absent(up{job="kubeclaw-orchestrator"}) or up{job="kubeclaw-orchestrator"} == 0
+          for: 2m
+          labels:
+            severity: critical
+            app: kubeclaw
+          annotations:
+            summary: "Kubeclaw orchestrator is down"
+            description: >-
+              The kubeclaw-orchestrator scrape target has been absent or returning 0
+              for more than 2 minutes. No tool jobs can be spawned and no messages
+              will be routed until this is resolved.
+            runbook_url: "https://github.com/mrmagooey/kubeclaw/blob/main/docs/RUNBOOKS.md#kubeclaworchestratordown"
+
+        - alert: KubeclawGroupQueueSaturated
+          expr: |
+            max by (group) (
+              max_over_time(kubeclaw_group_queue_depth[5m])
+            ) > {{ .Values.alerts.groupQueueSaturationDepth }}
+          for: 5m
+          labels:
+            severity: warning
+            app: kubeclaw
+          annotations:
+            summary: "Kubeclaw group queue depth is saturated (group={{ "{{" }} $labels.group {{ "}}" }})"
+            description: >-
+              The per-group message queue has held more than
+              {{ .Values.alerts.groupQueueSaturationDepth }} items for 5 minutes.
+              Either the LLM is slow or a channel is flooding messages. Check the
+              channel pod logs and the orchestrator queue depth metric.
+            runbook_url: "https://github.com/mrmagooey/kubeclaw/blob/main/docs/RUNBOOKS.md#kubeclawgroupqueuesaturated"
+
+        - alert: KubeclawRedisStreamStagnant
+          expr: |
+            increase(kubeclaw_redis_ipc_messages_total{stream=~"kubeclaw.*"}[5m]) == 0
+            and on(stream) kubeclaw_redis_ipc_messages_total{stream=~"kubeclaw.*"} > 0
+          for: 5m
+          labels:
+            severity: critical
+            app: kubeclaw
+          annotations:
+            summary: "Kubeclaw Redis IPC stream has received no messages (stream={{ "{{" }} $labels.stream {{ "}}" }})"
+            description: >-
+              The Redis stream {{ "{{" }} $labels.stream {{ "}}" }} has not received any
+              messages in the last 5 minutes, but previously had traffic. This
+              suggests the orchestrator or a channel pod has disconnected from Redis,
+              or the stream consumer group is blocked.
+            runbook_url: "https://github.com/mrmagooey/kubeclaw/blob/main/docs/RUNBOOKS.md#kubeclawredisstreamstagnant"
+
+    - name: kubeclaw.toolJob
+      interval: 30s
+      rules:
+        - alert: KubeclawToolJobFailureRateHigh
+          expr: |
+            (
+              sum by (image) (rate(kubeclaw_tool_job_failures_total[5m]))
+              /
+              sum by (image) (rate(kubeclaw_tool_job_spawned_total[5m]))
+            ) > 0.5
+            and on(image)
+            sum by (image) (rate(kubeclaw_tool_job_spawned_total[5m])) > 0
+          for: 10m
+          labels:
+            severity: warning
+            app: kubeclaw
+          annotations:
+            summary: "Kubeclaw tool-job failure rate above 50% (image={{ "{{" }} $labels.image {{ "}}" }})"
+            description: >-
+              More than 50% of tool-job spawns have been failing for 10 minutes for
+              image {{ "{{" }} $labels.image {{ "}}" }}. Check orchestrator logs for
+              OOMKilled, image-pull errors, or permission failures. The metric
+              kubeclaw_tool_job_failures_total breaks down failure reasons by image
+              and reason.
+            runbook_url: "https://github.com/mrmagooey/kubeclaw/blob/main/docs/RUNBOOKS.md#kubeclawtooljobfailureratehigh"
+
+        - alert: KubeclawLLMLatencyOverBudget
+          expr: |
+            histogram_quantile(0.99,
+              sum by (provider, model, le) (
+                rate(kubeclaw_channel_llm_call_duration_seconds_bucket[10m])
+              )
+            ) > {{ .Values.alerts.llmLatencyBudgetSeconds }}
+          for: 10m
+          labels:
+            severity: warning
+            app: kubeclaw
+          annotations:
+            summary: "Kubeclaw LLM p99 latency exceeds budget (provider={{ "{{" }} $labels.provider {{ "}}" }}, model={{ "{{" }} $labels.model {{ "}}" }})"
+            description: >-
+              The p99 LLM call duration for provider={{ "{{" }} $labels.provider {{ "}}" }}
+              model={{ "{{" }} $labels.model {{ "}}" }} has been above
+              {{ .Values.alerts.llmLatencyBudgetSeconds }}s for 10 minutes. Check if
+              the provider is experiencing an incident, or if context windows are
+              growing unboundedly. Consider adjusting alerts.llmLatencyBudgetSeconds.
+            runbook_url: "https://github.com/mrmagooey/kubeclaw/blob/main/docs/RUNBOOKS.md#kubeclawllmlatencyoverbudget"
+
+    - name: kubeclaw.dataPlane
+      interval: 30s
+      rules:
+        - alert: KubeclawLLMErrorRateElevated
+          expr: |
+            (
+              sum by (provider) (
+                rate(kubeclaw_channel_llm_call_duration_seconds_count{success="false"}[15m])
+              )
+              /
+              sum by (provider) (
+                rate(kubeclaw_channel_llm_call_duration_seconds_count[15m])
+              )
+            ) > 0.1
+          for: 15m
+          labels:
+            severity: warning
+            app: kubeclaw
+          annotations:
+            summary: "Kubeclaw LLM error rate elevated (provider={{ "{{" }} $labels.provider {{ "}}" }})"
+            description: >-
+              More than 10% of LLM calls to provider {{ "{{" }} $labels.provider {{ "}}" }}
+              have failed over the last 15 minutes. This may indicate an API outage,
+              rate-limit breach, or invalid API key. Check the channel pod logs and
+              the provider status page.
+            runbook_url: "https://github.com/mrmagooey/kubeclaw/blob/main/docs/RUNBOOKS.md#kubeclawllmerrorrateelevated"
+
+        - alert: KubeclawRAGErrorRateElevated
+          expr: |
+            rate(kubeclaw_rag_backend_errors_total[5m]) > 0
+          for: 10m
+          labels:
+            severity: warning
+            app: kubeclaw
+          annotations:
+            summary: "Kubeclaw RAG backend is returning errors (backend={{ "{{" }} $labels.backend {{ "}}" }})"
+            description: >-
+              The RAG backend {{ "{{" }} $labels.backend {{ "}}" }} has been returning
+              errors for 10 minutes. Context injection will silently degrade.
+              Check the RAG capability pod logs and Qdrant health.
+            runbook_url: "https://github.com/mrmagooey/kubeclaw/blob/main/docs/RUNBOOKS.md#kubeclawragerrorrateelevated"
+{{- end }}

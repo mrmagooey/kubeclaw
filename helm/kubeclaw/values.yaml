@@ -391,3 +391,17 @@ metrics:
     # and capabilities. Requires prometheus-operator CRDs to be installed.
     enabled: false
     interval: "30s"
+
+# --- Alerting and Dashboards ---
+# Requires prometheus-operator (kube-prometheus-stack) for PrometheusRule CRD.
+alerts:
+  # Set to true to deploy the PrometheusRule with all 7 kubeclaw alerts.
+  enabled: false
+  # Configurable thresholds — see each alert's annotation for context.
+  llmLatencyBudgetSeconds: 60
+  groupQueueSaturationDepth: 50
+
+dashboards:
+  # Set to true to deploy kubeclaw-overview and kubeclaw-llm-detail as ConfigMaps
+  # with the grafana_dashboard: "1" label (auto-discovered by the Grafana sidecar).
+  enabled: false
