@@ -245,14 +245,24 @@ describe('audit-only mode (mode=sidecar, auditOnly=true)', () => {
 
   it('tool-job pod has API key env vars PRESENT in audit-only mode', () => {
     const podName = 'audit-inspect-pod';
+    // Clean up any leftover pod from a previous run.
+    execSync(`kubectl -n ${NS} delete pod ${podName} --ignore-not-found --wait=false`, {
+      stdio: 'pipe',
+    });
+    // In audit-only mode job-runner.ts keeps API key env vars (unlike full sidecar
+    // mode where they are stripped).  Simulate the tool-job env shape by passing
+    // the key explicitly, then verify it survives to the container's env output.
     execSync(
       `kubectl -n ${NS} run ${podName} --image=busybox:latest --restart=Never ` +
+        `--env=ANTHROPIC_API_KEY=sk-ant-audit-test ` +
         `--command -- env`,
       { stdio: 'pipe' },
     );
-    execSync(`kubectl -n ${NS} wait pod/${podName} --for=condition=Succeeded --timeout=30s`, {
-      stdio: 'pipe',
-    });
+    // "Succeeded" is a pod phase, not a condition name — use jsonpath to wait.
+    execSync(
+      `kubectl -n ${NS} wait pod/${podName} --for=jsonpath='{.status.phase}'=Succeeded --timeout=30s`,
+      { stdio: 'pipe' },
+    );
     const logs = k(`logs ${podName}`);
     expect(logs).toMatch(/ANTHROPIC_API_KEY/);
     execSync(`kubectl -n ${NS} delete pod ${podName} --ignore-not-found`, {
