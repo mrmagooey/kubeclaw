@@ -82,7 +82,7 @@ data:
           },
           "options": {"tooltip": {"mode": "multi"}, "legend": {"displayMode": "table", "placement": "bottom", "calcs": ["mean", "last"]}},
           "targets": [
-            {"expr": "sum by (provider, model) (rate(kubeclaw_channel_llm_call_duration_seconds_count{status=\"ok\",provider=~\"$provider\",model=~\"$model\"}[5m])) / sum by (provider, model) (rate(kubeclaw_channel_llm_call_duration_seconds_count{provider=~\"$provider\",model=~\"$model\"}[5m]))", "legendFormat": "{{`{{provider}}`}}/{{`{{model}}`}}", "refId": "A"}
+            {"expr": "sum by (provider, model) (rate(kubeclaw_channel_llm_call_duration_seconds_count{success=\"true\",provider=~\"$provider\",model=~\"$model\"}[5m])) / sum by (provider, model) (rate(kubeclaw_channel_llm_call_duration_seconds_count{provider=~\"$provider\",model=~\"$model\"}[5m]))", "legendFormat": "{{`{{provider}}`}}/{{`{{model}}`}}", "refId": "A"}
           ]
         },
         {
