@@ -180,6 +180,9 @@ spec:
               mountPath: /app/store
             - name: sessions
               mountPath: /data/sessions
+            - name: specialists-catalog
+              mountPath: /etc/kubeclaw/specialists
+              readOnly: true
           resources:
             {{- toYaml $.Values.channelPod.resources | nindent 12 }}
         {{- if eq $.Values.credentialInjection.mode "sidecar" }}
@@ -195,6 +198,9 @@ spec:
         - name: sessions
           persistentVolumeClaim:
             claimName: kubeclaw-channel-{{ $name }}-sessions
+        - name: specialists-catalog
+          configMap:
+            name: kubeclaw-specialists
         {{- if eq $.Values.credentialInjection.mode "sidecar" }}
         {{- include "kubeclaw.credentialSidecarVolumes" $ | nindent 8 }}
         {{- end }}

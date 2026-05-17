@@ -70,6 +70,10 @@ import {
   stopDiscoveryWatcher,
   startHealthProbes,
 } from './capabilities/index.js';
+import {
+  SpecialistReconciler,
+  loadBaselineFromDisk,
+} from './specialists/reconciler.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -298,6 +302,52 @@ async function main(): Promise<void> {
 
   registerSecretDeps(secretManager, catalogInformer);
   logger.info('CatalogInformer and SecretManager initialised');
+
+  // ── Specialist catalog reconcile ──────────────────────────────────────────
+  // On orchestrator startup, merge the Helm baseline with any SQLite overrides
+  // and write the result to the kubeclaw-specialists ConfigMap so channel pods
+  // can mount and hot-reload it.
+  if (KUBECLAW_MODE === 'orchestrator') {
+    const specialistReconciler = new SpecialistReconciler({
+      baselineLoader: loadBaselineFromDisk,
+      configMapApply: async (rendered: string) => {
+        const data: Record<string, string> = { 'specialists.json': rendered };
+        const body = {
+          apiVersion: 'v1',
+          kind: 'ConfigMap',
+          metadata: {
+            name: 'kubeclaw-specialists',
+            namespace: KUBECLAW_NAMESPACE,
+          },
+          data,
+        };
+        // Try patch first; fall back to create if not found.
+        try {
+          await coreApi.patchNamespacedConfigMap({
+            name: 'kubeclaw-specialists',
+            namespace: KUBECLAW_NAMESPACE,
+            body,
+          });
+        } catch (err: unknown) {
+          const status = (err as { response?: { statusCode?: number } })?.response?.statusCode;
+          if (status === 404) {
+            await coreApi.createNamespacedConfigMap({
+              namespace: KUBECLAW_NAMESPACE,
+              body,
+            });
+          } else {
+            throw err;
+          }
+        }
+      },
+    });
+    try {
+      await specialistReconciler.apply();
+      logger.info('Specialists ConfigMap reconciled');
+    } catch (err) {
+      logger.warn({ err }, 'Specialist reconcile failed; channel pods will use stale or empty catalog');
+    }
+  }
 
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
