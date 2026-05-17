@@ -802,6 +802,20 @@ async function main(): Promise<void> {
   // Wire metrics into the job runner singleton
   jobRunner.metrics = orchMetrics;
 
+  // Sample group queue depth every 5 s and publish to Prometheus.
+  // Choice: periodic setInterval rather than hooking enqueue/dequeue paths
+  // because the gauge is a sampled snapshot metric and polling keeps specialists.ts
+  // and group-queue.ts free of metrics imports.
+  const queueDepthInterval = setInterval(() => {
+    for (const jid of Object.keys(registeredGroups)) {
+      const group = registeredGroups[jid];
+      if (!group) continue;
+      const depth = queue.queueDepth(jid);
+      orchMetrics.setGroupQueueDepth({ group: group.folder }, depth);
+    }
+  }, 5000);
+  queueDepthInterval.unref(); // don't keep the process alive
+
   await initDatabase();
   logger.info('Database initialized');
 
@@ -830,6 +844,7 @@ async function main(): Promise<void> {
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
+    clearInterval(queueDepthInterval);
     stopDiscoveryWatcher();
     await queue.shutdown(10000);
     await shutdownAllRunners();
