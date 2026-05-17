@@ -1,461 +1,223 @@
 # Specialist Agents
 
-KubeClaw supports **specialist sub-agents** within a group — separate Claude instances that handle specific types of requests. Specialists are defined in an `agents.json` file in the group folder and are invoked when mentioned in messages using `@name` syntax.
+KubeClaw supports **specialist sub-agents** addressable by `@mention`. Unlike the old per-group `agents.json` model, specialists are now defined in a **cluster-wide global catalog** — declare a specialist once and every group can invoke it.
 
-## Quick Start
+Specialists run in-process inside the channel pod (Path A), not as separate tool jobs. Mentioned specialists execute in parallel via `Promise.allSettled`, so one specialist's failure does not abort the others. Each reply is prefixed with `[@Name]`.
 
-Create a file at `groups/{groupname}/agents.json`:
+> **Migration note:** existing `groups/{group}/agents.json` files are silently ignored as of this release. See `docs/legacy-specialists-architecture.md` for the old model.
 
-```json
-{
-  "specialists": [
-    {
-      "name": "Research",
-      "prompt": "You are a research specialist. Focus on finding and analyzing information from authoritative sources."
-    },
-    {
-      "name": "Writer",
-      "prompt": "You are a writing specialist. Create clear, engaging content in various styles and formats.",
-      "triggers": ["@Content", "@Author"]
-    }
-  ]
-}
+---
+
+## Registering Specialists
+
+### Option 1: Helm `values.yaml` (baseline)
+
+Add a `specialists` array to your `values.yaml` before deploying or upgrading:
+
+```yaml
+specialists:
+  - name: Research
+    prompt: >
+      You are a research specialist. Find and analyse information from
+      authoritative sources. Cite every claim.
+    triggers:
+      - "@Researcher"
+      - "@Analysis"
+    llmProvider: claude
+    memory:
+      isolated: false
+
+  - name: Helper
+    prompt: Answer questions concisely and accurately.
+    llmProvider: openrouter
+    memory:
+      isolated: true
+    tools:
+      - web_search
+      - fetch_url
 ```
 
-Then mention them in messages:
+The Helm chart renders these into the `kubeclaw-specialists-baseline` ConfigMap, which the orchestrator reconciler picks up and merges into `kubeclaw-specialists`.
+
+### Option 2: Admin shell at runtime
+
+Connect to the admin shell and call `register_specialist`:
 
 ```
-@Research find recent AI trends
-@Writer polish this text: ...
-@Content write a blog post about...
+kubectl exec -it deployment/kubeclaw-orchestrator -n kubeclaw -- node dist/admin-shell.js
 ```
 
-## How Specialists Work
-
-### Message Flow
-
-1. **Detection**: When a message arrives, the orchestrator scans it for `@SpecialistName` mentions
-2. **Matching**: Each mentioned specialist is looked up in the `agents.json` file
-3. **Routing**: Instead of running a single agent, the orchestrator spawns **one agent per mentioned specialist**
-4. **Output**: Each specialist's response is sent back to the group separately
-5. **Fallback**: If no specialists are mentioned, the main group agent runs instead
-
-### Name Matching
-
-Names are matched **case-insensitively**. These are equivalent:
+Then in the shell:
 
 ```
-@Research
-@research
-@RESEARCH
-@rESeArCh
+register_specialist({
+  name: "Editor",
+  prompt: "You are a writing editor. Improve clarity and concision without changing meaning.",
+  memory: { isolated: true }
+})
 ```
 
-You can also define custom trigger aliases using the `triggers` field (see below).
+> **Caveat:** The `register_specialist` IPC tool is wired end-to-end through the `specialist_overrides` SQLite table and the reconciler, but the underlying K8s ConfigMap apply helper is currently deferred. Until that is shipped, `register_specialist` persists the override in SQLite and the reconciler will include it on the next reconcile cycle (triggered by orchestrator restart or the next Helm upgrade). Admin-shell overrides **always win** over the Helm baseline (see _Merge precedence_ below).
 
-## Configuration Format
+---
 
-### agents.json Structure
+## Schema
 
-The file must contain a top-level `specialists` array with at least one entry:
+Full field reference: `docs/superpowers/specs/2026-05-16-global-specialist-catalog-design.md`
 
-```json
-{
-  "specialists": [
-    {
-      "name": "SpecialistName",
-      "prompt": "Role and behavioral instructions for this specialist.",
-      "triggers": ["@Alias1", "@Alias2"],
-      "llmProvider": "claude",
-      "containerConfig": {
-        "timeout": 600000,
-        "memoryLimit": "2Gi"
-      },
-      "memory": {
-        "isolated": true
-      },
-      "claudemd": "Additional system prompt content."
-    }
-  ]
-}
-```
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `name` | string | yes | Display name; used for `@mentions`. E.g. `"Research"`. |
+| `prompt` | string | yes | System prompt for this specialist. |
+| `triggers` | string[] | no | Additional `@-mention` aliases, case-insensitive. |
+| `llmProvider` | string | no | Override the LLM provider for this specialist (e.g. `"claude"`, `"openrouter"`). Omit to inherit the group's default. |
+| `memory.isolated` | boolean | no | If `true`, specialist gets its own `session_key` (`groupfolder:SpecialistName`) and does not see group conversation history. Defaults to `false`. |
+| `claudemd` | string | no | Extra content appended to the system prompt. |
+| `tools` | string[] | no | Allowlist of tool names. When set, the specialist can only call listed tools. |
 
-### Fields
+---
 
-#### Required
+## Dispatch
 
-- **`name`** (string, non-empty)
-  - Display name for the specialist
-  - Used for `@mentions` in messages
-  - Example: `"Research"`, `"CodeReview"`, `"Editor"`
+### Triggering specialists
 
-- **`prompt`** (string, non-empty)
-  - Complete system prompt for this specialist
-  - Defines role, behavior, and constraints
-  - Example: `"You are a code review specialist. Focus on security, performance, and maintainability."`
-
-#### Optional
-
-- **`triggers`** (array of strings)
-  - Alternative names/aliases for this specialist
-  - Useful for friendly shorthand or domain-specific naming
-  - Matching is case-insensitive and strips leading `@` if present
-  - Example: `["@CodeReviewer", "@QA", "@Security"]`
-  - When mentioned: `@CodeReviewer`, `@qa`, `@SECURITY` all work
-
-- **`llmProvider`** (string)
-  - Override the default LLM provider for this specialist
-  - Allowed values depend on your KubeClaw configuration (typically `"claude"`, `"openrouter"`, etc.)
-  - When omitted, uses the group's default LLM provider
-  - Useful for cost optimization (cheaper model for simple tasks) or capability specialization
-  - Example: `"claude"` (use Claude Opus), or `"openrouter"` (use cost-effective alternative)
-
-- **`containerConfig`** (object)
-  - Partial overrides to the group's container configuration
-  - Merged with group-level settings (specialist settings win on conflict)
-  - See [ContainerConfig documentation](../src/types.ts#L90-L123) for all available options
-  - Common use cases:
-    - `timeout`: Increase for long-running analyses, or decrease to save resources
-    - `memoryLimit`, `memoryRequest`: Request more memory for compute-intensive specialists
-    - `cpuLimit`, `cpuRequest`: Allocate more CPU for parallel processing
-  - Example:
-    ```json
-    "containerConfig": {
-      "timeout": 900000,
-      "memoryLimit": "4Gi",
-      "cpuLimit": "2000m"
-    }
-    ```
-
-- **`memory`** (object)
-  - Controls whether this specialist has isolated conversational memory
-  - Properties:
-    - `isolated` (boolean): If `true`, specialist maintains its own separate session
-  - Default: `false` (specialist shares group's memory)
-  - When `isolated: true`:
-    - Specialist gets its own session key: `groupfolder:specialistname`
-    - First message to this specialist is fresh context (no group history)
-    - Subsequent messages build specialist's own conversation thread
-    - Useful for stateless specialists or separate conversations within a group
-  - Example:
-    ```json
-    "memory": {
-      "isolated": true
-    }
-    ```
-
-- **`claudemd`** (string)
-  - Extra system prompt content appended after the main `prompt`
-  - Useful for dynamically generated instructions or complex formatting
-  - Example:
-    ```json
-    "claudemd": "Current time: 2026-04-06\nAlways include timestamps in your analysis."
-    ```
-
-### Validation Rules
-
-- `agents.json` must be valid JSON
-- Top level must be an object with a `specialists` key
-- `specialists` must be a non-empty array
-- Each specialist entry must have non-empty `name` and `prompt` strings
-- Optional fields are validated by type (ignored if wrong type, not an error)
-- Invalid files log a warning but do not crash the orchestrator
-
-## Complete Example
-
-```json
-{
-  "specialists": [
-    {
-      "name": "Research",
-      "prompt": "You are a research specialist. Your role is to find, analyze, and summarize information from authoritative sources. Be thorough and cite your sources. Always verify claims with multiple sources when possible.",
-      "triggers": ["@Researcher", "@Analysis"],
-      "containerConfig": {
-        "timeout": 600000,
-        "memoryLimit": "2Gi"
-      }
-    },
-    {
-      "name": "Writer",
-      "prompt": "You are a writing specialist. Create clear, engaging, and well-structured content. Adapt tone and style to the audience. Proofread carefully.",
-      "triggers": ["@Content", "@Copy", "@Author"],
-      "memory": {
-        "isolated": true
-      }
-    },
-    {
-      "name": "CodeReview",
-      "prompt": "You are a code review specialist. Focus on security vulnerabilities, performance optimization, maintainability, and following best practices. Provide actionable feedback.",
-      "llmProvider": "openrouter",
-      "containerConfig": {
-        "timeout": 300000,
-        "memoryLimit": "1Gi"
-      }
-    },
-    {
-      "name": "QuestionAnswerer",
-      "prompt": "Answer user questions concisely and accurately. If you don't know something, say so.",
-      "memory": {
-        "isolated": true
-      },
-      "claudemd": "Keep answers to 2-3 sentences unless the user asks for more detail."
-    }
-  ]
-}
-```
-
-Usage in messages:
+Mention one or more specialists in any message:
 
 ```
-@Research what are the latest trends in quantum computing?
-@Writer turn my notes into a formal report
-@CodeReview check this SQL injection vulnerability: ...
-@qa review the authentication logic in this code
+@Research find recent AI safety papers
+@Helper format this JSON for me
+@Research summarise @Helper clean up the output
 ```
 
-## Session Isolation
+The `@mention` parser scans the message for names that match the `name` or `triggers` fields (case-insensitive, leading `@` stripped). All matched specialists run in parallel.
 
-By default, all specialists in a group share the same conversation memory (session). This allows follow-up context to flow between them.
+### Parallel execution
 
-When `memory.isolated: true`, a specialist gets its own session key and conversational thread:
+Dispatch uses `Promise.allSettled`, so:
 
-```json
-"memory": { "isolated": true }
+- All mentioned specialists run concurrently.
+- A failure in one specialist does not prevent others from responding.
+- Each specialist's reply is sent to the group with a `[@Name]` prefix so the user can tell them apart.
+
+### Fallback
+
+If no specialists are mentioned, the main group agent runs as normal.
+
+---
+
+## Per-Specialist Features
+
+### `llmProvider` — cost optimisation
+
+Route expensive specialists to capable models and cheap specialists to fast, low-cost ones:
+
+```yaml
+specialists:
+  - name: Expert
+    prompt: Solve complex problems with deep analysis.
+    llmProvider: claude          # Claude Opus — capable but expensive
+
+  - name: Helper
+    prompt: Answer simple questions quickly.
+    llmProvider: openrouter      # Cheap/fast model for simple tasks
 ```
 
-**Shared memory (default):**
-```
-User: @Research find X
-Research: Here's X...
-User: Can you @Writer summarize that?
-Writer: [sees Research's answer in context]
+When `llmProvider` is omitted, the group's configured provider is used.
+
+### `memory.isolated` — stateless specialists
+
+By default, specialists share the group's conversation history. Set `memory.isolated: true` for specialists that should start each invocation with a clean slate:
+
+```yaml
+- name: FAQ
+  prompt: Answer questions concisely. Be friendly.
+  memory:
+    isolated: true
 ```
 
-**Isolated memory:**
-```
-"memory": { "isolated": true }
-
-User: @Research find X
-Research: Here's X...
-User: Can you @Writer summarize that?
-Writer: [does NOT see Research's answer; fresh context]
-```
+Isolation is real: `conversation_history` rows are scoped by `session_key`. An isolated specialist's `session_key` is `groupfolder:SpecialistName`, completely separate from the group's `session_key`. No history leaks between them.
 
 Use isolation for:
-- Stateless specialists (question answerers, formatters)
-- Preventing context pollution in long conversations
-- Specialized tasks that shouldn't inherit group history
+- Stateless helpers (formatters, validators, Q&A bots)
+- Preventing context-window bloat from long group histories
+- Specialists that must not see previous group turns
 
-## Execution Model
+### `tools` — hardening via allowlist
 
-### Multiple Specialists in One Message
+Restrict which tools a specialist can call:
 
-If a message mentions multiple specialists, they all run:
-
-```
-@Research analyze this @Writer summarize it
-→ Both Research and Writer run (parallelized where possible)
-→ Both responses sent to group
-```
-
-### Specialist vs. Main Agent
-
-- **Specialists mentioned** → Only specialists run
-- **No specialists mentioned** → Main group agent runs (or does nothing if no trigger)
-
-Example: If a group has both specialists and a main agent prompt:
-
-```json
-{
-  "specialists": [
-    { "name": "Research", "prompt": "..." }
-  ]
-}
+```yaml
+- name: Summariser
+  prompt: Summarise the provided text.
+  tools:
+    - fetch_url
 ```
 
-```
-User: @Research find X            → Research runs only
-User: general question            → Main agent runs (if group has trigger + isMain flag)
-```
+A specialist with a `tools` allowlist cannot call anything outside that list, even if the channel pod has broader tool permissions. Omit `tools` to apply no restriction.
 
-## Practical Use Cases
+---
 
-### Case 1: Multi-Role Team
+## Merge Precedence
 
-A project management group with specialists:
+The orchestrator reconciler merges two sources into the `kubeclaw-specialists` ConfigMap:
 
-```json
-{
-  "specialists": [
-    {
-      "name": "ProjectManager",
-      "prompt": "Track project milestones and timelines. Summarize status on demand."
-    },
-    {
-      "name": "DevLead",
-      "prompt": "Review technical design. Provide architecture advice.",
-      "triggers": ["@Tech", "@Architecture"]
-    },
-    {
-      "name": "QALead",
-      "prompt": "Define test plans and quality criteria. Review test coverage."
-    }
-  ]
-}
-```
+1. **Helm baseline** — from `kubeclaw-specialists-baseline` ConfigMap (rendered from `values.yaml`)
+2. **Admin-shell overrides** — from the `specialist_overrides` SQLite table on the orchestrator
 
-Usage:
-```
-Team: @ProjectManager what's our blockers?
-Team: @DevLead should we refactor the API?
-Team: @QALead what's our test coverage target?
-```
+**Admin-shell overrides win on conflict.** If both sources define a specialist with the same `name`, the admin-shell version is used in full. This lets operators patch individual specialists at runtime without redeploying Helm.
 
-### Case 2: Cost Optimization with Different Models
-
-```json
-{
-  "specialists": [
-    {
-      "name": "Expert",
-      "prompt": "Solve complex problems with thorough analysis.",
-      "llmProvider": "claude"
-    },
-    {
-      "name": "Helper",
-      "prompt": "Answer simple questions and format text quickly.",
-      "llmProvider": "openrouter"
-    }
-  ]
-}
-```
-
-Usage:
-```
-@Expert solve this algorithm problem
-@Helper format this JSON
-```
-
-### Case 3: Isolated Q&A Bot
-
-```json
-{
-  "specialists": [
-    {
-      "name": "FAQ",
-      "prompt": "Answer questions concisely. Be friendly.",
-      "memory": { "isolated": true }
-    }
-  ]
-}
-```
-
-The FAQ specialist never sees previous group conversation — each question is fresh context. This prevents context window waste on long group histories.
+---
 
 ## Troubleshooting
 
-### Specialist Not Running
-
-**Check these in order:**
-
-1. **File exists and is valid**: Is `agents.json` in `groups/{groupname}/`? Test with `cat` or a JSON validator.
-2. **Syntax**: Run `jq . groups/{groupname}/agents.json` to validate JSON.
-3. **Structure**: Ensure `specialists` is a non-empty array with `name` and `prompt` fields.
-4. **Mention syntax**: Must be `@ExactName` or `@triggeralias`, case-insensitive. Check logs for detection output.
-5. **Permissions**: Ensure the orchestrator can read the file (`ls -la`).
-
-**Example validation:**
-```bash
-# Check file exists
-ls -la groups/mygroup/agents.json
-
-# Validate JSON
-jq empty groups/mygroup/agents.json
-
-# Check if orchestrator sees it
-kubectl logs -f deployment/kubeclaw-orchestrator -n kubeclaw | grep -i specialist
-```
-
-### Specialist Errors
-
-Check orchestrator logs for parsing errors:
+### Inspect the merged ConfigMap
 
 ```bash
-kubectl logs deployment/kubeclaw-orchestrator -n kubeclaw --tail=100 \
-  | grep -E 'agents\.json|specialist|warn'
+kubectl get cm kubeclaw-specialists -n kubeclaw \
+  -o jsonpath='{.data.specialists\.json}' | jq .
 ```
 
-Common errors:
-- `agents.json missing "specialists" array` → Add `"specialists": [ ... ]`
-- `Specialist entry missing non-empty "name" string` → Each specialist needs `"name": "..."`
-- `Failed to parse agents.json` → Check JSON syntax with `jq`
+This shows the exact list of specialists currently visible to all channel pods.
 
-### Session Key Issues
+### Check specialist_usage telemetry
 
-If isolated memory isn't working:
+Each channel pod records every specialist dispatch in its local SQLite database:
 
-1. Verify `"memory": { "isolated": true }` is present in specialist config
-2. Check that specialist is actually running (verify container output)
-3. Session isolation requires the specialist to be invoked; if another agent doesn't mention it, the specialist doesn't run
+```bash
+# Get the channel pod name
+kubectl get pods -n kubeclaw -l component=channel
 
-## Security Notes
-
-- Specialists are defined per-group — they cannot access specialists from other groups
-- Specialist prompts run with the same permissions as the group agent
-- Container overrides (`containerConfig`) are validated like group config overrides
-- File paths in `claudemd` are read-only and scoped to the group folder
-
-## File Location
-
-```
-groups/
-├── {groupname}/
-│   ├── agents.json              ← Specialists for this group
-│   ├── CLAUDE.md                ← Group memory (optional)
-│   ├── logs/
-│   └── attachments/
+# Open the SQLite shell
+kubectl exec -it <channel-pod> -n kubeclaw -- \
+  sqlite3 /data/kubeclaw.db "SELECT * FROM specialist_usage ORDER BY created_at DESC LIMIT 20;"
 ```
 
-- Must be in the group's root folder
-- Filename is exactly `agents.json` (lowercase, no variations)
-- If absent, group has no specialists (main agent only)
+Columns: `id`, `group_folder`, `specialist_name`, `session_key`, `duration_ms`, `status` (`success` or `error`), `error_message`, `created_at`.
 
-## Integration with CLAUDE.md
+### Specialist not responding
 
-Group memory (`CLAUDE.md`) and specialists work together:
+1. Check the merged ConfigMap (above) to confirm the specialist is registered.
+2. Verify the `@mention` matches the `name` or a `triggers` entry (case-insensitive).
+3. Check channel pod logs for dispatch errors:
+   ```bash
+   kubectl logs -l component=channel -n kubeclaw --tail=100 | grep -i specialist
+   ```
+4. Check `specialist_usage` — if `status = 'error'`, `error_message` has the reason.
 
-- Both specialists and the main agent can read/update `CLAUDE.md`
-- Specialists with `isolated: true` get separate session memory but still access shared `CLAUDE.md`
-- Use `CLAUDE.md` for persistent group knowledge, session for conversational context
+### ConfigMap not updating after `register_specialist`
 
-Example:
+The K8s ConfigMap apply step is deferred (see caveat in _Option 2_ above). Restart the orchestrator to trigger an immediate reconcile:
+
+```bash
+kubectl rollout restart deployment/kubeclaw-orchestrator -n kubeclaw
 ```
-groups/mygroup/
-├── CLAUDE.md (contains shared facts, team knowledge)
-├── agents.json (defines specialists)
-└── logs/
-```
 
-## Performance Considerations
-
-- Each mentioned specialist spawns a separate tool job
-- Multiple specialists in one message may run in parallel (depends on cluster capacity)
-- Each specialist gets its own container with its own timeout and resource limits
-- Use `containerConfig.timeout` to prevent specialists from blocking the group
-
-Recommended timeout strategy:
-```json
-{
-  "name": "QuickHelper",
-  "prompt": "...",
-  "containerConfig": {
-    "timeout": 120000
-  }
-}
-```
+---
 
 ## See Also
 
-- [CLAUDE.md](./CLAUDE.md) — Group memory documentation
-- [REQUIREMENTS.md](./REQUIREMENTS.md) — Architecture overview
-- [src/specialists.ts](../src/specialists.ts) — Implementation details
+- `docs/legacy-specialists-architecture.md` — old `agents.json`-based model (preserved for reference)
+- `docs/superpowers/specs/2026-05-16-global-specialist-catalog-design.md` — full design and field reference
+- `src/specialists/types.ts` — `GlobalSpecialist` interface
+- `src/specialists/catalog-loader.ts` — channel-side ConfigMap loader
+- `src/specialists/reconciler.ts` — orchestrator-side reconciler

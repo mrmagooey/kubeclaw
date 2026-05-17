@@ -20,7 +20,11 @@ Four-tier pod architecture: **Orchestrator** (high priv, only K8s API access, Re
 | `src/task-scheduler.ts`             | Runs scheduled tasks                                       |
 | `src/db.ts`                         | SQLite operations                                          |
 | `src/group-queue.ts`                | Per-group message queue with global concurrency limit       |
-| `src/specialists.ts`                | Loads `agents.json` specialist defs for agent-swarm support |
+| `src/specialists.ts`                | @mention parser; resolves mentions against the global catalog |
+| `src/specialists/types.ts`          | GlobalSpecialist interface + validator + wire-format parser  |
+| `src/specialists/catalog-loader.ts` | Channel-side: mounts kubeclaw-specialists ConfigMap, fs.watch reload |
+| `src/specialists/reconciler.ts`     | Orchestrator-side: merge(Helm baseline, SQLite overrides) → ConfigMap |
+| `src/skills/orchestrator/specialist-registry.ts` | Admin-shell IPC tools: register / edit / remove / list specialists |
 | `src/credential-broker/`            | Stamps `Authorization` headers via Envoy `ext_authz`; orchestrator-side secret holder |
 | `src/credential-injection/`         | Mode flag (`sidecar`/`istio`/`off`) + Envoy sidecar spec for tool-job pods |
 | `groups/{name}/CLAUDE.md`           | Per-group memory (isolated)                                |
