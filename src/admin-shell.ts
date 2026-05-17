@@ -43,6 +43,7 @@ import {
   setGroupCredential,
   unsetGroupCredential,
 } from './per-group-capabilities/credentials.js';
+import { onGroupRemoved } from './per-group-capabilities/index.js';
 
 // K8s clients (in-cluster config, auto-detected from service account)
 const kc = new k8s.KubeConfig();
@@ -436,10 +437,23 @@ export const TOOLS: OpenAI.ChatCompletionTool[] = [
         type: 'object',
         required: ['group_folder', 'capability_name', 'env_name', 'value'],
         properties: {
-          group_folder: { type: 'string', description: 'Target group folder name.' },
-          capability_name: { type: 'string', description: 'Per-group capability name (e.g. "github").' },
-          env_name: { type: 'string', description: 'Env-var name to set in the Secret.' },
-          value: { type: 'string', description: 'Secret value (will be base64-encoded into the Secret data).' },
+          group_folder: {
+            type: 'string',
+            description: 'Target group folder name.',
+          },
+          capability_name: {
+            type: 'string',
+            description: 'Per-group capability name (e.g. "github").',
+          },
+          env_name: {
+            type: 'string',
+            description: 'Env-var name to set in the Secret.',
+          },
+          value: {
+            type: 'string',
+            description:
+              'Secret value (will be base64-encoded into the Secret data).',
+          },
         },
       },
     },
@@ -515,6 +529,7 @@ function handleDeregisterGroup(input: ToolInput): string {
   const existing = db.getRegisteredGroup(jid);
   if (!existing) return `No group found with JID: ${jid}`;
   db.deleteRegisteredGroup(jid);
+  void onGroupRemoved(existing.folder);
   return `Removed group "${existing.name}" (${jid}).`;
 }
 

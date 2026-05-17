@@ -77,6 +77,10 @@ vi.mock('./per-group-capabilities/credentials.js', () => ({
   unsetGroupCredential: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock('./per-group-capabilities/index.js', () => ({
+  onGroupRemoved: vi.fn().mockResolvedValue(undefined),
+}));
+
 const MockCoreV1Api = class {};
 const MockAppsV1Api = class {};
 const MockBatchV1Api = class {};

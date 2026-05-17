@@ -1,0 +1,185 @@
+import type { PerGroupK8sClient } from './k8s-client.js';
+import type { CapabilitySpec } from '../capabilities/types.js';
+import { reconcileGroupCapabilities } from './reconciler.js';
+import { startSweeperLoop, type SweeperLoopHandle } from './scale-down-sweeper.js';
+import { gcGroup } from './gc.js';
+import { setDiscoveryDeps } from '../capabilities/discovery.js';
+import { logger } from '../logger.js';
+
+// Re-exports (used by tests and the orchestrator) -----------------------
+
+export {
+  reconcileGroupCapabilities,
+  type ReconcileArgs,
+} from './reconciler.js';
+export {
+  scaleUpInstance,
+  type ScaleUpResult,
+  type ScaleUpArgs,
+} from './scale-up.js';
+export {
+  sweepIdleInstances,
+  startSweeperLoop,
+  type SweepArgs,
+  type SweeperLoopHandle,
+} from './scale-down-sweeper.js';
+export { gcGroup, type GcArgs } from './gc.js';
+export {
+  setGroupCredential,
+  unsetGroupCredential,
+  type SetCredentialArgs,
+  type UnsetCredentialArgs,
+} from './credentials.js';
+export {
+  RealPerGroupK8sClient,
+  FakePerGroupK8sClient,
+  type PerGroupK8sClient,
+} from './k8s-client.js';
+export { groupHash } from './hash.js';
+export {
+  type CapabilityScope,
+  type ResolvedGroupCapability,
+  getScope,
+  validateScopeFields,
+  resolveGroupCapability,
+  PerGroupCapabilityError,
+} from './types.js';
+
+// Lifecycle (orchestrator-only, module-level state) ---------------------
+
+interface LifecycleDeps {
+  client: PerGroupK8sClient;
+  namespace: string;
+  groupsPvcName: string;
+  /** Callable returning current set of group folders (lets us avoid stale snapshots). */
+  listGroupFolders: () => string[];
+  /** Callable returning current capability specs (Helm + admin overrides merged). */
+  listSpecs: () => CapabilitySpec[];
+  /** Discovery cold-start timeout in ms (default 30000). */
+  discoveryTimeoutMs?: number;
+  /** Sweeper interval in ms (default 60000). */
+  sweepIntervalMs?: number;
+  /** Periodic full reconcile interval in ms (default 300000 = 5 minutes). */
+  periodicReconcileMs?: number;
+}
+
+let deps: LifecycleDeps | null = null;
+let sweeperHandle: SweeperLoopHandle | null = null;
+let periodicHandle: NodeJS.Timeout | null = null;
+
+export interface LifecycleHandle {
+  stop(): void;
+}
+
+export async function initPerGroupCapabilityLifecycle(
+  d: LifecycleDeps,
+): Promise<LifecycleHandle> {
+  deps = d;
+  const discoveryTimeoutMs = d.discoveryTimeoutMs ?? 30_000;
+  const sweepIntervalMs = d.sweepIntervalMs ?? 60_000;
+  const periodicReconcileMs = d.periodicReconcileMs ?? 5 * 60_000;
+
+  // Wire discovery so the Redis-stream discovery handler can scale instances up.
+  setDiscoveryDeps({
+    perGroupK8sClient: d.client,
+    namespace: d.namespace,
+    discoveryTimeoutMs,
+  });
+
+  // Initial full reconcile.
+  await reconcileGroupCapabilities({
+    client: d.client,
+    namespace: d.namespace,
+    groupsPvcName: d.groupsPvcName,
+    groups: d.listGroupFolders(),
+    specs: d.listSpecs(),
+  });
+
+  // Background sweeper.
+  sweeperHandle = startSweeperLoop({
+    client: d.client,
+    namespace: d.namespace,
+    specs: d.listSpecs(),
+    intervalMs: sweepIntervalMs,
+  });
+
+  // 5-minute periodic safety reconcile.
+  periodicHandle = setInterval(() => {
+    void (async () => {
+      try {
+        await reconcileGroupCapabilities({
+          client: d.client,
+          namespace: d.namespace,
+          groupsPvcName: d.groupsPvcName,
+          groups: d.listGroupFolders(),
+          specs: d.listSpecs(),
+        });
+      } catch (err) {
+        logger.warn({ err }, 'per-group periodic reconcile failed');
+      }
+    })();
+  }, periodicReconcileMs);
+
+  logger.info(
+    {
+      groups: d.listGroupFolders().length,
+      sweepIntervalMs,
+      periodicReconcileMs,
+    },
+    'per_group_capability_lifecycle_started',
+  );
+
+  return {
+    stop() {
+      sweeperHandle?.stop();
+      if (periodicHandle) clearInterval(periodicHandle);
+      sweeperHandle = null;
+      periodicHandle = null;
+      deps = null;
+    },
+  };
+}
+
+/**
+ * Narrow reconcile for a single group. No-op if lifecycle hasn't been initialised
+ * (so safe to call from code paths that run before orchestrator startup completes).
+ */
+export async function onGroupAdded(groupFolder: string): Promise<void> {
+  if (!deps) return;
+  try {
+    await reconcileGroupCapabilities({
+      client: deps.client,
+      namespace: deps.namespace,
+      groupsPvcName: deps.groupsPvcName,
+      groups: [groupFolder],
+      specs: deps.listSpecs(),
+    });
+  } catch (err) {
+    logger.warn({ err, groupFolder }, 'onGroupAdded reconcile failed');
+  }
+}
+
+/**
+ * GC cascade on group deletion. No-op if lifecycle hasn't been initialised.
+ */
+export async function onGroupRemoved(groupFolder: string): Promise<void> {
+  if (!deps) return;
+  try {
+    await gcGroup({
+      client: deps.client,
+      namespace: deps.namespace,
+      groupFolder,
+    });
+  } catch (err) {
+    logger.warn({ err, groupFolder }, 'onGroupRemoved gc failed');
+  }
+}
+
+/** Test-only reset. */
+export function _resetLifecycleForTest(): void {
+  if (sweeperHandle) sweeperHandle.stop();
+  if (periodicHandle) clearInterval(periodicHandle);
+  sweeperHandle = null;
+  periodicHandle = null;
+  deps = null;
+}
