@@ -51,17 +51,8 @@ end
 local MAX_BODY_BYTES = 1024 * 1024  -- 1 MB
 
 -- ── Main filter ───────────────────────────────────────────────────────────────
--- Body access lives in envoy_on_request_body, not envoy_on_request, because
--- request_handle:body() returns nil when called from envoy_on_request even
--- with an upstream buffer filter — the body hasn't been delivered to Lua's
--- callback yet at the headers phase. envoy_on_request_body fires after the
--- full body is buffered (end_stream=true), at which point headers + body are
--- both available and the request hasn't been forwarded upstream yet.
-function envoy_on_request_body(request_handle, end_stream)
-  request_handle:logInfo('kubeclaw-lua: envoy_on_request_body fired end_stream=' .. tostring(end_stream))
-  -- Body may arrive in chunks; only process once the full body is buffered.
-  if not end_stream then return end
-
+function envoy_on_request(request_handle)
+  request_handle:logInfo('kubeclaw-lua: envoy_on_request fired')
   local hdrs = request_handle:headers()
 
   -- Read and immediately strip both kubeclaw headers
