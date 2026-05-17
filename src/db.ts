@@ -254,6 +254,28 @@ function createSchema(database: SqlJsDatabase): void {
   } catch {
     /* column already exists */
   }
+
+  try {
+    database.run(
+      `ALTER TABLE conversation_history ADD COLUMN session_key TEXT`,
+    );
+  } catch {
+    /* column already exists */
+  }
+}
+
+/**
+ * One-shot migration: adds the `session_key` column to `conversation_history`
+ * (if it doesn't exist) and backfills NULL values to match `group_folder`.
+ * Safe to call multiple times — idempotent.
+ */
+export function runSessionKeyBackfill(): void {
+  // The column is added via ALTER TABLE inside createSchema(), but on databases
+  // that existed before the column was introduced the values will be NULL.
+  // Backfill: set session_key = group_folder wherever it is still NULL.
+  db.run(
+    `UPDATE conversation_history SET session_key = group_folder WHERE session_key IS NULL`,
+  );
 }
 
 /** @internal Test/integration use only. */
@@ -333,6 +355,7 @@ export async function initDatabase(): Promise<void> {
   }
 
   createSchema(db);
+  runSessionKeyBackfill();
   backfillFts();
   saveDatabase();
   migrateJsonState();

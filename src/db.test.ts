@@ -43,6 +43,7 @@ import {
   db,
   searchConversations,
   backfillFts,
+  runSessionKeyBackfill,
 } from './db.js';
 import { JobACL } from './types.js';
 
@@ -1711,5 +1712,56 @@ describe('deleteRegisteredGroup', () => {
 
     expect(getRegisteredGroup('keep-me@g.us')).toBeDefined();
     expect(getRegisteredGroup('remove-me@g.us')).toBeUndefined();
+  });
+});
+
+// --- runSessionKeyBackfill ---
+
+describe('runSessionKeyBackfill', () => {
+  it('adds session_key column to conversation_history if missing', async () => {
+    await _initTestDatabase();
+    // Verify the column exists after runSessionKeyBackfill runs
+    // (createSchema calls ALTER TABLE ADD COLUMN which runSessionKeyBackfill may also add)
+    runSessionKeyBackfill();
+    const cols = db.exec(
+      `SELECT name FROM pragma_table_info('conversation_history') ORDER BY name`,
+    );
+    const colNames = cols[0].values.flat() as string[];
+    expect(colNames).toContain('session_key');
+  });
+
+  it('backfills NULL session_key with group_folder for pre-existing rows', async () => {
+    await _initTestDatabase();
+    // Insert a row without session_key (simulate pre-migration database row)
+    db.run(
+      `INSERT INTO conversation_history (id, group_folder, role, content, created_at)
+       VALUES ('sk-backfill-1', 'backfill-group', 'user', 'old message', '2025-01-01T00:00:00Z')`,
+    );
+    // Ensure session_key is NULL before backfill
+    const before = db.exec(
+      `SELECT session_key FROM conversation_history WHERE id = 'sk-backfill-1'`,
+    );
+    expect(before[0].values[0][0]).toBeNull();
+
+    runSessionKeyBackfill();
+
+    const after = db.exec(
+      `SELECT session_key FROM conversation_history WHERE id = 'sk-backfill-1'`,
+    );
+    expect(after[0].values[0][0]).toBe('backfill-group');
+  });
+
+  it('is idempotent — running twice does not error or corrupt data', async () => {
+    await _initTestDatabase();
+    db.run(
+      `INSERT INTO conversation_history (id, group_folder, role, content, created_at)
+       VALUES ('sk-idem-1', 'idem-group', 'user', 'idempotent check', '2025-01-02T00:00:00Z')`,
+    );
+    runSessionKeyBackfill();
+    expect(() => runSessionKeyBackfill()).not.toThrow();
+    const result = db.exec(
+      `SELECT session_key FROM conversation_history WHERE id = 'sk-idem-1'`,
+    );
+    expect(result[0].values[0][0]).toBe('idem-group');
   });
 });
