@@ -38,12 +38,19 @@ import {
   removeSpecialist,
   listSpecialistOverrides,
 } from './skills/orchestrator/specialist-registry.js';
+import { RealPerGroupK8sClient } from './per-group-capabilities/k8s-client.js';
+import {
+  setGroupCredential,
+  unsetGroupCredential,
+} from './per-group-capabilities/credentials.js';
+import { onGroupRemoved } from './per-group-capabilities/index.js';
 
 // K8s clients (in-cluster config, auto-detected from service account)
 const kc = new k8s.KubeConfig();
 kc.loadFromCluster();
 const coreV1 = kc.makeApiClient(k8s.CoreV1Api);
 const appsV1 = kc.makeApiClient(k8s.AppsV1Api);
+const perGroupK8s = new RealPerGroupK8sClient(kc);
 const NAMESPACE = process.env.KUBECLAW_NAMESPACE || 'kubeclaw';
 const ORCHESTRATOR_DEPLOYMENT = 'kubeclaw-orchestrator';
 
@@ -315,7 +322,7 @@ export const TOOLS: OpenAI.ChatCompletionTool[] = [
     function: {
       name: 'register_specialist',
       description:
-        'Register a new global specialist agent in the specialist_overrides SQLite table. The specialist will be included in the merged catalog on the next reconcile cycle. Note: changes propagate to channel pods only on next orchestrator restart until the reconciler\'s K8s apply helper is wired.',
+        "Register a new global specialist agent in the specialist_overrides SQLite table. The specialist will be included in the merged catalog on the next reconcile cycle. Note: changes propagate to channel pods only on next orchestrator restart until the reconciler's K8s apply helper is wired.",
       parameters: {
         type: 'object',
         required: ['name', 'prompt'],
@@ -367,7 +374,7 @@ export const TOOLS: OpenAI.ChatCompletionTool[] = [
     function: {
       name: 'edit_specialist',
       description:
-        'Update fields on an existing specialist override. Only provided fields are changed; omitted fields keep their current values. Note: changes propagate to channel pods only on next orchestrator restart until the reconciler\'s K8s apply helper is wired.',
+        "Update fields on an existing specialist override. Only provided fields are changed; omitted fields keep their current values. Note: changes propagate to channel pods only on next orchestrator restart until the reconciler's K8s apply helper is wired.",
       parameters: {
         type: 'object',
         required: ['name'],
@@ -398,7 +405,7 @@ export const TOOLS: OpenAI.ChatCompletionTool[] = [
     function: {
       name: 'remove_specialist',
       description:
-        'Remove a specialist override from the SQLite table. The specialist will be excluded from the merged catalog on the next reconcile cycle. Note: changes propagate to channel pods only on next orchestrator restart until the reconciler\'s K8s apply helper is wired.',
+        "Remove a specialist override from the SQLite table. The specialist will be excluded from the merged catalog on the next reconcile cycle. Note: changes propagate to channel pods only on next orchestrator restart until the reconciler's K8s apply helper is wired.",
       parameters: {
         type: 'object',
         required: ['name'],
@@ -418,6 +425,54 @@ export const TOOLS: OpenAI.ChatCompletionTool[] = [
       description:
         'List all specialist overrides stored in the SQLite table (admin-shell managed entries only; does not include Helm baseline specialists).',
       parameters: { type: 'object', properties: {}, required: [] },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'set_group_credential',
+      description:
+        'Set an env-var credential on a per-(group, capability) K8s Secret. The Secret is mounted as envFrom into the per-group MCP capability Deployment. Takes effect on the next reconcile or pod restart.',
+      parameters: {
+        type: 'object',
+        required: ['group_folder', 'capability_name', 'env_name', 'value'],
+        properties: {
+          group_folder: {
+            type: 'string',
+            description: 'Target group folder name.',
+          },
+          capability_name: {
+            type: 'string',
+            description: 'Per-group capability name (e.g. "github").',
+          },
+          env_name: {
+            type: 'string',
+            description: 'Env-var name to set in the Secret.',
+          },
+          value: {
+            type: 'string',
+            description:
+              'Secret value (will be base64-encoded into the Secret data).',
+          },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'unset_group_credential',
+      description:
+        'Remove a single env-var key from a per-(group, capability) K8s Secret. Deletes the Secret entirely if no keys remain.',
+      parameters: {
+        type: 'object',
+        required: ['group_folder', 'capability_name', 'env_name'],
+        properties: {
+          group_folder: { type: 'string' },
+          capability_name: { type: 'string' },
+          env_name: { type: 'string' },
+        },
+      },
     },
   },
 ];
@@ -474,6 +529,7 @@ function handleDeregisterGroup(input: ToolInput): string {
   const existing = db.getRegisteredGroup(jid);
   if (!existing) return `No group found with JID: ${jid}`;
   db.deleteRegisteredGroup(jid);
+  void onGroupRemoved(existing.folder);
   return `Removed group "${existing.name}" (${jid}).`;
 }
 
@@ -634,9 +690,15 @@ function handleRegisterSpecialist(input: ToolInput): string {
   const spec = {
     name: input.name as string,
     prompt: input.prompt as string,
-    ...(input.triggers !== undefined && { triggers: input.triggers as string[] }),
-    ...(input.llmProvider !== undefined && { llmProvider: input.llmProvider as string }),
-    ...(input.memory !== undefined && { memory: input.memory as { isolated?: boolean } }),
+    ...(input.triggers !== undefined && {
+      triggers: input.triggers as string[],
+    }),
+    ...(input.llmProvider !== undefined && {
+      llmProvider: input.llmProvider as string,
+    }),
+    ...(input.memory !== undefined && {
+      memory: input.memory as { isolated?: boolean },
+    }),
     ...(input.claudemd !== undefined && { claudemd: input.claudemd as string }),
     ...(input.tools !== undefined && { tools: input.tools as string[] }),
   };
@@ -686,6 +748,50 @@ function handleListSpecialists(): string {
     .join('\n\n');
 }
 
+async function handleSetGroupCredential(input: ToolInput): Promise<string> {
+  const groupFolder = input.group_folder as string;
+  const capabilityName = input.capability_name as string;
+  const envName = input.env_name as string;
+  const value = input.value as string;
+  if (!groupFolder || !capabilityName || !envName || !value) {
+    return 'Error: group_folder, capability_name, env_name, and value are all required.';
+  }
+  try {
+    await setGroupCredential({
+      client: perGroupK8s,
+      namespace: NAMESPACE,
+      groupFolder,
+      capabilityName,
+      envName,
+      value,
+    });
+    return `Set credential ${envName} on (${groupFolder}, ${capabilityName}). Takes effect on next reconcile.`;
+  } catch (err) {
+    return `Error: ${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+
+async function handleUnsetGroupCredential(input: ToolInput): Promise<string> {
+  const groupFolder = input.group_folder as string;
+  const capabilityName = input.capability_name as string;
+  const envName = input.env_name as string;
+  if (!groupFolder || !capabilityName || !envName) {
+    return 'Error: group_folder, capability_name, and env_name are all required.';
+  }
+  try {
+    await unsetGroupCredential({
+      client: perGroupK8s,
+      namespace: NAMESPACE,
+      groupFolder,
+      capabilityName,
+      envName,
+    });
+    return `Removed credential ${envName} from (${groupFolder}, ${capabilityName}).`;
+  } catch (err) {
+    return `Error: ${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+
 export async function executeTool(
   name: string,
   input: ToolInput,
@@ -727,6 +833,10 @@ export async function executeTool(
       return handleRemoveSpecialist(input);
     case 'list_specialists':
       return handleListSpecialists();
+    case 'set_group_credential':
+      return handleSetGroupCredential(input);
+    case 'unset_group_credential':
+      return handleUnsetGroupCredential(input);
     default:
       return `Unknown tool: ${name}`;
   }

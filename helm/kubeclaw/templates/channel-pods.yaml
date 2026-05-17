@@ -16,6 +16,7 @@ spec:
       labels:
         app: kubeclaw-channel-{{ $name }}
         kubeclaw/channel: {{ $name }}
+        kubeclaw.io/role: channel
     spec:
       # No K8s API access — channel pods delegate all K8s operations to the orchestrator
       automountServiceAccountToken: false

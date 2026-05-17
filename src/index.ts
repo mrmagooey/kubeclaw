@@ -51,11 +51,7 @@ import { KubeConfig, CoreV1Api } from '@kubernetes/client-node';
 import { KUBECLAW_NAMESPACE } from './config.js';
 import { getOutputChannel, getRedisClient } from './k8s/redis-client.js';
 import { jobRunner } from './k8s/job-runner.js';
-import {
-  findChannel,
-  formatMessages,
-  formatOutbound,
-} from './router.js';
+import { findChannel, formatMessages, formatOutbound } from './router.js';
 import {
   isSenderAllowed,
   loadSenderAllowlist,
@@ -80,6 +76,12 @@ import {
   loadBaselineFromDisk,
 } from './specialists/reconciler.js';
 import { setSpecialistResolutionCallback } from './specialists.js';
+import {
+  RealPerGroupK8sClient,
+  initPerGroupCapabilityLifecycle,
+  onGroupAdded,
+} from './per-group-capabilities/index.js';
+import { listCapabilities } from './capabilities/registry.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -174,6 +176,7 @@ export function registerGroup(jid: string, group: RegisteredGroup): void {
     { jid, name: group.name, folder: group.folder },
     'Group registered',
   );
+  void onGroupAdded(group.folder);
 }
 
 /**
@@ -371,7 +374,8 @@ async function main(): Promise<void> {
             body,
           });
         } catch (err: unknown) {
-          const status = (err as { response?: { statusCode?: number } })?.response?.statusCode;
+          const status = (err as { response?: { statusCode?: number } })
+            ?.response?.statusCode;
           if (status === 404) {
             await coreApi.createNamespacedConfigMap({
               namespace: KUBECLAW_NAMESPACE,
@@ -387,7 +391,10 @@ async function main(): Promise<void> {
       await specialistReconciler.apply();
       logger.info('Specialists ConfigMap reconciled');
     } catch (err) {
-      logger.warn({ err }, 'Specialist reconcile failed; channel pods will use stale or empty catalog');
+      logger.warn(
+        { err },
+        'Specialist reconcile failed; channel pods will use stale or empty catalog',
+      );
     }
   }
 
@@ -605,6 +612,18 @@ async function main(): Promise<void> {
     );
   }
 
+  // Per-group MCP capability lifecycle: startup reconcile + sweeper + periodic safety pass.
+  const perGroupK8s = new RealPerGroupK8sClient();
+  const groupsPvcName =
+    process.env.KUBECLAW_GROUPS_PVC ?? 'kubeclaw-groups-pvc';
+  await initPerGroupCapabilityLifecycle({
+    client: perGroupK8s,
+    namespace: KUBECLAW_NAMESPACE,
+    groupsPvcName,
+    listGroupFolders: () =>
+      Object.values(getAllRegisteredGroups()).map((g) => g.folder),
+    listSpecs: () => listCapabilities(),
+  });
 }
 
 // Guard: only run when executed directly, not when imported by tests

@@ -87,6 +87,7 @@ spec:
     metadata:
       labels:
         app: kubeclaw-orchestrator
+        kubeclaw.io/role: orchestrator
       {{- if eq .Values.credentialInjection.mode "istio" }}
       annotations:
         # The orchestrator is the trusted control-plane tier; it must not receive

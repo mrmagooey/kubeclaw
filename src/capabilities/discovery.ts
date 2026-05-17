@@ -12,15 +12,35 @@ import {
   specToDiscoveryEntry,
 } from './registry.js';
 import type { CapabilityDiscoveryEntry } from './types.js';
+import type { PerGroupK8sClient } from '../per-group-capabilities/k8s-client.js';
+import { getScope } from '../per-group-capabilities/types.js';
+import { scaleUpInstance } from '../per-group-capabilities/scale-up.js';
 
 const RESPONSE_TTL_SECONDS = 30;
 
 let watcherRunning = false;
 
+export interface DiscoveryDeps {
+  perGroupK8sClient: PerGroupK8sClient;
+  namespace: string;
+  discoveryTimeoutMs: number;
+}
+
+let deps: DiscoveryDeps | null = null;
+
+export function setDiscoveryDeps(d: DiscoveryDeps): void {
+  deps = d;
+}
+
+export function _resetDiscoveryDepsForTest(): void {
+  deps = null;
+}
+
 interface DiscoveryRequest {
   requestId: string;
   capability?: string;
   channel?: string;
+  group?: string;
 }
 
 async function resolveStreamTip(stream: string): Promise<string> {
@@ -32,6 +52,13 @@ async function resolveStreamTip(stream: string): Promise<string> {
   return entries.length > 0 ? entries[0][0] : '0-0';
 }
 
+function withState(
+  entry: CapabilityDiscoveryEntry,
+  patch: { state: 'ready' | 'warming' | 'failed'; error?: string },
+): CapabilityDiscoveryEntry {
+  return { ...entry, ...patch } as CapabilityDiscoveryEntry;
+}
+
 async function handleRequest(req: DiscoveryRequest): Promise<void> {
   let result: CapabilityDiscoveryEntry[];
 
@@ -39,6 +66,31 @@ async function handleRequest(req: DiscoveryRequest): Promise<void> {
     const spec = getCapabilityByName(req.capability);
     if (!spec) {
       result = [];
+    } else if (getScope(spec) === 'group') {
+      // Group-scoped capability: scale up on demand and return the per-group endpoint.
+      if (!req.group || !deps) {
+        const baseEntry = specToDiscoveryEntry(spec);
+        result = [
+          withState(baseEntry, {
+            state: 'failed',
+            error: 'group context required for group-scoped capability',
+          }),
+        ];
+      } else {
+        const up = await scaleUpInstance({
+          client: deps.perGroupK8sClient,
+          namespace: deps.namespace,
+          groupFolder: req.group,
+          capabilityName: spec.name,
+          timeoutMs: deps.discoveryTimeoutMs,
+        });
+        const baseEntry = specToDiscoveryEntry(spec);
+        if (up.state === 'ready') {
+          result = [{ ...baseEntry, endpoint: up.endpoint, state: 'ready' }];
+        } else {
+          result = [withState(baseEntry, { state: 'failed', error: up.error })];
+        }
+      }
     } else if (spec.channels?.length) {
       // Spec has an ACL. Allow only when the requester identifies as a permitted channel.
       result =
@@ -117,6 +169,7 @@ async function watchRequests(): Promise<void> {
               requestId: obj.requestId,
               capability: obj.capability,
               channel: obj.channel,
+              group: obj.group,
             });
           } catch (err) {
             logger.error(
