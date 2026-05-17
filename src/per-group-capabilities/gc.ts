@@ -9,6 +9,10 @@ export interface GcArgs {
   groupFolder: string;
 }
 
+// v1 simplification vs spec: the spec describes a Redis DEL of `last_used` keys
+// during GC. v1 doesn't write any Redis `last_used` keys (touchLastUsed writes
+// SQLite only), so there's nothing to DEL. If a future change introduces a Redis
+// hot-path for last_used timestamps, add the matching DEL here.
 export async function gcGroup(args: GcArgs): Promise<void> {
   const hash = groupHash(args.groupFolder);
   const selector = `kubeclaw.io/group-hash=${hash}`;
