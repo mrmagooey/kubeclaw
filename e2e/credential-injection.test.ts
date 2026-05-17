@@ -1212,13 +1212,13 @@ describe.skipIf(!hasCluster)(
             // comes up before the proxy port (8443).
             'i=0; until curl -sf http://127.0.0.1:9901/ready >/dev/null 2>&1 || [ $i -ge 30 ]; do sleep 2; i=$((i+1)); done',
             // Envoy's ext_authz forwards the request's Authorization header
-            // (see envoy-sidecar-config.yaml authorization_request.allowed_headers).
-            // The broker uses that token to identify the calling pod's
-            // ServiceAccount; without it the broker returns 401 and the Lua
-            // filter never receives substitutions to count. Read the projected
-            // SA token from disk and pass it as Bearer.
+            // and (after the helm chart change) the x-kubeclaw-group header.
+            // The broker needs both to identify the SA + owning group and to
+            // emit substitutions; without them the Lua filter never receives
+            // a substitution list to count, the request flows through to the
+            // upstream, and we get 200/404 instead of 503.
             'TOKEN=$(cat /var/run/secrets/tokens/broker-token)',
-            `status=$(curl -sS -x http://127.0.0.1:8443 -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: text/plain" --data-binary '${repeats}' -o /dev/null -w "%{http_code}" http://${MOCK_SVC}/echo)`,
+            `status=$(curl -sS -x http://127.0.0.1:8443 -X POST -H "Authorization: Bearer $TOKEN" -H "X-Kubeclaw-Group: ${group}" -H "Content-Type: text/plain" --data-binary '${repeats}' -o /dev/null -w "%{http_code}" http://${MOCK_SVC}/echo)`,
             'echo "HTTP_STATUS=$status"',
           ].join('; ');
 

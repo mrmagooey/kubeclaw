@@ -577,6 +577,11 @@ describe('global specialist catalog e2e', () => {
     async () => {
       helmUpgrade(['--set-json', 'specialists=[]']);
       await waitForChannelPod();
+      // sqliteQueryInOrchestrator below depends on
+      // deployment/kubeclaw-orchestrator existing AND having at least one
+      // Ready pod. helmUpgrade returns when helm finishes templating, not
+      // when kubelet has rolled the new replicaset, so we wait here first.
+      await waitForOrchestrator();
       await startPortForward();
 
       // Insert the Sum specialist into specialist_overrides via kubectl exec.

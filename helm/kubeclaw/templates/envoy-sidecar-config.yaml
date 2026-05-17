@@ -50,6 +50,11 @@ data:
                                   - exact: ":authority"
                                   - exact: "authorization"
                                   - exact: "x-kubeclaw-job-id"
+                                  # Per-group identity. Forwarded so the broker
+                                  # can resolve the owning group's catalog
+                                  # entry when the calling pod sets it (e.g.
+                                  # the e2e counter-limit probe).
+                                  - exact: "x-kubeclaw-group"
                               headers_to_add:
                                 - { key: "X-Forwarded-Authority", value: "%REQ(:AUTHORITY)%" }
                             authorization_response:
