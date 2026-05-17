@@ -1173,17 +1173,6 @@ function migrateJsonState(): void {
 // --- Conversation History Functions ---
 
 /**
- * Backfill existing conversation_history rows that have a NULL session_key
- * by setting session_key = group_folder. Safe to run multiple times.
- */
-export function runSessionKeyBackfill(): void {
-  db.run(
-    `UPDATE conversation_history SET session_key = group_folder WHERE session_key IS NULL`,
-  );
-  saveDatabase();
-}
-
-/**
  * Return the most recent conversation messages for a group or session.
  *
  * Accepts either:
