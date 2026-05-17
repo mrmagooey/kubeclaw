@@ -66,9 +66,21 @@ vi.mock('./skills/orchestrator/specialist-registry.js', () => ({
   listSpecialistOverrides: mockListSpecialistOverrides,
 }));
 
+vi.mock('./per-group-capabilities/k8s-client.js', () => ({
+  RealPerGroupK8sClient: class {
+    constructor(_kc?: unknown) {}
+  },
+}));
+
+vi.mock('./per-group-capabilities/credentials.js', () => ({
+  setGroupCredential: vi.fn().mockResolvedValue(undefined),
+  unsetGroupCredential: vi.fn().mockResolvedValue(undefined),
+}));
+
 const MockCoreV1Api = class {};
 const MockAppsV1Api = class {};
 const MockBatchV1Api = class {};
+const MockNetworkingV1Api = class {};
 
 vi.mock('@kubernetes/client-node', () => {
   const mockCoreV1 = {
@@ -88,12 +100,14 @@ vi.mock('@kubernetes/client-node', () => {
     replaceNamespacedDeployment: mockReplaceNamespacedDeployment,
   };
   const mockBatchV1 = {};
+  const mockNetV1 = {};
   class MockKubeConfig {
     loadFromCluster() {}
     loadFromDefault() {}
     makeApiClient(ApiClass: unknown) {
       if (ApiClass === MockCoreV1Api) return mockCoreV1;
       if (ApiClass === MockBatchV1Api) return mockBatchV1;
+      if (ApiClass === MockNetworkingV1Api) return mockNetV1;
       return mockAppsV1;
     }
   }
@@ -102,6 +116,7 @@ vi.mock('@kubernetes/client-node', () => {
     CoreV1Api: MockCoreV1Api,
     AppsV1Api: MockAppsV1Api,
     BatchV1Api: MockBatchV1Api,
+    NetworkingV1Api: MockNetworkingV1Api,
   };
 });
 
@@ -142,6 +157,8 @@ describe('admin-shell TOOLS array', () => {
       'edit_specialist',
       'remove_specialist',
       'list_specialists',
+      'set_group_credential',
+      'unset_group_credential',
     ]);
   });
 
