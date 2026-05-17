@@ -42,6 +42,7 @@ import {
   _testResetState,
 } from './channel-runner.js';
 import { isSearchCommand, handleSearchCommand } from './runtime/search-command.js';
+import * as db from './db.js';
 
 describe('folderPrefixForChannel', () => {
   it('returns "oauth" for oauth-webchat', () => {
@@ -192,5 +193,75 @@ describe('/search dispatch end-to-end via processGroupMessages', () => {
     expect(runAgentSpy).toHaveBeenCalled();
     // sendMessage was NOT called directly by processGroupMessages (the LLM mock handles output).
     expect(sendMessageSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('/search dispatch — malformed FTS query error handling', () => {
+  const CHAT_JID = 'fts-error-test@g.us';
+  const GROUP_FOLDER = 'tg_fts-error-test';
+  const sendMessageSpy = vi.fn().mockResolvedValue(undefined);
+
+  afterEach(() => {
+    _testResetState();
+    runAgentSpy.mockClear();
+    sendMessageSpy.mockClear();
+    vi.restoreAllMocks();
+  });
+
+  it('sends a friendly error message when FTS4 throws and does NOT invoke the LLM', async () => {
+    const { _initTestDatabase, storeChatMetadata, storeMessage } = await import('./db.js');
+    await _initTestDatabase();
+
+    storeChatMetadata(CHAT_JID, new Date().toISOString(), 'FTS Error Group', 'telegram', true);
+
+    // Store a /search message with a malformed query (e.g. unclosed quote).
+    const msgTimestamp = new Date(Date.now() - 1000).toISOString();
+    storeMessage({
+      id: 'fts-error-msg-1',
+      chat_jid: CHAT_JID,
+      sender: 'user123',
+      sender_name: 'Alice',
+      content: '/search "unclosed',
+      timestamp: msgTimestamp,
+      is_from_me: false,
+    });
+
+    // Force searchConversations to throw as it would with a malformed FTS4 query.
+    vi.spyOn(db, 'searchConversations').mockImplementation(() => {
+      throw new Error('fts error: syntax error near end of input');
+    });
+
+    const fakeChannel = {
+      ownsJid: (jid: string) => jid === CHAT_JID,
+      sendMessage: sendMessageSpy,
+      setTyping: vi.fn().mockResolvedValue(undefined),
+    };
+
+    _testInjectState(
+      {
+        [CHAT_JID]: {
+          jid: CHAT_JID,
+          name: 'FTS Error Group',
+          folder: GROUP_FOLDER,
+          trigger: '@Claude',
+          added_at: new Date().toISOString(),
+          requiresTrigger: false,
+        },
+      },
+      [fakeChannel as any],
+    );
+
+    const result = await processGroupMessages(CHAT_JID);
+
+    // processGroupMessages should still return true (the message was consumed).
+    expect(result).toBe(true);
+
+    // sendMessage must have been called with the friendly error string.
+    expect(sendMessageSpy).toHaveBeenCalledOnce();
+    const sentText: string = sendMessageSpy.mock.calls[0][1];
+    expect(sentText).toMatch(/Search failed/i);
+
+    // The LLM runner must NOT have been invoked.
+    expect(runAgentSpy).not.toHaveBeenCalled();
   });
 });

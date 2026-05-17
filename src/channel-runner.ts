@@ -632,12 +632,22 @@ export async function processGroupMessages(chatJid: string): Promise<boolean> {
   // /search chat command: full-text search over conversation history.
   const lastMsg = missedMessages[missedMessages.length - 1];
   if (lastMsg && isSearchCommand(lastMsg.content)) {
-    const reply = handleSearchCommand(group.folder, lastMsg.content.trim());
     lastAgentTimestamp[chatJid] = lastMsg.timestamp;
     saveState();
     await channel.setTyping?.(chatJid, true);
     try {
+      const reply = handleSearchCommand(group.folder, lastMsg.content.trim());
       await channel.sendMessage(chatJid, reply);
+    } catch (err) {
+      logger.error({ err, chatJid }, 'Search command failed');
+      try {
+        await channel.sendMessage(
+          chatJid,
+          'Search failed: invalid query. Try simpler terms.',
+        );
+      } catch (sendErr) {
+        logger.error({ err: sendErr, chatJid }, 'Failed to send search error reply');
+      }
     } finally {
       await channel.setTyping?.(chatJid, false);
     }
