@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kubeclaw-specialists-baseline
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: kubeclaw
+    component: specialists-baseline
+data:
+  specialists.json: |-
+    {
+      "version": 1,
+      "generation": 0,
+      "specialists": {{ toJson (default (list) .Values.specialists) }}
+    }
