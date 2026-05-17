@@ -41,7 +41,8 @@ import {
   removeCapability,
   listCapabilities,
 } from '../capabilities/index.js';
-import { loadSpecialists } from '../specialists.js';
+// loadSpecialists removed — per-group agents.json specialist loading is deprecated.
+// Task 12 will clean up the remaining IPC specialist-dispatch path.
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
@@ -925,22 +926,10 @@ export async function startToolJobSpawnWatcher(): Promise<void> {
           const resultStream = getToolJobResultStream(agentJobId);
           const { groupsPvc, sessionsPvc } = channelPvcNames(channel ?? '');
 
-          // Resolve specialist prompt from agents.json if a specialist name was provided
-          let resolvedPrompt = prompt;
-          if (specialist) {
-            const specialists = loadSpecialists(groupFolder);
-            const spec = specialists?.find(
-              (s) => s.name.toLowerCase() === specialist.toLowerCase(),
-            );
-            if (spec) {
-              resolvedPrompt = `<specialist name="${spec.name}">\n${spec.prompt}\n</specialist>\n\n${prompt}`;
-            } else {
-              logger.warn(
-                { agentJobId, groupFolder, specialist },
-                'Specialist not found in agents.json, running without specialist prompt',
-              );
-            }
-          }
+          // Specialist prompt resolution from agents.json is deprecated;
+          // global specialist dispatch is now handled in channel-runner.
+          // Task 12 will remove this IPC handler entirely.
+          const resolvedPrompt = prompt;
 
           // Look up the parent group's llmProvider so the child job inherits it
           const allGroups = getAllRegisteredGroups();

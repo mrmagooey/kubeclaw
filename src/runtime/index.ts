@@ -27,6 +27,7 @@ import {
   AgentRunner,
   AvailableGroup,
   Task,
+  RunAgentOverrides,
 } from './types.js';
 import { RegisteredGroup } from '../types.js';
 import { logger } from '../logger.js';
@@ -65,6 +66,7 @@ class KubernetesToolJobRunner implements MessageRunner {
     input: ContainerInput,
     onProcess?: (proc: unknown, containerName: string) => void,
     onOutput?: (output: ContainerOutput) => Promise<void>,
+    _overrides: RunAgentOverrides = {},
   ): Promise<ContainerOutput> {
     // Add job ID if not present
     const jobInput = {
@@ -268,6 +270,7 @@ class FileSidecarToolJobRunner implements MessageRunner {
     input: ContainerInput,
     onProcess?: (proc: unknown, containerName: string) => void,
     onOutput?: (output: ContainerOutput) => Promise<void>,
+    _overrides: RunAgentOverrides = {},
   ): Promise<ContainerOutput> {
     // Get container configuration from group
     const userImage = group.containerConfig?.userImage as string | undefined;
@@ -570,6 +573,7 @@ class HttpSidecarToolJobRunner implements MessageRunner {
     input: ContainerInput,
     onProcess?: (proc: unknown, containerName: string) => void,
     onOutput?: (output: ContainerOutput) => Promise<void>,
+    _overrides: RunAgentOverrides = {},
   ): Promise<ContainerOutput> {
     // Get container configuration from group
     const userImage = group.containerConfig?.userImage as string | undefined;

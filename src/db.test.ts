@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 
 import {
   _initTestDatabase,
+  db,
   createTask,
   deleteTask,
   getAllChats,
@@ -35,7 +36,9 @@ import {
   getAllScheduledTasks,
   getConversationHistory,
   appendConversationMessage,
+  appendConversationHistory,
   clearConversationHistory,
+  runSessionKeyBackfill,
   getRegisteredGroup,
   updateGroupProvider,
   clearInvalidProviders,
@@ -1514,6 +1517,49 @@ describe('deleteRegisteredGroup', () => {
   });
 });
 
+// --- conversation_history session_key ---
+
+describe('conversation_history session_key', () => {
+  it('stores and retrieves rows keyed by session_key, scoped by session not group', () => {
+    appendConversationHistory({
+      groupFolder: 'mygroup',
+      sessionKey: 'mygroup',
+      role: 'user',
+      content: 'hello',
+    });
+    appendConversationHistory({
+      groupFolder: 'mygroup',
+      sessionKey: 'mygroup:Research',
+      role: 'user',
+      content: 'research-private',
+    });
+    const groupHist = getConversationHistory({ sessionKey: 'mygroup' });
+    const researchHist = getConversationHistory({
+      sessionKey: 'mygroup:Research',
+    });
+    expect(groupHist).toHaveLength(1);
+    expect(groupHist[0].content).toBe('hello');
+    expect(researchHist).toHaveLength(1);
+    expect(researchHist[0].content).toBe('research-private');
+    // Negative: session boundary must be enforced — each key must not see the other's rows
+    expect(groupHist.some(r => r.content === 'research-private')).toBe(false);
+    expect(researchHist.some(r => r.content === 'hello')).toBe(false);
+  });
+
+  it('backfills existing NULL session_key rows with group_folder on startup', () => {
+    db.run(
+      `INSERT INTO conversation_history (group_folder, role, content, created_at) VALUES (?, ?, ?, ?)`,
+      ['legacygroup', 'user', 'legacy', new Date().toISOString()],
+    );
+    runSessionKeyBackfill();
+    const result = db.exec(
+      `SELECT session_key FROM conversation_history WHERE group_folder = 'legacygroup'`,
+    );
+    expect(result.length).toBeGreaterThan(0);
+    expect(result[0].values[0][0]).toBe('legacygroup');
+  });
+});
+
 // --- skill_usage / recordSkillLoad / getSkillLoadStats / getSkillsLoadedSince ---
 
 describe('recordSkillLoad / getSkillLoadStats / getSkillsLoadedSince', () => {
@@ -1542,8 +1588,12 @@ describe('recordSkillLoad / getSkillLoadStats / getSkillsLoadedSince', () => {
   it('isolates by group', () => {
     recordSkillLoad('g1', 'skill-a', 1000);
     recordSkillLoad('g2', 'skill-b', 2000);
-    expect(getSkillLoadStats('g1').map((s) => s.skill_name)).toEqual(['skill-a']);
-    expect(getSkillLoadStats('g2').map((s) => s.skill_name)).toEqual(['skill-b']);
+    expect(getSkillLoadStats('g1').map((s) => s.skill_name)).toEqual([
+      'skill-a',
+    ]);
+    expect(getSkillLoadStats('g2').map((s) => s.skill_name)).toEqual([
+      'skill-b',
+    ]);
   });
 
   it('getSkillsLoadedSince returns distinct skills loaded after cutoff', () => {

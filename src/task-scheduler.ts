@@ -180,6 +180,7 @@ async function runTask(
           error = streamedOutput.error || 'Unknown error';
         }
       },
+      {},
     );
 
     if (output.status === 'error') {

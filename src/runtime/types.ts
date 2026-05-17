@@ -49,6 +49,19 @@ export interface Task {
 }
 
 /**
+ * Optional overrides for a single runAgent() invocation.
+ *
+ * - `sessionKey`   — history lookup/write key; defaults to group.folder
+ * - `llmProvider`  — model identifier; defaults to group.llmProvider or system default
+ * - `toolFilter`   — when present, only tools whose name is in this Set are advertised to the LLM
+ */
+export interface RunAgentOverrides {
+  sessionKey?: string;
+  llmProvider?: string;
+  toolFilter?: Set<string>;
+}
+
+/**
  * Unified interface for message/conversation execution across runtimes.
  *
  * In the four-tier model:
@@ -65,6 +78,7 @@ export interface MessageRunner {
     input: ContainerInput,
     onProcess?: (proc: unknown, containerName: string) => void,
     onOutput?: (output: ContainerOutput) => Promise<void>,
+    overrides?: RunAgentOverrides,
   ): Promise<ContainerOutput>;
 
   writeTasksSnapshot(groupFolder: string, isMain: boolean, tasks: Task[]): void;

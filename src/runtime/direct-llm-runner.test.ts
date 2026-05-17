@@ -59,6 +59,7 @@ vi.mock('../k8s/redis-client.js', () => ({
 vi.mock('../db.js', () => ({
   getConversationHistory: vi.fn().mockReturnValue([]),
   appendConversationMessage: vi.fn(),
+  appendConversationHistory: vi.fn(),
 }));
 
 vi.mock('../config.js', () => ({
@@ -96,7 +97,11 @@ vi.mock('./skill-loader.js', () => ({
 }));
 
 vi.mock('./tools/propose-skill.js', () => ({
-  proposeSkill: vi.fn().mockResolvedValue({ kind: 'staged', candidateId: 'c1', preview: 'preview' }),
+  proposeSkill: vi.fn().mockResolvedValue({
+    kind: 'staged',
+    candidateId: 'c1',
+    preview: 'preview',
+  }),
 }));
 
 // ---- Tests ----------------------------------------------------------------
@@ -482,6 +487,93 @@ describe('DirectLLMRunner', () => {
 
     expect(result.status).toBe('success');
     expect(result.result).toBe('Response from thinking model.');
+  });
+
+  it('runAgent uses supplied sessionKey for history lookup (not group.folder)', async () => {
+    mockCreate.mockResolvedValueOnce({
+      choices: [
+        {
+          message: {
+            role: 'assistant',
+            content: 'Specialist response',
+            tool_calls: [],
+          },
+        },
+      ],
+    });
+
+    const { DirectLLMRunner } = await import('./direct-llm-runner.js');
+    const { getConversationHistory, appendConversationHistory } = await import('../db.js');
+    const runner = new DirectLLMRunner();
+
+    await runner.runAgent(baseGroup, baseInput, undefined, undefined, {
+      sessionKey: 'specialist-abc',
+    });
+
+    // Should query by the specialist session key, not group folder
+    expect(getConversationHistory).toHaveBeenCalledWith({ sessionKey: 'specialist-abc' });
+    // Should write back using appendConversationHistory with the specialist key
+    expect(appendConversationHistory).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionKey: 'specialist-abc', role: 'user' }),
+    );
+    expect(appendConversationHistory).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionKey: 'specialist-abc', role: 'assistant' }),
+    );
+  });
+
+  it('runAgent uses supplied llmProvider override (not group.llmProvider)', async () => {
+    mockCreate.mockResolvedValueOnce({
+      choices: [
+        {
+          message: {
+            role: 'assistant',
+            content: 'Provider override response',
+            tool_calls: [],
+          },
+        },
+      ],
+    });
+
+    const { DirectLLMRunner } = await import('./direct-llm-runner.js');
+    const runner = new DirectLLMRunner();
+    // group has no llmProvider (would fall back to DEFAULT_DIRECT_MODEL)
+    await runner.runAgent(baseGroup, baseInput, undefined, undefined, {
+      llmProvider: 'gpt-4-turbo',
+    });
+
+    expect(mockCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ model: 'gpt-4-turbo' }),
+    );
+  });
+
+  it('runAgent filters tool list to toolFilter allowlist when provided', async () => {
+    mockCreate.mockResolvedValueOnce({
+      choices: [
+        {
+          message: {
+            role: 'assistant',
+            content: 'Filtered tools response',
+            tool_calls: [],
+          },
+        },
+      ],
+    });
+
+    const { DirectLLMRunner } = await import('./direct-llm-runner.js');
+    const runner = new DirectLLMRunner();
+
+    await runner.runAgent(baseGroup, baseInput, undefined, undefined, {
+      toolFilter: new Set(['web_search']),
+    });
+
+    const callArgs = mockCreate.mock.calls[0][0];
+    const toolNames = callArgs.tools.map((t: any) => t.function.name);
+    // Only the allowlisted tool is advertised
+    expect(toolNames).toEqual(['web_search']);
+    // Other built-in tools are not included
+    expect(toolNames).not.toContain('bash');
+    expect(toolNames).not.toContain('web_fetch');
+    expect(toolNames).not.toContain('execute_agent');
   });
 
   it('runAgent handles execute_agent with invalid JSON arguments gracefully', async () => {

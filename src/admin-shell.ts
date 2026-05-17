@@ -32,6 +32,12 @@ import {
   listCapabilities,
 } from './capabilities/index.js';
 import { getCapabilityStatus } from './capabilities/db.js';
+import {
+  registerSpecialist,
+  editSpecialist,
+  removeSpecialist,
+  listSpecialistOverrides,
+} from './skills/orchestrator/specialist-registry.js';
 
 // K8s clients (in-cluster config, auto-detected from service account)
 const kc = new k8s.KubeConfig();
@@ -304,6 +310,116 @@ export const TOOLS: OpenAI.ChatCompletionTool[] = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'register_specialist',
+      description:
+        'Register a new global specialist agent in the specialist_overrides SQLite table. The specialist will be included in the merged catalog on the next reconcile cycle. Note: changes propagate to channel pods only on next orchestrator restart until the reconciler\'s K8s apply helper is wired.',
+      parameters: {
+        type: 'object',
+        required: ['name', 'prompt'],
+        properties: {
+          name: {
+            type: 'string',
+            description:
+              'Specialist name (letters, digits, hyphens, underscores; must start with a letter). Used as the primary @mention alias.',
+          },
+          prompt: {
+            type: 'string',
+            description: 'System prompt for this specialist.',
+          },
+          triggers: {
+            type: 'array',
+            items: { type: 'string' },
+            description:
+              'Additional @mention aliases (without leading @). Case-insensitive. E.g. ["Researcher", "Analysis"].',
+          },
+          llmProvider: {
+            type: 'string',
+            description:
+              'Override LLM provider for this specialist (e.g. "claude", "openrouter"). Omit to inherit group default.',
+          },
+          memory: {
+            type: 'object',
+            description:
+              'Memory settings. Set isolated: true to give the specialist its own conversation history.',
+            properties: {
+              isolated: { type: 'boolean' },
+            },
+          },
+          claudemd: {
+            type: 'string',
+            description: 'Extra content appended to the system prompt.',
+          },
+          tools: {
+            type: 'array',
+            items: { type: 'string' },
+            description:
+              'Allowlist of tool names. When set, the specialist can only call listed tools.',
+          },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'edit_specialist',
+      description:
+        'Update fields on an existing specialist override. Only provided fields are changed; omitted fields keep their current values. Note: changes propagate to channel pods only on next orchestrator restart until the reconciler\'s K8s apply helper is wired.',
+      parameters: {
+        type: 'object',
+        required: ['name'],
+        properties: {
+          name: {
+            type: 'string',
+            description: 'Name of the specialist to edit.',
+          },
+          prompt: { type: 'string' },
+          triggers: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Replacement triggers list (without leading @).',
+          },
+          llmProvider: { type: 'string' },
+          memory: {
+            type: 'object',
+            properties: { isolated: { type: 'boolean' } },
+          },
+          claudemd: { type: 'string' },
+          tools: { type: 'array', items: { type: 'string' } },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'remove_specialist',
+      description:
+        'Remove a specialist override from the SQLite table. The specialist will be excluded from the merged catalog on the next reconcile cycle. Note: changes propagate to channel pods only on next orchestrator restart until the reconciler\'s K8s apply helper is wired.',
+      parameters: {
+        type: 'object',
+        required: ['name'],
+        properties: {
+          name: {
+            type: 'string',
+            description: 'Name of the specialist override to remove.',
+          },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_specialists',
+      description:
+        'List all specialist overrides stored in the SQLite table (admin-shell managed entries only; does not include Helm baseline specialists).',
+      parameters: { type: 'object', properties: {}, required: [] },
+    },
+  },
 ];
 
 // ---- Tool handlers ----
@@ -512,6 +628,64 @@ async function handleGetCapabilityLogs(input: ToolInput): Promise<string> {
   }
 }
 
+// ---- Specialist tool handlers ----
+
+function handleRegisterSpecialist(input: ToolInput): string {
+  const spec = {
+    name: input.name as string,
+    prompt: input.prompt as string,
+    ...(input.triggers !== undefined && { triggers: input.triggers as string[] }),
+    ...(input.llmProvider !== undefined && { llmProvider: input.llmProvider as string }),
+    ...(input.memory !== undefined && { memory: input.memory as { isolated?: boolean } }),
+    ...(input.claudemd !== undefined && { claudemd: input.claudemd as string }),
+    ...(input.tools !== undefined && { tools: input.tools as string[] }),
+  };
+  const result = registerSpecialist(spec);
+  if (!result.ok) return `Error: ${result.error}`;
+  return `Registered specialist "${spec.name}". Changes will appear in the merged catalog on next orchestrator restart.`;
+}
+
+function handleEditSpecialist(input: ToolInput): string {
+  const name = input.name as string;
+  if (!name) return 'Error: name is required.';
+  const patch: Record<string, unknown> = {};
+  if (input.prompt !== undefined) patch.prompt = input.prompt;
+  if (input.triggers !== undefined) patch.triggers = input.triggers;
+  if (input.llmProvider !== undefined) patch.llmProvider = input.llmProvider;
+  if (input.memory !== undefined) patch.memory = input.memory;
+  if (input.claudemd !== undefined) patch.claudemd = input.claudemd;
+  if (input.tools !== undefined) patch.tools = input.tools;
+  const result = editSpecialist({ name, patch });
+  if (!result.ok) return `Error: ${result.error}`;
+  return `Updated specialist "${name}". Changes will appear in the merged catalog on next orchestrator restart.`;
+}
+
+function handleRemoveSpecialist(input: ToolInput): string {
+  const name = input.name as string;
+  if (!name) return 'Error: name is required.';
+  const result = removeSpecialist({ name });
+  if (!result.ok) return `Error: ${result.error}`;
+  return `Removed specialist override "${name}". Changes will appear in the merged catalog on next orchestrator restart.`;
+}
+
+function handleListSpecialists(): string {
+  const specialists = listSpecialistOverrides();
+  if (specialists.length === 0)
+    return 'No specialist overrides registered. (Helm baseline specialists are not shown here.)';
+  return specialists
+    .map((s) =>
+      [
+        `Name: ${s.name}`,
+        `  Prompt: ${s.prompt.slice(0, 80)}${s.prompt.length > 80 ? '…' : ''}`,
+        ...(s.triggers ? [`  Triggers: ${s.triggers.join(', ')}`] : []),
+        ...(s.llmProvider ? [`  Provider: ${s.llmProvider}`] : []),
+        ...(s.memory ? [`  Memory: ${JSON.stringify(s.memory)}`] : []),
+        ...(s.tools ? [`  Tools: ${s.tools.join(', ')}`] : []),
+      ].join('\n'),
+    )
+    .join('\n\n');
+}
+
 export async function executeTool(
   name: string,
   input: ToolInput,
@@ -545,6 +719,14 @@ export async function executeTool(
       return handleListCapabilities();
     case 'get_capability_logs':
       return handleGetCapabilityLogs(input);
+    case 'register_specialist':
+      return handleRegisterSpecialist(input);
+    case 'edit_specialist':
+      return handleEditSpecialist(input);
+    case 'remove_specialist':
+      return handleRemoveSpecialist(input);
+    case 'list_specialists':
+      return handleListSpecialists();
     default:
       return `Unknown tool: ${name}`;
   }

@@ -456,9 +456,14 @@ export class JobRunner {
     let groupPlaceholders: Record<string, Record<string, string>> | undefined;
     if (this.secretManager && group.folder) {
       try {
-        groupPlaceholders = await this.secretManager.getGroupPlaceholders(group.folder);
+        groupPlaceholders = await this.secretManager.getGroupPlaceholders(
+          group.folder,
+        );
       } catch (err) {
-        logger.warn({ err, group: group.folder }, 'getGroupPlaceholders failed; omitting catalog envs');
+        logger.warn(
+          { err, group: group.folder },
+          'getGroupPlaceholders failed; omitting catalog envs',
+        );
       }
     }
 
@@ -756,6 +761,17 @@ export class JobRunner {
       }
     }
 
+    // Mount the merged specialists ConfigMap (optional — absent before first reconcile)
+    volumes.push({
+      name: 'specialists-catalog',
+      configMap: { name: 'kubeclaw-specialists', optional: true },
+    } as any);
+    volumeMounts.push({
+      name: 'specialists-catalog',
+      mountPath: '/etc/kubeclaw/specialists',
+      readOnly: true,
+    } as any);
+
     // Add browser WebSocket endpoint to agent env when sidecar is enabled
     if (spec.browserSidecar) {
       envVars.push({
@@ -784,7 +800,12 @@ export class JobRunner {
     // injection is active (any mode != off) and not in audit-only mode.
     // Catalog entries whose envVar names overlap with hard-coded built-ins take precedence.
     let baseEnvVars = envVars;
-    if (spec.catalogEntries && spec.catalogEntries.length > 0 && injectionMode !== 'off' && !auditOnly) {
+    if (
+      spec.catalogEntries &&
+      spec.catalogEntries.length > 0 &&
+      injectionMode !== 'off' &&
+      !auditOnly
+    ) {
       const { envs: catalogEnvs, coveredEnvNames } = buildCatalogEnvs(
         spec.catalogEntries,
         spec.groupPlaceholders ?? {},
@@ -909,7 +930,9 @@ export class JobRunner {
         template: {
           metadata: {
             labels: JOB_LABELS,
-            ...(podTemplateAnnotations && { annotations: podTemplateAnnotations }),
+            ...(podTemplateAnnotations && {
+              annotations: podTemplateAnnotations,
+            }),
           },
           spec: {
             restartPolicy: 'Never',

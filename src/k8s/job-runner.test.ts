@@ -301,6 +301,25 @@ describe('JobRunner', () => {
       expect(resources?.requests?.cpu).toBe('250m');
       expect(resources?.limits?.cpu).toBe('2000m');
     });
+
+    it('channel-pod spec mounts kubeclaw-specialists ConfigMap optionally', () => {
+      const spec = makeSpec();
+      const manifest = jobRunner.generateJobManifest(spec);
+
+      const volumes = manifest.spec?.template?.spec?.volumes || [];
+      const vol = volumes.find((v) => v.name === 'specialists-catalog');
+      expect(vol).toBeDefined();
+      expect(vol!.configMap).toEqual({ name: 'kubeclaw-specialists', optional: true });
+
+      const volumeMounts =
+        manifest.spec?.template?.spec?.containers?.[0]?.volumeMounts || [];
+      const mount = volumeMounts.find((m) => m.name === 'specialists-catalog');
+      expect(mount).toEqual({
+        name: 'specialists-catalog',
+        mountPath: '/etc/kubeclaw/specialists',
+        readOnly: true,
+      });
+    });
   });
 
   describe('REDIS_URL in generateJobManifest', () => {

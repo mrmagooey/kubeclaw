@@ -14,7 +14,11 @@ import path from 'path';
 import OpenAI from 'openai';
 
 import { GROUPS_DIR, KUBECLAW_CHANNEL, KUBECLAW_MODE } from '../config.js';
-import { getConversationHistory, appendConversationMessage } from '../db.js';
+import {
+  getConversationHistory,
+  appendConversationMessage,
+  appendConversationHistory,
+} from '../db.js';
 import { getRagProvider } from '../rag/provider.js';
 import { logger } from '../logger.js';
 import { RegisteredGroup } from '../types.js';
@@ -24,7 +28,9 @@ import {
   ContainerOutput,
   Task,
   AvailableGroup,
+  RunAgentOverrides,
 } from './types.js';
+export type { RunAgentOverrides };
 import { createLLMClient, DEFAULT_DIRECT_MODEL } from './llm-client.js';
 import { jobRunner } from '../k8s/job-runner.js';
 import type { McpServerStatus, ToolSpec } from '../types.js';
@@ -297,10 +303,22 @@ const TOOLS: OpenAI.ChatCompletionTool[] = [
       parameters: {
         type: 'object',
         properties: {
-          proposed_name: { type: 'string', description: 'kebab-case slug (e.g. prefer-rg-over-grep)' },
-          description: { type: 'string', description: 'one-line, specific, what triggers it' },
-          body: { type: 'string', description: 'markdown body of the instruction' },
-          rationale: { type: 'string', description: 'why this is worth keeping; shown to the user' },
+          proposed_name: {
+            type: 'string',
+            description: 'kebab-case slug (e.g. prefer-rg-over-grep)',
+          },
+          description: {
+            type: 'string',
+            description: 'one-line, specific, what triggers it',
+          },
+          body: {
+            type: 'string',
+            description: 'markdown body of the instruction',
+          },
+          rationale: {
+            type: 'string',
+            description: 'why this is worth keeping; shown to the user',
+          },
         },
         required: ['proposed_name', 'description', 'body', 'rationale'],
       },
@@ -786,13 +804,16 @@ async function mcpServerAction(
 
 // ---- Runner ----
 
-function getModel(group: RegisteredGroup): string {
-  const p = group.llmProvider;
+function getModel(group: RegisteredGroup, llmProviderOverride?: string): string {
+  const p = llmProviderOverride ?? group.llmProvider;
   if (p && p !== 'claude' && p !== 'openrouter') return p;
   return DEFAULT_DIRECT_MODEL;
 }
 
-function loadSystemPrompt(groupFolder: string, groupsDir: string = GROUPS_DIR): string {
+function loadSystemPrompt(
+  groupFolder: string,
+  groupsDir: string = GROUPS_DIR,
+): string {
   const claudeMd = path.join(groupsDir, groupFolder, 'CLAUDE.md');
   let base = DEFAULT_SYSTEM_PROMPT;
   try {
@@ -865,15 +886,20 @@ export class DirectLLMRunner implements MessageRunner {
     input: ContainerInput,
     _onProcess?: (proc: unknown, containerName: string) => void,
     onOutput?: (output: ContainerOutput) => Promise<void>,
+    overrides: RunAgentOverrides = {},
   ): Promise<ContainerOutput> {
-    const model = getModel(group);
+    const model = getModel(group, overrides.llmProvider);
     const systemPrompt = loadSystemPrompt(input.groupFolder);
     // Isolated scheduled tasks run without conversation history to avoid
     // polluting the user's chat context and accumulating token cost.
     const useHistory = !(
       input.isScheduledTask && input.sessionId === undefined
     );
-    const history = useHistory ? getConversationHistory(input.groupFolder) : [];
+    const history = useHistory
+      ? overrides.sessionKey
+        ? getConversationHistory({ sessionKey: overrides.sessionKey })
+        : getConversationHistory(input.groupFolder)
+      : [];
 
     const messages: OpenAI.ChatCompletionMessageParam[] = [
       { role: 'system', content: systemPrompt },
@@ -896,12 +922,19 @@ export class DirectLLMRunner implements MessageRunner {
     }));
     const mcpTools = this.mcpManager?.getTools() ?? [];
     const localToolDefs = [...this.localTools.values()].map((lt) => lt.def);
-    const effectiveTools = [
+    const allTools = [
       ...TOOLS,
       ...customToolDefs,
       ...mcpTools,
       ...localToolDefs,
     ];
+    const effectiveTools = overrides.toolFilter
+      ? allTools.filter(
+          (t) =>
+            t.type === 'function' &&
+            overrides.toolFilter!.has(t.function.name),
+        )
+      : allTools;
 
     logger.debug(
       { group: group.name, model, historyLen: history.length },
@@ -993,12 +1026,18 @@ export class DirectLLMRunner implements MessageRunner {
                 args,
               );
             } else if (call.function.name === 'propose_skill') {
-              const proposeArgs = args as unknown as Parameters<typeof proposeSkill>[2];
+              const proposeArgs = args as unknown as Parameters<
+                typeof proposeSkill
+              >[2];
               const dupCheck: DupCheckFn = async (a, existing) => {
                 if (existing.length === 0) return { duplicate: false };
-                const sys = 'You judge whether a proposed skill is a duplicate of any existing skill. Reply JSON: {"duplicate": boolean, "existing": "<name>"|null, "suggestion": "<short>"|null}';
+                const sys =
+                  'You judge whether a proposed skill is a duplicate of any existing skill. Reply JSON: {"duplicate": boolean, "existing": "<name>"|null, "suggestion": "<short>"|null}';
                 const listing = existing
-                  .map((s) => `- ${s.frontmatter.name}: ${s.frontmatter.description}`)
+                  .map(
+                    (s) =>
+                      `- ${s.frontmatter.name}: ${s.frontmatter.description}`,
+                  )
                   .join('\n');
                 const user = `Existing skills:\n${listing}\n\nProposed:\nname: ${a.proposed_name}\ndescription: ${a.description}\n`;
                 const completion = await this.client.chat.completions.create({
@@ -1011,12 +1050,20 @@ export class DirectLLMRunner implements MessageRunner {
                   max_tokens: 200,
                 });
                 try {
-                  return JSON.parse(completion.choices[0].message.content ?? '{"duplicate":false}');
+                  return JSON.parse(
+                    completion.choices[0].message.content ??
+                      '{"duplicate":false}',
+                  );
                 } catch {
                   return { duplicate: false };
                 }
               };
-              const proposeResult = await proposeSkill(GROUPS_DIR, input.groupFolder, proposeArgs, dupCheck);
+              const proposeResult = await proposeSkill(
+                GROUPS_DIR,
+                input.groupFolder,
+                proposeArgs,
+                dupCheck,
+              );
               result =
                 proposeResult.kind === 'staged'
                   ? `Staged candidate ${proposeResult.candidateId}. Tell the user: ${proposeResult.preview}\n\nThey can reply '/skills review' to triage.`
@@ -1024,10 +1071,9 @@ export class DirectLLMRunner implements MessageRunner {
                     ? `Duplicate of '${proposeResult.existing}'. ${proposeResult.suggestion}`
                     : `Error: ${proposeResult.message}`;
             } else if (this.localTools.has(call.function.name)) {
-              result = await this.localTools.get(call.function.name)!.handler(
-                args,
-                input,
-              );
+              result = await this.localTools
+                .get(call.function.name)!
+                .handler(args, input);
             } else if (this.mcpManager?.hasTool(call.function.name)) {
               result = await this.mcpManager.callTool(call.function.name, args);
             } else {
@@ -1053,8 +1099,27 @@ export class DirectLLMRunner implements MessageRunner {
       }
 
       if (useHistory) {
-        appendConversationMessage(input.groupFolder, 'user', input.prompt);
-        appendConversationMessage(input.groupFolder, 'assistant', fullResponse);
+        if (overrides.sessionKey) {
+          appendConversationHistory({
+            groupFolder: group.folder,
+            sessionKey: overrides.sessionKey,
+            role: 'user',
+            content: input.prompt,
+          });
+          appendConversationHistory({
+            groupFolder: group.folder,
+            sessionKey: overrides.sessionKey,
+            role: 'assistant',
+            content: fullResponse,
+          });
+        } else {
+          appendConversationMessage(input.groupFolder, 'user', input.prompt);
+          appendConversationMessage(
+            input.groupFolder,
+            'assistant',
+            fullResponse,
+          );
+        }
       }
 
       if (fullResponse) {
@@ -1109,6 +1174,7 @@ export class DirectLLMRunner implements MessageRunner {
 }
 
 export const __testing__ = {
-  loadSystemPromptForTest: (group: string, groupsDir: string) => loadSystemPrompt(group, groupsDir),
+  loadSystemPromptForTest: (group: string, groupsDir: string) =>
+    loadSystemPrompt(group, groupsDir),
   toolsForTest: () => TOOLS,
 };
