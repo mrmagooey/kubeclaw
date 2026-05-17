@@ -375,6 +375,28 @@ if (!KUBECLAW_CHANNEL) {
 let channelConnected = false;
 let channelReconnecting = false;
 
+/**
+ * Build the shutdown handler for the channel runner.
+ *
+ * Exported (`_buildShutdown`) so unit tests can verify that the metrics server
+ * is closed without spinning up the full main() function.
+ */
+export function _buildShutdown(
+  metricsServer: import('./metrics/registry.js').MetricsServer,
+  queue: GroupQueue,
+  channelList: Channel[],
+): (signal: string) => Promise<void> {
+  return async (signal: string) => {
+    logger.info({ signal }, 'Shutdown signal received');
+    channelConnected = false;
+    await queue.shutdown(10000);
+    await shutdownAllRunners();
+    for (const ch of channelList) await ch.disconnect();
+    await metricsServer.close();
+    process.exit(0);
+  };
+}
+
 function startHealthServer(): void {
   const port = parseInt(process.env.HEALTH_PORT || '9090', 10);
   http
@@ -767,14 +789,7 @@ async function main(): Promise<void> {
   loadState();
   await loadChannelPlugins('/workspace/plugins');
 
-  const shutdown = async (signal: string) => {
-    logger.info({ signal }, 'Shutdown signal received');
-    channelConnected = false;
-    await queue.shutdown(10000);
-    await shutdownAllRunners();
-    for (const ch of channels) await ch.disconnect();
-    process.exit(0);
-  };
+  const shutdown = _buildShutdown(channelMetricsServer, queue, channels);
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
 
