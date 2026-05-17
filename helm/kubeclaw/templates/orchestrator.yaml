@@ -244,6 +244,9 @@ spec:
               containerPort: {{ .Values.orchestrator.admin.port }}
               protocol: TCP
             {{- end }}
+            - name: metrics
+              containerPort: {{ .Values.metrics.port }}
+              protocol: TCP
           livenessProbe:
             httpGet:
               path: /liveness
@@ -296,3 +299,18 @@ spec:
       protocol: TCP
   type: ClusterIP
 {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kubeclaw-orchestrator
+  namespace: {{ .Values.namespace }}
+spec:
+  selector:
+    app: kubeclaw-orchestrator
+  ports:
+    - name: metrics
+      port: {{ .Values.metrics.port }}
+      targetPort: metrics
+      protocol: TCP
+  type: ClusterIP

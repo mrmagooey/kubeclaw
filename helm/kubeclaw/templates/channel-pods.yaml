@@ -157,6 +157,9 @@ spec:
             - name: health
               containerPort: 9090
               protocol: TCP
+            - name: metrics
+              containerPort: {{ $.Values.metrics.port }}
+              protocol: TCP
           livenessProbe:
             httpGet:
               path: /liveness
@@ -266,6 +269,25 @@ spec:
                 port:
                   name: http
 {{- end }}
+---
+# Metrics Service for channel: {{ $name }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: kubeclaw-channel-{{ $name }}-metrics
+  namespace: {{ $.Values.namespace }}
+  labels:
+    app: kubeclaw-channel-{{ $name }}
+    kubeclaw/channel: {{ $name }}
+spec:
+  selector:
+    app: kubeclaw-channel-{{ $name }}
+  ports:
+    - name: metrics
+      port: {{ $.Values.metrics.port }}
+      targetPort: metrics
+      protocol: TCP
+  type: ClusterIP
 {{- end }}
 {{- end }}
 {{- end }}
