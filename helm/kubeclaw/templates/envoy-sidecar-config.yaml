@@ -13,6 +13,8 @@ kind: ConfigMap
 metadata:
   name: kubeclaw-envoy-sidecar
   namespace: {{ .Values.namespace }}
+  labels:
+    kubeclaw.io/component: credential-sidecar
 data:
   envoy.yaml: |
     admin:
