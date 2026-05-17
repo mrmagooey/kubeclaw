@@ -43,6 +43,7 @@ import {
   getNewMessages,
   getRouterState,
   initDatabase,
+  recordSpecialistUsage,
   setRegisteredGroup,
   setRouterState,
   setSession,
@@ -1230,30 +1231,47 @@ export async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   // Named helper so Task 11 (telemetry) has a stable extension point.
   async function runOne(run: DispatchRun): Promise<void> {
-    await runAgent(
-      group,
-      run.prompt,
-      chatJid,
-      async (result) => {
-        if (result.result) {
-          const raw =
-            typeof result.result === 'string'
-              ? result.result
-              : JSON.stringify(result.result);
-          const text = raw
-            .replace(/<internal>[\s\S]*?<\/internal>/g, '')
-            .trim();
-          if (text) {
-            const out = run.specialistName ? `[@${run.specialistName}] ${text}` : text;
-            await channel!.sendMessage(chatJid, out);
-            outputSentToUser = true;
+    const start = Date.now();
+    let status: 'success' | 'error' = 'success';
+    try {
+      const agentStatus = await runAgent(
+        group,
+        run.prompt,
+        chatJid,
+        async (result) => {
+          if (result.result) {
+            const raw =
+              typeof result.result === 'string'
+                ? result.result
+                : JSON.stringify(result.result);
+            const text = raw
+              .replace(/<internal>[\s\S]*?<\/internal>/g, '')
+              .trim();
+            if (text) {
+              const out = run.specialistName ? `[@${run.specialistName}] ${text}` : text;
+              await channel!.sendMessage(chatJid, out);
+              outputSentToUser = true;
+            }
           }
-        }
-        if (result.status === 'success') queue.notifyIdle(chatJid);
-        if (result.status === 'error') hadError = true;
-      },
-      run.overrides,
-    );
+          if (result.status === 'success') queue.notifyIdle(chatJid);
+          if (result.status === 'error') { status = 'error'; hadError = true; }
+        },
+        run.overrides,
+      );
+      if (agentStatus === 'error') status = 'error';
+    } catch (err) {
+      status = 'error';
+      throw err;
+    } finally {
+      if (run.specialistName) {
+        recordSpecialistUsage({
+          groupFolder: group.folder,
+          specialistName: run.specialistName,
+          durationMs: Date.now() - start,
+          status,
+        });
+      }
+    }
   }
 
   const results = await Promise.allSettled(runs.map(runOne));

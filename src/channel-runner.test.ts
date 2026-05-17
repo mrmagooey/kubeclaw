@@ -16,6 +16,13 @@ vi.mock('./runtime/index.js', () => ({
   shutdownAllRunners: vi.fn(),
 }));
 
+const recordSpecialistUsageCalls: Array<{
+  groupFolder: string;
+  specialistName: string;
+  durationMs: number;
+  status: 'success' | 'error';
+}> = [];
+
 vi.mock('./db.js', async (importOriginal) => {
   const actual = await importOriginal();
   return {
@@ -36,6 +43,11 @@ vi.mock('./db.js', async (importOriginal) => {
     appendConversationHistory: vi.fn(),
     appendConversationMessage: vi.fn(),
     getNewMessages: vi.fn().mockReturnValue({ messages: [], newTimestamp: '' }),
+    recordSpecialistUsage: vi.fn().mockImplementation(
+      (args: { groupFolder: string; specialistName: string; durationMs: number; status: 'success' | 'error' }) => {
+        recordSpecialistUsageCalls.push({ ...args });
+      },
+    ),
   };
 });
 
@@ -832,6 +844,7 @@ describe('processGroupMessages dispatch', () => {
     vi.clearAllMocks();
     _resetStateForTesting();
     sentMessages = [];
+    recordSpecialistUsageCalls.length = 0;
 
     fakeRunner = {
       runAgent: vi.fn().mockResolvedValue({ status: 'success', result: null }),
@@ -969,5 +982,51 @@ describe('processGroupMessages dispatch', () => {
     await processGroupMessages(chatJid);
 
     expect(sentMessages).toEqual(['hello']);
+  });
+
+  it('records specialist usage on dispatch', async () => {
+    _setSpecialistCatalogForTesting(makeCatalog([{ name: 'A', prompt: 'p' }]));
+    mockGetMessagesSince.mockReturnValue([makeMessage('@A hi')]);
+
+    fakeRunner.runAgent = vi.fn().mockImplementation(async (_g: any, _input: any, _spec: any, onOutput: any) => {
+      if (onOutput) await onOutput({ status: 'success', result: 'hello back' });
+      return { status: 'success', result: null };
+    });
+
+    await processGroupMessages(chatJid);
+
+    expect(recordSpecialistUsageCalls).toHaveLength(1);
+    expect(recordSpecialistUsageCalls[0].specialistName).toBe('A');
+    expect(recordSpecialistUsageCalls[0].groupFolder).toBe(group.folder);
+    expect(recordSpecialistUsageCalls[0].status).toBe('success');
+    expect(typeof recordSpecialistUsageCalls[0].durationMs).toBe('number');
+  });
+
+  it('does not record specialist usage for main-agent runs', async () => {
+    _setSpecialistCatalogForTesting(makeCatalog([{ name: 'A', prompt: 'p' }]));
+    // No @A mention → main agent path
+    mockGetMessagesSince.mockReturnValue([makeMessage('no mention here')]);
+
+    fakeRunner.runAgent = vi.fn().mockImplementation(async (_g: any, _input: any, _spec: any, onOutput: any) => {
+      if (onOutput) await onOutput({ status: 'success', result: 'hello' });
+      return { status: 'success', result: null };
+    });
+
+    await processGroupMessages(chatJid);
+
+    expect(recordSpecialistUsageCalls).toHaveLength(0);
+  });
+
+  it('records error status when specialist run fails', async () => {
+    _setSpecialistCatalogForTesting(makeCatalog([{ name: 'A', prompt: 'p' }]));
+    mockGetMessagesSince.mockReturnValue([makeMessage('@A hi')]);
+
+    fakeRunner.runAgent = vi.fn().mockRejectedValue(new Error('specialist boom'));
+
+    await processGroupMessages(chatJid);
+
+    expect(recordSpecialistUsageCalls).toHaveLength(1);
+    expect(recordSpecialistUsageCalls[0].specialistName).toBe('A');
+    expect(recordSpecialistUsageCalls[0].status).toBe('error');
   });
 });

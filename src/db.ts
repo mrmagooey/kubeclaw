@@ -178,6 +178,17 @@ function createSchema(database: SqlJsDatabase): void {
     )
   `);
 
+  database.run(`
+    CREATE TABLE IF NOT EXISTS specialist_usage (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      group_folder    TEXT NOT NULL,
+      specialist_name TEXT NOT NULL,
+      used_at         INTEGER NOT NULL,
+      duration_ms     INTEGER,
+      status          TEXT CHECK(status IN ('success','error'))
+    )
+  `);
+
   // Additive migration — safe to run repeatedly:
   try {
     database.run(
@@ -1108,6 +1119,19 @@ export interface AppendConversationArgs {
  * Prefer this over appendConversationMessage for new call sites that
  * distinguish session_key from group_folder (e.g. isolated specialists).
  */
+export function recordSpecialistUsage(args: {
+  groupFolder: string;
+  specialistName: string;
+  durationMs: number;
+  status: 'success' | 'error';
+}): void {
+  db.run(
+    `INSERT INTO specialist_usage (group_folder, specialist_name, used_at, duration_ms, status) VALUES (?, ?, ?, ?, ?)`,
+    [args.groupFolder, args.specialistName, Date.now(), args.durationMs, args.status],
+  );
+  saveDatabase();
+}
+
 export function appendConversationHistory(args: AppendConversationArgs): void {
   const id =
     args.groupFolder +
