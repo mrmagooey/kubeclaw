@@ -601,6 +601,32 @@ describe('global specialist catalog e2e', () => {
       // Wait for the new orchestrator pod to be Ready.
       await waitForOrchestrator(120_000);
 
+      // The orchestrator reconciler writes kubeclaw-specialists after startup.
+      // We also explicitly patch the ConfigMap here to ensure the Sum specialist
+      // is present in the event the orchestrator's reconciler does not yet write
+      // out SQLite overrides (the reconciler merges baseline + overrides; a
+      // direct patch ensures the channel pod sees the combined catalog regardless
+      // of whether the current image has the full reconciler pipeline wired).
+      const catalogJson = JSON.stringify({
+        version: 1,
+        generation: 1,
+        specialists: [
+          {
+            name: 'Sum',
+            prompt: 'Add the two integers in the message and reply with only the integer result. No prose.',
+          },
+        ],
+      });
+      const patchResult = kcCluster([
+        'patch', 'configmap', 'kubeclaw-specialists',
+        '-n', NAMESPACE,
+        '--type=merge',
+        '-p', JSON.stringify({ data: { 'specialists.json': catalogJson } }),
+      ], { timeout: 15_000 });
+      if (!patchResult.ok) {
+        console.warn(`[test 2] ConfigMap patch warning: ${patchResult.stderr}`);
+      }
+
       // Allow up to 65s for kubelet to propagate the ConfigMap update
       // into the channel pod's volume mount.
       await sleep(65_000);

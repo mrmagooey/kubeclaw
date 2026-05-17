@@ -13,3 +13,24 @@ data:
       "generation": 0,
       "specialists": {{ toJson (default (list) .Values.specialists) }}
     }
+---
+# kubeclaw-specialists: the live merged catalog written by the orchestrator
+# reconciler on startup. This Helm-managed copy serves as the initial state
+# (baseline only; SQLite overrides are applied by the orchestrator at runtime).
+# Channel pods mount this ConfigMap at /etc/kubeclaw/specialists and hot-reload
+# it via fs.watch when kubelet propagates orchestrator updates.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kubeclaw-specialists
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: kubeclaw
+    component: specialists-catalog
+data:
+  specialists.json: |-
+    {
+      "version": 1,
+      "generation": 0,
+      "specialists": {{ toJson (default (list) .Values.specialists) }}
+    }

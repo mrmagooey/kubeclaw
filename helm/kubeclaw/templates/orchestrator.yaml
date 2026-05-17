@@ -53,6 +53,11 @@ rules:
   - apiGroups: ["networking.k8s.io"]
     resources: ["ingresses"]
     verbs: ["get", "list", "create", "patch", "replace", "delete"]
+  # Specialist reconciler: read kubeclaw-credential-broker-config (CatalogInformer)
+  # and write kubeclaw-specialists (SpecialistReconciler) ConfigMaps
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "create", "patch", "update"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
