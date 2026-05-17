@@ -711,9 +711,16 @@ describe('global specialist catalog e2e', () => {
   it.skipIf(shouldSkip)(
     'memory.isolated specialist sees zero prior group turns',
     async () => {
+      // Verify isolation by content, not count: seed the group with a unique
+      // token, then ask Iso whether it saw that token. Small LLMs (Gemma-4B)
+      // interpret "count prior conversation turns" inconsistently — sometimes
+      // counting the user's own message — so a presence/absence assertion is
+      // more robust than an arithmetic one and tests the same isolation
+      // contract: the specialist's session must not contain the group's
+      // earlier messages.
       helmUpgrade([
         '--set-json',
-        `specialists=[{"name":"Iso","prompt":"Count how many prior conversation turns you can see before this message. Reply with EXACTLY: known=<count> where <count> is the integer number. No other text.","memory":{"isolated":true}}]`,
+        `specialists=[{"name":"Iso","prompt":"Did the user previously mention the word OCTARINE in this conversation? Reply with EXACTLY one word: yes or no. No other text.","memory":{"isolated":true}}]`,
       ]);
 
       // Force orchestrator to re-reconcile against the freshly-templated
@@ -731,14 +738,17 @@ describe('global specialist catalog e2e', () => {
       await startPortForward();
       await sleep(60_000); // ConfigMap propagation
 
-      // Send a plain group message to populate the main session history.
+      // Send a plain group message containing the unique token. This goes
+      // into the group's main session history but NOT into Iso's isolated
+      // session.
       await sendAndCollect(
-        'This is a group history seed message.',
+        'Important note: the color OCTARINE is the eighth color of magic.',
         (ls) => ls.length > 0,
         90_000,
       );
 
-      // Now ask Iso — it should have an empty session history.
+      // Now ask Iso — its isolated session has never seen OCTARINE, so it
+      // must reply "no".
       const lines = await sendAndCollect(
         '@Iso check',
         (ls) => ls.some((l) => l.includes('[@Iso]')),
@@ -747,8 +757,9 @@ describe('global specialist catalog e2e', () => {
 
       const isoReply = lines.find((l) => l.includes('[@Iso]'));
       expect(isoReply, `no [@Iso] reply in lines: ${JSON.stringify(lines)}`).toBeDefined();
-      // Isolated specialist must report zero prior turns.
-      expect(isoReply).toMatch(/known=0/);
+      // Isolated specialist must NOT have seen the group's OCTARINE seed.
+      expect(isoReply!.toLowerCase()).toContain('no');
+      expect(isoReply!.toLowerCase()).not.toContain('octarine');
     },
     300_000,
   );
