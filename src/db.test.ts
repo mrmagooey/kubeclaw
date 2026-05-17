@@ -1517,6 +1517,42 @@ describe('backfillFts', () => {
   });
 });
 
+// --- clearConversationHistory FTS regression ---
+
+describe('clearConversationHistory FTS regression', () => {
+  it('wiping a group removes all its FTS rows', async () => {
+    await _initTestDatabase();
+
+    // Insert three messages for the target group
+    for (let i = 0; i < 3; i++) {
+      appendConversationMessage(
+        'wipe-group',
+        'user',
+        `searchable token xqzg message number ${i}`,
+      );
+    }
+    // Insert one message for a bystander group that must NOT be deleted
+    appendConversationMessage(
+      'bystander-group',
+      'user',
+      'searchable token xqzg bystander',
+    );
+
+    clearConversationHistory('wipe-group');
+
+    const ftsRows = db.exec(
+      `SELECT id FROM conversation_history_fts WHERE group_folder = 'wipe-group'`,
+    );
+    expect(ftsRows.length).toBe(0);
+
+    // Bystander row must still be searchable
+    const bystander = db.exec(
+      `SELECT id FROM conversation_history_fts WHERE conversation_history_fts MATCH 'xqzg' AND group_folder = 'bystander-group'`,
+    );
+    expect(bystander[0].values.length).toBe(1);
+  });
+});
+
 // --- getRegisteredGroup ---
 
 describe('getRegisteredGroup', () => {
