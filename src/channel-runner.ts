@@ -69,6 +69,9 @@ import { registerChannel } from './channels/registry.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { AvailableGroup, ContainerOutput } from './runtime/types.js';
 import { logger } from './logger.js';
+import { Registry } from 'prom-client';
+import { createChannelMetrics } from './metrics/channel.js';
+import { createMetricsServer } from './metrics/registry.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -747,6 +750,17 @@ function recoverPendingMessages(): void {
 
 async function main(): Promise<void> {
   startHealthServer();
+
+  const channelMetricsRegistry = new Registry();
+  const channelMetrics = createChannelMetrics(channelMetricsRegistry);
+  const channelMetricsServer = createMetricsServer({
+    registry: channelMetricsRegistry,
+    port: parseInt(process.env.METRICS_PORT ?? '9091', 10),
+  });
+  await channelMetricsServer.listen();
+  // channelMetrics is available for future instrumentation call sites
+  void channelMetrics;
+
   await initDatabase();
   logger.info(`Database initialized (channel: ${KUBECLAW_CHANNEL})`);
   loadState();
