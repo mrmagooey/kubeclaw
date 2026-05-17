@@ -63,6 +63,15 @@ data:
                                   - exact: "authorization"
                                   - exact: "x-kubeclaw-substitutions"
                                   - exact: "x-kubeclaw-policy"
+                      # Buffer request body so the Lua filter's
+                      # request_handle:body() returns the full body (not nil).
+                      # Without this, body substitution + the total>50 counter
+                      # limit silently no-op because the body has already been
+                      # streamed to upstream by the time Lua runs.
+                      - name: envoy.filters.http.buffer
+                        typed_config:
+                          "@type": type.googleapis.com/envoy.extensions.filters.http.buffer.v3.Buffer
+                          max_request_bytes: 1048576  # 1 MB (matches MAX_BODY_BYTES in Lua)
                       - name: envoy.filters.http.lua
                         typed_config:
                           "@type": type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua

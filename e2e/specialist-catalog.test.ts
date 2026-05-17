@@ -425,29 +425,32 @@ function getOrchestratorPod(): string {
  * Returns the script's stdout (trimmed).
  */
 function sqliteQueryInOrchestrator(script: string): string {
-  // Use `kubectl exec deployment/...` rather than resolving a pod name
-  // ourselves. kubectl picks a Ready pod from the deployment selector at
-  // exec time, eliminating the race where a pod we resolved seconds ago
-  // is now terminating. Retry on "pod not found" / "connection refused"
-  // for the case where kubectl picked a pod just before kubelet swapped
-  // it (no Ready pod available for a few seconds during the swap).
+  // kc() appends `-n NAMESPACE` at the end of the args list. For
+  // `kubectl exec ... -- node -e <script>`, that puts `-n NAMESPACE`
+  // AFTER the `--` separator, making it an argument to node instead of
+  // a flag to kubectl — kubectl then talks to the default namespace
+  // and fails with "deployments.apps kubeclaw-orchestrator not found".
+  // Build the args by hand with -n in front of exec to avoid this.
   let lastErr = '';
   for (let attempt = 0; attempt < 5; attempt++) {
-    const r = kc(
+    const r = spawnSync(
+      'kubectl',
       [
+        '-n', NAMESPACE,
         'exec',
         'deployment/kubeclaw-orchestrator',
         '-c', 'orchestrator',
         '--',
         'node', '-e', script,
       ],
-      { timeout: 30_000 },
+      { encoding: 'utf8', stdio: 'pipe', timeout: 30_000 },
     );
-    if (r.ok) return r.stdout.trim();
+    if (r.status === 0) return (r.stdout ?? '').trim();
     lastErr = `stdout: ${r.stdout}\nstderr: ${r.stderr}`;
+    const stderr = r.stderr ?? '';
     if (
       !/pods .* not found|connection refused|no Ready pods|error: unable to upgrade/i.test(
-        r.stderr,
+        stderr,
       )
     )
       break;
