@@ -7,6 +7,7 @@ vi.hoisted(() => {
 });
 
 import { folderPrefixForChannel } from './channel-runner.js';
+import { isSearchCommand, handleSearchCommand } from './runtime/search-command.js';
 
 describe('folderPrefixForChannel', () => {
   it('returns "oauth" for oauth-webchat', () => {
@@ -20,5 +21,20 @@ describe('folderPrefixForChannel', () => {
 
   it('falls back to first 3 chars for unknown channels', () => {
     expect(folderPrefixForChannel('matrix')).toBe('mat');
+  });
+});
+
+describe('/search dispatch', () => {
+  it('isSearchCommand identifies /search messages', () => {
+    expect(isSearchCommand('/search hello')).toBe(true);
+    expect(isSearchCommand('/skills list')).toBe(false);
+    expect(isSearchCommand('regular message')).toBe(false);
+  });
+
+  it('handleSearchCommand returns a no-results message for unknown query', async () => {
+    const { _initTestDatabase } = await import('./db.js');
+    await _initTestDatabase();
+    const out = handleSearchCommand('test-group', '/search xqzz_channel_runner_dispatch');
+    expect(out).toMatch(/no results/i);
   });
 });

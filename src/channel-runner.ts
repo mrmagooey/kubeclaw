@@ -57,6 +57,10 @@ import {
 } from './sender-allowlist.js';
 import { detectMentionedSpecialists, loadSpecialists } from './specialists.js';
 import { resetRagProvider } from './rag/provider.js';
+import {
+  handleSearchCommand,
+  isSearchCommand,
+} from './runtime/search-command.js';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import {
@@ -599,6 +603,21 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         (m.is_from_me || isTriggerAllowed(chatJid, m.sender, allowlistCfg)),
     );
     if (!hasTrigger) return true;
+  }
+
+  // /search chat command: full-text search over conversation history.
+  const lastMsg = missedMessages[missedMessages.length - 1];
+  if (lastMsg && isSearchCommand(lastMsg.content)) {
+    const reply = handleSearchCommand(group.folder, lastMsg.content.trim());
+    lastAgentTimestamp[chatJid] = lastMsg.timestamp;
+    saveState();
+    await channel.setTyping?.(chatJid, true);
+    try {
+      await channel.sendMessage(chatJid, reply);
+    } finally {
+      await channel.setTyping?.(chatJid, false);
+    }
+    return true;
   }
 
   const prompt = formatMessages(missedMessages, TIMEZONE);
