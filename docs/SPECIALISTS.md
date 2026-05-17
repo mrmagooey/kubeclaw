@@ -21,8 +21,8 @@ specialists:
       You are a research specialist. Find and analyse information from
       authoritative sources. Cite every claim.
     triggers:
-      - "@Researcher"
-      - "@Analysis"
+      - "Researcher"
+      - "Analysis"
     llmProvider: claude
     memory:
       isolated: false

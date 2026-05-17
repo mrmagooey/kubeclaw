@@ -20,6 +20,10 @@ const {
   mockCreateNamespacedPersistentVolumeClaim,
   mockCreateNamespacedDeployment,
   mockReplaceNamespacedDeployment,
+  mockRegisterSpecialist,
+  mockEditSpecialist,
+  mockRemoveSpecialist,
+  mockListSpecialistOverrides,
 } = vi.hoisted(() => ({
   mockGetAllRegisteredGroups: vi.fn().mockReturnValue({}),
   mockSetRegisteredGroup: vi.fn(),
@@ -38,6 +42,10 @@ const {
   mockCreateNamespacedPersistentVolumeClaim: vi.fn(),
   mockCreateNamespacedDeployment: vi.fn(),
   mockReplaceNamespacedDeployment: vi.fn(),
+  mockRegisterSpecialist: vi.fn().mockReturnValue({ ok: true }),
+  mockEditSpecialist: vi.fn().mockReturnValue({ ok: true }),
+  mockRemoveSpecialist: vi.fn().mockReturnValue({ ok: true }),
+  mockListSpecialistOverrides: vi.fn().mockReturnValue([]),
 }));
 
 vi.mock('./db.js', () => ({
@@ -49,6 +57,13 @@ vi.mock('./db.js', () => ({
   getAllScheduledTasks: mockGetAllScheduledTasks,
   getAllSessions: mockGetAllSessions,
   clearConversationHistory: mockClearConversationHistory,
+}));
+
+vi.mock('./skills/orchestrator/specialist-registry.js', () => ({
+  registerSpecialist: mockRegisterSpecialist,
+  editSpecialist: mockEditSpecialist,
+  removeSpecialist: mockRemoveSpecialist,
+  listSpecialistOverrides: mockListSpecialistOverrides,
 }));
 
 const MockCoreV1Api = class {};
@@ -123,6 +138,10 @@ describe('admin-shell TOOLS array', () => {
       'remove_capability',
       'list_capabilities',
       'get_capability_logs',
+      'register_specialist',
+      'edit_specialist',
+      'remove_specialist',
+      'list_specialists',
     ]);
   });
 
@@ -510,6 +529,157 @@ describe('executeTool', () => {
       const populated = await executeTool('list_groups', {});
       expect(populated).toContain('test:prog');
       expect(populated).toContain('Progressive');
+    });
+  });
+
+  // ── register_specialist ───────────────────────────────────────────────
+
+  describe('register_specialist', () => {
+    it('calls registerSpecialist and returns confirmation', async () => {
+      mockRegisterSpecialist.mockReturnValue({ ok: true });
+      const result = await executeTool('register_specialist', {
+        name: 'Research',
+        prompt: 'You are a research specialist.',
+        triggers: ['Researcher', 'Analysis'],
+        llmProvider: 'claude',
+      });
+      expect(mockRegisterSpecialist).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: 'Research',
+          prompt: 'You are a research specialist.',
+          triggers: ['Researcher', 'Analysis'],
+          llmProvider: 'claude',
+        }),
+      );
+      expect(result).toContain('Research');
+      expect(result).toContain('next orchestrator restart');
+    });
+
+    it('returns error when registerSpecialist fails validation', async () => {
+      mockRegisterSpecialist.mockReturnValue({
+        ok: false,
+        error: 'specialist already registered: Research',
+      });
+      const result = await executeTool('register_specialist', {
+        name: 'Research',
+        prompt: 'duplicate',
+      });
+      expect(result).toContain('Error');
+      expect(result).toContain('already registered');
+    });
+
+    it('tool definition includes triggers and llmProvider parameters', () => {
+      const tool = TOOLS.find((t) => t.function.name === 'register_specialist');
+      expect(tool).toBeDefined();
+      const props = tool!.function.parameters?.properties as Record<
+        string,
+        unknown
+      >;
+      expect(props.name).toBeDefined();
+      expect(props.prompt).toBeDefined();
+      expect(props.triggers).toBeDefined();
+      expect(props.llmProvider).toBeDefined();
+      expect(props.memory).toBeDefined();
+      expect(props.tools).toBeDefined();
+    });
+  });
+
+  // ── edit_specialist ───────────────────────────────────────────────────
+
+  describe('edit_specialist', () => {
+    it('calls editSpecialist with name and patch fields', async () => {
+      mockEditSpecialist.mockReturnValue({ ok: true });
+      const result = await executeTool('edit_specialist', {
+        name: 'Research',
+        prompt: 'Updated prompt.',
+      });
+      expect(mockEditSpecialist).toHaveBeenCalledWith({
+        name: 'Research',
+        patch: expect.objectContaining({ prompt: 'Updated prompt.' }),
+      });
+      expect(result).toContain('Research');
+      expect(result).toContain('next orchestrator restart');
+    });
+
+    it('returns error when specialist does not exist', async () => {
+      mockEditSpecialist.mockReturnValue({
+        ok: false,
+        error: 'no override registered: Ghost',
+      });
+      const result = await executeTool('edit_specialist', {
+        name: 'Ghost',
+        prompt: 'new',
+      });
+      expect(result).toContain('Error');
+      expect(result).toContain('no override registered');
+    });
+
+    it('returns error when name is missing', async () => {
+      const result = await executeTool('edit_specialist', {});
+      expect(result).toContain('Error');
+      expect(mockEditSpecialist).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── remove_specialist ─────────────────────────────────────────────────
+
+  describe('remove_specialist', () => {
+    it('calls removeSpecialist and returns confirmation', async () => {
+      mockRemoveSpecialist.mockReturnValue({ ok: true });
+      const result = await executeTool('remove_specialist', {
+        name: 'Research',
+      });
+      expect(mockRemoveSpecialist).toHaveBeenCalledWith({ name: 'Research' });
+      expect(result).toContain('Research');
+      expect(result).toContain('next orchestrator restart');
+    });
+
+    it('returns error when specialist does not exist', async () => {
+      mockRemoveSpecialist.mockReturnValue({
+        ok: false,
+        error: 'no such override: Ghost',
+      });
+      const result = await executeTool('remove_specialist', { name: 'Ghost' });
+      expect(result).toContain('Error');
+      expect(result).toContain('no such override');
+    });
+
+    it('returns error when name is missing', async () => {
+      const result = await executeTool('remove_specialist', {});
+      expect(result).toContain('Error');
+      expect(mockRemoveSpecialist).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── list_specialists ──────────────────────────────────────────────────
+
+  describe('list_specialists', () => {
+    it('returns empty message when no overrides registered', async () => {
+      mockListSpecialistOverrides.mockReturnValue([]);
+      const result = await executeTool('list_specialists', {});
+      expect(result).toContain('No specialist overrides');
+    });
+
+    it('returns formatted list when overrides present', async () => {
+      mockListSpecialistOverrides.mockReturnValue([
+        {
+          name: 'Research',
+          prompt: 'You are a research specialist.',
+          triggers: ['Researcher', 'Analysis'],
+          llmProvider: 'claude',
+        },
+        {
+          name: 'Helper',
+          prompt: 'Answer questions quickly.',
+          memory: { isolated: true },
+        },
+      ]);
+      const result = await executeTool('list_specialists', {});
+      expect(result).toContain('Name: Research');
+      expect(result).toContain('Triggers: Researcher, Analysis');
+      expect(result).toContain('Provider: claude');
+      expect(result).toContain('Name: Helper');
+      expect(result).toContain('Memory:');
     });
   });
 });

@@ -24,7 +24,7 @@ Create a file at `groups/{groupname}/agents.json`:
     {
       "name": "Writer",
       "prompt": "You are a writing specialist. Create clear, engaging content in various styles and formats.",
-      "triggers": ["@Content", "@Author"]
+      "triggers": ["Content", "Author"]
     }
   ]
 }
@@ -73,7 +73,7 @@ The file must contain a top-level `specialists` array with at least one entry:
     {
       "name": "SpecialistName",
       "prompt": "Role and behavioral instructions for this specialist.",
-      "triggers": ["@Alias1", "@Alias2"],
+      "triggers": ["Alias1", "Alias2"],
       "llmProvider": "claude",
       "containerConfig": {
         "timeout": 600000,
@@ -108,7 +108,7 @@ The file must contain a top-level `specialists` array with at least one entry:
   - Alternative names/aliases for this specialist
   - Useful for friendly shorthand or domain-specific naming
   - Matching is case-insensitive and strips leading `@` if present
-  - Example: `["@CodeReviewer", "@QA", "@Security"]`
+  - Example: `["CodeReviewer", "QA", "Security"]`
   - When mentioned: `@CodeReviewer`, `@qa`, `@SECURITY` all work
 
 - **`llmProvider`** (string)
@@ -177,7 +177,7 @@ The file must contain a top-level `specialists` array with at least one entry:
     {
       "name": "Research",
       "prompt": "You are a research specialist. Your role is to find, analyze, and summarize information from authoritative sources. Be thorough and cite your sources. Always verify claims with multiple sources when possible.",
-      "triggers": ["@Researcher", "@Analysis"],
+      "triggers": ["Researcher", "Analysis"],
       "containerConfig": {
         "timeout": 600000,
         "memoryLimit": "2Gi"
@@ -186,7 +186,7 @@ The file must contain a top-level `specialists` array with at least one entry:
     {
       "name": "Writer",
       "prompt": "You are a writing specialist. Create clear, engaging, and well-structured content. Adapt tone and style to the audience. Proofread carefully.",
-      "triggers": ["@Content", "@Copy", "@Author"],
+      "triggers": ["Content", "Copy", "Author"],
       "memory": {
         "isolated": true
       }
@@ -302,7 +302,7 @@ A project management group with specialists:
     {
       "name": "DevLead",
       "prompt": "Review technical design. Provide architecture advice.",
-      "triggers": ["@Tech", "@Architecture"]
+      "triggers": ["Tech", "Architecture"]
     },
     {
       "name": "QALead",

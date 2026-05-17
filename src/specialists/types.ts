@@ -49,6 +49,13 @@ export function validateSpecialist(s: unknown): ValidationResult {
   ) {
     return { ok: false, error: 'triggers must be string[]' };
   }
+  // Soft normalisation: strip leading '@' from trigger values so misconfigured
+  // catalogs (e.g. triggers: ["@Researcher"]) don't silently fail to match.
+  if (Array.isArray(obj.triggers)) {
+    obj.triggers = (obj.triggers as string[]).map((t) =>
+      t.startsWith('@') ? t.slice(1) : t,
+    );
+  }
   if (obj.llmProvider !== undefined && typeof obj.llmProvider !== 'string') {
     return { ok: false, error: 'llmProvider must be a string' };
   }

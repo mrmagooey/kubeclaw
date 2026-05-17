@@ -45,6 +45,18 @@ describe('validateSpecialist', () => {
     expect(ok).toEqual({ ok: true });
   });
 
+  it('strips leading @ from trigger values (soft normalisation)', () => {
+    const spec = {
+      name: 'Research',
+      prompt: 'p',
+      triggers: ['@Researcher', '@Analysis', 'NoAt'],
+    };
+    const result = validateSpecialist(spec);
+    expect(result).toEqual({ ok: true });
+    // Normalisation mutates the triggers in-place
+    expect(spec.triggers).toEqual(['Researcher', 'Analysis', 'NoAt']);
+  });
+
   it('rejects memory with unknown subfields', () => {
     const r = validateSpecialist({
       name: 'X',
