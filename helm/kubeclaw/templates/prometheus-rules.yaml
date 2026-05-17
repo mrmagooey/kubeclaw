@@ -30,7 +30,7 @@ spec:
         - alert: KubeclawGroupQueueSaturated
           expr: |
             max by (group) (
-              max_over_time(kubeclaw_orchestrator_group_queue_depth[5m])
+              max_over_time(kubeclaw_group_queue_depth[5m])
             ) > {{ .Values.alerts.groupQueueSaturationDepth }}
           for: 5m
           labels:
@@ -47,8 +47,8 @@ spec:
 
         - alert: KubeclawRedisStreamStagnant
           expr: |
-            increase(kubeclaw_orchestrator_redis_stream_messages_total{stream=~"kubeclaw.*"}[5m]) == 0
-            and on() kubeclaw_orchestrator_redis_stream_messages_total{stream=~"kubeclaw.*"} > 0
+            increase(kubeclaw_redis_ipc_messages_total{stream=~"kubeclaw.*"}[5m]) == 0
+            and on(stream) kubeclaw_redis_ipc_messages_total{stream=~"kubeclaw.*"} > 0
           for: 5m
           labels:
             severity: critical
@@ -68,22 +68,24 @@ spec:
         - alert: KubeclawToolJobFailureRateHigh
           expr: |
             (
-              rate(kubeclaw_orchestrator_tool_job_spawn_total{status="failed"}[5m])
+              sum by (image) (rate(kubeclaw_tool_job_failures_total[5m]))
               /
-              rate(kubeclaw_orchestrator_tool_job_spawn_total[5m])
+              sum by (image) (rate(kubeclaw_tool_job_spawned_total[5m]))
             ) > 0.5
+            and on(image)
+            sum by (image) (rate(kubeclaw_tool_job_spawned_total[5m])) > 0
           for: 10m
           labels:
             severity: warning
             app: kubeclaw
           annotations:
-            summary: "Kubeclaw tool-job failure rate above 50% (group={{ "{{" }} $labels.group {{ "}}" }})"
+            summary: "Kubeclaw tool-job failure rate above 50% (image={{ "{{" }} $labels.image {{ "}}" }})"
             description: >-
-              More than 50% of tool-job spawns have been failing for 10 minutes in
-              group {{ "{{" }} $labels.group {{ "}}" }}. Check orchestrator logs for
+              More than 50% of tool-job spawns have been failing for 10 minutes for
+              image {{ "{{" }} $labels.image {{ "}}" }}. Check orchestrator logs for
               OOMKilled, image-pull errors, or permission failures. The metric
-              kubeclaw_orchestrator_tool_job_spawn_total{status="failed"} breaks down
-              failure reasons.
+              kubeclaw_tool_job_failures_total breaks down failure reasons by image
+              and reason.
             runbook_url: "https://github.com/mrmagooey/kubeclaw/blob/main/docs/RUNBOOKS.md#kubeclawtooljobfailureratehigh"
 
         - alert: KubeclawLLMLatencyOverBudget
@@ -114,7 +116,7 @@ spec:
           expr: |
             (
               sum by (provider) (
-                rate(kubeclaw_channel_llm_call_duration_seconds_count{status="error"}[15m])
+                rate(kubeclaw_channel_llm_call_duration_seconds_count{success="false"}[15m])
               )
               /
               sum by (provider) (

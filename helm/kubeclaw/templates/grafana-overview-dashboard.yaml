@@ -73,8 +73,8 @@ data:
           },
           "options": {"tooltip": {"mode": "multi"}, "legend": {"displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]}},
           "targets": [
-            {"expr": "sum(rate(kubeclaw_orchestrator_tool_job_spawn_total[5m]))", "legendFormat": "Total", "refId": "A"},
-            {"expr": "sum(rate(kubeclaw_orchestrator_tool_job_spawn_total{status=\"failed\"}[5m]))", "legendFormat": "Failed", "refId": "B"}
+            {"expr": "sum(rate(kubeclaw_tool_job_spawned_total[5m]))", "legendFormat": "Total", "refId": "A"},
+            {"expr": "sum(rate(kubeclaw_tool_job_failures_total[5m]))", "legendFormat": "Failed", "refId": "B"}
           ]
         },
         {
@@ -89,7 +89,7 @@ data:
           },
           "options": {"tooltip": {"mode": "multi"}, "legend": {"displayMode": "table", "placement": "bottom", "calcs": ["max"]}},
           "targets": [
-            {"expr": "kubeclaw_orchestrator_group_queue_depth", "legendFormat": "{{`{{group}}`}}", "refId": "A"}
+            {"expr": "kubeclaw_group_queue_depth", "legendFormat": "{{`{{group}}`}}", "refId": "A"}
           ]
         },
         {
@@ -119,8 +119,8 @@ data:
           },
           "options": {"tooltip": {"mode": "multi"}, "legend": {"displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]}},
           "targets": [
-            {"expr": "sum by (provider) (rate(kubeclaw_channel_llm_call_duration_seconds_count{status=\"error\"}[5m]))", "legendFormat": "LLM error {{`{{provider}}`}}", "refId": "A"},
-            {"expr": "rate(kubeclaw_orchestrator_tool_job_spawn_total{status=\"failed\"}[5m])", "legendFormat": "Tool-job failure {{`{{group}}`}}", "refId": "B"},
+            {"expr": "sum by (provider) (rate(kubeclaw_channel_llm_call_duration_seconds_count{success=\"false\"}[5m]))", "legendFormat": "LLM error {{`{{provider}}`}}", "refId": "A"},
+            {"expr": "sum(rate(kubeclaw_tool_job_failures_total[5m]))", "legendFormat": "Tool-job failure", "refId": "B"},
             {"expr": "rate(kubeclaw_rag_backend_errors_total[5m])", "legendFormat": "RAG error {{`{{backend}}`}}", "refId": "C"}
           ]
         }
