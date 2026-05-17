@@ -758,8 +758,9 @@ async function main(): Promise<void> {
     port: parseInt(process.env.METRICS_PORT ?? '9091', 10),
   });
   await channelMetricsServer.listen();
-  // channelMetrics is available for future instrumentation call sites
-  void channelMetrics;
+
+  // Wire channel metrics into the DirectLLMRunner
+  getDirectLLMRunner().setChannelMetrics(channelMetrics);
 
   await initDatabase();
   logger.info(`Database initialized (channel: ${KUBECLAW_CHANNEL})`);
@@ -789,6 +790,14 @@ async function main(): Promise<void> {
         }
       }
       storeMessage(msg);
+      // Record inbound message after allowlist check passes
+      const group = registeredGroups[chatJid];
+      if (group) {
+        channelMetrics.recordMessage({
+          channelKind: KUBECLAW_CHANNEL_TYPE,
+          group: group.folder,
+        });
+      }
     },
     onChatMetadata: (
       chatJid: string,
