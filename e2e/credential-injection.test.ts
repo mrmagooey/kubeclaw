@@ -80,10 +80,18 @@ function createDummyCASecret() {
 
 describe('credential-injection sidecar mode (e2e)', () => {
   beforeAll(() => {
-    // Wait for the namespace to be fully gone if it's still terminating from a
-    // previous run, then create it fresh.
+    // Force a clean namespace. A previous test run may have left the audit
+    // describe block's release in this namespace (helm uninstall is best-
+    // effort), which then collides at install time with "Secret kubeclaw-redis
+    // cannot be imported into the current release: ... current value is
+    // ke2e-inject-audit". `kubectl wait --for=delete` against a namespace that
+    // isn't currently being deleted returns immediately, so we have to
+    // explicitly delete first and then wait for the deletion to finish.
     execSync(
-      `kubectl wait --for=delete ns/${NS} --timeout=60s 2>/dev/null || true`,
+      `kubectl delete ns ${NS} --ignore-not-found --wait=false 2>/dev/null || true`,
+    );
+    execSync(
+      `kubectl wait --for=delete ns/${NS} --timeout=120s 2>/dev/null || true`,
     );
     execSync(`kubectl create ns ${NS} || true`);
 
