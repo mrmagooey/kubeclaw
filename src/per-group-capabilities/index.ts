@@ -1,7 +1,10 @@
 import type { PerGroupK8sClient } from './k8s-client.js';
 import type { CapabilitySpec } from '../capabilities/types.js';
 import { reconcileGroupCapabilities } from './reconciler.js';
-import { startSweeperLoop, type SweeperLoopHandle } from './scale-down-sweeper.js';
+import {
+  sweepIdleInstances,
+  type SweeperLoopHandle,
+} from './scale-down-sweeper.js';
 import { gcGroup } from './gc.js';
 import { setDiscoveryDeps } from '../capabilities/discovery.js';
 import { logger } from '../logger.js';
@@ -95,13 +98,30 @@ export async function initPerGroupCapabilityLifecycle(
     specs: d.listSpecs(),
   });
 
-  // Background sweeper.
-  sweeperHandle = startSweeperLoop({
-    client: d.client,
-    namespace: d.namespace,
-    specs: d.listSpecs(),
-    intervalMs: sweepIntervalMs,
-  });
+  // Background sweeper — re-reads specs on each tick so admin-shell-added
+  // capabilities respond to threshold changes without an orchestrator restart.
+  let sweeperStopped = false;
+  const sweepTick = (): void => {
+    if (sweeperStopped) return;
+    void (async () => {
+      try {
+        await sweepIdleInstances({
+          client: d.client,
+          namespace: d.namespace,
+          specs: d.listSpecs(),
+        });
+      } catch (err) {
+        logger.warn({ err }, 'sweepIdleInstances threw');
+      }
+      if (!sweeperStopped) setTimeout(sweepTick, sweepIntervalMs);
+    })();
+  };
+  setTimeout(sweepTick, sweepIntervalMs);
+  sweeperHandle = {
+    stop() {
+      sweeperStopped = true;
+    },
+  };
 
   // 5-minute periodic safety reconcile.
   periodicHandle = setInterval(() => {
