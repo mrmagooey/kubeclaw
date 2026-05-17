@@ -169,6 +169,55 @@ function createSchema(database: SqlJsDatabase): void {
     ON conversation_history(group_folder, created_at)
   `);
 
+  // FTS4 full-text index over conversation_history.content
+  // sql.js WASM includes FTS4 but not FTS5 — do not change to fts5.
+  // notindexed= keeps the stored columns out of the token index so only
+  // the content column is tokenised.
+  database.run(`
+    CREATE VIRTUAL TABLE IF NOT EXISTS conversation_history_fts
+    USING fts4(
+      id          TEXT,
+      group_folder TEXT,
+      role        TEXT,
+      content     TEXT,
+      created_at  TEXT,
+      notindexed=id,
+      notindexed=group_folder,
+      notindexed=role,
+      notindexed=created_at
+    )
+  `);
+
+  // AFTER INSERT: mirror the new row into FTS.
+  database.run(`
+    CREATE TRIGGER IF NOT EXISTS conv_fts_ai
+    AFTER INSERT ON conversation_history
+    BEGIN
+      INSERT INTO conversation_history_fts(id, group_folder, role, content, created_at)
+      VALUES (new.id, new.group_folder, new.role, new.content, new.created_at);
+    END
+  `);
+
+  // AFTER DELETE: remove the FTS row by id.
+  database.run(`
+    CREATE TRIGGER IF NOT EXISTS conv_fts_ad
+    AFTER DELETE ON conversation_history
+    BEGIN
+      DELETE FROM conversation_history_fts WHERE id = old.id;
+    END
+  `);
+
+  // AFTER UPDATE OF content: replace the FTS row so the index stays current.
+  database.run(`
+    CREATE TRIGGER IF NOT EXISTS conv_fts_au
+    AFTER UPDATE OF content ON conversation_history
+    BEGIN
+      DELETE FROM conversation_history_fts WHERE id = old.id;
+      INSERT INTO conversation_history_fts(id, group_folder, role, content, created_at)
+      VALUES (new.id, new.group_folder, new.role, new.content, new.created_at);
+    END
+  `);
+
   try {
     database.run(
       `ALTER TABLE scheduled_tasks ADD COLUMN context_mode TEXT DEFAULT 'isolated'`,

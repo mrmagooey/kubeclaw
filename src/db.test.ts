@@ -40,6 +40,7 @@ import {
   updateGroupProvider,
   clearInvalidProviders,
   deleteRegisteredGroup,
+  db,
 } from './db.js';
 import { JobACL } from './types.js';
 
@@ -1347,6 +1348,56 @@ describe('conversation history', () => {
 
   it('clearConversationHistory is idempotent on empty history', () => {
     expect(() => clearConversationHistory('no-history-group')).not.toThrow();
+  });
+});
+
+// --- conversation_history_fts triggers ---
+
+describe('conversation_history_fts triggers', () => {
+  it('INSERT trigger populates FTS index', async () => {
+    await _initTestDatabase();
+    appendConversationMessage('main', 'user', 'the quick brown fox');
+    const result = db.exec(
+      `SELECT id FROM conversation_history_fts WHERE conversation_history_fts MATCH 'quick'`,
+    );
+    expect(result.length).toBe(1);
+    expect(result[0].values.length).toBe(1);
+  });
+
+  it('DELETE trigger removes row from FTS index', async () => {
+    await _initTestDatabase();
+    appendConversationMessage('main', 'user', 'unique canary phrase zqxw');
+    db.run(`DELETE FROM conversation_history WHERE group_folder = 'main'`);
+    const result = db.exec(
+      `SELECT id FROM conversation_history_fts WHERE conversation_history_fts MATCH 'zqxw'`,
+    );
+    expect(result.length).toBe(0);
+  });
+
+  it('UPDATE trigger replaces FTS entry on content change', async () => {
+    await _initTestDatabase();
+    appendConversationMessage('main', 'user', 'original phrase abc');
+    db.run(
+      `UPDATE conversation_history SET content = 'revised phrase xyz' WHERE group_folder = 'main'`,
+    );
+    const old = db.exec(
+      `SELECT id FROM conversation_history_fts WHERE conversation_history_fts MATCH 'abc'`,
+    );
+    const updated = db.exec(
+      `SELECT id FROM conversation_history_fts WHERE conversation_history_fts MATCH 'xyz'`,
+    );
+    expect(old.length).toBe(0);
+    expect(updated[0].values.length).toBe(1);
+  });
+
+  it('clearConversationHistory also empties FTS rows for that group', async () => {
+    await _initTestDatabase();
+    appendConversationMessage('main', 'user', 'searchable cleared word zqyy');
+    clearConversationHistory('main');
+    const result = db.exec(
+      `SELECT id FROM conversation_history_fts WHERE conversation_history_fts MATCH 'zqyy'`,
+    );
+    expect(result.length).toBe(0);
   });
 });
 
