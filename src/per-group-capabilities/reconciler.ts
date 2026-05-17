@@ -1,0 +1,61 @@
+import type { CapabilitySpec } from '../capabilities/types.js';
+import type { PerGroupK8sClient } from './k8s-client.js';
+import { getScope, validateScopeFields } from './types.js';
+import { groupHash } from './hash.js';
+import {
+  renderDeployment, renderService, renderNetworkPolicy, instanceName,
+} from './k8s-objects.js';
+import { upsertInstance } from './db.js';
+import { logger } from '../logger.js';
+
+export interface ReconcileArgs {
+  client: PerGroupK8sClient;
+  namespace: string;
+  groupsPvcName: string;
+  groups: string[];
+  specs: CapabilitySpec[];
+}
+
+export async function reconcileGroupCapabilities(args: ReconcileArgs): Promise<void> {
+  const groupSpecs = args.specs.filter(s => getScope(s) === 'group');
+  for (const spec of groupSpecs) validateScopeFields(spec);
+
+  const desired: { spec: CapabilitySpec; groupFolder: string; groupHash: string }[] = [];
+  for (const groupFolder of args.groups) {
+    const hash = groupHash(groupFolder);
+    for (const spec of groupSpecs) {
+      desired.push({ spec, groupFolder, groupHash: hash });
+    }
+  }
+
+  let errors = 0;
+  for (const { spec, groupFolder, groupHash: hash } of desired) {
+    try {
+      const ctx = {
+        groupFolder,
+        groupHash: hash,
+        namespace: args.namespace,
+        groupsPvcName: args.groupsPvcName,
+      };
+      await args.client.applyNetworkPolicy(renderNetworkPolicy(spec, ctx));
+      await args.client.applyService(renderService(spec, ctx));
+      await args.client.applyDeployment(renderDeployment(spec, ctx));
+      const name = instanceName(spec.name, hash);
+      upsertInstance({
+        groupFolder, capabilityName: spec.name, groupHash: hash,
+        deploymentName: name, serviceName: name,
+      });
+    } catch (err) {
+      errors += 1;
+      logger.warn(
+        { err, groupFolder, capability: spec.name },
+        'per-group capability reconcile failed for pair',
+      );
+    }
+  }
+
+  logger.info(
+    { desired_count: desired.length, errors },
+    'per-group capability reconcile complete',
+  );
+}
