@@ -370,3 +370,14 @@ credentialInjection:
       # Set to true if your cluster runs prometheus-operator.
       enabled: false
       interval: "30s"
+
+# Global specialist catalog. Empty by default — every channel sees no specialists
+# until you register some here or via the admin shell. See docs/SPECIALISTS.md.
+specialists: []
+# Example:
+# specialists:
+#   - name: CodeReview
+#     prompt: |
+#       You are a code-review specialist. Focus on security, performance, maintainability.
+#     llmProvider: claude
+#     tools: [mcp:fetch]
