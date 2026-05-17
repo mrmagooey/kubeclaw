@@ -415,15 +415,25 @@ function getOrchestratorPod(): string {
  * Returns the script's stdout (trimmed).
  */
 function sqliteQueryInOrchestrator(script: string): string {
-  const podName = getOrchestratorPod();
-  const r = kc(
-    ['exec', podName, '-c', 'orchestrator', '--', 'node', '-e', script],
-    { timeout: 30_000 },
-  );
-  if (!r.ok) {
-    throw new Error(`kubectl exec node script failed:\nstdout: ${r.stdout}\nstderr: ${r.stderr}`);
+  // The orchestrator pod can be rolled mid-test (helm upgrade reconciles
+  // pod-spec hashes when the embedded specialists ConfigMap changes), so
+  // the pod name we read may be invalid by the time kubectl exec runs.
+  // Retry the lookup-and-exec on "pod not found" — kubelet replaces the
+  // pod within a few seconds and the rollout-status check earlier already
+  // waited for the new pod to be Ready.
+  let lastErr = '';
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const podName = getOrchestratorPod();
+    const r = kc(
+      ['exec', podName, '-c', 'orchestrator', '--', 'node', '-e', script],
+      { timeout: 30_000 },
+    );
+    if (r.ok) return r.stdout.trim();
+    lastErr = `stdout: ${r.stdout}\nstderr: ${r.stderr}`;
+    if (!/pods .* not found|connection refused/i.test(r.stderr)) break;
+    spawnSync('sleep', ['2']);
   }
-  return r.stdout.trim();
+  throw new Error(`kubectl exec node script failed:\n${lastErr}`);
 }
 
 // ─── Suite-level lifecycle ────────────────────────────────────────────────────
