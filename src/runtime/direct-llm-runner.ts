@@ -289,6 +289,17 @@ const TOOLS: OpenAI.ChatCompletionTool[] = [
   },
 ];
 
+/**
+ * Set of tool names the LLM is authorised to call.  Used as a cardinality
+ * guard when recording metrics: any name the LLM fabricates that is not in
+ * this set is bucketed as 'unknown' so Prometheus label cardinality stays
+ * bounded.  Derived from the static TOOLS list; custom / MCP tools are added
+ * at dispatch time (see recordToolCall call site in runAgent).
+ */
+const STATIC_TOOL_NAMES: ReadonlySet<string> = new Set(
+  TOOLS.map((t) => t.function.name),
+);
+
 // Translate LLM-facing tool names to the names the tool server expects
 const TOOL_SERVER_NAME: Record<string, string> = {
   web_fetch: 'webFetch',
@@ -1027,8 +1038,18 @@ export class DirectLLMRunner implements MessageRunner {
             result = `Tool error: ${err instanceof Error ? err.message : String(err)}`;
           }
 
+          // Guard cardinality: bucket any name the LLM fabricated outside the
+          // registered tool set as 'unknown' so Prometheus label cardinality
+          // stays bounded.  effectiveTools includes static, custom, and MCP tools.
+          const knownToolNames = new Set([
+            ...STATIC_TOOL_NAMES,
+            ...effectiveTools.map((t) => t.function.name),
+          ]);
+          const toolLabel = knownToolNames.has(call.function.name)
+            ? call.function.name
+            : 'unknown';
           this.channelMetrics?.recordToolCall({
-            tool: call.function.name,
+            tool: toolLabel,
             status: toolSuccess ? 'success' : 'failure',
           });
 

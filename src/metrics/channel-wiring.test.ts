@@ -234,4 +234,28 @@ describe('DirectLLMRunner channel metrics wiring', () => {
     expect(callArg.status).toBe('failure');
   });
 
+  // Fix C: cardinality guard ------------------------------------------------
+
+  it('buckets hallucinated tool names as "unknown"', async () => {
+    const metrics = makeMetricsMock();
+    // The tool name here is not in the TOOLS list, so it should be bucketed.
+    const fakeClient = makeFakeOpenAIWithToolCall('query_database_v2_experimental');
+    const runner = new DirectLLMRunner(fakeClient);
+    runner.setChannelMetrics(metrics);
+
+    await runner.runAgent(
+      { name: 'TestGroup', folder: 'testgroup', trigger: '', added_at: '' },
+      {
+        prompt: 'Do something',
+        groupFolder: 'testgroup',
+        chatJid: 'jid@g.us',
+        isMain: false,
+        assistantName: 'bot',
+      },
+    );
+
+    expect(metrics.recordToolCall).toHaveBeenCalledOnce();
+    const callArg = (metrics.recordToolCall as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(callArg.tool).toBe('unknown');
+  });
 });
