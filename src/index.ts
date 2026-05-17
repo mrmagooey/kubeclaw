@@ -36,6 +36,7 @@ import {
   getRegisteredGroup,
   getRouterState,
   initDatabase,
+  setDbQueryCallback,
   setRegisteredGroup,
   setRouterState,
   setSession,
@@ -805,6 +806,11 @@ async function main(): Promise<void> {
   // Wire specialist resolution recording
   setSpecialistResolutionCallback((specialistName) => {
     orchMetrics.recordSpecialistResolution({ specialist: specialistName });
+  });
+
+  // Wire db query timing recording
+  setDbQueryCallback((operation, durationMs) => {
+    orchMetrics.recordDbQuery({ operation, durationMs });
   });
 
   // Sample group queue depth every 5 s and publish to Prometheus.
