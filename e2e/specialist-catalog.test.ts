@@ -716,6 +716,17 @@ describe('global specialist catalog e2e', () => {
         `specialists=[{"name":"Iso","prompt":"Count how many prior conversation turns you can see before this message. Reply with EXACTLY: known=<count> where <count> is the integer number. No other text.","memory":{"isolated":true}}]`,
       ]);
 
+      // Force orchestrator to re-reconcile against the freshly-templated
+      // kubeclaw-specialists-baseline CM. The reconciler only runs at
+      // startup; without this bounce it keeps serving the previous test's
+      // merged catalog and channels never see Iso.
+      kcCluster([
+        'rollout', 'restart',
+        'deployment/kubeclaw-orchestrator',
+        '-n', NAMESPACE,
+      ], { timeout: 30_000 });
+      await waitForOrchestrator(120_000);
+
       await waitForChannelPod();
       await startPortForward();
       await sleep(60_000); // ConfigMap propagation
