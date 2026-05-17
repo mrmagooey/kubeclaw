@@ -394,21 +394,28 @@ async function sendAndCollect(
 }
 
 /**
- * Return the name of a Running orchestrator pod. During a rollout there can
- * briefly be two pods (terminating + new); we must pick the Running one or
- * kubectl exec will fail with "pod not found" against the terminating one.
+ * Return the name of a non-terminating orchestrator pod. status.phase stays
+ * "Running" on terminating pods (it never transitions to "Terminated"), so a
+ * field-selector on phase is not enough to dodge a stale name during a
+ * rollout — we have to filter on the absence of a deletionTimestamp.
  */
 function getOrchestratorPod(): string {
+  // Print each pod's name and deletionTimestamp ('' if absent) on its own
+  // line; pick the first row whose timestamp is empty.
   const r = kc([
     'get', 'pods',
     '-l', 'app=kubeclaw-orchestrator',
-    '--field-selector=status.phase=Running',
-    '-o', 'jsonpath={.items[0].metadata.name}',
+    '-o',
+    'jsonpath={range .items[*]}{.metadata.name}{"\\t"}{.metadata.deletionTimestamp}{"\\n"}{end}',
   ]);
-  if (!r.ok || !r.stdout.trim()) {
-    throw new Error(`Could not find Running orchestrator pod: ${r.stderr}`);
+  if (!r.ok) {
+    throw new Error(`Could not list orchestrator pods: ${r.stderr}`);
   }
-  return r.stdout.trim();
+  for (const line of r.stdout.split('\n')) {
+    const [name, ts] = line.split('\t');
+    if (name && !ts) return name;
+  }
+  throw new Error(`No non-terminating orchestrator pod found:\n${r.stdout}`);
 }
 
 /**
