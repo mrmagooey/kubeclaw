@@ -2,16 +2,11 @@ import fs from 'fs';
 import http from 'http';
 import path from 'path';
 
-import { setupChannel } from './skills/orchestrator/channel-setup.js';
-import type { ChannelSetupInput } from './skills/orchestrator/types.js';
-
 import {
   ASSISTANT_NAME,
   GROUPS_DIR,
   KUBECLAW_MODE,
-  POLL_INTERVAL,
   TIMEZONE,
-  TRIGGER_PATTERN,
 } from './config.js';
 import './channels/index.js';
 import {
@@ -21,7 +16,6 @@ import {
 import { loadChannelPlugins } from './channels/plugin-loader.js';
 import {
   AvailableGroup,
-  ContainerOutput,
   getToolJobRunner,
   getRunnerForGroup,
   shutdownAllRunners,
@@ -32,7 +26,6 @@ import {
   getAllSessions,
   getAllTasks,
   getMessagesSince,
-  getNewMessages,
   getRegisteredGroup,
   getRouterState,
   initDatabase,
@@ -60,24 +53,15 @@ import {
   findChannel,
   formatMessages,
   formatOutbound,
-  stripInternalTags,
 } from './router.js';
 import {
   isSenderAllowed,
-  isTriggerAllowed,
   loadSenderAllowlist,
   shouldDropMessage,
 } from './sender-allowlist.js';
 import { startSchedulerLoop } from './task-scheduler.js';
-// specialists.js import removed — Path B specialist dispatch deleted in Task 12
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
-import { RawAttachment } from './k8s/types.js';
-import {
-  IMAGE_ATTACHMENT_PATTERN,
-  PDF_ATTACHMENT_PATTERN,
-} from './attachment-markers.js';
 import { logger } from './logger.js';
-import { augmentPrompt, getRagProvider } from './rag/provider.js';
 import { startHttpAdminServer } from './admin-shell.js';
 import {
   installCapability,
@@ -86,7 +70,6 @@ import {
   stopDiscoveryWatcher,
   startHealthProbes,
 } from './capabilities/index.js';
-import { handleSendFileMarkers } from './outbound-media.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -95,7 +78,6 @@ let lastTimestamp = '';
 let sessions: Record<string, string> = {};
 let registeredGroups: Record<string, RegisteredGroup> = {};
 let lastAgentTimestamp: Record<string, string> = {};
-let messageLoopRunning = false;
 
 const channels: Channel[] = [];
 const queue = new GroupQueue();
@@ -210,11 +192,6 @@ export function _setRegisteredGroups(
 }
 
 /** @internal - exported for testing */
-export async function _processGroupMessages(chatJid: string): Promise<boolean> {
-  return processGroupMessages(chatJid);
-}
-
-/** @internal - exported for testing */
 export function _pushChannel(channel: Channel): void {
   channels.push(channel);
 }
@@ -226,523 +203,6 @@ export function _resetState(): void {
   lastAgentTimestamp = {};
   sessions = {};
   registeredGroups = {};
-}
-
-export { recoverPendingMessages as _recoverPendingMessages };
-
-// ---- Skill invocation ----
-
-function loadSkillPrompt(name: string): string | null {
-  for (const p of [
-    path.join(process.cwd(), 'skills', 'channel', `${name}.md`),
-    `/app/skills/channel/${name}.md`,
-  ]) {
-    try {
-      return fs.readFileSync(p, 'utf-8');
-    } catch {
-      /* not found */
-    }
-  }
-  return null;
-}
-
-/**
- * Handle a skill invocation from the main group.
- *
- * Orchestrator skills (channel setup) are executed programmatically — the
- * orchestrator creates K8s resources directly. The channel skill document
- * is sent to the new blank channel pod via the control channel so it can
- * self-configure.
- */
-async function handleSkillInvocation(
-  skillName: string,
-  skillMd: string,
-  extraArgs: string,
-  chatJid: string,
-  group: RegisteredGroup,
-  channel: Channel,
-): Promise<void> {
-  // Parse extra args as key=value pairs for channel setup input
-  const input: ChannelSetupInput = { type: skillName };
-  for (const arg of extraArgs.split(/\s+/).filter(Boolean)) {
-    const [key, ...rest] = arg.split('=');
-    if (key && rest.length > 0) {
-      (input as any)[key] = rest.join('=');
-    }
-  }
-
-  // Execute orchestrator-side K8s resource creation
-  const result = await setupChannel(input);
-  const summary = result.log.join('\n');
-
-  if (!result.success) {
-    await channel.sendMessage(
-      chatJid,
-      `Skill "${skillName}" failed:\n${summary}`,
-    );
-    return;
-  }
-
-  // Send the channel skill document to the new pod via control channel
-  // so it can self-configure (Phase 2 will implement the configure handler)
-  const { publishControlCommand } = await import('./k8s/ipc-redis.js');
-  await publishControlCommand(result.instanceName, {
-    command: 'configure',
-    channelType: skillName,
-    skillDocument: skillMd,
-  });
-
-  await channel.sendMessage(
-    chatJid,
-    `Channel "${result.instanceName}" deployed:\n${summary}`,
-  );
-}
-
-interface AttachmentMarkerHandler {
-  // regex with positional groups: group 1 = path, group 2 = caption (optional)
-  pattern: RegExp;
-  mediaType: string; // used when calling preprocessor
-  // how to rewrite after preprocessing: given the done-path content, return replacement string
-  rewrite: (outputPath: string, caption?: string) => string;
-  fallback: (filename: string) => string;
-}
-
-const ATTACHMENT_HANDLERS: AttachmentMarkerHandler[] = [
-  {
-    pattern: IMAGE_ATTACHMENT_PATTERN,
-    mediaType: 'image/jpeg',
-    rewrite: (outputPath) => `[Image: ${outputPath}]`,
-    fallback: (filename) => `[Image: ${filename} (processing failed)]`,
-  },
-  {
-    pattern: PDF_ATTACHMENT_PATTERN,
-    mediaType: 'application/pdf',
-    rewrite: () => '', // PDF handler reads .txt inline
-    fallback: (filename) => `[Attachment: ${filename} (processing failed)]`,
-  },
-];
-
-function extractAttachments(
-  messages: Array<{ content: string }>,
-): RawAttachment[] {
-  const result: RawAttachment[] = [];
-  for (const handler of ATTACHMENT_HANDLERS) {
-    for (const msg of messages) {
-      // Reset lastIndex for each message since the regex has the global flag
-      handler.pattern.lastIndex = 0;
-      for (const m of msg.content.matchAll(handler.pattern)) {
-        result.push({
-          rawPath: m[1],
-          mediaType: handler.mediaType,
-          caption: m[2],
-        });
-      }
-    }
-  }
-  return result;
-}
-
-function rewriteAttachmentMarkers<T extends { content: string }>(
-  messages: T[],
-  groupDir: string,
-): T[] {
-  return messages.map((msg) => {
-    let content = msg.content;
-    for (const handler of ATTACHMENT_HANDLERS) {
-      handler.pattern.lastIndex = 0;
-      content = content.replace(
-        handler.pattern,
-        (_match: string, rawPath: string, caption?: string) => {
-          const donePath = path.join(groupDir, rawPath + '.done');
-          if (!fs.existsSync(donePath)) {
-            return handler.fallback(path.basename(rawPath));
-          }
-          const outputPath = fs.readFileSync(donePath, 'utf-8').trim();
-          return handler.rewrite(outputPath, caption);
-        },
-      );
-    }
-    return { ...msg, content };
-  });
-}
-
-/**
- * Process all pending messages for a group.
- * Called by the GroupQueue when it's this group's turn.
- */
-async function processGroupMessages(chatJid: string): Promise<boolean> {
-  const group = registeredGroups[chatJid];
-  if (!group) return true;
-
-  const channel = findChannel(channels, chatJid);
-  if (!channel) {
-    logger.warn({ chatJid }, 'No channel owns JID, skipping messages');
-    return true;
-  }
-
-  const isMainGroup = group.isMain === true;
-
-  const sinceTimestamp = lastAgentTimestamp[chatJid] || '';
-  let missedMessages = getMessagesSince(
-    chatJid,
-    sinceTimestamp,
-    ASSISTANT_NAME,
-  );
-
-  if (missedMessages.length === 0) return true;
-
-  // For non-main groups, check if trigger is required and present
-  if (!isMainGroup && group.requiresTrigger !== false) {
-    const allowlistCfg = loadSenderAllowlist();
-    const hasTrigger = missedMessages.some(
-      (m) =>
-        TRIGGER_PATTERN.test(m.content.trim()) &&
-        (m.is_from_me || isTriggerAllowed(chatJid, m.sender, allowlistCfg)),
-    );
-    if (!hasTrigger) return true;
-  }
-
-  // Check for skill command (main group only): message starting with /skill-name
-  if (isMainGroup) {
-    const lastMsg = missedMessages[missedMessages.length - 1];
-    const content = lastMsg.content.trim();
-    if (content.startsWith('/')) {
-      const [skillName, ...rest] = content.slice(1).split(/\s+/);
-      const skillMd = loadSkillPrompt(skillName);
-      if (skillMd) {
-        lastAgentTimestamp[chatJid] = lastMsg.timestamp;
-        saveState();
-        await handleSkillInvocation(
-          skillName,
-          skillMd,
-          rest.join(' '),
-          chatJid,
-          group,
-          channel,
-        );
-        return true;
-      }
-    }
-  }
-
-  // Preprocessing gate: spawn K8s job to process raw attachments before agent runs
-  const rawAttachments = extractAttachments(missedMessages);
-  if (rawAttachments.length > 0) {
-    const runner = getRunnerForGroup(group);
-    if (runner.runPreprocessingJob) {
-      logger.info(
-        { group: group.name, count: rawAttachments.length },
-        'Spawning attachment preprocessing job',
-      );
-      const groupDir = path.join(GROUPS_DIR, group.folder);
-      const ok = await runner.runPreprocessingJob(group, rawAttachments, {
-        groupsPvc: (group as any).groupsPvc,
-      });
-      if (!ok) {
-        logger.warn(
-          { group: group.name },
-          'Preprocessing job failed — continuing with unprocessed attachments',
-        );
-      }
-      missedMessages = rewriteAttachmentMarkers(missedMessages, groupDir);
-    }
-  }
-
-  const prompt = formatMessages(missedMessages, TIMEZONE);
-
-  // Specialist dispatch is handled in channel-runner (Path A); Path B always uses main agent.
-  // Task 12 will delete _processGroupMessages entirely.
-  const agentRuns = [{ group, sessionKey: group.folder, prompt }];
-
-  // Advance cursor in memory so the piping path in startMessageLoop sends
-  // only new messages as deltas rather than re-fetching the full history.
-  // Do NOT persist yet — if the process crashes before the agent completes,
-  // the on-disk cursor stays at its previous position and recovery re-queues
-  // these messages on next startup.
-  const previousCursor = lastAgentTimestamp[chatJid] || '';
-  lastAgentTimestamp[chatJid] =
-    missedMessages[missedMessages.length - 1].timestamp;
-
-  logger.info(
-    { group: group.name, messageCount: missedMessages.length },
-    'Processing messages',
-  );
-
-  await channel.setTyping?.(chatJid, true);
-  let hadError = false;
-  let outputSentToUser = false;
-
-  for (const agentRun of agentRuns) {
-    const output = await runAgent(
-      agentRun.group,
-      agentRun.prompt,
-      chatJid,
-      async (result) => {
-        // Streaming output callback — called for each agent result
-        if (result.result) {
-          const raw =
-            typeof result.result === 'string'
-              ? result.result
-              : JSON.stringify(result.result);
-          // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
-          const stripped = stripInternalTags(raw);
-          logger.info(
-            { group: group.name },
-            `Agent output: ${raw.slice(0, 200)}`,
-          );
-          // Handle [SendFile: ...] markers — send media and strip/replace markers
-          const text = await handleSendFileMarkers(
-            stripped,
-            channel,
-            chatJid,
-            group.folder,
-            GROUPS_DIR,
-          );
-          if (text) {
-            await channel.sendMessage(chatJid, text);
-            outputSentToUser = true;
-          }
-        }
-
-        if (result.status === 'success') {
-          queue.notifyIdle(chatJid);
-        }
-
-        if (result.status === 'error') {
-          hadError = true;
-        }
-      },
-      agentRun.sessionKey,
-    );
-
-    if (output === 'error' || hadError) {
-      hadError = true;
-      break;
-    }
-  }
-
-  await channel.setTyping?.(chatJid, false);
-
-  if (hadError) {
-    // If we already sent output to the user, don't roll back the cursor —
-    // the user got their response and re-processing would send duplicates.
-    if (outputSentToUser) {
-      logger.warn(
-        { group: group.name },
-        'Agent error after output was sent, skipping cursor rollback to prevent duplicates',
-      );
-      saveState();
-      return true;
-    }
-    // Roll back cursor so retries can re-process these messages
-    lastAgentTimestamp[chatJid] = previousCursor;
-    logger.warn(
-      { group: group.name },
-      'Agent error, rolled back message cursor for retry',
-    );
-    return false;
-  }
-
-  // Persist the advanced cursor only after the agent completes successfully.
-  saveState();
-  return true;
-}
-
-async function runAgent(
-  group: RegisteredGroup,
-  prompt: string,
-  chatJid: string,
-  onOutput?: (output: ContainerOutput) => Promise<void>,
-  sessionKey?: string,
-): Promise<'success' | 'error'> {
-  const isMain = group.isMain === true;
-  const provider = group.llmProvider || 'claude';
-  // sessionKey allows isolated specialist memory; defaults to group folder
-  const effectiveSessionKey = sessionKey ?? group.folder;
-  const sessionId = sessions[effectiveSessionKey];
-
-  logger.info(
-    { group: group.name, provider, hasProviderOverride: !!group.llmProvider },
-    'Running agent with LLM provider',
-  );
-
-  const agentRunner = getRunnerForGroup(group);
-
-  // Update tasks snapshot for container to read (filtered by group)
-  const tasks = getAllTasks();
-  agentRunner.writeTasksSnapshot(
-    group.folder,
-    isMain,
-    tasks.map((t) => ({
-      id: t.id,
-      groupFolder: t.group_folder,
-      prompt: t.prompt,
-      schedule_type: t.schedule_type,
-      schedule_value: t.schedule_value,
-      status: t.status,
-      next_run: t.next_run,
-    })),
-  );
-
-  // Update available groups snapshot (main group only can see all groups)
-  const availableGroups = getAvailableGroups();
-  agentRunner.writeGroupsSnapshot(
-    group.folder,
-    isMain,
-    availableGroups,
-    new Set(Object.keys(registeredGroups)),
-  );
-
-  // Wrap onOutput to track session ID from streamed results
-  const wrappedOnOutput = onOutput
-    ? async (output: ContainerOutput) => {
-        if (output.newSessionId) {
-          sessions[effectiveSessionKey] = output.newSessionId;
-          setSession(effectiveSessionKey, output.newSessionId);
-        }
-        await onOutput(output);
-      }
-    : undefined;
-
-  // Prepend retrieved context from vector store (no-op when RAG is not configured).
-  const augmentedPrompt = await augmentPrompt(group.folder, prompt);
-
-  try {
-    const output = await agentRunner.runAgent(
-      group,
-      {
-        prompt: augmentedPrompt,
-        sessionId,
-        groupFolder: group.folder,
-        chatJid,
-        isMain,
-        assistantName: ASSISTANT_NAME,
-      },
-      undefined,
-      wrappedOnOutput,
-      {},
-    );
-
-    if (output.newSessionId) {
-      sessions[group.folder] = output.newSessionId;
-      setSession(group.folder, output.newSessionId);
-    }
-
-    if (output.status === 'error') {
-      logger.error(
-        { group: group.name, error: output.error },
-        'Container agent error',
-      );
-      return 'error';
-    }
-
-    // Index the conversation turn for future retrieval (non-blocking, non-fatal).
-    if (output.result) {
-      void getRagProvider().indexConversationTurn(
-        group.folder,
-        prompt,
-        output.result,
-      );
-    }
-
-    return 'success';
-  } catch (err) {
-    logger.error({ group: group.name, err }, 'Agent error');
-    return 'error';
-  }
-}
-
-async function startMessageLoop(): Promise<void> {
-  if (messageLoopRunning) {
-    logger.debug('Message loop already running, skipping duplicate start');
-    return;
-  }
-  messageLoopRunning = true;
-
-  logger.info(`KubeClaw running (trigger: @${ASSISTANT_NAME})`);
-
-  while (true) {
-    try {
-      const jids = Object.keys(registeredGroups);
-      const { messages, newTimestamp } = getNewMessages(
-        jids,
-        lastTimestamp,
-        ASSISTANT_NAME,
-      );
-
-      if (messages.length > 0) {
-        logger.info({ count: messages.length }, 'New messages');
-
-        // Advance the "seen" cursor for all messages immediately
-        lastTimestamp = newTimestamp;
-        saveState();
-
-        // Deduplicate by group
-        const messagesByGroup = new Map<string, NewMessage[]>();
-        for (const msg of messages) {
-          const existing = messagesByGroup.get(msg.chat_jid);
-          if (existing) {
-            existing.push(msg);
-          } else {
-            messagesByGroup.set(msg.chat_jid, [msg]);
-          }
-        }
-
-        for (const [chatJid, groupMessages] of messagesByGroup) {
-          const group = registeredGroups[chatJid];
-          if (!group) continue;
-
-          const channel = findChannel(channels, chatJid);
-          if (!channel) {
-            logger.warn({ chatJid }, 'No channel owns JID, skipping messages');
-            continue;
-          }
-
-          const isMainGroup = group.isMain === true;
-          const needsTrigger = !isMainGroup && group.requiresTrigger !== false;
-
-          // For non-main groups, only act on trigger messages.
-          // Non-trigger messages accumulate in DB and get pulled as
-          // context when a trigger eventually arrives.
-          if (needsTrigger) {
-            const allowlistCfg = loadSenderAllowlist();
-            const hasTrigger = groupMessages.some(
-              (m) =>
-                TRIGGER_PATTERN.test(m.content.trim()) &&
-                (m.is_from_me ||
-                  isTriggerAllowed(chatJid, m.sender, allowlistCfg)),
-            );
-            if (!hasTrigger) continue;
-          }
-
-          // Pull all messages since lastAgentTimestamp so non-trigger
-          // context that accumulated between triggers is included.
-          queue.enqueueMessageCheck(chatJid);
-        }
-      }
-    } catch (err) {
-      logger.error({ err }, 'Error in message loop');
-    }
-    await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL));
-  }
-}
-
-/**
- * Startup recovery: check for unprocessed messages in registered groups.
- * Handles crash between advancing lastTimestamp and processing messages.
- */
-function recoverPendingMessages(): void {
-  for (const [chatJid, group] of Object.entries(registeredGroups)) {
-    const sinceTimestamp = lastAgentTimestamp[chatJid] || '';
-    const pending = getMessagesSince(chatJid, sinceTimestamp, ASSISTANT_NAME);
-    if (pending.length > 0) {
-      logger.info(
-        { group: group.name, pendingCount: pending.length },
-        'Recovery: found unprocessed messages',
-      );
-      queue.enqueueMessageCheck(chatJid);
-    }
-  }
 }
 
 async function main(): Promise<void> {
@@ -1051,20 +511,6 @@ async function main(): Promise<void> {
     );
   }
 
-  // In orchestrator mode, channels handle their own LLM conversations.
-  // The orchestrator only manages K8s resources, IPC, and task scheduling.
-  if (KUBECLAW_MODE !== 'orchestrator') {
-    queue.setProcessMessagesFn(processGroupMessages);
-    recoverPendingMessages();
-    startMessageLoop().catch((err) => {
-      logger.fatal({ err }, 'Message loop crashed unexpectedly');
-      process.exit(1);
-    });
-  } else {
-    logger.info(
-      'Orchestrator mode: channels handle LLM conversations, message loop disabled',
-    );
-  }
 }
 
 // Guard: only run when executed directly, not when imported by tests
