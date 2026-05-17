@@ -59,6 +59,14 @@ export interface RunAgentOverrides {
   sessionKey?: string;
   llmProvider?: string;
   toolFilter?: Set<string>;
+  /**
+   * Replace the channel's default system prompt for this single call. Set by
+   * the channel-runner for memory.isolated specialists so the LLM sees the
+   * specialist's instructions as the system role rather than embedded in the
+   * user message — otherwise the LLM counts the embedded specialist text as a
+   * "prior conversation turn" when asked.
+   */
+  systemPromptOverride?: string;
 }
 
 /**

@@ -1254,7 +1254,10 @@ export async function processGroupMessages(chatJid: string): Promise<boolean> {
   // the isolated specialist sees the @mention turn with no prior context.
   const isolatedPrompt =
     backstopMessages.length > 0
-      ? formatMessages([backstopMessages[backstopMessages.length - 1]], TIMEZONE)
+      ? formatMessages(
+          [backstopMessages[backstopMessages.length - 1]],
+          TIMEZONE,
+        )
       : prompt;
   const catalog = specialistCatalog.getAll();
   const mentionedSpecialists = detectMentionedSpecialists(prompt, catalog);
@@ -1287,19 +1290,38 @@ export async function processGroupMessages(chatJid: string): Promise<boolean> {
   const runs: DispatchRun[] =
     mentionedSpecialists.length > 0
       ? mentionedSpecialists.map((s) => {
-          const specPrompt = s.memory?.isolated ? isolatedPrompt : prompt;
+          const isolated = s.memory?.isolated === true;
+          // For isolated specialists, the specialist prompt + CLAUDE.md
+          // become the LLM's system message and the user content is just
+          // the triggering @mention turn — no group history, no embedded
+          // specialist directive. Non-isolated specialists keep the
+          // single-user-message format so the LLM can see the group
+          // conversation context.
+          const specPrompt = isolated ? isolatedPrompt : prompt;
+          const specialistBlock = `<specialist name="${s.name}">\n${s.prompt}${
+            s.claudemd ? `\n\n${s.claudemd}` : ''
+          }\n</specialist>`;
+          const systemPromptOverride = isolated
+            ? credentialSystemBlock
+              ? `${credentialSystemBlock}\n\n${specialistBlock}`
+              : specialistBlock
+            : undefined;
+          const userPrompt = isolated
+            ? specPrompt
+            : credentialSystemBlock
+              ? `${credentialSystemBlock}\n\n${specialistBlock}\n\n${specPrompt}`
+              : `${specialistBlock}\n\n${specPrompt}`;
           return {
             specialistName: s.name,
-            prompt: credentialSystemBlock
-              ? `${credentialSystemBlock}\n\n<specialist name="${s.name}">\n${s.prompt}${s.claudemd ? `\n\n${s.claudemd}` : ''}\n</specialist>\n\n${specPrompt}`
-              : `<specialist name="${s.name}">\n${s.prompt}${s.claudemd ? `\n\n${s.claudemd}` : ''}\n</specialist>\n\n${specPrompt}`,
+            prompt: userPrompt,
             overrides: {
-              sessionKey: s.memory?.isolated
+              sessionKey: isolated
                 ? `${group.folder}:${s.name}`
                 : group.folder,
               llmProvider: s.llmProvider,
               toolFilter:
                 s.tools && s.tools.length > 0 ? new Set(s.tools) : undefined,
+              systemPromptOverride,
             },
           };
         })

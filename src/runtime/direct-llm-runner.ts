@@ -844,7 +844,10 @@ async function mcpServerAction(
 
 // ---- Runner ----
 
-function getModel(group: RegisteredGroup, llmProviderOverride?: string): string {
+function getModel(
+  group: RegisteredGroup,
+  llmProviderOverride?: string,
+): string {
   const p = llmProviderOverride ?? group.llmProvider;
   if (p && p !== 'claude' && p !== 'openrouter') return p;
   return DEFAULT_DIRECT_MODEL;
@@ -953,7 +956,8 @@ export class DirectLLMRunner implements MessageRunner {
   ): Promise<ContainerOutput> {
     const model = getModel(group, overrides.llmProvider);
     const provider = resolveProviderLabel();
-    const systemPrompt = loadSystemPrompt(input.groupFolder);
+    const systemPrompt =
+      overrides.systemPromptOverride ?? loadSystemPrompt(input.groupFolder);
 
     // Record skill load: 1 if a custom CLAUDE.md was loaded, 0 if using default
     const hasCustomPrompt = systemPrompt !== DEFAULT_SYSTEM_PROMPT;
@@ -989,11 +993,13 @@ export class DirectLLMRunner implements MessageRunner {
     // Thresholds are re-read from env at call time (not cached at import time)
     // so that tests and operators can override them at runtime.
     const compressionThresholdMessages = parseInt(
-      process.env.KUBECLAW_COMPRESSION_THRESHOLD_MESSAGES || String(COMPRESSION_THRESHOLD_MESSAGES),
+      process.env.KUBECLAW_COMPRESSION_THRESHOLD_MESSAGES ||
+        String(COMPRESSION_THRESHOLD_MESSAGES),
       10,
     );
     const compressionThresholdTokens = parseInt(
-      process.env.KUBECLAW_COMPRESSION_THRESHOLD_TOKENS || String(COMPRESSION_THRESHOLD_TOKENS),
+      process.env.KUBECLAW_COMPRESSION_THRESHOLD_TOKENS ||
+        String(COMPRESSION_THRESHOLD_TOKENS),
       10,
     );
     let activeSummaryMarker: string | null = null;
@@ -1012,11 +1018,18 @@ export class DirectLLMRunner implements MessageRunner {
           process.env.MAX_CONVERSATION_HISTORY || '20',
           10,
         );
-        const toSummarize = rawHistory.slice(0, Math.max(0, rawHistory.length - keepWindow));
+        const toSummarize = rawHistory.slice(
+          0,
+          Math.max(0, rawHistory.length - keepWindow),
+        );
         if (toSummarize.length > 0) {
           try {
             const prevSummary = getLatestSummary(input.groupFolder);
-            const { text, tokenCount } = await summarize(toSummarize, this.client, model);
+            const { text, tokenCount } = await summarize(
+              toSummarize,
+              this.client,
+              model,
+            );
             const summaryId = insertSummary({
               groupFolder: input.groupFolder,
               sessionKey: input.sessionId ?? input.groupFolder,
@@ -1030,7 +1043,11 @@ export class DirectLLMRunner implements MessageRunner {
             deleteMessagesByIds(toSummarize.map((m) => m.id));
             activeSummaryMarker = `[summary_id=${summaryId}] ${text}`;
             logger.info(
-              { groupFolder: input.groupFolder, summaryId, messagesCompressed: toSummarize.length },
+              {
+                groupFolder: input.groupFolder,
+                summaryId,
+                messagesCompressed: toSummarize.length,
+              },
               'DirectLLMRunner: compressed conversation history',
             );
           } catch (err) {
@@ -1044,7 +1061,10 @@ export class DirectLLMRunner implements MessageRunner {
     }
 
     // After possible compression, slice to keep-window for the actual LLM call.
-    const keepWindow = parseInt(process.env.MAX_CONVERSATION_HISTORY || '20', 10);
+    const keepWindow = parseInt(
+      process.env.MAX_CONVERSATION_HISTORY || '20',
+      10,
+    );
     const history = activeSummaryMarker
       ? rawHistory.slice(Math.max(0, rawHistory.length - keepWindow))
       : rawHistory;
@@ -1082,8 +1102,7 @@ export class DirectLLMRunner implements MessageRunner {
     const effectiveTools = overrides.toolFilter
       ? allTools.filter(
           (t) =>
-            t.type === 'function' &&
-            overrides.toolFilter!.has(t.function.name),
+            t.type === 'function' && overrides.toolFilter!.has(t.function.name),
         )
       : allTools;
 
