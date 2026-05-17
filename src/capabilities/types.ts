@@ -45,6 +45,14 @@ export interface CapabilityBase {
   command?: string[];
   /** Optional args. */
   args?: string[];
+  /** Deployment scope. Default 'cluster'. */
+  scope?: 'cluster' | 'group';
+  /** Group-scope only: seconds of idle before scale-to-zero. Min 60. Default 600. */
+  scaleDownAfterIdleSeconds?: number;
+  /** Group-scope only: mount the group's PVC subPath at /data inside the pod. */
+  volumeFromGroupPvc?: boolean;
+  /** Group-scope only: where per-group credentials come from. Default 'none'. */
+  credentialsFrom?: 'none' | 'secret';
 }
 
 export interface McpCapabilitySpec extends CapabilityBase {
