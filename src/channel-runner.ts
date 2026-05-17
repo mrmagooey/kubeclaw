@@ -178,7 +178,13 @@ export async function handleCapabilitiesUpdate(
         url: `${c.endpoint}${c.kindMetadata.path ?? '/mcp'}`,
         allowedTools: c.kindMetadata.allowedTools,
       }));
+    const groupTemplates = capabilities.filter(
+      (c) => c.kind === 'mcp-group',
+    ) as Array<any>;
     await getDirectLLMRunner().configureMcp(mcpServers);
+    if (groupTemplates.length > 0) {
+      await getDirectLLMRunner().configureGroupMcpTemplates(groupTemplates);
+    }
     // Drop the cached RAG provider so the next call re-selects against
     // the new capability set (e.g. a newly installed Qdrant or LightRAG).
     resetRagProvider();
@@ -1315,9 +1321,7 @@ export async function processGroupMessages(chatJid: string): Promise<boolean> {
             specialistName: s.name,
             prompt: userPrompt,
             overrides: {
-              sessionKey: isolated
-                ? `${group.folder}:${s.name}`
-                : group.folder,
+              sessionKey: isolated ? `${group.folder}:${s.name}` : group.folder,
               llmProvider: s.llmProvider,
               toolFilter:
                 s.tools && s.tools.length > 0 ? new Set(s.tools) : undefined,

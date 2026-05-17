@@ -12,6 +12,7 @@
 
 import { RegisteredGroup, McpServerStatus } from '../types.js';
 import { RawAttachment } from '../k8s/types.js';
+import type { GroupMcpEntry } from '../capabilities/types.js';
 
 export interface ContainerInput {
   prompt: string;
@@ -113,6 +114,12 @@ export interface MessageRunner {
    * Implemented by DirectLLMRunner; not available on other runners.
    */
   configureMcp?(servers: McpServerStatus[]): Promise<void>;
+
+  /**
+   * Configure per-group MCP capability templates.
+   * Implemented by DirectLLMRunner; not available on other runners.
+   */
+  configureGroupMcpTemplates?(templates: GroupMcpEntry[]): Promise<void>;
 
   /**
    * Send a follow-up message to an active sidecar job.
