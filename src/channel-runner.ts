@@ -503,7 +503,8 @@ const queue = new GroupQueue();
 
 // Specialist catalog — loaded from ConfigMap at startup; hot-reloaded via fs.watch.
 // In tests this is replaced via _setSpecialistCatalogForTesting.
-let specialistCatalog: Pick<SpecialistCatalogLoader, 'getAll'> = new SpecialistCatalogLoader('/etc/kubeclaw/specialists/specialists.json');
+let specialistCatalog: Pick<SpecialistCatalogLoader, 'getAll'> =
+  new SpecialistCatalogLoader('/etc/kubeclaw/specialists/specialists.json');
 
 function loadState(): void {
   lastTimestamp = getRouterState('last_timestamp') || '';
@@ -1152,7 +1153,10 @@ export async function processGroupMessages(chatJid: string): Promise<boolean> {
           'Search failed: invalid query. Try simpler terms.',
         );
       } catch (sendErr) {
-        logger.error({ err: sendErr, chatJid }, 'Failed to send search error reply');
+        logger.error(
+          { err: sendErr, chatJid },
+          'Failed to send search error reply',
+        );
       }
     } finally {
       await channel.setTyping?.(chatJid, false);
@@ -1243,6 +1247,15 @@ export async function processGroupMessages(chatJid: string): Promise<boolean> {
   );
 
   const prompt = formatMessages(backstopMessages, TIMEZONE);
+  // For memory.isolated specialists, the prompt must also be isolated from
+  // the group's prior turns — otherwise the LLM sees them inline and treats
+  // them as conversation history, even though the *session* is per-specialist.
+  // Build a single-message prompt from just the last (triggering) message so
+  // the isolated specialist sees the @mention turn with no prior context.
+  const isolatedPrompt =
+    backstopMessages.length > 0
+      ? formatMessages([backstopMessages[backstopMessages.length - 1]], TIMEZONE)
+      : prompt;
   const catalog = specialistCatalog.getAll();
   const mentionedSpecialists = detectMentionedSpecialists(prompt, catalog);
 
@@ -1273,17 +1286,23 @@ export async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   const runs: DispatchRun[] =
     mentionedSpecialists.length > 0
-      ? mentionedSpecialists.map((s) => ({
-          specialistName: s.name,
-          prompt: credentialSystemBlock
-            ? `${credentialSystemBlock}\n\n<specialist name="${s.name}">\n${s.prompt}${s.claudemd ? `\n\n${s.claudemd}` : ''}\n</specialist>\n\n${prompt}`
-            : `<specialist name="${s.name}">\n${s.prompt}${s.claudemd ? `\n\n${s.claudemd}` : ''}\n</specialist>\n\n${prompt}`,
-          overrides: {
-            sessionKey: s.memory?.isolated ? `${group.folder}:${s.name}` : group.folder,
-            llmProvider: s.llmProvider,
-            toolFilter: s.tools && s.tools.length > 0 ? new Set(s.tools) : undefined,
-          },
-        }))
+      ? mentionedSpecialists.map((s) => {
+          const specPrompt = s.memory?.isolated ? isolatedPrompt : prompt;
+          return {
+            specialistName: s.name,
+            prompt: credentialSystemBlock
+              ? `${credentialSystemBlock}\n\n<specialist name="${s.name}">\n${s.prompt}${s.claudemd ? `\n\n${s.claudemd}` : ''}\n</specialist>\n\n${specPrompt}`
+              : `<specialist name="${s.name}">\n${s.prompt}${s.claudemd ? `\n\n${s.claudemd}` : ''}\n</specialist>\n\n${specPrompt}`,
+            overrides: {
+              sessionKey: s.memory?.isolated
+                ? `${group.folder}:${s.name}`
+                : group.folder,
+              llmProvider: s.llmProvider,
+              toolFilter:
+                s.tools && s.tools.length > 0 ? new Set(s.tools) : undefined,
+            },
+          };
+        })
       : [
           {
             prompt: credentialSystemBlock
@@ -1325,13 +1344,18 @@ export async function processGroupMessages(chatJid: string): Promise<boolean> {
               .replace(/<internal>[\s\S]*?<\/internal>/g, '')
               .trim();
             if (text) {
-              const out = run.specialistName ? `[@${run.specialistName}] ${text}` : text;
+              const out = run.specialistName
+                ? `[@${run.specialistName}] ${text}`
+                : text;
               await channel!.sendMessage(chatJid, out);
               outputSentToUser = true;
             }
           }
           if (result.status === 'success') queue.notifyIdle(chatJid);
-          if (result.status === 'error') { status = 'error'; hadError = true; }
+          if (result.status === 'error') {
+            status = 'error';
+            hadError = true;
+          }
         },
         run.overrides,
       );
@@ -1356,7 +1380,10 @@ export async function processGroupMessages(chatJid: string): Promise<boolean> {
   for (const [i, r] of results.entries()) {
     if (r.status === 'rejected') {
       hadError = true;
-      logger.error({ err: r.reason, specialist: runs[i].specialistName }, 'specialist run failed');
+      logger.error(
+        { err: r.reason, specialist: runs[i].specialistName },
+        'specialist run failed',
+      );
     }
   }
 
@@ -1562,7 +1589,9 @@ export function registerCredentialTools(
 // ── Test-only exports ────────────────────────────────────────────────────────
 // These are prefixed with _ and must not be called in production code.
 
-export function _setRegisteredGroupsForTesting(groups: Record<string, RegisteredGroup>): void {
+export function _setRegisteredGroupsForTesting(
+  groups: Record<string, RegisteredGroup>,
+): void {
   registeredGroups = groups;
 }
 
@@ -1577,7 +1606,9 @@ export function _resetStateForTesting(): void {
   channels.length = 0;
 }
 
-export function _setSpecialistCatalogForTesting(catalog: Pick<SpecialistCatalogLoader, 'getAll'>): void {
+export function _setSpecialistCatalogForTesting(
+  catalog: Pick<SpecialistCatalogLoader, 'getAll'>,
+): void {
   specialistCatalog = catalog;
 }
 
