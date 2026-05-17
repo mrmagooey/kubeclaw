@@ -381,3 +381,13 @@ specialists: []
 #       You are a code-review specialist. Focus on security, performance, maintainability.
 #     llmProvider: claude
 #     tools: [mcp:fetch]
+
+# Prometheus metrics scraping. Requires prometheus-operator in the cluster.
+metrics:
+  # Port on which each tier exposes /metrics. Must match METRICS_PORT env var.
+  port: 9091
+  serviceMonitor:
+    # Set to true to create ServiceMonitor resources for orchestrator, channels,
+    # and capabilities. Requires prometheus-operator CRDs to be installed.
+    enabled: false
+    interval: "30s"

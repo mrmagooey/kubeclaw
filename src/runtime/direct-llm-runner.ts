@@ -35,6 +35,7 @@ import { createLLMClient, DEFAULT_DIRECT_MODEL } from './llm-client.js';
 import { jobRunner } from '../k8s/job-runner.js';
 import type { McpServerStatus, ToolSpec } from '../types.js';
 import { McpManager } from './mcp-manager.js';
+import type { ChannelMetrics } from '../metrics/channel.js';
 import {
   getToolJobResultStream,
   getRedisClient,
@@ -325,6 +326,17 @@ const TOOLS: OpenAI.ChatCompletionTool[] = [
     },
   },
 ];
+
+/**
+ * Set of tool names the LLM is authorised to call.  Used as a cardinality
+ * guard when recording metrics: any name the LLM fabricates that is not in
+ * this set is bucketed as 'unknown' so Prometheus label cardinality stays
+ * bounded.  Derived from the static TOOLS list; custom / MCP tools are added
+ * at dispatch time (see recordToolCall call site in runAgent).
+ */
+const STATIC_TOOL_NAMES: ReadonlySet<string> = new Set(
+  TOOLS.map((t) => t.function.name),
+);
 
 // Translate LLM-facing tool names to the names the tool server expects
 const TOOL_SERVER_NAME: Record<string, string> = {
@@ -840,14 +852,37 @@ export interface LocalTool {
   ) => Promise<string>;
 }
 
+/** Derive a stable provider label from the configured base URL. */
+function resolveProviderLabel(): string {
+  const base = process.env.OPENAI_BASE_URL ?? '';
+  if (base.includes('openrouter')) return 'openrouter';
+  if (base.includes('groq')) return 'groq';
+  if (base.includes('mistral')) return 'mistral';
+  if (base.includes('anthropic') || base.includes('claude')) return 'anthropic';
+  if (base.includes('localhost') || base.includes('127.0.0.1')) return 'local';
+  if (base === '') return 'openai';
+  // best-effort: extract the hostname third component
+  try {
+    return new URL(base).hostname.split('.').at(-2) ?? 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
 export class DirectLLMRunner implements MessageRunner {
   private client: OpenAI;
   private mcpManager: McpManager | null = null;
   /** Channel-resident tools intercepted locally (no K8s pod spawned). */
   private localTools: Map<string, LocalTool> = new Map();
+  private channelMetrics: ChannelMetrics | null = null;
 
   constructor(client?: OpenAI) {
     this.client = client ?? createLLMClient();
+  }
+
+  /** Wire in channel-tier Prometheus metrics (called from channel-runner.ts). */
+  setChannelMetrics(metrics: ChannelMetrics): void {
+    this.channelMetrics = metrics;
   }
 
   /**
@@ -889,7 +924,15 @@ export class DirectLLMRunner implements MessageRunner {
     overrides: RunAgentOverrides = {},
   ): Promise<ContainerOutput> {
     const model = getModel(group, overrides.llmProvider);
+    const provider = resolveProviderLabel();
     const systemPrompt = loadSystemPrompt(input.groupFolder);
+
+    // Record skill load: 1 if a custom CLAUDE.md was loaded, 0 if using default
+    const hasCustomPrompt = systemPrompt !== DEFAULT_SYSTEM_PROMPT;
+    if (hasCustomPrompt) {
+      this.channelMetrics?.recordSkillLoad({ group: input.groupFolder });
+    }
+
     // Isolated scheduled tasks run without conversation history to avoid
     // polluting the user's chat context and accumulating token cost.
     const useHistory = !(
@@ -900,6 +943,12 @@ export class DirectLLMRunner implements MessageRunner {
         ? getConversationHistory({ sessionKey: overrides.sessionKey })
         : getConversationHistory(input.groupFolder)
       : [];
+
+    // Record conversation history size
+    this.channelMetrics?.setConversationHistorySize(
+      { group: input.groupFolder },
+      history.length,
+    );
 
     const messages: OpenAI.ChatCompletionMessageParam[] = [
       { role: 'system', content: systemPrompt },
@@ -946,12 +995,53 @@ export class DirectLLMRunner implements MessageRunner {
 
     try {
       while (toolRounds <= MAX_TOOL_ROUNDS) {
-        const response = await this.client.chat.completions.create({
+        const llmStart = Date.now();
+        let llmSuccess = true;
+        let response: OpenAI.ChatCompletion;
+        try {
+          response = await this.client.chat.completions.create({
+            model,
+            messages,
+            tools: effectiveTools,
+            tool_choice: 'auto',
+          });
+        } catch (llmErr) {
+          llmSuccess = false;
+          this.channelMetrics?.recordLlmCall({
+            provider,
+            model,
+            success: false,
+            durationMs: Date.now() - llmStart,
+          });
+          throw llmErr;
+        }
+        const llmDurationMs = Date.now() - llmStart;
+        this.channelMetrics?.recordLlmCall({
+          provider,
           model,
-          messages,
-          tools: effectiveTools,
-          tool_choice: 'auto',
+          success: llmSuccess,
+          durationMs: llmDurationMs,
         });
+
+        // Record token usage from the response
+        if (response.usage) {
+          if (response.usage.prompt_tokens) {
+            this.channelMetrics?.recordTokens({
+              provider,
+              model,
+              direction: 'input',
+              count: response.usage.prompt_tokens,
+            });
+          }
+          if (response.usage.completion_tokens) {
+            this.channelMetrics?.recordTokens({
+              provider,
+              model,
+              direction: 'output',
+              count: response.usage.completion_tokens,
+            });
+          }
+        }
 
         const msg = response.choices[0].message;
         messages.push(msg);
@@ -990,6 +1080,7 @@ export class DirectLLMRunner implements MessageRunner {
           }
 
           let result: string;
+          let toolSuccess = true;
           try {
             if (call.function.name === 'schedule_task') {
               result = await scheduleTaskDirect(
@@ -1087,8 +1178,24 @@ export class DirectLLMRunner implements MessageRunner {
               );
             }
           } catch (err) {
+            toolSuccess = false;
             result = `Tool error: ${err instanceof Error ? err.message : String(err)}`;
           }
+
+          // Guard cardinality: bucket any name the LLM fabricated outside the
+          // registered tool set as 'unknown' so Prometheus label cardinality
+          // stays bounded.  effectiveTools includes static, custom, and MCP tools.
+          const knownToolNames = new Set([
+            ...STATIC_TOOL_NAMES,
+            ...effectiveTools.map((t) => t.function.name),
+          ]);
+          const toolLabel = knownToolNames.has(call.function.name)
+            ? call.function.name
+            : 'unknown';
+          this.channelMetrics?.recordToolCall({
+            tool: toolLabel,
+            status: toolSuccess ? 'success' : 'failure',
+          });
 
           messages.push({
             role: 'tool',

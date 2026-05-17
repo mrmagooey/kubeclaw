@@ -9,6 +9,7 @@ import crypto from 'crypto';
 import { embed } from '../runtime/embedding-client.js';
 import { upsertPoints, QdrantPoint } from './store.js';
 import { logger } from '../logger.js';
+import type { RagMetrics } from '../metrics/rag.js';
 
 const CHUNK_SIZE = 1800; // characters (~450 tokens for English text)
 const CHUNK_OVERLAP = 200; // characters of overlap between consecutive chunks
@@ -59,10 +60,12 @@ export async function indexText(
   groupFolder: string,
   text: string,
   source: string,
+  metrics?: RagMetrics,
 ): Promise<void> {
   const chunks = chunk(text);
   if (chunks.length === 0) return;
 
+  const start = Date.now();
   const vectors = await embed(chunks);
   const now = Date.now();
 
@@ -73,6 +76,7 @@ export async function indexText(
   }));
 
   await upsertPoints(groupFolder, points);
+  metrics?.recordIndex({ group: groupFolder, chunks: chunks.length, durationMs: Date.now() - start });
   logger.debug(
     { groupFolder, source, chunks: chunks.length },
     'Indexed text chunks',

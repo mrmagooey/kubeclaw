@@ -24,6 +24,30 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+/**
+ * Optional metrics callback set by the orchestrator at startup.
+ * Avoids importing prom-client into db.ts; the orchestrator passes a closure.
+ * Signature: (operation: string, durationMs: number) => void
+ */
+let _onDbQuery: ((operation: string, durationMs: number) => void) | null = null;
+
+/** Called once from src/index.ts after orchMetrics is initialised. */
+export function setDbQueryCallback(
+  cb: (operation: string, durationMs: number) => void,
+): void {
+  _onDbQuery = cb;
+}
+
+/** @internal - time a synchronous db operation and report via the callback. */
+function timedDbOp<T>(operation: string, fn: () => T): T {
+  const start = Date.now();
+  try {
+    return fn();
+  } finally {
+    _onDbQuery?.(operation, Date.now() - start);
+  }
+}
+
 /** @internal Test/integration use only — do not import from feature modules. Use the curated CRUD functions in this file or in src/capabilities/db.ts. */
 export let db: SqlJsDatabase;
 let dbPath: string;
@@ -468,20 +492,22 @@ export function setLastGroupSync(): void {
 }
 
 export function storeMessage(msg: NewMessage): void {
-  db.run(
-    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      msg.id,
-      msg.chat_jid,
-      msg.sender,
-      msg.sender_name,
-      msg.content,
-      msg.timestamp,
-      msg.is_from_me ? 1 : 0,
-      msg.is_bot_message ? 1 : 0,
-    ],
-  );
-  saveDatabase();
+  timedDbOp('storeMessage', () => {
+    db.run(
+      `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        msg.id,
+        msg.chat_jid,
+        msg.sender,
+        msg.sender_name,
+        msg.content,
+        msg.timestamp,
+        msg.is_from_me ? 1 : 0,
+        msg.is_bot_message ? 1 : 0,
+      ],
+    );
+    saveDatabase();
+  });
 }
 
 export function storeMessageDirect(msg: {
@@ -553,7 +579,8 @@ export function getMessagesSince(
   botPrefix: string,
   limit: number = 200,
 ): NewMessage[] {
-  const sql = `
+  return timedDbOp('getMessagesSince', () => {
+    const sql = `
     SELECT * FROM (
       SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me
       FROM messages
@@ -565,16 +592,17 @@ export function getMessagesSince(
     ) ORDER BY timestamp
   `;
 
-  const stmt = db.prepare(sql);
-  stmt.bind([chatJid, sinceTimestamp, `${botPrefix}:%`, limit]);
+    const stmt = db.prepare(sql);
+    stmt.bind([chatJid, sinceTimestamp, `${botPrefix}:%`, limit]);
 
-  const messages: NewMessage[] = [];
-  while (stmt.step()) {
-    messages.push(stmt.getAsObject() as unknown as NewMessage);
-  }
-  stmt.free();
+    const messages: NewMessage[] = [];
+    while (stmt.step()) {
+      messages.push(stmt.getAsObject() as unknown as NewMessage);
+    }
+    stmt.free();
 
-  return messages;
+    return messages;
+  });
 }
 
 export function createTask(
@@ -1073,38 +1101,40 @@ export function getConversationHistory(
   groupFolderOrArgs: string | { sessionKey: string; limit?: number },
   limit?: number,
 ): { role: 'user' | 'assistant'; content: string }[] {
-  let column: string;
-  let key: string;
-  let maxMessages: number;
+  return timedDbOp('getConversationHistory', () => {
+    let column: string;
+    let key: string;
+    let maxMessages: number;
 
-  if (typeof groupFolderOrArgs === 'string') {
-    column = 'group_folder';
-    key = groupFolderOrArgs;
-    maxMessages =
-      limit ??
-      (parseInt(process.env.MAX_CONVERSATION_HISTORY || '20', 10) || 0);
-  } else {
-    column = 'session_key';
-    key = groupFolderOrArgs.sessionKey;
-    maxMessages =
-      groupFolderOrArgs.limit ??
-      (parseInt(process.env.MAX_CONVERSATION_HISTORY || '20', 10) || 0);
-  }
+    if (typeof groupFolderOrArgs === 'string') {
+      column = 'group_folder';
+      key = groupFolderOrArgs;
+      maxMessages =
+        limit ??
+        (parseInt(process.env.MAX_CONVERSATION_HISTORY || '20', 10) || 0);
+    } else {
+      column = 'session_key';
+      key = groupFolderOrArgs.sessionKey;
+      maxMessages =
+        groupFolderOrArgs.limit ??
+        (parseInt(process.env.MAX_CONVERSATION_HISTORY || '20', 10) || 0);
+    }
 
-  const query =
-    maxMessages > 0
-      ? `SELECT role, content FROM conversation_history WHERE ${column} = ? ORDER BY created_at DESC LIMIT ?`
-      : `SELECT role, content FROM conversation_history WHERE ${column} = ? ORDER BY created_at ASC`;
-  const params = maxMessages > 0 ? [key, maxMessages] : [key];
-  const result = db.exec(query, params);
-  if (result.length === 0) return [];
-  const rows = result[0].values.map((row: unknown[]) => ({
-    role: row[0] as 'user' | 'assistant',
-    content: row[1] as string,
-  }));
-  // DESC query returns newest-first; reverse to chronological order
-  if (maxMessages > 0) rows.reverse();
-  return rows;
+    const query =
+      maxMessages > 0
+        ? `SELECT role, content FROM conversation_history WHERE ${column} = ? ORDER BY created_at DESC LIMIT ?`
+        : `SELECT role, content FROM conversation_history WHERE ${column} = ? ORDER BY created_at ASC`;
+    const params = maxMessages > 0 ? [key, maxMessages] : [key];
+    const result = db.exec(query, params);
+    if (result.length === 0) return [];
+    const rows = result[0].values.map((row: unknown[]) => ({
+      role: row[0] as 'user' | 'assistant',
+      content: row[1] as string,
+    }));
+    // DESC query returns newest-first; reverse to chronological order
+    if (maxMessages > 0) rows.reverse();
+    return rows;
+  });
 }
 
 export interface AppendConversationArgs {

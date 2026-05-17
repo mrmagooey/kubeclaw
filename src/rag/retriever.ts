@@ -8,6 +8,7 @@
 import { embed, RAG_ENABLED } from '../runtime/embedding-client.js';
 import { search } from './store.js';
 import { logger } from '../logger.js';
+import type { RagMetrics } from '../metrics/rag.js';
 
 const TOP_K = parseInt(process.env.RAG_TOP_K ?? '5', 10);
 const SCORE_THRESHOLD = parseFloat(process.env.RAG_SCORE_THRESHOLD ?? '0.5');
@@ -21,9 +22,11 @@ const SCORE_THRESHOLD = parseFloat(process.env.RAG_SCORE_THRESHOLD ?? '0.5');
 export async function retrieveContext(
   groupFolder: string,
   query: string,
+  metrics?: RagMetrics,
 ): Promise<string> {
   if (!RAG_ENABLED) return '';
 
+  const start = Date.now();
   try {
     const [queryVector] = await embed([query]);
     const results = await search(
@@ -33,7 +36,10 @@ export async function retrieveContext(
       SCORE_THRESHOLD,
     );
 
-    if (results.length === 0) return '';
+    const hit = results.length > 0;
+    metrics?.recordQuery({ group: groupFolder, hit, durationMs: Date.now() - start });
+
+    if (!hit) return '';
 
     const chunks = results
       .map(
@@ -45,6 +51,7 @@ export async function retrieveContext(
     return `<retrieved_context>\nThe following excerpts from past conversations and documents may be relevant:\n\n${chunks}\n</retrieved_context>\n\n`;
   } catch (err) {
     // Non-fatal — if Qdrant is down, the agent runs without context
+    metrics?.recordBackendError({ backend: 'qdrant' });
     logger.warn(
       { err, groupFolder },
       'RAG retrieval failed, continuing without context',

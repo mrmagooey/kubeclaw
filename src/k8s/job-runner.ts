@@ -62,6 +62,7 @@ import {
   getOutputChannel,
   closeRedisConnections,
 } from './redis-client.js';
+import type { OrchestratorMetrics } from '../metrics/orchestrator.js';
 
 /**
  * Build Redis URL with embedded ACL credentials if provided and URL doesn't
@@ -238,6 +239,7 @@ export class JobRunner {
   private activeSubscriptions: Map<string, () => void>;
   private catalog?: CatalogInformer;
   private secretManager?: SecretManager;
+  metrics?: OrchestratorMetrics;
 
   constructor(opts: JobRunnerOpts = {}) {
     const kc = new KubeConfig();
@@ -361,6 +363,7 @@ export class JobRunner {
         namespace: this.namespace,
         body: jobManifest,
       });
+      this.metrics?.recordToolJobSpawn({ image: getContainerImage(group.llmProvider ?? 'openai') });
 
       const jobName = createdJob.metadata?.name || jobId;
 
@@ -412,6 +415,11 @@ export class JobRunner {
         { jobName, duration, group: group.name },
         'Kubernetes job completed',
       );
+      this.metrics?.recordToolJobDuration({
+        image: getContainerImage(group.llmProvider ?? 'openai'),
+        success: true,
+        durationMs: duration,
+      });
 
       return {
         status: 'success',
@@ -426,6 +434,15 @@ export class JobRunner {
         { group: group.name, jobId, error: errorMessage },
         'Kubernetes job failed',
       );
+      this.metrics?.recordToolJobFailure({
+        image: getContainerImage(group.llmProvider ?? 'openai'),
+        reason: 'error',
+      });
+      this.metrics?.recordToolJobDuration({
+        image: getContainerImage(group.llmProvider ?? 'openai'),
+        success: false,
+        durationMs: Date.now() - startTime,
+      });
 
       return {
         status: 'error',

@@ -1,0 +1,70 @@
+{{- if .Values.metrics.serviceMonitor.enabled -}}
+---
+# Orchestrator ServiceMonitor
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: kubeclaw-orchestrator-metrics
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: kubeclaw-orchestrator
+spec:
+  selector:
+    matchLabels:
+      app: kubeclaw-orchestrator
+  namespaceSelector:
+    matchNames:
+      - {{ .Values.namespace }}
+  endpoints:
+    - port: metrics
+      interval: {{ .Values.metrics.serviceMonitor.interval }}
+      path: /metrics
+{{- range $name, $cfg := .Values.channels }}
+{{- if $cfg.enabled }}
+---
+# Channel ServiceMonitor: {{ $name }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: kubeclaw-channel-{{ $name }}-metrics
+  namespace: {{ $.Values.namespace }}
+  labels:
+    app: kubeclaw-channel-{{ $name }}
+    kubeclaw/channel: {{ $name }}
+spec:
+  selector:
+    matchLabels:
+      app: kubeclaw-channel-{{ $name }}
+  namespaceSelector:
+    matchNames:
+      - {{ $.Values.namespace }}
+  endpoints:
+    - port: metrics
+      interval: {{ $.Values.metrics.serviceMonitor.interval }}
+      path: /metrics
+{{- end }}
+{{- end }}
+{{- range $name, $cfg := .Values.capabilities }}
+---
+# Capability ServiceMonitor: {{ $name }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: kubeclaw-capability-{{ $name }}-metrics
+  namespace: {{ $.Values.namespace }}
+  labels:
+    app: kubeclaw-capability-{{ $name }}
+    kubeclaw/capability: {{ $name }}
+spec:
+  selector:
+    matchLabels:
+      app: kubeclaw-capability-{{ $name }}
+  namespaceSelector:
+    matchNames:
+      - {{ $.Values.namespace }}
+  endpoints:
+    - port: metrics
+      interval: {{ $.Values.metrics.serviceMonitor.interval }}
+      path: /metrics
+{{- end }}
+{{- end }}

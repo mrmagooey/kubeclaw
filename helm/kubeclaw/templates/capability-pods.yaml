@@ -64,6 +64,9 @@ spec:
             - name: http
               containerPort: {{ $cfg.port | default 8080 }}
               protocol: TCP
+            - name: metrics
+              containerPort: {{ $.Values.metrics.port }}
+              protocol: TCP
           readinessProbe:
             tcpSocket:
               port: http
@@ -104,6 +107,10 @@ spec:
     - name: http
       port: {{ $cfg.port | default 8080 }}
       targetPort: http
+      protocol: TCP
+    - name: metrics
+      port: {{ $.Values.metrics.port }}
+      targetPort: metrics
       protocol: TCP
   type: ClusterIP
 {{- end }}

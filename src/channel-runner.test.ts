@@ -85,6 +85,7 @@ vi.mock('./router.js', async (importOriginal) => {
 
 import {
   folderPrefixForChannel,
+  _buildShutdown,
   dispatchSkillsCommandIfApplicable,
   handleSecretCommand,
   isSecretCommand,
@@ -111,6 +112,25 @@ describe('folderPrefixForChannel', () => {
 
   it('falls back to first 3 chars for unknown channels', () => {
     expect(folderPrefixForChannel('matrix')).toBe('mat');
+  });
+});
+
+describe('_buildShutdown: metrics server closed on shutdown', () => {
+  it('calls metricsServer.close() during shutdown', async () => {
+    const metricsServer = { close: vi.fn().mockResolvedValue(undefined) };
+    const queue = { shutdown: vi.fn().mockResolvedValue(undefined) };
+    const channels: Array<{ disconnect: () => Promise<void> }> = [];
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+
+    const shutdown = _buildShutdown(
+      metricsServer as import('./metrics/registry.js').MetricsServer,
+      queue as unknown as import('./group-queue.js').GroupQueue,
+      channels as unknown as import('./types.js').Channel[],
+    );
+    await shutdown('SIGTERM');
+
+    expect(metricsServer.close).toHaveBeenCalledOnce();
+    exitSpy.mockRestore();
   });
 });
 

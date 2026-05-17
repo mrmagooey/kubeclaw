@@ -29,6 +29,7 @@ import {
   getRegisteredGroup,
   getRouterState,
   initDatabase,
+  setDbQueryCallback,
   setRegisteredGroup,
   setRouterState,
   setSession,
@@ -49,6 +50,7 @@ import { SecretManager } from './k8s/secret-manager.js';
 import { KubeConfig, CoreV1Api } from '@kubernetes/client-node';
 import { KUBECLAW_NAMESPACE } from './config.js';
 import { getOutputChannel, getRedisClient } from './k8s/redis-client.js';
+import { jobRunner } from './k8s/job-runner.js';
 import {
   findChannel,
   formatMessages,
@@ -63,6 +65,9 @@ import { startSchedulerLoop } from './task-scheduler.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
 import { startHttpAdminServer } from './admin-shell.js';
+import { Registry } from 'prom-client';
+import { createOrchestratorMetrics } from './metrics/orchestrator.js';
+import { createMetricsServer } from './metrics/registry.js';
 import {
   installCapability,
   startCapabilitySubsystem,
@@ -219,6 +224,42 @@ async function main(): Promise<void> {
   }
 
   startOrchestratorHealthServer();
+
+  const metricsRegistry = new Registry();
+  const orchMetrics = createOrchestratorMetrics(metricsRegistry);
+  const metricsServer = createMetricsServer({
+    registry: metricsRegistry,
+    port: parseInt(process.env.METRICS_PORT ?? '9091', 10),
+  });
+  await metricsServer.listen();
+
+  // Wire metrics into the job runner singleton
+  jobRunner.metrics = orchMetrics;
+
+  // Wire specialist resolution recording
+  setSpecialistResolutionCallback((specialistName) => {
+    orchMetrics.recordSpecialistResolution({ specialist: specialistName });
+  });
+
+  // Wire db query timing recording
+  setDbQueryCallback((operation, durationMs) => {
+    orchMetrics.recordDbQuery({ operation, durationMs });
+  });
+
+  // Sample group queue depth every 5 s and publish to Prometheus.
+  // Choice: periodic setInterval rather than hooking enqueue/dequeue paths
+  // because the gauge is a sampled snapshot metric and polling keeps specialists.ts
+  // and group-queue.ts free of metrics imports.
+  const queueDepthInterval = setInterval(() => {
+    for (const jid of Object.keys(registeredGroups)) {
+      const group = registeredGroups[jid];
+      if (!group) continue;
+      const depth = queue.queueDepth(jid);
+      orchMetrics.setGroupQueueDepth({ group: group.folder }, depth);
+    }
+  }, 5000);
+  queueDepthInterval.unref(); // don't keep the process alive
+
   await initDatabase();
   logger.info('Database initialized');
 
@@ -353,6 +394,7 @@ async function main(): Promise<void> {
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
     stopCatalog();
+    clearInterval(queueDepthInterval);
     stopDiscoveryWatcher();
     await queue.shutdown(10000);
     await shutdownAllRunners();
@@ -478,6 +520,7 @@ async function main(): Promise<void> {
       ag: AvailableGroup[],
       rj: Set<string>,
     ) => getToolJobRunner().writeGroupsSnapshot(gf, im, ag, rj),
+    metrics: orchMetrics,
   };
   startRedisIpcWatcher(ipcDeps);
   startToolPodSpawnWatcher().catch((err) =>

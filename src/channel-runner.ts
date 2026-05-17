@@ -97,6 +97,9 @@ import {
   LIST_CREDENTIALS_TOOL_DEF,
   type IpcClient,
 } from './tools/list-credentials.js';
+import { Registry } from 'prom-client';
+import { createChannelMetrics } from './metrics/channel.js';
+import { createMetricsServer } from './metrics/registry.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -399,6 +402,28 @@ if (!KUBECLAW_CHANNEL) {
 // ── Health server state ───────────────────────────────────────────────────────
 let channelConnected = false;
 let channelReconnecting = false;
+
+/**
+ * Build the shutdown handler for the channel runner.
+ *
+ * Exported (`_buildShutdown`) so unit tests can verify that the metrics server
+ * is closed without spinning up the full main() function.
+ */
+export function _buildShutdown(
+  metricsServer: import('./metrics/registry.js').MetricsServer,
+  queue: GroupQueue,
+  channelList: Channel[],
+): (signal: string) => Promise<void> {
+  return async (signal: string) => {
+    logger.info({ signal }, 'Shutdown signal received');
+    channelConnected = false;
+    await queue.shutdown(10000);
+    await shutdownAllRunners();
+    for (const ch of channelList) await ch.disconnect();
+    await metricsServer.close();
+    process.exit(0);
+  };
+}
 
 function startHealthServer(): void {
   const port = parseInt(process.env.HEALTH_PORT || '9090', 10);
@@ -1510,6 +1535,18 @@ async function main(): Promise<void> {
   // Start the specialist catalog watcher before the message loop.
   (specialistCatalog as SpecialistCatalogLoader).start?.();
   startHealthServer();
+
+  const channelMetricsRegistry = new Registry();
+  const channelMetrics = createChannelMetrics(channelMetricsRegistry);
+  const channelMetricsServer = createMetricsServer({
+    registry: channelMetricsRegistry,
+    port: parseInt(process.env.METRICS_PORT ?? '9091', 10),
+  });
+  await channelMetricsServer.listen();
+
+  // Wire channel metrics into the DirectLLMRunner
+  getDirectLLMRunner().setChannelMetrics(channelMetrics);
+
   await initDatabase();
   logger.info(`Database initialized (channel: ${KUBECLAW_CHANNEL})`);
   startSkillCuratorInterval();
@@ -1517,14 +1554,7 @@ async function main(): Promise<void> {
   await loadChannelPlugins('/workspace/plugins');
   registerCredentialTools(getDirectLLMRunner());
 
-  const shutdown = async (signal: string) => {
-    logger.info({ signal }, 'Shutdown signal received');
-    channelConnected = false;
-    await queue.shutdown(10000);
-    await shutdownAllRunners();
-    for (const ch of channels) await ch.disconnect();
-    process.exit(0);
-  };
+  const shutdown = _buildShutdown(channelMetricsServer, queue, channels);
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
 
@@ -1540,6 +1570,14 @@ async function main(): Promise<void> {
         }
       }
       storeMessage(msg);
+      // Record inbound message after allowlist check passes
+      const group = registeredGroups[chatJid];
+      if (group) {
+        channelMetrics.recordMessage({
+          channelKind: KUBECLAW_CHANNEL_TYPE,
+          group: group.folder,
+        });
+      }
     },
     onChatMetadata: (
       chatJid: string,
