@@ -41,6 +41,7 @@ import {
   clearInvalidProviders,
   deleteRegisteredGroup,
   db,
+  searchConversations,
 } from './db.js';
 import { JobACL } from './types.js';
 
@@ -1398,6 +1399,74 @@ describe('conversation_history_fts triggers', () => {
       `SELECT id FROM conversation_history_fts WHERE conversation_history_fts MATCH 'zqyy'`,
     );
     expect(result.length).toBe(0);
+  });
+});
+
+// --- searchConversations ---
+
+describe('searchConversations', () => {
+  beforeEach(async () => {
+    await _initTestDatabase();
+    const rows = [
+      { role: 'user' as const, content: 'hello world greetings' },
+      { role: 'assistant' as const, content: 'hello back from assistant' },
+      { role: 'user' as const, content: 'goodbye world farewell' },
+      { role: 'user' as const, content: 'completely unrelated content here' },
+    ];
+    for (const r of rows) {
+      appendConversationMessage('search-group', r.role, r.content);
+    }
+  });
+
+  it('returns rows matching the query term', () => {
+    const results = searchConversations({ groupFolder: 'search-group', query: 'hello' });
+    expect(results.length).toBe(2);
+  });
+
+  it('snippet contains the matched term wrapped in brackets', () => {
+    const results = searchConversations({ groupFolder: 'search-group', query: 'hello' });
+    expect(results.every((r) => r.snippet.includes('[hello]'))).toBe(true);
+  });
+
+  it('respects the limit parameter', () => {
+    const results = searchConversations({
+      groupFolder: 'search-group',
+      query: 'world',
+      limit: 1,
+    });
+    expect(results.length).toBe(1);
+  });
+
+  it('returns empty array when query matches nothing', () => {
+    const results = searchConversations({
+      groupFolder: 'search-group',
+      query: 'xyzzy_no_match',
+    });
+    expect(results.length).toBe(0);
+  });
+
+  it('does not return rows from a different group', () => {
+    appendConversationMessage('other-group', 'user', 'hello from other group');
+    const results = searchConversations({ groupFolder: 'search-group', query: 'hello' });
+    expect(results.every((r) => r.groupFolder === 'search-group')).toBe(true);
+  });
+
+  it('after filter excludes rows before the cutoff', () => {
+    const results = searchConversations({
+      groupFolder: 'search-group',
+      query: 'hello',
+      after: '2030-06-01',
+    });
+    expect(results.length).toBe(0);
+  });
+
+  it('before filter excludes rows after the cutoff', () => {
+    const results = searchConversations({
+      groupFolder: 'search-group',
+      query: 'hello',
+      before: '2020-01-01',
+    });
+    expect(results.length).toBe(0);
   });
 });
 

@@ -1102,6 +1102,77 @@ export function clearConversationHistory(groupFolder: string): void {
   saveDatabase();
 }
 
+export interface SearchResult {
+  id: string;
+  groupFolder: string;
+  role: 'user' | 'assistant';
+  content: string;
+  createdAt: string;
+  snippet: string;
+}
+
+export interface SearchConversationsArgs {
+  groupFolder: string;
+  query: string;
+  limit?: number;
+  before?: string; // ISO date prefix, e.g. '2026-04' or '2026-04-15'
+  after?: string; // ISO date prefix
+}
+
+/**
+ * Full-text search over conversation_history for a single group.
+ * Uses the FTS4 virtual table created in createSchema().
+ * Results are ordered by recency descending. Limit defaults to 10.
+ */
+export function searchConversations(args: SearchConversationsArgs): SearchResult[] {
+  const { groupFolder, query, limit = 10, before, after } = args;
+
+  // Build the date filter fragment for the JOIN side.
+  const whereClauses: string[] = ['f.group_folder = ?', 'f.conversation_history_fts MATCH ?'];
+  const params: (string | number)[] = [groupFolder, query];
+
+  if (after) {
+    whereClauses.push('h.created_at >= ?');
+    params.push(after);
+  }
+  if (before) {
+    whereClauses.push('h.created_at <= ?');
+    params.push(before);
+  }
+
+  const where = whereClauses.join(' AND ');
+
+  // snippet(table, startMatch, endMatch, ellipsis, columnIndex, numTokens)
+  // columnIndex 3 = content column (0-indexed: id, group_folder, role, content, created_at)
+  const sql = `
+    SELECT
+      f.id,
+      f.group_folder,
+      h.role,
+      h.content,
+      h.created_at,
+      snippet(conversation_history_fts, '[', ']', '...', 3, 20) AS snippet
+    FROM conversation_history_fts f
+    JOIN conversation_history h ON h.id = f.id
+    WHERE ${where}
+    ORDER BY h.created_at DESC
+    LIMIT ?
+  `;
+  params.push(limit);
+
+  const result = db.exec(sql, params);
+  if (result.length === 0) return [];
+
+  return result[0].values.map((row: unknown[]) => ({
+    id: row[0] as string,
+    groupFolder: row[1] as string,
+    role: row[2] as 'user' | 'assistant',
+    content: row[3] as string,
+    createdAt: row[4] as string,
+    snippet: row[5] as string,
+  }));
+}
+
 // --- Job ACL Functions ---
 
 export function storeJobACL(acl: JobACL): void {
