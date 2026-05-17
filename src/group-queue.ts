@@ -269,6 +269,13 @@ export class GroupQueue {
     }
   }
 
+  /** Return the number of pending items (queued tasks + queued message flag) for a group. */
+  queueDepth(groupJid: string): number {
+    const state = this.groups.get(groupJid);
+    if (!state) return 0;
+    return state.pendingTasks.length + (state.pendingMessages ? 1 : 0);
+  }
+
   async shutdown(gracePeriodMs: number): Promise<void> {
     this.shuttingDown = true;
     logger.info({ activeCount: this.activeCount }, 'GroupQueue shutting down');

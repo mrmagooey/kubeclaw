@@ -74,6 +74,9 @@ import {
 import { logger } from './logger.js';
 import { augmentPrompt, getRagProvider } from './rag/provider.js';
 import { startHttpAdminServer } from './admin-shell.js';
+import { Registry } from 'prom-client';
+import { createOrchestratorMetrics } from './metrics/orchestrator.js';
+import { createMetricsServer } from './metrics/registry.js';
 import {
   installCapability,
   startCapabilitySubsystem,
@@ -786,6 +789,15 @@ async function main(): Promise<void> {
   }
 
   startOrchestratorHealthServer();
+
+  const metricsRegistry = new Registry();
+  const orchMetrics = createOrchestratorMetrics(metricsRegistry);
+  const metricsServer = createMetricsServer({
+    registry: metricsRegistry,
+    port: parseInt(process.env.METRICS_PORT ?? '9091', 10),
+  });
+  await metricsServer.listen();
+
   await initDatabase();
   logger.info('Database initialized');
 
