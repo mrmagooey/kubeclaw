@@ -250,6 +250,17 @@ async function startPortForward(): Promise<void> {
  * Used to (re-)install with different specialist sets between tests.
  */
 function helmUpgrade(extraArgs: string[]): void {
+  // The namespace may still be terminating from a prior test's afterEach
+  // (which deletes the release + namespace). helm upgrade will fail with
+  // "secrets ... forbidden ... namespace ... is being terminated" if we
+  // don't wait. Block here until the namespace is fully gone, then let
+  // helm --create-namespace recreate it.
+  spawnSync(
+    'kubectl',
+    ['wait', '--for=delete', `ns/${NAMESPACE}`, '--timeout=60s'],
+    { encoding: 'utf8', stdio: 'pipe', timeout: 70_000 },
+  );
+
   const result = spawnSync(
     'helm',
     [
@@ -257,6 +268,7 @@ function helmUpgrade(extraArgs: string[]): void {
       RELEASE,
       CHART_DIR,
       '--namespace', NAMESPACE,
+      '--create-namespace',
       '--timeout', '180s',
       '--set', `namespace=${NAMESPACE}`,
       '--set', 'secrets.anthropicApiKey=test-key',

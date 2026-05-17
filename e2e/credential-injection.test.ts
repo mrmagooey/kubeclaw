@@ -217,6 +217,16 @@ describe('audit-only mode (mode=sidecar, auditOnly=true)', () => {
   const AUDIT_RELEASE = 'ke2e-inject-audit';
 
   beforeAll(() => {
+    // The earlier sidecar-mode describe block's afterAll deletes this
+    // namespace with --wait=false. If it's still terminating, the helm
+    // install below races against deleting Secrets / RoleBindings and
+    // fails with "exists ... cannot be imported into the current release".
+    // Block here until the namespace is fully gone, then recreate it.
+    execSync(
+      `kubectl wait --for=delete ns/${NS} --timeout=60s 2>/dev/null || true`,
+    );
+    execSync(`kubectl create ns ${NS} 2>/dev/null || true`);
+
     const tmpDir = mkdtempSync(path.join(tmpdir(), 'ke2e-audit-'));
     const valuesFile = path.join(tmpDir, 'audit-values.yaml');
     writeFileSync(
