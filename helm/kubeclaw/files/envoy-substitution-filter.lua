@@ -123,9 +123,14 @@ function envoy_on_request(request_handle)
 
   -- ── Header substitution ───────────────────────────────────────────────────
   if allow_header then
-    -- Collect headers into a table first (cannot mutate during pairs() iteration)
+    -- Collect headers into a table first (cannot mutate during iteration).
+    -- The Envoy Lua headers object exposes the __pairs metamethod, so the
+    -- correct form is `pairs(hdrs)` — NOT `hdrs:pairs()`, which throws
+    --   "attempt to call method 'pairs' (a nil value)"
+    -- and silently swallows the rest of envoy_on_request, leaving the body-
+    -- substitution path and the total/per counter-limit checks unreachable.
     local header_pairs = {}
-    for name, value in hdrs:pairs() do
+    for name, value in pairs(hdrs) do
       header_pairs[#header_pairs + 1] = { name = name, value = value }
     end
 
