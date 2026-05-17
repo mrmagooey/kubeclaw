@@ -58,6 +58,7 @@ local MAX_BODY_BYTES = 1024 * 1024  -- 1 MB
 -- full body is buffered (end_stream=true), at which point headers + body are
 -- both available and the request hasn't been forwarded upstream yet.
 function envoy_on_request_body(request_handle, end_stream)
+  request_handle:logInfo('kubeclaw-lua: envoy_on_request_body fired end_stream=' .. tostring(end_stream))
   -- Body may arrive in chunks; only process once the full body is buffered.
   if not end_stream then return end
 
@@ -66,10 +67,14 @@ function envoy_on_request_body(request_handle, end_stream)
   -- Read and immediately strip both kubeclaw headers
   local subs_hdr  = hdrs:get('x-kubeclaw-substitutions')
   local policy_hdr = hdrs:get('x-kubeclaw-policy')
+  request_handle:logInfo('kubeclaw-lua: subs_hdr=' .. tostring(subs_hdr ~= nil and #subs_hdr or 'nil') .. ' policy_hdr=' .. tostring(policy_hdr ~= nil and #policy_hdr or 'nil'))
   hdrs:remove('x-kubeclaw-substitutions')
   hdrs:remove('x-kubeclaw-policy')
 
-  if not subs_hdr or subs_hdr == '' then return end
+  if not subs_hdr or subs_hdr == '' then
+    request_handle:logInfo('kubeclaw-lua: no substitutions header, returning')
+    return
+  end
 
   -- ── Parse policy header ───────────────────────────────────────────────────
   local per_placeholder_max = 10
@@ -108,6 +113,7 @@ function envoy_on_request_body(request_handle, end_stream)
     end
   end
 
+  request_handle:logInfo('kubeclaw-lua: parsed ' .. #substitutions .. ' substitutions, per=' .. per_placeholder_max .. ' total=' .. total_max)
   if #substitutions == 0 then return end
 
   -- ── Counters ──────────────────────────────────────────────────────────────
@@ -152,8 +158,10 @@ function envoy_on_request_body(request_handle, end_stream)
     local ctype = hdrs:get('content-type') or ''
     if not is_binary_content_type(ctype) then
       local body = request_handle:body()
+      request_handle:logInfo('kubeclaw-lua: body fetched, nil?=' .. tostring(body == nil))
       if body then
         local body_len = body:length()
+        request_handle:logInfo('kubeclaw-lua: body_len=' .. body_len)
         if body_len <= MAX_BODY_BYTES then
           local body_text = body:getBytes(0, body_len)
           local new_body = body_text
