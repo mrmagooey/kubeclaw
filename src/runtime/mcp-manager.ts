@@ -4,6 +4,10 @@
  * Connects to remote MCP server pods over HTTP, discovers their tools,
  * converts them to OpenAI function-calling format, and routes tool calls
  * to the correct MCP server.
+ *
+ * Every tool exposed by this manager is prefixed as `mcp__<capability>__<tool>`
+ * so that cluster-scoped and group-scoped tools share a common namespace without
+ * collision.
  */
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -13,6 +17,39 @@ import type OpenAI from 'openai';
 
 import { logger } from '../logger.js';
 import type { McpServerStatus } from '../types.js';
+import type { GroupMcpEntry } from '../capabilities/types.js';
+import { requestGroupCapability } from '../capabilities/discovery-client.js';
+
+// ---------------------------------------------------------------------------
+// Tool-name prefix helpers
+// ---------------------------------------------------------------------------
+
+const TOOL_PREFIX = 'mcp__';
+
+export function prefixedToolName(capabilityName: string, toolName: string): string {
+  return `${TOOL_PREFIX}${capabilityName}__${toolName}`;
+}
+
+export function parseToolName(name: string): { capability: string; tool: string } | null {
+  if (!name.startsWith(TOOL_PREFIX)) return null;
+  const rest = name.slice(TOOL_PREFIX.length);
+  const sep = rest.indexOf('__');
+  if (sep < 0) return null;
+  return { capability: rest.slice(0, sep), tool: rest.slice(sep + 2) };
+}
+
+function stripPrefixIfAny(name: string): string {
+  const parsed = parseToolName(name);
+  return parsed ? parsed.tool : name;
+}
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+export interface CallToolCtx {
+  groupFolder?: string;
+}
 
 interface ConnectedServer {
   name: string;
@@ -53,11 +90,12 @@ const RETRY_TICK_INTERVAL_MS = 5_000;
 
 export class McpManager {
   private servers = new Map<string, ConnectedServer>();
-  private toolToServer = new Map<string, string>();
   /** Servers that failed to connect and are waiting for a retry window. */
   private failedServers = new Map<string, FailedServer>();
   /** Background timer that retries failed servers without waiting for reconfigure(). */
   private retryTimer: ReturnType<typeof setInterval> | null = null;
+  /** Group-template entries keyed by capability name. */
+  private groupTemplates = new Map<string, GroupMcpEntry>();
 
   /**
    * Connect to MCP servers and discover their tools.
@@ -95,10 +133,6 @@ export class McpManager {
         logger.info({ server: name }, 'Disconnecting removed MCP server');
         await this.disconnectServer(server);
         this.servers.delete(name);
-        // Remove tool mappings for this server
-        for (const [tool, sName] of this.toolToServer) {
-          if (sName === name) this.toolToServer.delete(tool);
-        }
       }
     }
 
@@ -160,38 +194,121 @@ export class McpManager {
 
   /**
    * Get all discovered tools in OpenAI format.
+   * All tool names are prefixed with `mcp__<capability>__`.
    */
   getTools(): OpenAI.ChatCompletionTool[] {
     const tools: OpenAI.ChatCompletionTool[] = [];
+
+    // Cluster MCP servers — prefix tool names with mcp__<server>__
     for (const server of this.servers.values()) {
-      tools.push(...server.tools);
+      for (const t of server.tools) {
+        if (t.type !== 'function') continue;
+        const bare = stripPrefixIfAny(t.function.name);
+        tools.push({
+          type: 'function',
+          function: { ...t.function, name: prefixedToolName(server.name, bare) },
+        });
+      }
     }
+
+    // Group templates — synthesise tool entries from cached schemas.
+    for (const tmpl of this.groupTemplates.values()) {
+      if (tmpl.state !== 'ready' || !tmpl.toolSchemas) continue;
+      for (const schema of tmpl.toolSchemas) {
+        if (tmpl.allowedTools && !tmpl.allowedTools.includes(schema.name)) continue;
+        tools.push({
+          type: 'function',
+          function: {
+            name: prefixedToolName(tmpl.name, schema.name),
+            description: schema.description,
+            parameters: schema.inputSchema as Record<string, unknown>,
+          },
+        });
+      }
+    }
+
     return tools;
   }
 
   /**
    * Check if a tool name belongs to an MCP server.
+   * Tool names must use the `mcp__<capability>__<tool>` prefix format.
    */
   hasTool(toolName: string): boolean {
-    return this.toolToServer.has(toolName);
+    const parsed = parseToolName(toolName);
+    if (!parsed) return false;
+
+    // Cluster server matching this capability name?
+    if (this.servers.has(parsed.capability)) {
+      const server = this.servers.get(parsed.capability)!;
+      return server.tools.some(
+        (t) => t.type === 'function' && stripPrefixIfAny(t.function.name) === parsed.tool,
+      );
+    }
+
+    // Group template?
+    const tmpl = this.groupTemplates.get(parsed.capability);
+    if (tmpl && tmpl.state === 'ready') {
+      const allowed =
+        !tmpl.allowedTools || tmpl.allowedTools.includes(parsed.tool);
+      return allowed && (tmpl.toolSchemas?.some((s) => s.name === parsed.tool) ?? false);
+    }
+
+    return false;
   }
 
   /**
    * Execute a tool call, routing to the correct MCP server.
+   * Tool names must use the `mcp__<capability>__<tool>` prefix format.
+   * Group-scoped tool calls require `ctx.groupFolder`.
    */
   async callTool(
     toolName: string,
     args: Record<string, unknown>,
+    ctx?: CallToolCtx,
   ): Promise<string> {
-    const serverName = this.toolToServer.get(toolName);
-    if (!serverName) return `Unknown MCP tool: ${toolName}`;
+    const parsed = parseToolName(toolName);
+    if (!parsed) return `Unknown MCP tool: ${toolName}`;
 
-    const server = this.servers.get(serverName);
-    if (!server) return `MCP server "${serverName}" not connected`;
+    // Group-template branch (no live connection in the manager)
+    const tmpl = this.groupTemplates.get(parsed.capability);
+    if (tmpl && tmpl.state === 'ready') {
+      if (!ctx?.groupFolder) {
+        throw new Error(
+          `callTool(${toolName}) on a group-scoped capability requires ctx.groupFolder`,
+        );
+      }
+      const resolved = await requestGroupCapability(tmpl.name, ctx.groupFolder);
+      if ('error' in resolved) {
+        return JSON.stringify({
+          isError: true,
+          content: [{ type: 'text', text: `capability unavailable: ${resolved.error}` }],
+        });
+      }
+      try {
+        return await callOneShotMcp(resolved.endpoint, parsed.tool, args);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return JSON.stringify({
+          isError: true,
+          content: [{ type: 'text', text: `MCP call failed: ${msg}` }],
+        });
+      }
+    }
+
+    // Cluster server branch
+    const server = this.servers.get(parsed.capability);
+    if (!server) return `Unknown MCP tool: ${toolName}`;
+
+    // Verify the bare tool name actually exists on this server.
+    const toolExists = server.tools.some(
+      (t) => t.type === 'function' && stripPrefixIfAny(t.function.name) === parsed.tool,
+    );
+    if (!toolExists) return `Unknown MCP tool: ${toolName}`;
 
     try {
       const result = await server.client.callTool({
-        name: toolName,
+        name: parsed.tool,
         arguments: args,
       });
 
@@ -208,6 +325,22 @@ export class McpManager {
   }
 
   /**
+   * Configure group-scoped MCP templates. Only `state === 'ready'` entries
+   * with cached tool schemas are stored; others are silently dropped.
+   */
+  async configureGroupMcpTemplates(templates: GroupMcpEntry[]): Promise<void> {
+    this.groupTemplates.clear();
+    for (const tmpl of templates) {
+      if (tmpl.state !== 'ready') continue;
+      this.groupTemplates.set(tmpl.name, tmpl);
+    }
+    logger.info(
+      { count: this.groupTemplates.size, total: templates.length },
+      'mcp_group_templates_configured',
+    );
+  }
+
+  /**
    * Shut down all connections and stop background retries.
    */
   async shutdown(): Promise<void> {
@@ -216,8 +349,8 @@ export class McpManager {
       await this.disconnectServer(server);
     }
     this.servers.clear();
-    this.toolToServer.clear();
     this.failedServers.clear();
+    this.groupTemplates.clear();
   }
 
   /** Start background retry tick (idempotent — does nothing if already running). */
@@ -329,20 +462,7 @@ export class McpManager {
         continue;
       }
 
-      // Check for name collision with existing tools
-      if (this.toolToServer.has(tool.name)) {
-        logger.warn(
-          {
-            tool: tool.name,
-            server: status.name,
-            existingServer: this.toolToServer.get(tool.name),
-          },
-          'MCP tool name collision, skipping (first server wins)',
-        );
-        continue;
-      }
-
-      this.toolToServer.set(tool.name, status.name);
+      // Store tools with bare names; getTools() prefixes them on the way out.
       tools.push({
         type: 'function',
         function: {
@@ -381,5 +501,33 @@ export class McpManager {
         'Error disconnecting MCP server',
       );
     }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// One-shot MCP HTTP call helper (for group-scoped tool dispatch)
+// ---------------------------------------------------------------------------
+
+async function callOneShotMcp(
+  endpointUrl: string,
+  toolName: string,
+  args: Record<string, unknown>,
+): Promise<string> {
+  const transport = new StreamableHTTPClientTransport(new URL(endpointUrl + '/mcp'));
+  const client = new Client(
+    { name: 'kubeclaw-mcp-group-client', version: '0.0.1' },
+    { capabilities: {} },
+  );
+  await client.connect(transport);
+  try {
+    const result = await client.callTool({ name: toolName, arguments: args });
+    const content = (result.content ?? []) as Array<{ type?: string; text?: string }>;
+    const textParts = content
+      .filter((c) => c.type === 'text')
+      .map((c) => c.text ?? '')
+      .join('\n');
+    return textParts || JSON.stringify(result);
+  } finally {
+    await transport.close();
   }
 }
