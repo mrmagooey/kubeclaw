@@ -222,8 +222,16 @@ async function startPortForward(): Promise<void> {
   if (portForwardProcess) {
     portForwardProcess.kill();
     portForwardProcess = null;
-    await sleep(500);
   }
+  // portForwardProcess.kill() above only kills the bash parent — the kubectl
+  // child keeps the port bound until kernel reclaims it. Vitest's retry path
+  // re-enters startPortForward; without explicit pkill the new attempt hits
+  // "address already in use" on $HTTP_LOCAL_PORT for the full TIME_WAIT
+  // window. Brute-force kill any leftover by command-line pattern.
+  spawnSync('pkill', ['-f', `port-forward.*${HTTP_LOCAL_PORT}:80`], {
+    stdio: 'pipe',
+  });
+  await sleep(1500);
   portForwardProcess = spawn(
     'bash',
     [
