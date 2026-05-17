@@ -1287,7 +1287,9 @@ export class DirectLLMRunner implements MessageRunner {
                 .get(call.function.name)!
                 .handler(args, input);
             } else if (this.mcpManager?.hasTool(call.function.name)) {
-              result = await this.mcpManager.callTool(call.function.name, args);
+              result = await this.mcpManager.callTool(call.function.name, args, {
+                groupFolder: group.folder,
+              });
             } else {
               result = await executeToolViaK8s(
                 toolJobId,
