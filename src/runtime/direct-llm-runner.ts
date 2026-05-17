@@ -57,7 +57,7 @@ const TOOL_JOB_TIMEOUT_MS = 300_000; // 5 min for full tool jobs
 
 // ---- Tool definitions ----
 
-const TOOLS: OpenAI.ChatCompletionTool[] = [
+const TOOLS: OpenAI.ChatCompletionFunctionTool[] = [
   {
     type: 'function',
     function: {
@@ -1187,7 +1187,9 @@ export class DirectLLMRunner implements MessageRunner {
           // stays bounded.  effectiveTools includes static, custom, and MCP tools.
           const knownToolNames = new Set([
             ...STATIC_TOOL_NAMES,
-            ...effectiveTools.map((t) => t.function.name),
+            ...effectiveTools
+              .filter((t) => t.type === 'function')
+              .map((t) => t.function.name),
           ]);
           const toolLabel = knownToolNames.has(call.function.name)
             ? call.function.name

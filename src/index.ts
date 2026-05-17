@@ -79,6 +79,7 @@ import {
   SpecialistReconciler,
   loadBaselineFromDisk,
 } from './specialists/reconciler.js';
+import { setSpecialistResolutionCallback } from './specialists.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
