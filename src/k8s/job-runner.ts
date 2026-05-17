@@ -756,6 +756,17 @@ export class JobRunner {
       }
     }
 
+    // Mount the merged specialists ConfigMap (optional — absent before first reconcile)
+    volumes.push({
+      name: 'specialists-catalog',
+      configMap: { name: 'kubeclaw-specialists', optional: true },
+    });
+    volumeMounts.push({
+      name: 'specialists-catalog',
+      mountPath: '/etc/kubeclaw/specialists',
+      readOnly: true,
+    });
+
     // Add browser WebSocket endpoint to agent env when sidecar is enabled
     if (spec.browserSidecar) {
       envVars.push({
