@@ -8,5 +8,57 @@ metadata:
     app: kubeclaw
     release: {{ .Release.Name }}
 spec:
-  groups: []
+  groups:
+    - name: kubeclaw.infrastructure
+      interval: 30s
+      rules:
+        - alert: KubeclawOrchestratorDown
+          expr: |
+            absent(up{job="kubeclaw-orchestrator"}) or up{job="kubeclaw-orchestrator"} == 0
+          for: 2m
+          labels:
+            severity: critical
+            app: kubeclaw
+          annotations:
+            summary: "Kubeclaw orchestrator is down"
+            description: >-
+              The kubeclaw-orchestrator scrape target has been absent or returning 0
+              for more than 2 minutes. No tool jobs can be spawned and no messages
+              will be routed until this is resolved.
+            runbook_url: "https://github.com/mrmagooey/kubeclaw/blob/main/docs/RUNBOOKS.md#kubeclaworchestratordown"
+
+        - alert: KubeclawGroupQueueSaturated
+          expr: |
+            max by (group) (
+              max_over_time(kubeclaw_orchestrator_group_queue_depth[5m])
+            ) > {{ .Values.alerts.groupQueueSaturationDepth }}
+          for: 5m
+          labels:
+            severity: warning
+            app: kubeclaw
+          annotations:
+            summary: "Kubeclaw group queue depth is saturated (group={{ "{{" }} $labels.group {{ "}}" }})"
+            description: >-
+              The per-group message queue has held more than
+              {{ .Values.alerts.groupQueueSaturationDepth }} items for 5 minutes.
+              Either the LLM is slow or a channel is flooding messages. Check the
+              channel pod logs and the orchestrator queue depth metric.
+            runbook_url: "https://github.com/mrmagooey/kubeclaw/blob/main/docs/RUNBOOKS.md#kubeclawgroupqueuesaturated"
+
+        - alert: KubeclawRedisStreamStagnant
+          expr: |
+            increase(kubeclaw_orchestrator_redis_stream_messages_total{stream=~"kubeclaw.*"}[5m]) == 0
+            and on() kubeclaw_orchestrator_redis_stream_messages_total{stream=~"kubeclaw.*"} > 0
+          for: 5m
+          labels:
+            severity: critical
+            app: kubeclaw
+          annotations:
+            summary: "Kubeclaw Redis IPC stream has received no messages (stream={{ "{{" }} $labels.stream {{ "}}" }})"
+            description: >-
+              The Redis stream {{ "{{" }} $labels.stream {{ "}}" }} has not received any
+              messages in the last 5 minutes, but previously had traffic. This
+              suggests the orchestrator or a channel pod has disconnected from Redis,
+              or the stream consumer group is blocked.
+            runbook_url: "https://github.com/mrmagooey/kubeclaw/blob/main/docs/RUNBOOKS.md#kubeclawredisstreamstagnant"
 {{- end }}
