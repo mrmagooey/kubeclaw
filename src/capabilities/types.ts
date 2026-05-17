@@ -135,4 +135,30 @@ export type CapabilityDiscoveryEntry =
       kindMetadata: Record<string, never>;
       state?: 'ready' | 'warming' | 'failed';
       error?: string;
-    };
+    }
+  | GroupMcpEntry;
+
+// Re-export from schema-cache so consumers don't need to know about
+// per-group-capabilities/ to use this type.
+export type { McpToolSchema } from '../per-group-capabilities/schema-cache.js';
+
+/**
+ * Discovery entry for a per-group MCP capability.
+ *
+ * Endpoint is intentionally absent — group-scoped capabilities resolve their
+ * endpoint per-call via the discovery RPC (orchestrator scales the per-group
+ * Deployment up on demand). Tool schemas come from the orchestrator-side
+ * scrape cache.
+ */
+export interface GroupMcpEntry {
+  name: string;
+  kind: 'mcp-group';
+  /** Lifecycle state of the orchestrator-side schema scrape. */
+  state: 'ready' | 'pending-schema' | 'failed';
+  /** Present iff state === 'ready'. */
+  toolSchemas?: import('../per-group-capabilities/schema-cache.js').McpToolSchema[];
+  /** Optional filter declared on the capability spec. */
+  allowedTools?: string[];
+  /** Present iff state === 'failed'. */
+  error?: string;
+}
