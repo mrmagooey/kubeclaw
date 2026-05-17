@@ -106,4 +106,46 @@ spec:
               the provider is experiencing an incident, or if context windows are
               growing unboundedly. Consider adjusting alerts.llmLatencyBudgetSeconds.
             runbook_url: "https://github.com/mrmagooey/kubeclaw/blob/main/docs/RUNBOOKS.md#kubeclawllmlatencyoverbudget"
+
+    - name: kubeclaw.dataPlane
+      interval: 30s
+      rules:
+        - alert: KubeclawLLMErrorRateElevated
+          expr: |
+            (
+              sum by (provider) (
+                rate(kubeclaw_channel_llm_call_duration_seconds_count{status="error"}[15m])
+              )
+              /
+              sum by (provider) (
+                rate(kubeclaw_channel_llm_call_duration_seconds_count[15m])
+              )
+            ) > 0.1
+          for: 15m
+          labels:
+            severity: warning
+            app: kubeclaw
+          annotations:
+            summary: "Kubeclaw LLM error rate elevated (provider={{ "{{" }} $labels.provider {{ "}}" }})"
+            description: >-
+              More than 10% of LLM calls to provider {{ "{{" }} $labels.provider {{ "}}" }}
+              have failed over the last 15 minutes. This may indicate an API outage,
+              rate-limit breach, or invalid API key. Check the channel pod logs and
+              the provider status page.
+            runbook_url: "https://github.com/mrmagooey/kubeclaw/blob/main/docs/RUNBOOKS.md#kubeclawllmerrorrateelevated"
+
+        - alert: KubeclawRAGErrorRateElevated
+          expr: |
+            rate(kubeclaw_rag_backend_errors_total[5m]) > 0
+          for: 10m
+          labels:
+            severity: warning
+            app: kubeclaw
+          annotations:
+            summary: "Kubeclaw RAG backend is returning errors (backend={{ "{{" }} $labels.backend {{ "}}" }})"
+            description: >-
+              The RAG backend {{ "{{" }} $labels.backend {{ "}}" }} has been returning
+              errors for 10 minutes. Context injection will silently degrade.
+              Check the RAG capability pod logs and Qdrant health.
+            runbook_url: "https://github.com/mrmagooey/kubeclaw/blob/main/docs/RUNBOOKS.md#kubeclawragerrorrateelevated"
 {{- end }}
