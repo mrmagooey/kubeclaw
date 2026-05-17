@@ -53,8 +53,8 @@ rules:
   - apiGroups: ["networking.k8s.io"]
     resources: ["ingresses"]
     verbs: ["get", "list", "create", "patch", "replace", "delete"]
-  # Specialist reconciler: read kubeclaw-credential-broker-config (CatalogInformer)
-  # and write kubeclaw-specialists (SpecialistReconciler) ConfigMaps
+  # ConfigMap access for: CatalogInformer (reads cred broker config),
+  # SpecialistReconciler (writes kubeclaw-specialists).
   - apiGroups: [""]
     resources: ["configmaps"]
     verbs: ["get", "list", "create", "patch", "update"]
