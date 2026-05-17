@@ -61,4 +61,49 @@ spec:
               suggests the orchestrator or a channel pod has disconnected from Redis,
               or the stream consumer group is blocked.
             runbook_url: "https://github.com/mrmagooey/kubeclaw/blob/main/docs/RUNBOOKS.md#kubeclawredisstreamstagnant"
+
+    - name: kubeclaw.toolJob
+      interval: 30s
+      rules:
+        - alert: KubeclawToolJobFailureRateHigh
+          expr: |
+            (
+              rate(kubeclaw_orchestrator_tool_job_spawn_total{status="failed"}[5m])
+              /
+              rate(kubeclaw_orchestrator_tool_job_spawn_total[5m])
+            ) > 0.5
+          for: 10m
+          labels:
+            severity: warning
+            app: kubeclaw
+          annotations:
+            summary: "Kubeclaw tool-job failure rate above 50% (group={{ "{{" }} $labels.group {{ "}}" }})"
+            description: >-
+              More than 50% of tool-job spawns have been failing for 10 minutes in
+              group {{ "{{" }} $labels.group {{ "}}" }}. Check orchestrator logs for
+              OOMKilled, image-pull errors, or permission failures. The metric
+              kubeclaw_orchestrator_tool_job_spawn_total{status="failed"} breaks down
+              failure reasons.
+            runbook_url: "https://github.com/mrmagooey/kubeclaw/blob/main/docs/RUNBOOKS.md#kubeclawtoolobfailurerateligh"
+
+        - alert: KubeclawLLMLatencyOverBudget
+          expr: |
+            histogram_quantile(0.99,
+              sum by (provider, model, le) (
+                rate(kubeclaw_channel_llm_call_duration_seconds_bucket[10m])
+              )
+            ) > {{ .Values.alerts.llmLatencyBudgetSeconds }}
+          for: 10m
+          labels:
+            severity: warning
+            app: kubeclaw
+          annotations:
+            summary: "Kubeclaw LLM p99 latency exceeds budget (provider={{ "{{" }} $labels.provider {{ "}}" }}, model={{ "{{" }} $labels.model {{ "}}" }})"
+            description: >-
+              The p99 LLM call duration for provider={{ "{{" }} $labels.provider {{ "}}" }}
+              model={{ "{{" }} $labels.model {{ "}}" }} has been above
+              {{ .Values.alerts.llmLatencyBudgetSeconds }}s for 10 minutes. Check if
+              the provider is experiencing an incident, or if context windows are
+              growing unboundedly. Consider adjusting alerts.llmLatencyBudgetSeconds.
+            runbook_url: "https://github.com/mrmagooey/kubeclaw/blob/main/docs/RUNBOOKS.md#kubeclawllmlatencyoverbudget"
 {{- end }}
