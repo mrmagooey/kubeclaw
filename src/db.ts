@@ -371,6 +371,16 @@ function createSchema(database: SqlJsDatabase): void {
   database.run(
     `CREATE INDEX IF NOT EXISTS idx_per_group_cap_hash ON per_group_capability_instances(group_hash)`,
   );
+
+  database.run(`
+    CREATE TABLE IF NOT EXISTS capability_tool_schemas (
+      capability_name TEXT NOT NULL,
+      image           TEXT NOT NULL,
+      schemas_json    TEXT NOT NULL,
+      scraped_at      INTEGER NOT NULL,
+      PRIMARY KEY (capability_name, image)
+    )
+  `);
 }
 
 /**
