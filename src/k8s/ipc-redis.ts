@@ -40,6 +40,7 @@ import {
   listCapabilities,
 } from '../capabilities/index.js';
 import { loadSpecialists } from '../specialists.js';
+import type { OrchestratorMetrics } from '../metrics/orchestrator.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
@@ -53,10 +54,12 @@ export interface IpcDeps {
     availableGroups: AvailableGroup[],
     registeredJids: Set<string>,
   ) => void;
+  metrics?: OrchestratorMetrics;
 }
 
 let ipcWatcherRunning = false;
 let subscribers: Redis[] = [];
+let ipcMetrics: OrchestratorMetrics | undefined;
 
 function channelPvcNames(channel: string): {
   groupsPvc: string;
@@ -91,6 +94,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
     return;
   }
   ipcWatcherRunning = true;
+  ipcMetrics = deps.metrics;
 
   const subscriber = getRedisSubscriber();
 
@@ -767,6 +771,7 @@ export async function startToolPodSpawnWatcher(): Promise<void> {
       for (const [, messages] of resp as [string, [string, string[]][]][]) {
         for (const [id, fields] of messages) {
           lastId = id;
+          ipcMetrics?.recordRedisMessage({ stream });
           const obj: Record<string, string> = {};
           for (let i = 0; i < fields.length; i += 2)
             obj[fields[i]] = fields[i + 1];
@@ -890,6 +895,7 @@ export async function startToolJobSpawnWatcher(): Promise<void> {
       for (const [, messages] of resp as [string, [string, string[]][]][]) {
         for (const [id, fields] of messages) {
           lastId = id;
+          ipcMetrics?.recordRedisMessage({ stream });
           const obj: Record<string, string> = {};
           for (let i = 0; i < fields.length; i += 2)
             obj[fields[i]] = fields[i + 1];
@@ -1059,6 +1065,7 @@ export async function startTaskRequestWatcher(
       for (const [, messages] of resp as [string, [string, string[]][]][]) {
         for (const [id, fields] of messages) {
           lastId = id;
+          ipcMetrics?.recordRedisMessage({ stream });
           const obj: Record<string, string> = {};
           for (let i = 0; i < fields.length; i += 2)
             obj[fields[i]] = fields[i + 1];

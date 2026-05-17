@@ -51,6 +51,7 @@ import {
   startTaskRequestWatcher,
 } from './k8s/ipc-redis.js';
 import { getOutputChannel, getRedisClient } from './k8s/redis-client.js';
+import { jobRunner } from './k8s/job-runner.js';
 import {
   findChannel,
   formatMessages,
@@ -798,6 +799,9 @@ async function main(): Promise<void> {
   });
   await metricsServer.listen();
 
+  // Wire metrics into the job runner singleton
+  jobRunner.metrics = orchMetrics;
+
   await initDatabase();
   logger.info('Database initialized');
 
@@ -951,6 +955,7 @@ async function main(): Promise<void> {
       ag: AvailableGroup[],
       rj: Set<string>,
     ) => getToolJobRunner().writeGroupsSnapshot(gf, im, ag, rj),
+    metrics: orchMetrics,
   };
   startRedisIpcWatcher(ipcDeps);
   startToolPodSpawnWatcher().catch((err) =>
