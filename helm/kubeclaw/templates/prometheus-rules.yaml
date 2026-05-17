@@ -84,7 +84,7 @@ spec:
               OOMKilled, image-pull errors, or permission failures. The metric
               kubeclaw_orchestrator_tool_job_spawn_total{status="failed"} breaks down
               failure reasons.
-            runbook_url: "https://github.com/mrmagooey/kubeclaw/blob/main/docs/RUNBOOKS.md#kubeclawtoolobfailurerateligh"
+            runbook_url: "https://github.com/mrmagooey/kubeclaw/blob/main/docs/RUNBOOKS.md#kubeclawtooljobfailureratehigh"
 
         - alert: KubeclawLLMLatencyOverBudget
           expr: |
