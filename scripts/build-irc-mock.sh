@@ -20,7 +20,6 @@ cp -r "${PROJECT_ROOT}/e2e" "${BUILD_DIR}/"
 cp -r "${PROJECT_ROOT}/scripts" "${BUILD_DIR}/"
 cp "${PROJECT_ROOT}/package.json" "${BUILD_DIR}/"
 cp "${PROJECT_ROOT}/package-lock.json" "${BUILD_DIR}/" 2>/dev/null || true
-cp "${PROJECT_ROOT}/tsconfig.json" "${BUILD_DIR}/"
 
 # Remove "type": "module" from package.json for CommonJS build
 sed -i 's/"type": "module",//' "${BUILD_DIR}/package.json"
@@ -38,8 +37,9 @@ RUN npm install -g typescript
 COPY package*.json ./
 RUN npm ci --omit=dev --ignore-scripts
 
-# Copy source files
-COPY tsconfig.json ./
+# Copy source files. Do NOT copy tsconfig.json — tsc 5.4+ rejects mixing a
+# tsconfig with files-on-commandline (TS5112), and the CLI flags below already
+# specify everything the build needs.
 COPY e2e/ ./e2e/
 COPY scripts/irc-mock-server.ts ./scripts/
 

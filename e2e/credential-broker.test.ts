@@ -24,8 +24,14 @@ function buildBrokerImage(): string {
   const profileFlag = process.env.KUBECLAW_MINIKUBE_PROFILE
     ? `-p ${process.env.KUBECLAW_MINIKUBE_PROFILE}`
     : '';
+  // Re-tag the kubeclaw-orchestrator:latest image that global-setup built
+  // into the minikube docker daemon. Avoids racing parallel `docker build`s
+  // (cred-broker + cred-injection beforeAll run concurrently), which can
+  // corrupt BuildKit's COPY layer and surface as spurious TS module-not-found
+  // errors against files that actually exist on disk.
   execSync(
-    `eval $(minikube ${profileFlag} docker-env) && docker build -t ${tag} .`,
+    `eval $(minikube ${profileFlag} docker-env) && ` +
+      `docker tag kubeclaw-orchestrator:latest ${tag}`,
     { encoding: 'utf8', shell: '/bin/bash', stdio: 'inherit' },
   );
   return tag;

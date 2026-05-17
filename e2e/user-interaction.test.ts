@@ -114,11 +114,11 @@ vi.mock('../src/logger.js', () => ({
 }));
 
 import {
-  _processGroupMessages,
   _pushChannel,
   _resetState,
   _setRegisteredGroups,
 } from '../src/index.js';
+import { processGroupMessages as _processGroupMessages } from '../src/channel-runner.js';
 import {
   storeChatMetadata,
   storeMessage,

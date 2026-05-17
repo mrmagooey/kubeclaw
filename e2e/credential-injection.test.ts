@@ -25,8 +25,14 @@ function buildBrokerImage(): string {
   const profileFlag = process.env.KUBECLAW_MINIKUBE_PROFILE
     ? `-p ${process.env.KUBECLAW_MINIKUBE_PROFILE}`
     : '';
+  // Re-tag kubeclaw-orchestrator:latest (built by e2e/global-setup.ts) rather
+  // than running a fresh `docker build`. Avoids races between this test file
+  // and credential-broker.test.ts, both of which beforeAll the same minikube
+  // docker daemon concurrently; parallel BuildKit builds against the same
+  // context can produce spurious TS module-not-found errors.
   execSync(
-    `eval $(minikube ${profileFlag} docker-env) && docker build -t ${tag} .`,
+    `eval $(minikube ${profileFlag} docker-env) && ` +
+      `docker tag kubeclaw-orchestrator:latest ${tag}`,
     { encoding: 'utf8', shell: '/bin/bash', stdio: 'inherit' },
   );
   return tag;
