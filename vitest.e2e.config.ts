@@ -47,6 +47,12 @@ export default defineConfig({
       },
     },
     bail: 0,
-    retry: process.env.CI === 'true' ? 2 : 0,
+    // Auto-retry transient failures. The e2e suite shares an in-process
+    // mock LLM server + a host-side kubectl port-forward + an external
+    // minikube docker daemon; concurrent test files contend for ports
+    // and IO and produce sporadic `fetch failed`, `ECONNRESET`, and
+    // pod-not-ready blips that pass on the next try. Cap at 2 retries
+    // (3 attempts total) so persistent bugs still surface.
+    retry: process.env.CI === 'true' ? 2 : 2,
   },
 });
