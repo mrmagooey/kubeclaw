@@ -42,6 +42,7 @@ import {
   deleteRegisteredGroup,
   db,
   searchConversations,
+  backfillFts,
 } from './db.js';
 import { JobACL } from './types.js';
 
@@ -1467,6 +1468,52 @@ describe('searchConversations', () => {
       before: '2020-01-01',
     });
     expect(results.length).toBe(0);
+  });
+});
+
+// --- backfillFts ---
+
+describe('backfillFts', () => {
+  it('populates FTS from existing conversation_history rows', async () => {
+    await _initTestDatabase();
+    // Insert via appendConversationMessage (trigger fires), then manually wipe
+    // the FTS table to simulate a pre-migration database where the FTS table
+    // was added after rows were already present in conversation_history.
+    appendConversationMessage('bf-group', 'user', 'backfill target word xqzz');
+    db.run(`DELETE FROM conversation_history_fts`);
+    // Confirm FTS is now empty
+    const before = db.exec(
+      `SELECT id FROM conversation_history_fts WHERE conversation_history_fts MATCH 'xqzz'`,
+    );
+    expect(before.length).toBe(0);
+
+    backfillFts();
+
+    const after = db.exec(
+      `SELECT id FROM conversation_history_fts WHERE conversation_history_fts MATCH 'xqzz'`,
+    );
+    expect(after[0].values.length).toBe(1);
+  });
+
+  it('is idempotent — running twice does not duplicate FTS rows', async () => {
+    await _initTestDatabase();
+    db.run(
+      `INSERT INTO conversation_history (id, group_folder, role, content, created_at)
+       VALUES ('bf-2', 'bf-group2', 'user', 'idempotent check word xqzy', '2026-01-02T00:00:00Z')`,
+    );
+    backfillFts();
+    backfillFts(); // second call must be a no-op
+    const result = db.exec(
+      `SELECT id FROM conversation_history_fts WHERE conversation_history_fts MATCH 'xqzy'`,
+    );
+    expect(result[0].values.length).toBe(1);
+  });
+
+  it('is a no-op when conversation_history is empty', async () => {
+    await _initTestDatabase();
+    expect(() => backfillFts()).not.toThrow();
+    const result = db.exec(`SELECT COUNT(*) FROM conversation_history_fts`);
+    expect(Number(result[0].values[0][0])).toBe(0);
   });
 });
 
