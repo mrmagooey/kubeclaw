@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 const mockApply = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const mockDelete = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const mockPublish = vi.hoisted(() => vi.fn().mockResolvedValue(1));
+const mockGetCachedSchemas = vi.hoisted(() => vi.fn(() => null));
 
 vi.mock('./reconciler.js', () => ({
   applySpec: mockApply,
@@ -16,12 +17,16 @@ vi.mock('../k8s/redis-client.js', () => ({
 vi.mock('../logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
+vi.mock('../per-group-capabilities/schema-cache.js', () => ({
+  getCachedSchemas: mockGetCachedSchemas,
+}));
 
 import {
   installCapability,
   removeCapability,
   listCapabilities,
   getEntriesForChannel,
+  notifyAllChannels,
 } from './registry.js';
 import { _initTestDatabase, __resetDbForTest } from '../db.js';
 
@@ -34,6 +39,7 @@ beforeEach(() => {
   mockApply.mockClear();
   mockDelete.mockClear();
   mockPublish.mockClear();
+  mockGetCachedSchemas.mockClear();
 });
 
 describe('registry', () => {
@@ -181,5 +187,43 @@ describe('registry', () => {
     // mockPublish was called for each targeted channel, including mychan.
     const publishedChannels = mockPublish.mock.calls.map((c) => c[0] as string);
     expect(publishedChannels).toContain('kubeclaw:control:mychan');
+  });
+
+  describe('notifyAllChannels — group-scoped capabilities', () => {
+    it('includes mcp-group entries in the published payload', async () => {
+      // Setup: install a group-scoped echo capability + cache its schemas.
+      await installCapability({
+        kind: 'mcp',
+        name: 'echo',
+        image: 'echo:1',
+        scope: 'group',
+      });
+
+      // Mock the schema cache to return a mock schema.
+      mockGetCachedSchemas.mockReturnValue([
+        { name: 'echo', inputSchema: {} },
+      ]);
+
+      mockPublish.mockClear();
+      await notifyAllChannels();
+
+      // Find the published payload for the 'http' channel (a known channel).
+      const httpPublishCall = mockPublish.mock.calls.find(
+        (call) => call[0] === 'kubeclaw:control:http',
+      );
+      expect(httpPublishCall).toBeDefined();
+
+      // Parse the payload and extract the capabilities.
+      const payload = JSON.parse(httpPublishCall![1] as string);
+      const entries = JSON.parse(payload.capabilities);
+
+      // Verify that a mcp-group entry for 'echo' is present.
+      const groupEntry = entries.find(
+        (e: { kind: string; name: string }) => e.kind === 'mcp-group' && e.name === 'echo',
+      );
+      expect(groupEntry).toBeDefined();
+      expect(groupEntry?.state).toBe('ready');
+      expect(groupEntry?.toolSchemas).toBeDefined();
+    });
   });
 });

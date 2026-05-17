@@ -7,6 +7,7 @@ import {
   deleteCapability as dbDelete,
 } from './db.js';
 import { applySpec, deleteSpec, reconcileAllOnStartup } from './reconciler.js';
+import { getMcpEntriesAsync } from './client.js';
 import type {
   CapabilitySpec,
   CapabilityKind,
@@ -194,7 +195,13 @@ export async function notifyAllChannels(
   // multiple seconds of latency per install/remove operation.
   await Promise.all(
     [...targeted].map(async (channelName) => {
-      const entries = getEntriesForChannel(channelName);
+      // Non-MCP entries from the existing sync registry path (rag, http).
+      const nonMcp = getEntriesForChannel(channelName).filter(
+        (e) => e.kind !== 'mcp',
+      );
+      // MCP entries (cluster + group) from the async aggregator.
+      const mcp = await getMcpEntriesAsync(channelName, undefined);
+      const entries = [...nonMcp, ...mcp];
       const payload = JSON.stringify({
         command: 'capabilities_update',
         capabilities: JSON.stringify(entries),
