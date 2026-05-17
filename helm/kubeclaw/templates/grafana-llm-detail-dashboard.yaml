@@ -1,0 +1,184 @@
+{{- if .Values.dashboards.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kubeclaw-llm-detail-dashboard
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: kubeclaw
+    grafana_dashboard: "1"
+data:
+  kubeclaw-llm-detail.json: |
+    {
+      "__inputs": [],
+      "__requires": [
+        {"type": "grafana", "id": "grafana", "name": "Grafana", "version": "10.0.0"},
+        {"type": "datasource", "id": "prometheus", "name": "Prometheus", "version": "1.0.0"}
+      ],
+      "annotations": {"list": []},
+      "description": "Kubeclaw LLM per-provider and per-model deep dive: tokens, cost, latency, success rate",
+      "editable": true,
+      "fiscalYearStartMonth": 0,
+      "graphTooltip": 1,
+      "id": null,
+      "links": [],
+      "panels": [
+        {
+          "id": 1,
+          "title": "Tokens IN Rate (tokens/s)",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "fieldConfig": {
+            "defaults": {"unit": "short", "color": {"mode": "palette-classic"}},
+            "overrides": []
+          },
+          "options": {"tooltip": {"mode": "multi"}, "legend": {"displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]}},
+          "targets": [
+            {"expr": "sum by (provider, model) (rate(kubeclaw_channel_llm_tokens_total{direction=\"in\",provider=~\"$provider\",model=~\"$model\"}[5m]))", "legendFormat": "{{`{{provider}}`}}/{{`{{model}}`}}", "refId": "A"}
+          ]
+        },
+        {
+          "id": 2,
+          "title": "Tokens OUT Rate (tokens/s)",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "fieldConfig": {
+            "defaults": {"unit": "short", "color": {"mode": "palette-classic"}},
+            "overrides": []
+          },
+          "options": {"tooltip": {"mode": "multi"}, "legend": {"displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]}},
+          "targets": [
+            {"expr": "sum by (provider, model) (rate(kubeclaw_channel_llm_tokens_total{direction=\"out\",provider=~\"$provider\",model=~\"$model\"}[5m]))", "legendFormat": "{{`{{provider}}`}}/{{`{{model}}`}}", "refId": "A"}
+          ]
+        },
+        {
+          "id": 3,
+          "title": "Estimated Cost Rate ($/hour) — input tokens",
+          "description": "Cost = token rate × (cost_per_1k_input / 1000) × 3600. Set cost_per_1k_input variable to match your model pricing. Example: claude-3-5-sonnet = 3.00, gpt-4o = 2.50.",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "fieldConfig": {
+            "defaults": {"unit": "currencyUSD", "color": {"mode": "palette-classic"}},
+            "overrides": []
+          },
+          "options": {"tooltip": {"mode": "multi"}, "legend": {"displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]}},
+          "targets": [
+            {"expr": "sum by (provider, model) (rate(kubeclaw_channel_llm_tokens_total{direction=\"in\",provider=~\"$provider\",model=~\"$model\"}[5m])) * ($cost_per_1k_input / 1000) * 3600", "legendFormat": "{{`{{provider}}`}}/{{`{{model}}`}} input cost/hr", "refId": "A"},
+            {"expr": "sum by (provider, model) (rate(kubeclaw_channel_llm_tokens_total{direction=\"out\",provider=~\"$provider\",model=~\"$model\"}[5m])) * ($cost_per_1k_output / 1000) * 3600", "legendFormat": "{{`{{provider}}`}}/{{`{{model}}`}} output cost/hr", "refId": "B"}
+          ]
+        },
+        {
+          "id": 4,
+          "title": "LLM Call Success Rate (%)",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "fieldConfig": {
+            "defaults": {"unit": "percentunit", "min": 0, "max": 1, "color": {"mode": "palette-classic"}},
+            "overrides": []
+          },
+          "options": {"tooltip": {"mode": "multi"}, "legend": {"displayMode": "table", "placement": "bottom", "calcs": ["mean", "last"]}},
+          "targets": [
+            {"expr": "sum by (provider, model) (rate(kubeclaw_channel_llm_call_duration_seconds_count{status=\"ok\",provider=~\"$provider\",model=~\"$model\"}[5m])) / sum by (provider, model) (rate(kubeclaw_channel_llm_call_duration_seconds_count{provider=~\"$provider\",model=~\"$model\"}[5m]))", "legendFormat": "{{`{{provider}}`}}/{{`{{model}}`}}", "refId": "A"}
+          ]
+        },
+        {
+          "id": 5,
+          "title": "LLM Call Latency Percentiles (s)",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "fieldConfig": {
+            "defaults": {"unit": "s", "color": {"mode": "palette-classic"}},
+            "overrides": []
+          },
+          "options": {"tooltip": {"mode": "multi"}, "legend": {"displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]}},
+          "targets": [
+            {"expr": "histogram_quantile(0.50, sum by (provider, model, le) (rate(kubeclaw_channel_llm_call_duration_seconds_bucket{provider=~\"$provider\",model=~\"$model\"}[5m])))", "legendFormat": "p50 {{`{{provider}}`}}/{{`{{model}}`}}", "refId": "A"},
+            {"expr": "histogram_quantile(0.95, sum by (provider, model, le) (rate(kubeclaw_channel_llm_call_duration_seconds_bucket{provider=~\"$provider\",model=~\"$model\"}[5m])))", "legendFormat": "p95 {{`{{provider}}`}}/{{`{{model}}`}}", "refId": "B"},
+            {"expr": "histogram_quantile(0.99, sum by (provider, model, le) (rate(kubeclaw_channel_llm_call_duration_seconds_bucket{provider=~\"$provider\",model=~\"$model\"}[5m])))", "legendFormat": "p99 {{`{{provider}}`}}/{{`{{model}}`}}", "refId": "C"}
+          ]
+        },
+        {
+          "id": 6,
+          "title": "Tool Calls Invoked Rate (calls/s)",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "fieldConfig": {
+            "defaults": {"unit": "reqps", "color": {"mode": "palette-classic"}},
+            "overrides": []
+          },
+          "options": {"tooltip": {"mode": "multi"}, "legend": {"displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]}},
+          "targets": [
+            {"expr": "sum by (provider, model) (rate(kubeclaw_channel_tool_calls_total{provider=~\"$provider\",model=~\"$model\"}[5m]))", "legendFormat": "{{`{{provider}}`}}/{{`{{model}}`}}", "refId": "A"}
+          ]
+        }
+      ],
+      "refresh": "30s",
+      "schemaVersion": 38,
+      "tags": ["kubeclaw", "llm"],
+      "templating": {
+        "list": [
+          {
+            "name": "datasource",
+            "type": "datasource",
+            "pluginId": "prometheus",
+            "label": "Prometheus datasource",
+            "hide": 0,
+            "refresh": 1,
+            "query": "prometheus"
+          },
+          {
+            "name": "provider",
+            "type": "query",
+            "label": "Provider",
+            "hide": 0,
+            "refresh": 2,
+            "datasource": {"type": "prometheus", "uid": "${datasource}"},
+            "query": "label_values(kubeclaw_channel_llm_call_duration_seconds_count, provider)",
+            "multi": true,
+            "includeAll": true,
+            "allValue": ".*"
+          },
+          {
+            "name": "model",
+            "type": "query",
+            "label": "Model",
+            "hide": 0,
+            "refresh": 2,
+            "datasource": {"type": "prometheus", "uid": "${datasource}"},
+            "query": "label_values(kubeclaw_channel_llm_call_duration_seconds_count{provider=~\"$provider\"}, model)",
+            "multi": true,
+            "includeAll": true,
+            "allValue": ".*"
+          },
+          {
+            "name": "cost_per_1k_input",
+            "type": "textbox",
+            "label": "Input cost per 1k tokens (USD)",
+            "hide": 0,
+            "current": {"value": "3.00"},
+            "query": "3.00"
+          },
+          {
+            "name": "cost_per_1k_output",
+            "type": "textbox",
+            "label": "Output cost per 1k tokens (USD)",
+            "hide": 0,
+            "current": {"value": "15.00"},
+            "query": "15.00"
+          }
+        ]
+      },
+      "time": {"from": "now-3h", "to": "now"},
+      "timepicker": {},
+      "timezone": "browser",
+      "title": "Kubeclaw LLM Detail",
+      "uid": "kubeclaw-llm-detail",
+      "version": 1
+    }
+{{- end }}
