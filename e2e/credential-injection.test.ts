@@ -890,6 +890,22 @@ describe.skipIf(!hasCluster)(
         { stdio: 'inherit' },
       );
 
+      // Force-restart the broker deployment so the pod picks up the freshly
+      // built image. The helm upgrade above re-sets the same image tag, so
+      // the deployment's pod template hash is unchanged and no rollout
+      // fires automatically — kubelet keeps running the stale imageID that
+      // was current when the pod was first created. Without this restart,
+      // bug fixes to the broker (e.g. /authz path matching) never reach
+      // tests that rebuild kubeclaw-orchestrator:* without bumping the tag.
+      execSync(
+        `kubectl -n ${PG_NS} rollout restart deployment/kubeclaw-credential-broker`,
+        { stdio: 'pipe' },
+      );
+      execSync(
+        `kubectl -n ${PG_NS} rollout status deployment/kubeclaw-credential-broker --timeout=120s`,
+        { stdio: 'inherit' },
+      );
+
       // Wait for mock-upstream to be ready before tests run.
       execSync(
         `kubectl -n ${PG_NS} rollout status deployment/mock-upstream --timeout=120s`,
