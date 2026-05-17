@@ -65,7 +65,7 @@ import {
   shouldDropMessage,
 } from './sender-allowlist.js';
 import { startSchedulerLoop } from './task-scheduler.js';
-import { detectMentionedSpecialists, loadSpecialists } from './specialists.js';
+import { detectMentionedSpecialists, loadSpecialists, setSpecialistResolutionCallback } from './specialists.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { RawAttachment } from './k8s/types.js';
 import {
@@ -801,6 +801,11 @@ async function main(): Promise<void> {
 
   // Wire metrics into the job runner singleton
   jobRunner.metrics = orchMetrics;
+
+  // Wire specialist resolution recording
+  setSpecialistResolutionCallback((specialistName) => {
+    orchMetrics.recordSpecialistResolution({ specialist: specialistName });
+  });
 
   // Sample group queue depth every 5 s and publish to Prometheus.
   // Choice: periodic setInterval rather than hooking enqueue/dequeue paths

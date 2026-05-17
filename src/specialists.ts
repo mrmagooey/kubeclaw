@@ -5,6 +5,21 @@ import { GROUPS_DIR } from './config.js';
 import { logger } from './logger.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 
+/**
+ * Optional metrics callback set by the orchestrator at startup.
+ * Kept as a plain function rather than a full metrics import so that
+ * specialists.ts stays free of Prometheus dependencies and is testable
+ * in isolation.
+ */
+let _onSpecialistResolved: ((specialistName: string) => void) | null = null;
+
+/** Called once from src/index.ts after orchMetrics is initialised. */
+export function setSpecialistResolutionCallback(
+  cb: (specialistName: string) => void,
+): void {
+  _onSpecialistResolved = cb;
+}
+
 export interface SpecialistDef {
   name: string;
   prompt: string;
@@ -210,6 +225,7 @@ export function detectMentionedSpecialists(
     if (nameMatched || triggerMatched) {
       result.push(specialist);
       seen.add(lowerName);
+      _onSpecialistResolved?.(specialist.name);
     }
   }
 
