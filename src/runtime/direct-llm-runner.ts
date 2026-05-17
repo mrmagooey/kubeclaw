@@ -1027,7 +1027,10 @@ export class DirectLLMRunner implements MessageRunner {
             result = `Tool error: ${err instanceof Error ? err.message : String(err)}`;
           }
 
-          this.channelMetrics?.recordToolCall({ tool: call.function.name });
+          this.channelMetrics?.recordToolCall({
+            tool: call.function.name,
+            status: toolSuccess ? 'success' : 'failure',
+          });
 
           messages.push({
             role: 'tool',

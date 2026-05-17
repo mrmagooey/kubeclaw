@@ -4,7 +4,7 @@ export interface ChannelMetrics {
   recordMessage(labels: { channelKind: string; group: string }): void;
   recordLlmCall(labels: { provider: string; model: string; success: boolean; durationMs: number }): void;
   recordTokens(labels: { provider: string; model: string; direction: 'input' | 'output'; count: number }): void;
-  recordToolCall(labels: { tool: string }): void;
+  recordToolCall(labels: { tool: string; status: 'success' | 'failure' }): void;
   recordSkillLoad(labels: { group: string }): void;
   setConversationHistorySize(labels: { group: string }, size: number): void;
 }
@@ -35,7 +35,7 @@ export function createChannelMetrics(registry: Registry): ChannelMetrics {
   const toolCallsTotal = new Counter({
     name: 'kubeclaw_channel_tool_calls_total',
     help: 'Total tool invocations by the channel LLM during conversations',
-    labelNames: ['tool'] as const,
+    labelNames: ['tool', 'status'] as const,
     registers: [registry],
   });
 
@@ -63,8 +63,8 @@ export function createChannelMetrics(registry: Registry): ChannelMetrics {
     recordTokens({ provider, model, direction, count }) {
       tokensTotal.inc({ provider, model, direction }, count);
     },
-    recordToolCall({ tool }) {
-      toolCallsTotal.inc({ tool });
+    recordToolCall({ tool, status }) {
+      toolCallsTotal.inc({ tool, status });
     },
     recordSkillLoad({ group }) {
       skillLoadsTotal.inc({ group });

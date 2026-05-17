@@ -7,6 +7,26 @@ import { DirectLLMRunner } from '../runtime/direct-llm-runner.js';
 import type { ChannelMetrics } from '../metrics/channel.js';
 import { _initTestDatabase, __resetDbForTest, setDbQueryCallback } from '../db.js';
 
+// Mock redis-client so tool executions that reach executeToolViaK8s throw
+// (simulating Redis unavailable), which exercises the toolSuccess=false path.
+vi.mock('../k8s/redis-client.js', () => ({
+  getRedisClient: vi.fn().mockReturnValue({
+    xadd: vi.fn().mockRejectedValue(new Error('Redis unavailable (test)')),
+    xread: vi.fn(),
+    quit: vi.fn(),
+  }),
+  getRedisSubscriber: vi.fn(),
+  getRedisStreamWatcher: vi.fn(),
+  getToolCallsStream: vi.fn().mockReturnValue('kubeclaw:tool-calls:test'),
+  getToolResultsStream: vi.fn().mockReturnValue('kubeclaw:tool-results:test'),
+  getSpawnToolPodStream: vi.fn().mockReturnValue('kubeclaw:spawn-tool-pod'),
+  getSpawnToolJobStream: vi.fn().mockReturnValue('kubeclaw:spawn-tool-job'),
+  getToolJobResultStream: vi.fn().mockReturnValue('kubeclaw:tool-job-result:test'),
+  getTaskRequestStream: vi.fn().mockReturnValue('kubeclaw:task-mgmt-request'),
+  getOutputChannel: vi.fn().mockReturnValue('kubeclaw:output:test'),
+  getChannelStatusChannel: vi.fn().mockReturnValue('kubeclaw:channel-status'),
+}));
+
 // Minimal mock ChannelMetrics
 function makeMetricsMock(): ChannelMetrics & {
   calls: Record<string, unknown[][]>;
@@ -53,6 +73,44 @@ function makeFakeOpenAI(opts?: {
   const fakeCreate = vi.fn().mockResolvedValue({
     choices: [{ message: messageNoTools }],
     usage,
+  });
+
+  return {
+    chat: { completions: { create: fakeCreate } },
+  } as unknown as import('openai').default;
+}
+
+/**
+ * Fake OpenAI client that returns a single tool call on the first invocation
+ * and a plain content response on subsequent invocations.
+ */
+function makeFakeOpenAIWithToolCall(toolName: string): import('openai').default {
+  const usage = { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 };
+
+  const messageWithTool = {
+    role: 'assistant' as const,
+    content: null,
+    tool_calls: [
+      {
+        id: 'call_test_001',
+        type: 'function' as const,
+        function: { name: toolName, arguments: '{}' },
+      },
+    ],
+  };
+
+  const messageContent = {
+    role: 'assistant' as const,
+    content: 'Done',
+    tool_calls: undefined,
+  };
+
+  // First call returns tool call; subsequent calls return content.
+  let callCount = 0;
+  const fakeCreate = vi.fn().mockImplementation(() => {
+    callCount += 1;
+    const message = callCount === 1 ? messageWithTool : messageContent;
+    return Promise.resolve({ choices: [{ message }], usage });
   });
 
   return {
@@ -149,4 +207,31 @@ describe('DirectLLMRunner channel metrics wiring', () => {
     // Should not throw
     expect(() => runner.setChannelMetrics(metrics)).not.toThrow();
   });
+
+  // Fix B: toolSuccess status label ----------------------------------------
+
+  it('records status=failure when a tool throws', async () => {
+    // The global redis mock has xadd rejecting, so any executeToolViaK8s call
+    // will throw → toolSuccess = false.
+    const metrics = makeMetricsMock();
+    const fakeClient = makeFakeOpenAIWithToolCall('web_fetch');
+    const runner = new DirectLLMRunner(fakeClient);
+    runner.setChannelMetrics(metrics);
+
+    await runner.runAgent(
+      { name: 'TestGroup', folder: 'testgroup', trigger: '', added_at: '' },
+      {
+        prompt: 'Fetch http://example.com',
+        groupFolder: 'testgroup',
+        chatJid: 'jid@g.us',
+        isMain: false,
+        assistantName: 'bot',
+      },
+    );
+
+    expect(metrics.recordToolCall).toHaveBeenCalledOnce();
+    const callArg = (metrics.recordToolCall as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(callArg.status).toBe('failure');
+  });
+
 });
