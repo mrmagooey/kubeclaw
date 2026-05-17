@@ -394,16 +394,19 @@ async function sendAndCollect(
 }
 
 /**
- * Return the name of the orchestrator pod (first match).
+ * Return the name of a Running orchestrator pod. During a rollout there can
+ * briefly be two pods (terminating + new); we must pick the Running one or
+ * kubectl exec will fail with "pod not found" against the terminating one.
  */
 function getOrchestratorPod(): string {
   const r = kc([
     'get', 'pods',
     '-l', 'app=kubeclaw-orchestrator',
+    '--field-selector=status.phase=Running',
     '-o', 'jsonpath={.items[0].metadata.name}',
   ]);
   if (!r.ok || !r.stdout.trim()) {
-    throw new Error(`Could not find orchestrator pod: ${r.stderr}`);
+    throw new Error(`Could not find Running orchestrator pod: ${r.stderr}`);
   }
   return r.stdout.trim();
 }

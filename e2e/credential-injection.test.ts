@@ -649,6 +649,17 @@ function runSidecarProbe(opts: {
             { name: 'HTTP_PROXY', value: 'http://127.0.0.1:8443' },
             { name: 'NO_PROXY', value: 'localhost,127.0.0.1' },
           ],
+          // Mount the broker SA token so the probe script can read it
+          // and pass it as Bearer through the Envoy proxy. Envoy's
+          // ext_authz forwards the Authorization header, which is how
+          // the broker identifies the calling pod's ServiceAccount.
+          volumeMounts: [
+            {
+              name: 'broker-token',
+              mountPath: '/var/run/secrets/tokens',
+              readOnly: true,
+            },
+          ],
         },
         {
           name: 'credential-sidecar',
