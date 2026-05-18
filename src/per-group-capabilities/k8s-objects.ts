@@ -22,15 +22,24 @@ export interface RenderContext {
   groupsPvcName: string;
 }
 
-export function instanceName(capabilityName: string, groupHash: string): string {
+export function instanceName(
+  capabilityName: string,
+  groupHash: string,
+): string {
   return `mcp-${capabilityName}-${groupHash}`;
 }
 
-export function credsSecretName(capabilityName: string, groupHash: string): string {
+export function credsSecretName(
+  capabilityName: string,
+  groupHash: string,
+): string {
   return `${instanceName(capabilityName, groupHash)}-creds`;
 }
 
-function commonLabels(spec: CapabilitySpec, ctx: RenderContext): Record<string, string> {
+function commonLabels(
+  spec: CapabilitySpec,
+  ctx: RenderContext,
+): Record<string, string> {
   return {
     'kubeclaw.io/scope': 'group',
     'kubeclaw.io/capability': spec.name,
@@ -39,23 +48,48 @@ function commonLabels(spec: CapabilitySpec, ctx: RenderContext): Record<string, 
   };
 }
 
-export function renderDeployment(spec: CapabilitySpec, ctx: RenderContext): V1Deployment {
+export function renderDeployment(
+  spec: CapabilitySpec,
+  ctx: RenderContext,
+): V1Deployment {
   const resolved = resolveGroupCapability(spec);
   const name = instanceName(spec.name, ctx.groupHash);
   const port = spec.port ?? 3000;
   const labels = commonLabels(spec, ctx);
 
-  const env = Object.entries(spec.env ?? {}).map(([k, v]) => ({ name: k, value: v }));
-  const envFrom = resolved.credentialsFrom === 'secret'
-    ? [{ secretRef: { name: credsSecretName(spec.name, ctx.groupHash), optional: true } }]
-    : undefined;
+  const env = Object.entries(spec.env ?? {}).map(([k, v]) => ({
+    name: k,
+    value: v,
+  }));
+  const envFrom =
+    resolved.credentialsFrom === 'secret'
+      ? [
+          {
+            secretRef: {
+              name: credsSecretName(spec.name, ctx.groupHash),
+              optional: true,
+            },
+          },
+        ]
+      : undefined;
 
   const volumeMounts = resolved.volumeFromGroupPvc
-    ? [{ name: 'groups', mountPath: '/data', subPath: `groups/${ctx.groupFolder}` }]
+    ? [
+        {
+          name: 'groups',
+          mountPath: '/data',
+          subPath: `groups/${ctx.groupFolder}`,
+        },
+      ]
     : [];
 
   const volumes = resolved.volumeFromGroupPvc
-    ? [{ name: 'groups', persistentVolumeClaim: { claimName: ctx.groupsPvcName } }]
+    ? [
+        {
+          name: 'groups',
+          persistentVolumeClaim: { claimName: ctx.groupsPvcName },
+        },
+      ]
     : [];
 
   return {
@@ -69,26 +103,34 @@ export function renderDeployment(spec: CapabilitySpec, ctx: RenderContext): V1De
         metadata: { labels },
         spec: {
           automountServiceAccountToken: false,
-          containers: [{
-            name: 'mcp',
-            image: spec.image,
-            ports: [{ containerPort: port }],
-            ...(spec.command ? { command: spec.command } : {}),
-            ...(spec.args ? { args: spec.args } : {}),
-            env,
-            envFrom,
-            volumeMounts,
-            resources: {
-              requests: {
-                memory: spec.resources?.memoryRequest ?? '64Mi',
-                cpu: spec.resources?.cpuRequest ?? '50m',
+          containers: [
+            {
+              name: 'mcp',
+              image: spec.image,
+              ports: [{ containerPort: port }],
+              ...(spec.command ? { command: spec.command } : {}),
+              ...(spec.args ? { args: spec.args } : {}),
+              env,
+              envFrom,
+              volumeMounts,
+              readinessProbe: {
+                httpGet: { path: '/health', port },
+                initialDelaySeconds: 1,
+                periodSeconds: 2,
+                failureThreshold: 15,
               },
-              limits: {
-                memory: spec.resources?.memoryLimit ?? '256Mi',
-                cpu: spec.resources?.cpuLimit ?? '500m',
+              resources: {
+                requests: {
+                  memory: spec.resources?.memoryRequest ?? '64Mi',
+                  cpu: spec.resources?.cpuRequest ?? '50m',
+                },
+                limits: {
+                  memory: spec.resources?.memoryLimit ?? '256Mi',
+                  cpu: spec.resources?.cpuLimit ?? '500m',
+                },
               },
             },
-          }],
+          ],
           volumes,
         },
       },
@@ -96,7 +138,10 @@ export function renderDeployment(spec: CapabilitySpec, ctx: RenderContext): V1De
   };
 }
 
-export function renderService(spec: CapabilitySpec, ctx: RenderContext): V1Service {
+export function renderService(
+  spec: CapabilitySpec,
+  ctx: RenderContext,
+): V1Service {
   const name = instanceName(spec.name, ctx.groupHash);
   const port = spec.port ?? 3000;
   const labels = commonLabels(spec, ctx);
@@ -112,7 +157,10 @@ export function renderService(spec: CapabilitySpec, ctx: RenderContext): V1Servi
   };
 }
 
-export function renderNetworkPolicy(spec: CapabilitySpec, ctx: RenderContext): V1NetworkPolicy {
+export function renderNetworkPolicy(
+  spec: CapabilitySpec,
+  ctx: RenderContext,
+): V1NetworkPolicy {
   const name = instanceName(spec.name, ctx.groupHash);
   const port = spec.port ?? 3000;
   const labels = commonLabels(spec, ctx);
@@ -123,20 +171,34 @@ export function renderNetworkPolicy(spec: CapabilitySpec, ctx: RenderContext): V
     spec: {
       podSelector: { matchLabels: labels },
       policyTypes: ['Ingress', 'Egress'],
-      ingress: [{
-        _from: [
-          { podSelector: { matchLabels: { 'kubeclaw.io/role': 'channel' } } },
-          { podSelector: { matchLabels: { 'kubeclaw.io/role': 'orchestrator' } } },
-        ],
-        ports: [{ protocol: 'TCP', port }],
-      }],
+      ingress: [
+        {
+          _from: [
+            { podSelector: { matchLabels: { 'kubeclaw.io/role': 'channel' } } },
+            {
+              podSelector: {
+                matchLabels: { 'kubeclaw.io/role': 'orchestrator' },
+              },
+            },
+          ],
+          ports: [{ protocol: 'TCP', port }],
+        },
+      ],
       egress: [
         {
-          to: [{ podSelector: { matchLabels: { 'kubeclaw.io/role': 'redis' } } }],
+          to: [
+            { podSelector: { matchLabels: { 'kubeclaw.io/role': 'redis' } } },
+          ],
           ports: [{ protocol: 'TCP', port: 6379 }],
         },
         {
-          to: [{ namespaceSelector: { matchLabels: { 'kubernetes.io/metadata.name': 'kube-system' } } }],
+          to: [
+            {
+              namespaceSelector: {
+                matchLabels: { 'kubernetes.io/metadata.name': 'kube-system' },
+              },
+            },
+          ],
           ports: [
             { protocol: 'UDP', port: 53 },
             { protocol: 'TCP', port: 53 },
@@ -147,12 +209,19 @@ export function renderNetworkPolicy(spec: CapabilitySpec, ctx: RenderContext): V
   };
 }
 
-export function renderEmptySecret(spec: CapabilitySpec, ctx: RenderContext): V1Secret {
+export function renderEmptySecret(
+  spec: CapabilitySpec,
+  ctx: RenderContext,
+): V1Secret {
   const name = credsSecretName(spec.name, ctx.groupHash);
   return {
     apiVersion: 'v1',
     kind: 'Secret',
-    metadata: { name, namespace: ctx.namespace, labels: commonLabels(spec, ctx) },
+    metadata: {
+      name,
+      namespace: ctx.namespace,
+      labels: commonLabels(spec, ctx),
+    },
     type: 'Opaque',
     data: {},
   };

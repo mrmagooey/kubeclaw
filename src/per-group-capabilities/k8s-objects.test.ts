@@ -37,10 +37,12 @@ describe('renderDeployment', () => {
   it('mounts group PVC subPath when volumeFromGroupPvc is true', () => {
     const dep = renderDeployment(baseSpec, ctx);
     const container = dep.spec!.template.spec!.containers[0];
-    const mount = container.volumeMounts?.find(m => m.name === 'groups');
+    const mount = container.volumeMounts?.find((m) => m.name === 'groups');
     expect(mount?.mountPath).toBe('/data');
     expect(mount?.subPath).toBe('groups/Family');
-    const vol = dep.spec!.template.spec!.volumes?.find(v => v.name === 'groups');
+    const vol = dep.spec!.template.spec!.volumes?.find(
+      (v) => v.name === 'groups',
+    );
     expect(vol?.persistentVolumeClaim?.claimName).toBe('kubeclaw-groups-pvc');
   });
 
@@ -55,7 +57,9 @@ describe('renderDeployment', () => {
     const spec: CapabilitySpec = { ...baseSpec, credentialsFrom: 'secret' };
     const dep = renderDeployment(spec, ctx);
     const container = dep.spec!.template.spec!.containers[0];
-    expect(container.envFrom?.[0].secretRef?.name).toBe('mcp-filesystem-abc1234567-creds');
+    expect(container.envFrom?.[0].secretRef?.name).toBe(
+      'mcp-filesystem-abc1234567-creds',
+    );
   });
 });
 
@@ -74,7 +78,9 @@ describe('renderNetworkPolicy', () => {
     const ingress = np.spec?.ingress?.[0];
     const sources = ingress?._from ?? [];
     expect(sources.length).toBe(2);
-    const roles = sources.map(s => s.podSelector?.matchLabels?.['kubeclaw.io/role']).sort();
+    const roles = sources
+      .map((s) => s.podSelector?.matchLabels?.['kubeclaw.io/role'])
+      .sort();
     expect(roles).toEqual(['channel', 'orchestrator']);
     expect(ingress?.ports?.[0].port).toBe(3000);
   });
