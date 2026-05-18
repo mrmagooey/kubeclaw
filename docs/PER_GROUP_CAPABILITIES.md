@@ -100,6 +100,60 @@ typically <10 active pods at any moment.
   routing tools through the per-group MCP) is Phase B; v1 ships only the
   orchestrator-side foundation.
 
+## Channel-side consumer (Phase B Spec 1)
+
+Channels see per-group MCP tools as `mcp__<capability>__<tool>` in the LLM
+tool list. Resolution is lazy:
+
+1. Orchestrator pushes a `capabilities_update` over Redis IPC. Group-scoped
+   capabilities arrive as `kind: 'mcp-group'` entries with their cached tool
+   schemas (or `state: 'pending-schema'` if the scraper hasn't run yet).
+2. Channel's MCP manager stores the schemas. `getTools()` returns the
+   prefixed tool names to the LLM.
+3. When the LLM calls `mcp__filesystem__read_file`, the manager publishes a
+   discovery request to Redis, the orchestrator scales the per-group
+   Deployment up, returns the endpoint, the manager opens a one-shot MCP
+   HTTP session, calls `read_file`, returns the result.
+4. The per-group Deployment idles down on the standard sweeper schedule
+   (`scaleDownAfterIdleSeconds`, default 600).
+
+### Tool-call latency
+
+- Warm call (recent use, pod still running): single HTTP round-trip to the
+  per-group pod (~10s of ms).
+- Cold call (first call after idle, pod scaled to 0): orchestrator scale-up
+  + pod ready wait + first HTTP call. Dominated by image-pull time. Default
+  30 s discovery timeout.
+
+### Tool-call errors
+
+The LLM sees structured MCP-protocol error results (no exceptions):
+
+- `capability unavailable: <reason>` — scale-up failed or timed out.
+- `discovery timeout` — orchestrator non-responsive.
+- `MCP call failed: <reason>` — the per-group pod returned an error.
+
+No transparent retries; the LLM decides whether to retry, work around, or
+report the failure to the user.
+
+### Tool-name prefixing (breaking change)
+
+All MCP tools — both cluster-scoped and group-scoped — are exposed to the
+LLM as `mcp__<capability>__<tool>`. For example, a cluster-scoped Qdrant
+capability that previously surfaced `query_vectors` now surfaces
+`mcp__qdrant__query_vectors`.
+
+Operator action after upgrading:
+
+```bash
+# Find any prompts referencing flat MCP tool names:
+grep -rn '<tool-name>' groups/*/CLAUDE.md groups/*/skills/*.md
+```
+
+Update each match to the prefixed form. In-flight conversations may produce
+one failed tool call after upgrade if the LLM tries a stale name; the next
+turn picks up the new names from the refreshed tool list.
+
 ## Architecture references
 
 - Spec: `docs/superpowers/specs/2026-05-17-per-group-mcp-capabilities-phase-a-design.md`
