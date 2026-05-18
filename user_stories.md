@@ -109,3 +109,30 @@ status: partial (3/5) — AC1 (POST 200), AC2 (queued state), AC4 (≤2 active j
 - IMPORTANT: target the kind cluster `kubeclaw-e2e-istio`. Install kubeclaw with default values (mode=sidecar) in an isolated namespace. Use `--set image.tag=e2e-test --set image.pullPolicy=IfNotPresent` (the kind cluster has `kubeclaw-orchestrator:e2e-test` pre-loaded). Use `KUBECLAW_SKIP_HELM_INSTALL=true` to bypass vitest globalSetup.
 
 status: drafted
+## Story 5: Redis ACL user is created per tool-job and revoked on completion
+
+**As a** KubeClaw operator running specialist tool jobs in my cluster
+**I want** each tool-job pod to receive a unique, scoped Redis ACL user that is automatically revoked when the job finishes
+**So that** a compromised or misbehaving tool-job cannot read other groups' streams, publish to foreign channels, or persist access to Redis after its lifetime ends
+
+### Acceptance criteria
+
+1. After a tool-job is spawned by the orchestrator, `redis-cli ACL LIST` (authenticated as admin) includes an entry for `sidecar-<jobId>` whose rules grant read access only to `kubeclaw:input:<jobId>` and publish access only to `kubeclaw:messages:<groupFolder>` — no other keyspace patterns are present.
+2. A Redis client authenticating with the job's ACL credentials can execute `XREAD COUNT 1 STREAMS kubeclaw:input:<jobId> 0` and `PUBLISH kubeclaw:messages:<groupFolder> test` without error.
+3. The same client is rejected (NOPERM error) when it attempts to read a different job's input stream (`kubeclaw:input:<otherJobId>`) or publish to a different group's channel.
+4. After the orchestrator calls `revokeJobACL` for the job (either on job completion or on explicit revocation), `redis-cli ACL LIST` no longer contains `sidecar-<jobId>` and a subsequent authenticate attempt with the revoked credentials returns a `WRONGPASS` or `NOAUTH` error.
+5. The ACL entry for the job is also recorded in the orchestrator's SQLite database (`job_acls` table) with `status='active'` during the job's lifetime and `status='revoked'` after revocation — confirming DB and Redis stay in sync.
+
+### Notes for the test author
+
+- The ACL manager is in `src/k8s/acl-manager.ts` (`RedisACLManager` class). Key methods: `createJobACL(jobId, groupFolder)`, `revokeJobACL(jobId)`, `getJobCredentials(jobId)`. The singleton is `getACLManager()`.
+- DB helpers for ACL records are in `src/db.ts`: `storeJobACL`, `getJobACL`, `revokeJobACL` (marks status), `cleanupExpiredACLs`. The table is `job_acls`.
+- Install kubeclaw in an isolated namespace (e.g. `kubeclaw-e2e-acl`) with `orchestrator.replicas=1`. Follow the `beforeAll`/`afterAll` helm install+uninstall pattern from `e2e/credential-broker.test.ts`. The Redis Service is `kubeclaw-redis:6379`; port-forward it to a local port (e.g. `16382`) — pick a port distinct from Story 2 (`19091`) and the existing suite ports.
+- To read `redis-cli ACL LIST` from the test host, use `kubectl exec deployment/kubeclaw-orchestrator -n <ns> -- redis-cli -h kubeclaw-redis -p 6379 -a <adminPass> ACL LIST` (the admin password is in the `kubeclaw-secrets` Secret under key `redis-password`). Parse the output lines for the `sidecar-<jobId>` entry.
+- For AC1–AC3, exercise the ACL manager directly: exec into the orchestrator pod and call a one-shot Node.js script that imports `RedisACLManager` and creates then verifies ACL entries. Alternatively, post an IPC message that triggers a real tool-job via the HTTP channel's specialist path and inspect the resulting ACL state with `redis-cli ACL LIST`. The second approach is more realistic but requires a registered specialist; the first is more targeted and LLM-free.
+- For AC2–AC3 (permission checks), use `kubectl run --rm -i --restart=Never --image=redis:7-alpine` to run a transient Redis client pod in the same namespace. Pass job credentials via `--env`; then run `redis-cli -h kubeclaw-redis --user sidecar-<jobId> -a <password> XREAD ...`. Expect exit 0 for allowed ops and a `NOPERM` error string in stdout for denied ops.
+- For AC5, exec into the orchestrator pod and run `sqlite3 /app/store/kubeclaw.db "SELECT status FROM job_acls WHERE job_id='<jobId>'"` before and after revocation to assert the status transitions from `active` to `revoked`.
+- Known constraint: `ACL_ENCRYPTION_KEY` must be set (the helm chart injects it from `kubeclaw-secrets`). If the key is absent, the ACL manager falls back to a derived key (with a warning) — tests still pass but a warning is emitted in orchestrator logs.
+- IMPORTANT: target the kind cluster `kubeclaw-e2e-istio`. Use `--set image.tag=e2e-test --set image.pullPolicy=IfNotPresent`. Service names in the chart are prefixed `kubeclaw-` (e.g. `kubeclaw-redis`, not `redis`). Use `KUBECLAW_SKIP_HELM_INSTALL=true` to bypass globalSetup.
+
+status: drafted
