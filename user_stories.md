@@ -187,3 +187,28 @@ status: drafted
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--set image.tag=e2e-test --set image.pullPolicy=IfNotPresent --set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `--create-namespace`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
 
 status: passing 4/4 — also surfaced + fixed chart RBAC gap (deployments/scale subresource was missing from kubeclaw-job-manager Role; sweep was silently no-op'ing in production)
+## Story 8: Group credential secrets are created, listed, and deleted via the orchestrator IPC
+
+**As a** KubeClaw operator configuring per-group LLM API keys or third-party credentials
+**I want** the orchestrator to correctly create, list, and delete K8s Secrets for group credentials via the Redis IPC stream
+**So that** channel pods can safely store per-group API keys in the cluster without any pod needing direct K8s API access
+
+### Acceptance criteria
+
+1. After a `secret.add` IPC message is published to the orchestrator's task stream (with a `group`, `catalogId`, and JSON `fields` matching a catalog entry), `kubectl get secret kubeclaw-group-secrets-<group> -n <namespace>` returns a Secret whose `data` field contains a base64-encoded blob for that `catalogId`.
+2. A subsequent `secret.list` IPC message for the same group returns `{ ok: true, result: [{ catalogId, registeredAt }] }` — the `registeredAt` timestamp is present and the raw credential values are absent from the response payload.
+3. A `secret.remove` IPC message for the same group and `catalogId` causes the K8s Secret to be deleted (when it was the only entry) — `kubectl get secret kubeclaw-group-secrets-<group>` returns 404 after removal.
+4. A `catalog.list` IPC message returns `{ ok: true, result: [...] }` where the result array contains at least one entry whose `id` matches a catalog entry declared in the `credentialInjection.catalog` helm values.
+5. A `secret.add` with an unknown `catalogId` (not in the catalog) returns `{ ok: false, error: "unknown_catalog_entry" }` and no K8s Secret is created.
+
+### Notes for the test author
+
+- The orchestrator task stream is `kubeclaw:tasks` (a Redis stream). IPC messages are written as `XADD kubeclaw:tasks * type secret.add group <group> catalogId <id> fields '{"token":"val"}' resultStream <stream>`. Read back the response with `XREAD COUNT 1 BLOCK 5000 STREAMS <resultStream> 0`. Use `ioredis` directly — no LLM, no HTTP channel involved.
+- The catalog ConfigMap is `kubeclaw-credential-broker-config` (rendered by `helm/kubeclaw/templates/credential-broker-config.yaml`). Pass at least one `credentialInjection.catalog` entry at helm install time, e.g. `--set-json 'credentialInjection.catalog=[{"id":"replicate","host":"api.replicate.com","credentialFields":[{"name":"token","envVar":"REPLICATE_API_TOKEN"}]}]'`. Set `credentialInjection.mode=sidecar` so the ConfigMap is rendered.
+- The K8s Secret name is `kubeclaw-group-secrets-<group>` (from `SECRET_NAME_PREFIX` in `src/k8s/secret-manager.ts`). The Secret carries label `kubeclaw.io/group-secrets=true`. Verify its existence with `kubectl get secret kubeclaw-group-secrets-<group> -n <namespace>`.
+- The orchestrator needs `secrets` RBAC (`create`, `get`, `update`, `delete`) in its ClusterRole. Verify with `kubectl auth can-i create secrets --as=system:serviceaccount:<namespace>:kubeclaw-orchestrator -n <namespace>` before sending IPC — this is the most likely gap this story can surface.
+- Install kubeclaw in an isolated namespace (`kubeclaw-e2e-grpsec`) following the `beforeAll`/`afterAll` pattern from `e2e/credential-broker.test.ts`. Port-forward Redis to a local port (e.g. `16383`) to send IPC messages from the test host. Use `orchestrator.replicas=1`.
+- The Redis stream name and field layout are defined in `src/k8s/types.ts` (`TaskRequest` type) and used in `src/k8s/ipc-redis.ts` around line 1362. The `getTaskRequestStream()` helper (from `src/k8s/redis-client.ts`) returns the stream name; in production it is `kubeclaw:tasks`.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-grpsec --create-namespace`, `--set namespace=kubeclaw-e2e-grpsec`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
+
+status: drafted
