@@ -246,9 +246,11 @@ describe.skipIf(!hasIstio || hasExistingRelease)(
     let installed = false;
 
     beforeAll(() => {
-      const skipHelmInstall = process.env.KUBECLAW_SKIP_HELM_INSTALL === 'true';
-
-      if (!skipHelmInstall) {
+      // The describe-level guard already filtered out "vanilla release exists"
+      // (when KUBECLAW_SKIP_HELM_INSTALL is unset). At this point we always
+      // need a fresh mode=istio install — the env var only suppresses the
+      // global-setup vanilla install; it does NOT mean "skip this install".
+      {
         // Write a temporary values file so we can include catalog entries
         // (helm --set does not support complex nested arrays cleanly).
         const valuesDir = mkdtempSync(path.join(tmpdir(), 'ke2e-vals-'));
@@ -376,8 +378,9 @@ describe.skipIf(!hasIstio || hasExistingRelease)(
         `kubectl -n ${NS} delete pod ${BROKER_PROBE_POD} --ignore-not-found --wait=false`,
         { stdio: 'pipe' },
       );
-      // Only uninstall if we installed (and not skipping for live-cluster dev runs).
-      if (!installed || process.env.KUBECLAW_SKIP_HELM_INSTALL === 'true') return;
+      // Always uninstall when we installed; the env var only suppresses
+      // global-setup install, not this suite's lifecycle.
+      if (!installed) return;
       execSync('helm uninstall kubeclaw --namespace kubeclaw', {
         encoding: 'utf8',
         stdio: 'inherit',
