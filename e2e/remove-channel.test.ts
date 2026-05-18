@@ -1,82 +1,69 @@
 /**
- * e2e test: remove_channel story 1 — admin-shell tool
+ * E2E: remove_channel admin shell tool
  *
- * Story: As a KubeClaw operator I want to remove a channel (Deployment + K8s
- * Secret + PVC) through the admin shell in a single command so that I can
- * cleanly decommission a channel without manually running multiple kubectl
- * delete commands.
+ * Tests that the remove_channel tool in admin-shell.ts correctly removes
+ * a channel's Deployment, Secret, and PersistentVolumeClaims, and that
+ * setup_channel stamps the kubeclaw-channel=<instance> label on all
+ * created resources so AC5 label-selector cleanup verification works.
  *
- * Acceptance criteria tested here:
- *   AC1 — admin shell exposes a `remove_channel` tool that accepts instanceName
- *   AC2 — removes Deployment, Secret, and PVC created by setup_channel
- *   AC3 — calling a second time is idempotent (no error)
- *   AC4 — tool reply lists which resources were deleted vs already absent
- *   AC5 — after remove, label selector kubeclaw-channel=<instance> is empty
+ * Requires: kind cluster `kubeclaw-e2e-istio` with kubeclaw installed
+ *   (kubectl context = kind-kubeclaw-e2e-istio, namespace = kubeclaw).
+ *   Image `kubeclaw-orchestrator:e2e-test` must be pre-loaded into kind.
+ * Does NOT require a live LLM — calls executeTool() directly via kubectl exec.
  *
- * Expected initial failure: step 3 ("AC1/2/5") fails with the executeTool
- * result containing "Unknown tool: remove_channel", because the tool does not
- * yet exist in admin-shell.ts.
- *
- * The test calls executeTool() directly inside the orchestrator pod via
- * kubectl exec so no LLM is needed (deterministic, no model required).
- *
- * Prerequisites:
- *   - A Kubernetes cluster is reachable via the default kubectl context.
- *   - The image kubeclaw-orchestrator:e2e-test is loaded into the cluster.
- *   - helm 3.x on PATH.
+ * Run:
+ *   docker build -t kubeclaw-orchestrator:e2e-test .
+ *   docker save kubeclaw-orchestrator:e2e-test -o /tmp/orch.tar
+ *   kind load image-archive /tmp/orch.tar --name kubeclaw-e2e-istio
+ *   kubectl --context kind-kubeclaw-e2e-istio delete namespace kubeclaw --ignore-not-found --timeout=60s
+ *   kubectl config use-context kind-kubeclaw-e2e-istio
+ *   KUBECLAW_SKIP_HELM_INSTALL=true npx vitest run --config vitest.e2e.config.ts remove-channel
  */
-
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 
-// ─── Constants ────────────────────────────────────────────────────────────────
+// ── Constants ──────────────────────────────────────────────────────────────────
 
-const NAMESPACE = 'kubeclaw-rc-test';
-const RELEASE = 'kubeclaw-rc-test';
+const KUBE_CONTEXT = 'kind-kubeclaw-e2e-istio';
+const NAMESPACE = 'kubeclaw';
 const CHART_DIR = './helm/kubeclaw';
-const ADMIN_LOCAL_PORT = 19091; // unique — does not clash with other suites
+const RELEASE = 'kubeclaw';
 
-// Random suffix so back-to-back runs don't conflict on stale PVC names.
-const RUN_ID = Math.random().toString(36).slice(2, 7);
-const INSTANCE_NAME = `http-removetest-${RUN_ID}`;
+// Use a unique instance name per test run to avoid Deployment selector
+// immutability conflicts if the namespace is not wiped between runs.
+const INSTANCE_SUFFIX = Math.random().toString(36).slice(2, 7);
+const INSTANCE_NAME = `http-removetest-${INSTANCE_SUFFIX}`;
+const DEPLOYMENT_NAME = `kubeclaw-channel-${INSTANCE_NAME}`;
+const SECRET_NAME = `kubeclaw-${INSTANCE_NAME}-secrets`;
+const PVC_NAMES = [
+  `kubeclaw-channel-${INSTANCE_NAME}-groups`,
+  `kubeclaw-channel-${INSTANCE_NAME}-store`,
+  `kubeclaw-channel-${INSTANCE_NAME}-sessions`,
+];
 
-// Minimal HTTP user credentials — just need something so setup_channel accepts
-// the 'http' type (HTTP_CHANNEL_USERS is a required credential field).
-const HTTP_USERS = `testuser:testpass`;
+const RESOURCE_READY_TIMEOUT_MS = 120_000;
+const POLL_INTERVAL_MS = 3_000;
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ── Skip guard ──────────────────────────────────────────────────────────────────
+// Skip the whole suite if the kind cluster context is not present.
+
+const contextAvailable =
+  spawnSync('kubectl', ['config', 'get-contexts', KUBE_CONTEXT], {
+    stdio: 'pipe',
+  }).status === 0;
+
+// ── Helpers ────────────────────────────────────────────────────────────────────
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-/** Run kubectl with -n NAMESPACE; returns { ok, stdout, stderr }. */
+/** Run kubectl with --context=KUBE_CONTEXT and return result. */
 function kc(
   args: string[],
   opts: { timeout?: number } = {},
 ): { ok: boolean; stdout: string; stderr: string } {
-  const r: SpawnSyncReturns<string> = spawnSync(
-    'kubectl',
-    [...args, '-n', NAMESPACE],
-    {
-      encoding: 'utf8',
-      stdio: 'pipe',
-      timeout: opts.timeout ?? 30_000,
-    },
-  );
-  return {
-    ok: r.status === 0,
-    stdout: r.stdout ?? '',
-    stderr: r.stderr ?? '',
-  };
-}
-
-/** Run kubectl at cluster scope (no -n flag). */
-function kcCluster(
-  args: string[],
-  opts: { timeout?: number } = {},
-): { ok: boolean; stdout: string; stderr: string } {
-  const r: SpawnSyncReturns<string> = spawnSync('kubectl', args, {
+  const r = spawnSync('kubectl', ['--context', KUBE_CONTEXT, ...args], {
     encoding: 'utf8',
     stdio: 'pipe',
     timeout: opts.timeout ?? 30_000,
@@ -88,75 +75,33 @@ function kcCluster(
   };
 }
 
-/** Poll until fn() returns true or timeoutMs elapses. */
-async function waitUntil(
-  fn: () => boolean,
-  timeoutMs: number,
-  label: string,
-  intervalMs = 3000,
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (fn()) return;
-    await sleep(intervalMs);
-  }
-  throw new Error(`Timed out after ${timeoutMs}ms waiting for: ${label}`);
-}
-
-/** Wait for the orchestrator Deployment to have at least one Ready pod. */
-async function waitForOrchestrator(timeoutMs = 180_000): Promise<void> {
-  await waitUntil(
-    () => {
-      const r = kc([
-        'get',
-        'pods',
-        '-l',
-        'app=kubeclaw-orchestrator',
-        '-o',
-        'jsonpath={.items[*].status.conditions[?(@.type=="Ready")].status}',
-      ]);
-      const statuses = r.stdout.trim().split(/\s+/).filter(Boolean);
-      return statuses.length > 0 && statuses.every((s) => s === 'True');
-    },
-    timeoutMs,
-    'orchestrator pod Ready',
-  );
-}
-
 /**
- * Call executeTool(toolName, args) directly inside the orchestrator container
- * via kubectl exec.  Returns the string output that executeTool() resolves to.
- *
- * The admin-shell module has a top-level `kc.loadFromCluster()` call and lazy
- * K8s client creation; calling executeTool() from inside the pod is safe.
- * The `KUBERNETES_SERVICE_HOST` guard lives only inside `main()` and does not
- * block the named export.
+ * Call executeTool inside the orchestrator pod via kubectl exec.
+ * Uses dynamic import of the compiled admin-shell.js — no LLM needed.
+ * The script runs as an ES module (`--input-type=module`) so dynamic
+ * import() works without transpilation.
  */
-function execAdminTool(
+function runAdminTool(
   toolName: string,
-  toolArgs: Record<string, unknown>,
+  input: Record<string, unknown>,
   opts: { timeout?: number } = {},
-): { ok: boolean; output: string; stderr: string } {
-  const argsJson = JSON.stringify(JSON.stringify(toolArgs));
-  // We use a dynamic import so the module-level side effects (KubeConfig.loadFromCluster)
-  // execute after the NODE_PATH is set and inside the real cluster environment.
-  const script = `
-    (async () => {
-      try {
-        const { executeTool } = await import('/app/dist/admin-shell.js');
-        const result = await executeTool(${JSON.stringify(toolName)}, ${argsJson});
-        process.stdout.write(result);
-        process.exit(0);
-      } catch (err) {
-        process.stderr.write('exec-error: ' + (err instanceof Error ? err.message + '\\n' + err.stack : String(err)));
-        process.exit(1);
-      }
-    })();
-  `;
+): { ok: boolean; stdout: string; stderr: string } {
+  // Build the inline ESM script.  JSON.stringify is safe for embedding in
+  // the double-quoted node -e argument because it produces only ASCII
+  // printable characters and does not include unescaped quotes.
+  const script = `import('/app/dist/admin-shell.js').then(async m => {
+  const result = await m.executeTool(${JSON.stringify(toolName)}, ${JSON.stringify(input)});
+  process.stdout.write(result + '\\n');
+}).catch(e => {
+  process.stderr.write(String(e) + '\\n');
+  process.exit(1);
+});`;
 
-  const r: SpawnSyncReturns<string> = spawnSync(
+  const r = spawnSync(
     'kubectl',
     [
+      '--context',
+      KUBE_CONTEXT,
       '-n',
       NAMESPACE,
       'exec',
@@ -175,356 +120,259 @@ function execAdminTool(
       timeout: opts.timeout ?? 60_000,
     },
   );
-
   return {
     ok: r.status === 0,
-    output: (r.stdout ?? '').trim(),
-    stderr: (r.stderr ?? '').trim(),
+    stdout: r.stdout ?? '',
+    stderr: r.stderr ?? '',
   };
 }
 
-/**
- * Return true if a K8s resource exists in the test namespace.
- * kind examples: 'deployment', 'secret', 'persistentvolumeclaim'
- */
-function resourceExists(kind: string, name: string): boolean {
-  const r = kc(['get', kind, name, '--ignore-not-found', '-o', 'name']);
-  return r.stdout.trim().length > 0;
+/** Poll condition until it returns true, or throw on timeout. */
+async function waitUntil(
+  condition: () => boolean,
+  timeoutMs: number,
+  label: string,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (condition()) return;
+    await sleep(POLL_INTERVAL_MS);
+  }
+  throw new Error(`Timed out after ${timeoutMs}ms waiting for: ${label}`);
 }
 
-/**
- * Wait for the channel Deployment to have a Ready pod.
- */
-async function waitForChannelDeployment(
-  deploymentName: string,
-  timeoutMs = 120_000,
-): Promise<void> {
+// ── Suite setup / teardown ─────────────────────────────────────────────────────
+
+beforeAll(async () => {
+  if (!contextAvailable) return; // suite is skipped — nothing to set up
+
+  // Check if kubeclaw is already installed in the kind cluster.
+  const helmStatus = spawnSync(
+    'helm',
+    ['--kube-context', KUBE_CONTEXT, 'status', RELEASE, '--namespace', NAMESPACE],
+    { encoding: 'utf8', stdio: 'pipe' },
+  );
+
+  if (helmStatus.status !== 0) {
+    // Install kubeclaw.  The caller must have pre-loaded
+    // kubeclaw-orchestrator:e2e-test into the kind cluster with:
+    //   docker build -t kubeclaw-orchestrator:e2e-test .
+    //   docker save ... | kind load image-archive ...
+    console.log(`Installing kubeclaw into ${KUBE_CONTEXT}...`);
+    kc(['create', 'namespace', NAMESPACE]);
+    const install = spawnSync(
+      'helm',
+      [
+        '--kube-context', KUBE_CONTEXT,
+        'upgrade', '--install',
+        RELEASE, CHART_DIR,
+        '--namespace', NAMESPACE,
+        '--timeout', '120s',
+        '--set', `namespace=${NAMESPACE}`,
+        '--set', 'secrets.anthropicApiKey=test-key',
+        '--set', 'secrets.claudeCodeOauthToken=test-token',
+        '--set', 'redis.password=e2e-test-pass',
+        '--set', 'image.tag=e2e-test',
+        '--set', 'image.pullPolicy=Never',
+      ],
+      { encoding: 'utf8', stdio: 'pipe', timeout: 180_000 },
+    );
+    if (install.status !== 0) {
+      throw new Error(
+        `helm install failed:\nstdout: ${install.stdout}\nstderr: ${install.stderr}`,
+      );
+    }
+  }
+
+  // Wait for orchestrator pod to be Ready (up to 120s).
+  console.log('Waiting for kubeclaw-orchestrator to be Ready...');
   await waitUntil(
     () => {
       const r = kc([
-        'get',
-        'deployment',
-        deploymentName,
-        '--ignore-not-found',
-        '-o',
-        'jsonpath={.status.readyReplicas}',
+        'get', 'deployment', 'kubeclaw-orchestrator',
+        '-n', NAMESPACE,
+        '-o', 'jsonpath={.status.readyReplicas}',
       ]);
       return r.ok && r.stdout.trim() === '1';
     },
-    timeoutMs,
-    `channel Deployment ${deploymentName} Ready`,
+    120_000,
+    'kubeclaw-orchestrator readyReplicas=1',
   );
-}
+  console.log('kubeclaw-orchestrator is Ready');
+}, 180_000);
 
-// ─── Install / teardown ───────────────────────────────────────────────────────
-
-/**
- * Install kubeclaw into NAMESPACE with default values.
- * No --wait so we control readiness ourselves.
- */
-function helmInstall(): void {
-  // Wait for any prior namespace termination to complete.
-  spawnSync(
-    'kubectl',
-    ['wait', '--for=delete', `ns/${NAMESPACE}`, '--timeout=60s'],
-    { encoding: 'utf8', stdio: 'pipe', timeout: 70_000 },
-  );
-
-  // Ensure namespace does not linger (belt-and-suspenders).
-  spawnSync(
-    'kubectl',
-    ['delete', 'namespace', NAMESPACE, '--ignore-not-found', '--wait=true'],
-    { encoding: 'utf8', stdio: 'pipe', timeout: 90_000 },
-  );
-
-  // Pre-create namespace with Helm ownership metadata (mirrors specialist-catalog pattern).
-  spawnSync('kubectl', ['create', 'namespace', NAMESPACE], {
-    encoding: 'utf8',
-    stdio: 'pipe',
-  });
-  spawnSync(
-    'kubectl',
-    ['label', 'namespace', NAMESPACE, 'app.kubernetes.io/managed-by=Helm'],
-    { encoding: 'utf8', stdio: 'pipe' },
-  );
-  spawnSync(
-    'kubectl',
-    [
-      'annotate',
-      'namespace',
-      NAMESPACE,
-      `meta.helm.sh/release-name=${RELEASE}`,
-      `meta.helm.sh/release-namespace=${NAMESPACE}`,
-    ],
-    { encoding: 'utf8', stdio: 'pipe' },
-  );
-
-  const result: SpawnSyncReturns<string> = spawnSync(
-    'helm',
-    [
-      'upgrade',
-      '--install',
-      RELEASE,
-      CHART_DIR,
-      '--namespace',
-      NAMESPACE,
-      '--create-namespace',
-      '--timeout',
-      '180s',
-      '--set',
-      `namespace=${NAMESPACE}`,
-      '--set',
-      'secrets.anthropicApiKey=test-key',
-      '--set',
-      'secrets.claudeCodeOauthToken=test-token',
-      // Use a placeholder OpenAI key — the admin shell itself needs a model
-      // to run its REPL, but we call executeTool() directly (no LLM turn).
-      '--set',
-      'secrets.openaiApiKey=test-key',
-      '--set',
-      'credentialInjection.mode=off',
-      '--set',
-      'redis.password=e2e-rc-redis-pass',
-      '--set',
-      `image.tag=e2e-test`,
-    ],
-    { encoding: 'utf8', stdio: 'pipe', timeout: 240_000 },
-  );
-
-  if (result.status !== 0) {
-    throw new Error(
-      `helm upgrade --install failed (exit ${result.status}):\n` +
-        `stdout: ${result.stdout}\nstderr: ${result.stderr}`,
-    );
+afterAll(() => {
+  if (!contextAvailable) return;
+  // Best-effort cleanup of any test channel resources left by a failed run.
+  kc(['delete', 'deployment', DEPLOYMENT_NAME, '-n', NAMESPACE, '--ignore-not-found']);
+  kc(['delete', 'secret', SECRET_NAME, '-n', NAMESPACE, '--ignore-not-found']);
+  for (const pvc of PVC_NAMES) {
+    kc(['delete', 'pvc', pvc, '-n', NAMESPACE, '--ignore-not-found']);
   }
-}
-
-// ─── Suite ────────────────────────────────────────────────────────────────────
-
-describe('remove_channel admin-shell tool (Story 1)', { timeout: 600_000 }, () => {
-  // Derived resource names matching the naming convention in channel-setup.ts.
-  const deploymentName = `kubeclaw-channel-${INSTANCE_NAME}`;
-  const secretName = `kubeclaw-${INSTANCE_NAME}-secrets`;
-  const pvcGroups = `kubeclaw-channel-${INSTANCE_NAME}-groups`;
-  const pvcStore = `kubeclaw-channel-${INSTANCE_NAME}-store`;
-  const pvcSessions = `kubeclaw-channel-${INSTANCE_NAME}-sessions`;
-
-  beforeAll(async () => {
-    // Install kubeclaw if not already present in the test namespace.
-    // We always ensure a clean slate rather than reusing a potentially dirty one.
-    helmInstall();
-
-    // Wait for the orchestrator to be Ready before exercising admin tools.
-    await waitForOrchestrator(180_000);
-  }, 300_000);
-
-  afterAll(() => {
-    // Clean up channel resources if the test left them behind (e.g. on failure).
-    for (const resource of [
-      `deployment/${deploymentName}`,
-      `secret/${secretName}`,
-      `persistentvolumeclaim/${pvcGroups}`,
-      `persistentvolumeclaim/${pvcStore}`,
-      `persistentvolumeclaim/${pvcSessions}`,
-    ]) {
-      kc(['delete', resource, '--ignore-not-found', '--wait=false'], {
-        timeout: 10_000,
-      });
-    }
-
-    // Uninstall the helm release and delete the namespace.
-    spawnSync('helm', ['uninstall', RELEASE, '--namespace', NAMESPACE], {
-      encoding: 'utf8',
-      stdio: 'pipe',
-    });
-    spawnSync(
-      'kubectl',
-      [
-        'delete',
-        'namespace',
-        NAMESPACE,
-        '--ignore-not-found',
-        '--timeout=60s',
-      ],
-      { encoding: 'utf8', stdio: 'pipe', timeout: 90_000 },
-    );
-  }, 120_000);
-
-  // ── Step 1: set up a channel via setup_channel ───────────────────────────────
-  it(
-    'setup_channel creates Deployment, Secret, and PVCs for the test instance',
-    async () => {
-      const result = execAdminTool(
-        'setup_channel',
-        {
-          type: 'http',
-          instanceName: INSTANCE_NAME,
-          httpUsers: HTTP_USERS,
-          httpPort: 4080,
-        },
-        { timeout: 60_000 },
-      );
-
-      expect(
-        result.ok,
-        `setup_channel exec failed:\nstdout: ${result.output}\nstderr: ${result.stderr}`,
-      ).toBe(true);
-
-      // setup_channel returns log lines; success means no "failed" keyword.
-      expect(result.output.toLowerCase()).not.toContain('failed');
-
-      // Verify Deployment was created.
-      expect(
-        resourceExists('deployment', deploymentName),
-        `Deployment ${deploymentName} not found after setup_channel`,
-      ).toBe(true);
-
-      // Verify Secret was created.
-      expect(
-        resourceExists('secret', secretName),
-        `Secret ${secretName} not found after setup_channel`,
-      ).toBe(true);
-
-      // Verify PVCs were created.
-      for (const pvc of [pvcGroups, pvcStore, pvcSessions]) {
-        expect(
-          resourceExists('persistentvolumeclaim', pvc),
-          `PVC ${pvc} not found after setup_channel`,
-        ).toBe(true);
-      }
-    },
-    90_000,
-  );
-
-  // ── Step 2: wait for the channel Deployment to be Ready ─────────────────────
-  it(
-    'channel Deployment becomes Ready after setup_channel',
-    async () => {
-      // The Deployment is created; wait for at least one pod to be Ready.
-      // On a kind cluster with a local image this is typically 30-60s.
-      await waitForChannelDeployment(deploymentName, 120_000);
-
-      const r = kc([
-        'get',
-        'deployment',
-        deploymentName,
-        '-o',
-        'jsonpath={.status.readyReplicas}',
-      ]);
-      expect(r.stdout.trim()).toBe('1');
-    },
-    150_000,
-  );
-
-  // ── Step 3: call remove_channel — AC1, AC2, AC4, AC5 ─────────────────────────
-  //
-  // EXPECTED FAILURE (initial): executeTool('remove_channel', ...) returns
-  // "Unknown tool: remove_channel" because the tool is not yet implemented.
-  // The assertions below will therefore fail, signalling the implementer.
-  it(
-    'AC1/AC2: remove_channel tool exists and deletes Deployment, Secret, and PVCs',
-    async () => {
-      const result = execAdminTool(
-        'remove_channel',
-        { instanceName: INSTANCE_NAME },
-        { timeout: 60_000 },
-      );
-
-      // AC1: the tool must be recognised (not returned as "Unknown tool: ...").
-      // On the first run this assertion fails because remove_channel is not
-      // implemented — that failure is the intended contract signal.
-      expect(
-        result.output,
-        `remove_channel returned an error (tool may not exist yet):\n` +
-          `output: ${result.output}\nstderr: ${result.stderr}`,
-      ).not.toMatch(/unknown tool/i);
-
-      // AC2: Deployment must be gone.
-      expect(
-        resourceExists('deployment', deploymentName),
-        `Deployment ${deploymentName} still exists after remove_channel`,
-      ).toBe(false);
-
-      // AC2: Secret must be gone.
-      expect(
-        resourceExists('secret', secretName),
-        `Secret ${secretName} still exists after remove_channel`,
-      ).toBe(false);
-
-      // AC2: PVCs must be gone.
-      for (const pvc of [pvcGroups, pvcStore, pvcSessions]) {
-        expect(
-          resourceExists('persistentvolumeclaim', pvc),
-          `PVC ${pvc} still exists after remove_channel`,
-        ).toBe(false);
-      }
-
-      // AC4: the reply text must mention each resource kind that was deleted.
-      const lower = result.output.toLowerCase();
-      expect(
-        lower,
-        `remove_channel reply does not mention "deployment":\n${result.output}`,
-      ).toMatch(/deployment/);
-      expect(
-        lower,
-        `remove_channel reply does not mention "secret":\n${result.output}`,
-      ).toMatch(/secret/);
-      expect(
-        lower,
-        `remove_channel reply does not mention "pvc" or "persistentvolumeclaim":\n${result.output}`,
-      ).toMatch(/pvc|persistentvolumeclaim/);
-    },
-    90_000,
-  );
-
-  // ── Step 4: AC5 — label selector returns no resources ────────────────────────
-  it(
-    'AC5: label selector kubeclaw-channel=<instance> returns no resources after removal',
-    () => {
-      // AC5: kubectl get deployment,secret,pvc -l kubeclaw-channel=<instance>
-      // must return nothing (empty list).
-      // This also validates that setup_channel stamps the label and that
-      // remove_channel cleans up labelled resources.
-      const r = kc([
-        'get',
-        'deployment,secret,persistentvolumeclaim',
-        '-l',
-        `kubeclaw-channel=${INSTANCE_NAME}`,
-        '--ignore-not-found',
-        '-o',
-        'name',
-      ]);
-
-      expect(
-        r.stdout.trim(),
-        `Label selector kubeclaw-channel=${INSTANCE_NAME} still matches resources:\n${r.stdout}`,
-      ).toBe('');
-    },
-  );
-
-  // ── Step 5: AC3 — second call is idempotent ───────────────────────────────────
-  it(
-    'AC3: calling remove_channel a second time succeeds (idempotent)',
-    async () => {
-      const result = execAdminTool(
-        'remove_channel',
-        { instanceName: INSTANCE_NAME },
-        { timeout: 60_000 },
-      );
-
-      // The tool must not error out when resources are already absent.
-      expect(
-        result.output,
-        `Second remove_channel call errored:\noutput: ${result.output}\nstderr: ${result.stderr}`,
-      ).not.toMatch(/unknown tool/i);
-
-      // AC4 (second call): reply must indicate the resources were already absent.
-      const lower = result.output.toLowerCase();
-      expect(
-        lower,
-        `Second remove_channel call does not indicate resources were absent:\n${result.output}`,
-      ).toMatch(/absent|not found|already|did not exist|missing|none/);
-    },
-    90_000,
-  );
 });
+
+// ── Tests ──────────────────────────────────────────────────────────────────────
+
+describe.skipIf(!contextAvailable)(
+  `remove_channel admin shell tool (instance: ${INSTANCE_NAME})`,
+  () => {
+    it(
+      'setup_channel creates Deployment, Secret, and PVCs',
+      async () => {
+        const result = runAdminTool(
+          'setup_channel',
+          {
+            type: 'http',
+            instanceName: INSTANCE_NAME,
+            httpUsers: 'testuser:testpass',
+            httpPort: 4080,
+          },
+          { timeout: 90_000 },
+        );
+
+        expect(
+          result.ok,
+          `setup_channel failed:\nstdout: ${result.stdout}\nstderr: ${result.stderr}`,
+        ).toBe(true);
+        expect(result.stdout).toMatch(/Created|Updated/);
+
+        // Wait for the Deployment to appear (K8s API may lag slightly).
+        await waitUntil(
+          () => kc(['get', 'deployment', DEPLOYMENT_NAME, '-n', NAMESPACE]).ok,
+          RESOURCE_READY_TIMEOUT_MS,
+          `Deployment ${DEPLOYMENT_NAME} to exist`,
+        );
+
+        // Secret must exist.
+        const secretCheck = kc(['get', 'secret', SECRET_NAME, '-n', NAMESPACE]);
+        expect(
+          secretCheck.ok,
+          `Secret ${SECRET_NAME} not found:\n${secretCheck.stderr}`,
+        ).toBe(true);
+
+        // All 3 PVCs must exist.
+        for (const pvc of PVC_NAMES) {
+          const pvcCheck = kc(['get', 'pvc', pvc, '-n', NAMESPACE]);
+          expect(
+            pvcCheck.ok,
+            `PVC ${pvc} not found:\n${pvcCheck.stderr}`,
+          ).toBe(true);
+        }
+      },
+      RESOURCE_READY_TIMEOUT_MS + 30_000,
+    );
+
+    it(
+      'channel Deployment becomes Ready',
+      async () => {
+        await waitUntil(
+          () => {
+            const r = kc([
+              'get', 'deployment', DEPLOYMENT_NAME,
+              '-n', NAMESPACE,
+              '-o', 'jsonpath={.status.readyReplicas}',
+            ]);
+            return r.ok && r.stdout.trim() === '1';
+          },
+          RESOURCE_READY_TIMEOUT_MS,
+          `Deployment ${DEPLOYMENT_NAME} readyReplicas=1`,
+        );
+      },
+      RESOURCE_READY_TIMEOUT_MS + 10_000,
+    );
+
+    it(
+      'AC1/AC2: remove_channel tool exists and deletes Deployment, Secret, and PVCs',
+      async () => {
+        const result = runAdminTool(
+          'remove_channel',
+          { instanceName: INSTANCE_NAME },
+          { timeout: 60_000 },
+        );
+
+        expect(
+          result.ok,
+          `remove_channel failed:\nstdout: ${result.stdout}\nstderr: ${result.stderr}`,
+        ).toBe(true);
+
+        const output = result.stdout;
+        expect(output, 'Expected "Deleted:" in output').toContain('Deleted:');
+        expect(output).toContain(DEPLOYMENT_NAME);
+        expect(output).toContain(SECRET_NAME);
+        for (const pvc of PVC_NAMES) {
+          expect(output, `Expected PVC ${pvc} in output`).toContain(pvc);
+        }
+
+        // Wait for ALL resources (Deployment + PVCs) to be fully gone from the
+        // API server.  PVCs with the pvc-protection finalizer may linger in
+        // Terminating state while a pod still holds a reference; we must wait
+        // for them to fully disappear so AC3 (idempotent check) sees 404s,
+        // not a successful delete on a still-terminating PVC.
+        await waitUntil(
+          () => {
+            const labelCheck = kc([
+              'get', 'deployment,secret,pvc',
+              '-n', NAMESPACE,
+              '-l', `kubeclaw-channel=${INSTANCE_NAME}`,
+              '--ignore-not-found',
+              '-o', 'name',
+            ]);
+            return labelCheck.ok && labelCheck.stdout.trim() === '';
+          },
+          60_000,
+          'all kubeclaw-channel resources to be fully absent after first remove_channel',
+        );
+      },
+      90_000,
+    );
+
+    it(
+      'AC3: idempotent — second remove_channel call succeeds with already-absent summary',
+      () => {
+        const result = runAdminTool(
+          'remove_channel',
+          { instanceName: INSTANCE_NAME },
+          { timeout: 30_000 },
+        );
+
+        expect(
+          result.ok,
+          `second remove_channel failed:\nstdout: ${result.stdout}\nstderr: ${result.stderr}`,
+        ).toBe(true);
+
+        const output = result.stdout;
+        expect(output, 'Expected "Already absent:" in output').toContain('Already absent:');
+        // Must NOT report any deletions (the "Deleted:\n" line is absent;
+        // "Nothing deleted." is the marker when deleted=[] in summary).
+        expect(output, 'Should not contain "Deleted:" on second call').not.toMatch(
+          /^Deleted:/m,
+        );
+      },
+      30_000,
+    );
+
+    it(
+      'AC5: kubectl label selector finds no resources after remove',
+      async () => {
+        // PVCs with the pvc-protection finalizer enter Terminating state when
+        // a pod still held a reference.  Poll until the label selector returns
+        // nothing (all resources fully gone, not just marked for deletion).
+        await waitUntil(
+          () => {
+            const result = kc([
+              'get', 'deployment,secret,pvc',
+              '-n', NAMESPACE,
+              '-l', `kubeclaw-channel=${INSTANCE_NAME}`,
+              '--ignore-not-found',
+              '-o', 'name',
+            ]);
+            return result.ok && result.stdout.trim() === '';
+          },
+          30_000,
+          `all kubeclaw-channel=${INSTANCE_NAME} resources to be absent`,
+        );
+      },
+      35_000,
+    );
+  },
+);

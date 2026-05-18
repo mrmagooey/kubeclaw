@@ -25,6 +25,7 @@ import * as db from './db.js';
 import { logger } from './logger.js';
 import { createLLMClient, DEFAULT_DIRECT_MODEL } from './runtime/llm-client.js';
 import { setupChannel } from './skills/orchestrator/channel-setup.js';
+import { removeChannel } from './skills/orchestrator/channel-remove.js';
 import type { ChannelSetupInput } from './skills/orchestrator/types.js';
 import {
   installCapability,
@@ -240,6 +241,25 @@ export const TOOLS: OpenAI.ChatCompletionTool[] = [
           },
         },
         required: ['type'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'remove_channel',
+      description:
+        'Remove a channel instance and all its associated K8s resources (Deployment, Secret, and PersistentVolumeClaims). Idempotent — safe to call even if resources are already absent.',
+      parameters: {
+        type: 'object',
+        properties: {
+          instanceName: {
+            type: 'string',
+            description:
+              'The channel instance name passed to setup_channel (e.g. "http", "telegram", "http-staging").',
+          },
+        },
+        required: ['instanceName'],
       },
     },
   },
@@ -586,6 +606,13 @@ async function handleSetupChannel(input: ToolInput): Promise<string> {
   return result.log.join('\n');
 }
 
+async function handleRemoveChannel(input: ToolInput): Promise<string> {
+  const instanceName = input.instanceName as string | undefined;
+  if (!instanceName) return 'Error: instanceName is required.';
+  const result = await removeChannel(instanceName);
+  return result.summary;
+}
+
 async function handleGetOrchestratorStatus(): Promise<string> {
   const deployment = await appsV1.readNamespacedDeployment({
     name: ORCHESTRATOR_DEPLOYMENT,
@@ -813,6 +840,8 @@ export async function executeTool(
       return handleClearConversation(input);
     case 'setup_channel':
       return handleSetupChannel(input);
+    case 'remove_channel':
+      return handleRemoveChannel(input);
     case 'get_orchestrator_status':
       return handleGetOrchestratorStatus();
     case 'restart_orchestrator':

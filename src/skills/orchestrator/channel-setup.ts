@@ -104,6 +104,7 @@ export async function validateChannelCredentials(
 export async function createOrPatchSecret(
   name: string,
   data: Record<string, string>,
+  labels?: Record<string, string>,
 ): Promise<string> {
   const { coreV1 } = getK8sClients();
   try {
@@ -120,7 +121,7 @@ export async function createOrPatchSecret(
       body: {
         apiVersion: 'v1',
         kind: 'Secret',
-        metadata: { name, namespace: NAMESPACE },
+        metadata: { name, namespace: NAMESPACE, labels },
         stringData: data,
       },
     });
@@ -131,6 +132,7 @@ export async function createOrPatchSecret(
 export async function createPvcIfNotExists(
   name: string,
   size: string,
+  labels?: Record<string, string>,
 ): Promise<string> {
   const { coreV1 } = getK8sClients();
   try {
@@ -145,7 +147,7 @@ export async function createPvcIfNotExists(
       body: {
         apiVersion: 'v1',
         kind: 'PersistentVolumeClaim',
-        metadata: { name, namespace: NAMESPACE },
+        metadata: { name, namespace: NAMESPACE, labels },
         spec: {
           accessModes: ['ReadWriteOnce'],
           resources: { requests: { storage: size } },
@@ -305,6 +307,7 @@ export async function setupChannel(
   const instanceName = input.instanceName || type;
   const secretName = `kubeclaw-${instanceName}-secrets`;
   const deploymentName = `kubeclaw-channel-${instanceName}`;
+  const channelLabel: Record<string, string> = { 'kubeclaw-channel': instanceName };
   const log: string[] = [];
 
   const secretData = buildSecretData(input);
@@ -329,7 +332,7 @@ export async function setupChannel(
   }
 
   // Create or patch secret
-  log.push(await createOrPatchSecret(secretName, secretData));
+  log.push(await createOrPatchSecret(secretName, secretData, channelLabel));
 
   // Create PVCs
   const pvcSizes: Record<string, string> = {
@@ -339,7 +342,7 @@ export async function setupChannel(
   };
   for (const [suffix, size] of Object.entries(pvcSizes)) {
     const pvcName = `kubeclaw-channel-${instanceName}-${suffix}`;
-    log.push(await createPvcIfNotExists(pvcName, size));
+    log.push(await createPvcIfNotExists(pvcName, size, channelLabel));
   }
 
   // Build and create Deployment
@@ -354,12 +357,16 @@ export async function setupChannel(
   const deploymentBody: k8s.V1Deployment = {
     apiVersion: 'apps/v1',
     kind: 'Deployment',
-    metadata: { name: deploymentName, namespace: NAMESPACE },
+    metadata: {
+      name: deploymentName,
+      namespace: NAMESPACE,
+      labels: { ...channelLabel, app: deploymentName },
+    },
     spec: {
       replicas: 1,
       selector: { matchLabels: { app: deploymentName } },
       template: {
-        metadata: { labels: { app: deploymentName } },
+        metadata: { labels: { app: deploymentName, ...channelLabel } },
         spec: {
           automountServiceAccountToken: false,
           securityContext: { runAsUser: 1000, runAsGroup: 1000 },
