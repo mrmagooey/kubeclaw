@@ -136,3 +136,29 @@ status: drafted
 - IMPORTANT: target the kind cluster `kubeclaw-e2e-istio`. Use `--set image.tag=e2e-test --set image.pullPolicy=IfNotPresent`. Service names in the chart are prefixed `kubeclaw-` (e.g. `kubeclaw-redis`, not `redis`). Use `KUBECLAW_SKIP_HELM_INSTALL=true` to bypass globalSetup.
 
 status: drafted
+## Story 6: Sender allowlist drop mode silently discards messages from blocked senders
+
+**As a** KubeClaw operator who wants to limit which users can trigger the assistant
+**I want** the channel pod to silently discard inbound messages from senders not on the allowlist when `mode` is `drop`
+**So that** blocked senders get no response and generate no storage or LLM cost, without revealing that the block is in effect
+
+### Acceptance criteria
+
+1. When a `sender-allowlist.json` with `mode: "drop"` and an explicit sender list is written to the channel pod's config directory (`$HOME/.config/kubeclaw/sender-allowlist.json`), subsequent `POST /message` requests from a sender **not** in the list are silently discarded — no reply is produced and the message is not written to the SQLite database.
+2. A `POST /message` from a sender **in** the allowlist is stored normally — `SELECT COUNT(*) FROM messages WHERE sender = '<allowed_sender>'` returns a non-zero count after the post.
+3. Switching the file to `allow: "*"` (allow all) and posting from the previously blocked sender causes the message to be stored — confirming the config is re-read on each message rather than cached at startup.
+4. When `mode: "trigger"` (not `drop`) and the sender is absent from the `allow` list, the message is still stored in the database — the trigger check only gates LLM dispatch, not storage.
+5. The orchestrator debug log contains an entry with the text `sender-allowlist: dropping message` for every discarded message (verifiable via `kubectl logs`).
+
+### Notes for the test author
+
+- The allowlist config path in the pod is `$HOME/.config/kubeclaw/sender-allowlist.json`. In the kind cluster, `$HOME` inside the orchestrator/channel pod is `/root` (the container runs as root) or the configured user. Write it with `kubectl exec <pod> -- sh -c 'mkdir -p $HOME/.config/kubeclaw && cat > $HOME/.config/kubeclaw/sender-allowlist.json <<EOF\n{...}\nEOF'`.
+- The drop logic is in `src/index.ts` around line 420 (`shouldDropMessage` + `isSenderAllowed`) and in `src/channel-runner.ts`. `loadSenderAllowlist()` reads the file fresh on every call — no restart needed after writing the file.
+- To verify message storage, exec into the orchestrator pod and query SQLite: `kubectl exec deployment/kubeclaw-orchestrator -n kubeclaw-e2e-istio -- sqlite3 /app/store/kubeclaw.db "SELECT COUNT(*) FROM messages WHERE sender='blocked-user@example.com'"`. Expect `0` for the blocked sender and `>0` for the allowed sender.
+- Use `KUBECLAW_SKIP_HELM_INSTALL=true` and target the pre-installed kubeclaw release in the `kubeclaw-e2e-istio` kind cluster. Port-forward the orchestrator's HTTP channel service to a local port (e.g. `14093`) using `kubectl port-forward svc/kubeclaw-orchestrator -n kubeclaw-e2e-istio 14093:14081`. The HTTP channel accepts `POST /message` with Basic Auth (credentials from Secret `kubeclaw-secrets`, key `http-channel-password`).
+- AC3 (config hot-reload) is the key regression risk: do not add any in-memory caching of the allowlist in `loadSenderAllowlist()`. The unit test in `src/sender-allowlist.test.ts` already covers the load logic; the e2e test should verify the live file-write → message-drop cycle.
+- For AC5, capture logs with `kubectl logs deployment/kubeclaw-orchestrator -n kubeclaw-e2e-istio --since=30s | grep "sender-allowlist: dropping"` immediately after posting a blocked message. Set `logDenied: true` in the allowlist JSON (it is the default).
+- AC4 (trigger mode still stores) distinguishes `drop` from `trigger` mode: in `trigger` mode a denied sender's message reaches `storeMessage()` but does not proceed to the LLM queue. Assert the message row exists in SQLite but no SSE reply appears within a short timeout (e.g. 5 s).
+- IMPORTANT: target the kind cluster `kubeclaw-e2e-istio`. Use `--set image.tag=e2e-test --set image.pullPolicy=IfNotPresent`. Service names in the chart are prefixed `kubeclaw-` (e.g. `kubeclaw-credential-broker`, `kubeclaw-orchestrator`, `kubeclaw-redis`). Use `KUBECLAW_SKIP_HELM_INSTALL=true` to bypass globalSetup. If installing via helm: pass `--create-namespace`.
+
+status: drafted
