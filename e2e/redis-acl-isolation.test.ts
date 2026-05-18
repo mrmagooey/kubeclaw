@@ -241,6 +241,7 @@ describe.skipIf(!clusterReachable)(
           RELEASE,
           './helm/kubeclaw',
           `-n ${NS}`,
+          '--create-namespace',
           `--set namespace=${NS}`,
           '--set image.tag=e2e-test',
           '--set image.pullPolicy=IfNotPresent',
