@@ -83,3 +83,29 @@ status: passing (AC1-2, AC4-5; AC3 skipped — LLM dispatch dependency)
 - IMPORTANT: target the kind cluster `kubeclaw-e2e-istio` (not minikube). Install kubeclaw with default values (mode=sidecar). Use `KUBECLAW_SKIP_HELM_INSTALL=true` convention.
 
 status: partial (3/5) — AC1 (POST 200), AC2 (queued state), AC4 (≤2 active jobs) pass; AC3, AC5 timing assertions flake on slow kind LLM (count-to-30 specialist exceeds 120s windows). Queue back-pressure logic verified structurally; LLM-end-to-end timing should be re-tested on a faster inference target.
+## Story 4: Credential broker stamps Authorization header for allowed destinations and returns 403 for unknown ones
+
+**As a** KubeClaw operator relying on the credential-injection subsystem for secure LLM access
+**I want** the credential broker to stamp a valid `Authorization: Bearer <key>` header when a registered pod presents a valid token for a known destination, and to return HTTP 403 when the same pod targets an unregistered destination
+**So that** I can trust that the broker enforces the allow-list at runtime and that workloads cannot reach unlisted external endpoints by forging or omitting the credential header
+
+### Acceptance criteria
+
+1. A `kubectl run` curl pod presenting a valid ServiceAccount bearer token with `X-Forwarded-Authority: api.anthropic.com` receives HTTP 200 from `POST http://credential-broker.<ns>.svc:8080/authz` and the response includes an `Authorization` header whose value starts with `Bearer `.
+2. The same pod presenting a valid bearer token with `X-Forwarded-Authority: unknown.example.com` (not in the broker config) receives HTTP 403 and the response body contains no `Authorization` header.
+3. A request to `POST /authz` with no `Authorization` header at all (no bearer token) receives HTTP 401 regardless of the `X-Forwarded-Authority` value.
+4. After the helm install, `GET http://credential-broker.<ns>.svc:9090/metrics` returns HTTP 200 and the body contains the metric family `credential_broker_authz_total` with labels reflecting the outcomes from AC1–AC3 (status=200, status=403, status=401).
+5. The credential broker Deployment has `readyReplicas=1` within 60 seconds of `helm install` completing, and the pod's container is running as non-root (`runAsNonRoot: true` visible in the pod spec).
+
+### Notes for the test author
+
+- Install kubeclaw in an isolated namespace (e.g. `kubeclaw-e2e-authz`) with `orchestrator.replicas=0` (no orchestrator needed) and `secrets.existingSecret=kubeclaw-secrets` (pre-create the Secret with a dummy `anthropic-api-key`). Follow the `beforeAll` / `afterAll` pattern from `e2e/credential-broker.test.ts`.
+- The broker's ConfigMap (`kubeclaw-credential-broker-config`) is rendered by `helm/kubeclaw/templates/credential-broker-config.yaml`. It includes built-in mappings for `api.anthropic.com` → `anthropic-api-key`. Pass `--set credentialInjection.mode=sidecar` so the broker is deployed.
+- To call `/authz` from within the cluster, use `kubectl run --rm -i --restart=Never --image=curlimages/curl:8.10.1` — the curl pod runs in the same namespace and can resolve `credential-broker.<ns>.svc` via DNS. The existing `credential-broker.test.ts` line 100-111 shows this exact pattern.
+- For AC1 (bearer token), the curl pod must present a real Kubernetes ServiceAccount bearer token. Use `--serviceaccount=kubeclaw-tool-job` (the SA created by the helm chart for tool jobs) and mount its token at the default path. Then retrieve the token with `kubectl exec ... -- cat /var/run/secrets/kubernetes.io/serviceaccount/token` and pass it as `-H "Authorization: Bearer <token>"`. Alternatively, use `kubectl create token kubeclaw-tool-job -n <ns> --audience kubeclaw-credential-broker` to mint a short-lived token before running the curl pod.
+- For AC4 (metrics), port-forward `deployment/kubeclaw-credential-broker` on port 9090 and `curl -s http://localhost:<local>`. Use a distinct local port (e.g. `19092`) to avoid conflicts with Story 2's `19091`. The `credential_broker_authz_total` metric is registered in `src/credential-broker/metrics.ts`.
+- For AC5, check `kubectl get pod -l app=kubeclaw-credential-broker -o jsonpath='{.items[0].spec.securityContext}'` — the rendered Deployment in `helm/kubeclaw/templates/credential-broker.yaml` sets `runAsNonRoot: true` and `runAsUser: 65534` at the pod level.
+- Known constraint: the broker performs a TokenReview against the Kubernetes API for every `/authz` request; the `kubeclaw-credential-broker` ClusterRoleBinding (bound to `system:auth-delegator`) must exist before traffic is sent. This is installed by the helm chart automatically; wait for `kubectl rollout status deployment/kubeclaw-credential-broker` before running authz tests.
+- IMPORTANT: target the kind cluster `kubeclaw-e2e-istio`. Install kubeclaw with default values (mode=sidecar) in an isolated namespace. Use `--set image.tag=e2e-test --set image.pullPolicy=IfNotPresent` (the kind cluster has `kubeclaw-orchestrator:e2e-test` pre-loaded). Use `KUBECLAW_SKIP_HELM_INSTALL=true` to bypass vitest globalSetup.
+
+status: drafted
