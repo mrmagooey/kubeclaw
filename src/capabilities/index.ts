@@ -24,4 +24,4 @@ export { startDiscoveryWatcher, stopDiscoveryWatcher } from './discovery.js';
 
 export { startHealthProbes, stopHealthProbes } from './health.js';
 
-export { getRagEntry, getMcpEntries, getHttpEntry } from './client.js';
+export { getRagEntry, getMcpEntriesAsync, getHttpEntry } from './client.js';

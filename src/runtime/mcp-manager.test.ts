@@ -28,6 +28,7 @@ const {
   }
 
   class MockStreamableHTTPTransport {
+    close = vi.fn();
     constructor(_url: unknown) {}
   }
 
@@ -71,6 +72,7 @@ vi.mock('../logger.js', () => ({
 
 import { McpManager } from './mcp-manager.js';
 import type { McpServerStatus } from '../types.js';
+import type { GroupMcpEntry } from '../capabilities/types.js';
 
 // ---- Tests ----
 
@@ -118,7 +120,7 @@ describe('McpManager', () => {
 
       const tools = manager.getTools();
       expect(tools).toHaveLength(1);
-      expect(tools[0].function.name).toBe('get_weather');
+      expect(tools[0].function.name).toBe('mcp__weather__get_weather');
       expect(tools[0].function.description).toBe(
         'Get current weather for a location',
       );
@@ -132,7 +134,7 @@ describe('McpManager', () => {
       await manager.initialize([weatherServer]);
 
       expect(manager.getTools()).toHaveLength(0);
-      expect(manager.hasTool('get_weather')).toBe(false);
+      expect(manager.hasTool('mcp__weather__get_weather')).toBe(false);
     });
 
     it('connects to multiple servers', async () => {
@@ -170,9 +172,9 @@ describe('McpManager', () => {
       const tools = manager.getTools();
       // get_weather + list_events (create_event filtered by allowedTools on calendarServer)
       expect(tools).toHaveLength(2);
-      expect(manager.hasTool('get_weather')).toBe(true);
-      expect(manager.hasTool('list_events')).toBe(true);
-      expect(manager.hasTool('create_event')).toBe(false);
+      expect(manager.hasTool('mcp__weather__get_weather')).toBe(true);
+      expect(manager.hasTool('mcp__calendar__list_events')).toBe(true);
+      expect(manager.hasTool('mcp__calendar__create_event')).toBe(false);
     });
 
     it('applies allowedTools filter', async () => {
@@ -200,9 +202,9 @@ describe('McpManager', () => {
       const manager = new McpManager();
       await manager.initialize([calendarServer]); // allowedTools: ['list_events']
 
-      expect(manager.hasTool('list_events')).toBe(true);
-      expect(manager.hasTool('create_event')).toBe(false);
-      expect(manager.hasTool('delete_event')).toBe(false);
+      expect(manager.hasTool('mcp__calendar__list_events')).toBe(true);
+      expect(manager.hasTool('mcp__calendar__create_event')).toBe(false);
+      expect(manager.hasTool('mcp__calendar__delete_event')).toBe(false);
     });
 
     it('handles tool name collisions (first server wins)', async () => {
@@ -240,8 +242,10 @@ describe('McpManager', () => {
       await manager.initialize([server1, server2]);
 
       const tools = manager.getTools();
-      expect(tools).toHaveLength(1);
-      expect(tools[0].function.description).toBe('From server1');
+      expect(tools).toHaveLength(2);
+      // Both servers emit their own tool (prefixed by server name, no collision)
+      const names = tools.map((t) => t.function.name).sort();
+      expect(names).toEqual(['mcp__server1__shared_tool', 'mcp__server2__shared_tool']);
     });
 
     it('falls back to SSE transport when StreamableHTTP fails', async () => {
@@ -262,18 +266,18 @@ describe('McpManager', () => {
     it('returns true for registered tools', async () => {
       const manager = new McpManager();
       await manager.initialize([weatherServer]);
-      expect(manager.hasTool('get_weather')).toBe(true);
+      expect(manager.hasTool('mcp__weather__get_weather')).toBe(true);
     });
 
     it('returns false for unknown tools', async () => {
       const manager = new McpManager();
       await manager.initialize([weatherServer]);
-      expect(manager.hasTool('nonexistent')).toBe(false);
+      expect(manager.hasTool('mcp__weather__nonexistent')).toBe(false);
     });
 
     it('returns false when no servers initialized', () => {
       const manager = new McpManager();
-      expect(manager.hasTool('anything')).toBe(false);
+      expect(manager.hasTool('mcp__anything__foo')).toBe(false);
     });
   });
 
@@ -282,7 +286,7 @@ describe('McpManager', () => {
       const manager = new McpManager();
       await manager.initialize([weatherServer]);
 
-      const result = await manager.callTool('get_weather', { location: 'NYC' });
+      const result = await manager.callTool('mcp__weather__get_weather', { location: 'NYC' });
 
       expect(mockCallTool).toHaveBeenCalledWith({
         name: 'get_weather',
@@ -295,8 +299,8 @@ describe('McpManager', () => {
       const manager = new McpManager();
       await manager.initialize([weatherServer]);
 
-      const result = await manager.callTool('nonexistent', {});
-      expect(result).toBe('Unknown MCP tool: nonexistent');
+      const result = await manager.callTool('mcp__weather__nonexistent', {});
+      expect(result).toBe('Unknown MCP tool: mcp__weather__nonexistent');
     });
 
     it('handles tool call errors gracefully', async () => {
@@ -304,7 +308,7 @@ describe('McpManager', () => {
       await manager.initialize([weatherServer]);
 
       mockCallTool.mockRejectedValueOnce(new Error('Server timeout'));
-      const result = await manager.callTool('get_weather', { location: 'NYC' });
+      const result = await manager.callTool('mcp__weather__get_weather', { location: 'NYC' });
       expect(result).toContain('MCP tool error');
       expect(result).toContain('Server timeout');
     });
@@ -320,7 +324,7 @@ describe('McpManager', () => {
         ],
       });
 
-      const result = await manager.callTool('get_weather', { location: 'NYC' });
+      const result = await manager.callTool('mcp__weather__get_weather', { location: 'NYC' });
       expect(result).toBe('Line 1\nLine 2');
     });
 
@@ -332,7 +336,7 @@ describe('McpManager', () => {
         content: [{ type: 'image', data: 'base64...' }],
       });
 
-      const result = await manager.callTool('get_weather', { location: 'NYC' });
+      const result = await manager.callTool('mcp__weather__get_weather', { location: 'NYC' });
       expect(result).toBe('Tool returned no text output');
     });
   });
@@ -361,10 +365,10 @@ describe('McpManager', () => {
     it('removes servers no longer in list', async () => {
       const manager = new McpManager();
       await manager.initialize([weatherServer]);
-      expect(manager.hasTool('get_weather')).toBe(true);
+      expect(manager.hasTool('mcp__weather__get_weather')).toBe(true);
 
       await manager.reconfigure([]);
-      expect(manager.hasTool('get_weather')).toBe(false);
+      expect(manager.hasTool('mcp__weather__get_weather')).toBe(false);
       expect(manager.getTools()).toHaveLength(0);
       expect(mockClose).toHaveBeenCalled();
     });
@@ -378,7 +382,7 @@ describe('McpManager', () => {
 
       // Should not reconnect to existing server
       expect(mockConnect.mock.calls.length).toBe(connectCallsBefore);
-      expect(manager.hasTool('get_weather')).toBe(true);
+      expect(manager.hasTool('mcp__weather__get_weather')).toBe(true);
     });
 
     it('retries a previously-failed server when its backoff window has elapsed', async () => {
@@ -391,7 +395,7 @@ describe('McpManager', () => {
       await manager.initialize([weatherServer]);
 
       expect(manager.getTools()).toHaveLength(0);
-      expect(manager.hasTool('get_weather')).toBe(false);
+      expect(manager.hasTool('mcp__weather__get_weather')).toBe(false);
 
       // Advance time past the first backoff window (5 s) using fake timers.
       vi.useFakeTimers();
@@ -416,7 +420,7 @@ describe('McpManager', () => {
 
       vi.useRealTimers();
 
-      expect(manager.hasTool('get_weather')).toBe(true);
+      expect(manager.hasTool('mcp__weather__get_weather')).toBe(true);
       expect(manager.getTools()).toHaveLength(1);
     });
 
@@ -481,7 +485,7 @@ describe('McpManager', () => {
 
       vi.useRealTimers();
 
-      expect(manager.hasTool('get_weather')).toBe(true);
+      expect(manager.hasTool('mcp__weather__get_weather')).toBe(true);
     });
 
     it('removes failed server tracking when server is removed from list', async () => {
@@ -522,7 +526,7 @@ describe('McpManager', () => {
       await manager.initialize([weatherServer]);
 
       expect(manager.getTools()).toHaveLength(0);
-      expect(manager.hasTool('get_weather')).toBe(false);
+      expect(manager.hasTool('mcp__weather__get_weather')).toBe(false);
 
       // Prepare a successful connection for the retry attempt.
       mockConnect.mockResolvedValueOnce(undefined);
@@ -545,7 +549,7 @@ describe('McpManager', () => {
       await vi.advanceTimersByTimeAsync(6_000);
 
       // Check before shutdown clears state.
-      expect(manager.hasTool('get_weather')).toBe(true);
+      expect(manager.hasTool('mcp__weather__get_weather')).toBe(true);
       expect(manager.getTools()).toHaveLength(1);
 
       vi.useRealTimers();
@@ -618,7 +622,7 @@ describe('McpManager', () => {
 
       expect(mockClose).toHaveBeenCalled();
       expect(manager.getTools()).toHaveLength(0);
-      expect(manager.hasTool('get_weather')).toBe(false);
+      expect(manager.hasTool('mcp__weather__get_weather')).toBe(false);
     });
 
     it('handles close errors gracefully', async () => {
@@ -636,7 +640,7 @@ describe('McpManager', () => {
       expect(manager.getTools()).toEqual([]);
     });
 
-    it('returns tools in OpenAI format', async () => {
+    it('returns tools in OpenAI format with prefixed names', async () => {
       const manager = new McpManager();
       await manager.initialize([weatherServer]);
 
@@ -644,7 +648,7 @@ describe('McpManager', () => {
       expect(tools[0]).toEqual({
         type: 'function',
         function: {
-          name: 'get_weather',
+          name: 'mcp__weather__get_weather',
           description: 'Get current weather for a location',
           parameters: {
             type: 'object',
@@ -682,6 +686,74 @@ describe('McpManager', () => {
         type: 'object',
         properties: {},
       });
+    });
+  });
+
+  describe('McpManager — group MCP templates', () => {
+    it('configureGroupMcpTemplates advertises tools from cached schemas', async () => {
+      const mgr = new McpManager();
+      await mgr.configureGroupMcpTemplates([
+        {
+          name: 'filesystem',
+          kind: 'mcp-group',
+          state: 'ready',
+          toolSchemas: [
+            { name: 'read_file', description: 'reads', inputSchema: { type: 'object' } },
+            { name: 'list_dir', description: 'lists', inputSchema: { type: 'object' } },
+          ],
+        },
+      ]);
+      const tools = mgr.getTools();
+      const names = tools.map((t) => t.function.name).sort();
+      expect(names).toEqual(['mcp__filesystem__list_dir', 'mcp__filesystem__read_file']);
+    });
+
+    it('configureGroupMcpTemplates drops pending-schema entries', async () => {
+      const mgr = new McpManager();
+      await mgr.configureGroupMcpTemplates([
+        { name: 'github', kind: 'mcp-group', state: 'pending-schema' },
+      ]);
+      expect(mgr.getTools()).toEqual([]);
+    });
+
+    it('configureGroupMcpTemplates drops failed entries', async () => {
+      const mgr = new McpManager();
+      await mgr.configureGroupMcpTemplates([
+        { name: 'github', kind: 'mcp-group', state: 'failed', error: 'no pod' },
+      ]);
+      expect(mgr.getTools()).toEqual([]);
+    });
+
+    it('hasTool recognises prefixed group tool names', async () => {
+      const mgr = new McpManager();
+      await mgr.configureGroupMcpTemplates([
+        {
+          name: 'filesystem',
+          kind: 'mcp-group',
+          state: 'ready',
+          toolSchemas: [{ name: 'read_file', inputSchema: {} }],
+        },
+      ]);
+      expect(mgr.hasTool('mcp__filesystem__read_file')).toBe(true);
+      expect(mgr.hasTool('read_file')).toBe(false);
+    });
+
+    it('allowedTools filter applies to group templates', async () => {
+      const mgr = new McpManager();
+      await mgr.configureGroupMcpTemplates([
+        {
+          name: 'filesystem',
+          kind: 'mcp-group',
+          state: 'ready',
+          toolSchemas: [
+            { name: 'read_file', inputSchema: {} },
+            { name: 'write_file', inputSchema: {} },
+          ],
+          allowedTools: ['read_file'],
+        },
+      ]);
+      const names = mgr.getTools().map((t) => t.function.name);
+      expect(names).toEqual(['mcp__filesystem__read_file']);
     });
   });
 });

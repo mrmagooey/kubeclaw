@@ -59,6 +59,21 @@ function withState(
   return { ...entry, ...patch } as CapabilityDiscoveryEntry;
 }
 
+/**
+ * Assert that entry is a cluster-scoped discovery entry (has an endpoint).
+ * Group-scoped entries are created separately and never flow through specToDiscoveryEntry.
+ */
+function asClusterEntry(
+  entry: CapabilityDiscoveryEntry,
+): Exclude<CapabilityDiscoveryEntry, { kind: 'mcp-group' }> {
+  if (entry.kind === 'mcp-group') {
+    throw new Error(
+      `Internal: mcp-group entry should not be created by specToDiscoveryEntry`,
+    );
+  }
+  return entry;
+}
+
 async function handleRequest(req: DiscoveryRequest): Promise<void> {
   let result: CapabilityDiscoveryEntry[];
 
@@ -84,7 +99,7 @@ async function handleRequest(req: DiscoveryRequest): Promise<void> {
           capabilityName: spec.name,
           timeoutMs: deps.discoveryTimeoutMs,
         });
-        const baseEntry = specToDiscoveryEntry(spec);
+        const baseEntry = asClusterEntry(specToDiscoveryEntry(spec));
         if (up.state === 'ready') {
           result = [{ ...baseEntry, endpoint: up.endpoint, state: 'ready' }];
         } else {

@@ -39,6 +39,7 @@ export type { RunAgentOverrides };
 import { createLLMClient, DEFAULT_DIRECT_MODEL } from './llm-client.js';
 import { jobRunner } from '../k8s/job-runner.js';
 import type { McpServerStatus, ToolSpec } from '../types.js';
+import type { GroupMcpEntry } from '../capabilities/types.js';
 import { McpManager } from './mcp-manager.js';
 import type { ChannelMetrics } from '../metrics/channel.js';
 import {
@@ -947,6 +948,18 @@ export class DirectLLMRunner implements MessageRunner {
     }
   }
 
+  /**
+   * Configure per-group MCP capability templates.
+   * Can be called multiple times to reconfigure (e.g. when capabilities_update arrives).
+   */
+  async configureGroupMcpTemplates(templates: GroupMcpEntry[]): Promise<void> {
+    if (!this.mcpManager) {
+      this.mcpManager = new McpManager();
+      await this.mcpManager.initialize([]);
+    }
+    await this.mcpManager.configureGroupMcpTemplates(templates);
+  }
+
   async runAgent(
     group: RegisteredGroup,
     input: ContainerInput,
@@ -1287,7 +1300,13 @@ export class DirectLLMRunner implements MessageRunner {
                 .get(call.function.name)!
                 .handler(args, input);
             } else if (this.mcpManager?.hasTool(call.function.name)) {
-              result = await this.mcpManager.callTool(call.function.name, args);
+              result = await this.mcpManager.callTool(
+                call.function.name,
+                args,
+                {
+                  groupFolder: group.folder,
+                },
+              );
             } else {
               result = await executeToolViaK8s(
                 toolJobId,

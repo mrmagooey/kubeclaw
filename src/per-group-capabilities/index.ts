@@ -8,6 +8,10 @@ import {
 import { gcGroup } from './gc.js';
 import { setDiscoveryDeps } from '../capabilities/discovery.js';
 import { logger } from '../logger.js';
+import { scrapeMissingSchemas, type CallToolsListFn } from './schema-scraper.js';
+import { Client as McpClient } from '@modelcontextprotocol/sdk/client/index.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import type { McpToolSchema } from './schema-cache.js';
 
 // Re-exports (used by tests and the orchestrator) -----------------------
 
@@ -47,6 +51,19 @@ export {
   resolveGroupCapability,
   PerGroupCapabilityError,
 } from './types.js';
+export {
+  scrapeMissingSchemas,
+  startSchemaScraperLoop,
+  type ScrapeArgs,
+  type CallToolsListFn,
+} from './schema-scraper.js';
+export {
+  cacheSchemas,
+  getCachedSchemas,
+  clearCachedSchemas,
+  listAllCachedSchemas,
+  type McpToolSchema,
+} from './schema-cache.js';
 
 // Lifecycle (orchestrator-only, module-level state) ---------------------
 
@@ -64,11 +81,14 @@ interface LifecycleDeps {
   sweepIntervalMs?: number;
   /** Periodic full reconcile interval in ms (default 300000 = 5 minutes). */
   periodicReconcileMs?: number;
+  /** Schema-scraper tick interval in ms (default 60000). */
+  schemaScrapeIntervalMs?: number;
 }
 
 let deps: LifecycleDeps | null = null;
 let sweeperHandle: SweeperLoopHandle | null = null;
 let periodicHandle: NodeJS.Timeout | null = null;
+let scraperHandle: { stop(): void } | null = null;
 
 export interface LifecycleHandle {
   stop(): void;
@@ -123,6 +143,55 @@ export async function initPerGroupCapabilityLifecycle(
     },
   };
 
+  // Schema scraper — re-reads specs on each tick so admin-shell-added
+  // capabilities pick up schemas without an orchestrator restart.
+  const scrapeIntervalMs = d.schemaScrapeIntervalMs ?? 60_000;
+  let scraperStopped = false;
+  const scraperFailureState = { failures: new Map<string, number>() };
+  const realCallToolsList: CallToolsListFn = async (endpointUrl) => {
+    const transport = new StreamableHTTPClientTransport(
+      new URL(endpointUrl + '/mcp'),
+    );
+    const mcp = new McpClient(
+      { name: 'kubeclaw-schema-scraper', version: '0.0.1' },
+      { capabilities: {} },
+    );
+    await mcp.connect(transport);
+    try {
+      const res = await mcp.listTools();
+      return (res.tools ?? []).map((t) => ({
+        name: t.name,
+        description: t.description,
+        inputSchema: t.inputSchema,
+      })) as McpToolSchema[];
+    } finally {
+      await transport.close();
+    }
+  };
+  const scrapeTick = (): void => {
+    if (scraperStopped) return;
+    void (async () => {
+      try {
+        await scrapeMissingSchemas({
+          client: d.client,
+          namespace: d.namespace,
+          specs: d.listSpecs(),
+          callToolsList: realCallToolsList,
+          failureState: scraperFailureState,
+        });
+      } catch (err) {
+        logger.warn({ err }, 'scrapeMissingSchemas threw');
+      }
+      if (!scraperStopped) setTimeout(scrapeTick, scrapeIntervalMs);
+    })();
+  };
+  setTimeout(scrapeTick, scrapeIntervalMs);
+  scraperHandle = {
+    stop() {
+      scraperStopped = true;
+    },
+  };
+
   // 5-minute periodic safety reconcile.
   periodicHandle = setInterval(() => {
     void (async () => {
@@ -152,8 +221,10 @@ export async function initPerGroupCapabilityLifecycle(
   return {
     stop() {
       sweeperHandle?.stop();
+      scraperHandle?.stop();
       if (periodicHandle) clearInterval(periodicHandle);
       sweeperHandle = null;
+      scraperHandle = null;
       periodicHandle = null;
       deps = null;
     },
@@ -198,8 +269,10 @@ export async function onGroupRemoved(groupFolder: string): Promise<void> {
 /** Test-only reset. */
 export function _resetLifecycleForTest(): void {
   if (sweeperHandle) sweeperHandle.stop();
+  if (scraperHandle) scraperHandle.stop();
   if (periodicHandle) clearInterval(periodicHandle);
   sweeperHandle = null;
+  scraperHandle = null;
   periodicHandle = null;
   deps = null;
 }

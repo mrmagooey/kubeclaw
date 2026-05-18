@@ -1,79 +1,83 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
+import { _initTestDatabase, __resetDbForTest } from '../db.js';
+import { setCapability } from './db.js';
+import { getMcpEntriesAsync } from './client.js';
+import { cacheSchemas } from '../per-group-capabilities/schema-cache.js';
 
-const mockEntries = vi.hoisted(() => vi.fn());
+beforeAll(async () => {
+  await _initTestDatabase();
+});
 
-vi.mock('./registry.js', () => ({
-  getEntriesForChannel: mockEntries,
-  listCapabilities: vi.fn().mockReturnValue([]),
-  listCapabilitiesByKind: vi.fn().mockReturnValue([]),
-  getCapabilityByName: vi.fn(),
-}));
-vi.mock('../logger.js', () => ({
-  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
-}));
+beforeEach(() => {
+  __resetDbForTest();
+});
 
-import { getRagEntry, getMcpEntries, getHttpEntry } from './client.js';
-
-beforeEach(() => mockEntries.mockReset());
-
-describe('client', () => {
-  it('getRagEntry returns the first rag capability for the channel', () => {
-    mockEntries.mockReturnValue([
-      {
-        kind: 'rag',
-        name: 'main',
-        endpoint: 'http://x',
-        kindMetadata: { backend: 'qdrant' },
-      },
-      {
-        kind: 'mcp',
-        name: 'wx',
-        endpoint: 'http://y',
-        kindMetadata: { path: '/mcp' },
-      },
-    ]);
-    expect(getRagEntry('http')?.name).toBe('main');
+describe('getMcpEntriesAsync', () => {
+  it('returns cluster-scoped mcp entries', async () => {
+    setCapability({
+      name: 'qdrant',
+      kind: 'mcp',
+      image: 'qdrant:1',
+      port: 6333,
+    });
+    const entries = await getMcpEntriesAsync('telegram', undefined);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].kind).toBe('mcp');
   });
 
-  it('getRagEntry returns undefined when no rag is registered', () => {
-    mockEntries.mockReturnValue([]);
-    expect(getRagEntry('http')).toBeUndefined();
+  it('emits mcp-group entries with pending-schema when no cache', async () => {
+    setCapability({
+      name: 'echo',
+      kind: 'mcp',
+      image: 'echo:1',
+      scope: 'group',
+    });
+    const entries = await getMcpEntriesAsync('telegram', undefined);
+    const group = entries.find((e) => e.kind === 'mcp-group');
+    expect(group?.state).toBe('pending-schema');
   });
 
-  it('getMcpEntries returns only MCP entries', () => {
-    mockEntries.mockReturnValue([
-      {
-        kind: 'rag',
-        name: 'main',
-        endpoint: '',
-        kindMetadata: { backend: 'qdrant' },
-      },
-      { kind: 'mcp', name: 'wx', endpoint: '', kindMetadata: { path: '/mcp' } },
-      {
-        kind: 'mcp',
-        name: 'cal',
-        endpoint: '',
-        kindMetadata: { path: '/mcp' },
-      },
-    ]);
-    expect(getMcpEntries('http').map((e) => e.name)).toEqual(['wx', 'cal']);
+  it('emits mcp-group entries with ready + schemas when cached', async () => {
+    setCapability({
+      name: 'echo',
+      kind: 'mcp',
+      image: 'echo:1',
+      scope: 'group',
+    });
+    cacheSchemas('echo', 'echo:1', [{ name: 'echo', inputSchema: {} }]);
+    const entries = await getMcpEntriesAsync('telegram', undefined);
+    const group = entries.find((e) => e.kind === 'mcp-group');
+    expect(group?.state).toBe('ready');
+    if (group?.kind === 'mcp-group') {
+      expect(group.toolSchemas).toHaveLength(1);
+    }
   });
 
-  it('getHttpEntry returns the named http entry when present', () => {
-    mockEntries.mockReturnValue([
-      { kind: 'http', name: 'cache', endpoint: 'http://c', kindMetadata: {} },
-      {
-        kind: 'http',
-        name: 'shortener',
-        endpoint: 'http://s',
-        kindMetadata: {},
-      },
-    ]);
-    expect(getHttpEntry('http', 'shortener')?.endpoint).toBe('http://s');
+  it('respects channel ACL on cluster mcp', async () => {
+    setCapability({
+      name: 'qdrant',
+      kind: 'mcp',
+      image: 'q:1',
+      channels: ['discord'],
+    });
+    const tel = await getMcpEntriesAsync('telegram', undefined);
+    const dis = await getMcpEntriesAsync('discord', undefined);
+    expect(tel).toEqual([]);
+    expect(dis).toHaveLength(1);
   });
 
-  it('getHttpEntry returns undefined when no match', () => {
-    mockEntries.mockReturnValue([]);
-    expect(getHttpEntry('http', 'nope')).toBeUndefined();
+  it('respects channel ACL on group-scoped capability', async () => {
+    setCapability({
+      name: 'echo',
+      kind: 'mcp',
+      image: 'echo:1',
+      scope: 'group',
+      channels: ['discord'],
+    });
+    cacheSchemas('echo', 'echo:1', [{ name: 'echo', inputSchema: {} }]);
+    const tel = await getMcpEntriesAsync('telegram', undefined);
+    const dis = await getMcpEntriesAsync('discord', undefined);
+    expect(tel).toEqual([]);
+    expect(dis).toHaveLength(1);
   });
 });
