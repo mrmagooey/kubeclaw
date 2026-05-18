@@ -57,3 +57,29 @@ status: passing
 - The pattern in `e2e/credential-injection.test.ts` line 325 shows the simplest approach: `execSync("curl -s http://localhost:19091/metrics", { encoding: "utf8" })` and `expect(metricsText).toContain("kubeclaw_tool_job_spawned_total")`. Adapt the same pattern for the orchestrator port.
 
 status: passing (AC1-2, AC4-5; AC3 skipped — LLM dispatch dependency)
+## Story 3: Global concurrency limit queues a third group's message until a slot opens
+
+**As a** KubeClaw operator with multiple active users
+**I want** the orchestrator to respect `MAX_CONCURRENT_JOBS` so that a third group's inbound message is held in the queue rather than dropped or processed out of turn when two groups are already running
+**So that** busy periods are handled gracefully without losing messages and without overloading the node with unbounded parallel channel pods
+
+### Acceptance criteria
+
+1. With `orchestrator.maxConcurrentJobs=2` set at install time, when two groups each have a long-running tool job in flight, a POST to the HTTP channel from a third group receives HTTP 200 (message accepted) immediately — the channel does not reject or time out the request.
+2. While those two jobs are in flight, the third group's message is not yet processed — the orchestrator has not produced any reply for the third group.
+3. Once one of the two running jobs finishes and its slot is released, the third group's message is processed and a reply is produced within 30 seconds.
+4. After all three groups have received replies, `kubectl get jobs -n <namespace>` shows at most 2 jobs with `status.active > 0` at any single point in time during the test (verified via log scraping or periodic polling).
+5. No messages are lost: all three groups eventually receive a reply in the correct order (FIFO within a group).
+
+### Notes for the test author
+
+- `MAX_CONCURRENT_JOBS` is surfaced in the Helm chart as `orchestrator.maxConcurrentJobs` (default `10`; set to `2` for this test). The env var is injected in `helm/kubeclaw/templates/orchestrator.yaml` line 167-168. Use `--set orchestrator.maxConcurrentJobs=2` at helm install time.
+- The `GroupQueue` implementation is in `src/group-queue.ts`. When `activeCount >= MAX_CONCURRENT_JOBS` the new group is added to `waitingGroups` and its `pendingMessages` flag is set; it is drained in `tryDrainWaiting()` once a slot frees. The test should verify this draining happens end-to-end.
+- To create a long-running tool job, use a specialist or channel message that causes the orchestrator to dispatch a Kubernetes Job. The `/alpine` specialist (configured via `helm --set-json 'specialists=[...]'`) runs `sleep 10` via the kubeclaw-alpine image and is the simplest hold mechanism. Alternatively, configure a specialist whose system prompt instructs it to wait; a local stub LLM that responds slowly is another option.
+- Port-forward the HTTP channel service to a local port (e.g. `14092` to avoid conflicts with the existing minikube-live suite on `14081`). The channel accepts `POST /message` with Basic Auth; see `e2e/minikube-live-admin-shell.test.ts` lines 57-63 for the Basic Auth pattern and `e2e/minikube-live.test.ts` for the POST + SSE reply pattern.
+- Install kubeclaw in an isolated namespace (e.g. `kubeclaw-e2e-concurrency`) so the test does not collide with other suites. Follow the `beforeAll` / `afterAll` install+uninstall pattern from `e2e/credential-broker.test.ts`.
+- Polling strategy for AC4: sample `kubectl get jobs -n kubeclaw-e2e-concurrency -o json` every second while the two jobs are running and assert `items.filter(j => j.status.active > 0).length <= 2`.
+- Known constraint: job startup latency on kind can be 3-5 s; set SSE/reply timeouts to at least 60 s to avoid flaky failures on slow CI nodes.
+- IMPORTANT: target the kind cluster `kubeclaw-e2e-istio` (not minikube). Install kubeclaw with default values (mode=sidecar). Use `KUBECLAW_SKIP_HELM_INSTALL=true` convention.
+
+status: drafted
