@@ -42,6 +42,21 @@ All notable changes to KubeClaw will be documented in this file.
 - **New SQLite table `capability_tool_schemas`** stores scraped tool schemas per `(capability_name, image)`.
 - **New orchestrator background loop:** schema scraper. Runs every 60 s, scrapes any (capability, image) pair without a cached schema, caps retries at 3 per orchestrator-process lifetime.
 - **Per-group Deployments now expose a readinessProbe on `/health`** so the K8s API only reports them ready once the MCP server is accepting connections. Removes a race against scrape and discovery RPCs.
+- **Filesystem MCP capability (Phase B Spec 2)** — default-on. Each
+  registered group gets a per-group `kubeclaw-mcp-bundle` pod (scales to
+  zero when idle) exposing five tools to the LLM under the
+  `mcp__filesystem__*` prefix: `read_file`, `write_file`, `list_directory`,
+  `search_files`, `create_directory`. Files are stored on the group's PVC
+  subPath; 100 MiB file-size cap (configurable via
+  `KUBECLAW_FS_MAX_FILE_BYTES`).
+- **New container image `kubeclaw-mcp-bundle`** — Node-based, hosts
+  multiple MCP server kinds selected via `--server` arg. Filesystem is the
+  first inhabitant.
+- **Helm static-template gate for group-scoped capabilities** —
+  capability-pods, serviceaccounts, and metrics-servicemonitor now skip
+  entries with `scope: group`, leaving their deployment to the
+  orchestrator reconciler. Prevents double-deployment of group-scoped
+  capabilities.
 
 ## [1.2.0](https://github.com/qwibitai/kubeclaw/compare/v1.1.6...v1.2.0)
 

@@ -34,6 +34,11 @@ Tell it in plain English: `"set up Telegram"` — it will ask for your credentia
 
 - **Multi-channel messaging** - Talk to your assistant from WhatsApp, Telegram, Discord, Slack, IRC, Signal, Gmail, HTTP, or oauth-webchat. Install channels via the orchestrator admin shell (see [docs/INSTALLING_A_CHANNEL.md](docs/INSTALLING_A_CHANNEL.md)). Run one or many at the same time.
 - **Isolated group context** - Each group has its own memory, isolated filesystem, and runs in its own Kubernetes Job sandbox with only that filesystem mounted to it.
+- **Per-group filesystem** — every group gets a sandboxed filesystem at
+  `/data` (its own PVC subPath) exposed to the LLM via 5 MCP tools
+  (`read_file`, `write_file`, `list_directory`, `search_files`,
+  `create_directory`). Default-on; 100 MiB file-size cap. Scales to zero
+  when idle.
 - **Main channel** - Your private channel (self-chat) for admin control; every group is completely isolated
 - **Scheduled tasks** - Recurring jobs that run Claude and can message you back
 - **Web access** - Search and fetch content from the Web
