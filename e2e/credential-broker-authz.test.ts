@@ -179,7 +179,7 @@ describe('credential broker /authz endpoint (Story 4)', { timeout: 300_000 }, ()
         { encoding: 'utf8' },
       ).trim();
 
-      const brokerUrl = `http://credential-broker.${NS}.svc:8080/authz`;
+      const brokerUrl = `http://kubeclaw-credential-broker.${NS}.svc:8080/authz`;
 
       // Run a curl pod that:
       //   - POSTs to /authz with the SA Bearer token
@@ -225,7 +225,7 @@ describe('credential broker /authz endpoint (Story 4)', { timeout: 300_000 }, ()
         { encoding: 'utf8' },
       ).trim();
 
-      const brokerUrl = `http://credential-broker.${NS}.svc:8080/authz`;
+      const brokerUrl = `http://kubeclaw-credential-broker.${NS}.svc:8080/authz`;
 
       const curlOutput = execSync(
         `kubectl --namespace ${NS} run authz-ac2 --rm -i --restart=Never ` +
@@ -260,7 +260,7 @@ describe('credential broker /authz endpoint (Story 4)', { timeout: 300_000 }, ()
   it(
     'AC3: request with no Authorization header → 401 regardless of authority',
     () => {
-      const brokerUrl = `http://credential-broker.${NS}.svc:8080/authz`;
+      const brokerUrl = `http://kubeclaw-credential-broker.${NS}.svc:8080/authz`;
 
       // No -H "Authorization: ..." — broker receives no Bearer token.
       const curlOutput = execSync(
