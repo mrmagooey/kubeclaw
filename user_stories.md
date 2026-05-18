@@ -83,7 +83,7 @@ status: passing (AC1-2, AC4-5; AC3 skipped — LLM dispatch dependency)
 - IMPORTANT: target the kind cluster `kubeclaw-e2e-istio` (not minikube). Install kubeclaw with default values (mode=sidecar). Use `KUBECLAW_SKIP_HELM_INSTALL=true` convention.
 
 status: partial (3/5) — AC1 (POST 200), AC2 (queued state), AC4 (≤2 active jobs) pass; AC3, AC5 timing assertions flake on slow kind LLM (count-to-30 specialist exceeds 120s windows). Queue back-pressure logic verified structurally; LLM-end-to-end timing should be re-tested on a faster inference target.
-## Story 4: Credential broker stamps Authorization header for allowed destinations and returns 403 for unknown ones
+## Story 4: Credential broker stamps Authorization header for allowed destinations and returns 403 for unknown ones (status: passing — 5/5)
 
 **As a** KubeClaw operator relying on the credential-injection subsystem for secure LLM access
 **I want** the credential broker to stamp a valid `Authorization: Bearer <key>` header when a registered pod presents a valid token for a known destination, and to return HTTP 403 when the same pod targets an unregistered destination
