@@ -284,6 +284,8 @@ function helmInstall(extraArgs: string[]): void {
       '--create-namespace',
       '--timeout', '180s',
       '--set', `namespace=${NAMESPACE}`,
+      '--set', 'image.tag=e2e-test',
+      '--set', 'image.pullPolicy=IfNotPresent',
       '--set', 'secrets.anthropicApiKey=test-key',
       '--set', 'secrets.claudeCodeOauthToken=test-token',
       '--set', `secrets.openaiApiKey=${LIVE_API_KEY}`,
