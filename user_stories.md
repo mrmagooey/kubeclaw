@@ -136,7 +136,7 @@ status: drafted
 - IMPORTANT: target the kind cluster `kubeclaw-e2e-istio`. Use `--set image.tag=e2e-test --set image.pullPolicy=IfNotPresent`. Service names in the chart are prefixed `kubeclaw-` (e.g. `kubeclaw-redis`, not `redis`). Use `KUBECLAW_SKIP_HELM_INSTALL=true` to bypass globalSetup.
 
 status: drafted
-## Story 6: Sender allowlist drop mode silently discards messages from blocked senders
+## Story 6: Sender allowlist drop mode silently discards messages from blocked senders (status: passing 5/5)
 
 **As a** KubeClaw operator who wants to limit which users can trigger the assistant
 **I want** the channel pod to silently discard inbound messages from senders not on the allowlist when `mode` is `drop`
