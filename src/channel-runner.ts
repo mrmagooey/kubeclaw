@@ -1675,6 +1675,10 @@ async function main(): Promise<void> {
           shouldDropMessage(chatJid, cfg) &&
           !isSenderAllowed(chatJid, msg.sender, cfg)
         ) {
+          logger.info(
+            { chatJid, sender: msg.sender },
+            'sender-allowlist: dropping message',
+          );
           return;
         }
       }
