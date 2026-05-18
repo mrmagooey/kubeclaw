@@ -190,7 +190,33 @@ channelPod:
 #         limits:
 #           memory: "512Mi"
 #           cpu: "500m"
-capabilities: {}
+capabilities:
+  filesystem:
+    kind: mcp
+    scope: group
+    image: kubeclaw-mcp-bundle:latest
+    command: ["node", "/app/index.js", "--server", "filesystem", "--root", "/data"]
+    port: 3000
+    path: /mcp
+    volumeFromGroupPvc: true
+    credentialsFrom: none
+    scaleDownAfterIdleSeconds: 600
+    allowedTools:
+      - read_file
+      - write_file
+      - list_directory
+      - search_files
+      - create_directory
+    env:
+      KUBECLAW_FS_MAX_FILE_BYTES: "104857600"
+      NODE_OPTIONS: "--max-old-space-size=384"
+    resources:
+      requests:
+        memory: 128Mi
+        cpu: 50m
+      limits:
+        memory: 512Mi
+        cpu: 500m
 
 # Default resource limits for capability pods.
 capabilityPod:
