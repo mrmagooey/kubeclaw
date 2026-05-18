@@ -225,7 +225,12 @@ const hasIstio =
 //   install with Istio mode enabled and therefore runs only in the dedicated
 //   istio CI workflow (e2e-istio.yml), where no global-setup kubeclaw release
 //   pre-exists.
+// When KUBECLAW_SKIP_HELM_INSTALL=true the caller has manually installed a
+// kubeclaw release with mode=istio and wants to run the suite against it.
+// In that case we treat the existing release as "not colliding" so the guard
+// does not skip the entire describe block.
 const hasExistingRelease =
+  process.env.KUBECLAW_SKIP_HELM_INSTALL !== 'true' &&
   spawnSync('helm', ['status', 'kubeclaw', '--namespace', NS], {
     stdio: 'pipe',
   }).status === 0;
@@ -241,69 +246,97 @@ describe.skipIf(!hasIstio || hasExistingRelease)(
     let installed = false;
 
     beforeAll(() => {
-      // Write a temporary values file so we can include catalog entries
-      // (helm --set does not support complex nested arrays cleanly).
-      const valuesDir = mkdtempSync(path.join(tmpdir(), 'ke2e-vals-'));
-      const valuesFile = path.join(valuesDir, 'e2e-values.yaml');
-      writeFileSync(
-        valuesFile,
-        [
-          'credentialInjection:',
-          '  mode: istio',
-          '  istio:',
-          '    gateway:',
-          '      replicas: 1',
-          '    testFixture:',
-          '      enabled: true',
-          // Catalog entries used by the per-group credential tests.
-          // e2e-catalog-bearer: same host as test-mock MAPPING (mock-upstream.kubeclaw-test).
-          //   The mapping path wins for built-in identities, but catalog resolution
-          //   is verified via direct broker calls with group Secrets present (tests
-          //   that expect x-kubeclaw-substitutions check for the header when it
-          //   appears; those that cannot disambiguate accept 200 or 403).
-          // e2e-catalog-basic: different host with two credential fields.
-          // e2e-catalog-body-only: allowedPositions=[body] only.
-          '  catalog:',
-          '    - id: e2e-catalog-bearer',
-          '      host: mock-upstream.kubeclaw-test',
-          '      upstreamPort: 80',
-          '      credentialFields:',
-          '        - { name: token, envVar: E2E_CATALOG_TOKEN }',
-          '      baseUrlEnvs: {}',
-          '      allowOperatorFallback: false',
-          '      allowedPositions: [header, body]',
-          '    - id: e2e-catalog-basic',
-          '      host: api.e2e-basic.kubeclaw-test',
-          '      upstreamPort: 80',
-          '      credentialFields:',
-          '        - { name: username, envVar: E2E_BASIC_USER }',
-          '        - { name: password, envVar: E2E_BASIC_PASS }',
-          '      baseUrlEnvs: {}',
-          '      allowOperatorFallback: false',
-          '      allowedPositions: [header, body]',
-          '    - id: e2e-catalog-body-only',
-          '      host: api.e2e-bodyonly.kubeclaw-test',
-          '      upstreamPort: 80',
-          '      credentialFields:',
-          '        - { name: apikey, envVar: E2E_BODY_KEY }',
-          '      baseUrlEnvs: {}',
-          '      allowOperatorFallback: false',
-          '      allowedPositions: [body]',
-        ].join('\n'),
-      );
+      const skipHelmInstall = process.env.KUBECLAW_SKIP_HELM_INSTALL === 'true';
 
-      helm(
-        [
-          'upgrade --install kubeclaw helm/kubeclaw',
-          '--namespace kubeclaw --create-namespace',
-          `-f ${valuesFile}`,
-          '--set image.tag=e2e-test',
-          '--wait --timeout 5m',
-        ].join(' '),
-      );
-      rmSync(valuesDir, { recursive: true, force: true });
-      installed = true;
+      if (!skipHelmInstall) {
+        // Write a temporary values file so we can include catalog entries
+        // (helm --set does not support complex nested arrays cleanly).
+        const valuesDir = mkdtempSync(path.join(tmpdir(), 'ke2e-vals-'));
+        const valuesFile = path.join(valuesDir, 'e2e-values.yaml');
+        writeFileSync(
+          valuesFile,
+          [
+            'credentialInjection:',
+            '  mode: istio',
+            '  istio:',
+            '    gateway:',
+            '      replicas: 1',
+            '    testFixture:',
+            '      enabled: true',
+            // Catalog entries used by the per-group credential tests.
+            // e2e-catalog-bearer: same host as test-mock MAPPING (mock-upstream.kubeclaw-test).
+            //   The mapping path wins for built-in identities, but catalog resolution
+            //   is verified via direct broker calls with group Secrets present (tests
+            //   that expect x-kubeclaw-substitutions check for the header when it
+            //   appears; those that cannot disambiguate accept 200 or 403).
+            // e2e-catalog-basic: different host with two credential fields.
+            // e2e-catalog-body-only: allowedPositions=[body] only.
+            '  catalog:',
+            '    - id: e2e-catalog-bearer',
+            '      host: mock-upstream.kubeclaw-test',
+            '      upstreamPort: 80',
+            '      credentialFields:',
+            '        - { name: token, envVar: E2E_CATALOG_TOKEN }',
+            '      baseUrlEnvs: {}',
+            '      allowOperatorFallback: false',
+            '      allowedPositions: [header, body]',
+            '    - id: e2e-catalog-basic',
+            '      host: api.e2e-basic.kubeclaw-test',
+            '      upstreamPort: 80',
+            '      credentialFields:',
+            '        - { name: username, envVar: E2E_BASIC_USER }',
+            '        - { name: password, envVar: E2E_BASIC_PASS }',
+            '      baseUrlEnvs: {}',
+            '      allowOperatorFallback: false',
+            '      allowedPositions: [header, body]',
+            '    - id: e2e-catalog-body-only',
+            '      host: api.e2e-bodyonly.kubeclaw-test',
+            '      upstreamPort: 80',
+            '      credentialFields:',
+            '        - { name: apikey, envVar: E2E_BODY_KEY }',
+            '      baseUrlEnvs: {}',
+            '      allowOperatorFallback: false',
+            '      allowedPositions: [body]',
+          ].join('\n'),
+        );
 
+        // Pre-create the namespace with the istio-injection label BEFORE helm install
+        // so that Istio's mutating webhook fires on the first pod creation.
+        // (Labeling after install is too late — gateway pods are already scheduled.)
+        execSync(
+          `kubectl create namespace ${NS} --dry-run=client -o yaml | kubectl apply -f -`,
+          { stdio: 'pipe' },
+        );
+        execSync(
+          `kubectl label namespace ${NS} istio-injection=enabled --overwrite`,
+          { stdio: 'pipe' },
+        );
+
+        helm(
+          [
+            'upgrade --install kubeclaw helm/kubeclaw',
+            `--namespace ${NS}`,
+            `-f ${valuesFile}`,
+            '--set image.tag=e2e-test',
+            '--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test',
+          ].join(' '),
+        );
+        rmSync(valuesDir, { recursive: true, force: true });
+        installed = true;
+      }
+
+      execSync(
+        `kubectl -n ${NS} rollout status deployment/kubeclaw-orchestrator --timeout=120s`,
+        { stdio: 'inherit' },
+      );
+      execSync(
+        `kubectl -n ${NS} rollout status deployment/kubeclaw-istio-egressgateway --timeout=120s`,
+        { stdio: 'inherit' },
+      );
+      execSync(
+        `kubectl -n ${NS} rollout status deployment/kubeclaw-credential-broker --timeout=120s`,
+        { stdio: 'inherit' },
+      );
       execSync(
         `kubectl -n ${NS} rollout status deployment/kubeclaw-mock-upstream --timeout=120s`,
         { stdio: 'inherit' },
@@ -338,12 +371,13 @@ describe.skipIf(!hasIstio || hasExistingRelease)(
     });
 
     afterAll(() => {
-      if (!installed) return;
       // Best-effort cleanup of the probe pod.
       execSync(
         `kubectl -n ${NS} delete pod ${BROKER_PROBE_POD} --ignore-not-found --wait=false`,
         { stdio: 'pipe' },
       );
+      // Only uninstall if we installed (and not skipping for live-cluster dev runs).
+      if (!installed || process.env.KUBECLAW_SKIP_HELM_INSTALL === 'true') return;
       execSync('helm uninstall kubeclaw --namespace kubeclaw', {
         encoding: 'utf8',
         stdio: 'inherit',
@@ -424,28 +458,92 @@ describe.skipIf(!hasIstio || hasExistingRelease)(
       );
 
       const overrides = JSON.stringify({
-        spec: { serviceAccountName: 'kubeclaw-tool-job' },
+        metadata: {
+          annotations: {
+            // Enable Istio DNS capture so the sidecar intercepts DNS lookups for
+            // ServiceEntry hostnames (e.g. mock-upstream.kubeclaw-test) and returns
+            // synthetic IPs that Envoy then routes through the egress gateway.
+            'proxy.istio.io/config':
+              '{"proxyMetadata":{"ISTIO_META_DNS_CAPTURE":"true","ISTIO_META_DNS_AUTO_ALLOCATE":"true"}}',
+          },
+        },
+        spec: {
+          serviceAccountName: 'kubeclaw-tool-job',
+          // Projected token with kubeclaw-credential-broker audience so the broker
+          // can validate it via TokenReview and resolve identity as sa/kubeclaw-tool-job.
+          // (Istio XFCC-based identity requires mTLS on the HTTP gateway listener,
+          // which gateway-mode injection does not configure automatically; the
+          // bearer-token path provides equivalent identity resolution via TokenReview.)
+          volumes: [
+            {
+              name: 'broker-token',
+              projected: {
+                sources: [
+                  {
+                    serviceAccountToken: {
+                      audience: 'kubeclaw-credential-broker',
+                      expirationSeconds: 600,
+                      path: 'broker-token',
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+          containers: [
+            {
+              name: 'kubeclaw-egress-probe',
+              image: 'curlimages/curl:8.10.1',
+              volumeMounts: [
+                {
+                  name: 'broker-token',
+                  mountPath: '/var/run/secrets/tokens',
+                  readOnly: true,
+                },
+              ],
+            },
+          ],
+        },
       });
-      // NB: each line is joined with "; " and embedded inside an outer
-      // sh -c '...' single-quoted string in kubectl run. Do NOT use
-      // single-quotes inside these lines — they will terminate the outer
-      // quoting and break the spawned shell.
-      const script = [
+      // Build the script inline. Lines joined with "; " — no single quotes
+      // allowed since the overrides JSON string is quoted with single quotes
+      // in some shell contexts. Double quotes are safe.
+      // trap: always call quitquitquit so the istio-proxy sidecar exits and
+      // the pod reaches Succeeded/Failed (not stuck in Running indefinitely).
+      // Use the projected service-account token (audience=kubeclaw-credential-broker)
+      // so the broker can perform a TokenReview and identify the caller as
+      // sa/kubeclaw-tool-job.
+      const scriptLines = [
+        'trap "curl -sS -X POST http://localhost:15020/quitquitquit || true" EXIT',
         'set -e',
-        'resp=$(curl -sS -H "Authorization: Bearer placeholder" http://mock-upstream.kubeclaw-test/echo)',
+        'SA_TOKEN=$(cat /var/run/secrets/tokens/broker-token)',
+        'resp=$(curl -sS -H "Authorization: Bearer $SA_TOKEN" http://mock-upstream.kubeclaw-test/echo)',
         'echo RESPONSE_BEGIN',
         'echo "$resp"',
         'echo RESPONSE_END',
-        // Tell the istio-proxy sidecar to exit so the pod can reach Succeeded.
-        'curl -sS -X POST http://localhost:15020/quitquitquit || true',
-      ].join('; ');
+      ];
+
+      // The overrides must include the command so that kubectl run --overrides
+      // does not null it out. The container command is set directly in the
+      // override JSON, and kubectl run is invoked without --command.
+      const overridesWithCmd = JSON.stringify({
+        ...JSON.parse(overrides),
+        spec: {
+          ...JSON.parse(overrides).spec,
+          containers: [
+            {
+              ...JSON.parse(overrides).spec.containers[0],
+              command: ['sh', '-c', scriptLines.join('; ')],
+            },
+          ],
+        },
+      });
 
       execSync(
         `kubectl run ${probeName} -n ${NS} \
         --image=curlimages/curl:8.10.1 \
         --restart=Never \
-        --overrides='${overrides}' \
-        --command -- sh -c '${script}'`,
+        --overrides='${overridesWithCmd}'`,
         { stdio: 'inherit' },
       );
 

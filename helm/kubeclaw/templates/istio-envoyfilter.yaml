@@ -14,6 +14,39 @@ spec:
     labels:
       istio: kubeclaw-egressgateway
   configPatches:
+    # Insert a Lua filter before ext_authz to copy :authority → x-forwarded-authority.
+    # The ext_authz headers_to_add field does not support access-log format strings
+    # (%REQ(:AUTHORITY)%), so we use a minimal Lua snippet to do the copy instead.
+    - applyTo: HTTP_FILTER
+      match:
+        context: GATEWAY
+        listener:
+          filterChain:
+            filter:
+              name: envoy.filters.network.http_connection_manager
+              subFilter:
+                name: envoy.filters.http.router
+      patch:
+        operation: INSERT_BEFORE
+        value:
+          name: envoy.filters.http.lua.set-forwarded-authority
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
+            default_source_code:
+              inline_string: |
+                function envoy_on_request(handle)
+                  local authority = handle:headers():get(":authority") or handle:headers():get("host") or ""
+                  -- strip port suffix if present (e.g. "example.com:80" → "example.com")
+                  local host = authority:match("^([^:]+)")
+                  if host and host ~= "" then
+                    handle:headers():replace("x-forwarded-authority", host)
+                  end
+                  -- Convert method to POST so the ext_authz HTTP service sends POST to the
+                  -- credential broker (which only accepts POST /authz* requests). The original
+                  -- method is irrelevant for the auth sub-request; the upstream sees whatever
+                  -- method the broker's response allows through.
+                  handle:headers():replace(":method", "POST")
+                end
     # Insert ext_authz HTTP filter before the router filter on the outbound listener.
     - applyTo: HTTP_FILTER
       match:
@@ -32,8 +65,8 @@ spec:
             "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz
             http_service:
               server_uri:
-                uri: http://credential-broker.{{ .Values.namespace }}.svc.cluster.local:{{ .Values.credentialInjection.broker.port }}
-                cluster: outbound|{{ .Values.credentialInjection.broker.port }}||credential-broker.{{ .Values.namespace }}.svc.cluster.local
+                uri: http://kubeclaw-credential-broker.{{ .Values.namespace }}.svc.cluster.local:{{ .Values.credentialInjection.broker.port }}
+                cluster: outbound|{{ .Values.credentialInjection.broker.port }}||kubeclaw-credential-broker.{{ .Values.namespace }}.svc.cluster.local
                 timeout: 5s
               path_prefix: /authz
               authorization_request:
@@ -49,10 +82,6 @@ spec:
                     - exact: x-kubeclaw-substitutions
                     - exact: x-kubeclaw-policy
             failure_mode_allow: false
-            with_request_body:
-              max_request_bytes: 0
-              allow_partial_message: false
-              pack_as_bytes: false
     # Insert Lua substitution filter immediately after ext_authz so it sees
     # the broker's x-kubeclaw-substitutions / x-kubeclaw-policy response headers,
     # performs placeholder substitution in request headers and body, then strips

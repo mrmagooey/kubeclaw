@@ -24,7 +24,10 @@
 #     Istio's iptables already enforces this, but NetworkPolicy adds a
 #     second defence-in-depth layer at the CNI level.
 ---
-# Egress gateway is the ONLY pod allowed to reach the credential broker.
+# Egress gateway is the ONLY pod allowed to reach the credential broker on the
+# authz port in normal mode. When testFixture.enabled=true (e2e only), all
+# in-namespace pods may also reach the broker directly so per-group credential
+# tests can call /authz from the persistent probe pod via kubectl exec.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -43,6 +46,16 @@ spec:
       ports:
         - protocol: TCP
           port: {{ .Values.credentialInjection.broker.port }}
+    {{- if ((.Values.credentialInjection.istio.testFixture).enabled) }}
+    # e2e test fixture: allow all in-namespace pods to call /authz directly
+    # for per-group credential tests (probe pod -> broker without going through
+    # the egress gateway). NEVER enable in production.
+    - from:
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.credentialInjection.broker.port }}
+    {{- end }}
 ---
 # Workload pods: restrict egress to DNS + in-namespace services.
 # Istio iptables enforces the actual constraint; this adds a CNI-level layer.
@@ -70,6 +83,15 @@ spec:
               kubernetes.io/metadata.name: istio-system
       ports:
         - { protocol: TCP, port: 15012 }
+    # Egress gateway: Envoy sidecar routes mesh traffic to the gateway pod on
+    # port 8080 (the gateway's containerPort / targetPort). After DNAT by
+    # kube-proxy the CNI evaluates NetworkPolicy against the pod port.
+    - to:
+        - podSelector:
+            matchLabels:
+              istio: kubeclaw-egressgateway
+      ports:
+        - { protocol: TCP, port: 8080 }
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -93,6 +115,12 @@ spec:
               kubernetes.io/metadata.name: istio-system
       ports:
         - { protocol: TCP, port: 15012 }
+    - to:
+        - podSelector:
+            matchLabels:
+              istio: kubeclaw-egressgateway
+      ports:
+        - { protocol: TCP, port: 8080 }
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -116,6 +144,12 @@ spec:
               kubernetes.io/metadata.name: istio-system
       ports:
         - { protocol: TCP, port: 15012 }
+    - to:
+        - podSelector:
+            matchLabels:
+              istio: kubeclaw-egressgateway
+      ports:
+        - { protocol: TCP, port: 8080 }
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -139,4 +173,10 @@ spec:
               kubernetes.io/metadata.name: istio-system
       ports:
         - { protocol: TCP, port: 15012 }
+    - to:
+        - podSelector:
+            matchLabels:
+              istio: kubeclaw-egressgateway
+      ports:
+        - { protocol: TCP, port: 8080 }
 {{- end }}

@@ -26,6 +26,7 @@ spec:
         istio: kubeclaw-egressgateway
       annotations:
         sidecar.istio.io/inject: "true"
+        inject.istio.io/templates: "gateway"
     spec:
       serviceAccountName: kubeclaw-istio-egressgateway
       securityContext:
@@ -65,9 +66,11 @@ spec:
       targetPort: 8080
 ---
 # Gateway — HTTP listener on port 80. Workload sidecars route to this gateway
-# over mesh mTLS; the gateway terminates that mTLS and presents plaintext HTTP
-# to its filter chain (where ext_authz fires per the EnvoyFilter), then
-# originates TLS to the real upstream per the per-host DestinationRules.
+# over mesh mTLS (enforced by the kubeclaw-egressgateway-strict PeerAuthentication);
+# Istio terminates the mTLS and populates x-forwarded-client-cert (XFCC) on
+# the inbound HTTP listener automatically via auto-mTLS. The gateway's filter
+# chain (ext_authz + Lua) reads XFCC for identity and stamps the Authorization
+# header before forwarding to the upstream.
 apiVersion: networking.istio.io/v1
 kind: Gateway
 metadata:
@@ -124,6 +127,23 @@ spec:
             host: {{ index $dest "host" }}
             port: { number: {{ index $dest "upstreamPort" }} }
 {{- end }}
+---
+# PeerAuthentication — enforce STRICT mTLS for inbound connections to the egress
+# gateway pod. This ensures that workload sidecars always use mTLS when connecting
+# to the gateway, which causes Istio to populate x-forwarded-client-cert (XFCC)
+# with the caller's SPIFFE identity. The credential broker reads XFCC to resolve
+# the workload service account for per-group credential lookup.
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: kubeclaw-egressgateway-strict
+  namespace: {{ $.Values.namespace }}
+spec:
+  selector:
+    matchLabels:
+      istio: kubeclaw-egressgateway
+  mtls:
+    mode: STRICT
 {{- range $dest := $destinations }}
 {{- if eq (index $dest "upstreamProtocol") "HTTPS" }}
 ---
