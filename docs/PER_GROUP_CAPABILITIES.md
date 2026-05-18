@@ -154,6 +154,41 @@ Update each match to the prefixed form. In-flight conversations may produce
 one failed tool call after upgrade if the LLM tries a stale name; the next
 turn picks up the new names from the refreshed tool list.
 
+## Filesystem MCP (Phase B Spec 2)
+
+The filesystem capability ships **default-on**. Every registered group gets
+its own `kubeclaw-mcp-bundle` pod (scaled to zero when idle) exposing five
+tools under `mcp__filesystem__*`:
+
+- `read_file(path)` — UTF-8 contents
+- `write_file(path, content)` — overwrites
+- `list_directory(path)` — entries with type and size
+- `search_files(path, pattern)` — glob over file paths (`**/*.md` style)
+- `create_directory(path)` — recursive + idempotent
+
+All paths are relative to the group's PVC subPath (mounted at `/data` inside
+the pod). Absolute paths, traversal escapes, and symlink escapes are rejected.
+
+### File-size cap
+
+Both `read_file` and `write_file` are capped at **100 MiB** per call. The
+MCP protocol holds full content in memory during JSON encode/decode, so
+larger files would risk OOM-ing the pod (default `memoryLimit: 512Mi`).
+
+To raise the cap, override in `values.yaml`:
+
+```yaml
+capabilities:
+  filesystem:
+    env:
+      KUBECLAW_FS_MAX_FILE_BYTES: "524288000"        # 500 MiB
+      NODE_OPTIONS: "--max-old-space-size=1024"
+    resources:
+      memoryLimit: 2Gi
+```
+
+Pod memory should be ~3-4× the cap to absorb the JSON-decode peak.
+
 ## Architecture references
 
 - Spec: `docs/superpowers/specs/2026-05-17-per-group-mcp-capabilities-phase-a-design.md`

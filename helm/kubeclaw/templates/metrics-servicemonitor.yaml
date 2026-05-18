@@ -44,7 +44,12 @@ spec:
       path: /metrics
 {{- end }}
 {{- end }}
+{{- /*
+  Group-scoped capabilities are deployed on-demand per (group × capability);
+  their ServiceMonitors are managed by the orchestrator reconciler, not here.
+*/ -}}
 {{- range $name, $cfg := .Values.capabilities }}
+{{- if ne $cfg.scope "group" }}
 ---
 # Capability ServiceMonitor: {{ $name }}
 apiVersion: monitoring.coreos.com/v1
@@ -66,5 +71,6 @@ spec:
     - port: metrics
       interval: {{ $.Values.metrics.serviceMonitor.interval }}
       path: /metrics
+{{- end }}
 {{- end }}
 {{- end }}
