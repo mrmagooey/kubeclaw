@@ -221,6 +221,12 @@ export default async function setup() {
   // ── Install kubeclaw via Helm ────────────────────────────────────────────
   // Skip if kubeclaw is already deployed — we must not overwrite a live user
   // installation with test credentials, and teardown must not uninstall it.
+  //
+  // Set KUBECLAW_SKIP_HELM_INSTALL=true to bypass the helm install entirely
+  // when no existing release is found. Useful for test suites (e.g. the istio
+  // e2e suite) that perform their own helm install with custom values before
+  // running vitest — this env var prevents global-setup from racing ahead and
+  // installing a vanilla release that would cause the suite to silently skip.
   const existingRelease = spawnSync(
     'helm',
     ['status', RELEASE, '--namespace', NAMESPACE],
@@ -248,6 +254,11 @@ export default async function setup() {
         console.log('🔑 Using live kubeclaw-redis admin password from secret\n');
       }
     }
+  } else if (process.env.KUBECLAW_SKIP_HELM_INSTALL === 'true') {
+    console.log(
+      '⏭️  KUBECLAW_SKIP_HELM_INSTALL=true — skipping helm install ' +
+        '(the calling test suite is expected to manage its own kubeclaw installation)\n',
+    );
   } else {
     // Pre-create the namespace with Helm ownership metadata so that helm can
     // manage it (the chart's namespace.yaml PATCHes it with pod-security labels).
