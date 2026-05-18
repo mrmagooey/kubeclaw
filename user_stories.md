@@ -184,30 +184,6 @@ status: drafted
 - This test is **LLM-free** and **Kubernetes-free** — use `FakePerGroupK8sClient` from `src/per-group-capabilities/k8s-client.ts` and `_initTestDatabase()` + `__resetDbForTest()` from `src/db.ts`. Call `sweepIdleInstances` directly; no helm install needed.
 - Test setup pattern: (a) `_initTestDatabase()`, (b) `upsertInstance(...)` with `replicas=1`, (c) set `lastUsedAt` via `touchLastUsed` then manipulate time via the `nowSeconds` override to simulate elapsed idle, (d) call `sweepIdleInstances`, (e) assert `FakePerGroupK8sClient.deployments` and `listInstancesAtReplicas(0)`.
 - To simulate log output for AC5, spy on `logger.info` (pino logger from `src/logger.ts`) and assert the call was made with `{ group, capability }` and message `'per_group_capability_scale_down'`.
-- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--set image.tag=e2e-test --set image.pullPolicy=IfNotPresent --set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `--create-namespace`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. No live cluster or helm install is needed for this story — the test runs entirely in-process against the fake K8s client and an in-memory SQLite database.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--set image.tag=e2e-test --set image.pullPolicy=IfNotPresent --set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `--create-namespace`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
 
-status: drafted
-## Story 7: Idle per-group capability Deployments scale to zero after the configured idle timeout
-
-**As a** KubeClaw operator running per-group capability pods (e.g. per-group MCP servers)
-**I want** idle capability Deployments to be automatically scaled to zero replicas once `scaleDownAfterIdleSeconds` elapses without activity
-**So that** capability pods do not consume compute and memory indefinitely when no group is using them
-
-### Acceptance criteria
-
-1. A per-group capability Deployment that has been idle (no `touchLastUsed` call) for at least `scaleDownAfterIdleSeconds` is scaled to zero replicas by the sweeper — verified by `kubectl get deployment <name> -o jsonpath='{.spec.replicas}'` returning `0`.
-2. A per-group capability Deployment whose `lastUsedAt` was updated within the idle window is NOT scaled down — it retains `replicas=1`.
-3. After scale-down, the SQLite row for that instance reflects `replicas=0` (query: `sqlite3 /app/store/kubeclaw.db "SELECT replicas FROM per_group_capability_instances WHERE deployment_name='<name>'"`).
-4. A capability whose `scaleDownAfterIdleSeconds` is very large (e.g. `86400`) is not scaled down even when the same sweeper tick fires.
-5. The orchestrator log contains an entry matching `per_group_capability_scale_down` with the correct `group` and `capability` fields for each Deployment that was scaled.
-
-### Notes for the test author
-
-- The sweeper implementation is in `src/per-group-capabilities/scale-down-sweeper.ts` (`sweepIdleInstances`). It reads live instances from `listInstancesAtReplicas(1)`, compares `lastUsedAt` against the spec's `scaleDownAfterIdleSeconds`, and calls `client.patchDeploymentReplicas(..., 0)` + `setReplicas(..., 0)` for any instance past the threshold. `nowSeconds` is injectable for time-control.
-- DB helpers in `src/per-group-capabilities/db.ts`: `touchLastUsed(groupFolder, capabilityName)` updates `last_used_at`; `setReplicas(groupFolder, capabilityName, n)` updates the `replicas` column; `listInstancesAtReplicas(1)` returns all instances with `replicas=1`.
-- This test is **LLM-free** and **Kubernetes-free** — use `FakePerGroupK8sClient` from `src/per-group-capabilities/k8s-client.ts` and `_initTestDatabase()` + `__resetDbForTest()` from `src/db.ts`. Call `sweepIdleInstances` directly; no helm install needed.
-- Test setup pattern: (a) `_initTestDatabase()`, (b) `upsertInstance(...)` with `replicas=1`, (c) set `lastUsedAt` via `touchLastUsed` then manipulate time via the `nowSeconds` override to simulate elapsed idle, (d) call `sweepIdleInstances`, (e) assert `FakePerGroupK8sClient.deployments` and `listInstancesAtReplicas(0)`.
-- To simulate log output for AC5, spy on `logger.info` (pino logger from `src/logger.ts`) and assert the call was made with `{ group, capability }` and message `'per_group_capability_scale_down'`.
-- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--set image.tag=e2e-test --set image.pullPolicy=IfNotPresent --set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `--create-namespace`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. No live cluster or helm install is needed for this story — the test runs entirely in-process against the fake K8s client and an in-memory SQLite database.
-
-status: drafted
+status: passing 4/4 — also surfaced + fixed chart RBAC gap (deployments/scale subresource was missing from kubeclaw-job-manager Role; sweep was silently no-op'ing in production)
