@@ -270,7 +270,9 @@ function helmInstall(extraArgs: string[]): void {
     { encoding: 'utf8', stdio: 'pipe', timeout: 70_000 },
   );
 
-  const usersStr = USERS.map((u) => `${u.username}:${u.password}`).join(',');
+  // helm --set treats unescaped commas as value separators, so we
+  // backslash-escape each one inside the single passed value.
+  const usersStr = USERS.map((u) => `${u.username}:${u.password}`).join('\\,');
 
   const result = spawnSync(
     'helm',
