@@ -56,4 +56,4 @@ status: passing
 - Known constraint: `kubeclaw_group_queue_depth` is a Gauge that resets to 0 between messages; assert its presence (metric family name exists in the text) rather than a specific non-zero value.
 - The pattern in `e2e/credential-injection.test.ts` line 325 shows the simplest approach: `execSync("curl -s http://localhost:19091/metrics", { encoding: "utf8" })` and `expect(metricsText).toContain("kubeclaw_tool_job_spawned_total")`. Adapt the same pattern for the orchestrator port.
 
-status: drafted
+status: passing (AC1-2, AC4-5; AC3 skipped — LLM dispatch dependency)
