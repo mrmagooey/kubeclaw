@@ -118,15 +118,44 @@ describe.skipIf(!K8S_AVAILABLE)('filesystem MCP (real K8s)', () => {
     } catch (err) {
       console.warn('namespace setup failed:', err);
     }
+    // Create the groups PVC that filesystem mounts via subPath. Cross-namespace
+    // PVC references aren't supported, so the test namespace needs its own.
+    try {
+      sh(
+        `cat <<'EOF' | kubectl apply -n ${NAMESPACE} -f -
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: kubeclaw-groups-pvc
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+EOF`,
+      );
+    } catch (err) {
+      console.warn('PVC setup failed:', err);
+    }
     try {
       sh(`./container/mcp-bundle/build.sh ${BUNDLE_IMAGE}`);
     } catch {
       console.warn('mcp-bundle build failed.');
     }
+    // Load image into the active local cluster. Try minikube first, then kind.
     try {
       sh(`minikube image load ${BUNDLE_IMAGE} 2>&1 || true`);
     } catch {
       /* not minikube */
+    }
+    try {
+      const ctx = sh('kubectl config current-context').trim();
+      if (ctx.startsWith('kind-')) {
+        const clusterName = ctx.replace(/^kind-/, '');
+        sh(`kind load docker-image ${BUNDLE_IMAGE} --name ${clusterName} 2>&1 || true`);
+      }
+    } catch {
+      /* not kind */
     }
     await _initTestDatabase();
   }, 300_000);
