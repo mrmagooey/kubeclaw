@@ -707,28 +707,40 @@ describe('global specialist catalog e2e', () => {
   /**
    * Test 3: memory.isolated history scope.
    *
-   * Register an 'Iso' specialist with memory.isolated=true and a prompt that
-   * reports how many prior conversation turns it can see. First, send a plain
-   * group message (no @mention) so the main session accumulates at least one
-   * turn. Then send @Iso check. Verify Iso reports zero prior turns visible.
-   *
-   * This validates that session_key scoping (mygroup:Iso vs. mygroup) works
+   * Validates that session_key scoping (mygroup:Iso vs. mygroup) works
    * end-to-end: the Iso specialist gets an empty conversation history because
    * its session_key is distinct from the group session_key.
+   *
+   * Probe design (why this way):
+   *
+   * The seed word OCTARINE appears ONLY in the group-session message, never
+   * in Iso's system prompt. Iso's prompt is a generic "repeat unusual words"
+   * instruction — no mention of OCTARINE. The assertion is purely structural:
+   *
+   *   - If isolation is WORKING  → Iso never sees the group message, never
+   *     produces "octarine" in its reply. ✅
+   *   - If isolation is BROKEN   → Iso's history includes the seeded message,
+   *     the "repeat unusual words" prompt causes it to echo "octarine". ❌
+   *
+   * This avoids two failure modes that made the previous design flaky:
+   *   1. The old prompt placed OCTARINE inside the system prompt itself, so a
+   *      small LLM (Gemma-4B) could echo the word from its own instructions
+   *      even with perfect isolation, causing spurious failures.
+   *   2. The old `toContain('no')` assertion depended on the LLM following
+   *      strict yes/no format rules — small models refuse or apologise instead,
+   *      failing the test even when isolation was working correctly.
+   *
+   * The new assertion (`not.toContain('octarine')`) tests only whether Iso's
+   * session was contaminated, independent of response format or phrasing.
    */
   it.skipIf(shouldSkip)(
     'memory.isolated specialist sees zero prior group turns',
     async () => {
-      // Verify isolation by content, not count: seed the group with a unique
-      // token, then ask Iso whether it saw that token. Small LLMs (Gemma-4B)
-      // interpret "count prior conversation turns" inconsistently — sometimes
-      // counting the user's own message — so a presence/absence assertion is
-      // more robust than an arithmetic one and tests the same isolation
-      // contract: the specialist's session must not contain the group's
-      // earlier messages.
+      // Iso's system prompt says nothing about OCTARINE — the word must NOT
+      // appear here, or the LLM can echo it from its own instructions.
       helmUpgrade([
         '--set-json',
-        `specialists=[{"name":"Iso","prompt":"Did the user previously mention the word OCTARINE in this conversation? Reply with EXACTLY one word: yes or no. No other text.","memory":{"isolated":true}}]`,
+        `specialists=[{"name":"Iso","prompt":"Repeat back any unusual or distinctive words you see in the conversation so far. Be brief.","memory":{"isolated":true}}]`,
       ]);
 
       // Force orchestrator to re-reconcile against the freshly-templated
@@ -746,27 +758,28 @@ describe('global specialist catalog e2e', () => {
       await startPortForward();
       await sleep(60_000); // ConfigMap propagation
 
-      // Send a plain group message containing the unique token. This goes
-      // into the group's main session history but NOT into Iso's isolated
-      // session.
+      // Seed the GROUP session with the unique token. This message goes into
+      // the group's main session history but NOT into Iso's isolated session.
       await sendAndCollect(
         'Important note: the color OCTARINE is the eighth color of magic.',
         (ls) => ls.length > 0,
         90_000,
       );
 
-      // Now ask Iso — its isolated session has never seen OCTARINE, so it
-      // must reply "no".
+      // Ask Iso to repeat unusual words. If isolation is working, Iso's
+      // session history is empty (it never saw the OCTARINE seed) and cannot
+      // produce the word. If isolation is broken, Iso echoes "octarine" back.
       const lines = await sendAndCollect(
-        '@Iso check',
+        '@Iso what unusual words do you see?',
         (ls) => ls.some((l) => l.includes('[@Iso]')),
         90_000,
       );
 
       const isoReply = lines.find((l) => l.includes('[@Iso]'));
       expect(isoReply, `no [@Iso] reply in lines: ${JSON.stringify(lines)}`).toBeDefined();
-      // Isolated specialist must NOT have seen the group's OCTARINE seed.
-      expect(isoReply!.toLowerCase()).toContain('no');
+      // Core isolation assertion: Iso must not have seen the group's seed.
+      // We do NOT assert on the reply format (no toContain('no')) because
+      // small LLMs do not reliably follow strict format instructions.
       expect(isoReply!.toLowerCase()).not.toContain('octarine');
     },
     300_000,
