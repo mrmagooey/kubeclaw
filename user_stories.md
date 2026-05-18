@@ -109,7 +109,7 @@ status: partial (3/5) — AC1 (POST 200), AC2 (queued state), AC4 (≤2 active j
 - IMPORTANT: target the kind cluster `kubeclaw-e2e-istio`. Install kubeclaw with default values (mode=sidecar) in an isolated namespace. Use `--set image.tag=e2e-test --set image.pullPolicy=IfNotPresent` (the kind cluster has `kubeclaw-orchestrator:e2e-test` pre-loaded). Use `KUBECLAW_SKIP_HELM_INSTALL=true` to bypass vitest globalSetup.
 
 status: drafted
-## Story 5: Redis ACL user is created per tool-job and revoked on completion
+## Story 5: Redis ACL user is created per tool-job and revoked on completion (status: deferred — test infra fails at helm install in vitest run despite same command succeeding manually; needs further debugging)
 
 **As a** KubeClaw operator running specialist tool jobs in my cluster
 **I want** each tool-job pod to receive a unique, scoped Redis ACL user that is automatically revoked when the job finishes
