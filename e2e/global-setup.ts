@@ -296,6 +296,27 @@ export default async function setup() {
     kubeclawInstalledBySetup = true;
   }
 
+  // When KUBECLAW_SKIP_HELM_INSTALL=true and no existing release was found,
+  // the caller's test will install kubeclaw itself; the Redis pod and ACL
+  // user don't exist yet, so waiting for them here would deadlock. Return
+  // early — the test's beforeAll is responsible for cluster readiness.
+  if (
+    process.env.KUBECLAW_SKIP_HELM_INSTALL === 'true' &&
+    !kubeclawInstalledBySetup
+  ) {
+    const existingRelease = spawnSync(
+      'helm',
+      ['status', RELEASE, '--namespace', NAMESPACE],
+      { encoding: 'utf8', stdio: 'pipe' },
+    );
+    if (existingRelease.status !== 0) {
+      console.log(
+        '✅ E2E Global Setup complete (skipped post-install Redis wait + port-forward)\n',
+      );
+      return;
+    }
+  }
+
   // Wait for Redis pod to be ready before attempting port-forward
   await waitForRedisPod();
   console.log('✅ Redis pod running\n');

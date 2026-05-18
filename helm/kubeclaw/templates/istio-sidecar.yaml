@@ -12,13 +12,13 @@ metadata:
   namespace: {{ .Values.namespace }}
 spec:
   egress:
-    # Allow traffic to all services within the kubeclaw namespace (Redis, broker, etc.)
+    # Single catch-all egress listener (port unset). Istio's Sidecar validator
+    # rejects multiple empty-port listeners; both host scopes must live in one.
+    # - "./*"            traffic to all services in the kubeclaw namespace
+    # - "istio-system/*" platform-level entries (cert-manager ACME, control plane)
+    # ServiceEntry resources created by this chart live in the kubeclaw namespace,
+    # so "./*" already covers them.
     - hosts:
         - "./*"
-    # Allow traffic declared in ServiceEntry resources in the istio-system namespace.
-    # ServiceEntry resources created by this chart are placed in the kubeclaw namespace,
-    # so "./*" above covers them. "istio-system/*" is kept for platform-level entries
-    # (e.g. cert-manager ACME, mesh control-plane traffic).
-    - hosts:
         - "istio-system/*"
 {{- end }}
