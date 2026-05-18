@@ -29,6 +29,12 @@ rules:
   - apiGroups: ["apps"]
     resources: ["deployments"]
     verbs: ["create", "get", "list", "watch", "update", "patch", "delete"]
+  # Per-group capability scale-down: PUT on deployments/scale (distinct from
+  # `update` on deployments). Without this, the idle-sweeper's
+  # replaceNamespacedDeploymentScale call 403s and the sweep silently no-ops.
+  - apiGroups: ["apps"]
+    resources: ["deployments/scale"]
+    verbs: ["get", "update", "patch"]
   # MCP server lifecycle: create/update/delete services
   - apiGroups: [""]
     resources: ["services"]
