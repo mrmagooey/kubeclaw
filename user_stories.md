@@ -577,4 +577,4 @@ status: passing 5/5 (verifies pre-existing broadcast loop in sendMessage)
 - LLM-dependence: **none**.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-attach-del --create-namespace`, `--set namespace=kubeclaw-e2e-attach-del`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
 
-status: drafted
+status: passing 5/5 (DELETE complements Story 19 GET)
