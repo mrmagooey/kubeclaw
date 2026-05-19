@@ -590,6 +590,52 @@ export class HttpChannel implements Channel {
       return;
     }
 
+    // Attachment delete endpoint
+    // DELETE /attachments/raw/<filename>
+    if (
+      req.method === 'DELETE' &&
+      url.pathname.startsWith('/attachments/raw/')
+    ) {
+      const username = this.authenticate(req);
+      if (!username) {
+        this.sendUnauthorized(res);
+        return;
+      }
+
+      const filename = url.pathname.slice('/attachments/raw/'.length);
+
+      // Reject path traversal: no slashes, backslashes, or '..' segments
+      if (
+        !filename ||
+        filename.includes('/') ||
+        filename.includes('\\') ||
+        filename.includes('..')
+      ) {
+        res.writeHead(400, { 'Content-Type': 'text/plain' });
+        res.end('Bad Request');
+        return;
+      }
+
+      const jid = `http:${username}`;
+      const attachDir = path.join(GROUPS_DIR, jid, 'attachments', 'raw');
+      const filePath = path.join(attachDir, filename);
+
+      fs.unlink(filePath, (err) => {
+        if (!err) {
+          res.writeHead(204);
+          res.end();
+        } else if (err.code === 'ENOENT') {
+          res.writeHead(404, { 'Content-Type': 'text/plain' });
+          res.end('Not Found');
+        } else {
+          logger.error({ err, filePath }, 'DELETE /attachments/raw failed');
+          res.writeHead(500, { 'Content-Type': 'text/plain' });
+          res.end('Internal Server Error');
+        }
+      });
+      return;
+    }
+
     // Conversation history endpoint
     if (req.method === 'GET' && url.pathname === '/history') {
       const username = this.authenticate(req);
