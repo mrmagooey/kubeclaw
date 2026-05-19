@@ -429,6 +429,16 @@ export class HttpChannel implements Channel {
       }
 
       const contentType = (req.headers['content-type'] ?? '').toLowerCase();
+
+      if (
+        !contentType.startsWith('application/json') &&
+        !contentType.startsWith('multipart/form-data')
+      ) {
+        res.writeHead(415, { 'Content-Type': 'text/plain' });
+        res.end('Unsupported Media Type');
+        return;
+      }
+
       const chunks: Buffer[] = [];
       let totalSize = 0;
 
