@@ -555,4 +555,4 @@ status: passing 5/5 (SSE id: field + Last-Event-ID replay + getOutboundMessagesS
 - LLM-dependence: **none**.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-csse --create-namespace`, `--set namespace=kubeclaw-e2e-csse`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
 
-status: drafted
+status: passing 5/5 (verifies pre-existing broadcast loop in sendMessage)
