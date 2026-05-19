@@ -155,7 +155,7 @@ beforeAll(async () => {
   // Skip helm install if the env var is set (faster re-runs when cluster is
   // already in the right state).
   if (process.env.KUBECLAW_SKIP_HELM_INSTALL === 'true') {
-    await waitForChannelPod(60_000);
+    await waitForChannelPod(240_000);
     await startPortForward();
     return;
   }
