@@ -487,3 +487,26 @@ status: passing 5/5 (new /help command implemented)
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-hist --create-namespace`, `--set namespace=kubeclaw-e2e-hist`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
 
 status: passing 5/5 (new GET /history endpoint + getConversationHistoryPage helper)
+
+## Story 19: User downloads a previously uploaded image attachment via the HTTP channel
+
+**As a** KubeClaw user via the HTTP channel
+**I want** to retrieve an image I previously uploaded by issuing `GET /attachments/raw/<filename>`
+**So that** I can view or save my attachments programmatically without needing direct pod access or kubectl
+
+### Acceptance criteria
+
+1. After uploading an image via `POST /message` (multipart), `GET /attachments/raw/<filename>` (authenticated, using the exact filename returned in the `[ImageAttachment: ...]` SSE marker) returns HTTP 200 with the correct `Content-Type` and a response body byte-for-byte identical to the uploaded file.
+2. `GET /attachments/raw/<filename>` without valid Basic Auth → HTTP 401.
+3. `GET /attachments/raw/<filename>` for a nonexistent filename → HTTP 404.
+4. `GET /attachments/raw/../../../etc/passwd` (path traversal) → HTTP 400.
+5. `alice` cannot download `bob`'s attachment — cross-user filename lookup → HTTP 404 (route scopes to authenticated user's group folder).
+
+### Notes for the test author
+
+- Add `GET /attachments/raw/:filename` route to `src/channels/http.ts`. Compute `attachDir = path.join(GROUPS_DIR, 'http:' + username, 'attachments', 'raw')`; reject filenames containing `/`, `\`, or `..`.
+- Derive Content-Type from extension: `.jpg`/`.jpeg`→`image/jpeg`, `.png`→`image/png`, `.gif`→`image/gif`, `.webp`→`image/webp`, else `application/octet-stream`.
+- LLM-dependence: **LLM-independent** for all 5 ACs.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-attach --create-namespace`, `--set namespace=kubeclaw-e2e-attach`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
+
+status: drafted
