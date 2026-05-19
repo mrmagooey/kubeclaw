@@ -266,4 +266,4 @@ status: passing 5/5 — first end-user-focused story; LLM-independent
 - LLM-dependence: **LLM-independent**. The `/secret` slash-command path is intercepted in `channel-runner.ts` before the LLM queue is consulted; no `it.skipIf(noLlm)` is needed for any AC.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-usersec --create-namespace`, `--set namespace=kubeclaw-e2e-usersec`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
 
-status: drafted
+status: passing 5/5 — also fixed a real product bug: channel-runner.ts:1196 was calling createSecretIpcFn(type, {}) without groupFolder, so the orchestrator silently dropped every /secret IPC. Fix passes groupFolder so the entire /secret slash command suite now works end-to-end.
