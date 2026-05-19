@@ -434,4 +434,4 @@ status: passing 5/5
 - LLM-dependence: **LLM-dependent** for ACs 1 and 2 (`/compact` calls the LLM summariser). Gate those ACs with `it.skipIf(process.env.KUBECLAW_NO_LLM === 'true')`. ACs 3, 4, and 5 are LLM-independent (`/summary` reads from SQLite; empty/no-op paths do not call the summariser) — do not gate them.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-compact --create-namespace`, `--set namespace=kubeclaw-e2e-compact`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
 
-status: drafted
+status: passing 5/5 (extended channel-runner intercept to cover /compact, /summary, /clear via single isCompactCommand path)
