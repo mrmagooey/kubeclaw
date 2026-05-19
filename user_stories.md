@@ -556,3 +556,25 @@ status: passing 5/5 (SSE id: field + Last-Event-ID replay + getOutboundMessagesS
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-csse --create-namespace`, `--set namespace=kubeclaw-e2e-csse`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
 
 status: passing 5/5 (verifies pre-existing broadcast loop in sendMessage)
+
+## Story 22: User deletes a previously uploaded attachment via the HTTP channel
+
+**As a** KubeClaw user via the HTTP channel
+**I want** to permanently delete an attachment I uploaded earlier via `DELETE /attachments/raw/<filename>`
+**So that** I can remove sensitive or unwanted files from the server without pod access
+
+### Acceptance criteria
+
+1. Authenticated DELETE of valid filename → 204; subsequent GET → 404.
+2. No auth → 401, file not deleted.
+3. Nonexistent → 404.
+4. Path traversal → 400, no filesystem mutation.
+5. Alice can't delete Bob's attachment — cross-user → 404.
+
+### Notes for the test author
+
+- Mirror Story 19's GET handler in `src/channels/http.ts` — same path safety + group-folder scoping. `fs.promises.unlink` with ENOENT → 404.
+- LLM-dependence: **none**.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-attach-del --create-namespace`, `--set namespace=kubeclaw-e2e-attach-del`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
+
+status: drafted
