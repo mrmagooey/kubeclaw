@@ -533,3 +533,26 @@ status: passing 5/5 (new GET /attachments/raw/<filename> endpoint)
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-sse-catch-up --create-namespace`, `--set namespace=kubeclaw-e2e-sse-catch-up`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
 
 status: passing 5/5 (SSE id: field + Last-Event-ID replay + getOutboundMessagesSince helper)
+
+## Story 21: Concurrent SSE connections receive the same assistant reply
+
+**As a** KubeClaw user via the HTTP channel
+**I want** every browser tab I have open to receive assistant replies simultaneously
+**So that** I never miss a message because I was reading it in one tab while it arrived in another
+
+### Acceptance criteria
+
+1. Two `GET /stream` connections for the same user → both receive identical SSE payloads within 2s.
+2. One closes, the other keeps receiving subsequent replies — no error, no pod crash.
+3. Three connections → all three receive the same payload.
+4. Bob's stream does NOT receive Alice's events — cross-user isolation under concurrent streams.
+5. `GET /stream` without Basic Auth → HTTP 401, no stream opened.
+
+### Notes for the test author
+
+- `src/channels/http.ts` — `sseClients` array + `sendMessage` broadcast loop (~line 531). Already structurally handles multi-client; this story verifies it.
+- Trigger: `/help` slash command (Story 17) — deterministic, LLM-free, <500ms reply.
+- LLM-dependence: **none**.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-csse --create-namespace`, `--set namespace=kubeclaw-e2e-csse`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
+
+status: drafted
