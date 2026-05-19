@@ -11,6 +11,8 @@ import { ASSISTANT_NAME, GROUPS_DIR } from '../config.js';
 import {
   appendConversationMessage,
   getConversationHistoryPage,
+  getOutboundMessagesSince,
+  storeMessageDirect,
 } from '../db.js';
 import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
@@ -361,6 +363,35 @@ export class HttpChannel implements Channel {
       });
       res.write(':ok\n\n'); // initial heartbeat
 
+      // Last-Event-ID catch-up (Story 20 AC2/AC4)
+      const lastEventIdHeader = req.headers['last-event-id'];
+      if (lastEventIdHeader) {
+        const lastEventIdMs = Number(lastEventIdHeader);
+        const maxAgeMs = 24 * 60 * 60 * 1000; // 24h
+        if (
+          Number.isFinite(lastEventIdMs) &&
+          Date.now() - lastEventIdMs <= maxAgeMs
+        ) {
+          const jid = `http:${username}`;
+          const sinceIso = new Date(lastEventIdMs).toISOString();
+          try {
+            const missed = getOutboundMessagesSince(jid, sinceIso, 200);
+            for (const msg of missed) {
+              // id: is the message timestamp in ms for client-side monotonicity
+              const msgIdMs = new Date(msg.timestamp).getTime();
+              const lines = msg.content.split('\n');
+              const payload =
+                `id: ${msgIdMs}\n` +
+                lines.map((l) => `data: ${l}`).join('\n') +
+                '\n\n';
+              if (!res.writableEnded) res.write(payload);
+            }
+          } catch (err) {
+            logger.warn({ err, username }, 'SSE catch-up query failed');
+          }
+        }
+      }
+
       const client: SseClient = { username, res };
       this.sseClients.push(client);
 
@@ -646,6 +677,26 @@ export class HttpChannel implements Channel {
     const username = jid.slice('http:'.length);
     const clients = this.sseClients.filter((c) => c.username === username);
 
+    // Monotonically increasing id: use epoch-ms (Story 20 AC1)
+    const nowMs = Date.now();
+    const timestamp = new Date(nowMs).toISOString();
+
+    // Persist the outbound message so it can be replayed on reconnect (AC2)
+    try {
+      storeMessageDirect({
+        id: `http-out-${nowMs}-${++this.messageSeq}`,
+        chat_jid: jid,
+        sender: ASSISTANT_NAME,
+        sender_name: ASSISTANT_NAME,
+        content: text,
+        timestamp,
+        is_from_me: true,
+        is_bot_message: true,
+      });
+    } catch (err) {
+      logger.warn({ err, jid }, 'Failed to persist outbound HTTP message for SSE catch-up');
+    }
+
     if (clients.length === 0) {
       logger.debug({ jid }, 'No SSE client connected for HTTP JID');
       return;
@@ -653,7 +704,10 @@ export class HttpChannel implements Channel {
 
     // Escape newlines for SSE data field; split into multiple data lines
     const lines = text.split('\n');
-    const ssePayload = lines.map((l) => `data: ${l}`).join('\n') + '\n\n';
+    const ssePayload =
+      `id: ${nowMs}\n` +
+      lines.map((l) => `data: ${l}`).join('\n') +
+      '\n\n';
 
     for (const client of clients) {
       try {

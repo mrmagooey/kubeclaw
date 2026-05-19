@@ -746,6 +746,46 @@ export function getMessagesSince(
   });
 }
 
+/**
+ * Return outbound (bot/assistant) messages for a chat JID since the given
+ * ISO timestamp, ordered chronologically, capped at `limit` rows.
+ *
+ * Used by the HTTP channel to replay missed SSE events on reconnect
+ * (Last-Event-ID catch-up, Story 20).
+ */
+export function getOutboundMessagesSince(
+  chatJid: string,
+  sinceTimestamp: string,
+  limit: number = 200,
+): Pick<NewMessage, 'id' | 'content' | 'timestamp'>[] {
+  return timedDbOp('getOutboundMessagesSince', () => {
+    const sql = `
+      SELECT * FROM (
+        SELECT id, content, timestamp
+        FROM messages
+        WHERE chat_jid = ? AND timestamp > ?
+          AND is_bot_message = 1
+          AND content != '' AND content IS NOT NULL
+        ORDER BY timestamp DESC
+        LIMIT ?
+      ) ORDER BY timestamp
+    `;
+    const stmt = db.prepare(sql);
+    stmt.bind([chatJid, sinceTimestamp, limit]);
+    const rows: Pick<NewMessage, 'id' | 'content' | 'timestamp'>[] = [];
+    while (stmt.step()) {
+      rows.push(
+        stmt.getAsObject() as unknown as Pick<
+          NewMessage,
+          'id' | 'content' | 'timestamp'
+        >,
+      );
+    }
+    stmt.free();
+    return rows;
+  });
+}
+
 export function createTask(
   task: Omit<ScheduledTask, 'last_run' | 'last_result'>,
 ): void {
