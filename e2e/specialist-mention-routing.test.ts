@@ -18,7 +18,7 @@
  * ───────────────
  * All five ACs are LLM-dependent. The suite detects the provider with the
  * same probe used by specialist-catalog.test.ts (GET /models, POST
- * /chat/completions with max_tokens=4). If the provider is unreachable or
+ * /chat/completions with max_tokens=256). If the provider is unreachable or
  * the kind cluster `kubeclaw-e2e-istio` is absent the whole suite skips
  * cleanly via it.skipIf(shouldSkip).
  *
@@ -116,19 +116,36 @@ async function probeProvider(): Promise<void> {
       body: JSON.stringify({
         model: LIVE_MODEL,
         messages: [{ role: 'user', content: 'ping' }],
-        max_tokens: 4,
+        // 256 tokens lets reasoning-style models (Nemotron, etc.) exhaust
+        // their hidden reasoning chain and still emit non-null content.
+        // Non-reasoning models stop at EOS far earlier, so this is harmless.
+        max_tokens: 256,
       }),
-      signal: AbortSignal.timeout(15_000),
+      signal: AbortSignal.timeout(30_000),
     });
     if (!chatRes.ok) {
       providerSkipReason = `POST /chat/completions returned HTTP ${chatRes.status}`;
       return;
     }
     const payload = (await chatRes.json()) as {
-      choices?: { message?: { content?: string } }[];
+      choices?: {
+        message?: {
+          content?: string | null;
+          reasoning?: string | null;
+          reasoning_content?: string | null;
+        };
+      }[];
     };
-    if (typeof payload.choices?.[0]?.message?.content !== 'string') {
-      providerSkipReason = 'malformed chat response from provider';
+    const msg = payload.choices?.[0]?.message;
+    // Some reasoning models (e.g. Nemotron via OpenRouter) return the answer
+    // in `reasoning` or `reasoning_content` when `content` is null. Accept any
+    // non-empty string in any of these fields as a valid response.
+    const hasContent =
+      typeof msg?.content === 'string' ||
+      typeof msg?.reasoning === 'string' ||
+      typeof msg?.reasoning_content === 'string';
+    if (!hasContent) {
+      providerSkipReason = 'malformed chat response from provider (no content/reasoning field)';
       return;
     }
     providerAvailable = true;
@@ -139,6 +156,7 @@ async function probeProvider(): Promise<void> {
 }
 
 await probeProvider();
+console.log(`[probe] clusterAvailable=${clusterAvailable} providerAvailable=${providerAvailable} reason=${providerSkipReason} model=${LIVE_MODEL} base=${LIVE_BASE_URL}`);
 
 const shouldSkip = !clusterAvailable || !providerAvailable;
 const skipReason = shouldSkip

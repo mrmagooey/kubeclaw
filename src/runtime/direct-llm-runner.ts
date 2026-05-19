@@ -1184,11 +1184,18 @@ export class DirectLLMRunner implements MessageRunner {
           msg.tool_calls?.filter((c) => c.type === 'function') ?? [];
 
         if (toolCalls.length === 0) {
-          // Some models (e.g. Gemma with extended thinking) return the answer in
-          // a non-standard `reasoning_content` field and leave `content` null.
-          // Fall back to that field so the response is not silently discarded.
-          const extended = msg as typeof msg & { reasoning_content?: string };
-          fullResponse = msg.content || extended.reasoning_content || '';
+          // Some reasoning models leave `content` null and put their answer in
+          // a non-standard field. Known variants:
+          //   - `reasoning_content` (Gemma extended-thinking via some providers)
+          //   - `reasoning`         (Nemotron via OpenRouter)
+          // Fall back through these fields so the response is not silently
+          // discarded when the model exhausts its token budget on chain-of-thought.
+          const extended = msg as typeof msg & {
+            reasoning_content?: string;
+            reasoning?: string;
+          };
+          fullResponse =
+            msg.content || extended.reasoning_content || extended.reasoning || '';
           break;
         }
 
