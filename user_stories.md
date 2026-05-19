@@ -578,3 +578,27 @@ status: passing 5/5 (verifies pre-existing broadcast loop in sendMessage)
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-attach-del --create-namespace`, `--set namespace=kubeclaw-e2e-attach-del`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
 
 status: passing 5/5 (DELETE complements Story 19 GET)
+
+## Story 23: User lists their uploaded attachments via the HTTP channel
+
+**As a** KubeClaw user via the HTTP channel
+**I want** to retrieve a list of my uploaded attachments via `GET /attachments/list`
+**So that** I can see what files I have on the server before downloading or deleting them, without needing pod access
+
+### Acceptance criteria
+
+1. Authenticated `GET /attachments/list` returns 200 with a JSON array of objects, each containing at least `filename` (string) and `size` (bytes, number).
+2. The list is scoped to the authenticated user's group — Alice's request returns only Alice's files, never Bob's.
+3. When the user has no uploaded files the response is 200 with an empty array (`[]`), not a 404.
+4. After uploading a file via `POST /attachments/raw/<filename>`, it appears in the list immediately; after deleting it via `DELETE /attachments/raw/<filename>`, it is absent from the next list response.
+5. Unauthenticated request → 401, no body.
+
+### Notes for the test author
+
+- Handler lives in `src/channels/http.ts` alongside the existing `/attachments/raw` GET and DELETE handlers. Use `fs.promises.readdir` + `fs.promises.stat` over the same per-group attachments folder used by Stories 19 and 22 (derive path via the same `groupFolder` / `attachmentsDir` helper to stay consistent).
+- Response shape: `[{ filename: string, size: number, modifiedAt: string }]` — `modifiedAt` is ISO-8601 from `stat.mtime`. Assert at minimum `filename` and `size` in ACs 1/4.
+- Cross-user isolation (AC 2): same pattern as Story 22 AC 5 — create two Basic Auth users, upload to one, assert the other's list is empty.
+- LLM-dependence: **none**.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-attach-list --create-namespace`, `--set namespace=kubeclaw-e2e-attach-list`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
+
+status: drafted
