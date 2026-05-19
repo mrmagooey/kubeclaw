@@ -211,4 +211,4 @@ status: passing 4/4 — also surfaced + fixed chart RBAC gap (deployments/scale 
 - The Redis stream name and field layout are defined in `src/k8s/types.ts` (`TaskRequest` type) and used in `src/k8s/ipc-redis.ts` around line 1362. The `getTaskRequestStream()` helper (from `src/k8s/redis-client.ts`) returns the stream name; in production it is `kubeclaw:tasks`.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-grpsec --create-namespace`, `--set namespace=kubeclaw-e2e-grpsec`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
 
-status: drafted
+status: passing 5/5 — also fixed ApiException.code 404 detection in src/k8s/secret-manager.ts (same bug pattern as channel-remove from Story 1)
