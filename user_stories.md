@@ -510,3 +510,26 @@ status: passing 5/5 (new GET /history endpoint + getConversationHistoryPage help
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-attach --create-namespace`, `--set namespace=kubeclaw-e2e-attach`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
 
 status: passing 5/5 (new GET /attachments/raw/<filename> endpoint)
+
+## Story 20: SSE stream catch-up on reconnect
+
+**As a** KubeClaw user via the HTTP webchat channel
+**I want** missed assistant messages replayed automatically when my browser reconnects to the SSE stream
+**So that** I never silently lose replies that arrived while my tab was closed, the network dropped, or the channel pod restarted
+
+### Acceptance criteria
+
+1. Every SSE event emitted by `GET /stream` carries a monotonically increasing `id:` field.
+2. When the browser reconnects with `Last-Event-ID`, the server replays all assistant messages with an ID greater than the supplied value, before resuming live stream.
+3. First-time connect (no `Last-Event-ID`) → no replay, only live messages.
+4. Replay is bounded: at most 200 messages, no replay if `Last-Event-ID` is older than 24h.
+5. e2e: POST → SSE reply → drop → POST while disconnected → reconnect with Last-Event-ID → second reply arrives as catch-up.
+
+### Notes for the test author
+
+- `src/channels/http.ts` GET /stream handler + sendSse method.
+- `getMessagesSince(chatJid, sinceTimestamp)` in `src/db.ts` already supports the query.
+- LLM-dependence: **none**.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-sse-catch-up --create-namespace`, `--set namespace=kubeclaw-e2e-sse-catch-up`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
+
+status: drafted
