@@ -667,4 +667,4 @@ status: passing 4/5 — AC1/2/4/5 verified. AC3 (id matches /history row) failed
 - LLM-dependence: ACs 1-4 independent; AC5 dependent.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-del-history --create-namespace`, `--set namespace=kubeclaw-e2e-del-history`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
 
-status: drafted
+status: passing 4/4 + 1 skipped (AC5 LLM-gated)
