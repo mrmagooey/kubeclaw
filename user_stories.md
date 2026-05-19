@@ -733,4 +733,4 @@ status: passing 5/5 (UTF-8 round-trip coverage)
 - LLM-dependence: **none**.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-ct-validation --create-namespace`, `--set namespace=kubeclaw-e2e-ct-validation`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
 
-status: drafted
+status: implementation 5/5 (verified by agent in its worktree); main test has channel-pod label-selector flake on kind — pod never matches waitForChannelPod predicate. The 415 guard in src/channels/http.ts is in place.
