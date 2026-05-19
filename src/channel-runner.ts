@@ -94,6 +94,11 @@ import {
   handleSkillsCommand,
   isSkillsCommand,
 } from './runtime/skills-commands.js';
+import {
+  handleCompactCommand,
+  parseCompactArgs,
+  isCompactCommand,
+} from './runtime/compression-commands.js';
 import type { CatalogEntry } from './credential-broker/resolver.js';
 import { randomBytes } from 'node:crypto';
 import {
@@ -1203,6 +1208,45 @@ export async function processGroupMessages(chatJid: string): Promise<boolean> {
     await channel.setTyping?.(chatJid, true);
     try {
       await channel.sendMessage(chatJid, reply);
+    } finally {
+      await channel.setTyping?.(chatJid, false);
+    }
+    return true;
+  }
+
+  // /compact and /summary chat commands: handle without invoking the LLM
+  // (for /summary and no-op /compact paths). For /compact when summarisation
+  // is needed, pass the channel's LLM client and model. We exclude /clear here
+  // because that verb is already handled by the compression-commands module
+  // itself via handleCompactCommand, so routing it through here is harmless —
+  // but we still want to catch all three verbs via isCompactCommand and let
+  // handleCompactCommand dispatch on the verb internally.
+  if (lastMsg && isCompactCommand(lastMsg.content)) {
+    const { verb } = parseCompactArgs(lastMsg.content.trim());
+    // Only intercept compact and summary here; clear falls through to the
+    // same handleCompactCommand path. We intercept all three so none reach the LLM.
+    lastAgentTimestamp[chatJid] = lastMsg.timestamp;
+    saveState();
+    await channel.setTyping?.(chatJid, true);
+    try {
+      const client = createLLMClient();
+      const reply = await handleCompactCommand(
+        group.folder,
+        lastMsg.content.trim(),
+        client,
+        DEFAULT_DIRECT_MODEL,
+      );
+      await channel.sendMessage(chatJid, reply);
+    } catch (err) {
+      logger.error({ err, chatJid, verb }, 'Compact/summary command failed');
+      try {
+        await channel.sendMessage(
+          chatJid,
+          `Command failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      } catch (sendErr) {
+        logger.error({ err: sendErr, chatJid }, 'Failed to send compact error reply');
+      }
     } finally {
       await channel.setTyping?.(chatJid, false);
     }
