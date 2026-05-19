@@ -8,7 +8,10 @@ import {
 import path from 'node:path';
 
 import { ASSISTANT_NAME, GROUPS_DIR } from '../config.js';
-import { appendConversationMessage } from '../db.js';
+import {
+  appendConversationMessage,
+  getConversationHistoryPage,
+} from '../db.js';
 import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
 import { registerChannel, ChannelOpts } from './registry.js';
@@ -478,6 +481,42 @@ export class HttpChannel implements Channel {
           res.end('Invalid JSON');
         }
       });
+      return;
+    }
+
+    // Conversation history endpoint
+    if (req.method === 'GET' && url.pathname === '/history') {
+      const username = this.authenticate(req);
+      if (!username) {
+        this.sendUnauthorized(res);
+        return;
+      }
+
+      const jid = `http:${username}`;
+      const group = this.opts.registeredGroups()[jid];
+      if (!group) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Group not found' }));
+        return;
+      }
+
+      const rawLimit = parseInt(url.searchParams.get('limit') ?? '20', 10);
+      const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? rawLimit : 20;
+      const before = url.searchParams.get('before') ?? undefined;
+
+      try {
+        const messages = getConversationHistoryPage(group.folder, {
+          limit,
+          before: before ?? undefined,
+        });
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ messages }));
+      } catch (err) {
+        logger.error({ err, jid }, 'GET /history failed');
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Internal server error' }));
+      }
       return;
     }
 

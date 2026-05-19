@@ -1720,6 +1720,88 @@ export function cleanupExpiredACLs(): string[] {
   return revokedJobIds;
 }
 
+// --- Conversation History Pagination ---
+
+export interface ConversationHistoryPageRow {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  created_at: string;
+}
+
+/**
+ * Return a page of conversation history rows for a group, ordered oldest-first.
+ *
+ * @param groupFolder  The group folder (matches the `group_folder` column).
+ * @param opts.limit   Maximum rows to return (default 20, cap 100).
+ * @param opts.before  If given, return only rows with `created_at` strictly
+ *                     older than the row whose `id = before`. Enables cursor
+ *                     pagination: pass the `id` of the oldest row in the
+ *                     previous page to fetch the next page backwards in time.
+ */
+export function getConversationHistoryPage(
+  groupFolder: string,
+  opts: { limit?: number; before?: string } = {},
+): ConversationHistoryPageRow[] {
+  return timedDbOp('getConversationHistoryPage', () => {
+    const rawLimit = opts.limit ?? 20;
+    const limit = Math.min(Math.max(1, rawLimit), 100);
+
+    if (opts.before) {
+      // Look up the created_at of the cursor row.
+      const cursorResult = db.exec(
+        `SELECT created_at FROM conversation_history WHERE id = ? AND group_folder = ?`,
+        [opts.before, groupFolder],
+      );
+      if (cursorResult.length === 0 || cursorResult[0].values.length === 0) {
+        // Unknown cursor ID → return empty page rather than crash.
+        return [];
+      }
+      const cursorCreatedAt = cursorResult[0].values[0][0] as string;
+
+      const result = db.exec(
+        `SELECT id, role, content, created_at
+         FROM conversation_history
+         WHERE group_folder = ? AND (
+           created_at < ? OR (created_at = ? AND id < ?)
+         )
+         ORDER BY created_at DESC, id DESC
+         LIMIT ?`,
+        [groupFolder, cursorCreatedAt, cursorCreatedAt, opts.before, limit],
+      );
+      if (result.length === 0) return [];
+      const rows = result[0].values.map((row: unknown[]) => ({
+        id: row[0] as string,
+        role: row[1] as 'user' | 'assistant',
+        content: row[2] as string,
+        created_at: row[3] as string,
+      }));
+      // Return in chronological order (oldest first).
+      rows.reverse();
+      return rows;
+    }
+
+    // No cursor: return `limit` most-recent rows in chronological order.
+    const result = db.exec(
+      `SELECT id, role, content, created_at
+       FROM conversation_history
+       WHERE group_folder = ?
+       ORDER BY created_at DESC, id DESC
+       LIMIT ?`,
+      [groupFolder, limit],
+    );
+    if (result.length === 0) return [];
+    const rows = result[0].values.map((row: unknown[]) => ({
+      id: row[0] as string,
+      role: row[1] as 'user' | 'assistant',
+      content: row[2] as string,
+      created_at: row[3] as string,
+    }));
+    rows.reverse();
+    return rows;
+  });
+}
+
 // --- Skill Usage Functions ---
 
 export interface SkillLoadStat {
