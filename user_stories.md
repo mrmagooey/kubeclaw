@@ -405,4 +405,4 @@ status: passing 5/5 (required wiring /clear into channel-runner)
 - LLM-dependence: **LLM-independent** for all 5 ACs. The attachment path in `http.ts` calls `appendConversationMessage` and `handleInbound` directly — no LLM call is involved. The SSE line that carries `[ImageAttachment: …]` is the channel's own echo, not an LLM reply. Do NOT gate any AC with `KUBECLAW_NO_LLM`.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-image --create-namespace`, `--set namespace=kubeclaw-e2e-image`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
 
-status: drafted
+status: passing 5/5
