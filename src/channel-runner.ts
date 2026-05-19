@@ -37,6 +37,7 @@ import {
   getAllChats,
   getAllRegisteredGroups,
   getAllSessions,
+  clearConversationHistory,
   getAllTasks,
   getConversationHistory,
   getMessagesSince,
@@ -1166,6 +1167,25 @@ export async function processGroupMessages(chatJid: string): Promise<boolean> {
       }
     } finally {
       await channel.setTyping?.(chatJid, false);
+    }
+    return true;
+  }
+
+  // /clear chat command: wipe conversation history without invoking the LLM.
+  if (
+    lastMsg &&
+    /^\/clear(\s|$)/.test(lastMsg.content.trim())
+  ) {
+    clearConversationHistory(group.folder);
+    lastAgentTimestamp[chatJid] = lastMsg.timestamp;
+    saveState();
+    try {
+      await channel.sendMessage(
+        chatJid,
+        'Conversation history and summaries cleared.',
+      );
+    } catch (err) {
+      logger.error({ err, chatJid }, '/clear reply send failed');
     }
     return true;
   }
