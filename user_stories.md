@@ -267,3 +267,30 @@ status: passing 5/5 — first end-user-focused story; LLM-independent
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-usersec --create-namespace`, `--set namespace=kubeclaw-e2e-usersec`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
 
 status: passing 5/5 — also fixed a real product bug: channel-runner.ts:1196 was calling createSecretIpcFn(type, {}) without groupFolder, so the orchestrator silently dropped every /secret IPC. Fix passes groupFolder so the entire /secret slash command suite now works end-to-end.
+## Story 11: User searches their conversation history via the /search chat command
+
+**As a** KubeClaw user via the HTTP channel
+**I want** to type `/search <query>` in chat and receive a list of matching past messages from my conversation history
+**So that** I can quickly recall what the assistant and I discussed previously without scrolling through a long thread or asking the LLM to remember things
+
+### Acceptance criteria
+
+1. A `POST /message` containing `/search <unique-token>` — where `<unique-token>` was present in a message previously sent in the same session — returns an SSE reply that lists that message with a date stamp and a snippet containing the token, without invoking the LLM.
+2. A `POST /message` containing `/search xqzz-no-match-e2e` (a string guaranteed not to appear in any prior message) returns an SSE reply with text matching `No results` (case-insensitive).
+3. A `POST /message` containing `/search --limit 1 <token>` when two or more messages in the history match `<token>` returns an SSE reply containing exactly one result line (i.e., only a single `[1]` prefix is present in the reply).
+4. Results returned by `/search` are scoped to the current user's group — a second user's prior messages do not appear in the first user's search results, even when both users have sent messages containing the same token.
+5. A `POST /message` containing just `/search` (no query) returns an SSE reply containing usage help (the word "Usage" or the word "search", case-insensitive), not an error stack trace.
+
+### Notes for the test author
+
+- The slash-command dispatch lives in `src/channel-runner.ts` around line 1147 (`isSearchCommand` → `handleSearchCommand`). The handler is in `src/runtime/search-command.ts`. This path is intercepted **before** the LLM queue — no LLM is required.
+- Install kubeclaw in an isolated namespace (`kubeclaw-e2e-search`) with `orchestrator.replicas=1` and the HTTP channel enabled. Follow the `beforeAll`/`afterAll` helm install+uninstall pattern from `e2e/credential-broker.test.ts`. Port-forward the HTTP channel Service to a local port (e.g. `14096`): `kubectl port-forward svc/kubeclaw-channel-http -n kubeclaw-e2e-search 14096:14081`.
+- Create two HTTP users at install time for AC4: `--set-json 'httpChannel.users={"alice":"alicepw","bob":"bobpw"}'`. The group folder for `alice` is `http-http-alice`; for `bob` it is `http-http-bob`. Verify isolation by sending `/search <shared-token>` as `alice` and confirming `bob`'s messages do not appear.
+- To seed prior history for AC1: first `POST /message` a user message (e.g. `'story11-marker-' + Date.now()`) from `alice`; wait for it to be stored (poll `/events` or wait 1 s); then send `/search <that-marker>`. The marker must appear in the reply.
+- To read the SSE reply, use the helper in `e2e/lib/` or open a `fetch` stream against `GET /events?jid=http:alice`. Wait up to 15 s; the search command is synchronous and round-trips in under 2 s on kind.
+- For AC3, seed at least two messages containing the same token (e.g. `'duptoken'`) before sending `/search --limit 1 duptoken`. Assert the reply text contains `[1]` but does NOT contain `[2]`.
+- For AC5, assert the reply to a bare `/search` contains the substring `search` or `Usage` (case-insensitive) and does not contain any stack-trace indicators (no `Error:`, no `at ` indented lines).
+- LLM-dependence: **LLM-independent**. `isSearchCommand` intercepts before the LLM queue. No `it.skipIf(noLlm)` needed.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-search --create-namespace`, `--set namespace=kubeclaw-e2e-search`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
+
+status: drafted
