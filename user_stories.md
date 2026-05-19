@@ -461,4 +461,4 @@ status: passing 5/5 (extended channel-runner intercept to cover /compact, /summa
 - LLM-dependence: **LLM-independent** for ACs 1, 2, 3, and 5. AC4 touches the LLM fallback path — gate it with `it.skipIf(process.env.KUBECLAW_NO_LLM === 'true')` only if the test requires an actual LLM reply to distinguish from the help text; otherwise assert purely on the absence of the help-text prefix (no LLM needed).
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-help --create-namespace`, `--set namespace=kubeclaw-e2e-help`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
 
-status: drafted
+status: passing 5/5 (new /help command implemented)
