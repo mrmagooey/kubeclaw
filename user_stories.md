@@ -734,3 +734,24 @@ status: passing 5/5 (UTF-8 round-trip coverage)
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-ct-validation --create-namespace`, `--set namespace=kubeclaw-e2e-ct-validation`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
 
 status: implementation 5/5 (verified by agent in its worktree); main test has channel-pod label-selector flake on kind — pod never matches waitForChannelPod predicate. The 415 guard in src/channels/http.ts is in place.
+
+## Story 30: HEAD /attachments/raw returns size and content-type without body
+
+**As a** KubeClaw user via the HTTP channel
+**I want** to HEAD a previously uploaded attachment and get Content-Type + Content-Length without the body
+**So that** I can check size/type before deciding to download
+
+### Acceptance criteria
+
+1. HEAD existing file (authenticated) → 200 + correct Content-Type + Content-Length, empty body.
+2. HEAD nonexistent → 404, no body.
+3. Unauthenticated HEAD → 401, no body.
+4. HEAD with path traversal → 400, no body.
+
+### Notes
+
+- Extend the GET /attachments/raw/<filename> handler in `src/channels/http.ts` to also match HEAD; replace `res.end(fileData)` with `res.end()`.
+- LLM-dependence: **none**.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-head-attach --create-namespace`, `--set namespace=kubeclaw-e2e-head-attach`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
+
+status: drafted
