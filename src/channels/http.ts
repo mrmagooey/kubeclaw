@@ -485,8 +485,8 @@ export class HttpChannel implements Channel {
           const group = this.opts.registeredGroups()[jid];
           if (!group) {
             logger.debug({ jid }, 'HTTP image from unregistered user');
-            res.writeHead(200, { 'Content-Type': 'text/plain' });
-            res.end('ok');
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ id: null }));
             return;
           }
 
@@ -504,10 +504,10 @@ export class HttpChannel implements Channel {
           // row is visible immediately (before the LLM pipeline processes the
           // message from the messages table).
           appendConversationMessage(group.folder, 'user', marker);
-          this.handleInbound(username, marker);
+          const attachMsgId = this.handleInbound(username, marker);
 
-          res.writeHead(200, { 'Content-Type': 'text/plain' });
-          res.end('ok');
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ id: attachMsgId, attachment: filename }));
           return;
         }
 
@@ -521,9 +521,9 @@ export class HttpChannel implements Channel {
             res.end('Missing text');
             return;
           }
-          this.handleInbound(username, text.trim());
-          res.writeHead(200, { 'Content-Type': 'text/plain' });
-          res.end('ok');
+          const msgId = this.handleInbound(username, text.trim());
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ id: msgId }));
         } catch {
           res.writeHead(400, { 'Content-Type': 'text/plain' });
           res.end('Invalid JSON');
@@ -722,7 +722,7 @@ export class HttpChannel implements Channel {
     res.end('Not found');
   }
 
-  private handleInbound(username: string, text: string): void {
+  private handleInbound(username: string, text: string): string {
     const jid = `http:${username}`;
     const timestamp = new Date().toISOString();
     const msgId = `${Date.now()}-${++this.messageSeq}`;
@@ -732,7 +732,7 @@ export class HttpChannel implements Channel {
     const group = this.opts.registeredGroups()[jid];
     if (!group) {
       logger.debug({ jid }, 'HTTP message from unregistered user');
-      return;
+      return msgId;
     }
 
     this.opts.onMessage(jid, {
@@ -746,6 +746,7 @@ export class HttpChannel implements Channel {
     });
 
     logger.info({ jid }, 'HTTP message stored');
+    return msgId;
   }
 
   private sendSse(username: string, eventType: string, data: string): void {
