@@ -712,3 +712,25 @@ status: passing 5/5 (coverage for existing 400 validation)
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-unicode --create-namespace`, `--set namespace=kubeclaw-e2e-unicode`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
 
 status: passing 5/5 (UTF-8 round-trip coverage)
+
+## Story 29: POST /message rejects wrong Content-Type
+
+**As a** KubeClaw user via the HTTP channel
+**I want** the server to reject POST /message requests with unexpected Content-Type
+**So that** mis-configured clients fail fast with a clear error
+
+### Acceptance criteria
+
+1. text/plain with JSON body → 415.
+2. application/xml → 415.
+3. application/json → 200 + `{id}` (baseline).
+4. multipart/form-data (no image) → 400 (multipart path still reached).
+5. Unauthenticated wrong Content-Type → 401 before CT check.
+
+### Notes
+
+- Add explicit guard in `src/channels/http.ts` POST /message handler (~line 431): if content-type isn't json or multipart, return 415.
+- LLM-dependence: **none**.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-ct-validation --create-namespace`, `--set namespace=kubeclaw-e2e-ct-validation`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
+
+status: drafted
