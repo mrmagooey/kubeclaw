@@ -602,3 +602,25 @@ status: passing 5/5 (DELETE complements Story 19 GET)
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-attach-list --create-namespace`, `--set namespace=kubeclaw-e2e-attach-list`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
 
 status: passing 5/5 (new GET /attachments/list completes attachment CRUD)
+
+## Story 24: SSE Stream Keepalive Heartbeat
+
+**As a** KubeClaw user via the HTTP webchat channel
+**I want** the SSE stream to send periodic comment-frame heartbeats
+**So that** load balancers and reverse proxies do not silently drop my idle connection
+
+### Acceptance criteria
+
+1. Fresh authenticated GET /stream → `: ping` comment within 35s with no user activity.
+2. Heartbeat is a comment, not `data:` event; no `id:` field, doesn't bump Last-Event-ID.
+3. Two heartbeats observed within 70s.
+4. Unauthenticated GET → 401 before any heartbeat.
+5. `/help` reply still delivered alongside heartbeats (interval timer not cleared by message events).
+
+### Notes for the test author
+
+- Implementation: `src/channels/http.ts:410-417` — `setInterval(() => res.write(': ping\n\n'), 30_000)`. Already exists; this is a coverage story.
+- LLM-dependence: **none**.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-keepalive --create-namespace`, `--set namespace=kubeclaw-e2e-keepalive`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
+
+status: drafted
