@@ -1193,8 +1193,10 @@ export async function processGroupMessages(chatJid: string): Promise<boolean> {
   // transcript memory and a SYSTEM event is injected in its place.
   if (lastMsg && isSecretCommand(lastMsg.content)) {
     // Build a minimal IPC function backed by the real Redis task-request stream
+    // Carry the group folder so the orchestrator's task watcher accepts the
+    // request — without it the watcher silently drops every secret IPC.
     const secretIpc: SecretCommandDeps['ipc'] = async (type, fields) => {
-      const ipcFn = createSecretIpcFn(type, {});
+      const ipcFn = createSecretIpcFn(type, { groupFolder: group.folder });
       return ipcFn(fields);
     };
 
