@@ -319,7 +319,16 @@ export class HttpChannel implements Channel {
   }
 
   private handleRequest(req: IncomingMessage, res: ServerResponse): void {
-    const url = new URL(req.url ?? '/', `http://localhost:${this.config.port}`);
+    // Reject any request whose raw URL contains path-traversal sequences
+    // before URL normalisation can resolve them away.
+    const rawUrl = req.url ?? '/';
+    if (rawUrl.includes('..')) {
+      res.writeHead(400, { 'Content-Type': 'text/plain' });
+      res.end('Bad Request');
+      return;
+    }
+
+    const url = new URL(rawUrl, `http://localhost:${this.config.port}`);
 
     // Serve chat UI without auth (browser will prompt via Basic auth challenge)
     if (req.method === 'GET' && url.pathname === '/') {
@@ -481,6 +490,72 @@ export class HttpChannel implements Channel {
           res.end('Invalid JSON');
         }
       });
+      return;
+    }
+
+    // Attachment download endpoint
+    // GET /attachments/raw/<filename>
+    if (
+      req.method === 'GET' &&
+      url.pathname.startsWith('/attachments/raw/')
+    ) {
+      const username = this.authenticate(req);
+      if (!username) {
+        this.sendUnauthorized(res);
+        return;
+      }
+
+      const filename = url.pathname.slice('/attachments/raw/'.length);
+
+      // Reject path traversal: no slashes, backslashes, or '..' segments
+      if (
+        !filename ||
+        filename.includes('/') ||
+        filename.includes('\\') ||
+        filename.includes('..')
+      ) {
+        res.writeHead(400, { 'Content-Type': 'text/plain' });
+        res.end('Bad Request');
+        return;
+      }
+
+      const jid = `http:${username}`;
+      const attachDir = path.join(GROUPS_DIR, jid, 'attachments', 'raw');
+      const filePath = path.join(attachDir, filename);
+
+      let fileData: Buffer;
+      try {
+        fileData = fs.readFileSync(filePath);
+      } catch (err: any) {
+        if (err?.code === 'ENOENT') {
+          res.writeHead(404, { 'Content-Type': 'text/plain' });
+          res.end('Not Found');
+        } else {
+          logger.error({ err, filePath }, 'GET /attachments/raw failed');
+          res.writeHead(500, { 'Content-Type': 'text/plain' });
+          res.end('Internal Server Error');
+        }
+        return;
+      }
+
+      // Derive Content-Type from extension or magic bytes
+      const ext = path.extname(filename).toLowerCase();
+      const extMime: Record<string, string> = {
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.png': 'image/png',
+        '.gif': 'image/gif',
+        '.webp': 'image/webp',
+      };
+      const contentType =
+        extMime[ext] ?? detectMediaType(fileData) ?? 'application/octet-stream';
+
+      res.writeHead(200, {
+        'Content-Type': contentType,
+        'Content-Length': fileData.length,
+        'Cache-Control': 'private, max-age=3600',
+      });
+      res.end(fileData);
       return;
     }
 
