@@ -380,3 +380,29 @@ status: passing 5/5 against local Gemma-4B (~58 min); 3/5 on OpenRouter Nemotron
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-clear --create-namespace`, `--set namespace=kubeclaw-e2e-clear`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
 
 status: passing 5/5 (required wiring /clear into channel-runner)
+## Story 15: User sends an image attachment via the HTTP channel
+
+**As a** KubeClaw user via the HTTP channel
+**I want** to attach an image to my message and have the assistant acknowledge receipt and store it
+**So that** I can share visual content (screenshots, diagrams, photos) and have it recorded in my conversation history alongside my text, ready to be referenced by the assistant
+
+### Acceptance criteria
+
+1. A `POST /message` with `Content-Type: multipart/form-data` containing a valid JPEG image part named `image` returns HTTP 200 and an `ok` body; the image is saved to disk at `groups/http:http-alice/attachments/raw/<filename>.jpg` inside the channel pod.
+2. A subsequent `GET /events?jid=http:alice` SSE stream delivers a message whose text matches `[ImageAttachment: attachments/raw/<filename>.jpg]`, confirming the marker was written to conversation history and echoed back to the user's stream.
+3. A multipart POST including both an `image` part (valid PNG) and a `text` part (non-empty caption) results in the stored `[ImageAttachment: …]` marker containing the caption, e.g. `[ImageAttachment: attachments/raw/<filename>.png caption="my caption"]`.
+4. A multipart POST whose `image` part contains non-image bytes (e.g. a plain-text file) returns HTTP 415 with body `Unsupported image format` and no file is written to disk.
+5. A multipart POST with `Content-Type: multipart/form-data` but no `image` part returns HTTP 400 with body `Missing image`.
+
+### Notes for the test author
+
+- Image handling lives in `src/channels/http.ts`. The multipart parser is `parseMultipart`; media-type detection is `detectMediaType` (magic-byte matching: JPEG `[0xff,0xd8,0xff]`, PNG `[0x89,0x50,0x4e,0x47,…]`, GIF `[0x47,0x49,0x46]`, WebP `[0x52,0x49,0x46,0x46]`). Files are written to `GROUPS_DIR/<jid>/attachments/raw/<img-timestamp-rand.ext>`. The `[ImageAttachment: …]` marker is appended to `conversation_history` via `appendConversationMessage` and then `handleInbound` is called to trigger the channel's SSE delivery.
+- For AC1/AC2: build a minimal valid JPEG in the test (3-byte magic prefix `\xff\xd8\xff` followed by arbitrary bytes is sufficient to pass `detectMediaType`). POST it as `multipart/form-data` with part name `image`. Use `node:http` or `undici` to send the raw multipart body — no browser required. After the POST returns 200, open (or poll) the SSE stream for the `[ImageAttachment: …]` line. Wait up to 10 s.
+- For AC3: use a minimal PNG (magic prefix `[0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a]`). Include a `text` part with value `my caption`. Assert the SSE marker includes `caption="my caption"`.
+- For AC4/AC5: send deliberate bad payloads and assert the HTTP response code and body without opening an SSE stream.
+- To verify file presence on disk (AC1), use `kubectl exec <channel-pod> -n kubeclaw-e2e-image -- ls /app/groups/http:http-alice/attachments/raw/` and assert the listing is non-empty. The channel pod is found with `kubectl get pod -n kubeclaw-e2e-image -l kubeclaw-component=channel-http -o jsonpath='{.items[0].metadata.name}'`.
+- Install kubeclaw in an isolated namespace with a single HTTP user (`alice`). Follow the `beforeAll`/`afterAll` helm install+uninstall pattern from `e2e/credential-broker.test.ts`. Port-forward the HTTP channel Service to a local port (e.g. `14100`): `kubectl port-forward svc/kubeclaw-channel-http -n kubeclaw-e2e-image 14100:14081`.
+- LLM-dependence: **LLM-independent** for all 5 ACs. The attachment path in `http.ts` calls `appendConversationMessage` and `handleInbound` directly — no LLM call is involved. The SSE line that carries `[ImageAttachment: …]` is the channel's own echo, not an LLM reply. Do NOT gate any AC with `KUBECLAW_NO_LLM`.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-image --create-namespace`, `--set namespace=kubeclaw-e2e-image`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
+
+status: drafted
