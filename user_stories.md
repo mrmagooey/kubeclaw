@@ -406,3 +406,32 @@ status: passing 5/5 (required wiring /clear into channel-runner)
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-image --create-namespace`, `--set namespace=kubeclaw-e2e-image`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
 
 status: passing 5/5
+
+## Story 16: User compacts their conversation history via the /compact and /summary chat commands
+
+**As a** KubeClaw user via the HTTP channel
+**I want** to type `/compact` to summarise and trim my old messages, and `/summary` to view any existing summary
+**So that** I can keep long-running conversations manageable without losing context — old turns are distilled into a summary that the assistant still carries forward, rather than being discarded entirely
+
+### Acceptance criteria
+
+1. A `POST /message` containing `/compact` when the conversation has more than the default keep-window of messages returns an SSE reply whose text contains the word "Compacted" (case-insensitive), a count of messages summarised, and a summary id — and the SQLite `conversation_history` row count for the group is reduced, confirming old rows were deleted.
+2. A `POST /message` containing `/compact --keep 2` when there are at least 4 messages in history returns an SSE reply confirming compaction occurred, and `SELECT COUNT(*) FROM conversation_history WHERE group_folder=?` returns at most 2 rows, confirming the keep-window was respected.
+3. A `POST /message` containing `/compact` when the conversation history is already empty (or within the keep-window) returns an SSE reply containing the phrase "Nothing to compact" — confirming graceful no-op without an error.
+4. After a successful `/compact`, a `POST /message` containing `/summary` returns an SSE reply that includes the summary text produced in AC1 (i.e. the text is non-empty and contains the word "Summary" or the summary chain entry header `[1/`).
+5. A `POST /message` containing `/summary` before any compaction has occurred returns an SSE reply containing the phrase "No summary" — confirming graceful empty-state handling.
+
+### Notes for the test author
+
+- The command implementation lives entirely in `src/runtime/compression-commands.ts`: `isCompactCommand` (regex matches `/compact`, `/summary`, `/clear`), `parseCompactArgs`, and `handleCompactCommand`. As of this writing the dispatch is **not yet wired** into the channel-runner slash-command path in `src/channel-runner.ts` — the `processGroupMessages` function handles `/search`, `/skills`, `/secret`, and `/clear` (the last added for Story 14) but does not yet check `isCompactCommand` for the `compact` or `summary` verbs. Wire it in following the same pattern as `isSearchCommand` → `handleSearchCommand` around line 1147: detect before `formatMessages`, call `await handleCompactCommand(group.folder, lastMsg.content, client, model)`, send the result via `channel.sendMessage`, and return early. Note that `handleCompactCommand` for the `compact` verb calls `summarize(...)` which requires a real LLM client and model — pass the channel's existing `client` and `model` from its config.
+- Story 14 (`/clear`) already wired the `clear` verb into channel-runner. The `isCompactCommand` regex is shared, so the new dispatch check must branch on the parsed verb to avoid re-handling `clear` — or add a separate `isCompactOrSummaryCommand` guard that excludes `clear`.
+- Install kubeclaw in an isolated namespace (`kubeclaw-e2e-compact`) with `orchestrator.replicas=1` and the HTTP channel enabled. Follow the `beforeAll`/`afterAll` helm install+uninstall pattern from `e2e/credential-broker.test.ts`. Port-forward the HTTP channel Service to a local port (e.g. `14101`): `kubectl port-forward svc/kubeclaw-channel-http -n kubeclaw-e2e-compact 14101:14081`. Create a single HTTP user: `--set-json 'httpChannel.users={"alice":"alicepw"}'`. Group folder is `http-http-alice`.
+- To seed conversation history for AC1/AC2: `POST /message` multiple normal text messages from `alice` (e.g. 5–6 distinct sentences) before sending `/compact`. The `MAX_CONVERSATION_HISTORY` env defaults to 20 so override to a small value (`--set 'channel.env.MAX_CONVERSATION_HISTORY=3'`) to ensure seeding 5 messages triggers compaction with the default keep-window.
+- To verify row counts: `kubectl exec <channel-pod> -n kubeclaw-e2e-compact -- sqlite3 /app/groups/http-http-alice/db.sqlite 'SELECT COUNT(*) FROM conversation_history WHERE group_folder="http-http-alice"'`. The channel pod is found with `kubectl get pod -n kubeclaw-e2e-compact -l kubeclaw-component=channel-http -o jsonpath='{.items[0].metadata.name}'`.
+- For AC1: assert the SSE reply contains "Compacted" and that the row count is strictly less than the count before the command.
+- For AC2: seed at least 4 messages with `MAX_CONVERSATION_HISTORY=10` (so default keep-window does not interfere), send `/compact --keep 2`, assert row count ≤ 2.
+- For AC4: after the `/compact` in AC1 succeeds, send `/summary` and assert the reply is non-empty and contains `[1/` (the summary chain header) or the substring "Summary" (case-insensitive).
+- LLM-dependence: **LLM-dependent** for ACs 1 and 2 (`/compact` calls the LLM summariser). Gate those ACs with `it.skipIf(process.env.KUBECLAW_NO_LLM === 'true')`. ACs 3, 4, and 5 are LLM-independent (`/summary` reads from SQLite; empty/no-op paths do not call the summariser) — do not gate them.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-compact --create-namespace`, `--set namespace=kubeclaw-e2e-compact`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
+
+status: drafted
