@@ -624,3 +624,25 @@ status: passing 5/5 (new GET /attachments/list completes attachment CRUD)
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-keepalive --create-namespace`, `--set namespace=kubeclaw-e2e-keepalive`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
 
 status: passing 5/5 (coverage for pre-existing 30s heartbeat)
+
+## Story 25: POST /message returns the stored message ID
+
+**As a** KubeClaw user via the HTTP webchat channel
+**I want** the `POST /message` response to include the assigned message ID
+**So that** I can correlate the SSE reply I receive later with the message that triggered it
+
+### Acceptance criteria
+
+1. Authenticated POST with valid `{"text":"..."}` → 200 with JSON body `{"id":"<msgId>"}`.
+2. Two successive POSTs return distinct IDs.
+3. The returned `id` matches the row in SQLite `messages` table (verifiable via GET /history from Story 18).
+4. Unauthenticated POST → 401, no id in body.
+5. POST with missing/blank text → 400, no id in body.
+
+### Notes for the test author
+
+- `src/channels/http.ts` POST /message handler (~line 423) already computes `msgId` in `handleInbound` (~line 728). Surface it in the JSON response body.
+- LLM-dependence: **none**.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-msg-ack --create-namespace`, `--set namespace=kubeclaw-e2e-msg-ack`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
+
+status: drafted
