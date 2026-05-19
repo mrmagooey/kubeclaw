@@ -108,7 +108,7 @@ status: partial (3/5) — AC1 (POST 200), AC2 (queued state), AC4 (≤2 active j
 - Known constraint: the broker performs a TokenReview against the Kubernetes API for every `/authz` request; the `kubeclaw-credential-broker` ClusterRoleBinding (bound to `system:auth-delegator`) must exist before traffic is sent. This is installed by the helm chart automatically; wait for `kubectl rollout status deployment/kubeclaw-credential-broker` before running authz tests.
 - IMPORTANT: target the kind cluster `kubeclaw-e2e-istio`. Install kubeclaw with default values (mode=sidecar) in an isolated namespace. Use `--set image.tag=e2e-test --set image.pullPolicy=IfNotPresent` (the kind cluster has `kubeclaw-orchestrator:e2e-test` pre-loaded). Use `KUBECLAW_SKIP_HELM_INSTALL=true` to bypass vitest globalSetup.
 
-status: drafted
+status: passing 5/5
 ## Story 5: Redis ACL user is created per tool-job and revoked on completion (status: deferred — test infra fails at helm install in vitest run despite same command succeeding manually; needs further debugging)
 
 **As a** KubeClaw operator running specialist tool jobs in my cluster
@@ -135,7 +135,7 @@ status: drafted
 - Known constraint: `ACL_ENCRYPTION_KEY` must be set (the helm chart injects it from `kubeclaw-secrets`). If the key is absent, the ACL manager falls back to a derived key (with a warning) — tests still pass but a warning is emitted in orchestrator logs.
 - IMPORTANT: target the kind cluster `kubeclaw-e2e-istio`. Use `--set image.tag=e2e-test --set image.pullPolicy=IfNotPresent`. Service names in the chart are prefixed `kubeclaw-` (e.g. `kubeclaw-redis`, not `redis`). Use `KUBECLAW_SKIP_HELM_INSTALL=true` to bypass globalSetup.
 
-status: drafted
+status: deferred — test infra fails at helm install in vitest run despite same command succeeding manually
 ## Story 6: Sender allowlist drop mode silently discards messages from blocked senders (status: passing 5/5)
 
 **As a** KubeClaw operator who wants to limit which users can trigger the assistant
@@ -161,7 +161,7 @@ status: drafted
 - AC4 (trigger mode still stores) distinguishes `drop` from `trigger` mode: in `trigger` mode a denied sender's message reaches `storeMessage()` but does not proceed to the LLM queue. Assert the message row exists in SQLite but no SSE reply appears within a short timeout (e.g. 5 s).
 - IMPORTANT: target the kind cluster `kubeclaw-e2e-istio`. Use `--set image.tag=e2e-test --set image.pullPolicy=IfNotPresent`. Service names in the chart are prefixed `kubeclaw-` (e.g. `kubeclaw-credential-broker`, `kubeclaw-orchestrator`, `kubeclaw-redis`). Use `KUBECLAW_SKIP_HELM_INSTALL=true` to bypass globalSetup. If installing via helm: pass `--create-namespace`.
 
-status: drafted
+status: passing 5/5
 
 ## Story 7: Idle per-group capability Deployments scale to zero after the configured idle timeout
 
@@ -293,4 +293,4 @@ status: passing 5/5 — also fixed a real product bug: channel-runner.ts:1196 wa
 - LLM-dependence: **LLM-independent**. `isSearchCommand` intercepts before the LLM queue. No `it.skipIf(noLlm)` needed.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-search --create-namespace`, `--set namespace=kubeclaw-e2e-search`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
 
-status: drafted
+status: passing 5/5
