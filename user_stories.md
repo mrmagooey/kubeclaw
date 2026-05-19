@@ -350,4 +350,4 @@ status: passing 5/5
 - Install kubeclaw in an isolated namespace. Port-forward the HTTP channel Service to a local port (e.g. `14098`): `kubectl port-forward svc/kubeclaw-channel-http -n kubeclaw-e2e-specialist 14098:14081`. Create a single HTTP user: `--set-json 'httpChannel.users={"alice":"alicepw"}'`. Read SSE replies via `GET /events?jid=http:alice` (same helper as Stories 11–12). Wait up to 30 s per assertion to accommodate LLM round-trip latency.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-specialist --create-namespace`, `--set namespace=kubeclaw-e2e-specialist`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
 
-status: drafted
+status: passing 5/5 against local Gemma-4B (~58 min). OpenRouter retests: 2/5 free-Gemma-4-26b (rate-limited on multi-call ACs); 0/5 paid Gemma-3-4b (no SSE lines — suspected orchestrator→openrouter.ai connectivity gap). Test contract verified; OpenRouter transport for kind needs a separate fix.
