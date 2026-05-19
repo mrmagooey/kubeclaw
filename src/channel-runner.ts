@@ -592,6 +592,22 @@ export async function dispatchSkillsCommandIfApplicable(
   return true;
 }
 
+// ── /help command ─────────────────────────────────────────────────────────────
+
+export const HELP_TEXT = [
+  'Available slash commands:',
+  '  /search <query>   — full-text search over conversation history',
+  '  /skills           — manage learned skills (review / accept / reject)',
+  '  /secret           — manage credentials (add / remove / list / catalog)',
+  '  /clear            — clear conversation context',
+  '  /compact          — compact conversation history',
+  '  /summary          — summarise recent conversation',
+].join('\n');
+
+export function isHelpCommand(message: string): boolean {
+  return /^\/help(\s|$)/.test(message.trim());
+}
+
 // ── /secret command types ─────────────────────────────────────────────────────
 
 /** IPC response envelope returned by the orchestrator for secret.* operations. */
@@ -1148,6 +1164,19 @@ export async function processGroupMessages(chatJid: string): Promise<boolean> {
   // Slash command intercepts: /search, /skills and /secret must live here — BEFORE
   // formatMessages wraps the content in XML, which would break the regex match.
   const lastMsg = missedMessages[missedMessages.length - 1];
+
+  // /help chat command: list available slash commands without invoking the LLM.
+  if (lastMsg && isHelpCommand(lastMsg.content)) {
+    lastAgentTimestamp[chatJid] = lastMsg.timestamp;
+    saveState();
+    await channel.setTyping?.(chatJid, true);
+    try {
+      await channel.sendMessage(chatJid, HELP_TEXT);
+    } finally {
+      await channel.setTyping?.(chatJid, false);
+    }
+    return true;
+  }
 
   // /search chat command: full-text search over conversation history.
   if (lastMsg && isSearchCommand(lastMsg.content)) {
