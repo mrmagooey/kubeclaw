@@ -601,4 +601,4 @@ status: passing 5/5 (DELETE complements Story 19 GET)
 - LLM-dependence: **none**.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-attach-list --create-namespace`, `--set namespace=kubeclaw-e2e-attach-list`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
 
-status: drafted
+status: passing 5/5 (new GET /attachments/list completes attachment CRUD)
