@@ -42,7 +42,8 @@ export class SecretManager {
   private validateValue(v: string): void {
     if (v.length === 0) throw new Error('value is empty');
     if (v.length > MAX_VALUE_LEN) throw new Error('value too long');
-    if (CONTROL_CHAR_RE.test(v)) throw new Error('value contains invalid characters');
+    if (CONTROL_CHAR_RE.test(v))
+      throw new Error('value contains invalid characters');
   }
 
   async setGroupSecret(
@@ -64,7 +65,10 @@ export class SecretManager {
       fields: Object.fromEntries(
         entry.credentialFields.map((f) => [
           f.name,
-          { value: fieldValues[f.name], placeholder: this.generatePlaceholder(f.name) },
+          {
+            value: fieldValues[f.name],
+            placeholder: this.generatePlaceholder(f.name),
+          },
         ]),
       ),
       registeredAt: new Date().toISOString(),
@@ -75,8 +79,13 @@ export class SecretManager {
     try {
       await this.opts.k8s.readSecret(this.secretName(group));
     } catch (err: unknown) {
-      const e = err as { statusCode?: number; response?: { statusCode?: number } };
-      if (e?.statusCode === 404 || e?.response?.statusCode === 404) exists = false;
+      const e = err as {
+        statusCode?: number;
+        code?: number;
+        response?: { statusCode?: number };
+      };
+      if (e?.statusCode === 404 || e?.response?.statusCode === 404 || e?.code === 404)
+        exists = false;
       else throw err;
     }
 
@@ -120,8 +129,12 @@ export class SecretManager {
     try {
       secret = await this.opts.k8s.readSecret(this.secretName(group));
     } catch (err: unknown) {
-      const e = err as { statusCode?: number; response?: { statusCode?: number } };
-      if (e?.statusCode === 404 || e?.response?.statusCode === 404) return [];
+      const e = err as {
+        statusCode?: number;
+        code?: number;
+        response?: { statusCode?: number };
+      };
+      if (e?.statusCode === 404 || e?.response?.statusCode === 404 || e?.code === 404) return [];
       throw err;
     }
     return Object.entries(secret.data ?? {}).map(([catalogId, b64]) => {
@@ -148,8 +161,12 @@ export class SecretManager {
     try {
       secret = await this.opts.k8s.readSecret(this.secretName(group));
     } catch (err: unknown) {
-      const e = err as { statusCode?: number; response?: { statusCode?: number } };
-      if (e?.statusCode === 404 || e?.response?.statusCode === 404) return {};
+      const e = err as {
+        statusCode?: number;
+        code?: number;
+        response?: { statusCode?: number };
+      };
+      if (e?.statusCode === 404 || e?.response?.statusCode === 404 || e?.code === 404) return {};
       throw err;
     }
     const result: Record<string, Record<string, string>> = {};
