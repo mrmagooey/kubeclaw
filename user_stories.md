@@ -462,3 +462,28 @@ status: passing 5/5 (extended channel-runner intercept to cover /compact, /summa
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-help --create-namespace`, `--set namespace=kubeclaw-e2e-help`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
 
 status: passing 5/5 (new /help command implemented)
+## Story 18: User browses paginated conversation history via the HTTP channel
+
+**As a** KubeClaw user via the HTTP channel
+**I want** to fetch a page of my past conversation messages using a `GET /history` endpoint
+**So that** I can review what was said earlier without relying on the LLM or scrolling through the chat UI
+
+### Acceptance criteria
+
+1. `GET /history?limit=5` (authenticated) returns HTTP 200 with a JSON array of up to 5 of the most recent messages for the authenticated user, each with fields `id`, `role` (`"user"` or `"assistant"`), `content`, and `created_at`.
+2. `GET /history?before=<id>&limit=5` returns the 5 messages older than the message with the given `id`, enabling cursor-based backward pagination through history.
+3. `GET /history` with no `limit` parameter defaults to returning 20 messages or fewer (the system default), not an unbounded result set.
+4. `GET /history` without valid HTTP Basic Auth credentials returns HTTP 401.
+5. After sending 7 messages (mix of user and assistant turns) and calling `GET /history?limit=3`, then `GET /history?before=<oldest-id-from-first-page>&limit=3`, the two pages together contain 6 distinct message IDs with no overlap.
+
+### Notes for the test author
+
+- No `GET /history` route exists yet. Add it to `src/channels/http.ts` alongside the existing `/stream` and `/message` handlers in `handleRequest`. The route must call `getConversationHistory` (exported from `src/db.ts`) with the authenticated user's `group_folder` (`http:<username>`), passing `limit` from the query string (parsed as an integer, default 20, capped at 100).
+- For cursor pagination (AC2): extend `getConversationHistory` in `src/db.ts` (or add a new sibling `getConversationHistoryBefore(groupFolder, beforeId, limit)`) to accept an optional `beforeId` parameter; the SQL becomes `SELECT ... WHERE group_folder = ? AND created_at < (SELECT created_at FROM conversation_history WHERE id = ?) ORDER BY created_at DESC LIMIT ?`. Use `created_at`-based cursor since `id` is a UUID, not a sortable integer.
+- Unit test (`src/channels/http.test.ts`): stub `getConversationHistory` and assert the route serialises the rows as JSON and applies the `limit` cap correctly.
+- Integration test: stand up an in-process `HttpChannel` with a real SQLite DB (same pattern as `src/db.test.ts`), insert rows via `appendConversationMessage`, then call `GET /history` with `node:http` and assert shape and pagination.
+- E2e test file: `e2e/history-pagination.test.ts`. Install kubeclaw in namespace `kubeclaw-e2e-hist` with HTTP channel and one user `alice`. Seed history by POSTing 7 messages via `POST /message` (they will produce assistant-turn errors in a no-LLM namespace; that is acceptable — both turns are stored). Port-forward HTTP channel Service to local port `14103`: `kubectl port-forward svc/kubeclaw-channel-http -n kubeclaw-e2e-hist 14103:14081`. Assert ACs 1, 2, 3, 4, and 5 using `node-fetch` or `fetch`.
+- LLM-dependence: **LLM-independent**. No LLM call is involved at any layer; the route reads SQLite directly.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-hist --create-namespace`, `--set namespace=kubeclaw-e2e-hist`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
+
+status: drafted
