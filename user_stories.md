@@ -239,3 +239,31 @@ status: passing 5/5 — also fixed ApiException.code 404 detection in src/k8s/se
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-msgstore --create-namespace`, `--set namespace=kubeclaw-e2e-msgstore`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
 
 status: passing 5/5 — first end-user-focused story; LLM-independent
+
+## Story 10: User registers and manages API credentials via the /secret chat command
+
+**As a** KubeClaw user via the HTTP channel
+**I want** to type `/secret catalog`, `/secret add`, `/secret list`, and `/secret remove` directly in chat
+**So that** I can register my own API keys for specialist tool-jobs without needing operator access or kubectl
+
+### Acceptance criteria
+
+1. A `POST /message` containing `/secret catalog` returns a reply that lists at least one catalog entry (showing its `id`, `host`, and field names) — confirming the channel can reach the orchestrator and surface available credential slots to the user.
+2. A `POST /message` containing `/secret add <catalogId> <value>` for a valid single-field catalog entry returns a reply confirming the credential was registered, and a subsequent `kubectl get secret kubeclaw-group-secrets-<groupFolder> -n <namespace>` confirms the K8s Secret exists.
+3. A `POST /message` containing `/secret list` after the add in AC2 returns a reply containing the `catalogId` and a `registeredAt` timestamp — and the raw credential value is **absent** from the reply text.
+4. A `POST /message` containing `/secret remove <catalogId>` returns a reply confirming deletion, and the K8s Secret is absent from the cluster after removal.
+5. A `POST /message` containing `/secret add <unknown-id> <value>` (a `catalogId` not in the catalog) returns a reply containing the word "Unknown" and does not create any K8s Secret.
+
+### Notes for the test author
+
+- **Key distinction from Story 8**: Story 8 drives the orchestrator IPC stream directly (Redis `XADD`). This story drives the **user-facing HTTP channel** slash-command path: `POST /message` → `channel-runner.ts` slash dispatch → IPC → reply back via SSE. The two test layers are complementary, not duplicates.
+- The slash-command dispatch lives in `src/channel-runner.ts` around line 1194 (`isSecretCommand` → `handleSecretCommand`). `handleSecretCommand` is in the same file at line 809. The IPC function is built from `createSecretIpcFn` and talks to the Redis task-request stream (`kubeclaw:tasks`).
+- Install kubeclaw in an isolated namespace (`kubeclaw-e2e-usersec`) with `orchestrator.replicas=1`, `credentialInjection.mode=sidecar`, and at least one catalog entry declared: `--set-json 'credentialInjection.catalog=[{"id":"e2e-svc","host":"api.e2e.example.com","credentialFields":[{"name":"token","envVar":"E2E_TOKEN"}]}]'`. Follow the `beforeAll`/`afterAll` helm install+uninstall pattern from `e2e/credential-broker.test.ts`.
+- Port-forward the HTTP channel Service to a local port (e.g. `14095`): `kubectl port-forward svc/kubeclaw-channel-http -n kubeclaw-e2e-usersec 14095:14081`. Use a single HTTP user (`--set-json 'httpChannel.users={"alice":"alicepw"}'`). The group folder for `alice` is `http-http-alice`.
+- To read the SSE reply, open an EventSource (or `fetch` with streaming) against `GET /events?jid=http:alice` — the same pattern as `e2e/inbound-message-persistence.test.ts` AC-side assertions, or the helper in `e2e/lib/`. Wait up to 15 s for the reply event; the slash command is LLM-free but traverses Redis IPC which adds ~1-2 s on kind.
+- For AC2 and AC4, verify the K8s Secret name `kubeclaw-group-secrets-http-http-alice` (prefix `kubeclaw-group-secrets-` + group folder). Use `kubectl get secret kubeclaw-group-secrets-http-http-alice -n kubeclaw-e2e-usersec` — expect exit 0 after add, exit non-zero after remove.
+- For AC3 (raw value absent from reply), send a unique token string (e.g. `'e2esecret-' + Date.now()`) in the `/secret add` call, then assert that exact string does NOT appear anywhere in the `/secret list` reply text.
+- LLM-dependence: **LLM-independent**. The `/secret` slash-command path is intercepted in `channel-runner.ts` before the LLM queue is consulted; no `it.skipIf(noLlm)` is needed for any AC.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-usersec --create-namespace`, `--set namespace=kubeclaw-e2e-usersec`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
+
+status: drafted
