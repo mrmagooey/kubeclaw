@@ -690,3 +690,25 @@ status: passing 4/4 + 1 skipped (AC5 LLM-gated)
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-empty-msg --create-namespace`, `--set namespace=kubeclaw-e2e-empty-msg`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
 
 status: passing 5/5 (coverage for existing 400 validation)
+
+## Story 28: Unicode and emoji round-trip through POST /message and SSE
+
+**As a** KubeClaw user via the HTTP webchat channel
+**I want** to send and receive messages containing Unicode text, emoji, and multi-byte characters without corruption
+**So that** I can communicate naturally in any language
+
+### Acceptance criteria
+
+1. POST emoji+CJK ("Hello 🌍 こんにちは") → 200; stored content matches input byte-for-byte.
+2. POST Arabic RTL ("مرحبا بالعالم") → 200; stored content matches.
+3. SSE `data:` line carries Unicode payload intact.
+4. 10KB multi-byte string (2500×🔥) → 200; length preserved.
+5. Unauthenticated Unicode POST → 401.
+
+### Notes
+
+- Pure coverage story; `src/channels/http.ts` already decodes UTF-8.
+- LLM-dependence: **none**.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-unicode --create-namespace`, `--set namespace=kubeclaw-e2e-unicode`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
+
+status: drafted
