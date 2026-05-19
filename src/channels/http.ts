@@ -10,6 +10,7 @@ import path from 'node:path';
 import { ASSISTANT_NAME, GROUPS_DIR } from '../config.js';
 import {
   appendConversationMessage,
+  clearConversationHistory,
   getConversationHistoryPage,
   getOutboundMessagesSince,
   storeMessageDirect,
@@ -712,6 +713,31 @@ export class HttpChannel implements Channel {
         res.end(JSON.stringify({ messages }));
       } catch (err) {
         logger.error({ err, jid }, 'GET /history failed');
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Internal server error' }));
+      }
+      return;
+    }
+
+    if (req.method === 'DELETE' && url.pathname === '/history') {
+      const username = this.authenticate(req);
+      if (!username) {
+        this.sendUnauthorized(res);
+        return;
+      }
+      const jid = `http:${username}`;
+      const group = this.opts.registeredGroups()[jid];
+      if (!group) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Group not found' }));
+        return;
+      }
+      try {
+        clearConversationHistory(group.folder);
+        res.writeHead(204);
+        res.end();
+      } catch (err) {
+        logger.error({ err, jid }, 'DELETE /history failed');
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Internal server error' }));
       }
