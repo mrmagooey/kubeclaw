@@ -646,3 +646,25 @@ status: passing 5/5 (coverage for pre-existing 30s heartbeat)
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-msg-ack --create-namespace`, `--set namespace=kubeclaw-e2e-msg-ack`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
 
 status: passing 4/5 — AC1/2/4/5 verified. AC3 (id matches /history row) failed: Story 18 /history queries conversation_history table; Story 25 msgId is from messages table — different ID schemes, no cross-story correlation possible without changing /history shape.
+
+## Story 26: User erases their conversation history via REST
+
+**As a** KubeClaw user via the HTTP channel
+**I want** to permanently delete my conversation history via `DELETE /history`
+**So that** I can wipe my chat clean programmatically without going through the chat UI
+
+### Acceptance criteria
+
+1. Authenticated DELETE → 204; subsequent GET /history → empty.
+2. Unauthenticated DELETE → 401, history intact.
+3. Scoped to user — alice deletion doesn't affect bob.
+4. Idempotent — empty history DELETE → 204.
+5. Next message reply has no memory of prior turns (LLM-dependent — gate with skipIf).
+
+### Notes for the test author
+
+- Add `DELETE /history` branch to `src/channels/http.ts` after the existing GET /history. Call `clearConversationHistory(group.folder)` from `src/db.ts`.
+- LLM-dependence: ACs 1-4 independent; AC5 dependent.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-del-history --create-namespace`, `--set namespace=kubeclaw-e2e-del-history`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
+
+status: drafted
