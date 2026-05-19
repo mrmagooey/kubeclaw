@@ -435,3 +435,30 @@ status: passing 5/5
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-compact --create-namespace`, `--set namespace=kubeclaw-e2e-compact`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
 
 status: passing 5/5 (extended channel-runner intercept to cover /compact, /summary, /clear via single isCompactCommand path)
+## Story 17: User discovers available slash commands via /help
+
+**As a** KubeClaw user via the HTTP channel
+**I want** to type `/help` and receive a plain-text list of all slash commands the channel supports
+**So that** I can discover what commands are available without consulting documentation or guessing
+
+### Acceptance criteria
+
+1. A `POST /message` containing `/help` returns HTTP 200 and an SSE reply that lists at least the commands `/search`, `/skills`, `/secret`, `/clear`, `/compact`, and `/summary` — confirming the help text is comprehensive.
+2. A `POST /message` containing `/help` returns a reply that does NOT contain any LLM-generated prose — confirmed by the reply arriving in under 2 seconds and containing no sentences longer than 80 characters (a structural check, not an LLM check).
+3. A `POST /message` containing `/help foobar` (with an ignored argument) returns the same help text as plain `/help` — confirming the command ignores trailing arguments.
+4. A `POST /message` containing `/HELP` (upper-case) does NOT trigger the help intercept and instead falls through to the LLM — confirmed by the reply not matching the known help-text prefix (command matching is case-sensitive).
+5. After `/help`, a subsequent normal message (not a slash command) is processed normally — confirmed by the SSE stream delivering a non-help reply for the follow-up message.
+
+### Notes for the test author
+
+- No `/help` command exists yet. It must be added to `src/channel-runner.ts` following the same intercept pattern used by `/clear` (around line 1179): detect `lastMsg.content.trim() === '/help'` (or `/^\/help(\s|$)/i` — but see AC4, case-sensitive is required so use `/^\/help(\s|$)/`), build a static help string listing all slash commands, call `channel.sendMessage(chatJid, helpText)`, and return early without invoking the LLM.
+- The help text should be a static string constant defined near the other command handlers in `channel-runner.ts`. Recommended format: one command per line, e.g. `  /search <query>  — full-text search over conversation history`. Include: `/search`, `/skills`, `/secret`, `/clear`, `/compact`, `/summary`, `/help`.
+- For AC2: time the round-trip from POST to first SSE event. On a healthy kind cluster the `/help` intercept should reply in well under 2 s; use a 5 s timeout to be safe in CI. Assert the reply text contains the literal string `/search` as a proxy for the structured help format.
+- For AC4: send `/HELP` and wait up to 6 s for an SSE event. The reply MUST NOT start with the known help-text prefix (e.g. must not contain the literal string `Available commands` or `/search` as the first token). Since no LLM is configured in the e2e namespace, the expected outcome is an error reply or timeout — assert that the SSE event body does not match the help text pattern.
+- For AC5: after the `/help` reply is received, POST a second message `ping` and assert the SSE stream delivers a second event that does not contain the help text. In an LLM-free namespace the second reply will be an error, which is fine — just assert it is distinct from the help text.
+- Install kubeclaw in an isolated namespace (`kubeclaw-e2e-help`) with the HTTP channel enabled and a single user `alice`. Follow the `beforeAll`/`afterAll` helm install+uninstall pattern from `e2e/credential-broker.test.ts`. Port-forward the HTTP channel Service to a local port `14102`: `kubectl port-forward svc/kubeclaw-channel-http -n kubeclaw-e2e-help 14102:14081`.
+- SSE reply helper: open a persistent `GET /events?jid=http:alice` connection (or use the `GET /stream` endpoint if present) before sending the POST, collect events, and assert within 5 s.
+- LLM-dependence: **LLM-independent** for ACs 1, 2, 3, and 5. AC4 touches the LLM fallback path — gate it with `it.skipIf(process.env.KUBECLAW_NO_LLM === 'true')` only if the test requires an actual LLM reply to distinguish from the help text; otherwise assert purely on the absence of the help-text prefix (no LLM needed).
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-help --create-namespace`, `--set namespace=kubeclaw-e2e-help`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
+
+status: drafted
