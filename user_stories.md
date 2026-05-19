@@ -668,3 +668,25 @@ status: passing 4/5 — AC1/2/4/5 verified. AC3 (id matches /history row) failed
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-del-history --create-namespace`, `--set namespace=kubeclaw-e2e-del-history`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
 
 status: passing 4/4 + 1 skipped (AC5 LLM-gated)
+
+## Story 27: Empty or whitespace-only POST /message is rejected with 400
+
+**As a** KubeClaw user via the HTTP channel
+**I want** the server to reject blank submissions with 400 Bad Request
+**So that** I get clear feedback when I accidentally send an empty message
+
+### Acceptance criteria
+
+1. `{"text":""}` → 400 + "Missing text", nothing stored.
+2. `{"text":"   "}` → 400 + "Missing text", nothing stored.
+3. `{}` (no text field) → 400 + "Missing text".
+4. Malformed JSON → 400 + "Invalid JSON".
+5. Valid non-empty → 200 + `{id}` (regression guard).
+
+### Notes for the test author
+
+- Behavior at `src/channels/http.ts:520-530` already exists; this is a coverage story.
+- LLM-dependence: **none**.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-empty-msg --create-namespace`, `--set namespace=kubeclaw-e2e-empty-msg`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
+
+status: drafted
