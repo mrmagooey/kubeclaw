@@ -350,7 +350,7 @@ status: passing 5/5
 - Install kubeclaw in an isolated namespace. Port-forward the HTTP channel Service to a local port (e.g. `14098`): `kubectl port-forward svc/kubeclaw-channel-http -n kubeclaw-e2e-specialist 14098:14081`. Create a single HTTP user: `--set-json 'httpChannel.users={"alice":"alicepw"}'`. Read SSE replies via `GET /events?jid=http:alice` (same helper as Stories 11–12). Wait up to 30 s per assertion to accommodate LLM round-trip latency.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-specialist --create-namespace`, `--set namespace=kubeclaw-e2e-specialist`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
 
-status: passing 5/5 against local Gemma-4B (~58 min). OpenRouter retests: 2/5 free-Gemma-4-26b (rate-limited on multi-call ACs); 0/5 paid Gemma-3-4b (no SSE lines — suspected orchestrator→openrouter.ai connectivity gap). Test contract verified; OpenRouter transport for kind needs a separate fix.
+status: passing 5/5 against local Gemma-4B (~58 min); 3/5 on OpenRouter Nemotron-3-nano-30b (24 min, AC2/AC3/AC4 — substantive routing — pass; AC1 port-forward flake, AC5 SSE timeout). Fix `6eae125` added `reasoning` fallback to direct-llm-runner.ts so reasoning models work end-to-end; probe accepts content/reasoning/reasoning_content.
 
 **As a** KubeClaw user via the HTTP channel
 **I want** to type `/clear` in chat and have my conversation history wiped immediately
