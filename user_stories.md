@@ -238,4 +238,4 @@ status: passing 5/5 — also fixed ApiException.code 404 detection in src/k8s/se
 - LLM-dependence: **LLM-independent**. `storeMessage` is called in the `onMessage` callback (channel-runner.ts line ~1681) before the group queue is consulted and before any LLM runner is invoked. No LLM stub or `it.skipIf(noLlm)` needed.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-msgstore --create-namespace`, `--set namespace=kubeclaw-e2e-msgstore`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
 
-status: drafted
+status: passing 5/5 — first end-user-focused story; LLM-independent
