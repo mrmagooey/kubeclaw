@@ -294,3 +294,32 @@ status: passing 5/5 — also fixed a real product bug: channel-runner.ts:1196 wa
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-search --create-namespace`, `--set namespace=kubeclaw-e2e-search`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
 
 status: passing 5/5
+
+## Story 12: User reviews and manages the assistant's learned skills via the /skills chat command
+
+**As a** KubeClaw user via the HTTP channel
+**I want** to type `/skills review`, `/skills accept <id>`, `/skills reject <id>`, `/skills list`, and `/skills disable <name>` directly in chat
+**So that** I can curate which learned behaviours the assistant applies in future conversations without needing filesystem or kubectl access
+
+### Acceptance criteria
+
+1. After the skill curator writes at least one candidate (injected directly into `groups/<group>/skills/_candidates/`), a `POST /message` containing `/skills review` returns an SSE reply that shows the candidate's name, description, and body — and includes the accept/reject prompt with the candidate id.
+2. A `POST /message` containing `/skills accept <candidate-id>` moves the candidate to the accepted skills directory — verified by checking that `groups/<group>/skills/<name>.md` exists and `groups/<group>/skills/_candidates/<id>.md` is absent after the command.
+3. After accepting a skill in AC2, a `POST /message` containing `/skills list` returns an SSE reply that includes the accepted skill's name and description.
+4. A `POST /message` containing `/skills reject <candidate-id>` when the candidate id does not exist returns an SSE reply that contains the phrase "Could not reject" — confirming graceful error handling rather than a crash.
+5. A `POST /message` containing `/skills disable <name>` for an accepted skill moves it to the archive — verified by checking that `groups/<group>/skills/<name>.md` is absent and `groups/<group>/skills/_archive/<name>.md` exists.
+
+### Notes for the test author
+
+- The slash-command dispatch lives in `src/channel-runner.ts` around line 1174 (`isSkillsCommand` → `handleSkillsCommand`). The handler is in `src/runtime/skills-commands.ts`. This path is intercepted **before** the LLM queue — no LLM is required.
+- Candidates and accepted skills live under `GROUPS_DIR/<group>/skills/`. `GROUPS_DIR` defaults to `groups/` relative to the process working directory, but inside the channel pod it is the mounted groups volume. To seed a candidate from the test host use `kubectl exec <channel-pod> -n <namespace> -- sh -c 'mkdir -p /app/groups/<group>/skills/_candidates && cat > /app/groups/<group>/skills/_candidates/<id>.md <<EOF\n---\nname: e2e-test-skill\ndescription: E2E smoke skill\n---\nAlways greet with "hello from skill".\nEOF'`. The pod finds groups at `/app/groups` (inspect `GROUPS_DIR` env var to confirm).
+- The group folder for HTTP user `alice` is `http-http-alice`. The channel pod is found with `kubectl get pod -n <namespace> -l kubeclaw-component=channel-http -o jsonpath='{.items[0].metadata.name}'`. Use the same pod for both writing candidates and querying the filesystem after commands.
+- Install kubeclaw in an isolated namespace (`kubeclaw-e2e-skills`) with `orchestrator.replicas=1` and the HTTP channel enabled. Follow the `beforeAll`/`afterAll` helm install+uninstall pattern from `e2e/credential-broker.test.ts`. Port-forward the HTTP channel Service to a local port (e.g. `14097`): `kubectl port-forward svc/kubeclaw-channel-http -n kubeclaw-e2e-skills 14097:14081`.
+- Create a single HTTP user at install time: `--set-json 'httpChannel.users={"alice":"alicepw"}'`. To read SSE replies, open a `fetch` stream against `GET /events?jid=http:alice` (same pattern as Story 11 / `e2e/lib/`). Wait up to 15 s; the skills command is synchronous and completes in under 2 s on kind.
+- For AC1: write a candidate file directly via `kubectl exec` before sending `/skills review`, then assert the SSE reply contains the candidate's `name` and the substring `accept`.
+- For AC2: capture the candidate id from the filename stem written in AC1 (e.g. `'<timestamp>-<unique>-e2e-test-skill'`). After `/skills accept <id>`, use `kubectl exec <pod> -- ls /app/groups/http-http-alice/skills/` to confirm `e2e-test-skill.md` is present and `kubectl exec <pod> -- ls /app/groups/http-http-alice/skills/_candidates/` to confirm the candidate file is absent.
+- For AC5: after AC2 leaves an accepted skill, send `/skills disable e2e-test-skill` and verify `ls /app/groups/http-http-alice/skills/e2e-test-skill.md` returns a non-zero exit while `ls /app/groups/http-http-alice/skills/_archive/e2e-test-skill.md` returns exit 0.
+- LLM-dependence: **LLM-independent**. `isSkillsCommand` intercepts before the LLM queue in `channel-runner.ts`. No `it.skipIf(noLlm)` needed for any AC.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-skills --create-namespace`, `--set namespace=kubeclaw-e2e-skills`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
+
+status: drafted
