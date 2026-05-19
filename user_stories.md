@@ -212,3 +212,30 @@ status: passing 4/4 — also surfaced + fixed chart RBAC gap (deployments/scale 
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-grpsec --create-namespace`, `--set namespace=kubeclaw-e2e-grpsec`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
 
 status: passing 5/5 — also fixed ApiException.code 404 detection in src/k8s/secret-manager.ts (same bug pattern as channel-remove from Story 1)
+
+## Story 9: Inbound messages are durably stored per user before any LLM processing
+
+**As a** KubeClaw user via the HTTP web UI
+**I want** every message I send to be immediately written to the channel's message store
+**So that** my conversation is durable even if the LLM is unavailable, and two users sharing the same assistant never see each other's messages
+
+### Acceptance criteria
+
+1. A `POST /message` from a valid user (`alice`) returns HTTP 200, and a subsequent sqlite3 query inside the channel pod confirms a row in the `messages` table whose `chat_jid = 'http:alice'`, `sender = 'alice'`, and `content` matches the sent text — before any LLM reply is awaited.
+2. A `POST /message` without an `Authorization` header returns HTTP 401 and no row is written to the `messages` table for that content.
+3. A message from a second valid user (`bob`) appears under `chat_jid = 'http:bob'` — the `messages` table has zero rows with `chat_jid = 'http:alice'` whose content matches bob's unique message text, confirming per-user isolation at the storage layer.
+4. After the channel pod is restarted (`kubectl rollout restart`), a fresh sqlite3 query still finds the previously stored rows — confirming the DB is persisted to the PVC and survives restarts.
+5. The `is_from_me` column for user-originated messages is `0` (false), and `is_bot_message` is `0` — distinguishing user turns from assistant turns in any future query.
+
+### Notes for the test author
+
+- Install kubeclaw in an isolated namespace (`kubeclaw-e2e-msgstore`) with `orchestrator.replicas=1` and the HTTP channel enabled. Follow the `beforeAll`/`afterAll` helm install+uninstall pattern from `e2e/credential-broker.test.ts`. Port-forward the HTTP channel Service to a local port (e.g. `14094`): `kubectl port-forward svc/kubeclaw-channel-http -n kubeclaw-e2e-msgstore 14094:14081`.
+- Auth credentials: the HTTP channel username/password pairs are configured via helm values `httpChannel.users` (default `kubeclaw`/`<http-channel-password>`). Create at least two users at install time: `--set-json 'httpChannel.users={"alice":"alicepw","bob":"bobpw"}'`. The `chat_jid` for user `alice` is `http:alice` (constructed inside `HttpChannel.handleRequest` — see `src/channels/http.ts` line ~438).
+- DB path inside the channel pod: `/app/store/messages-http.db` (`STORE_DIR=/app/store`, `KUBECLAW_CHANNEL=http` → `messages-${KUBECLAW_CHANNEL}.db`, from `src/db.ts` lines 431-434). Find the channel pod name with `kubectl get pod -n kubeclaw-e2e-msgstore -l kubeclaw-component=channel-http -o jsonpath='{.items[0].metadata.name}'`.
+- To query the DB from the test host, use `kubectl exec <pod> -n kubeclaw-e2e-msgstore -- python3 -c "import sqlite3; ..."` (Python is available in the container image). The query is: `SELECT COUNT(*) FROM messages WHERE chat_jid='http:alice' AND content='<sent-text>'`. Alternatively, copy the file out with `kubectl cp` and open it with `sql.js` in-process (same pattern as `e2e/per-group-capability-scale-down.test.ts` lines 160-163).
+- For AC1, send a message with a unique, unambiguous token (e.g. `'story9-alice-' + Date.now()`) so the DB row is unambiguous. Poll for the row with a short timeout (e.g. 5 s at 500 ms intervals) since `storeMessage` + `saveDatabase` is synchronous but the port-forward may add a small latency.
+- For AC4 (persistence across restart), issue `kubectl rollout restart deployment/kubeclaw-channel-http -n kubeclaw-e2e-msgstore` and wait for `kubectl rollout status` to return before re-querying. The PVC is named `kubeclaw-channel-http-data` (rendered by the helm chart); if the StorageClass does not support `ReadWriteMany`, exactly one replica must be used.
+- LLM-dependence: **LLM-independent**. `storeMessage` is called in the `onMessage` callback (channel-runner.ts line ~1681) before the group queue is consulted and before any LLM runner is invoked. No LLM stub or `it.skipIf(noLlm)` needed.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-msgstore --create-namespace`, `--set namespace=kubeclaw-e2e-msgstore`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
+
+status: drafted
