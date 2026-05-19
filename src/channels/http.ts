@@ -270,7 +270,15 @@ export class HttpChannel implements Channel {
   }
 
   async connect(): Promise<void> {
-    this.server = createServer((req, res) => this.handleRequest(req, res));
+    this.server = createServer((req, res) => {
+      this.handleRequest(req, res).catch((err) => {
+        logger.error({ err }, 'Unhandled error in HTTP request handler');
+        if (!res.headersSent) {
+          res.writeHead(500, { 'Content-Type': 'text/plain' });
+          res.end('Internal Server Error');
+        }
+      });
+    });
 
     return new Promise((resolve, reject) => {
       this.server!.listen(this.config.port, () => {
@@ -320,7 +328,7 @@ export class HttpChannel implements Channel {
     res.end('Unauthorized');
   }
 
-  private handleRequest(req: IncomingMessage, res: ServerResponse): void {
+  private async handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
     // Reject any request whose raw URL contains path-traversal sequences
     // before URL normalisation can resolve them away.
     const rawUrl = req.url ?? '/';
@@ -521,6 +529,44 @@ export class HttpChannel implements Channel {
           res.end('Invalid JSON');
         }
       });
+      return;
+    }
+
+    // Attachment list endpoint
+    // GET /attachments/list
+    if (req.method === 'GET' && url.pathname === '/attachments/list') {
+      const username = this.authenticate(req);
+      if (!username) {
+        this.sendUnauthorized(res);
+        return;
+      }
+      const jid = `http:${username}`;
+      const attachDir = path.join(GROUPS_DIR, jid, 'attachments', 'raw');
+      let entries: { filename: string; size: number; modifiedAt: string }[];
+      try {
+        const names = await fs.promises.readdir(attachDir);
+        entries = await Promise.all(
+          names.map(async (name) => {
+            const st = await fs.promises.stat(path.join(attachDir, name));
+            return {
+              filename: name,
+              size: st.size,
+              modifiedAt: st.mtime.toISOString(),
+            };
+          }),
+        );
+      } catch (err: unknown) {
+        if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') {
+          entries = [];
+        } else {
+          logger.error({ err, attachDir }, 'GET /attachments/list failed');
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Internal server error' }));
+          return;
+        }
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(entries));
       return;
     }
 
