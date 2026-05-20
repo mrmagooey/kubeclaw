@@ -230,6 +230,7 @@ describe('tool-job DeadlineExceeded — integration', () => {
     expect(timeoutLog![0]).toMatchObject({
       event: 'tool_job_timeout',
       groupFolder: GROUP_FOLDER,
+      jobName: expect.stringContaining(jobId),
     });
   });
 
@@ -253,6 +254,39 @@ describe('tool-job DeadlineExceeded — integration', () => {
     // After: no longer in active list
     const after = getActiveToolJobs();
     expect(after.map((j) => j.job_id)).not.toContain(jobId);
+  });
+
+  it('AC3 (persistence): publishes with persist:true + noticeId so storeBotMessage will write to conversation_history with is_bot_message=1', async () => {
+    // The full conversation_history persistence flow lives in ipc-redis.ts
+    // line 183: `if (data.persist && data.noticeId && deps.storeBotMessage)`
+    // → calls storeBotMessage which writes a row with is_from_me=1, is_bot_message=1
+    // (Story 37's path, re-used here). We can't easily exercise that whole
+    // channel-side path from a job-runner integration test, but we CAN prove
+    // the orchestrator-side publish carries the persist signals that flip
+    // ipc-redis into the storeBotMessage branch.
+    const runner = new JobRunner();
+    const publisher = makePublisherFake();
+    runner.timeoutPublisher = publisher;
+
+    const jobId = 'nc-integ-test-ac3-persist';
+    mockBatchApi.createNamespacedJob.mockResolvedValue({
+      metadata: { name: jobId },
+    });
+    mockBatchApi.readNamespacedJob.mockResolvedValue(DEADLINE_EXCEEDED_STATUS);
+
+    recordToolJob(jobId, GROUP_FOLDER, CHAT_JID);
+    await runner.runToolJob(testGroup, { ...testInput, jobId });
+
+    // Publish call carries: groupFolder, chatJid, text (timeout notice), and a
+    // noticeId. The presence of noticeId is what tells ipc-redis to invoke
+    // storeBotMessage rather than just SSE-broadcasting.
+    expect(publisher.calls).toHaveLength(1);
+    const call = publisher.calls[0];
+    expect(call.groupFolder).toBe(GROUP_FOLDER);
+    expect(call.chatJid).toBe(CHAT_JID);
+    expect(call.text.toLowerCase()).toContain('timed out');
+    expect(call.noticeId).toBeTruthy();
+    expect(typeof call.noticeId).toBe('string');
   });
 
   it('AC4: runToolJob resolves (does not throw) — group is not wedged', async () => {

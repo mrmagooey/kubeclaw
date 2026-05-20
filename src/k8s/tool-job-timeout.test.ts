@@ -344,7 +344,10 @@ describe('JobRunner.runToolJob — DeadlineExceeded (Story 43)', () => {
     expect(timeoutCall![0]).toMatchObject({
       event: 'tool_job_timeout',
       groupFolder: 'test-group',
+      jobName: expect.any(String),
     });
+    // jobName should be the K8s Job name, not empty
+    expect((timeoutCall![0] as { jobName: string }).jobName).toBeTruthy();
   });
 
   it('records kubeclaw_tool_job_duration_seconds histogram observation (AC5)', async () => {
