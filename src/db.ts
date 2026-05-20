@@ -1953,7 +1953,7 @@ export interface ToolJobRecord {
   job_id: string;
   group_folder: string;
   chat_jid: string;
-  status: 'active' | 'completed' | 'interrupted' | 'timeout';
+  status: 'active' | 'completed' | 'interrupted' | 'timeout' | 'oomkill';
   created_at: string;
   resolved_at: string | null;
   /** User-facing message ID from the POST /message response (Story 25). May be NULL for rows written before this column was added. */
