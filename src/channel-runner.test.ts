@@ -1675,3 +1675,263 @@ describe('handleCapabilitiesCommand — /capabilities remove', () => {
     expect(ipc).not.toHaveBeenCalled();
   });
 });
+
+// ── /specialists command unit tests ──────────────────────────────────────────
+
+import {
+  isSpecialistsCommand,
+  handleSpecialistsCommand,
+} from './channel-runner.js';
+
+describe('isSpecialistsCommand', () => {
+  it('matches /specialists list', () => {
+    expect(isSpecialistsCommand('/specialists list')).toBe(true);
+  });
+
+  it('matches bare /specialists', () => {
+    expect(isSpecialistsCommand('/specialists')).toBe(true);
+  });
+
+  it('matches /specialists with unknown sub-command', () => {
+    expect(isSpecialistsCommand('/specialists foobar')).toBe(true);
+  });
+
+  it('does not match /skills', () => {
+    expect(isSpecialistsCommand('/skills list')).toBe(false);
+  });
+
+  it('does not match /search', () => {
+    expect(isSpecialistsCommand('/search foo')).toBe(false);
+  });
+
+  it('does not match a regular message', () => {
+    expect(isSpecialistsCommand('hello @Researcher')).toBe(false);
+  });
+});
+
+describe('handleSpecialistsCommand', () => {
+  function makeCatalog(specialists: Array<{ name: string; prompt: string }>) {
+    return { getAll: () => specialists };
+  }
+
+  it('returns "No specialists configured" when catalog is empty', () => {
+    const reply = handleSpecialistsCommand('/specialists list', makeCatalog([]));
+    expect(reply.toLowerCase()).toContain('no specialists configured');
+  });
+
+  it('lists each specialist as @Name — description', () => {
+    const catalog = makeCatalog([
+      { name: 'Researcher', prompt: 'Find and summarise information.' },
+      { name: 'Coder', prompt: 'Write and review code.' },
+    ]);
+    const reply = handleSpecialistsCommand('/specialists list', catalog);
+    expect(reply).toContain('@Researcher');
+    expect(reply).toContain('@Coder');
+    expect(reply).toContain('Find and summarise information.');
+    expect(reply).toContain('Write and review code.');
+  });
+
+  it('truncates long prompts to 80 chars with ellipsis', () => {
+    const longPrompt = 'A'.repeat(100);
+    const catalog = makeCatalog([{ name: 'Big', prompt: longPrompt }]);
+    const reply = handleSpecialistsCommand('/specialists list', catalog);
+    // The displayed description should be truncated
+    expect(reply).toContain('@Big');
+    expect(reply).toContain('A'.repeat(80) + '…');
+    expect(reply).not.toContain('A'.repeat(100));
+  });
+
+  it('does not truncate prompts that are exactly 80 chars', () => {
+    const prompt = 'B'.repeat(80);
+    const catalog = makeCatalog([{ name: 'Exact', prompt }]);
+    const reply = handleSpecialistsCommand('/specialists list', catalog);
+    expect(reply).toContain('B'.repeat(80));
+    expect(reply).not.toContain('…');
+  });
+
+  it('returns usage hint for unknown sub-command', () => {
+    const catalog = makeCatalog([{ name: 'A', prompt: 'do stuff' }]);
+    const reply = handleSpecialistsCommand('/specialists foobar', catalog);
+    expect(reply).toContain('Usage: /specialists list');
+  });
+
+  it('returns usage hint for bare /specialists (no sub-command)', () => {
+    const catalog = makeCatalog([{ name: 'A', prompt: 'do stuff' }]);
+    const reply = handleSpecialistsCommand('/specialists', catalog);
+    expect(reply).toContain('Usage: /specialists list');
+  });
+
+  it('returns usage hint when catalog is empty and unknown sub-command given', () => {
+    const reply = handleSpecialistsCommand('/specialists bad', makeCatalog([]));
+    expect(reply).toContain('Usage: /specialists list');
+  });
+});
+
+// ── /specialists dispatch via processGroupMessages ────────────────────────────
+
+describe('/specialists list dispatch via processGroupMessages', () => {
+  const CHAT_JID = 'specialists-test@g.us';
+  const GROUP_FOLDER = 'tg_specialists-test';
+  const sendMessageSpy = vi.fn().mockResolvedValue(undefined);
+  let fakeSpecialistsRunner: {
+    runAgent: ReturnType<typeof vi.fn>;
+    writeTasksSnapshot: ReturnType<typeof vi.fn>;
+    writeGroupsSnapshot: ReturnType<typeof vi.fn>;
+  };
+
+  beforeEach(() => {
+    fakeSpecialistsRunner = {
+      runAgent: vi
+        .fn()
+        .mockResolvedValue({ status: 'success', result: null }),
+      writeTasksSnapshot: vi.fn(),
+      writeGroupsSnapshot: vi.fn(),
+    };
+    mockGetDirectLLMRunner.mockReturnValue(fakeSpecialistsRunner);
+  });
+
+  afterEach(() => {
+    _testResetState();
+    sendMessageSpy.mockClear();
+    vi.restoreAllMocks();
+  });
+
+  it('sends specialist list via channel.sendMessage without invoking the LLM', async () => {
+    const msgTimestamp = new Date(Date.now() - 1000).toISOString();
+    mockGetMessagesSince.mockReturnValueOnce([{
+      id: 'spec-list-msg-1',
+      chat_jid: CHAT_JID,
+      sender: 'user123',
+      sender_name: 'Alice',
+      content: '/specialists list',
+      timestamp: msgTimestamp,
+      is_from_me: false,
+    }]);
+
+    const fakeChannel = {
+      ownsJid: (jid: string) => jid === CHAT_JID,
+      sendMessage: sendMessageSpy,
+      setTyping: vi.fn().mockResolvedValue(undefined),
+    };
+    mockFindChannel.mockReturnValueOnce(fakeChannel);
+
+    _setSpecialistCatalogForTesting({
+      getAll: () => [
+        { name: 'Researcher', prompt: 'Research topics in depth.' },
+        { name: 'Coder', prompt: 'Write clean code.' },
+      ],
+    });
+
+    _testInjectState(
+      {
+        [CHAT_JID]: {
+          jid: CHAT_JID,
+          name: 'Specialists Test Group',
+          folder: GROUP_FOLDER,
+          trigger: '@Claude',
+          added_at: new Date().toISOString(),
+          requiresTrigger: false,
+        },
+      },
+      [fakeChannel as any],
+    );
+
+    const result = await processGroupMessages(CHAT_JID);
+
+    expect(result).toBe(true);
+    expect(sendMessageSpy).toHaveBeenCalledOnce();
+    const sentText: string = sendMessageSpy.mock.calls[0][1];
+    expect(sentText).toContain('@Researcher');
+    expect(sentText).toContain('@Coder');
+    // LLM runner must NOT have been invoked
+    expect(fakeSpecialistsRunner.runAgent).not.toHaveBeenCalled();
+  });
+
+  it('sends "No specialists configured" when catalog is empty', async () => {
+    const msgTimestamp = new Date(Date.now() - 1000).toISOString();
+    mockGetMessagesSince.mockReturnValueOnce([{
+      id: 'spec-list-msg-2',
+      chat_jid: CHAT_JID,
+      sender: 'user123',
+      sender_name: 'Alice',
+      content: '/specialists list',
+      timestamp: msgTimestamp,
+      is_from_me: false,
+    }]);
+
+    const fakeChannel = {
+      ownsJid: (jid: string) => jid === CHAT_JID,
+      sendMessage: sendMessageSpy,
+      setTyping: vi.fn().mockResolvedValue(undefined),
+    };
+    mockFindChannel.mockReturnValueOnce(fakeChannel);
+
+    _setSpecialistCatalogForTesting({ getAll: () => [] });
+
+    _testInjectState(
+      {
+        [CHAT_JID]: {
+          jid: CHAT_JID,
+          name: 'Specialists Test Group',
+          folder: GROUP_FOLDER,
+          trigger: '@Claude',
+          added_at: new Date().toISOString(),
+          requiresTrigger: false,
+        },
+      },
+      [fakeChannel as any],
+    );
+
+    await processGroupMessages(CHAT_JID);
+
+    expect(sendMessageSpy).toHaveBeenCalledOnce();
+    const sentText: string = sendMessageSpy.mock.calls[0][1];
+    expect(sentText.toLowerCase()).toContain('no specialists configured');
+  });
+
+  it('sends usage hint for unknown sub-command', async () => {
+    const msgTimestamp = new Date(Date.now() - 1000).toISOString();
+    mockGetMessagesSince.mockReturnValueOnce([{
+      id: 'spec-list-msg-3',
+      chat_jid: CHAT_JID,
+      sender: 'user123',
+      sender_name: 'Alice',
+      content: '/specialists foobar',
+      timestamp: msgTimestamp,
+      is_from_me: false,
+    }]);
+
+    const fakeChannel = {
+      ownsJid: (jid: string) => jid === CHAT_JID,
+      sendMessage: sendMessageSpy,
+      setTyping: vi.fn().mockResolvedValue(undefined),
+    };
+    mockFindChannel.mockReturnValueOnce(fakeChannel);
+
+    _setSpecialistCatalogForTesting({ getAll: () => [] });
+
+    _testInjectState(
+      {
+        [CHAT_JID]: {
+          jid: CHAT_JID,
+          name: 'Specialists Test Group',
+          folder: GROUP_FOLDER,
+          trigger: '@Claude',
+          added_at: new Date().toISOString(),
+          requiresTrigger: false,
+        },
+      },
+      [fakeChannel as any],
+    );
+
+    await processGroupMessages(CHAT_JID);
+
+    expect(sendMessageSpy).toHaveBeenCalledOnce();
+    const sentText: string = sendMessageSpy.mock.calls[0][1];
+    expect(sentText).toContain('Usage: /specialists list');
+    // No stack trace in the reply
+    expect(sentText).not.toMatch(/Error:/);
+    expect(sentText).not.toMatch(/at \w/);
+  });
+});
+

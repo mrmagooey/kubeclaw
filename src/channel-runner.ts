@@ -1030,6 +1030,49 @@ export async function handleSecretCommand(
   }
 }
 
+// ── /specialists command ──────────────────────────────────────────────────────
+
+/**
+ * Return true if the message is a `/specialists` slash command.
+ */
+export function isSpecialistsCommand(message: string): boolean {
+  return /^\/specialists(\s|$)/i.test(message.trim());
+}
+
+/**
+ * Handle a `/specialists` command. Reads from the channel's in-process catalog
+ * (no IPC round-trip) and returns a formatted plain-text reply.
+ *
+ * Sub-commands:
+ *   /specialists list — list all specialists (name + truncated description)
+ *   anything else     — usage hint
+ */
+export function handleSpecialistsCommand(
+  message: string,
+  catalog: Pick<SpecialistCatalogLoader, 'getAll'>,
+): string {
+  const trimmed = message.trim();
+  const subCommand = trimmed
+    .replace(/^\/specialists\s*/i, '')
+    .trim()
+    .toLowerCase();
+
+  if (subCommand !== 'list') {
+    return 'Usage: /specialists list';
+  }
+
+  const specialists = catalog.getAll();
+  if (specialists.length === 0) {
+    return 'No specialists configured';
+  }
+
+  const lines = specialists.map((s) => {
+    const desc = s.prompt.length > 80 ? s.prompt.slice(0, 80) + '…' : s.prompt;
+    return `@${s.name} — ${desc}`;
+  });
+  return lines.join('\n');
+}
+
 // ── /capabilities command ─────────────────────────────────────────────────────
 
 export function isCapabilitiesCommand(message: string): boolean {
@@ -1514,6 +1557,23 @@ export async function processGroupMessages(chatJid: string): Promise<boolean> {
     await channel.setTyping?.(chatJid, true);
     try {
       await channel.sendMessage(chatJid, result.reply);
+    } finally {
+      await channel.setTyping?.(chatJid, false);
+    }
+    return true;
+  }
+
+  // /specialists command: reads from the channel's in-process catalog, no IPC.
+  if (lastMsg && isSpecialistsCommand(lastMsg.content)) {
+    const reply = handleSpecialistsCommand(
+      lastMsg.content.trim(),
+      specialistCatalog,
+    );
+    lastAgentTimestamp[chatJid] = lastMsg.timestamp;
+    saveState();
+    await channel.setTyping?.(chatJid, true);
+    try {
+      await channel.sendMessage(chatJid, reply);
     } finally {
       await channel.setTyping?.(chatJid, false);
     }
