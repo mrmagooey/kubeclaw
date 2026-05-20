@@ -1078,4 +1078,269 @@ describe('HttpChannel', () => {
       await channel.disconnect();
     });
   });
+
+  // ── GET /healthz ─────────────────────────────────────────────────────────
+
+  describe('GET /healthz', () => {
+    it('returns 200 with JSON body containing status and uptime_ms (no auth)', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/healthz', auth: null });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      expect(res._headers['Content-Type']).toMatch(/application\/json/);
+      const parsed = JSON.parse(res._body) as { status: string; uptime_ms: number };
+      expect(parsed.status).toBe('ok');
+      expect(typeof parsed.uptime_ms).toBe('number');
+      await channel.disconnect();
+    });
+
+    it('HEAD /healthz → 200, no body', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/healthz', method: 'HEAD', auth: null });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      expect(res._body).toBe('');
+      await channel.disconnect();
+    });
+
+    it('POST /healthz → 405 with Allow: GET, HEAD', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/healthz', method: 'POST', auth: null });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(405);
+      expect(res._headers['Allow']).toMatch(/\bGET\b/);
+      expect(res._headers['Allow']).toMatch(/\bHEAD\b/);
+      await channel.disconnect();
+    });
+
+    it('GET /healthz/anything → 404 (exact-match only)', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/healthz/anything', auth: null });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(404);
+      await channel.disconnect();
+    });
+  });
+
+  // ── GET /readyz ───────────────────────────────────────────────────────────
+
+  describe('GET /readyz', () => {
+    it('AC1: returns 200 with ready JSON when DB and Redis are healthy (no auth)', async () => {
+      const channel = new HttpChannel(
+        makeConfig(),
+        makeOpts({
+          checkDb: () => 'ok',
+          checkRedis: async () => 'ok',
+        }),
+      );
+      await channel.connect();
+
+      const req = makeReq({ url: '/readyz', auth: null });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      expect(res._headers['Content-Type']).toMatch(/application\/json/);
+      const body = JSON.parse(res._body) as {
+        status: string;
+        checks: { db: string; redis: string };
+      };
+      expect(body.status).toBe('ready');
+      expect(body.checks.db).toBe('ok');
+      expect(body.checks.redis).toBe('ok');
+      await channel.disconnect();
+    });
+
+    it('AC2: returns 503 with not_ready JSON when Redis is unreachable', async () => {
+      const channel = new HttpChannel(
+        makeConfig(),
+        makeOpts({
+          checkDb: () => 'ok',
+          checkRedis: async () => 'unreachable',
+        }),
+      );
+      await channel.connect();
+
+      const req = makeReq({ url: '/readyz', auth: null });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(503);
+      const body = JSON.parse(res._body) as {
+        status: string;
+        checks: { db: string; redis: string };
+      };
+      expect(body.status).toBe('not_ready');
+      expect(body.checks.db).toBe('ok');
+      expect(body.checks.redis).toBe('unreachable');
+      await channel.disconnect();
+    });
+
+    it('returns 503 when DB fails', async () => {
+      const channel = new HttpChannel(
+        makeConfig(),
+        makeOpts({
+          checkDb: () => 'failed',
+          checkRedis: async () => 'ok',
+        }),
+      );
+      await channel.connect();
+
+      const req = makeReq({ url: '/readyz', auth: null });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(503);
+      const body = JSON.parse(res._body) as {
+        status: string;
+        checks: { db: string; redis: string };
+      };
+      expect(body.status).toBe('not_ready');
+      expect(body.checks.db).toBe('failed');
+      await channel.disconnect();
+    });
+
+    it('AC4 HEAD /readyz → mirrors GET status code, no body', async () => {
+      const channel = new HttpChannel(
+        makeConfig(),
+        makeOpts({
+          checkDb: () => 'ok',
+          checkRedis: async () => 'ok',
+        }),
+      );
+      await channel.connect();
+
+      const req = makeReq({ url: '/readyz', method: 'HEAD', auth: null });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      expect(res._body).toBe('');
+      await channel.disconnect();
+    });
+
+    it('AC4 HEAD /readyz → 503 with no body when not ready', async () => {
+      const channel = new HttpChannel(
+        makeConfig(),
+        makeOpts({
+          checkDb: () => 'ok',
+          checkRedis: async () => 'unreachable',
+        }),
+      );
+      await channel.connect();
+
+      const req = makeReq({ url: '/readyz', method: 'HEAD', auth: null });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(503);
+      expect(res._body).toBe('');
+      await channel.disconnect();
+    });
+
+    it('AC4 POST /readyz → 405 + Allow: GET, HEAD', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/readyz', method: 'POST', auth: null });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(405);
+      expect(res._headers['Allow']).toMatch(/\bGET\b/);
+      expect(res._headers['Allow']).toMatch(/\bHEAD\b/);
+      await channel.disconnect();
+    });
+
+    it('GET /readyz/sub-path → 404 (exact-match only)', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/readyz/foo', auth: null });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(404);
+      await channel.disconnect();
+    });
+
+    it('does not require auth credentials', async () => {
+      const channel = new HttpChannel(
+        makeConfig(),
+        makeOpts({
+          checkDb: () => 'ok',
+          checkRedis: async () => 'ok',
+        }),
+      );
+      await channel.connect();
+
+      // No Authorization header
+      const req = makeReq({ url: '/readyz', auth: null });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      // Should NOT return 401
+      expect(res._status).not.toBe(401);
+      expect(res._status).toBe(200);
+      await channel.disconnect();
+    });
+  });
+
+  // ── 405 Method Not Allowed (pathMethods table) ────────────────────────────
+
+  describe('405 Method Not Allowed', () => {
+    it('DELETE / → 405 with Allow header listing GET', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/', method: 'DELETE', auth: null });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(405);
+      expect(res._headers['Allow']).toContain('GET');
+      await channel.disconnect();
+    });
+
+    it('GET /message → 405 with Allow header listing POST', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/message', method: 'GET', auth: null });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(405);
+      expect(res._headers['Allow']).toContain('POST');
+      await channel.disconnect();
+    });
+
+    it('unknown path → 404 (not 405)', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/unknown-path-xyz', method: 'DELETE', auth: null });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(404);
+      await channel.disconnect();
+    });
+  });
 });

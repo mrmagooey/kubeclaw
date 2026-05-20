@@ -11,6 +11,7 @@ import { ASSISTANT_NAME, GROUPS_DIR } from '../config.js';
 import {
   appendConversationMessage,
   clearConversationHistory,
+  db,
   getConversationHistoryPage,
   getOutboundMessagesSince,
   storeMessageDirect,
@@ -26,10 +27,32 @@ import {
   RegisteredGroup,
 } from '../types.js';
 
+/** Result of a single readiness sub-check. */
+export type CheckResult = 'ok' | 'failed' | 'unreachable';
+
+/** Shape of the /readyz response body. */
+export interface ReadyzBody {
+  status: 'ready' | 'not_ready';
+  checks: {
+    db: CheckResult;
+    redis: CheckResult;
+  };
+}
+
 export interface HttpChannelOpts {
   onMessage: OnInboundMessage;
   onChatMetadata: OnChatMetadata;
   registeredGroups: () => Record<string, RegisteredGroup>;
+  /**
+   * Override the DB health check for testing.
+   * Defaults to running `SELECT 1` on the module-level `db` export.
+   */
+  checkDb?: () => CheckResult;
+  /**
+   * Override the Redis health check for testing.
+   * Defaults to sending PING with a 2 s timeout on the shared Redis client.
+   */
+  checkRedis?: () => Promise<CheckResult>;
 }
 
 interface HttpConfig {
@@ -265,11 +288,40 @@ export class HttpChannel implements Channel {
   private sseClients: SseClient[] = [];
   private messageSeq = 0;
   private processStartMs: number;
+  private checkDb: () => CheckResult;
+  private checkRedis: () => Promise<CheckResult>;
 
   constructor(config: HttpConfig, opts: HttpChannelOpts) {
     this.config = config;
     this.opts = opts;
     this.processStartMs = Date.now();
+
+    this.checkDb = opts.checkDb ?? (() => {
+      try {
+        db.exec('SELECT 1');
+        return 'ok';
+      } catch {
+        return 'failed';
+      }
+    });
+
+    this.checkRedis = opts.checkRedis ?? (async () => {
+      // Lazy import so tests that mock the module don't pull in ioredis at
+      // module load.
+      const { getRedisClient } = await import('../k8s/redis-client.js');
+      const client = getRedisClient();
+      try {
+        await Promise.race([
+          client.ping(),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('Redis PING timeout')), 2000),
+          ),
+        ]);
+        return 'ok';
+      } catch {
+        return 'unreachable';
+      }
+    });
   }
 
   async connect(): Promise<void> {
@@ -351,6 +403,7 @@ export class HttpChannel implements Channel {
         res.writeHead(200, {
           'Content-Type': 'application/json',
           'Content-Length': Buffer.byteLength(body),
+          'Cache-Control': 'no-store',
         });
         res.end(body);
         return;
@@ -361,8 +414,36 @@ export class HttpChannel implements Channel {
         res.writeHead(200, {
           'Content-Type': 'application/json',
           'Content-Length': Buffer.byteLength(body),
+          'Cache-Control': 'no-store',
         });
         res.end();
+        return;
+      }
+      // Other methods fall through to pathMethods 405 handler below
+    }
+
+    // Readiness check — no auth required; checks DB + Redis reachability
+    if (url.pathname === '/readyz') {
+      if (req.method === 'GET' || req.method === 'HEAD') {
+        const dbResult = this.checkDb();
+        const redisResult = await this.checkRedis();
+        const allOk = dbResult === 'ok' && redisResult === 'ok';
+        const statusCode = allOk ? 200 : 503;
+        const responseBody: ReadyzBody = {
+          status: allOk ? 'ready' : 'not_ready',
+          checks: { db: dbResult, redis: redisResult },
+        };
+        const body = JSON.stringify(responseBody);
+        res.writeHead(statusCode, {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body),
+          'Cache-Control': 'no-store',
+        });
+        if (req.method === 'HEAD') {
+          res.end();
+        } else {
+          res.end(body);
+        }
         return;
       }
       // Other methods fall through to pathMethods 405 handler below
@@ -789,6 +870,7 @@ export class HttpChannel implements Channel {
     const pathMethods: Record<string, string[]> = {
       '/': ['GET'],
       '/healthz': ['GET', 'HEAD'],
+      '/readyz': ['GET', 'HEAD'],
       '/stream': ['GET'],
       '/message': ['POST'],
       '/history': ['GET', 'DELETE'],

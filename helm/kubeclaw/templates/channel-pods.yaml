@@ -169,6 +169,16 @@ spec:
             periodSeconds: 30
             failureThreshold: 3
             timeoutSeconds: 5
+          {{- if $cfg.httpPort }}
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+            timeoutSeconds: 5
+          {{- else }}
           readinessProbe:
             httpGet:
               path: /health
@@ -177,6 +187,7 @@ spec:
             periodSeconds: 10
             failureThreshold: 3
             timeoutSeconds: 5
+          {{- end }}
           volumeMounts:
             - name: groups
               mountPath: /app/groups
