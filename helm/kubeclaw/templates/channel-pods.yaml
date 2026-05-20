@@ -146,6 +146,8 @@ spec:
               value: {{ $.Values.httpChannel.attachments.maxCountPerUser | default 0 | quote }}
             - name: HTTP_CHANNEL_MAX_ATTACHMENT_BYTES_PER_USER
               value: {{ $.Values.httpChannel.attachments.maxSizeBytesPerUser | default 0 | quote }}
+            - name: HTTP_CHANNEL_CORS_ORIGIN
+              value: {{ $.Values.httpChannel.cors.origin | quote }}
             {{- end }}
             {{- if eq $.Values.credentialInjection.mode "sidecar" }}
             {{- include "kubeclaw.credentialSidecarEnv" $ | nindent 12 }}

@@ -79,12 +79,14 @@ function makeConfig(overrides?: {
   port?: number;
   users?: Record<string, string>;
   perUserMessagesPerMinute?: number;
+  corsOrigin?: string;
 }) {
   return {
     port: overrides?.port ?? 4080,
     users: overrides?.users ?? { alice: 'secret', bob: 'hunter2' },
     // Default to unlimited so existing tests don't get throttled.
     perUserMessagesPerMinute: overrides?.perUserMessagesPerMinute ?? 0,
+    corsOrigin: overrides?.corsOrigin ?? '*',
   };
 }
 
@@ -1765,6 +1767,192 @@ describe('HttpChannel', () => {
       );
       expect(postRes._status).toBe(429);
 
+      await channel.disconnect();
+    });
+  });
+
+  // ── CORS preflight (OPTIONS) ──────────────────────────────────────────────
+
+  describe('CORS preflight (OPTIONS)', () => {
+    it('OPTIONS /message → 204 with CORS headers (AC1)', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ method: 'OPTIONS', url: '/message', auth: null });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(204);
+      expect(res._headers['Access-Control-Allow-Origin']).toBe('*');
+      expect(res._headers['Access-Control-Allow-Methods']).toBe('POST');
+      expect(res._headers['Access-Control-Allow-Headers']).toBe(
+        'Authorization, Content-Type',
+      );
+      expect(res._headers['Access-Control-Max-Age']).toBe('86400');
+      await channel.disconnect();
+    });
+
+    it('OPTIONS /stream → 204 with Access-Control-Allow-Methods: GET (AC2)', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ method: 'OPTIONS', url: '/stream', auth: null });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(204);
+      expect(res._headers['Access-Control-Allow-Origin']).toBe('*');
+      expect(res._headers['Access-Control-Allow-Methods']).toBe('GET');
+      await channel.disconnect();
+    });
+
+    it('OPTIONS /healthz → 204 with Access-Control-Allow-Origin (AC3)', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ method: 'OPTIONS', url: '/healthz', auth: null });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(204);
+      expect(res._headers['Access-Control-Allow-Origin']).toBe('*');
+      await channel.disconnect();
+    });
+
+    it('OPTIONS /history → 204 with correct allowed methods', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ method: 'OPTIONS', url: '/history', auth: null });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(204);
+      expect(res._headers['Access-Control-Allow-Origin']).toBe('*');
+      expect(res._headers['Access-Control-Allow-Methods']).toBe('GET, DELETE');
+      await channel.disconnect();
+    });
+
+    it('OPTIONS /attachments/list → 204 with Access-Control-Allow-Methods: GET', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({
+        method: 'OPTIONS',
+        url: '/attachments/list',
+        auth: null,
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(204);
+      expect(res._headers['Access-Control-Allow-Methods']).toBe('GET');
+      await channel.disconnect();
+    });
+
+    it('OPTIONS /attachments/raw/<file> → 204 with GET, HEAD, DELETE', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({
+        method: 'OPTIONS',
+        url: '/attachments/raw/img-123.jpg',
+        auth: null,
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(204);
+      expect(res._headers['Access-Control-Allow-Methods']).toBe(
+        'GET, HEAD, DELETE',
+      );
+      await channel.disconnect();
+    });
+
+    it('OPTIONS does not require authentication', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      // No auth header — OPTIONS must still return 204
+      const req = makeReq({ method: 'OPTIONS', url: '/message', auth: null });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(204);
+      expect(res._headers['Access-Control-Allow-Origin']).toBe('*');
+      await channel.disconnect();
+    });
+
+    it('respects HTTP_CHANNEL_CORS_ORIGIN config', async () => {
+      const channel = new HttpChannel(
+        makeConfig({ corsOrigin: 'https://app.example.com' }),
+        makeOpts(),
+      );
+      await channel.connect();
+
+      const req = makeReq({ method: 'OPTIONS', url: '/message', auth: null });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(204);
+      expect(res._headers['Access-Control-Allow-Origin']).toBe(
+        'https://app.example.com',
+      );
+      await channel.disconnect();
+    });
+  });
+
+  // ── CORS headers on non-OPTIONS authenticated responses (AC4) ─────────────
+
+  describe('CORS headers on authenticated responses', () => {
+    it('GET /healthz carries Access-Control-Allow-Origin', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/healthz', auth: null });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      expect(res._headers['Access-Control-Allow-Origin']).toBe('*');
+      await channel.disconnect();
+    });
+
+    it('POST /message carries Access-Control-Allow-Origin', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({
+        method: 'POST',
+        url: '/message',
+        auth: 'alice:secret',
+        body: '{"text":"Hello"}',
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      expect(res._headers['Access-Control-Allow-Origin']).toBe('*');
+      await channel.disconnect();
+    });
+
+    it('GET /stream carries Access-Control-Allow-Origin', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/stream', auth: 'alice:secret' });
+      const closeHandlers: Array<() => void> = [];
+      (req.on as ReturnType<typeof vi.fn>).mockImplementation(
+        (event: string, cb: () => void) => {
+          if (event === 'close') closeHandlers.push(cb);
+        },
+      );
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      expect(res._headers['Access-Control-Allow-Origin']).toBe('*');
+      closeHandlers.forEach((h) => h());
       await channel.disconnect();
     });
   });

@@ -87,10 +87,12 @@ describe('HTTP Channel End-to-End', () => {
     };
   }
 
-  function createChannel(): HttpChannel {
+  function createChannel(corsOrigin?: string): HttpChannel {
     const config = {
       port: HTTP_PORT,
       users: { [TEST_USER]: TEST_PASS, bob: 'bobpass' },
+      perUserMessagesPerMinute: 0,
+      corsOrigin: corsOrigin ?? '*',
     };
     return new HttpChannel(config, createTestOpts());
   }
@@ -575,6 +577,105 @@ describe('HTTP Channel End-to-End', () => {
       await expect(
         tempChannel.sendMessage(TEST_JID, 'test'),
       ).resolves.toBeUndefined();
+    }, 5000);
+  });
+
+  // ── CORS Preflight (OPTIONS) ──────────────────────────────────────────────
+
+  describe('CORS Preflight (OPTIONS)', () => {
+    beforeAll(async () => {
+      channel = createChannel();
+      await channel.connect();
+      // Small delay to ensure the port is fully ready after the previous
+      // describe block released it. This matches the pattern used by the
+      // other beforeAll sections that share this port.
+      await new Promise((r) => setTimeout(r, 50));
+    });
+
+    afterAll(async () => {
+      if (channel) {
+        await channel.disconnect();
+        channel = null;
+      }
+    });
+
+    it('OPTIONS /message → 204 with CORS headers', async () => {
+      const res = await fetch(`http://localhost:${HTTP_PORT}/message`, {
+        method: 'OPTIONS',
+        headers: {
+          Origin: 'https://app.example.com',
+          'Access-Control-Request-Method': 'POST',
+        },
+      });
+
+      expect(res.status).toBe(204);
+      expect(res.headers.get('Access-Control-Allow-Origin')).toBe('*');
+      expect(res.headers.get('Access-Control-Allow-Methods')).toBe('POST');
+      expect(res.headers.get('Access-Control-Allow-Headers')).toBe(
+        'Authorization, Content-Type',
+      );
+      expect(res.headers.get('Access-Control-Max-Age')).toBe('86400');
+    }, 5000);
+
+    it('OPTIONS /stream → 204 with Access-Control-Allow-Methods: GET', async () => {
+      const res = await fetch(`http://localhost:${HTTP_PORT}/stream`, {
+        method: 'OPTIONS',
+        headers: {
+          Origin: 'https://app.example.com',
+          'Access-Control-Request-Method': 'GET',
+        },
+      });
+
+      expect(res.status).toBe(204);
+      expect(res.headers.get('Access-Control-Allow-Origin')).toBe('*');
+      expect(res.headers.get('Access-Control-Allow-Methods')).toBe('GET');
+    }, 5000);
+
+    it('OPTIONS /healthz → 204 with Access-Control-Allow-Origin (no auth required)', async () => {
+      const res = await fetch(`http://localhost:${HTTP_PORT}/healthz`, {
+        method: 'OPTIONS',
+      });
+
+      expect(res.status).toBe(204);
+      expect(res.headers.get('Access-Control-Allow-Origin')).toBe('*');
+    }, 5000);
+
+    it('OPTIONS does not require authentication', async () => {
+      // No Authorization header — must succeed
+      const res = await fetch(`http://localhost:${HTTP_PORT}/message`, {
+        method: 'OPTIONS',
+      });
+
+      expect(res.status).toBe(204);
+    }, 5000);
+
+    it('POST /message response carries Access-Control-Allow-Origin', async () => {
+      const res = await fetch(`http://localhost:${HTTP_PORT}/message`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: basicAuth(TEST_USER, TEST_PASS),
+        },
+        body: JSON.stringify({ text: 'cors test' }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get('Access-Control-Allow-Origin')).toBe('*');
+    }, 5000);
+
+    it('GET /stream response carries Access-Control-Allow-Origin', async () => {
+      const controller = new AbortController();
+      const fetchPromise = fetch(`http://localhost:${HTTP_PORT}/stream`, {
+        headers: { Authorization: basicAuth(TEST_USER, TEST_PASS) },
+        signal: controller.signal,
+      });
+
+      const res = await fetchPromise;
+      expect(res.status).toBe(200);
+      expect(res.headers.get('Access-Control-Allow-Origin')).toBe('*');
+
+      controller.abort();
+      await res.body?.cancel().catch(() => {});
     }, 5000);
   });
 });

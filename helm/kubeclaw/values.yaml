@@ -173,6 +173,11 @@ httpChannel:
     # Maximum cumulative bytes of stored files per user.
     # 0 (default) = unlimited.
     maxSizeBytesPerUser: 0
+  cors:
+    # Value for the Access-Control-Allow-Origin response header.
+    # Use "*" to allow any origin (default), or set to a specific origin such
+    # as "https://app.example.com" to restrict cross-origin access.
+    origin: "*"
 
 # Default resource limits for channel pods.
 channelPod:

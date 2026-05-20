@@ -69,6 +69,11 @@ interface HttpConfig {
   maxAttachmentCount?: number;
   /** Maximum cumulative attachment bytes per user. 0 = unlimited. Default: 0. */
   maxAttachmentBytes?: number;
+  /**
+   * Value for the Access-Control-Allow-Origin header on all responses.
+   * Defaults to "*" (allow all origins). Set via HTTP_CHANNEL_CORS_ORIGIN.
+   */
+  corsOrigin: string;
 }
 
 /** Token-bucket state for a single user. */
@@ -412,7 +417,9 @@ export class HttpChannel implements Channel {
     username: string,
     nowMs: number = Date.now(),
   ): { allowed: true } | { allowed: false; retryAfterSeconds: number } {
-    const capacity = this.config.perUserMessagesPerMinute;
+    // Default to 0 (unlimited) when the field is unset — defends against
+    // test configs created before the field was added to HttpConfig.
+    const capacity = this.config.perUserMessagesPerMinute ?? 0;
     if (capacity === 0) return { allowed: true }; // unlimited
 
     const refillRatePerMs = capacity / 60_000; // tokens per millisecond
@@ -510,6 +517,39 @@ export class HttpChannel implements Channel {
     res.end('Unauthorized');
   }
 
+  /**
+   * Inject Access-Control-Allow-Origin onto an outgoing response object.
+   * Called for every non-OPTIONS response so browsers accept actual responses
+   * after a successful preflight.
+   */
+  private addCorsHeaders(headers: Record<string, string>): Record<string, string> {
+    return {
+      ...headers,
+      // Default to "*" if not configured (matches the helm default + the
+      // HTTP_CHANNEL_CORS_ORIGIN env-var fallback). Defends against test
+      // configs that omit corsOrigin without disabling the cors path.
+      'Access-Control-Allow-Origin': this.config.corsOrigin ?? '*',
+    };
+  }
+
+  /**
+   * Map from path (or path prefix key) to the HTTP methods that are valid
+   * for the OPTIONS preflight Allow header.
+   * OPTIONS is intentionally excluded from each list because it is handled
+   * by the early dispatch block — it must not appear in the pathMethods 405
+   * table.
+   */
+  private static readonly CORS_PATH_METHODS: Record<string, string[]> = {
+    '/': ['GET'],
+    '/healthz': ['GET', 'HEAD'],
+    '/readyz': ['GET', 'HEAD'],
+    '/stream': ['GET'],
+    '/message': ['POST'],
+    '/history': ['GET', 'DELETE'],
+    '/attachments/list': ['GET'],
+    '/attachments/raw/': ['GET', 'HEAD', 'DELETE'], // prefix — dynamic filenames
+  };
+
   private async handleRequest(
     req: IncomingMessage,
     res: ServerResponse,
@@ -518,34 +558,61 @@ export class HttpChannel implements Channel {
     // before URL normalisation can resolve them away.
     const rawUrl = req.url ?? '/';
     if (rawUrl.includes('..')) {
-      res.writeHead(400, { 'Content-Type': 'text/plain' });
+      res.writeHead(400, {
+        'Content-Type': 'text/plain',
+        'Access-Control-Allow-Origin': this.config.corsOrigin,
+      });
       res.end('Bad Request');
       return;
     }
 
     const url = new URL(rawUrl, `http://localhost:${this.config.port}`);
 
+    // CORS preflight — must come before auth so browsers can complete the
+    // preflight exchange without credentials (OPTIONS never requires auth).
+    if (req.method === 'OPTIONS') {
+      // Resolve allowed methods for this path
+      let allowedMethods: string[] | undefined =
+        HttpChannel.CORS_PATH_METHODS[url.pathname];
+      if (!allowedMethods && url.pathname.startsWith('/attachments/raw/')) {
+        allowedMethods = HttpChannel.CORS_PATH_METHODS['/attachments/raw/'];
+      }
+
+      const methodsList = allowedMethods
+        ? allowedMethods.join(', ')
+        : 'GET, POST, DELETE';
+
+      res.writeHead(204, {
+        'Access-Control-Allow-Origin': this.config.corsOrigin,
+        'Access-Control-Allow-Methods': methodsList,
+        'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+        'Access-Control-Max-Age': '86400',
+      });
+      res.end();
+      return;
+    }
+
     // Health check — no auth required (before auth so probes don't need credentials)
     if (url.pathname === '/healthz') {
       if (req.method === 'GET') {
         const uptime_ms = Date.now() - this.processStartMs;
         const body = JSON.stringify({ status: 'ok', uptime_ms });
-        res.writeHead(200, {
+        res.writeHead(200, this.addCorsHeaders({
           'Content-Type': 'application/json',
-          'Content-Length': Buffer.byteLength(body),
+          'Content-Length': String(Buffer.byteLength(body)),
           'Cache-Control': 'no-store',
-        });
+        }));
         res.end(body);
         return;
       }
       if (req.method === 'HEAD') {
         const uptime_ms = Date.now() - this.processStartMs;
         const body = JSON.stringify({ status: 'ok', uptime_ms });
-        res.writeHead(200, {
+        res.writeHead(200, this.addCorsHeaders({
           'Content-Type': 'application/json',
-          'Content-Length': Buffer.byteLength(body),
+          'Content-Length': String(Buffer.byteLength(body)),
           'Cache-Control': 'no-store',
-        });
+        }));
         res.end();
         return;
       }
@@ -564,11 +631,11 @@ export class HttpChannel implements Channel {
           checks: { db: dbResult, redis: redisResult },
         };
         const body = JSON.stringify(responseBody);
-        res.writeHead(statusCode, {
+        res.writeHead(statusCode, this.addCorsHeaders({
           'Content-Type': 'application/json',
-          'Content-Length': Buffer.byteLength(body),
+          'Content-Length': String(Buffer.byteLength(body)),
           'Cache-Control': 'no-store',
-        });
+        }));
         if (req.method === 'HEAD') {
           res.end();
         } else {
@@ -586,10 +653,10 @@ export class HttpChannel implements Channel {
         this.sendUnauthorized(res);
         return;
       }
-      res.writeHead(200, {
+      res.writeHead(200, this.addCorsHeaders({
         'Content-Type': 'text/html; charset=utf-8',
         'Cache-Control': 'no-cache',
-      });
+      }));
       res.end(CHAT_HTML);
       return;
     }
@@ -602,12 +669,12 @@ export class HttpChannel implements Channel {
         return;
       }
 
-      res.writeHead(200, {
+      res.writeHead(200, this.addCorsHeaders({
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
         Connection: 'keep-alive',
         'X-Accel-Buffering': 'no', // disable nginx buffering
-      });
+      }));
       res.write(':ok\n\n'); // initial heartbeat
 
       // Last-Event-ID catch-up (Story 20 AC2/AC4)
@@ -670,10 +737,10 @@ export class HttpChannel implements Channel {
       // do not consume resources (AC4: no DB row increment on 429 path).
       const rl = this.consumeRateLimit(username);
       if (!rl.allowed) {
-        res.writeHead(429, {
+        res.writeHead(429, this.addCorsHeaders({
           'Content-Type': 'text/plain',
           'Retry-After': String(rl.retryAfterSeconds),
-        });
+        }));
         res.end('Too Many Requests');
         return;
       }
@@ -684,7 +751,7 @@ export class HttpChannel implements Channel {
         !contentType.startsWith('application/json') &&
         !contentType.startsWith('multipart/form-data')
       ) {
-        res.writeHead(415, { 'Content-Type': 'text/plain' });
+        res.writeHead(415, this.addCorsHeaders({ 'Content-Type': 'text/plain' }));
         res.end('Unsupported Media Type');
         return;
       }
@@ -711,7 +778,7 @@ export class HttpChannel implements Channel {
         if (contentType.startsWith('multipart/form-data')) {
           const boundaryMatch = contentType.match(/boundary=([^\s;]+)/);
           if (!boundaryMatch) {
-            res.writeHead(400, { 'Content-Type': 'text/plain' });
+            res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'text/plain' }));
             res.end('Missing boundary');
             return;
           }
@@ -722,14 +789,14 @@ export class HttpChannel implements Channel {
           const imagePart = parts.find((p) => p.name === 'image');
 
           if (!imagePart) {
-            res.writeHead(400, { 'Content-Type': 'text/plain' });
+            res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'text/plain' }));
             res.end('Missing image');
             return;
           }
 
           const mime = detectMediaType(imagePart.data);
           if (!mime) {
-            res.writeHead(415, { 'Content-Type': 'text/plain' });
+            res.writeHead(415, this.addCorsHeaders({ 'Content-Type': 'text/plain' }));
             res.end('Unsupported image format');
             return;
           }
@@ -748,7 +815,7 @@ export class HttpChannel implements Channel {
           const group = this.opts.registeredGroups()[jid];
           if (!group) {
             logger.debug({ jid }, 'HTTP image from unregistered user');
-            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.writeHead(200, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
             res.end(JSON.stringify({ id: null }));
             return;
           }
@@ -785,7 +852,7 @@ export class HttpChannel implements Channel {
           appendConversationMessage(group.folder, 'user', marker);
           const attachMsgId = this.handleInbound(username, marker);
 
-          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.writeHead(200, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
           res.end(JSON.stringify({ id: attachMsgId, attachment: filename }));
           return;
         }
@@ -796,7 +863,7 @@ export class HttpChannel implements Channel {
             text?: string;
           };
           if (!text?.trim()) {
-            res.writeHead(400, { 'Content-Type': 'text/plain' });
+            res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'text/plain' }));
             res.end('Missing text');
             return;
           }
@@ -804,10 +871,10 @@ export class HttpChannel implements Channel {
           // interruption notices back to this request (Story 25 establishes
           // the field; Story 37 propagates it to orphan-job notices).
           const msgId = this.handleInbound(username, text.trim());
-          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.writeHead(200, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
           res.end(JSON.stringify({ id: msgId }));
         } catch {
-          res.writeHead(400, { 'Content-Type': 'text/plain' });
+          res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'text/plain' }));
           res.end('Invalid JSON');
         }
           } catch (err) {
@@ -861,12 +928,12 @@ export class HttpChannel implements Channel {
           entries = [];
         } else {
           logger.error({ err, attachDir }, 'GET /attachments/list failed');
-          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.writeHead(500, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
           res.end(JSON.stringify({ error: 'Internal server error' }));
           return;
         }
       }
-      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.writeHead(200, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
       res.end(JSON.stringify(entries));
       return;
     }
@@ -906,11 +973,11 @@ export class HttpChannel implements Channel {
         fileData = fs.readFileSync(filePath);
       } catch (err: any) {
         if (err?.code === 'ENOENT') {
-          res.writeHead(404, { 'Content-Type': 'text/plain' });
+          res.writeHead(404, this.addCorsHeaders({ 'Content-Type': 'text/plain' }));
           res.end('Not Found');
         } else {
           logger.error({ err, filePath }, 'GET /attachments/raw failed');
-          res.writeHead(500, { 'Content-Type': 'text/plain' });
+          res.writeHead(500, this.addCorsHeaders({ 'Content-Type': 'text/plain' }));
           res.end('Internal Server Error');
         }
         return;
@@ -928,11 +995,11 @@ export class HttpChannel implements Channel {
       const contentType =
         extMime[ext] ?? detectMediaType(fileData) ?? 'application/octet-stream';
 
-      res.writeHead(200, {
+      res.writeHead(200, this.addCorsHeaders({
         'Content-Type': contentType,
-        'Content-Length': fileData.length,
+        'Content-Length': String(fileData.length),
         'Cache-Control': 'private, max-age=3600',
-      });
+      }));
       if (req.method === 'HEAD') {
         res.end();
       } else {
@@ -973,14 +1040,14 @@ export class HttpChannel implements Channel {
 
       fs.unlink(filePath, (err) => {
         if (!err) {
-          res.writeHead(204);
+          res.writeHead(204, this.addCorsHeaders({}));
           res.end();
         } else if (err.code === 'ENOENT') {
-          res.writeHead(404, { 'Content-Type': 'text/plain' });
+          res.writeHead(404, this.addCorsHeaders({ 'Content-Type': 'text/plain' }));
           res.end('Not Found');
         } else {
           logger.error({ err, filePath }, 'DELETE /attachments/raw failed');
-          res.writeHead(500, { 'Content-Type': 'text/plain' });
+          res.writeHead(500, this.addCorsHeaders({ 'Content-Type': 'text/plain' }));
           res.end('Internal Server Error');
         }
       });
@@ -998,7 +1065,7 @@ export class HttpChannel implements Channel {
       const jid = `http:${username}`;
       const group = this.opts.registeredGroups()[jid];
       if (!group) {
-        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.writeHead(404, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
         res.end(JSON.stringify({ error: 'Group not found' }));
         return;
       }
@@ -1013,11 +1080,11 @@ export class HttpChannel implements Channel {
           before: before ?? undefined,
         });
 
-        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.writeHead(200, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
         res.end(JSON.stringify({ messages }));
       } catch (err) {
         logger.error({ err, jid }, 'GET /history failed');
-        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.writeHead(500, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
         res.end(JSON.stringify({ error: 'Internal server error' }));
       }
       return;
@@ -1032,17 +1099,17 @@ export class HttpChannel implements Channel {
       const jid = `http:${username}`;
       const group = this.opts.registeredGroups()[jid];
       if (!group) {
-        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.writeHead(404, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
         res.end(JSON.stringify({ error: 'Group not found' }));
         return;
       }
       try {
         clearConversationHistory(group.folder);
-        res.writeHead(204);
+        res.writeHead(204, this.addCorsHeaders({}));
         res.end();
       } catch (err) {
         logger.error({ err, jid }, 'DELETE /history failed');
-        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.writeHead(500, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
         res.end(JSON.stringify({ error: 'Internal server error' }));
       }
       return;
@@ -1060,26 +1127,26 @@ export class HttpChannel implements Channel {
     };
     const allowed = pathMethods[url.pathname];
     if (allowed && !allowed.includes(req.method ?? '')) {
-      res.writeHead(405, {
+      res.writeHead(405, this.addCorsHeaders({
         'Content-Type': 'text/plain',
         Allow: allowed.join(', '),
-      });
+      }));
       res.end('Method Not Allowed');
       return;
     }
     if (url.pathname.startsWith('/attachments/raw/')) {
       const allowedRaw = ['GET', 'HEAD', 'DELETE'];
       if (!allowedRaw.includes(req.method ?? '')) {
-        res.writeHead(405, {
+        res.writeHead(405, this.addCorsHeaders({
           'Content-Type': 'text/plain',
           Allow: allowedRaw.join(', '),
-        });
+        }));
         res.end('Method Not Allowed');
         return;
       }
     }
 
-    res.writeHead(404, { 'Content-Type': 'text/plain' });
+    res.writeHead(404, this.addCorsHeaders({ 'Content-Type': 'text/plain' }));
     res.end('Not found');
   }
 
@@ -1246,6 +1313,7 @@ function parseConfig(): HttpConfig | null {
     'HTTP_CHANNEL_RATE_LIMIT_PER_USER_MESSAGES_PER_MINUTE',
     'HTTP_CHANNEL_MAX_ATTACHMENT_COUNT_PER_USER',
     'HTTP_CHANNEL_MAX_ATTACHMENT_BYTES_PER_USER',
+    'HTTP_CHANNEL_CORS_ORIGIN',
   ]);
 
   const port = parseInt(
@@ -1305,12 +1373,18 @@ function parseConfig(): HttpConfig | null {
     10,
   );
 
+  const corsOrigin =
+    process.env.HTTP_CHANNEL_CORS_ORIGIN ||
+    envVars.HTTP_CHANNEL_CORS_ORIGIN ||
+    '*';
+
   return {
     port,
     users,
     perUserMessagesPerMinute,
     maxAttachmentCount: isNaN(maxAttachmentCount) ? 0 : maxAttachmentCount,
     maxAttachmentBytes: isNaN(maxAttachmentBytes) ? 0 : maxAttachmentBytes,
+    corsOrigin,
   };
 }
 
