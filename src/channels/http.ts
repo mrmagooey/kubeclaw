@@ -705,6 +705,7 @@ export class HttpChannel implements Channel {
 
       req.on('end', () => {
         void (async () => {
+          try {
         const body = Buffer.concat(chunks);
 
         if (contentType.startsWith('multipart/form-data')) {
@@ -809,6 +810,24 @@ export class HttpChannel implements Channel {
           res.writeHead(400, { 'Content-Type': 'text/plain' });
           res.end('Invalid JSON');
         }
+          } catch (err) {
+            // Unhandled error in the multipart or JSON path — e.g. quota
+            // helper throwing EACCES on a malconfigured PVC. Without this
+            // boundary the void IIFE leaves the response hanging open and
+            // produces an unhandled promise rejection.
+            logger.error(
+              { err },
+              'POST /message handler error after body received',
+            );
+            if (!res.writableEnded) {
+              try {
+                res.writeHead(500, { 'Content-Type': 'text/plain' });
+                res.end('Internal Server Error');
+              } catch {
+                /* response already partially written, nothing to do */
+              }
+            }
+          }
         })();
       });
       return;

@@ -1849,7 +1849,7 @@ describe('detectMediaType', () => {
       expect(result).toEqual({ count: 2, bytes: 30000 });
     });
 
-    it('skips non-file entries (directories) when summing bytes', async () => {
+    it('skips non-file entries (directories) for both bytes AND count', async () => {
       vi.mocked(fsPromises.readdir).mockResolvedValueOnce(
         ['subdir'] as unknown as Awaited<ReturnType<typeof fsPromises.readdir>>,
       );
@@ -1857,8 +1857,8 @@ describe('detectMediaType', () => {
         { isFile: () => false, size: 0 } as unknown as Awaited<ReturnType<typeof fsPromises.stat>>,
       );
       const result = await getAttachmentUsage('/some/dir');
-      // count still includes the entry (readdir sees it), bytes=0 since not a file
       expect(result.bytes).toBe(0);
+      expect(result.count).toBe(0);
     });
 
     it('propagates unexpected errors from readdir', async () => {
