@@ -755,3 +755,25 @@ status: implementation 5/5 (verified by agent in its worktree); main test has ch
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-head-attach --create-namespace`, `--set namespace=kubeclaw-e2e-head-attach`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
 
 status: passing 4/4 (HEAD extension to GET /attachments/raw handler)
+
+## Story 31: Wrong HTTP method on a known route returns 405 with Allow header
+
+**As a** KubeClaw user via the HTTP channel
+**I want** 405 Method Not Allowed (not 404) when I use an unsupported verb on a real endpoint
+**So that** my client can distinguish "path doesn't exist" from "wrong method"
+
+### Acceptance criteria
+
+1. DELETE /stream → 405 + `Allow: GET`.
+2. PUT /message → 405 + `Allow: POST`.
+3. POST /history → 405 + `Allow: GET, DELETE`.
+4. POST /attachments/list → 405 + `Allow: GET`.
+5. PATCH /nonexistent → 404 (unknown path, no 405 promotion).
+
+### Notes
+
+- Add a `pathMethods` table in `src/channels/http.ts` before the final 404 fallthrough; on path match, emit 405 + `Allow`.
+- LLM-dependence: **none**.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-405 --create-namespace`, `--set namespace=kubeclaw-e2e-405`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
+
+status: drafted
