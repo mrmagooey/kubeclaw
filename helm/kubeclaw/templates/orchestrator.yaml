@@ -168,6 +168,10 @@ spec:
             - name: MCP_SERVERS_VALUES
               value: {{ .Values.mcpServers | toJson | quote }}
             {{- end }}
+            {{- if .Values.perGroupCapabilities }}
+            - name: PER_GROUP_CAPABILITIES_VALUES
+              value: {{ .Values.perGroupCapabilities | toJson | quote }}
+            {{- end }}
             - name: ANTHROPIC_API_KEY
               valueFrom:
                 secretKeyRef:

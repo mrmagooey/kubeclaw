@@ -178,6 +178,20 @@ channelPod:
       memory: 256Mi
       cpu: 200m
 
+# Per-group capability type declarations.
+# Each entry declares a capability type that can be provisioned per-group via
+# the `/capabilities add <type>` slash command. The `type` field selects a
+# registered builder (e.g. "echo"). Unknown types cause a fatal error at boot.
+#
+# NOTE: `echo` is a test-only builder. Do not declare it in production.
+#
+# Example:
+#   perGroupCapabilities:
+#     - type: echo
+#       image: kubeclaw-echo:e2e-test
+#       scaleDownAfterIdleSeconds: 120
+perGroupCapabilities: []
+
 # Capability pods — long-lived feature pods (low priv tier).
 # Each capability runs a user-supplied container image as a Deployment + Service.
 # Capabilities have no Kubernetes API access (automountServiceAccountToken: false).

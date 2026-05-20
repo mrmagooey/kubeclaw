@@ -82,6 +82,10 @@ import {
   initPerGroupCapabilityLifecycle,
   onGroupAdded,
 } from './per-group-capabilities/index.js';
+import {
+  buildPerGroupCapabilitySpec,
+  type PerGroupCapabilityHelmEntry,
+} from './per-group-capabilities/builders/index.js';
 import { listCapabilities } from './capabilities/registry.js';
 
 // Re-export for backwards compatibility during refactor
@@ -610,6 +614,50 @@ async function main(): Promise<void> {
     logger.warn(
       { count: mcpSpecs.length },
       'Synced legacy MCP_SERVERS_VALUES (deprecated, use CAPABILITIES_VALUES)',
+    );
+  }
+
+  // One-shot ingest of values.yaml-supplied per-group capability type declarations
+  // (env: PER_GROUP_CAPABILITIES_VALUES, JSON array).
+  // Each entry has { type, image, scaleDownAfterIdleSeconds? }; the type field
+  // selects a registered builder (e.g. "echo"). Unknown types cause a fatal error
+  // at boot so the operator gets immediate feedback rather than a silent no-op.
+  const perGroupCapValuesJson = process.env.PER_GROUP_CAPABILITIES_VALUES;
+  if (perGroupCapValuesJson) {
+    let perGroupEntries: PerGroupCapabilityHelmEntry[];
+    try {
+      perGroupEntries = JSON.parse(perGroupCapValuesJson);
+    } catch (err) {
+      logger.fatal(
+        { err },
+        'PER_GROUP_CAPABILITIES_VALUES is not valid JSON; refusing to start',
+      );
+      process.exit(1);
+    }
+    for (const entry of perGroupEntries) {
+      let spec;
+      try {
+        spec = buildPerGroupCapabilitySpec(entry);
+      } catch (err) {
+        logger.fatal(
+          { err, entry },
+          'Unknown per-group capability type in PER_GROUP_CAPABILITIES_VALUES; refusing to start',
+        );
+        process.exit(1);
+      }
+      try {
+        await installCapability(spec);
+      } catch (err) {
+        logger.error(
+          { err, entry },
+          'Failed to install per-group capability from PER_GROUP_CAPABILITIES_VALUES',
+        );
+        // continue installing remaining entries
+      }
+    }
+    logger.info(
+      { count: perGroupEntries.length },
+      'Synced per-group capabilities from values.yaml',
     );
   }
 
