@@ -80,9 +80,6 @@ function kc(
     ['--context', KUBE_CONTEXT, '-n', NAMESPACE, ...args],
     { encoding: 'utf8', stdio: 'pipe', timeout: opts.timeout ?? 30_000 },
   );
-  if (!r.status === null && !opts.allowFail) {
-    throw new Error(`kubectl ${args.join(' ')} failed: ${r.stderr}`);
-  }
   if ((r.status ?? 1) !== 0 && !opts.allowFail) {
     throw new Error(`kubectl ${args.join(' ')} failed (${r.status}): ${r.stderr}`);
   }
@@ -295,7 +292,7 @@ function seedConversationHistory(folder: string): string[] {
 
 /** Write a 1×1 PNG (minimal valid PNG) to /tmp/story35-test.png locally. */
 function createMinimalPng(): Buffer {
-  // Minimal valid 1x1 white PNG (67 bytes).
+  // Minimal valid 1x1 white PNG (68 bytes).
   return Buffer.from(
     '89504e470d0a1a0a0000000d49484452000000010000000108020000009001' +
     '2e00000000c4944415478016360f8ff000000020001e221bc330000000049454e44ae426082',
@@ -506,7 +503,11 @@ async function runSetup(): Promise<void> {
   //    We use kubectl exec to write the file directly, bypassing multipart
   //    (POST /message with multipart is complex here and requires an LLM-less
   //    channel to be fully registered first).
-  const attachDir = `/app/groups/${state.folder}/attachments/raw`;
+  // Use the production attachment path (jid-based, with a literal colon)
+  // — `src/channels/http.ts` writes attachments to `${GROUPS_DIR}/${jid}/attachments/raw`
+  // where jid = `http:${username}`. Writing here proves application-written
+  // attachments survive the upgrade, not just arbitrary test files.
+  const attachDir = `/app/groups/http:${HTTP_USER}/attachments/raw`;
   const attachFilename = `story35-test-${Date.now()}.png`;
   const pngBase64 = createMinimalPng().toString('base64');
   try {
@@ -543,9 +544,8 @@ async function runSetup(): Promise<void> {
 
   try {
     channelExec(['mkdir', '-p', candidatesDir]);
-    channelExec(['sh', '-c', `cat > '${candidateFile}'`]);
-    // Write via here-string approach through kubectl exec stdin isn't supported
-    // easily; use printf instead.
+    // `kubectl exec` doesn't pipe stdin reliably for `cat > file`; use printf
+    // to write the content in a single exec call.
     channelExec([
       'sh', '-c',
       `printf '%s' ${JSON.stringify(skillContent)} > '${candidateFile}'`,
@@ -683,8 +683,12 @@ async function runSetup(): Promise<void> {
   );
 
   if (upgradeResult.status !== 0) {
-    state.skipReason = `helm upgrade failed: ${upgradeResult.stderr.slice(0, 500)}`;
-    return;
+    // Upgrade failure is THE regression this test exists to catch — fail hard
+    // rather than skip. (Helm install failure earlier in the setup is a true
+    // precondition miss and is correctly handled by skipReason.)
+    throw new Error(
+      `helm upgrade failed (the regression this test guards against): ${upgradeResult.stderr.slice(0, 500)}`,
+    );
   }
 
   // ── 12. Wait for rollout after upgrade (AC3) ──────────────────────────────
@@ -722,7 +726,11 @@ async function runSetup(): Promise<void> {
 
   // sha256sum the attachment after upgrade (AC3).
   try {
-    const attachDir = `/app/groups/${state.folder}/attachments/raw`;
+    // Use the production attachment path (jid-based, with a literal colon)
+  // — `src/channels/http.ts` writes attachments to `${GROUPS_DIR}/${jid}/attachments/raw`
+  // where jid = `http:${username}`. Writing here proves application-written
+  // attachments survive the upgrade, not just arbitrary test files.
+  const attachDir = `/app/groups/http:${HTTP_USER}/attachments/raw`;
     const sha256Out = channelExec([
       'sha256sum',
       `${attachDir}/${state.preUpgradeAttachmentFilename}`,
