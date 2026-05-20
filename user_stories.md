@@ -800,3 +800,142 @@ status: passing 5/5 (405 Method Not Allowed + Allow header per RFC 9110)
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-healthz --create-namespace`, `--set namespace=kubeclaw-e2e-healthz`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14117` for the kubectl port-forward.
 
 status: passing 5/5 (GET/HEAD /healthz, 405 on other verbs, sub-path 404)
+
+## Story 33: HTTP channel `/readyz` reports DB and Redis reachability
+
+**As a** KubeClaw operator
+**I want** `GET /readyz` on the HTTP channel's user-facing port to return 200 only when the pod can actually serve traffic (SQLite open + Redis reachable), and 503 otherwise with a structured reason
+**So that** Kubernetes rolling updates only send traffic to channel pods that can persist messages and reach the orchestrator IPC, instead of black-holing requests during a transient Redis outage
+
+### Acceptance criteria
+
+1. `GET /readyz` (no auth required) on a healthy pod → 200 + `Content-Type: application/json` + body `{"status":"ready","checks":{"db":"ok","redis":"ok"}}`.
+2. With Redis unreachable (simulated by `kubectl scale deployment kubeclaw-redis --replicas=0`), `GET /readyz` returns 503 within 10 s + body `{"status":"not_ready","checks":{"db":"ok","redis":"unreachable"}}`. The pod itself does NOT crash; `kubectl get pod` still shows `Running`.
+3. After Redis is restored (`kubectl scale … --replicas=1`), `GET /readyz` returns 200 again within 30 s — no channel-pod restart required.
+4. `HEAD /readyz` mirrors GET (status code only, no body); `POST /readyz` → 405 + `Allow: GET, HEAD` (extend Story 31's `pathMethods` table).
+5. The HTTP channel's K8s Service `kubeclaw-channel-http` carries a `readinessProbe` pointing at `/readyz` on the user-facing port; with Redis down (AC2), `kubectl get endpoints kubeclaw-channel-http` removes the channel pod's IP within 30 s.
+
+### Notes for the test author
+
+- Story 32 added `/healthz` (liveness) on the user-facing HTTP port. This story adds the complementary `/readyz` on the same port. Implement next to `/healthz` in `src/channels/http.ts` near the top of the dispatch, before authentication.
+- The pre-existing `/health` and `/liveness` on the dedicated health port (`HEALTH_PORT=9090`, see `src/channel-runner.ts:444-466`) check `channelConnected` only — they do NOT validate DB or Redis. Do not collapse `/readyz` into `/health`; keep `/readyz` on the user-facing port so the chart's user-facing Service can use it as a readinessProbe gating Endpoints membership.
+- DB check: SQLite `PRAGMA quick_check` (or a trivial `SELECT 1`) on the channel's DB handle. Treat any throw as `db: "failed"` and return 503.
+- Redis check: `PING` via the existing ioredis client with a 2 s timeout. Treat timeout / `ECONNREFUSED` as `redis: "unreachable"`.
+- Bypass auth (probes don't have Basic Auth credentials) — same pre-auth placement as `/healthz` in Story 32.
+- The chart's existing channel Service (`helm/kubeclaw/templates/channel-pods.yaml`) currently has no readinessProbe wired to the user-facing port. Add `readinessProbe: { httpGet: { path: /readyz, port: <user-port-name> }, initialDelaySeconds: 5, periodSeconds: 10, failureThreshold: 3 }` to the channel container template. The dedicated health-port probes (`/health`, `/liveness` on port 9090) stay as-is for backward compat.
+- For AC2/AC3, scale Redis down via `kubectl scale deployment kubeclaw-redis -n kubeclaw-e2e-readyz --replicas=0` and poll `/readyz` every 1 s; restore with `--replicas=1` and `kubectl wait --for=condition=Available deployment/kubeclaw-redis`.
+- For AC5, poll `kubectl get endpoints kubeclaw-channel-http -n kubeclaw-e2e-readyz -o json` and assert `subsets[].addresses` is empty (or `subsets[].notReadyAddresses` contains the pod) while Redis is down.
+- LLM-dependence: **none**.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-readyz --create-namespace`, `--set namespace=kubeclaw-e2e-readyz`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14118` for the kubectl port-forward.
+
+status: drafted
+
+## Story 34: Per-user POST rate limit returns 429 with Retry-After
+
+**As a** KubeClaw operator wanting to bound LLM cost and resource use per user
+**I want** `POST /message` to return HTTP 429 with a `Retry-After` header once a user exceeds N requests in a sliding W-second window
+**So that** a buggy client (or a malicious one) can't drain the LLM budget or starve other users by hammering the endpoint
+
+### Acceptance criteria
+
+1. With `httpChannel.rateLimit.perUserMessagesPerMinute=5`, six rapid `POST /message` from `alice` within 60 s → first 5 return 200; 6th returns 429 + `Retry-After: <seconds>` header where the value is a positive integer ≤ 60.
+2. After waiting `Retry-After` seconds, a 7th `POST /message` from `alice` returns 200 — the limiter has refilled (token-bucket or sliding-window, either is acceptable).
+3. The limit is per-user: while `alice` is throttled (just hit a 429), `bob` can POST normally — `bob`'s first POST returns 200, confirming buckets are keyed on authenticated username, not source IP.
+4. Throttled requests (429 path) do NOT consume LLM budget: `messages` table row count for `alice` does not increment on the 6th rejected POST (queried via `kubectl exec` sqlite, same pattern as Story 9 AC1).
+5. `GET /stream`, `GET /history`, `GET /attachments/raw/*`, and `/healthz` are NOT throttled by the message limiter — 20 rapid `GET /history?limit=1` from `alice` all return 200.
+
+### Notes for the test author
+
+- Implement an in-memory limiter keyed by username in `src/channels/http.ts`, scoped to the POST /message handler only. Token-bucket with capacity = `perUserMessagesPerMinute` and refill rate = capacity/60 s is the simplest. Hold state in a `Map<string, Bucket>` on the `HttpChannel` instance.
+- Surface config as helm value `httpChannel.rateLimit.perUserMessagesPerMinute` (default `60`, set `5` for this test). Plumb through the same path as `httpChannel.users` (env var or mounted config). Document `0` as "unlimited" so existing deployments keep working.
+- On 429, compute `Retry-After` as `ceil((1 - bucket.tokens) * 60 / capacity)` (token-bucket) or `windowExpiryTimestamp - now` (sliding-window). Either approach must return a positive integer ≤ 60.
+- AC4 is the load-bearing assertion: ensure the limiter check runs BEFORE `handleInbound` so no DB write occurs on rejected requests. The simplest placement is at the very top of the POST /message branch in `handleRequest`, after auth.
+- AC5: do not wrap the limiter around the entire dispatch — only POST /message. GET endpoints are read-only and cheap; throttling them would break Story 18/19/23/32 SSE-heavy flows.
+- For the test, send 6 POSTs back-to-back via `Promise.all`-style fan-out with sequential `await` (not parallel — single-threaded confirms it's not a race). Use unique text per request so DB row counts are unambiguous.
+- LLM-dependence: **none**. The 429 path returns before LLM dispatch; AC5 GETs don't invoke LLM either.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-ratelimit --create-namespace`, `--set namespace=kubeclaw-e2e-ratelimit`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`, `--set-json 'httpChannel.users={"alice":"alicepw","bob":"bobpw"}'`, `--set httpChannel.rateLimit.perUserMessagesPerMinute=5`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14119` for the kubectl port-forward.
+
+status: drafted
+
+## Story 35: `helm upgrade` preserves SQLite DB, attachments, and per-group memory
+
+**As a** KubeClaw operator rolling out a new chart version
+**I want** `helm upgrade` (across two chart versions, no chart-value changes) to leave the channel pod's SQLite DB, the `groups/` directory, and uploaded attachments byte-identical
+**So that** users don't lose conversation history, learned skills, or files when I deploy an update — and so the PVC isn't accidentally recreated by a template rename
+
+### Acceptance criteria
+
+1. Before upgrade: install chart, post 3 messages as `alice` (each with a unique marker), upload 1 image attachment, accept 1 skill candidate. Capture: (a) `sqlite3 ... 'SELECT id, content FROM conversation_history WHERE group_folder=?' `, (b) sha256 of the attachment file, (c) the accepted skill file path.
+2. Run `helm upgrade kubeclaw ./helm/kubeclaw -n <ns>` with identical values (simulating a chart-only change). The upgrade completes with no errors.
+3. After upgrade: channel pod is rolled (`kubectl rollout status` succeeds) within 90 s, and re-running the captures from AC1 produces byte-identical results — same IDs, same content, same sha256, same skill file.
+4. The channel pod's PVC `kubeclaw-channel-http-data` retains the same `uid` (`kubectl get pvc -o jsonpath='{.metadata.uid}'`) before and after the upgrade — confirming Helm didn't delete-and-recreate it.
+5. `GET /history` (Story 18) for `alice` after the upgrade returns the 3 pre-upgrade messages with their original `id` and `created_at` fields intact.
+
+### Notes for the test author
+
+- This is a pure ops/regression story; no new code. It catches regressions where someone renames a PVC template, changes a label selector, or accidentally adds `helm.sh/resource-policy: ""` to a stateful resource.
+- The reference behaviour is enforced via PVC `helm.sh/resource-policy: keep` annotation. Verify the annotation is present after AC1's install: `kubectl get pvc kubeclaw-channel-http-data -n <ns> -o jsonpath='{.metadata.annotations}'` should contain `keep`.
+- Skip Helm's chart-version mismatch detection by not bumping `Chart.yaml`'s version between install and upgrade — the test exercises template-render stability, not version-skew migration. A separate future story can cover N → N+1 schema migration.
+- For AC1's skill seed: write a candidate file via `kubectl exec` (same pattern as Story 12 notes), then run `/skills accept <id>` via the HTTP channel.
+- For AC3's sha256, use `kubectl exec <channel-pod> -- sha256sum /app/groups/http:http-alice/attachments/raw/<filename>` before and after the upgrade.
+- The channel pod will be re-created by the rollout; the PVC must persist. Wait for the new pod to be Ready (`kubectl wait --for=condition=Ready pod -l kubeclaw-component=channel-http -n <ns>`) before re-running captures.
+- LLM-dependence: **none**.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-upgrade --create-namespace`, `--set namespace=kubeclaw-e2e-upgrade`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`, `--set-json 'httpChannel.users={"alice":"alicepw"}'`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run (this story must run its own install + upgrade cycle, so the SKIP flag is irrelevant — the test does its own helm calls and tears down at the end).
+
+status: drafted
+
+## Story 36: User provisions a per-group capability and sees it in `/capabilities list`
+
+**As a** KubeClaw user via the HTTP channel
+**I want** to type `/capabilities add <type>` to provision a per-group capability (e.g. an MCP server) for my group, and `/capabilities list` to see what's active
+**So that** I can self-serve capability provisioning without operator intervention — and the system honours Story 7's scale-down lifecycle from the moment of creation
+
+### Acceptance criteria
+
+1. With at least one capability builder registered (declared via helm `--set-json 'perGroupCapabilities=[{"type":"echo","image":"kubeclaw-echo:e2e-test","scaleDownAfterIdleSeconds":120}]'`), a `POST /message` containing `/capabilities add echo` from `alice` returns an SSE reply containing the phrase "provisioned" (case-insensitive) and the deployment name. Within 60 s, `kubectl get deployment -l kubeclaw-capability=echo,kubeclaw-group=http-http-alice -n <ns>` shows a Deployment with `readyReplicas=1`.
+2. A `POST /message` containing `/capabilities list` returns an SSE reply listing the active capability with at least: `type`, `replicas`, `lastUsedAt` (ISO-8601). The reply also includes the configured `scaleDownAfterIdleSeconds`.
+3. `/capabilities add echo` invoked a second time from `alice` is idempotent — returns "already provisioned" (case-insensitive) and the original Deployment's `metadata.uid` is unchanged.
+4. `/capabilities remove echo` deletes the Deployment and the `per_group_capability_instances` row — `kubectl get deployment -l kubeclaw-capability=echo,kubeclaw-group=http-http-alice` returns no items within 30 s, and `sqlite3 ... 'SELECT COUNT(*) FROM per_group_capability_instances WHERE group_folder=? AND capability_name=?'` returns 0.
+5. The capability provisioned in AC1 is scoped to `alice`: `bob` running `/capabilities list` sees an empty list (no `echo` capability), even though `alice`'s Deployment exists in the same namespace.
+
+### Notes for the test author
+
+- Capability reconciler entry: `src/per-group-capabilities/reconciler.ts` (`upsertInstance` + `scaleUpInstance`). Scale-down sweeper is exercised by Story 7. This story exercises the up-side: orchestrator IPC → reconcile → Deployment creation + DB row.
+- Add slash-command dispatch in `src/channel-runner.ts` for `/capabilities` (regex pattern + handler), mirroring the `/secret` handler pattern (~line 1196). The handler must `groupFolder`-scope every IPC call (Story 10 fixed exactly this gap for `/secret`).
+- Add a new IPC verb set: `capability.add`, `capability.list`, `capability.remove`. Route them through `src/k8s/ipc-redis.ts`'s task-stream handler (mirror the `secret.*` family). Handlers call into `src/per-group-capabilities/index.ts`.
+- A test capability builder is needed. The simplest is a no-op `echo` builder that creates a Deployment running `busybox sleep infinity` with a `/health` endpoint — define it in `src/per-group-capabilities/builders/echo.ts` for the test fixture. The builder must be exported in the registry; consult `src/capabilities/builders/` for the existing builder shape.
+- AC2's `lastUsedAt`: read from `per_group_capability_instances.last_used_at` (Story 7 confirms this field exists). Format as ISO-8601 in the reply.
+- AC3 (idempotency): the reconciler's `upsertInstance` is already idempotent at the DB layer; ensure the K8s `Apply` patch path (server-side apply) does not bump `metadata.uid`.
+- AC5 (per-group isolation): verify the IPC handler reads `groupFolder` from the IPC envelope, not from a global; the `/capabilities list` reply for `bob` must filter `WHERE group_folder = 'http-http-bob'`.
+- Two HTTP users needed: `--set-json 'httpChannel.users={"alice":"alicepw","bob":"bobpw"}'`. Group folders: `http-http-alice`, `http-http-bob`.
+- LLM-dependence: **none**. The `/capabilities` path is intercepted before the LLM queue, like `/secret`.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-caps --create-namespace`, `--set namespace=kubeclaw-e2e-caps`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Pre-load the test capability image `kubeclaw-echo:e2e-test` into the kind cluster (`kind load docker-image kubeclaw-echo:e2e-test --name kubeclaw-e2e-istio`). Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14120` for the kubectl port-forward.
+
+status: drafted
+
+## Story 37: Orchestrator restart with in-flight tool job surfaces a user-visible error
+
+**As a** KubeClaw user via the HTTP channel
+**I want** the assistant to send me a clear error message if the orchestrator restarts while my tool job is still running, instead of leaving me waiting indefinitely
+**So that** I know my request needs to be re-sent and I'm not staring at a frozen tab — and so the system doesn't accumulate orphaned tool-job pods after a crash-loop
+
+### Acceptance criteria
+
+1. While a tool job is running (verified: `kubectl get pod -l kubeclaw.io/job-id=<jobId> -n <ns>` shows `Running`), `kubectl rollout restart deployment/kubeclaw-orchestrator -n <ns>` is issued. The new orchestrator pod becomes Ready within 60 s.
+2. Within 30 s of the new orchestrator becoming Ready, the user's SSE stream delivers a message containing "tool job interrupted" (case-insensitive) referencing the affected message id (from Story 25's POST response body).
+3. The in-flight tool-job pod is either (a) cleaned up — `kubectl get pod -l kubeclaw.io/job-id=<jobId>` returns no items — OR (b) marked as `Failed` with a status reason of `OrchestratorRestart` visible in `kubectl get job <jobName> -o yaml`. Either resolution is acceptable; assert one of the two.
+4. The `messages` table in the channel DB still contains the original user message (it was persisted before dispatch — see Story 9), and the assistant's interruption notice is appended as a row with `is_from_me=1` and `is_bot_message=1`.
+5. After AC2's notice arrives, sending a fresh `POST /message` from the same user works normally — the new tool job spawns, completes, and replies within the normal timeout. Confirms the restart cleanly recovered rather than leaving the user's group in a wedged state.
+
+### Notes for the test author
+
+- The orchestrator must detect orphaned tool jobs on startup. The detection point is in `src/index.ts` near the orchestrator's IPC subscription setup — on boot, list all Jobs with label `kubeclaw.io/job-id` whose status.active>0 OR which have a row in the orchestrator's tracking table without a terminal status, and for each: (a) emit an interruption message to the originating group's channel (via Redis stream), (b) delete or mark-failed the Job. The exact mechanism is implementer's choice; the user-visible AC is what matters.
+- Triggering a long-running tool job: use the `/alpine` specialist with a `sleep 30` payload (same pattern as Story 3) — declare it via `--set-json 'specialists=[{"name":"alpine","prompt":"...","image":"kubeclaw-alpine:e2e-test","timeoutSeconds":120}]'`. The specialist must take long enough that the orchestrator restart happens mid-execution; 30 s is comfortable.
+- For AC2, the interruption notice goes through the same Redis `kubeclaw:messages:<groupFolder>` stream that the channel subscribes to — no new transport needed. The channel's `sendMessage` will deliver it over the user's open SSE.
+- For AC3, prefer cleanup (delete the Job) over fail-marking — orphaned `Running` pods consume cluster resources. The orchestrator's K8s client (`src/k8s/job-runner.ts`) already has `deleteJob` and `deletePodsForJob` helpers.
+- For AC4, the channel-side `is_bot_message=1` flag (Story 9 AC5) must be set on the interruption row so future `/search` doesn't surface it as a user turn.
+- Timing: the SSE stream is held open by the user-side `GET /events` connection. Story 20's catch-up (Last-Event-ID) guarantees that even if the user reconnects during the orchestrator restart, they will still get the interruption notice via replay.
+- LLM-dependence: AC1, AC3, AC4 independent. AC2 depends on the specialist actually being dispatched (the LLM-free `/alpine` direct path can avoid LLM call) — gate AC5 with `it.skipIf(process.env.KUBECLAW_NO_LLM === 'true')` since the fresh post-restart message in AC5 traverses the LLM path.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-orch-restart --create-namespace`, `--set namespace=kubeclaw-e2e-orch-restart`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14121` for the kubectl port-forward.
+
+status: drafted
