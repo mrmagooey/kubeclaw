@@ -1777,13 +1777,18 @@ export async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   const results = await Promise.allSettled(runs.map(runOne));
 
+  // Defensive guard: in normal operation `runAgent` catches all exceptions
+  // internally and returns { status: 'error' } — so `runOne` settles
+  // `fulfilled` and this loop is a no-op. We keep it in case a future
+  // refactor changes runAgent's contract; logging here surfaces the
+  // regression rather than silently swallowing the rejection.
   for (const [i, r] of results.entries()) {
     if (r.status === 'rejected') {
       hadError = true;
       const specName = runs[i].specialistName;
       logger.error(
         { err: r.reason, specialist: specName },
-        'specialist run failed',
+        'specialist run failed (unexpected rejection — runAgent should catch internally)',
       );
       if (specName && !failedSpecialists.includes(specName)) {
         failedSpecialists.push(specName);
@@ -1802,11 +1807,15 @@ export async function processGroupMessages(chatJid: string): Promise<boolean> {
     }
     // No output reached the user yet. Send a visible error for each failed
     // specialist so the user knows to retry rather than stare at silence.
-    for (const specName of failedSpecialists) {
+    for (const [idx, specName] of failedSpecialists.entries()) {
       const errText = `[@${specName}] Error: specialist run failed`;
       await channel.sendMessage(chatJid, errText);
       storeMessage({
-        id: `err-${specName}-${Date.now()}`,
+        // Include `idx` so two specialists failing in the same millisecond
+        // (unlikely under sequential await, but theoretically possible if
+        // failedSpecialists has duplicates from concurrent rejections) get
+        // distinct PKs.
+        id: `err-${specName}-${Date.now()}-${idx}`,
         chat_jid: chatJid,
         sender: 'system',
         sender_name: 'system',

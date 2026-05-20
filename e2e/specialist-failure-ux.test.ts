@@ -217,8 +217,24 @@ async function postMessage(text: string): Promise<void> {
 
 // ─── Suite ───────────────────────────────────────────────────────────────────
 
-describe.skipIf(shouldSkip)(
-  skipReason || 'specialist failure → user-visible error reply (AC1–AC5)',
+// KNOWN LIMITATION: the `specialists.openaiBaseUrlOverride` helm flag below is
+// not yet a real chart value — there's no per-specialist `openaiBaseUrl` field
+// on the GlobalSpecialist type, so the override is silently discarded and the
+// "broken" specialist would actually succeed against the live LLM endpoint.
+// To make this test reliably exercise the failure path we either need to
+//   (a) add an `openaiBaseUrl` field to GlobalSpecialist + helm template, or
+//   (b) inject the failure via a different mechanism (NetworkPolicy egress
+//       block to a target host, kubectl-applied at runtime).
+// Until one of those lands, this test is permanently skipped — the unit and
+// integration tests in src/channel-runner.test.ts already exercise the
+// hadError code path with a synthetic runAgent that returns status:'error'.
+const e2eFailureInjectionUnsupported = true;
+
+describe.skipIf(shouldSkip || e2eFailureInjectionUnsupported)(
+  skipReason ||
+    (e2eFailureInjectionUnsupported
+      ? 'specialist failure UX — e2e skipped (failure-injection mechanism unsupported; see comment above)'
+      : 'specialist failure → user-visible error reply (AC1–AC5)'),
   () => {
     beforeAll(async () => {
       // Install kubeclaw with one specialist whose llmProvider points to a
