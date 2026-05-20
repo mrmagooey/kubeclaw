@@ -582,9 +582,9 @@ export class HttpChannel implements Channel {
     }
 
     // Attachment download endpoint
-    // GET /attachments/raw/<filename>
+    // GET / HEAD /attachments/raw/<filename>
     if (
-      req.method === 'GET' &&
+      (req.method === 'GET' || req.method === 'HEAD') &&
       url.pathname.startsWith('/attachments/raw/')
     ) {
       const username = this.authenticate(req);
@@ -643,7 +643,11 @@ export class HttpChannel implements Channel {
         'Content-Length': fileData.length,
         'Cache-Control': 'private, max-age=3600',
       });
-      res.end(fileData);
+      if (req.method === 'HEAD') {
+        res.end();
+      } else {
+        res.end(fileData);
+      }
       return;
     }
 
