@@ -1223,3 +1223,72 @@ status: drafted
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-cancel --create-namespace`, `--set namespace=kubeclaw-e2e-cancel`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14133`.
 
 status: drafted
+
+## Story 50: `/jobs` slash command shows active and recent tool jobs
+
+**As a** KubeClaw user via the HTTP channel
+**I want** to type `/jobs` to see which specialist tool jobs are currently running or recently completed for my group
+**So that** I can check whether a long-running job is still in progress, see how past jobs resolved, and decide whether to `/cancel`
+
+### Acceptance criteria
+
+1. `POST /message` with body `/jobs` returns an SSE reply listing each active job for the group as `[running] @SpecialistName (started HH:MM)` within 3 s; if no jobs are running the reply is `No active jobs`.
+2. After a job completes (success, timeout, oomkill, interrupted), a subsequent `/jobs` shows the last 5 completed jobs for the group in the format `[status] @SpecialistName (HH:MM → HH:MM)` where `status` ∈ `{completed, timeout, oomkill, interrupted}`.
+3. Jobs from other groups are never listed — `/jobs` is scoped to the authenticated user's group.
+4. Unit test: stub `getActiveToolJobs` + `getRecentToolJobsForGroup` returning two rows (one active, one completed); assert `processGroupMessages` calls `sendMessage` with text containing both entries.
+5. Integration test: write rows into `tool_jobs` via `recordToolJob` + `resolveToolJob`; call the slash-command handler directly; assert the formatted reply includes the correct status labels.
+
+### Notes
+
+- Add `isJobsCommand` / `handleJobsCommand` to `src/channel-runner.ts` following the `/cancel` intercept pattern. Use existing `getActiveToolJobs()` in `src/db.ts`; add `getRecentToolJobsForGroup(groupFolder, limit)` helper (query `tool_jobs WHERE group_folder=? ORDER BY created_at DESC LIMIT ?`). Add `/jobs` to HELP_TEXT.
+- Format times as ISO-8601 UTC with `Z` suffix, displayed as `HH:MMZ` in the reply.
+- LLM-dependence: **none**.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-jobs --create-namespace`, `--set namespace=kubeclaw-e2e-jobs`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14134`.
+
+status: drafted
+
+## Story 51: agentStatus='error' non-throw path triggers user-visible reply
+
+**As a** KubeClaw user whose specialist returned an error status without throwing
+**I want** to receive the same `[@Specialist] Error: specialist run failed` reply that I'd get if the specialist threw
+**So that** all specialist failure modes surface consistently, regardless of whether the runtime throws or returns an error status
+
+### Acceptance criteria
+
+1. Unit test: `processGroupMessages` with `fakeRunner.runAgent` resolving to `{ status: 'error', result: null }` (not rejecting) → `channel.sendMessage` is called once with text `'[@Alpha] Error: specialist run failed'`.
+2. Unit test: when `runAgent` resolves `{ status: 'error' }` after streaming partial output (`outputSentToUser = true`), `sendMessage` is NOT called for the error message — partial-output guard still applies.
+3. Unit test: `processGroupMessages` returns `true` (not `false`) so the group is not wedged.
+4. Unit test: a specialist that resolves `{ status: 'error' }` is recorded in `failedSpecialists`; a specialist that resolves `{ status: 'success' }` in the same call is not — only failed entries appear in the error reply.
+5. Integration test: inject a fake runner that resolves with `{ status: 'error', result: 'partial text' }` before setting `outputSentToUser`; confirm no duplicate message is sent.
+
+### Notes
+
+- No production code changes required — the `if (agentStatus === 'error')` branch in `src/channel-runner.ts` is already implemented (Story 41 covered the throw path; this story covers the resolve path).
+- Add tests to `src/channel-runner.test.ts` near the existing Story 41 specialist-failure tests. Use `vi.fn().mockResolvedValue({ status: 'error', result: null })` (not `.mockRejectedValue`).
+- LLM-dependence: **none**.
+- No e2e cluster setup needed — this is a unit/integration coverage story only.
+
+status: drafted
+
+## Story 52: `GET /export` downloads full conversation history as NDJSON
+
+**As a** KubeClaw user via the HTTP channel
+**I want** `GET /export` to return my full conversation history as a downloadable NDJSON file
+**So that** I can back up or migrate my conversation without needing database access or kubectl
+
+### Acceptance criteria
+
+1. Authenticated `GET /export` returns HTTP 200 with `Content-Type: application/x-ndjson`, `Content-Disposition: attachment; filename="kubeclaw-export-<group>-<date>.ndjson"`, and a body where each line is a JSON object with keys `role`, `content`, `timestamp`, and `sender`.
+2. The export includes all rows from `conversation_history` for the authenticated user's group, oldest-first; no pagination — the full history is streamed in a single response.
+3. An unauthenticated `GET /export` returns 401.
+4. `HEAD /export` returns the same headers as GET but no body (consistent with `HEAD /attachments/raw`).
+5. `POST /export` returns 405 with `Allow: GET, HEAD`.
+
+### Notes
+
+- Add the `/export` route to `src/channels/http.ts` alongside `/history`. Query via existing `getConversationHistory(jid)` or add `getAllConversationHistory(jid)` if pagination caps are enforced. Stream row-by-row via `res.write(JSON.stringify(row) + '\n')` to avoid buffering the entire history.
+- Add `/export` to `HttpChannel.CORS_PATH_METHODS` with `['GET', 'HEAD']`. Add to the 405 `pathMethods` table.
+- LLM-dependence: **none**.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-export --create-namespace`, `--set namespace=kubeclaw-e2e-export`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14135`.
+
+status: drafted
