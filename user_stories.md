@@ -1082,3 +1082,73 @@ status: drafted
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-job-timeout --create-namespace`, `--set namespace=kubeclaw-e2e-job-timeout`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14127`.
 
 status: drafted
+
+## Story 44: `/schedule` user-facing chat command
+
+**As a** KubeClaw user via the HTTP channel
+**I want** to type `/schedule add <cron|interval|once> <value> <prompt>`, `/schedule list`, and `/schedule remove <id>` directly in chat
+**So that** I can set up recurring or one-off assistant prompts (e.g. daily summaries, reminders) without operator access to the orchestrator
+
+### Acceptance criteria
+
+1. A `POST /message` containing `/schedule add interval 60000 "ping"` returns an SSE reply confirming the task was created and including the assigned task `id` (UUID), without invoking the LLM.
+2. A `POST /message` containing `/schedule list` returns an SSE reply listing all tasks for the current group (at minimum: `id`, `schedule_type`, `schedule_value`, `status`, `next_run`), or "No scheduled tasks" when none exist.
+3. A `POST /message` containing `/schedule remove <id>` for a valid task id returns "Removed" and a subsequent `/schedule list` does not include that `id`.
+4. A `POST /message` containing `/schedule remove <unknown-id>` returns a reply containing "not found" without a stack trace.
+5. Tasks are scoped to the authenticated user's group: `alice`'s `/schedule list` does not show `bob`'s tasks, even when both have created tasks.
+
+### Notes
+
+- `createTask`, `getTasksForGroup`, `deleteTask` in `src/db.ts` are all present. Add `isScheduleCommand` / `handleScheduleCommand` to `src/channel-runner.ts` following the `/secret` intercept pattern. No IPC needed — the channel pod reads/writes its local SQLite directly.
+- Add `/schedule` to `HELP_TEXT` in `channel-runner.ts`.
+- LLM-dependence: **none**.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-schedule --create-namespace`, `--set namespace=kubeclaw-e2e-schedule`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14128`.
+
+status: drafted
+
+## Story 45: `/memory` command for per-group CLAUDE.md (read/append/edit)
+
+**As a** KubeClaw user via the HTTP channel
+**I want** to type `/memory show`, `/memory append <text>`, and `/memory set <text>` directly in chat
+**So that** I can inspect and update the persistent instructions the assistant applies to every conversation in my group, without kubectl or filesystem access
+
+### Acceptance criteria
+
+1. A `POST /message` containing `/memory show` returns an SSE reply containing the full contents of `groups/<groupFolder>/CLAUDE.md`, or "No memory set" when absent — without invoking the LLM.
+2. A `POST /message` containing `/memory append <text>` appends `<text>` (with newline separator) to `groups/<groupFolder>/CLAUDE.md`, creating the file if absent; subsequent `/memory show` confirms the append.
+3. A `POST /message` containing `/memory set <text>` overwrites `groups/<groupFolder>/CLAUDE.md` entirely with `<text>`.
+4. A `POST /message` containing `/memory set ""` (empty string) truncates the file to empty; `/memory show` returns "No memory set".
+5. Memory is scoped to the authenticated user's group: `alice`'s `/memory show` does not return `bob`'s CLAUDE.md content; `alice`'s `/memory append` does not affect `bob`'s file.
+
+### Notes
+
+- `CLAUDE.md` is loaded at `path.join(groupsDir, groupFolder, 'CLAUDE.md')` in `src/runtime/direct-llm-runner.ts`. The command reads/writes via `fs.promises`. Add `isMemoryCommand`/`handleMemoryCommand` to `src/channel-runner.ts` following the `/secret` intercept pattern. No DB, no IPC, no LLM.
+- Add `/memory` to `HELP_TEXT`.
+- Security: construct path as `path.join(GROUPS_DIR, groupFolder, 'CLAUDE.md')` where `groupFolder` comes from authenticated user's JID — no user input in the path so no traversal risk.
+- LLM-dependence: **none**.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-memory --create-namespace`, `--set namespace=kubeclaw-e2e-memory`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14129`.
+
+status: drafted
+
+## Story 46: OOMKill sends a user-visible "out of memory" reply
+
+**As a** KubeClaw user via the HTTP channel
+**I want** to receive a clear error message when my tool job is killed by the OOM killer (container memory limit exceeded), instead of waiting indefinitely
+**So that** I know my request consumed too much memory and I can retry with a smaller input or ask the operator to raise the memory limit
+
+### Acceptance criteria
+
+1. When a tool-job pod's container is terminated with `reason=OOMKilled` (visible in `kubectl get pod -o json` as `containerStatuses[].lastState.terminated.reason`), the orchestrator emits a message to the originating channel group within 30 s containing "out of memory" (case-insensitive).
+2. The orchestrator log contains `{ event: "tool_job_oomkill", groupFolder, jobName }` at the time the error is sent.
+3. The OOMKill reply is stored in `conversation_history` with `role='assistant'` and `is_bot_message=1`.
+4. The group is not wedged after the OOMKill: a subsequent `POST /message` from the same user returns 200 and is dispatched normally.
+5. Unit test: mock the pod-watcher with a synthetic event whose `containerStatuses[0].lastState.terminated.reason === 'OOMKilled'` → assert the OOM error message is sent via the Redis mock, distinct from the `DeadlineExceeded` path (Story 43).
+
+### Notes
+
+- Add an `OOMKilledError` class alongside `DeadlineExceededError` in `src/k8s/job-runner.ts`. In the pod-watcher callback, when `lastState.terminated.reason === 'OOMKilled'`, throw `OOMKilledError`. Catch in `runToolJob` with a parallel `else if (error instanceof OOMKilledError)` branch that publishes the "out of memory" notice via the existing `timeoutPublisher` (rename to `failurePublisher` or add a sibling `oomkillPublisher`).
+- Mirror Story 43's `formatTimeoutNotice` shape with `formatOomKillNotice(groupFolder, jobName)`.
+- LLM-dependence: **none**.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-oomkill --create-namespace`, `--set namespace=kubeclaw-e2e-oomkill`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14130`.
+
+status: drafted
