@@ -955,10 +955,12 @@ export async function startToolJobSpawnWatcher(): Promise<void> {
   const stream = getSpawnToolJobStream();
   let lastId = await resolveStreamTip(redis, stream);
 
-  // Story 43: wire the timeout publisher on the jobRunner singleton so
-  // DeadlineExceeded events can emit a user-visible "timed out" notice via
-  // the group's Redis pub/sub output channel.
-  jobRunner.timeoutPublisher = {
+  // Story 43 / Story 46: wire publishers on the jobRunner singleton so
+  // DeadlineExceeded and OOMKilled events can emit a user-visible notice via
+  // the group's Redis pub/sub output channel.  The two share the same
+  // ToolJobTimeoutPublisher shape; we set them as sibling fields rather than
+  // sharing a single instance so a future refactor can specialise either.
+  const failurePublisher = {
     async publish(
       groupFolder: string,
       chatJid: string,
@@ -977,6 +979,8 @@ export async function startToolJobSpawnWatcher(): Promise<void> {
       );
     },
   };
+  jobRunner.timeoutPublisher = failurePublisher;
+  jobRunner.oomKillPublisher = failurePublisher;
 
   logger.info('Tool job spawn watcher started');
 
@@ -1091,8 +1095,16 @@ export async function startToolJobSpawnWatcher(): Promise<void> {
             .then(async (output) => {
               // Mark the job as completed so it is not treated as an orphan.
               // Story 43: skip for 'timeout' — job-runner already called
-              // resolveToolJob(jobId, 'timeout') in the DeadlineExceeded catch block.
-              if (output.jobId && output.status !== 'timeout') {
+              // resolveToolJob(jobId, 'timeout') in the DeadlineExceeded branch.
+              // Story 46: same for 'oomkill' — already resolved by the OOMKill
+              // branch in job-runner. The DB row's WHERE status='active' guard
+              // would no-op anyway, but skip explicitly to avoid the warn log
+              // on the (always-empty) result set.
+              if (
+                output.jobId &&
+                output.status !== 'timeout' &&
+                output.status !== 'oomkill'
+              ) {
                 try {
                   resolveToolJob(output.jobId, 'completed');
                 } catch (err) {
