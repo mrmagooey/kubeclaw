@@ -11,6 +11,7 @@
  */
 
 import fs from 'fs';
+import fsPromises from 'fs/promises';
 import http from 'http';
 import path from 'path';
 
@@ -596,12 +597,15 @@ export async function dispatchSkillsCommandIfApplicable(
 
 export const HELP_TEXT = [
   'Available slash commands:',
-  '  /search <query>   — full-text search over conversation history',
-  '  /skills           — manage learned skills (review / accept / reject)',
-  '  /secret           — manage credentials (add / remove / list / catalog)',
-  '  /clear            — clear conversation context',
-  '  /compact          — compact conversation history',
-  '  /summary          — summarise recent conversation',
+  '  /search <query>          — full-text search over conversation history',
+  '  /skills                  — manage learned skills (review / accept / reject)',
+  '  /secret                  — manage credentials (add / remove / list / catalog)',
+  '  /memory show             — show your group memory (CLAUDE.md)',
+  '  /memory append <text>    — append text to your group memory',
+  '  /memory set <text>       — replace your group memory entirely',
+  '  /clear                   — clear conversation context',
+  '  /compact                 — compact conversation history',
+  '  /summary                 — summarise recent conversation',
 ].join('\n');
 
 export function isHelpCommand(message: string): boolean {
@@ -1027,6 +1031,103 @@ export async function handleSecretCommand(
 
     default:
       return { reply: `Unknown subcommand: ${verb}\n\n${SECRET_HELP}` };
+  }
+}
+
+// ── /memory command ───────────────────────────────────────────────────────────
+
+export function isMemoryCommand(message: string): boolean {
+  return /^\/memory(\s|$)/.test(message.trim());
+}
+
+/**
+ * Handle a /memory slash command.
+ *
+ * Reads or writes `groups/<groupFolder>/CLAUDE.md` for the authenticated
+ * user's group. The path is always constructed from `groupFolder`, which
+ * comes from the authenticated user's JID — no user-supplied path component
+ * is accepted.
+ *
+ * Subcommands:
+ *   /memory show            — print the file, or "No memory set" if absent
+ *   /memory append <text>   — append text (with newline), creating if needed
+ *   /memory set <text>      — overwrite entirely (empty string truncates)
+ */
+export async function handleMemoryCommand(
+  groupFolder: string,
+  message: string,
+  groupsDir: string = GROUPS_DIR,
+): Promise<string> {
+  // Defence-in-depth: validate the folder name even though production call
+  // sites already pre-validate via registerGroup.
+  if (!isValidGroupFolder(groupFolder)) {
+    return 'Memory command failed: invalid group folder.';
+  }
+  const memoryPath = path.join(groupsDir, groupFolder, 'CLAUDE.md');
+  const parts = message.trim().split(/\s+/);
+  const verb = parts[1];
+
+  switch (verb) {
+    case undefined:
+    case 'help':
+      return [
+        'Memory commands:',
+        '  /memory show              — show your group memory',
+        '  /memory append <text>     — append text to your group memory',
+        '  /memory set <text>        — replace your group memory entirely',
+      ].join('\n');
+
+    case 'show': {
+      try {
+        const content = await fsPromises.readFile(memoryPath, 'utf8');
+        return content.trim() === '' ? 'No memory set.' : content;
+      } catch (err: unknown) {
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+          return 'No memory set.';
+        }
+        throw err;
+      }
+    }
+
+    case 'append': {
+      const text = parts.slice(2).join(' ');
+      if (!text) return 'Usage: /memory append <text>';
+      await fsPromises.mkdir(path.dirname(memoryPath), { recursive: true });
+      let existing = '';
+      try {
+        existing = await fsPromises.readFile(memoryPath, 'utf8');
+      } catch (err: unknown) {
+        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+      }
+      const separator = existing.endsWith('\n') || existing === '' ? '' : '\n';
+      await fsPromises.writeFile(
+        memoryPath,
+        existing + separator + text + '\n',
+        'utf8',
+      );
+      return 'Memory updated.';
+    }
+
+    case 'set': {
+      // Everything after "set" is the replacement text. Trim leading/trailing
+      // whitespace to stay consistent with /memory append.
+      const text = message
+        .trim()
+        .replace(/^\/memory\s+set\s*/, '')
+        .trim();
+      await fsPromises.mkdir(path.dirname(memoryPath), { recursive: true });
+      await fsPromises.writeFile(memoryPath, text, 'utf8');
+      return text === '' ? 'Memory cleared.' : 'Memory updated.';
+    }
+
+    default:
+      return [
+        `Unknown subcommand: ${verb}`,
+        'Memory commands:',
+        '  /memory show              — show your group memory',
+        '  /memory append <text>     — append text to your group memory',
+        '  /memory set <text>        — replace your group memory entirely',
+      ].join('\n');
   }
 }
 
@@ -1563,6 +1664,26 @@ export async function processGroupMessages(chatJid: string): Promise<boolean> {
     await channel.setTyping?.(chatJid, true);
     try {
       await channel.sendMessage(chatJid, result.reply);
+    } finally {
+      await channel.setTyping?.(chatJid, false);
+    }
+    return true;
+  }
+
+  // /memory command: read/append/set per-group CLAUDE.md. No LLM, no IPC.
+  if (lastMsg && isMemoryCommand(lastMsg.content)) {
+    let reply: string;
+    try {
+      reply = await handleMemoryCommand(group.folder, lastMsg.content);
+    } catch (err) {
+      logger.error({ err, chatJid }, '/memory command failed');
+      reply = 'Memory command failed. Please try again.';
+    }
+    lastAgentTimestamp[chatJid] = lastMsg.timestamp;
+    saveState();
+    await channel.setTyping?.(chatJid, true);
+    try {
+      await channel.sendMessage(chatJid, reply);
     } finally {
       await channel.setTyping?.(chatJid, false);
     }

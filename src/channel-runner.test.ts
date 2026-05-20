@@ -2075,3 +2075,175 @@ describe('/specialists list dispatch via processGroupMessages', () => {
   });
 });
 
+
+
+// ── /memory command unit tests ────────────────────────────────────────────────
+
+import { promises as fsp } from 'fs';
+import os from 'os';
+import { isMemoryCommand, handleMemoryCommand, HELP_TEXT } from './channel-runner.js';
+
+describe('isMemoryCommand', () => {
+  it('returns true for /memory show', () => {
+    expect(isMemoryCommand('/memory show')).toBe(true);
+  });
+  it('returns true for /memory append text', () => {
+    expect(isMemoryCommand('/memory append hello')).toBe(true);
+  });
+  it('returns true for /memory set text', () => {
+    expect(isMemoryCommand('/memory set hello world')).toBe(true);
+  });
+  it('returns true for /memory alone', () => {
+    expect(isMemoryCommand('/memory')).toBe(true);
+  });
+  it('returns false for /memories', () => {
+    expect(isMemoryCommand('/memories')).toBe(false);
+  });
+  it('returns false for /skills', () => {
+    expect(isMemoryCommand('/skills list')).toBe(false);
+  });
+  it('returns false for a regular message', () => {
+    expect(isMemoryCommand('hello world')).toBe(false);
+  });
+});
+
+describe('HELP_TEXT includes /memory', () => {
+  it('HELP_TEXT contains /memory show', () => {
+    expect(HELP_TEXT).toContain('/memory show');
+  });
+  it('HELP_TEXT contains /memory append', () => {
+    expect(HELP_TEXT).toContain('/memory append');
+  });
+  it('HELP_TEXT contains /memory set', () => {
+    expect(HELP_TEXT).toContain('/memory set');
+  });
+});
+
+describe('handleMemoryCommand — mocked fs', () => {
+  let tmpDir: string;
+  let groupFolder: string;
+
+  beforeEach(async () => {
+    tmpDir = await fsp.mkdtemp(os.tmpdir() + '/memory-unit-');
+    groupFolder = 'test-group';
+    // create the group dir
+    await fsp.mkdir(`${tmpDir}/${groupFolder}`, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await fsp.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it('AC1: /memory show returns "No memory set." when file absent', async () => {
+    const reply = await handleMemoryCommand(groupFolder, '/memory show', tmpDir);
+    expect(reply).toBe('No memory set.');
+  });
+
+  it('AC1: /memory show returns file contents when present', async () => {
+    await fsp.writeFile(`${tmpDir}/${groupFolder}/CLAUDE.md`, 'hello memory', 'utf8');
+    const reply = await handleMemoryCommand(groupFolder, '/memory show', tmpDir);
+    expect(reply).toBe('hello memory');
+  });
+
+  it('AC2: /memory append creates file and returns "Memory updated."', async () => {
+    const reply = await handleMemoryCommand(groupFolder, '/memory append first line', tmpDir);
+    expect(reply).toBe('Memory updated.');
+    const contents = await fsp.readFile(`${tmpDir}/${groupFolder}/CLAUDE.md`, 'utf8');
+    expect(contents).toContain('first line');
+  });
+
+  it('AC2: /memory append adds to existing file with newline', async () => {
+    await fsp.writeFile(`${tmpDir}/${groupFolder}/CLAUDE.md`, 'existing content', 'utf8');
+    await handleMemoryCommand(groupFolder, '/memory append added line', tmpDir);
+    const contents = await fsp.readFile(`${tmpDir}/${groupFolder}/CLAUDE.md`, 'utf8');
+    expect(contents).toContain('existing content');
+    expect(contents).toContain('added line');
+  });
+
+  it('AC2: /memory show after append confirms the addition', async () => {
+    await handleMemoryCommand(groupFolder, '/memory append my note', tmpDir);
+    const reply = await handleMemoryCommand(groupFolder, '/memory show', tmpDir);
+    expect(reply).toContain('my note');
+  });
+
+  it('AC3: /memory set overwrites file', async () => {
+    await fsp.writeFile(`${tmpDir}/${groupFolder}/CLAUDE.md`, 'old content', 'utf8');
+    const reply = await handleMemoryCommand(groupFolder, '/memory set new content', tmpDir);
+    expect(reply).toBe('Memory updated.');
+    const contents = await fsp.readFile(`${tmpDir}/${groupFolder}/CLAUDE.md`, 'utf8');
+    expect(contents).toBe('new content');
+    expect(contents).not.toContain('old content');
+  });
+
+  it('AC3: /memory show after set returns only the new text', async () => {
+    await handleMemoryCommand(groupFolder, '/memory set brand new memory', tmpDir);
+    const reply = await handleMemoryCommand(groupFolder, '/memory show', tmpDir);
+    expect(reply).toBe('brand new memory');
+  });
+
+  it('AC4: /memory set "" truncates to empty; show returns "No memory set."', async () => {
+    await fsp.writeFile(`${tmpDir}/${groupFolder}/CLAUDE.md`, 'something here', 'utf8');
+    const setReply = await handleMemoryCommand(groupFolder, '/memory set ', tmpDir);
+    expect(setReply).toBe('Memory cleared.');
+    const showReply = await handleMemoryCommand(groupFolder, '/memory show', tmpDir);
+    expect(showReply).toBe('No memory set.');
+  });
+
+  it('AC4: /memory set with only spaces clears memory', async () => {
+    await fsp.writeFile(`${tmpDir}/${groupFolder}/CLAUDE.md`, 'had content', 'utf8');
+    // "/memory set" with no trailing text
+    const setReply = await handleMemoryCommand(groupFolder, '/memory set', tmpDir);
+    expect(setReply).toBe('Memory cleared.');
+    const showReply = await handleMemoryCommand(groupFolder, '/memory show', tmpDir);
+    expect(showReply).toBe('No memory set.');
+  });
+
+  it('unknown subcommand returns help text', async () => {
+    const reply = await handleMemoryCommand(groupFolder, '/memory frobnicate', tmpDir);
+    expect(reply).toContain('Unknown subcommand');
+    expect(reply).toContain('/memory show');
+  });
+
+  it('/memory append with no text returns usage hint', async () => {
+    const reply = await handleMemoryCommand(groupFolder, '/memory append', tmpDir);
+    expect(reply).toMatch(/usage/i);
+  });
+});
+
+describe('handleMemoryCommand — per-group isolation', () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await fsp.mkdtemp(os.tmpdir() + '/memory-isolation-');
+    await fsp.mkdir(`${tmpDir}/alice`, { recursive: true });
+    await fsp.mkdir(`${tmpDir}/bob`, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await fsp.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it('AC5: alice show does not return bob content', async () => {
+    await fsp.writeFile(`${tmpDir}/bob/CLAUDE.md`, 'bobs private note', 'utf8');
+    const reply = await handleMemoryCommand('alice', '/memory show', tmpDir);
+    expect(reply).toBe('No memory set.');
+    expect(reply).not.toContain('bobs private note');
+  });
+
+  it('AC5: alice append does not affect bobs file', async () => {
+    await fsp.writeFile(`${tmpDir}/bob/CLAUDE.md`, 'bobs original', 'utf8');
+    await handleMemoryCommand('alice', '/memory append alices note', tmpDir);
+    const bobContent = await fsp.readFile(`${tmpDir}/bob/CLAUDE.md`, 'utf8');
+    expect(bobContent).toBe('bobs original');
+    expect(bobContent).not.toContain('alices note');
+  });
+
+  it('AC5: alice and bob have independent memories', async () => {
+    await handleMemoryCommand('alice', '/memory set alice memory', tmpDir);
+    await handleMemoryCommand('bob', '/memory set bob memory', tmpDir);
+    const aliceReply = await handleMemoryCommand('alice', '/memory show', tmpDir);
+    const bobReply = await handleMemoryCommand('bob', '/memory show', tmpDir);
+    expect(aliceReply).toBe('alice memory');
+    expect(bobReply).toBe('bob memory');
+  });
+});
