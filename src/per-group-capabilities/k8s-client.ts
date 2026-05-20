@@ -282,8 +282,12 @@ function labelMatch(
   selector: string,
 ): boolean {
   if (!labels) return false;
-  const [k, v] = selector.split('=');
-  return labels[k] === v;
+  // Support compound selectors: "key1=val1,key2=val2"
+  const pairs = selector.split(',');
+  return pairs.every((pair) => {
+    const [k, v] = pair.split('=');
+    return labels[k] === v;
+  });
 }
 
 export class FakePerGroupK8sClient implements PerGroupK8sClient {

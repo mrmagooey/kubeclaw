@@ -67,6 +67,21 @@ vi.mock('./k8s/ipc-redis.js', () => ({
   createSecretIpcFn: vi.fn().mockReturnValue(vi.fn().mockResolvedValue({ ok: true, result: [] })),
 }));
 
+// Mock rag/provider so it doesn't attempt to import capabilities/registry →
+// capabilities/reconciler → k8s/job-runner (which needs a live cluster).
+vi.mock('./rag/provider.js', () => ({
+  resetRagProvider: vi.fn(),
+  getRagProvider: vi.fn().mockReturnValue(null),
+}));
+
+// Mock capabilities/registry transitively imported via rag/provider → capabilities/client.
+vi.mock('./capabilities/registry.js', () => ({
+  getEntriesForChannel: vi.fn().mockReturnValue([]),
+  listCapabilities: vi.fn().mockReturnValue([]),
+  installCapability: vi.fn().mockResolvedValue(undefined),
+  removeCapability: vi.fn().mockResolvedValue(undefined),
+}));
+
 vi.mock('./router.js', async (importOriginal) => {
   const actual = await importOriginal();
   return {
@@ -93,8 +108,11 @@ import {
   applyCredentialBackstop,
   buildCatalogBackstopPatterns,
   registerCredentialTools,
+  isCapabilitiesCommand,
+  handleCapabilitiesCommand,
   type SecretCommandDeps,
   type IpcResponse,
+  type CapabilityIpcFn,
 } from './channel-runner.js';
 import type { CatalogEntry } from './credential-broker/resolver.js';
 import { buildCredentialSystemBlock } from './tools/list-credentials.js';
@@ -1252,5 +1270,177 @@ describe('channel-runner compression command dispatch', () => {
     expect(isCompactCommand('/summary')).toBe(true);
     expect(isCompactCommand('/clear')).toBe(true);
     expect(isCompactCommand('/skills list')).toBe(false);
+  });
+});
+
+// ── /capabilities command tests ───────────────────────────────────────────────
+
+describe('isCapabilitiesCommand', () => {
+  it('returns true for /capabilities lines', () => {
+    expect(isCapabilitiesCommand('/capabilities add echo')).toBe(true);
+    expect(isCapabilitiesCommand('/capabilities list')).toBe(true);
+    expect(isCapabilitiesCommand('/capabilities remove echo')).toBe(true);
+    expect(isCapabilitiesCommand('/capabilities help')).toBe(true);
+    expect(isCapabilitiesCommand('/capabilities')).toBe(true);
+  });
+
+  it('returns false for non-/capabilities messages', () => {
+    expect(isCapabilitiesCommand('hello')).toBe(false);
+    expect(isCapabilitiesCommand('/secret list')).toBe(false);
+    expect(isCapabilitiesCommand('/cap list')).toBe(false);
+  });
+});
+
+describe('handleCapabilitiesCommand — /capabilities add', () => {
+  const GROUP = 'http-http-alice';
+
+  it('returns help for /capabilities or /capabilities help', async () => {
+    const ipc = vi.fn() as unknown as CapabilityIpcFn;
+    const r1 = await handleCapabilitiesCommand(GROUP, '/capabilities', ipc);
+    expect(r1.reply).toMatch(/Capability commands/i);
+    const r2 = await handleCapabilitiesCommand(GROUP, '/capabilities help', ipc);
+    expect(r2.reply).toMatch(/Capability commands/i);
+  });
+
+  it('passes groupFolder to IPC for /capabilities add', async () => {
+    const ipcCalls: Array<[string, Record<string, string>]> = [];
+    const ipc: CapabilityIpcFn = async (type, fields) => {
+      ipcCalls.push([type, fields]);
+      return {
+        ok: true,
+        result: {
+          deploymentName: 'mcp-echo-abc123',
+          message: "Capability 'echo' provisioned.",
+          alreadyProvisioned: false,
+        },
+      };
+    };
+
+    const result = await handleCapabilitiesCommand(GROUP, '/capabilities add echo', ipc);
+
+    expect(ipcCalls).toHaveLength(1);
+    expect(ipcCalls[0][0]).toBe('capability.add');
+    expect(ipcCalls[0][1].groupFolder).toBe(GROUP);
+    expect(ipcCalls[0][1].capabilityType).toBe('echo');
+    // Reply contains 'provisioned' (AC1) and deployment name
+    expect(result.reply).toMatch(/provisioned/i);
+    expect(result.reply).toContain('mcp-echo-abc123');
+  });
+
+  it('returns already-provisioned message for idempotent second call (AC3)', async () => {
+    const ipc: CapabilityIpcFn = async () => ({
+      ok: true,
+      result: {
+        deploymentName: 'mcp-echo-abc123',
+        message: "Capability 'echo' is already provisioned.",
+        alreadyProvisioned: true,
+      },
+    });
+
+    const result = await handleCapabilitiesCommand(GROUP, '/capabilities add echo', ipc);
+    expect(result.reply).toMatch(/already provisioned/i);
+    expect(result.reply).toContain('mcp-echo-abc123');
+  });
+
+  it('returns error message when IPC fails', async () => {
+    const ipc: CapabilityIpcFn = async () => ({
+      ok: false,
+      error: 'Unknown capability type',
+    });
+
+    const result = await handleCapabilitiesCommand(GROUP, '/capabilities add nonexistent', ipc);
+    expect(result.reply).toMatch(/Failed to provision/i);
+    expect(result.reply).toContain('Unknown capability type');
+  });
+
+  it('requires a capability type argument', async () => {
+    const ipc = vi.fn() as unknown as CapabilityIpcFn;
+    const result = await handleCapabilitiesCommand(GROUP, '/capabilities add', ipc);
+    expect(result.reply).toMatch(/Usage:/i);
+    expect(ipc).not.toHaveBeenCalled();
+  });
+});
+
+describe('handleCapabilitiesCommand — /capabilities list', () => {
+  const GROUP_ALICE = 'http-http-alice';
+  const GROUP_BOB = 'http-http-bob';
+
+  it('returns formatted list with type, replicas, lastUsedAt, scaleDownAfterIdleSeconds (AC2)', async () => {
+    const lastUsedUnix = Math.floor(new Date('2025-01-15T12:00:00Z').getTime() / 1000);
+    const ipc: CapabilityIpcFn = async (_type, fields) => {
+      expect(fields.groupFolder).toBe(GROUP_ALICE);
+      return {
+        ok: true,
+        result: [
+          {
+            type: 'echo',
+            deploymentName: 'mcp-echo-abc123',
+            replicas: 0,
+            lastUsedAt: lastUsedUnix,
+            scaleDownAfterIdleSeconds: 120,
+          },
+        ],
+      };
+    };
+
+    const result = await handleCapabilitiesCommand(GROUP_ALICE, '/capabilities list', ipc);
+    expect(result.reply).toContain('echo');
+    expect(result.reply).toContain('mcp-echo-abc123');
+    expect(result.reply).toContain('120'); // scaleDownAfterIdleSeconds
+    expect(result.reply).toMatch(/2025-01-15T12:00:00.000Z/); // ISO-8601 lastUsedAt
+  });
+
+  it('returns empty list message when no capabilities provisioned', async () => {
+    const ipc: CapabilityIpcFn = async () => ({ ok: true, result: [] });
+    const result = await handleCapabilitiesCommand(GROUP_ALICE, '/capabilities list', ipc);
+    expect(result.reply).toMatch(/No capabilities provisioned/i);
+  });
+
+  it('uses groupFolder scoped to the requesting group (AC5 — bob sees empty list)', async () => {
+    const ipcCalls: Array<Record<string, string>> = [];
+    const ipc: CapabilityIpcFn = async (_type, fields) => {
+      ipcCalls.push(fields);
+      // Bob's group has no capabilities
+      return { ok: true, result: [] };
+    };
+
+    const result = await handleCapabilitiesCommand(GROUP_BOB, '/capabilities list', ipc);
+    expect(ipcCalls[0].groupFolder).toBe(GROUP_BOB);
+    expect(result.reply).toMatch(/No capabilities provisioned/i);
+  });
+});
+
+describe('handleCapabilitiesCommand — /capabilities remove', () => {
+  const GROUP = 'http-http-alice';
+
+  it('passes groupFolder and capabilityType to IPC', async () => {
+    const ipcCalls: Array<[string, Record<string, string>]> = [];
+    const ipc: CapabilityIpcFn = async (type, fields) => {
+      ipcCalls.push([type, fields]);
+      return { ok: true, result: { message: "Capability 'echo' removed." } };
+    };
+
+    const result = await handleCapabilitiesCommand(GROUP, '/capabilities remove echo', ipc);
+    expect(ipcCalls[0][0]).toBe('capability.remove');
+    expect(ipcCalls[0][1].groupFolder).toBe(GROUP);
+    expect(ipcCalls[0][1].capabilityType).toBe('echo');
+    expect(result.reply).toMatch(/Removed/i);
+  });
+
+  it('returns error when capability not provisioned', async () => {
+    const ipc: CapabilityIpcFn = async () => ({
+      ok: false,
+      error: "Capability 'echo' is not provisioned for this group.",
+    });
+
+    const result = await handleCapabilitiesCommand(GROUP, '/capabilities remove echo', ipc);
+    expect(result.reply).toMatch(/Failed to remove/i);
+  });
+
+  it('requires a capability type argument', async () => {
+    const ipc = vi.fn() as unknown as CapabilityIpcFn;
+    const result = await handleCapabilitiesCommand(GROUP, '/capabilities remove', ipc);
+    expect(result.reply).toMatch(/Usage:/i);
+    expect(ipc).not.toHaveBeenCalled();
   });
 });

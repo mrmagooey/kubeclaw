@@ -44,6 +44,13 @@ import {
 // loadSpecialists removed — per-group agents.json specialist loading is deprecated.
 // Task 12 will clean up the remaining IPC specialist-dispatch path.
 import type { OrchestratorMetrics } from '../metrics/orchestrator.js';
+import type { PerGroupK8sClient } from '../per-group-capabilities/k8s-client.js';
+import {
+  provisionCapability,
+  listGroupCapabilities,
+  removeCapabilityInstance,
+  type ProvisionDeps,
+} from '../per-group-capabilities/index.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
@@ -78,6 +85,23 @@ export function registerSecretDeps(
 ): void {
   _secretManager = secretManager;
   _catalogInformer = catalogInformer;
+}
+
+// Per-group capability provision deps — set by registerCapabilityDeps()
+let _capabilityDeps: ProvisionDeps | null = null;
+
+/**
+ * Register per-group capability provisioning dependencies used by the
+ * capability.add / capability.list / capability.remove IPC handlers.
+ * Must be called before startTaskRequestWatcher().
+ */
+export function registerCapabilityDeps(deps: ProvisionDeps): void {
+  _capabilityDeps = deps;
+}
+
+/** Test-only: reset capability deps. */
+export function _resetCapabilityDepsForTest(): void {
+  _capabilityDeps = null;
 }
 
 function channelPvcNames(channel: string): {
@@ -1425,6 +1449,74 @@ export async function startTaskRequestWatcher(
               const error =
                 err instanceof Error ? err.message : String(err);
               logger.warn({ error }, 'catalog.list failed');
+              response = JSON.stringify({ ok: false, error });
+            }
+            await redis.xadd(resultStream, '*', 'result', response);
+          } else if (type === 'capability.add') {
+            // Provision a per-group capability for the requesting group.
+            const { capabilityType, resultStream } = obj;
+            if (!groupFolder || !capabilityType || !resultStream) continue;
+            let response: string;
+            try {
+              if (!_capabilityDeps) throw new Error('CapabilityDeps not initialised');
+              const result = await provisionCapability(
+                groupFolder,
+                capabilityType,
+                _capabilityDeps,
+              );
+              if (result.ok) {
+                response = JSON.stringify({
+                  ok: true,
+                  result: {
+                    deploymentName: result.deploymentName,
+                    message: result.message,
+                    alreadyProvisioned: result.alreadyProvisioned ?? false,
+                  },
+                });
+              } else {
+                response = JSON.stringify({ ok: false, error: result.message });
+              }
+            } catch (err) {
+              const error = err instanceof Error ? err.message : String(err);
+              logger.warn({ groupFolder, capabilityType, error }, 'capability.add failed');
+              response = JSON.stringify({ ok: false, error });
+            }
+            await redis.xadd(resultStream, '*', 'result', response);
+          } else if (type === 'capability.list') {
+            // List per-group capability instances for the requesting group.
+            const { resultStream } = obj;
+            if (!groupFolder || !resultStream) continue;
+            let response: string;
+            try {
+              if (!_capabilityDeps) throw new Error('CapabilityDeps not initialised');
+              const entries = listGroupCapabilities(groupFolder, _capabilityDeps);
+              response = JSON.stringify({ ok: true, result: entries });
+            } catch (err) {
+              const error = err instanceof Error ? err.message : String(err);
+              logger.warn({ groupFolder, error }, 'capability.list failed');
+              response = JSON.stringify({ ok: false, error });
+            }
+            await redis.xadd(resultStream, '*', 'result', response);
+          } else if (type === 'capability.remove') {
+            // Remove a per-group capability instance for the requesting group.
+            const { capabilityType, resultStream } = obj;
+            if (!groupFolder || !capabilityType || !resultStream) continue;
+            let response: string;
+            try {
+              if (!_capabilityDeps) throw new Error('CapabilityDeps not initialised');
+              const result = await removeCapabilityInstance(
+                groupFolder,
+                capabilityType,
+                _capabilityDeps,
+              );
+              if (result.ok) {
+                response = JSON.stringify({ ok: true, result: { message: result.message } });
+              } else {
+                response = JSON.stringify({ ok: false, error: result.message });
+              }
+            } catch (err) {
+              const error = err instanceof Error ? err.message : String(err);
+              logger.warn({ groupFolder, capabilityType, error }, 'capability.remove failed');
               response = JSON.stringify({ ok: false, error });
             }
             await redis.xadd(resultStream, '*', 'result', response);

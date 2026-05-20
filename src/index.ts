@@ -44,6 +44,7 @@ import {
   startToolJobSpawnWatcher,
   startTaskRequestWatcher,
   registerSecretDeps,
+  registerCapabilityDeps,
 } from './k8s/ipc-redis.js';
 import { CatalogInformer } from './k8s/catalog.js';
 import { SecretManager } from './k8s/secret-manager.js';
@@ -622,6 +623,14 @@ async function main(): Promise<void> {
     groupsPvcName,
     listGroupFolders: () =>
       Object.values(getAllRegisteredGroups()).map((g) => g.folder),
+    listSpecs: () => listCapabilities(),
+  });
+
+  // Wire up capability provisioning IPC handlers (capability.add / .list / .remove).
+  registerCapabilityDeps({
+    client: perGroupK8s,
+    namespace: KUBECLAW_NAMESPACE,
+    groupsPvcName,
     listSpecs: () => listCapabilities(),
   });
 }

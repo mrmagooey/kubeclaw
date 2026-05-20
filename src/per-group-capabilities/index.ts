@@ -64,6 +64,14 @@ export {
   listAllCachedSchemas,
   type McpToolSchema,
 } from './schema-cache.js';
+export {
+  provisionCapability,
+  listGroupCapabilities,
+  removeCapabilityInstance,
+  type ProvisionDeps,
+  type ProvisionResult,
+  type CapabilityListEntry,
+} from './provision.js';
 
 // Lifecycle (orchestrator-only, module-level state) ---------------------
 

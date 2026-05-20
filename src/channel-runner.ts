@@ -1030,6 +1030,183 @@ export async function handleSecretCommand(
   }
 }
 
+// ── /capabilities command ─────────────────────────────────────────────────────
+
+export function isCapabilitiesCommand(message: string): boolean {
+  return /^\/capabilities(\s|$)/.test(message.trim());
+}
+
+const CAPABILITIES_HELP = [
+  'Capability commands:',
+  '  /capabilities add <type>      — provision a per-group capability',
+  '  /capabilities list            — list active capabilities for this group',
+  '  /capabilities remove <type>   — remove a per-group capability',
+  '  /capabilities help',
+].join('\n');
+
+export interface CapabilityCommandResult {
+  reply: string;
+}
+
+export type CapabilityIpcFn = (
+  type: 'capability.add' | 'capability.list' | 'capability.remove',
+  fields: Record<string, string>,
+) => Promise<IpcResponse>;
+
+/**
+ * Create a real Redis-backed IPC function for capability operations.
+ * Mirrors createSecretIpcFn but for the capability.* verb set.
+ */
+export function createCapabilityIpcFn(): CapabilityIpcFn {
+  return async (type, fields) => {
+    const redis = getRedisClient();
+    const resultStream = `kubeclaw:capability-result:${Date.now()}-${randomBytes(4).toString('hex')}`;
+
+    const allFields: string[] = ['type', type, 'resultStream', resultStream];
+    for (const [k, v] of Object.entries(fields)) {
+      allFields.push(k, v);
+    }
+    await redis.xadd(getTaskRequestStream(), '*', ...allFields);
+
+    // Wait up to 10s for orchestrator response (reconcile can take a moment)
+    const deadline = Date.now() + 10_000;
+    let lastId = '0-0';
+    while (Date.now() < deadline) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) break;
+      const response = await redis.xread(
+        'COUNT',
+        1,
+        'BLOCK',
+        Math.min(remaining, 1000),
+        'STREAMS',
+        resultStream,
+        lastId,
+      );
+      if (!response) continue;
+      for (const [, messages] of response as [string, [string, string[]][]][]) {
+        for (const [, flds] of messages) {
+          const obj: Record<string, string> = {};
+          for (let i = 0; i < flds.length; i += 2) obj[flds[i]] = flds[i + 1];
+          if (obj.result) {
+            return JSON.parse(obj.result) as IpcResponse;
+          }
+        }
+      }
+    }
+    return { ok: false, error: 'timeout' };
+  };
+}
+
+/**
+ * Handle a /capabilities slash command.
+ *
+ * groupFolder is the per-group folder (e.g. 'http-http-alice'); it is passed
+ * in every IPC call so the orchestrator scopes operations correctly (AC5).
+ */
+export async function handleCapabilitiesCommand(
+  groupFolder: string,
+  message: string,
+  ipc: CapabilityIpcFn,
+): Promise<CapabilityCommandResult> {
+  const parts = message.trim().split(/\s+/);
+  if (parts[0] !== '/capabilities') return { reply: CAPABILITIES_HELP };
+
+  const verb = parts[1];
+
+  switch (verb) {
+    case undefined:
+    case 'help':
+      return { reply: CAPABILITIES_HELP };
+
+    case 'add': {
+      const capabilityType = parts[2];
+      if (!capabilityType) {
+        return { reply: 'Usage: /capabilities add <type>' };
+      }
+      let res: IpcResponse;
+      try {
+        res = await ipc('capability.add', { groupFolder, capabilityType });
+      } catch {
+        return { reply: "Couldn't reach the orchestrator. Try again." };
+      }
+      if (!res.ok) {
+        return {
+          reply: `Failed to provision capability: ${(res as { ok: false; error: string }).error}`,
+        };
+      }
+      const addResult = res.result as {
+        deploymentName?: string;
+        message: string;
+        alreadyProvisioned: boolean;
+      };
+      if (addResult.alreadyProvisioned) {
+        return {
+          reply: `Already provisioned — deployment '${addResult.deploymentName ?? capabilityType}' already exists for this group.`,
+        };
+      }
+      return {
+        reply: `Provisioned — capability '${capabilityType}' is being deployed as '${addResult.deploymentName ?? capabilityType}'.`,
+      };
+    }
+
+    case 'list': {
+      let res: IpcResponse;
+      try {
+        res = await ipc('capability.list', { groupFolder });
+      } catch {
+        return { reply: "Couldn't reach the orchestrator. Try again." };
+      }
+      if (!res.ok) {
+        return {
+          reply: `Failed to list capabilities: ${(res as { ok: false; error: string }).error}`,
+        };
+      }
+      const entries = res.result as Array<{
+        type: string;
+        deploymentName: string;
+        replicas: number;
+        lastUsedAt: number | null;
+        scaleDownAfterIdleSeconds: number;
+      }>;
+      if (!entries || entries.length === 0) {
+        return { reply: 'No capabilities provisioned for this group.' };
+      }
+      const lines = entries.map((e) => {
+        const lastUsed = e.lastUsedAt
+          ? new Date(e.lastUsedAt * 1000).toISOString()
+          : 'never';
+        return `  ${e.type} | deployment: ${e.deploymentName} | replicas: ${e.replicas} | lastUsedAt: ${lastUsed} | scaleDownAfterIdleSeconds: ${e.scaleDownAfterIdleSeconds}`;
+      });
+      return { reply: `Active capabilities:\n${lines.join('\n')}` };
+    }
+
+    case 'remove': {
+      const capabilityType = parts[2];
+      if (!capabilityType) {
+        return { reply: 'Usage: /capabilities remove <type>' };
+      }
+      let res: IpcResponse;
+      try {
+        res = await ipc('capability.remove', { groupFolder, capabilityType });
+      } catch {
+        return { reply: "Couldn't reach the orchestrator. Try again." };
+      }
+      if (!res.ok) {
+        return {
+          reply: `Failed to remove capability: ${(res as { ok: false; error: string }).error}`,
+        };
+      }
+      return {
+        reply: `Removed — capability '${capabilityType}' has been deleted for this group.`,
+      };
+    }
+
+    default:
+      return { reply: `Unknown subcommand: ${verb}\n\n${CAPABILITIES_HELP}` };
+  }
+}
+
 async function runAgent(
   group: RegisteredGroup,
   prompt: string,
@@ -1333,6 +1510,26 @@ export async function processGroupMessages(chatJid: string): Promise<boolean> {
     await channel.setTyping?.(chatJid, true);
     try {
       await channel.sendMessage(chatJid, result.reply);
+    } finally {
+      await channel.setTyping?.(chatJid, false);
+    }
+    return true;
+  }
+
+  // /capabilities command: handle upstream of LLM; group-scoped provisioning.
+  if (lastMsg && isCapabilitiesCommand(lastMsg.content)) {
+    const capIpc = createCapabilityIpcFn();
+    const capResult = await handleCapabilitiesCommand(
+      group.folder,
+      lastMsg.content.trim(),
+      capIpc,
+    );
+
+    lastAgentTimestamp[chatJid] = lastMsg.timestamp;
+    saveState();
+    await channel.setTyping?.(chatJid, true);
+    try {
+      await channel.sendMessage(chatJid, capResult.reply);
     } finally {
       await channel.setTyping?.(chatJid, false);
     }
