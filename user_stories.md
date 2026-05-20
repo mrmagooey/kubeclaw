@@ -754,4 +754,4 @@ status: implementation 5/5 (verified by agent in its worktree); main test has ch
 - LLM-dependence: **none**.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-head-attach --create-namespace`, `--set namespace=kubeclaw-e2e-head-attach`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
 
-status: drafted
+status: passing 4/4 (HEAD extension to GET /attachments/raw handler)
