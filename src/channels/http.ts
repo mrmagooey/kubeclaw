@@ -1157,7 +1157,11 @@ function parseConfig(): HttpConfig | null {
     process.env.HTTP_CHANNEL_RATE_LIMIT_PER_USER_MESSAGES_PER_MINUTE ||
     envVars.HTTP_CHANNEL_RATE_LIMIT_PER_USER_MESSAGES_PER_MINUTE ||
     '60';
-  const perUserMessagesPerMinute = Math.max(0, parseInt(rateLimitRaw, 10) || 60);
+  const parsedRateLimit = parseInt(rateLimitRaw, 10);
+  const perUserMessagesPerMinute = Math.max(
+    0,
+    Number.isNaN(parsedRateLimit) ? 60 : parsedRateLimit,
+  );
 
   return { port, users, perUserMessagesPerMinute };
 }
