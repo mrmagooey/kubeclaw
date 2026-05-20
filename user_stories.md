@@ -1012,3 +1012,73 @@ status: drafted
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-cbreload --create-namespace`, `--set namespace=kubeclaw-e2e-cbreload`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14124`.
 
 status: drafted
+
+## Story 41: Specialist failure sends a user-visible error reply
+
+**As a** KubeClaw user via the HTTP channel
+**I want** to receive a clear error message when an @specialist job fails (network error, LLM timeout, K8s pod crash) rather than my request disappearing silently
+**So that** I know to retry or contact the operator instead of staring at a frozen stream with no feedback
+
+### Acceptance criteria
+
+1. When a specialist run throws (simulated by patching the specialist's system prompt to an LLM address that refuses connections), the user's SSE stream receives a message containing `[@SpecialistName] Error: specialist run failed` (case-insensitive on "error") within 15 s — no silent timeout.
+2. The error reply is stored in `conversation_history` with `role='assistant'` and `is_bot_message=1`, confirming it is durable and survives `/history` retrieval.
+3. If partial output was already sent before the failure (simulated by a specialist that streams one token then errors), the partial output is retained and the error is NOT re-sent — the `outputSentToUser` branch is exercised.
+4. After the error reply, the group is not left in a wedged state: a subsequent normal `POST /message` from the same user is accepted and processed normally (no perpetual retry loop).
+5. Unit test: `processGroupMessages` in `src/channel-runner.ts` with a mock that throws on `runOne` → `channel.sendMessage` is called with a text matching `/error/i` + `specialistName`; returned value is `true` (not `false`).
+
+### Notes
+
+- The fix is in `src/channel-runner.ts` around the `if (hadError && !outputSentToUser)` branch: call `channel.sendMessage(chatJid, `[@${runs[i].specialistName}] Error: specialist run failed`)` before returning. If multiple specialists failed, send one message per failure.
+- Unit test file: `src/channel-runner.test.ts`. Integration test: inject a fake runner that rejects on `runOne`, assert `sendMessage` call. E2e test: deploy a specialist whose `endpoint` points to a DNS-unreachable host; send `@BrokenSpec hello`; assert SSE error text.
+- LLM-dependence: **none** for ACs 1, 4, 5.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-spec-fail --create-namespace`, `--set namespace=kubeclaw-e2e-spec-fail`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14125`.
+
+status: drafted
+
+## Story 42: GIF and WebP image attachments are accepted and round-trip correctly
+
+**As a** KubeClaw user via the HTTP channel
+**I want** to upload GIF and WebP images (not just JPEG and PNG) and have them stored and retrievable identically to JPEG/PNG
+**So that** screenshots from macOS (often WebP) and animated GIFs are accepted rather than silently rejected with HTTP 415
+
+### Acceptance criteria
+
+1. A `POST /message` with a multipart body whose `image` part contains minimal valid GIF bytes (`[0x47, 0x49, 0x46, 0x38, 0x39, 0x61, …]`) returns HTTP 200; subsequent `GET /attachments/raw/<filename>` returns 200 with `Content-Type: image/gif` and a body byte-for-byte identical to the upload.
+2. A `POST /message` with a minimal valid WebP payload (`[0x52, 0x49, 0x46, 0x46, …, 0x57, 0x45, 0x42, 0x50]`) returns HTTP 200; `GET /attachments/raw/<filename>` returns `Content-Type: image/webp`.
+3. Unit test: `detectMediaType(Buffer.from([0x47, 0x49, 0x46]))` returns `'image/gif'`; `detectMediaType(Buffer.from([0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00]))` returns `'image/webp'`.
+4. An animated GIF (multi-frame magic prefix still starts with `47 49 46`) is accepted and stored — confirming the magic-byte check is prefix-only and does not require a fully valid GIF structure.
+5. A file with first four bytes `[0x52, 0x49, 0x46, 0x46]` but whose 9th byte is NOT `0x57` (`W`) is still accepted (the current WebP detection only checks the RIFF prefix, 4 bytes) — or, if the implementation is tightened to require `WEBP` at offset 8, a non-WEBP RIFF file correctly returns 415.
+
+### Notes
+
+- `detectMediaType` already recognises both formats in `src/channels/http.ts`. This is **a pure test gap** — no implementation changes expected for ACs 1–4. AC5 clarifies the boundary and may or may not require a minor implementation tweak (the current 4-byte RIFF prefix can match non-WebP RIFF files like WAV).
+- Unit test: add cases to the existing `detectMediaType` describe block in `src/channels/http.test.ts`.
+- LLM-dependence: **none**.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-gif-webp --create-namespace`, `--set namespace=kubeclaw-e2e-gif-webp`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14126`.
+
+status: drafted
+
+## Story 43: Tool-job activeDeadline expiry sends a user-visible "timed out" reply
+
+**As a** KubeClaw user via the HTTP channel
+**I want** to receive a clear error message when my tool job exceeds its `activeDeadlineSeconds` and Kubernetes terminates it, rather than waiting indefinitely for a reply that will never arrive
+**So that** I know to retry my request and can report the issue to the operator rather than staring at a frozen chat
+
+### Acceptance criteria
+
+1. When a tool job's K8s Job transitions to `status.conditions[].type=Failed` with `reason=DeadlineExceeded`, the orchestrator emits a message to the originating channel group within 30 s containing the phrase "timed out" (case-insensitive) and the group folder in context.
+2. The orchestrator log contains an entry with fields `{ event: "tool_job_timeout", groupFolder, jobName }` at the time the error message is sent.
+3. The timeout reply is stored in the channel's `conversation_history` table with `role='assistant'` and `is_bot_message=1` — confirming it is durable and appears in `/history`.
+4. The group is not wedged after the timeout: a subsequent `POST /message` from the same user returns 200 and the orchestrator dispatches it normally (no perpetual retry, no locked queue slot).
+5. The `kubeclaw_tool_job_duration_seconds` histogram (Story 2) records a completed observation for the timed-out job — confirming the metrics instrument the failure path, not just successes.
+
+### Notes
+
+- The fix lives in `src/k8s/job-runner.ts` in the job watch loop. When a job watch event shows `conditions[].reason === 'DeadlineExceeded'`, publish to the originating channel group's Redis stream (`kubeclaw:messages:<groupFolder>`) so it flows through Story 37's `storeBotMessage` path and gets persisted with `is_from_me=1, is_bot_message=1`.
+- To trigger `DeadlineExceeded` in the e2e test, configure a specialist with `timeoutSeconds: 5` and a command that runs `sleep 60`. The K8s Job will be terminated after 5 s with `DeadlineExceeded`.
+- Unit test: mock the job-watcher callback with a synthetic `DeadlineExceeded` event and assert the message is sent via the Redis mock.
+- LLM-dependence: **none** for ACs 1–4 (the timeout path bypasses LLM). AC5 requires the metrics endpoint scrape from `:9091/metrics`.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-job-timeout --create-namespace`, `--set namespace=kubeclaw-e2e-job-timeout`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14127`.
+
+status: drafted
