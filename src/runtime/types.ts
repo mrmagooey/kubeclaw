@@ -23,6 +23,12 @@ export interface ContainerInput {
   isScheduledTask?: boolean;
   assistantName?: string;
   secrets?: Record<string, string>;
+  /**
+   * User-facing message ID from the POST /message response (Story 25).
+   * Propagated to tool job spawn requests so orphan reconciliation (Story 37)
+   * can reference it in the interruption notice (AC2).
+   */
+  originMessageId?: string | null;
 }
 
 export interface ContainerOutput {

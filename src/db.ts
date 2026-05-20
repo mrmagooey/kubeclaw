@@ -387,6 +387,7 @@ function createSchema(database: SqlJsDatabase): void {
   // status: 'active' | 'completed' | 'interrupted'
   // The chat_jid is stored so we can route the interruption notice back to the
   // correct channel SSE stream via the Redis pub/sub channel for the group.
+  // message_id: the user-facing message ID from the POST /message response (Story 25).
   database.run(`
     CREATE TABLE IF NOT EXISTS tool_jobs (
       job_id       TEXT PRIMARY KEY,
@@ -394,9 +395,16 @@ function createSchema(database: SqlJsDatabase): void {
       chat_jid     TEXT NOT NULL,
       status       TEXT NOT NULL DEFAULT 'active',
       created_at   TEXT NOT NULL,
-      resolved_at  TEXT
+      resolved_at  TEXT,
+      message_id   TEXT
     )
   `);
+  // Additive migration: add message_id to existing databases.
+  try {
+    database.run(`ALTER TABLE tool_jobs ADD COLUMN message_id TEXT`);
+  } catch {
+    /* column already exists */
+  }
   database.run(
     `CREATE INDEX IF NOT EXISTS idx_tool_jobs_status ON tool_jobs(status)`,
   );
@@ -1922,21 +1930,27 @@ export interface ToolJobRecord {
   status: 'active' | 'completed' | 'interrupted';
   created_at: string;
   resolved_at: string | null;
+  /** User-facing message ID from the POST /message response (Story 25). May be NULL for rows written before this column was added. */
+  message_id: string | null;
 }
 
 /**
  * Record a newly spawned tool job so it can be detected as an orphan if the
  * orchestrator restarts while the job is still running.
+ *
+ * @param messageId — the user-facing message ID returned by POST /message
+ *   (Story 25). Pass undefined/null for callers that do not have this value.
  */
 export function recordToolJob(
   jobId: string,
   groupFolder: string,
   chatJid: string,
+  messageId?: string | null,
 ): void {
   db.run(
-    `INSERT OR IGNORE INTO tool_jobs (job_id, group_folder, chat_jid, status, created_at)
-     VALUES (?, ?, ?, 'active', ?)`,
-    [jobId, groupFolder, chatJid, new Date().toISOString()],
+    `INSERT OR IGNORE INTO tool_jobs (job_id, group_folder, chat_jid, status, created_at, message_id)
+     VALUES (?, ?, ?, 'active', ?, ?)`,
+    [jobId, groupFolder, chatJid, new Date().toISOString(), messageId ?? null],
   );
   saveDatabase();
 }
@@ -1962,7 +1976,7 @@ export function resolveToolJob(
  */
 export function getActiveToolJobs(): ToolJobRecord[] {
   const result = db.exec(
-    `SELECT job_id, group_folder, chat_jid, status, created_at, resolved_at
+    `SELECT job_id, group_folder, chat_jid, status, created_at, resolved_at, message_id
      FROM tool_jobs WHERE status = 'active'`,
   );
   if (result.length === 0) return [];
@@ -1973,5 +1987,6 @@ export function getActiveToolJobs(): ToolJobRecord[] {
     status: row[3] as 'active',
     created_at: row[4] as string,
     resolved_at: row[5] as string | null,
+    message_id: row[6] as string | null,
   }));
 }

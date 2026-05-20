@@ -245,6 +245,9 @@ describe('Story 37: orchestrator restart with in-flight tool job', () => {
       // ── 4. AC2: Interruption notice arrives within 30 s of Ready ─────────
       const noticeText = await ssePromise; // times out at 90 s total
       expect(noticeText.toLowerCase()).toContain('tool job interrupted');
+      // AC2: notice must reference the user-facing messageId from POST /message
+      expect(messageId).toBeDefined();
+      expect(noticeText).toContain(messageId!);
 
       // ── 5. AC3: Orphaned pod is cleaned up ───────────────────────────────
       //

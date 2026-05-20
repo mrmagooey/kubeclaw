@@ -1215,6 +1215,7 @@ async function runAgent(
   chatJid: string,
   onOutput?: (output: ContainerOutput) => Promise<void>,
   overrides: RunAgentOverrides = {},
+  originMessageId?: string | null,
 ): Promise<'success' | 'error'> {
   const isMain = group.isMain === true;
   const sessionId = sessions[group.folder];
@@ -1265,6 +1266,7 @@ async function runAgent(
         chatJid,
         isMain,
         assistantName: ASSISTANT_NAME,
+        originMessageId: originMessageId ?? null,
       },
       undefined,
       wrappedOnOutput,
@@ -1678,6 +1680,9 @@ export async function processGroupMessages(chatJid: string): Promise<boolean> {
           }
         },
         run.overrides,
+        // Pass the originating message ID so tool jobs can be correlated back
+        // to the user's request if the orchestrator restarts (Story 37 AC2).
+        lastMsg?.id ?? null,
       );
       if (agentStatus === 'error') status = 'error';
     } catch (err) {
@@ -2049,6 +2054,20 @@ async function main(): Promise<void> {
         return;
       }
       await ch.sendMessage(jid, text);
+    },
+    // AC4 (Story 37): persist interruption notices in the channel DB so the
+    // messages table has a row with is_from_me=1, is_bot_message=1.
+    storeBotMessage: (jid: string, text: string, noticeId: string) => {
+      storeMessage({
+        id: noticeId,
+        chat_jid: jid,
+        sender: 'assistant',
+        sender_name: 'assistant',
+        content: text,
+        timestamp: new Date().toISOString(),
+        is_from_me: true,
+        is_bot_message: true,
+      });
     },
     registeredGroups: () => registeredGroups,
     registerGroup,

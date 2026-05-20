@@ -410,17 +410,32 @@ async function main(): Promise<void> {
   // visible interruption notice via Redis, delete the K8s Job, and mark the
   // DB row as `interrupted`. Bounded to 30 s so a hung K8s API does not
   // block the rest of the boot sequence.
-  void reconcileOrphanedJobsOnStartup({
+  // Failure 3 fix: await (not void) so IPC watcher starts AFTER reconciliation.
+  await reconcileOrphanedJobsOnStartup({
     k8s: {
       deleteJob: async (jobName: string) => {
         await jobRunner.stopJob(jobName);
       },
     },
     publisher: {
-      publish: async (groupFolder: string, chatJid: string, text: string) => {
+      // Failure 1 fix: include `persist: true` and `noticeId` in the Redis
+      // payload so the channel pod stores the notice in the messages table
+      // (AC4: is_from_me=1, is_bot_message=1).
+      publish: async (
+        groupFolder: string,
+        chatJid: string,
+        text: string,
+        noticeId: string,
+      ) => {
         await getRedisClient().publish(
           getOutputChannel(groupFolder),
-          JSON.stringify({ type: 'message', chatJid, text }),
+          JSON.stringify({
+            type: 'message',
+            chatJid,
+            text,
+            persist: true,
+            noticeId,
+          }),
         );
       },
     },

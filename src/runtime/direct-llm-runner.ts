@@ -523,29 +523,28 @@ async function executeToolJob(
   groupFolder: string,
   chatJid: string,
   task: string,
+  originMessageId?: string | null,
 ): Promise<string> {
   const redis = getRedisClient();
   const toolJobId = `agent-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
   const resultStream = getToolJobResultStream(toolJobId);
 
   if (KUBECLAW_MODE === 'channel') {
-    // Delegate to orchestrator via Redis stream
-    await redis.xadd(
-      getSpawnToolJobStream(),
-      '*',
-      'agentJobId',
-      toolJobId,
-      'groupFolder',
-      groupFolder,
-      'chatJid',
-      chatJid,
-      'prompt',
-      task,
-      'timeout',
-      String(TOOL_JOB_TIMEOUT_MS),
-      'channel',
-      KUBECLAW_CHANNEL,
-    );
+    // Delegate to orchestrator via Redis stream.
+    // Include the originMessageId so the orchestrator can store it in
+    // tool_jobs.message_id for accurate interruption notices (Story 37 AC2).
+    const spawnFields: string[] = [
+      'agentJobId', toolJobId,
+      'groupFolder', groupFolder,
+      'chatJid', chatJid,
+      'prompt', task,
+      'timeout', String(TOOL_JOB_TIMEOUT_MS),
+      'channel', KUBECLAW_CHANNEL,
+    ];
+    if (originMessageId) {
+      spawnFields.push('messageId', originMessageId);
+    }
+    await redis.xadd(getSpawnToolJobStream(), '*', ...spawnFields);
     logger.debug(
       { toolJobId },
       'DirectLLMRunner: requested tool job from orchestrator',
@@ -1245,6 +1244,7 @@ export class DirectLLMRunner implements MessageRunner {
                 input.groupFolder,
                 input.chatJid,
                 args.task as string,
+                input.originMessageId,
               );
             } else if (
               call.function.name === 'deploy_mcp_server' ||

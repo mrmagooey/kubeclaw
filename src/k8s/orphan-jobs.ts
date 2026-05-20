@@ -34,13 +34,23 @@ export interface OrphanJobK8sClient {
 /**
  * Minimal interface for publishing the interruption notice to the channel's
  * Redis output pub/sub channel (`kubeclaw:messages:<groupFolder>`).
+ * The `persist` flag tells the channel pod to also store the notice in its
+ * `messages` table with `is_from_me=1, is_bot_message=1` (AC4).
  */
 export interface OrphanJobPublisher {
   /**
-   * Publish a JSON-encoded `{ type: 'message', chatJid, text }` payload to
-   * the channel named `kubeclaw:messages:<groupFolder>`.
+   * Publish a JSON-encoded payload to the channel named
+   * `kubeclaw:messages:<groupFolder>`.
+   *
+   * @param noticeId — generated ID for the message row so the channel can
+   *   store it idempotently.
    */
-  publish(groupFolder: string, chatJid: string, text: string): Promise<void>;
+  publish(
+    groupFolder: string,
+    chatJid: string,
+    text: string,
+    noticeId: string,
+  ): Promise<void>;
 }
 
 export interface ReconcileOrphanedJobsDeps {
@@ -63,13 +73,20 @@ export interface ReconcileOrphanedJobsDeps {
 /**
  * Format the user-visible interruption notice for a single orphaned job.
  * The message must contain "tool job interrupted" (case-insensitive) and
- * reference the job ID so users can correlate it with the POST /message
- * response they received when they submitted the request (Story 25).
+ * reference the user-facing message ID (from the POST /message response,
+ * Story 25) so users can correlate it with their original request.
+ *
+ * Falls back to the K8s job ID if `messageId` is null (e.g. rows written
+ * before the message_id column was added).
  */
-export function formatInterruptionNotice(jobId: string): string {
+export function formatInterruptionNotice(
+  messageId: string | null,
+  jobId: string,
+): string {
+  const ref = messageId ?? jobId;
   return (
     `Tool job interrupted: the assistant service restarted while your request ` +
-    `(job ${jobId}) was still running. ` +
+    `(message ${ref}) was still running. ` +
     `Please re-send your message to try again.`
   );
 }
@@ -146,9 +163,12 @@ export async function reconcileOrphanedJobsOnStartup(
     }
 
     // Step 2: Publish interruption notice to the group's output channel.
-    const notice = formatInterruptionNotice(job_id);
+    // The noticeId is a stable ID for this specific notice so the channel pod
+    // can store the row idempotently (AC4: is_from_me=1, is_bot_message=1).
+    const noticeId = `orphan-notice-${job_id}`;
+    const notice = formatInterruptionNotice(orphan.message_id, job_id);
     try {
-      await publisher.publish(group_folder, chat_jid, notice);
+      await publisher.publish(group_folder, chat_jid, notice, noticeId);
       logger.info(
         { jobId: job_id, groupFolder: group_folder },
         'reconcileOrphanedJobsOnStartup: interruption notice published',

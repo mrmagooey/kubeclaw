@@ -56,6 +56,16 @@ import {
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
+  /**
+   * Optional callback invoked when a published message carries `persist: true`
+   * (e.g. orphan interruption notices from Story 37). The channel pod should
+   * store the notice in its `messages` table with `is_from_me=1, is_bot_message=1`.
+   *
+   * @param jid       — the chat JID the notice is addressed to
+   * @param text      — the notice text
+   * @param noticeId  — a stable, deterministic ID for idempotent storage
+   */
+  storeBotMessage?: (jid: string, text: string, noticeId: string) => void;
   registeredGroups: () => Record<string, RegisteredGroup>;
   registerGroup: (jid: string, group: RegisteredGroup) => void;
   syncGroups: (force: boolean) => Promise<void>;
@@ -127,6 +137,16 @@ interface AgentOutputMessage {
   chatJid?: string;
   text?: string;
   payload?: TaskRequest;
+  /**
+   * When `true`, the channel pod should also persist this message in its
+   * `messages` table with `is_from_me=1, is_bot_message=1` (Story 37 AC4).
+   */
+  persist?: boolean;
+  /**
+   * Stable, deterministic ID for the message row.  Required when `persist`
+   * is `true` so the channel can store the row idempotently.
+   */
+  noticeId?: string;
 }
 
 /**
@@ -157,6 +177,19 @@ export function startIpcWatcher(deps: IpcDeps): void {
         // Authorization: verify this group can send to this chatJid
         const targetGroup = registeredGroups[data.chatJid];
         if (isMain || (targetGroup && targetGroup.folder === sourceGroup)) {
+          // AC4 (Story 37): persist interruption notices in the messages table
+          // with is_from_me=1, is_bot_message=1 BEFORE delivering to SSE so
+          // the DB row is always present even if the SSE delivery fails.
+          if (data.persist && data.noticeId && deps.storeBotMessage) {
+            try {
+              deps.storeBotMessage(data.chatJid, data.text, data.noticeId);
+            } catch (err) {
+              logger.warn(
+                { chatJid: data.chatJid, noticeId: data.noticeId, err },
+                'Redis IPC: failed to persist bot message; delivering to SSE anyway',
+              );
+            }
+          }
           await deps.sendMessage(data.chatJid, data.text);
           logger.info(
             { chatJid: data.chatJid, sourceGroup },
@@ -952,6 +985,7 @@ export async function startToolJobSpawnWatcher(): Promise<void> {
             prompt,
             channel,
             specialist,
+            messageId,
           } = obj;
           if (!agentJobId || !groupFolder || !chatJid || !prompt) continue;
 
@@ -998,8 +1032,11 @@ export async function startToolJobSpawnWatcher(): Promise<void> {
               // resultStream — to never fire.
               (jobName: string) => {
                 // Record the job so orphan reconciliation can detect it on restart.
+                // messageId is the user-facing ID from the POST /message
+                // response (Story 25) — passed through the IPC envelope so the
+                // interruption notice (AC2) can reference it.
                 try {
-                  recordToolJob(jobName, groupFolder, chatJid);
+                  recordToolJob(jobName, groupFolder, chatJid, messageId ?? null);
                 } catch (err) {
                   logger.warn(
                     { jobName, groupFolder, err },

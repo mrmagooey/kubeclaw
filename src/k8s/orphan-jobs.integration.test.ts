@@ -39,18 +39,19 @@ function makeK8sFake(): OrphanJobK8sClient & { deleted: string[] } {
 }
 
 function makePublisherFake(): OrphanJobPublisher & {
-  published: Array<{ groupFolder: string; chatJid: string; text: string }>;
+  published: Array<{ groupFolder: string; chatJid: string; text: string; noticeId: string }>;
 } {
   const published: Array<{
     groupFolder: string;
     chatJid: string;
     text: string;
+    noticeId: string;
   }> = [];
   return {
     published,
     publish: vi.fn(
-      async (groupFolder: string, chatJid: string, text: string) => {
-        published.push({ groupFolder, chatJid, text });
+      async (groupFolder: string, chatJid: string, text: string, noticeId: string) => {
+        published.push({ groupFolder, chatJid, text, noticeId });
       },
     ),
   };
@@ -83,7 +84,31 @@ describe('orphan-jobs integration', () => {
     expect(publisher.published[0].text.toLowerCase()).toContain(
       'tool job interrupted',
     );
+    // No messageId set — falls back to job ID
     expect(publisher.published[0].text).toContain(jobId);
+    // noticeId is provided for channel-side persistence (AC4)
+    expect(publisher.published[0].noticeId).toBeTruthy();
+  });
+
+  it('AC2: notice references user-facing messageId when recordToolJob includes it', async () => {
+    const jobId = 'nc-testgroup-int-ac2';
+    const groupFolder = 'testgroup';
+    const chatJid = 'http:ac2user';
+    const messageId = 'msg-ac2-12345';
+
+    // Seed with a messageId (as the channel sends when spawning the job)
+    recordToolJob(jobId, groupFolder, chatJid, messageId);
+
+    const k8s = makeK8sFake();
+    const publisher = makePublisherFake();
+
+    await reconcileOrphanedJobsOnStartup({ k8s, publisher });
+
+    expect(publisher.published).toHaveLength(1);
+    // AC2: notice must reference the user-facing messageId
+    expect(publisher.published[0].text).toContain(messageId);
+    // K8s job ID should not be in the notice
+    expect(publisher.published[0].text).not.toContain(jobId);
   });
 
   it('marks the DB row as interrupted after reconciliation', async () => {

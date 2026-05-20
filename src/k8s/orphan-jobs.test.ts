@@ -24,6 +24,7 @@ function makeRecord(overrides: Partial<ToolJobRecord> = {}): ToolJobRecord {
     status: 'active',
     created_at: new Date().toISOString(),
     resolved_at: null,
+    message_id: null,
     ...overrides,
   };
 }
@@ -39,15 +40,15 @@ function makeK8sFake(): OrphanJobK8sClient & { calls: string[] } {
 }
 
 function makePublisherFake(): OrphanJobPublisher & {
-  calls: Array<{ groupFolder: string; chatJid: string; text: string }>;
+  calls: Array<{ groupFolder: string; chatJid: string; text: string; noticeId: string }>;
 } {
-  const calls: Array<{ groupFolder: string; chatJid: string; text: string }> =
+  const calls: Array<{ groupFolder: string; chatJid: string; text: string; noticeId: string }> =
     [];
   return {
     calls,
     publish: vi.fn(
-      async (groupFolder: string, chatJid: string, text: string) => {
-        calls.push({ groupFolder, chatJid, text });
+      async (groupFolder: string, chatJid: string, text: string, noticeId: string) => {
+        calls.push({ groupFolder, chatJid, text, noticeId });
       },
     ),
   };
@@ -57,13 +58,29 @@ function makePublisherFake(): OrphanJobPublisher & {
 
 describe('formatInterruptionNotice', () => {
   it('contains "tool job interrupted" (case-insensitive)', () => {
-    const notice = formatInterruptionNotice('nc-mygroup-abc123');
+    const notice = formatInterruptionNotice(null, 'nc-mygroup-abc123');
     expect(notice.toLowerCase()).toContain('tool job interrupted');
   });
 
-  it('references the job ID', () => {
+  it('references the messageId when provided (AC2)', () => {
+    const messageId = 'msg-12345';
     const jobId = 'nc-mygroup-abc123';
-    const notice = formatInterruptionNotice(jobId);
+    const notice = formatInterruptionNotice(messageId, jobId);
+    expect(notice).toContain(messageId);
+    // Should NOT reference the K8s job ID when messageId is available
+    expect(notice).not.toContain(jobId);
+  });
+
+  it('falls back to the K8s job ID when messageId is null', () => {
+    const jobId = 'nc-mygroup-abc123';
+    const notice = formatInterruptionNotice(null, jobId);
+    expect(notice).toContain(jobId);
+  });
+
+  it('falls back to the K8s job ID when messageId is empty', () => {
+    const jobId = 'nc-mygroup-abc123';
+    // null treated as fallback
+    const notice = formatInterruptionNotice(null, jobId);
     expect(notice).toContain(jobId);
   });
 });
@@ -106,8 +123,12 @@ describe('reconcileOrphanedJobsOnStartup', () => {
     expect(publisher.calls[0].groupFolder).toBe('group1');
     expect(publisher.calls[0].chatJid).toBe('http:alice');
     expect(publisher.calls[0].text.toLowerCase()).toContain('tool job interrupted');
+    // noticeId must be provided for channel-side persistence (AC4)
+    expect(publisher.calls[0].noticeId).toBeDefined();
+    expect(publisher.calls[0].noticeId).toBeTruthy();
     expect(publisher.calls[1].groupFolder).toBe('group2');
     expect(publisher.calls[1].chatJid).toBe('http:bob');
+    expect(publisher.calls[1].noticeId).toBeDefined();
   });
 
   it('calls deleteJob for each orphaned job', async () => {
@@ -241,16 +262,31 @@ describe('reconcileOrphanedJobsOnStartup', () => {
     expect(publisher.calls).toHaveLength(1);
   });
 
-  it('publishes notice text containing the job ID', async () => {
+  it('publishes notice text containing the job ID when no messageId is set (fallback)', async () => {
     const jobId = 'nc-special-job-999';
     await reconcileOrphanedJobsOnStartup({
       k8s,
       publisher,
-      getActiveJobs: () => [makeRecord({ job_id: jobId })],
+      getActiveJobs: () => [makeRecord({ job_id: jobId, message_id: null })],
       markInterrupted: (id) => markedInterrupted.push(id),
     });
 
     expect(publisher.calls[0].text).toContain(jobId);
+  });
+
+  it('publishes notice text containing the user-facing messageId when available (AC2)', async () => {
+    const jobId = 'nc-special-job-999';
+    const messageId = 'msg-user-1234567890';
+    await reconcileOrphanedJobsOnStartup({
+      k8s,
+      publisher,
+      getActiveJobs: () => [makeRecord({ job_id: jobId, message_id: messageId })],
+      markInterrupted: (id) => markedInterrupted.push(id),
+    });
+
+    expect(publisher.calls[0].text).toContain(messageId);
+    // The K8s job ID should NOT appear in the notice when messageId is present
+    expect(publisher.calls[0].text).not.toContain(jobId);
   });
 
   it('is idempotent — second call with empty active list is a no-op', async () => {

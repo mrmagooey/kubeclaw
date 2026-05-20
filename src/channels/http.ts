@@ -703,6 +703,9 @@ export class HttpChannel implements Channel {
             res.end('Missing text');
             return;
           }
+          // Return the message ID so clients can correlate tool-job
+          // interruption notices back to this request (Story 25 establishes
+          // the field; Story 37 propagates it to orphan-job notices).
           const msgId = this.handleInbound(username, text.trim());
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ id: msgId }));
@@ -964,6 +967,12 @@ export class HttpChannel implements Channel {
     res.end('Not found');
   }
 
+  /**
+   * Store an inbound user message and return its generated message ID.
+   * The ID is returned to callers so it can be included in the HTTP response
+   * body (Story 25) and propagated to any tool jobs spawned while processing
+   * this message (Story 37 AC2 — orphan-job interruption notices reference it).
+   */
   private handleInbound(username: string, text: string): string {
     const jid = `http:${username}`;
     const timestamp = new Date().toISOString();

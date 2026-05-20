@@ -1253,6 +1253,118 @@ describe('startIpcWatcher', () => {
     subscriberOnRef.messageHandler!('kubeclaw:messages:g', 'not-json{{{');
     await Promise.resolve(); // should not throw
   });
+
+  // ── Story 37 AC4: persist interruption notices ────────────────────────────
+
+  it('AC4: calls storeBotMessage when message has persist:true and noticeId', async () => {
+    const mockStoreBotMessage = vi.fn();
+    const deps = {
+      ...createMockDeps(),
+      storeBotMessage: mockStoreBotMessage,
+    };
+    mockRegisteredGroups.mockReturnValue({
+      'http:alice': {
+        name: 'Alice',
+        folder: 'alice',
+        isMain: true,
+        trigger: '',
+        added_at: '',
+      },
+    });
+    startIpcWatcher(deps);
+
+    subscriberOnRef.messageHandler!(
+      'kubeclaw:messages:alice',
+      JSON.stringify({
+        type: 'message',
+        chatJid: 'http:alice',
+        text: 'Tool job interrupted: ...',
+        persist: true,
+        noticeId: 'orphan-notice-job123',
+      }),
+    );
+    await Promise.resolve();
+
+    // storeBotMessage must be called BEFORE sendMessage (AC4)
+    expect(mockStoreBotMessage).toHaveBeenCalledWith(
+      'http:alice',
+      'Tool job interrupted: ...',
+      'orphan-notice-job123',
+    );
+    expect(mockSendMessage).toHaveBeenCalledWith(
+      'http:alice',
+      'Tool job interrupted: ...',
+    );
+  });
+
+  it('AC4: does NOT call storeBotMessage for regular messages (persist not set)', async () => {
+    const mockStoreBotMessage = vi.fn();
+    const deps = {
+      ...createMockDeps(),
+      storeBotMessage: mockStoreBotMessage,
+    };
+    mockRegisteredGroups.mockReturnValue({
+      'http:alice': {
+        name: 'Alice',
+        folder: 'alice',
+        isMain: true,
+        trigger: '',
+        added_at: '',
+      },
+    });
+    startIpcWatcher(deps);
+
+    subscriberOnRef.messageHandler!(
+      'kubeclaw:messages:alice',
+      JSON.stringify({
+        type: 'message',
+        chatJid: 'http:alice',
+        text: 'Regular bot response',
+      }),
+    );
+    await Promise.resolve();
+
+    expect(mockStoreBotMessage).not.toHaveBeenCalled();
+    expect(mockSendMessage).toHaveBeenCalled();
+  });
+
+  it('AC4: delivers to SSE even when storeBotMessage throws', async () => {
+    const mockStoreBotMessage = vi.fn().mockImplementation(() => {
+      throw new Error('DB write failed');
+    });
+    const deps = {
+      ...createMockDeps(),
+      storeBotMessage: mockStoreBotMessage,
+    };
+    mockRegisteredGroups.mockReturnValue({
+      'http:alice': {
+        name: 'Alice',
+        folder: 'alice',
+        isMain: true,
+        trigger: '',
+        added_at: '',
+      },
+    });
+    startIpcWatcher(deps);
+
+    subscriberOnRef.messageHandler!(
+      'kubeclaw:messages:alice',
+      JSON.stringify({
+        type: 'message',
+        chatJid: 'http:alice',
+        text: 'Tool job interrupted: ...',
+        persist: true,
+        noticeId: 'orphan-notice-job-fail',
+      }),
+    );
+    await Promise.resolve();
+
+    // sendMessage must still be called even though storeBotMessage threw
+    expect(mockSendMessage).toHaveBeenCalledWith(
+      'http:alice',
+      'Tool job interrupted: ...',
+    );
+  });
 });
 
 describe('sendMessageToAgent', () => {
