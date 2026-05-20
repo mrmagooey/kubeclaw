@@ -197,6 +197,10 @@ export async function removeCapabilityInstance(
   const selector = `kubeclaw.io/capability=${capabilityType},kubeclaw.io/group-hash=${hash}`;
 
   try {
+    // K8s delete first, then DB row: if the K8s delete throws, the DB row
+    // remains so a retried `/capabilities remove` can find it and try again.
+    // The inverse ordering would orphan untracked K8s objects on partial
+    // failure with no DB row to reach them from.
     await deps.client.deleteByLabel(deps.namespace, selector);
     deleteInstance(groupFolder, capabilityType);
 

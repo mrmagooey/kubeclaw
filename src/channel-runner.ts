@@ -1068,7 +1068,9 @@ export function createCapabilityIpcFn(): CapabilityIpcFn {
     }
     await redis.xadd(getTaskRequestStream(), '*', ...allFields);
 
-    // Wait up to 10s for orchestrator response (reconcile can take a moment)
+    // 10s timeout (vs the 5s used by createSecretIpcFn) — capability.add
+    // triggers a K8s reconcile (Deployment + Service + NetworkPolicy apply)
+    // which is meaningfully slower than the SQLite write that backs secret.*.
     const deadline = Date.now() + 10_000;
     let lastId = '0-0';
     while (Date.now() < deadline) {

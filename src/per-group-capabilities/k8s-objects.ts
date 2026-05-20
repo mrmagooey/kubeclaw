@@ -129,6 +129,12 @@ export function renderDeployment(
                   cpu: spec.resources?.cpuLimit ?? '500m',
                 },
               },
+              securityContext: {
+                runAsNonRoot: true,
+                runAsUser: 1000,
+                runAsGroup: 1000,
+                allowPrivilegeEscalation: false,
+              },
             },
           ],
           volumes,

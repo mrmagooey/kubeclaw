@@ -105,6 +105,32 @@ describe('provisionCapability — AC1: creates Deployment, Service, NetworkPolic
     expect(result.ok).toBe(false);
     expect(client.store.deployments.size).toBe(0);
   });
+
+  it('returns ok:false and leaves no DB row when K8s applyDeployment throws', async () => {
+    class FailingClient extends FakePerGroupK8sClient {
+      async applyDeployment(): Promise<void> {
+        throw new Error('K8s API server unavailable');
+      }
+    }
+    const client = new FailingClient();
+    const deps = makeDeps(client);
+
+    const result = await provisionCapability('http-http-alice', 'echo', deps);
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toMatch(/K8s API server unavailable/);
+    // No DB row should have been created — the DB write only happens after
+    // all three K8s applies succeed.
+    expect(getInstance('http-http-alice', 'echo')).toBeFalsy();
+    // No Deployment, because applyDeployment is the call that threw.
+    expect(client.store.deployments.size).toBe(0);
+    // NetworkPolicy and Service ARE present — they apply before the
+    // Deployment and are not currently rolled back on partial K8s failure.
+    // This documents the as-is behaviour; transactional rollback would be a
+    // follow-up story.
+    expect(client.store.policies.size).toBe(1);
+    expect(client.store.services.size).toBe(1);
+  });
 });
 
 // ── AC3: idempotency — second add returns alreadyProvisioned ───────────────
