@@ -955,6 +955,29 @@ export async function startToolJobSpawnWatcher(): Promise<void> {
   const stream = getSpawnToolJobStream();
   let lastId = await resolveStreamTip(redis, stream);
 
+  // Story 43: wire the timeout publisher on the jobRunner singleton so
+  // DeadlineExceeded events can emit a user-visible "timed out" notice via
+  // the group's Redis pub/sub output channel.
+  jobRunner.timeoutPublisher = {
+    async publish(
+      groupFolder: string,
+      chatJid: string,
+      text: string,
+      noticeId: string,
+    ): Promise<void> {
+      await getRedisClient().publish(
+        getOutputChannel(groupFolder),
+        JSON.stringify({
+          type: 'message',
+          chatJid,
+          text,
+          persist: true,
+          noticeId,
+        }),
+      );
+    },
+  };
+
   logger.info('Tool job spawn watcher started');
 
   while (ipcWatcherRunning) {
@@ -1067,7 +1090,9 @@ export async function startToolJobSpawnWatcher(): Promise<void> {
             )
             .then(async (output) => {
               // Mark the job as completed so it is not treated as an orphan.
-              if (output.jobId) {
+              // Story 43: skip for 'timeout' — job-runner already called
+              // resolveToolJob(jobId, 'timeout') in the DeadlineExceeded catch block.
+              if (output.jobId && output.status !== 'timeout') {
                 try {
                   resolveToolJob(output.jobId, 'completed');
                 } catch (err) {

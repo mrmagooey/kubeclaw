@@ -384,7 +384,7 @@ function createSchema(database: SqlJsDatabase): void {
 
   // Tool job tracking table — used by orphan reconciliation on orchestrator restart.
   // Each row represents a K8s tool job that was spawned.
-  // status: 'active' | 'completed' | 'interrupted'
+  // status: 'active' | 'completed' | 'interrupted' | 'timeout'
   // The chat_jid is stored so we can route the interruption notice back to the
   // correct channel SSE stream via the Redis pub/sub channel for the group.
   // message_id: the user-facing message ID from the POST /message response (Story 25).
@@ -1927,7 +1927,7 @@ export interface ToolJobRecord {
   job_id: string;
   group_folder: string;
   chat_jid: string;
-  status: 'active' | 'completed' | 'interrupted';
+  status: 'active' | 'completed' | 'interrupted' | 'timeout';
   created_at: string;
   resolved_at: string | null;
   /** User-facing message ID from the POST /message response (Story 25). May be NULL for rows written before this column was added. */
@@ -1961,7 +1961,7 @@ export function recordToolJob(
  */
 export function resolveToolJob(
   jobId: string,
-  status: 'completed' | 'interrupted',
+  status: 'completed' | 'interrupted' | 'timeout',
 ): void {
   db.run(
     `UPDATE tool_jobs SET status = ?, resolved_at = ? WHERE job_id = ? AND status = 'active'`,

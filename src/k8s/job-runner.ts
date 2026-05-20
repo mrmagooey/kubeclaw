@@ -63,6 +63,53 @@ import {
   closeRedisConnections,
 } from './redis-client.js';
 import type { OrchestratorMetrics } from '../metrics/orchestrator.js';
+import { resolveToolJob } from '../db.js';
+
+/**
+ * Sentinel error thrown by `waitForJobCompletion` when the K8s Job transitions
+ * to `status.conditions[].type=Failed` with `reason=DeadlineExceeded`.
+ * Distinct from generic failures so callers can handle it specifically.
+ */
+export class DeadlineExceededError extends Error {
+  constructor(jobName: string) {
+    super(`DeadlineExceeded: Job ${jobName} exceeded its activeDeadlineSeconds`);
+    this.name = 'DeadlineExceededError';
+  }
+}
+
+/**
+ * Publisher interface for the tool-job timeout notice — mirrors
+ * `OrphanJobPublisher` from orphan-jobs.ts so the same Redis-backed
+ * implementation can be reused.
+ */
+export interface ToolJobTimeoutPublisher {
+  /**
+   * Publish a JSON-encoded `{ type: 'message', chatJid, text, persist, noticeId }`
+   * payload to `kubeclaw:messages:<groupFolder>`.
+   */
+  publish(
+    groupFolder: string,
+    chatJid: string,
+    text: string,
+    noticeId: string,
+  ): Promise<void>;
+}
+
+/**
+ * Format the user-visible timeout notice for a DeadlineExceeded job.
+ * The message must contain "timed out" (case-insensitive) and reference
+ * the group folder so operators can correlate log entries.
+ */
+export function formatTimeoutNotice(
+  groupFolder: string,
+  jobName: string,
+): string {
+  return (
+    `Your request timed out: the tool job for group "${groupFolder}" ` +
+    `(job ${jobName}) exceeded its time limit and was terminated by Kubernetes. ` +
+    `Please re-send your message to try again.`
+  );
+}
 
 /**
  * Build Redis URL with embedded ACL credentials if provided and URL doesn't
@@ -240,6 +287,8 @@ export class JobRunner {
   private catalog?: CatalogInformer;
   private secretManager?: SecretManager;
   metrics?: OrchestratorMetrics;
+  /** Optional publisher for DeadlineExceeded timeout notices. Set from ipc-redis.ts after construction. */
+  timeoutPublisher?: ToolJobTimeoutPublisher;
 
   constructor(opts: JobRunnerOpts = {}) {
     const kc = new KubeConfig();
@@ -430,6 +479,60 @@ export class JobRunner {
         jobId,
       };
     } catch (error) {
+      const duration = Date.now() - startTime;
+      const image = getContainerImage(group.llmProvider ?? 'openai');
+
+      // Story 43: DeadlineExceeded — K8s terminated the job because it exceeded
+      // activeDeadlineSeconds.  Publish a user-visible "timed out" notice, mark
+      // the DB row as 'timeout', and record the failure metric.
+      if (error instanceof DeadlineExceededError) {
+        const jobName = error.message.match(/Job (.+) exceeded/)?.[1] ?? jobId;
+        logger.error(
+          { event: 'tool_job_timeout', groupFolder: group.folder, jobName },
+          'Tool job timed out (DeadlineExceeded)',
+        );
+
+        // Mark DB row as timed-out (best-effort).
+        try {
+          resolveToolJob(jobId, 'timeout');
+        } catch (dbErr) {
+          logger.warn(
+            { jobId, dbErr },
+            'tool_job_timeout: failed to mark job as timeout in DB',
+          );
+        }
+
+        // Publish timeout notice to the channel's pub/sub channel (best-effort).
+        if (this.timeoutPublisher) {
+          const noticeId = `timeout-notice-${jobId}`;
+          const notice = formatTimeoutNotice(group.folder, jobId);
+          try {
+            await this.timeoutPublisher.publish(
+              group.folder,
+              input.chatJid,
+              notice,
+              noticeId,
+            );
+          } catch (pubErr) {
+            logger.warn(
+              { jobId, groupFolder: group.folder, pubErr },
+              'tool_job_timeout: failed to publish timeout notice',
+            );
+          }
+        }
+
+        // Record metrics for the timeout path.
+        this.metrics?.recordToolJobFailure({ image, reason: 'deadline_exceeded' });
+        this.metrics?.recordToolJobDuration({ image, success: false, durationMs: duration });
+
+        return {
+          status: 'timeout',
+          result: null,
+          error: error.message,
+          jobId,
+        };
+      }
+
       const errorMessage =
         error instanceof Error ? error.message : String(error);
       logger.error(
@@ -437,13 +540,13 @@ export class JobRunner {
         'Kubernetes job failed',
       );
       this.metrics?.recordToolJobFailure({
-        image: getContainerImage(group.llmProvider ?? 'openai'),
+        image,
         reason: 'error',
       });
       this.metrics?.recordToolJobDuration({
-        image: getContainerImage(group.llmProvider ?? 'openai'),
+        image,
         success: false,
-        durationMs: Date.now() - startTime,
+        durationMs: duration,
       });
 
       return {
@@ -1120,21 +1223,32 @@ export class JobRunner {
 
         // Check for failure
         if (status?.failed && status.failed > 0) {
-          const reason =
-            status.conditions?.find(
-              (c: { type: string; reason?: string }) => c.type === 'Failed',
-            )?.reason || 'Unknown';
+          const failedCondition = status.conditions?.find(
+            (c: { type: string; reason?: string }) => c.type === 'Failed',
+          );
+          const reason = failedCondition?.reason || 'Unknown';
           const message =
             status.conditions?.find(
               (c: { type: string; message?: string }) => c.type === 'Failed',
             )?.message || 'Job failed';
+
+          // Story 43: DeadlineExceeded gets a distinct error so callers can
+          // publish a user-visible timeout notice rather than a generic error.
+          if (reason === 'DeadlineExceeded') {
+            throw new DeadlineExceededError(jobName);
+          }
+
           throw new Error(`${reason}: ${message}`);
         }
 
-        // Check for active deadline exceeded
+        // Check for active deadline exceeded via conditions (belt-and-suspenders:
+        // some K8s versions set conditions without incrementing failed count).
         const conditions = status?.conditions || [];
         for (const condition of conditions) {
           if (condition.type === 'Failed' && condition.status === 'True') {
+            if (condition.reason === 'DeadlineExceeded') {
+              throw new DeadlineExceededError(jobName);
+            }
             throw new Error(
               `Job failed: ${condition.reason} - ${condition.message}`,
             );
