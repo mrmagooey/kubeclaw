@@ -91,6 +91,26 @@ vi.mock('./capabilities/registry.js', () => ({
   removeCapability: vi.fn().mockResolvedValue(undefined),
 }));
 
+// Prevent the module-level `new JobRunner()` singleton from crashing the test
+// suite in environments without a Kubernetes cluster (the real constructor calls
+// KubeConfig.makeApiClient which throws "No active cluster!").
+vi.mock('./k8s/job-runner.js', () => {
+  const noop = vi.fn().mockResolvedValue(undefined);
+  const fakeRunner = {
+    createToolPodJob: noop,
+    createSidecarToolPodJob: noop,
+    deleteJob: noop,
+    getJobStatus: vi.fn().mockResolvedValue('running'),
+    listJobs: vi.fn().mockResolvedValue([]),
+    getPodLogs: vi.fn().mockResolvedValue(''),
+  };
+  return {
+    JobRunner: vi.fn().mockImplementation(() => fakeRunner),
+    jobRunner: fakeRunner,
+    buildJobName: vi.fn().mockReturnValue('fake-job-name'),
+  };
+});
+
 vi.mock('./router.js', async (importOriginal) => {
   const actual = await importOriginal();
   return {
@@ -1235,6 +1255,126 @@ describe('processGroupMessages dispatch', () => {
     expect(recordSpecialistUsageCalls).toHaveLength(1);
     expect(recordSpecialistUsageCalls[0].specialistName).toBe('A');
     expect(recordSpecialistUsageCalls[0].status).toBe('error');
+  });
+
+  // ── Story 41: specialist failure sends user-visible error reply ───────────────
+
+  it('sends error message to user when specialist throws and no output was sent (AC1+AC5)', async () => {
+    _setSpecialistCatalogForTesting(makeCatalog([{ name: 'Coder', prompt: 'p' }]));
+    mockGetMessagesSince.mockReturnValue([makeMessage('@Coder please help')]);
+
+    fakeRunner.runAgent = vi.fn().mockRejectedValue(new Error('connection refused'));
+
+    const result = await processGroupMessages(chatJid);
+
+    // AC5: must return true (not false) so the group is not wedged
+    expect(result).toBe(true);
+    // AC1: sendMessage must have been called with text matching /error/i + specialist name
+    expect(mockChannel.sendMessage).toHaveBeenCalledOnce();
+    const [, sentText] = mockChannel.sendMessage.mock.calls[0] as [string, string];
+    expect(sentText).toMatch(/error/i);
+    expect(sentText).toContain('Coder');
+  });
+
+  it('error message text matches [@SpecialistName] Error: specialist run failed format', async () => {
+    _setSpecialistCatalogForTesting(makeCatalog([{ name: 'Researcher', prompt: 'p' }]));
+    mockGetMessagesSince.mockReturnValue([makeMessage('@Researcher look this up')]);
+
+    fakeRunner.runAgent = vi.fn().mockRejectedValue(new Error('timeout'));
+
+    await processGroupMessages(chatJid);
+
+    const [, sentText] = mockChannel.sendMessage.mock.calls[0] as [string, string];
+    expect(sentText).toBe('[@Researcher] Error: specialist run failed');
+  });
+
+  it('sends one error message per failed specialist when multiple specialists fail (AC1)', async () => {
+    _setSpecialistCatalogForTesting(makeCatalog([
+      { name: 'A', prompt: 'pa' },
+      { name: 'B', prompt: 'pb' },
+    ]));
+    mockGetMessagesSince.mockReturnValue([makeMessage('@A @B help')]);
+
+    fakeRunner.runAgent = vi.fn().mockRejectedValue(new Error('network down'));
+
+    await processGroupMessages(chatJid);
+
+    expect(mockChannel.sendMessage).toHaveBeenCalledTimes(2);
+    const texts = mockChannel.sendMessage.mock.calls.map((c: [string, string]) => c[1]);
+    expect(texts).toContain('[@A] Error: specialist run failed');
+    expect(texts).toContain('[@B] Error: specialist run failed');
+  });
+
+  it('stores error reply in db with is_bot_message=true (AC2)', async () => {
+    _setSpecialistCatalogForTesting(makeCatalog([{ name: 'Planner', prompt: 'p' }]));
+    mockGetMessagesSince.mockReturnValue([makeMessage('@Planner make a plan')]);
+
+    fakeRunner.runAgent = vi.fn().mockRejectedValue(new Error('pod crash'));
+
+    await processGroupMessages(chatJid);
+
+    const storeMessageMock = (db as any).storeMessage as ReturnType<typeof vi.fn>;
+    expect(storeMessageMock).toHaveBeenCalled();
+    const stored = storeMessageMock.mock.calls.find((c: any[]) =>
+      typeof c[0]?.content === 'string' && c[0].content.includes('Planner'),
+    );
+    expect(stored).toBeDefined();
+    expect(stored![0].is_bot_message).toBe(true);
+    expect(stored![0].content).toMatch(/error/i);
+  });
+
+  it('does NOT send error message when partial output was already sent to user (AC3)', async () => {
+    _setSpecialistCatalogForTesting(makeCatalog([{ name: 'Writer', prompt: 'p' }]));
+    mockGetMessagesSince.mockReturnValue([makeMessage('@Writer write something')]);
+
+    fakeRunner.runAgent = vi.fn().mockImplementation(async (
+      _g: any, _input: any, _spec: any, onOutput: any,
+    ) => {
+      // Emit a partial result first, then throw
+      if (onOutput) await onOutput({ status: 'success', result: 'partial output here' });
+      throw new Error('then failed');
+    });
+
+    const result = await processGroupMessages(chatJid);
+
+    // AC3: outputSentToUser branch — return true, do NOT send additional error
+    expect(result).toBe(true);
+    // Only the partial output message was sent, not an extra error message
+    expect(mockChannel.sendMessage).toHaveBeenCalledOnce();
+    const [, sentText] = mockChannel.sendMessage.mock.calls[0] as [string, string];
+    expect(sentText).toContain('partial output here');
+    expect(sentText).not.toMatch(/error/i);
+  });
+
+  it('after error reply the group is not wedged — next processGroupMessages call succeeds (AC4)', async () => {
+    _setSpecialistCatalogForTesting(makeCatalog([{ name: 'Helper', prompt: 'p' }]));
+    mockGetMessagesSince.mockReturnValue([makeMessage('@Helper fail')]);
+
+    fakeRunner.runAgent = vi.fn().mockRejectedValue(new Error('first fail'));
+
+    // First call — should fail with error reply but return true
+    const firstResult = await processGroupMessages(chatJid);
+    expect(firstResult).toBe(true);
+
+    // Reset for a clean second call
+    mockChannel.sendMessage.mockClear();
+    mockGetMessagesSince.mockReturnValue([makeMessage('@Helper now succeed')]);
+    fakeRunner.runAgent = vi.fn().mockImplementation(async (_g: any, _input: any, _spec: any, onOutput: any) => {
+      if (onOutput) await onOutput({ status: 'success', result: 'all good' });
+      return { status: 'success', result: null };
+    });
+
+    // Second call — should process normally
+    const secondResult = await processGroupMessages(chatJid);
+    expect(secondResult).toBe(true);
+    const texts = mockChannel.sendMessage.mock.calls.map((c: [string, string]) => c[1]);
+    expect(texts.some((t) => t.includes('all good'))).toBe(true);
+
+    // Restore fakeRunner.runAgent to a safe non-emitting default so subsequent
+    // describe blocks (which share the mockGetDirectLLMRunner reference) are not
+    // contaminated by this test's emitting implementation.
+    fakeRunner.runAgent = vi.fn().mockResolvedValue({ status: 'success', result: null });
+    mockGetMessagesSince.mockReturnValue([]);
   });
 });
 

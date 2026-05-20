@@ -1712,6 +1712,9 @@ export async function processGroupMessages(chatJid: string): Promise<boolean> {
   await channel.setTyping?.(chatJid, true);
   let hadError = false;
   let outputSentToUser = false;
+  // Tracks specialists whose runs completed with an error (agentStatus='error'
+  // or runAgent threw) so we can emit a user-visible error reply for each one.
+  const failedSpecialists: string[] = [];
 
   // Named helper so Task 11 (telemetry) has a stable extension point.
   async function runOne(run: DispatchRun): Promise<void> {
@@ -1750,7 +1753,13 @@ export async function processGroupMessages(chatJid: string): Promise<boolean> {
         // to the user's request if the orchestrator restarts (Story 37 AC2).
         lastMsg?.id ?? null,
       );
-      if (agentStatus === 'error') status = 'error';
+      if (agentStatus === 'error') {
+        status = 'error';
+        hadError = true;
+        if (run.specialistName && !outputSentToUser) {
+          failedSpecialists.push(run.specialistName);
+        }
+      }
     } catch (err) {
       status = 'error';
       throw err;
@@ -1771,10 +1780,14 @@ export async function processGroupMessages(chatJid: string): Promise<boolean> {
   for (const [i, r] of results.entries()) {
     if (r.status === 'rejected') {
       hadError = true;
+      const specName = runs[i].specialistName;
       logger.error(
-        { err: r.reason, specialist: runs[i].specialistName },
+        { err: r.reason, specialist: specName },
         'specialist run failed',
       );
+      if (specName && !failedSpecialists.includes(specName)) {
+        failedSpecialists.push(specName);
+      }
     }
   }
 
@@ -1782,11 +1795,29 @@ export async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   if (hadError) {
     if (outputSentToUser) {
+      // Partial output already reached the user — don't send a confusing
+      // error on top of it. Just persist what we have and move on.
       saveState();
       return true;
     }
-    lastAgentTimestamp[chatJid] = previousCursor;
-    return false;
+    // No output reached the user yet. Send a visible error for each failed
+    // specialist so the user knows to retry rather than stare at silence.
+    for (const specName of failedSpecialists) {
+      const errText = `[@${specName}] Error: specialist run failed`;
+      await channel.sendMessage(chatJid, errText);
+      storeMessage({
+        id: `err-${specName}-${Date.now()}`,
+        chat_jid: chatJid,
+        sender: 'system',
+        sender_name: 'system',
+        content: errText,
+        timestamp: new Date().toISOString(),
+        is_from_me: true,
+        is_bot_message: true,
+      });
+    }
+    saveState();
+    return true;
   }
 
   saveState();
