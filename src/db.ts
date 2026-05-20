@@ -1908,6 +1908,49 @@ export function getConversationHistoryPage(
   });
 }
 
+// --- Conversation Export (Story 52) ---
+
+export interface ConversationExportRow {
+  role: 'user' | 'assistant';
+  content: string;
+  /** ISO-8601 timestamp (maps from created_at column) */
+  timestamp: string;
+  /** Derived from role: username for user rows, 'assistant' for assistant rows */
+  sender: string;
+}
+
+/**
+ * Return ALL conversation_history rows for a group, oldest-first.
+ * Intended for export. NOTE: sql.js materializes the whole result set in
+ * memory before returning — the HTTP layer streams to the client per-row
+ * via `res.write`, but the DB read itself is still buffered. For very large
+ * histories on small pods this could OOM; a future story can add a true
+ * cursor-based reader if that becomes a real workload.
+ *
+ * The `sender` field is derived from the role and the provided `username`.
+ */
+export function getAllConversationHistory(
+  groupFolder: string,
+  username: string,
+): ConversationExportRow[] {
+  return timedDbOp('getAllConversationHistory', () => {
+    const result = db.exec(
+      `SELECT role, content, created_at
+       FROM conversation_history
+       WHERE group_folder = ?
+       ORDER BY created_at ASC, id ASC`,
+      [groupFolder],
+    );
+    if (result.length === 0) return [];
+    return result[0].values.map((row: unknown[]) => ({
+      role: row[0] as 'user' | 'assistant',
+      content: row[1] as string,
+      timestamp: row[2] as string,
+      sender: (row[0] as string) === 'user' ? username : 'assistant',
+    }));
+  });
+}
+
 // --- Skill Usage Functions ---
 
 export interface SkillLoadStat {

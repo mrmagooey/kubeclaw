@@ -13,6 +13,7 @@ import {
   appendConversationMessage,
   clearConversationHistory,
   db,
+  getAllConversationHistory,
   getConversationHistoryPage,
   getOutboundMessagesSince,
   storeMessageDirect,
@@ -548,6 +549,7 @@ export class HttpChannel implements Channel {
     '/history': ['GET', 'DELETE'],
     '/attachments/list': ['GET'],
     '/attachments/raw/': ['GET', 'HEAD', 'DELETE'], // prefix — dynamic filenames
+    '/export': ['GET', 'HEAD'],
   };
 
   private async handleRequest(
@@ -1115,6 +1117,48 @@ export class HttpChannel implements Channel {
       return;
     }
 
+    // Story 52: GET /export — stream full conversation history as NDJSON.
+    if (
+      (req.method === 'GET' || req.method === 'HEAD') &&
+      url.pathname === '/export'
+    ) {
+      const username = this.authenticate(req);
+      if (!username) {
+        this.sendUnauthorized(res);
+        return;
+      }
+      const jid = `http:${username}`;
+      const group = this.opts.registeredGroups()[jid];
+      if (!group) {
+        res.writeHead(404, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+        res.end(JSON.stringify({ error: 'Group not found' }));
+        return;
+      }
+      const date = new Date().toISOString().slice(0, 10);
+      const filename = `kubeclaw-export-${group.folder}-${date}.ndjson`;
+      res.writeHead(200, this.addCorsHeaders({
+        'Content-Type': 'application/x-ndjson',
+        'Content-Disposition': `attachment; filename="${filename}"`,
+      }));
+      if (req.method === 'HEAD') {
+        res.end();
+        return;
+      }
+      try {
+        const rows = getAllConversationHistory(group.folder, username);
+        for (const row of rows) {
+          res.write(JSON.stringify(row) + '\n');
+        }
+        res.end();
+      } catch (err) {
+        // Headers already sent (200), so we can't change status. Log and
+        // end the response — the client gets a truncated NDJSON body.
+        logger.error({ err, jid }, 'GET /export failed mid-stream');
+        res.end();
+      }
+      return;
+    }
+
     // Per RFC 9110: known paths reached with an unsupported method → 405 + Allow
     const pathMethods: Record<string, string[]> = {
       '/': ['GET'],
@@ -1124,6 +1168,7 @@ export class HttpChannel implements Channel {
       '/message': ['POST'],
       '/history': ['GET', 'DELETE'],
       '/attachments/list': ['GET'],
+      '/export': ['GET', 'HEAD'],
     };
     const allowed = pathMethods[url.pathname];
     if (allowed && !allowed.includes(req.method ?? '')) {
