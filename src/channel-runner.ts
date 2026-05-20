@@ -612,6 +612,7 @@ export const HELP_TEXT = [
   '  /clear                   — clear conversation context',
   '  /compact                 — compact conversation history',
   '  /summary                 — summarise recent conversation',
+  '  /cancel                  — abort the currently running tool job',
 ].join('\n');
 
 export function isHelpCommand(message: string): boolean {
@@ -786,6 +787,96 @@ export function createSecretIpcFn(
       }
     }
     return { ok: false, error: 'timeout' };
+  };
+}
+
+// ── /cancel command ───────────────────────────────────────────────────────────
+
+export function isCancelCommand(message: string): boolean {
+  return /^\/cancel(\s|$)/.test(message.trim());
+}
+
+/**
+ * Dependency injection interface for handleCancelCommand.
+ * `cancelFn` is called with the groupFolder and chatJid; it should send a
+ * job.cancel IPC request to the orchestrator and return the reply text
+ * ("Cancelled" or "No active job"). Injected in production via Redis;
+ * stubbed in unit tests.
+ */
+export interface CancelCommandDeps {
+  cancelFn: (groupFolder: string, chatJid: string) => Promise<string>;
+}
+
+/**
+ * Handle the /cancel slash command.
+ *
+ * Delegates actual job lookup and deletion to cancelFn (which sends a
+ * job.cancel IPC to the orchestrator). Returns the reply text.
+ */
+export async function handleCancelCommand(
+  groupFolder: string,
+  chatJid: string,
+  deps: CancelCommandDeps,
+): Promise<string> {
+  return deps.cancelFn(groupFolder, chatJid);
+}
+
+/**
+ * Build a production-wired cancel function backed by the task-request stream.
+ * Sends a job.cancel IPC to the orchestrator and awaits the result with a
+ * 5-second timeout.
+ */
+export function buildCancelFn(): CancelCommandDeps['cancelFn'] {
+  return async (groupFolder: string, chatJid: string): Promise<string> => {
+    const redis = getRedisClient();
+    const resultStream = `kubeclaw:cancel-result:${Date.now()}-${randomBytes(4).toString('hex')}`;
+
+    await redis.xadd(
+      getTaskRequestStream(),
+      '*',
+      'type',
+      'job.cancel',
+      'groupFolder',
+      groupFolder,
+      'chatJid',
+      chatJid,
+      'resultStream',
+      resultStream,
+    );
+
+    // Wait up to 5s for orchestrator response
+    const deadline = Date.now() + 5000;
+    let lastId = '0-0';
+    while (Date.now() < deadline) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) break;
+      const response = await redis.xread(
+        'COUNT',
+        1,
+        'BLOCK',
+        Math.min(remaining, 1000),
+        'STREAMS',
+        resultStream,
+        lastId,
+      );
+      if (!response) continue;
+      for (const [, messages] of response as [string, [string, string[]][]][]) {
+        for (const [, flds] of messages) {
+          const obj: Record<string, string> = {};
+          for (let i = 0; i < flds.length; i += 2) obj[flds[i]] = flds[i + 1];
+          if (obj.result) {
+            const parsed = JSON.parse(obj.result) as {
+              ok: boolean;
+              status?: string;
+              error?: string;
+            };
+            if (!parsed.ok) return `Cancel failed: ${parsed.error ?? 'unknown error'}`;
+            return parsed.status === 'no_active_job' ? 'No active job' : 'Cancelled';
+          }
+        }
+      }
+    }
+    return 'Cancel timed out — orchestrator did not respond';
   };
 }
 
@@ -1773,6 +1864,21 @@ export async function processGroupMessages(chatJid: string): Promise<boolean> {
           'Failed to send compact error reply',
         );
       }
+    } finally {
+      await channel.setTyping?.(chatJid, false);
+    }
+    return true;
+  }
+
+  // /cancel command: abort the currently running tool job for this group.
+  if (lastMsg && isCancelCommand(lastMsg.content)) {
+    const cancelDeps: CancelCommandDeps = { cancelFn: buildCancelFn() };
+    const reply = await handleCancelCommand(group.folder, chatJid, cancelDeps);
+    lastAgentTimestamp[chatJid] = lastMsg.timestamp;
+    saveState();
+    await channel.setTyping?.(chatJid, true);
+    try {
+      await channel.sendMessage(chatJid, reply);
     } finally {
       await channel.setTyping?.(chatJid, false);
     }

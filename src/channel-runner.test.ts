@@ -2468,3 +2468,135 @@ describe('HELP_TEXT includes /schedule', () => {
   });
 });
 
+// ── /cancel command tests (Story 49) ─────────────────────────────────────────
+
+import {
+  isCancelCommand,
+  handleCancelCommand,
+  type CancelCommandDeps,
+} from './channel-runner.js';
+
+describe('/cancel — isCancelCommand parser', () => {
+  it('returns true for "/cancel"', () => {
+    expect(isCancelCommand('/cancel')).toBe(true);
+  });
+
+  it('returns true for "/cancel " with trailing space', () => {
+    expect(isCancelCommand('/cancel ')).toBe(true);
+  });
+
+  it('returns false for non-/cancel messages', () => {
+    expect(isCancelCommand('hello')).toBe(false);
+    expect(isCancelCommand('/secret add replicate r8_abc')).toBe(false);
+    expect(isCancelCommand('/skills list')).toBe(false);
+    expect(isCancelCommand('/cancellation')).toBe(false);
+  });
+});
+
+describe('/cancel — handleCancelCommand delegates to cancelFn', () => {
+  it('calls cancelFn with groupFolder and chatJid and returns "Cancelled" when job was running', async () => {
+    const cancelFnSpy = vi.fn().mockResolvedValue('Cancelled');
+    const deps: CancelCommandDeps = { cancelFn: cancelFnSpy };
+
+    const reply = await handleCancelCommand('my-group', 'chat@g.us', deps);
+
+    expect(cancelFnSpy).toHaveBeenCalledWith('my-group', 'chat@g.us');
+    expect(reply).toMatch(/cancelled/i);
+  });
+
+  it('returns "No active job" when no job is running', async () => {
+    const cancelFnSpy = vi.fn().mockResolvedValue('No active job');
+    const deps: CancelCommandDeps = { cancelFn: cancelFnSpy };
+
+    const reply = await handleCancelCommand('my-group', 'chat@g.us', deps);
+
+    expect(cancelFnSpy).toHaveBeenCalledWith('my-group', 'chat@g.us');
+    expect(reply).toMatch(/no active job/i);
+  });
+});
+
+describe('/cancel — processGroupMessages intercept', () => {
+  const CANCEL_JID = 'cancel-test@g.us';
+  const CANCEL_FOLDER = 'tg_cancel-test';
+  const sendMessageSpy = vi.fn().mockResolvedValue(undefined);
+  let cancelFakeRunner: { runAgent: ReturnType<typeof vi.fn>; writeTasksSnapshot: ReturnType<typeof vi.fn>; writeGroupsSnapshot: ReturnType<typeof vi.fn> };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    _resetStateForTesting();
+    sendMessageSpy.mockClear();
+
+    cancelFakeRunner = {
+      runAgent: vi.fn().mockResolvedValue({ status: 'success', result: null }),
+      writeTasksSnapshot: vi.fn(),
+      writeGroupsSnapshot: vi.fn(),
+    };
+    mockGetDirectLLMRunner.mockReturnValue(cancelFakeRunner);
+  });
+
+  afterEach(() => {
+    _testResetState();
+    vi.restoreAllMocks();
+  });
+
+  it('intercepts /cancel and sends the cancel reply without invoking the LLM runner', async () => {
+    const { _initTestDatabase } = await import('./db.js');
+    await _initTestDatabase();
+
+    // Return a /cancel message from getMessagesSince
+    const msgTimestamp = new Date(Date.now() - 1000).toISOString();
+    mockGetMessagesSince.mockReturnValueOnce([{
+      id: 'cancel-msg-1',
+      chat_jid: CANCEL_JID,
+      sender: 'user123',
+      sender_name: 'Alice',
+      content: '/cancel',
+      timestamp: msgTimestamp,
+      is_from_me: false,
+    }]);
+
+    const fakeChannel = {
+      ownsJid: (jid: string) => jid === CANCEL_JID,
+      sendMessage: sendMessageSpy,
+      setTyping: vi.fn().mockResolvedValue(undefined),
+    };
+    mockFindChannel.mockReturnValueOnce(fakeChannel);
+
+    // Mock Redis xadd + xread so buildCancelFn() gets a "no_active_job" response
+    const mockRedis = vi.mocked(
+      (await import('./k8s/redis-client.js')).getRedisClient(),
+    );
+    // xadd returns a stream ID; xread returns the result immediately
+    (mockRedis as any).xadd = vi.fn().mockResolvedValue('1-0');
+    (mockRedis as any).xread = vi.fn().mockResolvedValue([
+      ['kubeclaw:cancel-result:test', [
+        ['1-0', ['result', JSON.stringify({ ok: true, status: 'no_active_job' })]],
+      ]],
+    ]);
+
+    _testInjectState(
+      {
+        [CANCEL_JID]: {
+          jid: CANCEL_JID,
+          name: 'Cancel Test Group',
+          folder: CANCEL_FOLDER,
+          trigger: '@Claude',
+          added_at: new Date().toISOString(),
+          requiresTrigger: false,
+        },
+      },
+      [fakeChannel as any],
+    );
+
+    const result = await processGroupMessages(CANCEL_JID);
+
+    expect(result).toBe(true);
+    // sendMessage was called with the cancel reply
+    expect(sendMessageSpy).toHaveBeenCalledOnce();
+    const sentText: string = sendMessageSpy.mock.calls[0][1];
+    expect(sentText).toMatch(/no active job/i);
+    // LLM runner was NOT invoked
+    expect(cancelFakeRunner.runAgent).not.toHaveBeenCalled();
+  });
+});
+

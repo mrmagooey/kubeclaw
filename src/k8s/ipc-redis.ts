@@ -131,6 +131,15 @@ function channelPvcNames(channel: string): {
 // Track tool pod jobs per tool job for cleanup
 const toolPodsByAgent = new Map<string, Set<string>>();
 
+/**
+ * Active K8s agent-job names keyed by groupFolder.
+ * Populated by startToolJobSpawnWatcher when onProcess fires (i.e. the K8s Job
+ * exists and has a real name). Cleared when the job resolves or rejects.
+ * Used by the job.cancel IPC handler to look up the K8s job name from a
+ * groupFolder without requiring the channel pod to know the jobName.
+ */
+const activeAgentJobsByGroup = new Map<string, string>();
+
 interface AgentOutputMessage {
   type: 'message' | 'task_request';
   jobId?: string;
@@ -1075,6 +1084,8 @@ export async function startToolJobSpawnWatcher(): Promise<void> {
                     'Failed to record tool job for orphan tracking',
                   );
                 }
+                // Track so job.cancel IPC can find the K8s job name by groupFolder.
+                activeAgentJobsByGroup.set(groupFolder, jobName);
                 const inputStream = getInputStream(jobName);
                 redis
                   .xadd(inputStream, '*', 'type', 'close')
@@ -1093,6 +1104,8 @@ export async function startToolJobSpawnWatcher(): Promise<void> {
               },
             )
             .then(async (output) => {
+              // Job done — remove from active tracking.
+              activeAgentJobsByGroup.delete(groupFolder);
               // Mark the job as completed so it is not treated as an orphan.
               // Story 43: skip for 'timeout' — job-runner already called
               // resolveToolJob(jobId, 'timeout') in the DeadlineExceeded branch.
@@ -1127,6 +1140,8 @@ export async function startToolJobSpawnWatcher(): Promise<void> {
               logger.debug({ agentJobId }, 'Tool job result written to stream');
             })
             .catch(async (err) => {
+              // Job errored — remove from active tracking.
+              activeAgentJobsByGroup.delete(groupFolder);
               logger.error({ agentJobId, err }, 'Tool job failed');
               await redis.xadd(
                 resultStream,
@@ -1636,6 +1651,89 @@ export async function startTaskRequestWatcher(
               response = JSON.stringify({ ok: false, error });
             }
             await redis.xadd(resultStream, '*', 'result', response);
+          } else if (type === 'job.cancel') {
+            // Cancel the in-flight K8s tool job for a group.
+            // The channel pod sends groupFolder; we look up the K8s job name,
+            // delete the job, and publish a "Cancelled" notice back to the
+            // channel's output pub/sub so it appears in the SSE stream.
+            const { resultStream: cancelResultStream } = obj;
+            const jobName = activeAgentJobsByGroup.get(groupFolder);
+            if (!jobName) {
+              logger.info(
+                { groupFolder },
+                'job.cancel: no active job for group',
+              );
+              if (cancelResultStream)
+                await redis.xadd(
+                  cancelResultStream,
+                  '*',
+                  'result',
+                  JSON.stringify({ ok: true, status: 'no_active_job' }),
+                );
+            } else {
+              try {
+                await jobRunner.stopJob(jobName);
+                // Clear the map entry immediately on success so a subsequent
+                // /cancel returns "no active job" rather than failing on a
+                // stale entry. (stopJob already silently swallows NotFound.)
+                activeAgentJobsByGroup.delete(groupFolder);
+                logger.info(
+                  { groupFolder, jobName },
+                  'job.cancel: job stopped',
+                );
+
+                // Publish a "Cancelled" notice to the channel's output channel
+                // using the same envelope as regular bot messages so the channel
+                // pod's storeBotMessage callback persists it to conversation_history
+                // with is_bot_message=1 and streams it to the SSE client.
+                // Publish failure is non-fatal: the job IS stopped; SSE delivery
+                // is best-effort.
+                const noticeId = `cancel-${Date.now()}-${groupFolder}`;
+                const outputChannel = getOutputChannel(groupFolder);
+                try {
+                  await getRedisClient().publish(
+                    outputChannel,
+                    JSON.stringify({
+                      type: 'message',
+                      chatJid: obj.chatJid ?? groupFolder,
+                      text: 'Cancelled',
+                      persist: true,
+                      noticeId,
+                    }),
+                  );
+                } catch (pubErr) {
+                  logger.warn(
+                    { groupFolder, jobName, err: pubErr },
+                    'job.cancel: notice publish failed (job was stopped successfully)',
+                  );
+                }
+
+                if (cancelResultStream)
+                  await redis.xadd(
+                    cancelResultStream,
+                    '*',
+                    'result',
+                    JSON.stringify({ ok: true, status: 'cancelled', jobName }),
+                  );
+              } catch (err) {
+                // stopJob threw — clear the map entry anyway so a retried
+                // /cancel doesn't try to stop a job that might already be gone.
+                activeAgentJobsByGroup.delete(groupFolder);
+                const error =
+                  err instanceof Error ? err.message : String(err);
+                logger.error(
+                  { groupFolder, jobName, error },
+                  'job.cancel: failed to stop job',
+                );
+                if (cancelResultStream)
+                  await redis.xadd(
+                    cancelResultStream,
+                    '*',
+                    'result',
+                    JSON.stringify({ ok: false, error }),
+                  );
+              }
+            }
           }
         }
       }
@@ -1707,6 +1805,18 @@ export function startControlChannelWatcher(
       logger.error({ err }, 'Failed to parse control channel message');
     }
   });
+}
+
+/**
+ * @internal Test-only helper — seed a K8s job name into activeAgentJobsByGroup.
+ * Allows integration tests to exercise the job.cancel handler without spinning
+ * up a real startToolJobSpawnWatcher loop.
+ */
+export function _testSetActiveAgentJob(
+  groupFolder: string,
+  jobName: string,
+): void {
+  activeAgentJobsByGroup.set(groupFolder, jobName);
 }
 
 /**
