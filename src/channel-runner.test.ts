@@ -2715,3 +2715,163 @@ describe('/cancel — processGroupMessages intercept', () => {
   });
 });
 
+// ── /jobs unit tests (Story 50) ───────────────────────────────────────────────
+
+import {
+  isJobsCommand,
+  handleJobsCommand,
+  formatJobTime,
+} from './channel-runner.js';
+import type { ToolJobRecord } from './db.js';
+
+describe('isJobsCommand', () => {
+  it('returns true for /jobs', () => {
+    expect(isJobsCommand('/jobs')).toBe(true);
+  });
+
+  it('returns true for /jobs with trailing whitespace', () => {
+    expect(isJobsCommand('/jobs  ')).toBe(true);
+  });
+
+  it('returns false for non-/jobs messages', () => {
+    expect(isJobsCommand('/search foo')).toBe(false);
+    expect(isJobsCommand('/skills list')).toBe(false);
+    expect(isJobsCommand('hello /jobs')).toBe(false);
+    expect(isJobsCommand('')).toBe(false);
+  });
+});
+
+describe('formatJobTime', () => {
+  it('formats ISO timestamp to HH:MMZ', () => {
+    expect(formatJobTime('2026-05-20T14:32:00.000Z')).toBe('14:32Z');
+    expect(formatJobTime('2026-01-01T00:00:00.000Z')).toBe('00:00Z');
+    expect(formatJobTime('2026-12-31T23:59:00.000Z')).toBe('23:59Z');
+  });
+});
+
+describe('HELP_TEXT contains /jobs', () => {
+  it('contains /jobs entry', () => {
+    expect(HELP_TEXT).toContain('/jobs');
+  });
+});
+
+describe('handleJobsCommand — stubbed DB', () => {
+  const GROUP_FOLDER = 'test-group';
+  const OTHER_GROUP = 'other-group';
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('returns "No active jobs." when both active and recent lists are empty', () => {
+    vi.spyOn(db, 'getActiveToolJobs').mockReturnValue([]);
+    vi.spyOn(db, 'getRecentToolJobsForGroup').mockReturnValue([]);
+
+    const reply = handleJobsCommand(GROUP_FOLDER);
+    expect(reply).toBe('No active jobs.');
+  });
+
+  it('formats two running jobs correctly', () => {
+    const activeJobs: ToolJobRecord[] = [
+      {
+        job_id: 'job-1',
+        group_folder: GROUP_FOLDER,
+        chat_jid: 'jid@test',
+        specialist_name: 'CodeReview',
+        status: 'active',
+        created_at: '2026-05-20T14:32:00.000Z',
+        resolved_at: null,
+        message_id: null,
+      },
+      {
+        job_id: 'job-2',
+        group_folder: GROUP_FOLDER,
+        chat_jid: 'jid@test',
+        specialist_name: 'DocWriter',
+        status: 'active',
+        created_at: '2026-05-20T14:45:00.000Z',
+        resolved_at: null,
+        message_id: null,
+      },
+    ];
+    vi.spyOn(db, 'getActiveToolJobs').mockReturnValue(activeJobs);
+    vi.spyOn(db, 'getRecentToolJobsForGroup').mockReturnValue([]);
+
+    const reply = handleJobsCommand(GROUP_FOLDER);
+    expect(reply).toContain('[running] @CodeReview (started 14:32Z)');
+    expect(reply).toContain('[running] @DocWriter (started 14:45Z)');
+  });
+
+  it('formats two completed jobs correctly', () => {
+    vi.spyOn(db, 'getActiveToolJobs').mockReturnValue([]);
+    const recentJobs: ToolJobRecord[] = [
+      {
+        job_id: 'job-3',
+        group_folder: GROUP_FOLDER,
+        chat_jid: 'jid@test',
+        specialist_name: 'Analyst',
+        status: 'completed',
+        created_at: '2026-05-20T10:00:00.000Z',
+        resolved_at: '2026-05-20T10:05:00.000Z',
+        message_id: null,
+      },
+      {
+        job_id: 'job-4',
+        group_folder: GROUP_FOLDER,
+        chat_jid: 'jid@test',
+        specialist_name: 'Tester',
+        status: 'timeout',
+        created_at: '2026-05-20T09:00:00.000Z',
+        resolved_at: '2026-05-20T09:30:00.000Z',
+        message_id: null,
+      },
+    ];
+    vi.spyOn(db, 'getRecentToolJobsForGroup').mockReturnValue(recentJobs);
+
+    const reply = handleJobsCommand(GROUP_FOLDER);
+    expect(reply).toContain('[completed] @Analyst (10:00Z → 10:05Z)');
+    expect(reply).toContain('[timeout] @Tester (09:00Z → 09:30Z)');
+  });
+
+  it('scopes active jobs to the authenticated group only', () => {
+    const allActiveJobs: ToolJobRecord[] = [
+      {
+        job_id: 'job-mine',
+        group_folder: GROUP_FOLDER,
+        chat_jid: 'jid@test',
+        specialist_name: 'MySpec',
+        status: 'active',
+        created_at: '2026-05-20T14:00:00.000Z',
+        resolved_at: null,
+        message_id: null,
+      },
+      {
+        job_id: 'job-other',
+        group_folder: OTHER_GROUP,
+        chat_jid: 'jid@other',
+        specialist_name: 'OtherSpec',
+        status: 'active',
+        created_at: '2026-05-20T14:01:00.000Z',
+        resolved_at: null,
+        message_id: null,
+      },
+    ];
+    vi.spyOn(db, 'getActiveToolJobs').mockReturnValue(allActiveJobs);
+    vi.spyOn(db, 'getRecentToolJobsForGroup').mockReturnValue([]);
+
+    const reply = handleJobsCommand(GROUP_FOLDER);
+    expect(reply).toContain('@MySpec');
+    expect(reply).not.toContain('@OtherSpec');
+  });
+
+  it('getRecentToolJobsForGroup is called with the correct groupFolder', () => {
+    vi.spyOn(db, 'getActiveToolJobs').mockReturnValue([]);
+    const getRecentSpy = vi
+      .spyOn(db, 'getRecentToolJobsForGroup')
+      .mockReturnValue([]);
+
+    handleJobsCommand(GROUP_FOLDER);
+    expect(getRecentSpy).toHaveBeenCalledWith(GROUP_FOLDER, 5);
+  });
+});
+

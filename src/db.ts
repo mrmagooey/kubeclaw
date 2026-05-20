@@ -388,20 +388,30 @@ function createSchema(database: SqlJsDatabase): void {
   // The chat_jid is stored so we can route the interruption notice back to the
   // correct channel SSE stream via the Redis pub/sub channel for the group.
   // message_id: the user-facing message ID from the POST /message response (Story 25).
+  // specialist_name: display name of the specialist that was invoked (Story 50).
   database.run(`
     CREATE TABLE IF NOT EXISTS tool_jobs (
-      job_id       TEXT PRIMARY KEY,
-      group_folder TEXT NOT NULL,
-      chat_jid     TEXT NOT NULL,
-      status       TEXT NOT NULL DEFAULT 'active',
-      created_at   TEXT NOT NULL,
-      resolved_at  TEXT,
-      message_id   TEXT
+      job_id          TEXT PRIMARY KEY,
+      group_folder    TEXT NOT NULL,
+      chat_jid        TEXT NOT NULL,
+      status          TEXT NOT NULL DEFAULT 'active',
+      created_at      TEXT NOT NULL,
+      resolved_at     TEXT,
+      message_id      TEXT,
+      specialist_name TEXT NOT NULL DEFAULT ''
     )
   `);
   // Additive migration: add message_id to existing databases.
   try {
     database.run(`ALTER TABLE tool_jobs ADD COLUMN message_id TEXT`);
+  } catch {
+    /* column already exists */
+  }
+  // Additive migration: add specialist_name to existing databases (Story 50).
+  try {
+    database.run(
+      `ALTER TABLE tool_jobs ADD COLUMN specialist_name TEXT NOT NULL DEFAULT ''`,
+    );
   } catch {
     /* column already exists */
   }
@@ -1958,6 +1968,8 @@ export interface ToolJobRecord {
   resolved_at: string | null;
   /** User-facing message ID from the POST /message response (Story 25). May be NULL for rows written before this column was added. */
   message_id: string | null;
+  /** Display name of the specialist invoked for this job (Story 50). Empty string for rows written before this column was added. */
+  specialist_name: string;
 }
 
 /**
@@ -1966,17 +1978,27 @@ export interface ToolJobRecord {
  *
  * @param messageId — the user-facing message ID returned by POST /message
  *   (Story 25). Pass undefined/null for callers that do not have this value.
+ * @param specialistName — display name of the specialist invoked (Story 50).
+ *   Optional; defaults to empty string for backward-compatible callers.
  */
 export function recordToolJob(
   jobId: string,
   groupFolder: string,
   chatJid: string,
   messageId?: string | null,
+  specialistName?: string,
 ): void {
   db.run(
-    `INSERT OR IGNORE INTO tool_jobs (job_id, group_folder, chat_jid, status, created_at, message_id)
-     VALUES (?, ?, ?, 'active', ?, ?)`,
-    [jobId, groupFolder, chatJid, new Date().toISOString(), messageId ?? null],
+    `INSERT OR IGNORE INTO tool_jobs (job_id, group_folder, chat_jid, status, created_at, message_id, specialist_name)
+     VALUES (?, ?, ?, 'active', ?, ?, ?)`,
+    [
+      jobId,
+      groupFolder,
+      chatJid,
+      new Date().toISOString(),
+      messageId ?? null,
+      specialistName ?? '',
+    ],
   );
   saveDatabase();
 }
@@ -2002,7 +2024,7 @@ export function resolveToolJob(
  */
 export function getActiveToolJobs(): ToolJobRecord[] {
   const result = db.exec(
-    `SELECT job_id, group_folder, chat_jid, status, created_at, resolved_at, message_id
+    `SELECT job_id, group_folder, chat_jid, status, created_at, resolved_at, message_id, specialist_name
      FROM tool_jobs WHERE status = 'active'`,
   );
   if (result.length === 0) return [];
@@ -2014,5 +2036,36 @@ export function getActiveToolJobs(): ToolJobRecord[] {
     created_at: row[4] as string,
     resolved_at: row[5] as string | null,
     message_id: row[6] as string | null,
+    specialist_name: (row[7] as string | null) ?? '',
+  }));
+}
+
+/**
+ * Return the most recent non-active (completed/interrupted/timeout/oomkill)
+ * tool jobs for a specific group, ordered newest first.
+ * Used by the /jobs command to show recent history.
+ */
+export function getRecentToolJobsForGroup(
+  groupFolder: string,
+  limit: number,
+): ToolJobRecord[] {
+  const result = db.exec(
+    `SELECT job_id, group_folder, chat_jid, status, created_at, resolved_at, message_id, specialist_name
+     FROM tool_jobs
+     WHERE group_folder = ? AND status NOT IN ('active')
+     ORDER BY created_at DESC
+     LIMIT ?`,
+    [groupFolder, limit],
+  );
+  if (result.length === 0) return [];
+  return result[0].values.map((row: unknown[]) => ({
+    job_id: row[0] as string,
+    group_folder: row[1] as string,
+    chat_jid: row[2] as string,
+    status: row[3] as 'completed' | 'interrupted' | 'timeout' | 'oomkill',
+    created_at: row[4] as string,
+    resolved_at: row[5] as string | null,
+    message_id: row[6] as string | null,
+    specialist_name: (row[7] as string | null) ?? '',
   }));
 }

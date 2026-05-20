@@ -42,9 +42,11 @@ import {
   getAllSessions,
   clearConversationHistory,
   getAllTasks,
+  getActiveToolJobs,
   getConversationHistory,
   getMessagesSince,
   getNewMessages,
+  getRecentToolJobsForGroup,
   getRouterState,
   getTasksForGroup,
   initDatabase,
@@ -600,6 +602,7 @@ export async function dispatchSkillsCommandIfApplicable(
 
 export const HELP_TEXT = [
   'Available slash commands:',
+  '  /jobs                    — list active and recent tool jobs',
   '  /search <query>          — full-text search over conversation history',
   '  /skills                  — manage learned skills (review / accept / reject)',
   '  /secret                  — manage credentials (add / remove / list / catalog)',
@@ -617,6 +620,60 @@ export const HELP_TEXT = [
 
 export function isHelpCommand(message: string): boolean {
   return /^\/help(\s|$)/.test(message.trim());
+}
+
+// ── /jobs command ─────────────────────────────────────────────────────────────
+
+/**
+ * Format an ISO-8601 timestamp to HH:MMZ display format.
+ * e.g. "2026-05-20T14:32:00.000Z" → "14:32Z"
+ */
+export function formatJobTime(iso: string): string {
+  return new Date(iso).toISOString().slice(11, 16) + 'Z';
+}
+
+export function isJobsCommand(message: string): boolean {
+  return /^\/jobs(\s|$)/.test(message.trim());
+}
+
+/**
+ * Handle the /jobs slash command.
+ *
+ * Returns a formatted text reply listing:
+ *  - Active running jobs as "[running] @SpecialistName (started HH:MMZ)"
+ *  - Recent completed jobs as "[status] @SpecialistName (HH:MMZ → HH:MMZ)"
+ *  - "No active jobs." if no running jobs and no recent history.
+ */
+export function handleJobsCommand(groupFolder: string): string {
+  const activeJobs = getActiveToolJobs().filter(
+    (j) => j.group_folder === groupFolder,
+  );
+  const recentJobs = getRecentToolJobsForGroup(groupFolder, 5);
+
+  if (activeJobs.length === 0 && recentJobs.length === 0) {
+    return 'No active jobs.';
+  }
+
+  const lines: string[] = [];
+
+  for (const job of activeJobs) {
+    const nameDisplay = job.specialist_name
+      ? ` @${job.specialist_name}` : '';
+    lines.push(`[running]${nameDisplay} (started ${formatJobTime(job.created_at)})`);
+  }
+
+  for (const job of recentJobs) {
+    const resolvedDisplay = job.resolved_at
+      ? formatJobTime(job.resolved_at)
+      : '?';
+    const nameDisplay = job.specialist_name
+      ? ` @${job.specialist_name}` : '';
+    lines.push(
+      `[${job.status}]${nameDisplay} (${formatJobTime(job.created_at)} → ${resolvedDisplay})`,
+    );
+  }
+
+  return lines.join('\n');
 }
 
 // ── /secret command types ─────────────────────────────────────────────────────
@@ -1874,6 +1931,20 @@ export async function processGroupMessages(chatJid: string): Promise<boolean> {
   if (lastMsg && isCancelCommand(lastMsg.content)) {
     const cancelDeps: CancelCommandDeps = { cancelFn: buildCancelFn() };
     const reply = await handleCancelCommand(group.folder, chatJid, cancelDeps);
+    lastAgentTimestamp[chatJid] = lastMsg.timestamp;
+    saveState();
+    await channel.setTyping?.(chatJid, true);
+    try {
+      await channel.sendMessage(chatJid, reply);
+    } finally {
+      await channel.setTyping?.(chatJid, false);
+    }
+    return true;
+  }
+
+  // /jobs command: list active and recent tool jobs for this group.
+  if (lastMsg && isJobsCommand(lastMsg.content)) {
+    const reply = handleJobsCommand(group.folder);
     lastAgentTimestamp[chatJid] = lastMsg.timestamp;
     saveState();
     await channel.setTyping?.(chatJid, true);
