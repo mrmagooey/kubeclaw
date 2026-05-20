@@ -114,6 +114,37 @@ export function formatTimeoutNotice(
 }
 
 /**
+ * Sentinel error thrown by `waitForJobCompletion` when the pod backing a K8s
+ * Job was terminated with `containerStatuses[].lastState.terminated.reason ===
+ * 'OOMKilled'`.  Distinct from generic failures and DeadlineExceeded so
+ * callers can publish a specific "out of memory" notice.
+ */
+export class OOMKilledError extends Error {
+  public readonly jobName: string;
+  constructor(jobName: string) {
+    super(`OOMKilled: Job ${jobName} container was killed by the OOM killer`);
+    this.name = 'OOMKilledError';
+    this.jobName = jobName;
+  }
+}
+
+/**
+ * Format the user-visible OOM notice.  The message must contain "out of
+ * memory" (case-insensitive) so AC1 can be asserted with a simple
+ * case-insensitive substring check.
+ */
+export function formatOomKillNotice(
+  groupFolder: string,
+  jobName: string,
+): string {
+  return (
+    `Your request ran out of memory: the tool job for group "${groupFolder}" ` +
+    `(job ${jobName}) was killed by the Kubernetes OOM killer because it exceeded ` +
+    `its container memory limit. Try a simpler request or contact your administrator.`
+  );
+}
+
+/**
  * Build Redis URL with embedded ACL credentials if provided and URL doesn't
  * already contain credentials.
  * - redis://host:port + username + password → redis://username:password@host:port
@@ -291,6 +322,8 @@ export class JobRunner {
   metrics?: OrchestratorMetrics;
   /** Optional publisher for DeadlineExceeded timeout notices. Set from ipc-redis.ts after construction. */
   timeoutPublisher?: ToolJobTimeoutPublisher;
+  /** Optional publisher for OOMKill notices. Uses the same interface as timeoutPublisher. */
+  oomKillPublisher?: ToolJobTimeoutPublisher;
 
   constructor(opts: JobRunnerOpts = {}) {
     const kc = new KubeConfig();
@@ -534,6 +567,59 @@ export class JobRunner {
 
         return {
           status: 'timeout',
+          result: null,
+          error: error.message,
+          jobId,
+        };
+      }
+
+      // Story 46: OOMKilled — the container was terminated by the kernel OOM
+      // killer because it exceeded its memory limit.  Publish a user-visible
+      // "out of memory" notice, mark the DB row as 'error', and record the
+      // failure metric.
+      if (error instanceof OOMKilledError) {
+        const jobName = error.jobName;
+        logger.error(
+          { event: 'tool_job_oomkill', groupFolder: group.folder, jobName },
+          'Tool job killed by OOM killer',
+        );
+
+        // Mark DB row as oomkill (best-effort). Done BEFORE the publish so
+        // an orchestrator crash mid-handler doesn't leave the row 'active'.
+        try {
+          resolveToolJob(jobId, 'oomkill');
+        } catch (dbErr) {
+          logger.warn(
+            { jobId, dbErr },
+            'tool_job_oomkill: failed to mark job as oomkill in DB',
+          );
+        }
+
+        // Publish OOM notice to the channel's pub/sub channel (best-effort).
+        if (this.oomKillPublisher) {
+          const noticeId = `oomkill-notice-${jobId}`;
+          const notice = formatOomKillNotice(group.folder, jobName);
+          try {
+            await this.oomKillPublisher.publish(
+              group.folder,
+              input.chatJid,
+              notice,
+              noticeId,
+            );
+          } catch (pubErr) {
+            logger.warn(
+              { jobId, groupFolder: group.folder, pubErr },
+              'tool_job_oomkill: failed to publish OOM notice',
+            );
+          }
+        }
+
+        // Record metrics for the OOM path.
+        this.metrics?.recordToolJobFailure({ image, reason: 'oomkilled' });
+        this.metrics?.recordToolJobDuration({ image, success: false, durationMs: duration });
+
+        return {
+          status: 'oomkill',
           result: null,
           error: error.message,
           jobId,
@@ -1245,6 +1331,14 @@ export class JobRunner {
             throw new DeadlineExceededError(jobName);
           }
 
+          // Story 46: Check if the job failure was due to an OOMKilled container.
+          // The Job-level condition won't say "OOMKilled" — it typically says
+          // "BackoffLimitExceeded".  We must inspect pod containerStatuses to
+          // determine the actual termination reason.
+          if (await this.isOOMKilled(jobName)) {
+            throw new OOMKilledError(jobName);
+          }
+
           throw new Error(`${reason}: ${message}`);
         }
 
@@ -1255,6 +1349,10 @@ export class JobRunner {
           if (condition.type === 'Failed' && condition.status === 'True') {
             if (condition.reason === 'DeadlineExceeded') {
               throw new DeadlineExceededError(jobName);
+            }
+            // Belt-and-suspenders OOMKill check for the conditions-only path.
+            if (await this.isOOMKilled(jobName)) {
+              throw new OOMKilledError(jobName);
             }
             throw new Error(
               `Job failed: ${condition.reason} - ${condition.message}`,
@@ -1275,6 +1373,47 @@ export class JobRunner {
     }
 
     throw new Error(`Timeout waiting for job ${jobName} to complete`);
+  }
+
+  /**
+   * Return true if any container in the pod(s) backing `jobName` was
+   * terminated with reason=OOMKilled.
+   *
+   * Checks `containerStatuses[].lastState.terminated.reason` and
+   * `containerStatuses[].state.terminated.reason` (the latter covers the
+   * case where the pod has already exited by the time we query).
+   *
+   * Returns false on any API error so callers fall through to generic failure.
+   */
+  async isOOMKilled(jobName: string): Promise<boolean> {
+    try {
+      const pods = await this.coreApi.listNamespacedPod({
+        namespace: this.namespace,
+        labelSelector: `job-name=${jobName}`,
+      });
+
+      for (const pod of pods.items ?? []) {
+        const containerStatuses = pod.status?.containerStatuses ?? [];
+        for (const cs of containerStatuses) {
+          if (
+            cs.lastState?.terminated?.reason === 'OOMKilled' ||
+            cs.state?.terminated?.reason === 'OOMKilled'
+          ) {
+            logger.debug(
+              { jobName, container: cs.name, reason: 'OOMKilled' },
+              'OOMKilled container detected in pod',
+            );
+            return true;
+          }
+        }
+      }
+    } catch (err) {
+      logger.warn(
+        { jobName, err },
+        'isOOMKilled: failed to list pods; treating as non-OOM failure',
+      );
+    }
+    return false;
   }
 
   /**

@@ -1987,7 +1987,7 @@ export function recordToolJob(
  */
 export function resolveToolJob(
   jobId: string,
-  status: 'completed' | 'interrupted' | 'timeout',
+  status: 'completed' | 'interrupted' | 'timeout' | 'oomkill',
 ): void {
   db.run(
     `UPDATE tool_jobs SET status = ?, resolved_at = ? WHERE job_id = ? AND status = 'active'`,

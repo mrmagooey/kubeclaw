@@ -32,7 +32,7 @@ export interface ContainerInput {
 }
 
 export interface ContainerOutput {
-  status: 'success' | 'error' | 'timeout';
+  status: 'success' | 'error' | 'timeout' | 'oomkill';
   result: string | null;
   newSessionId?: string;
   error?: string;
