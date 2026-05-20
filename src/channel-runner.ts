@@ -35,6 +35,8 @@ import {
 } from './capabilities/db.js';
 import {
   appendConversationMessage,
+  createTask,
+  deleteTaskForGroup,
   getAllChats,
   getAllRegisteredGroups,
   getAllSessions,
@@ -44,6 +46,7 @@ import {
   getMessagesSince,
   getNewMessages,
   getRouterState,
+  getTasksForGroup,
   initDatabase,
   recordSpecialistUsage,
   setRegisteredGroup,
@@ -603,6 +606,9 @@ export const HELP_TEXT = [
   '  /memory show             — show your group memory (CLAUDE.md)',
   '  /memory append <text>    — append text to your group memory',
   '  /memory set <text>       — replace your group memory entirely',
+  '  /schedule add <type> <value> <prompt>  — schedule a task (cron/interval/once)',
+  '  /schedule list           — list your scheduled tasks',
+  '  /schedule remove <id>    — remove a scheduled task',
   '  /clear                   — clear conversation context',
   '  /compact                 — compact conversation history',
   '  /summary                 — summarise recent conversation',
@@ -1031,6 +1037,166 @@ export async function handleSecretCommand(
 
     default:
       return { reply: `Unknown subcommand: ${verb}\n\n${SECRET_HELP}` };
+  }
+}
+
+// ── /schedule command ──────────────────────────────────────────────────────
+
+
+const SCHEDULE_HELP = [
+  'Schedule commands:',
+  '  /schedule add interval <ms> <prompt>    — run every <ms> milliseconds',
+  '  /schedule add cron <expr> <prompt>      — run on a cron schedule',
+  '  /schedule add once <iso-date> <prompt>  — run once at the given time',
+  '  /schedule list                          — list tasks for this group',
+  '  /schedule remove <id>                   — remove a task by id',
+  '  /schedule help                          — show this help',
+].join('\n');
+
+export function isScheduleCommand(message: string): boolean {
+  return /^\/schedule(\s|$)/.test(message.trim());
+}
+
+/**
+ * Parsed form of a `/schedule add` command.
+ *
+ * schedule_type: 'interval' | 'cron' | 'once'
+ * schedule_value: the raw value string (ms, cron expr, or ISO date)
+ * prompt: the remainder of the line after the type + value tokens
+ */
+export interface ScheduleAddCommand {
+  schedule_type: 'interval' | 'cron' | 'once';
+  schedule_value: string;
+  prompt: string;
+}
+
+/**
+ * Parse `/schedule add <type> <value> <prompt>`.
+ * Returns null if the subcommand is missing, the type is unrecognised,
+ * or the prompt is empty.
+ */
+export function parseScheduleAddCommand(
+  message: string,
+): ScheduleAddCommand | null {
+  // /schedule add <type> <value> <...prompt>
+  const m = /^\/schedule\s+add\s+(\S+)\s+(\S+)\s+(.+)$/is.exec(message.trim());
+  if (!m) return null;
+
+  const raw = m[1].toLowerCase();
+  if (raw !== 'interval' && raw !== 'cron' && raw !== 'once') return null;
+
+  return {
+    schedule_type: raw as 'interval' | 'cron' | 'once',
+    schedule_value: m[2],
+    prompt: m[3].replace(/^["']|["']$/g, '').trim(),
+  };
+}
+
+/**
+ * Handle a `/schedule` slash command.
+ *
+ * All DB operations are synchronous (sql.js) — no async required, but the
+ * function signature is async for consistency with handleSecretCommand and to
+ * allow future I/O without a signature change.
+ */
+export async function handleScheduleCommand(
+  groupFolder: string,
+  chatJid: string,
+  message: string,
+): Promise<string> {
+  const parts = message.trim().split(/\s+/);
+  if (parts[0] !== '/schedule') return SCHEDULE_HELP;
+
+  const verb = parts[1];
+
+  switch (verb) {
+    case undefined:
+    case 'help':
+      return SCHEDULE_HELP;
+
+    case 'add': {
+      const parsed = parseScheduleAddCommand(message);
+      if (!parsed) {
+        return (
+          'Usage: /schedule add <interval|cron|once> <value> <prompt>\n\n' +
+          SCHEDULE_HELP
+        );
+      }
+
+      const { schedule_type, schedule_value, prompt } = parsed;
+
+      // Compute next_run based on type
+      let next_run: string | null;
+      if (schedule_type === 'once') {
+        next_run = schedule_value;
+      } else if (schedule_type === 'interval') {
+        const ms = parseInt(schedule_value, 10);
+        if (!ms || ms <= 0) {
+          return `Invalid interval value '${schedule_value}'. Must be a positive integer (milliseconds).`;
+        }
+        next_run = new Date(Date.now() + ms).toISOString();
+      } else {
+        // cron — validate by attempting parse; fall back to a safe next run
+        try {
+          const { CronExpressionParser } = await import('cron-parser');
+          next_run = CronExpressionParser.parse(schedule_value, {
+            tz: TIMEZONE,
+          })
+            .next()
+            .toISOString();
+        } catch {
+          return `Invalid cron expression: '${schedule_value}'`;
+        }
+      }
+
+      const id = randomBytes(16).toString('hex').replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
+
+      createTask({
+        id,
+        group_folder: groupFolder,
+        chat_jid: chatJid,
+        prompt,
+        schedule_type,
+        schedule_value,
+        context_mode: 'isolated',
+        next_run,
+        status: 'active',
+        created_at: new Date().toISOString(),
+      });
+
+      return `Scheduled task created.\nid: ${id}\ntype: ${schedule_type}\nvalue: ${schedule_value}\nnext_run: ${next_run}`;
+    }
+
+    case 'list': {
+      const tasks = getTasksForGroup(groupFolder);
+      if (tasks.length === 0) return 'No scheduled tasks.';
+
+      const lines = tasks.map((t) =>
+        [
+          `id: ${t.id}`,
+          `  type: ${t.schedule_type}`,
+          `  value: ${t.schedule_value}`,
+          `  status: ${t.status}`,
+          `  next_run: ${t.next_run ?? 'n/a'}`,
+          `  prompt: ${t.prompt.slice(0, 80)}${t.prompt.length > 80 ? '…' : ''}`,
+        ].join('\n'),
+      );
+      return `Scheduled tasks (${tasks.length}):\n\n${lines.join('\n\n')}`;
+    }
+
+    case 'remove': {
+      const id = parts[2];
+      if (!id) return 'Usage: /schedule remove <id>';
+
+      const deleted = deleteTaskForGroup(id, groupFolder);
+      if (!deleted) {
+        return `Task '${id}' not found for this group.`;
+      }
+      return `Removed task '${id}'.`;
+    }
+
+    default:
+      return `Unknown subcommand: ${verb}\n\n${SCHEDULE_HELP}`;
   }
 }
 
@@ -1664,6 +1830,26 @@ export async function processGroupMessages(chatJid: string): Promise<boolean> {
     await channel.setTyping?.(chatJid, true);
     try {
       await channel.sendMessage(chatJid, result.reply);
+    } finally {
+      await channel.setTyping?.(chatJid, false);
+    }
+    return true;
+  }
+
+  // /schedule command: add/list/remove user-managed scheduled tasks. No LLM.
+  if (lastMsg && isScheduleCommand(lastMsg.content)) {
+    let reply: string;
+    try {
+      reply = await handleScheduleCommand(group.folder, chatJid, lastMsg.content);
+    } catch (err) {
+      logger.error({ err, chatJid }, '/schedule command failed');
+      reply = 'Schedule command failed. Please try again.';
+    }
+    lastAgentTimestamp[chatJid] = lastMsg.timestamp;
+    saveState();
+    await channel.setTyping?.(chatJid, true);
+    try {
+      await channel.sendMessage(chatJid, reply);
     } finally {
       await channel.setTyping?.(chatJid, false);
     }

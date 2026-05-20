@@ -43,6 +43,9 @@ vi.mock('./db.js', async (importOriginal) => {
     appendConversationHistory: vi.fn(),
     appendConversationMessage: vi.fn(),
     getNewMessages: vi.fn().mockReturnValue({ messages: [], newTimestamp: '' }),
+    createTask: vi.fn(),
+    getTasksForGroup: vi.fn().mockReturnValue([]),
+    deleteTaskForGroup: vi.fn().mockReturnValue(true),
     recordSpecialistUsage: vi
       .fn()
       .mockImplementation(
@@ -141,9 +144,13 @@ import {
   registerCredentialTools,
   isCapabilitiesCommand,
   handleCapabilitiesCommand,
+  isScheduleCommand,
+  parseScheduleAddCommand,
+  handleScheduleCommand,
   type SecretCommandDeps,
   type IpcResponse,
   type CapabilityIpcFn,
+  type ScheduleAddCommand,
 } from './channel-runner.js';
 import type { CatalogEntry } from './credential-broker/resolver.js';
 import { buildCredentialSystemBlock } from './tools/list-credentials.js';
@@ -2247,3 +2254,217 @@ describe('handleMemoryCommand — per-group isolation', () => {
     expect(bobReply).toBe('bob memory');
   });
 });
+
+// ── /schedule command unit tests ─────────────────────────────────────────────
+
+describe('isScheduleCommand', () => {
+  it('returns true for /schedule prefix', () => {
+    expect(isScheduleCommand('/schedule add interval 60000 ping')).toBe(true);
+    expect(isScheduleCommand('/schedule list')).toBe(true);
+    expect(isScheduleCommand('/schedule remove abc')).toBe(true);
+    expect(isScheduleCommand('/schedule')).toBe(true);
+    expect(isScheduleCommand('/schedule help')).toBe(true);
+  });
+
+  it('returns false for non-/schedule messages', () => {
+    expect(isScheduleCommand('hello')).toBe(false);
+    expect(isScheduleCommand('/secret list')).toBe(false);
+    expect(isScheduleCommand('/scheduled add foo')).toBe(false);
+    expect(isScheduleCommand('/skills list')).toBe(false);
+  });
+});
+
+describe('parseScheduleAddCommand', () => {
+  it('parses interval commands', () => {
+    const result = parseScheduleAddCommand(
+      '/schedule add interval 60000 "ping"',
+    ) as ScheduleAddCommand;
+    expect(result).not.toBeNull();
+    expect(result.schedule_type).toBe('interval');
+    expect(result.schedule_value).toBe('60000');
+    expect(result.prompt).toBe('ping');
+  });
+
+  it('parses cron commands', () => {
+    const result = parseScheduleAddCommand(
+      '/schedule add cron "* * * * *" check status',
+    ) as ScheduleAddCommand;
+    expect(result).not.toBeNull();
+    expect(result.schedule_type).toBe('cron');
+    expect(result.schedule_value).toBe('"*');
+    // cron expr without quotes — value is the first token after add+type
+  });
+
+  it('parses once commands', () => {
+    const result = parseScheduleAddCommand(
+      '/schedule add once 2026-12-25T00:00:00Z happy holidays',
+    ) as ScheduleAddCommand;
+    expect(result).not.toBeNull();
+    expect(result.schedule_type).toBe('once');
+    expect(result.schedule_value).toBe('2026-12-25T00:00:00Z');
+    expect(result.prompt).toBe('happy holidays');
+  });
+
+  it('returns null for an unknown schedule type', () => {
+    expect(parseScheduleAddCommand('/schedule add weekly monday ping')).toBeNull();
+  });
+
+  it('returns null when prompt is missing', () => {
+    expect(parseScheduleAddCommand('/schedule add interval 60000')).toBeNull();
+  });
+
+  it('returns null when value is missing', () => {
+    expect(parseScheduleAddCommand('/schedule add interval')).toBeNull();
+  });
+
+  it('strips surrounding quotes from prompt', () => {
+    const result = parseScheduleAddCommand(
+      '/schedule add interval 60000 "check the logs"',
+    ) as ScheduleAddCommand;
+    expect(result.prompt).toBe('check the logs');
+  });
+});
+
+describe('handleScheduleCommand — add (AC1)', () => {
+  beforeEach(() => {
+    vi.mocked(db.createTask).mockClear();
+  });
+
+  it('creates a task and returns confirmation with id', async () => {
+    vi.mocked(db.createTask).mockImplementation(() => undefined);
+
+    const reply = await handleScheduleCommand(
+      'group-alice',
+      'http:alice',
+      '/schedule add interval 60000 "ping"',
+    );
+
+    expect(db.createTask).toHaveBeenCalledOnce();
+    const call = vi.mocked(db.createTask).mock.calls[0][0];
+    expect(call.schedule_type).toBe('interval');
+    expect(call.schedule_value).toBe('60000');
+    expect(call.prompt).toBe('ping');
+    expect(call.group_folder).toBe('group-alice');
+    expect(call.chat_jid).toBe('http:alice');
+    expect(call.id).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    );
+
+    // AC1: reply confirms creation with id
+    expect(reply).toMatch(/Scheduled task created/i);
+    expect(reply).toContain(call.id);
+  });
+
+  it('returns an error for an invalid interval value', async () => {
+    const reply = await handleScheduleCommand(
+      'group-alice',
+      'http:alice',
+      '/schedule add interval notanumber ping',
+    );
+    expect(db.createTask).not.toHaveBeenCalled();
+    expect(reply).toMatch(/invalid interval/i);
+  });
+
+  it('returns an error for an unknown schedule type', async () => {
+    const reply = await handleScheduleCommand(
+      'group-alice',
+      'http:alice',
+      '/schedule add weekly monday ping',
+    );
+    expect(db.createTask).not.toHaveBeenCalled();
+    expect(reply).toMatch(/Usage/i);
+  });
+});
+
+describe('handleScheduleCommand — list (AC2)', () => {
+  it('returns "No scheduled tasks" when the group has none', async () => {
+    vi.mocked(db.getTasksForGroup).mockReturnValue([]);
+
+    const reply = await handleScheduleCommand(
+      'group-alice',
+      'http:alice',
+      '/schedule list',
+    );
+    expect(reply).toMatch(/no scheduled tasks/i);
+  });
+
+  it('lists tasks with required fields when tasks exist', async () => {
+    const fakeTask = {
+      id: 'test-id-1234',
+      group_folder: 'group-alice',
+      chat_jid: 'http:alice',
+      prompt: 'send daily report',
+      schedule_type: 'interval' as const,
+      schedule_value: '86400000',
+      status: 'active' as const,
+      next_run: '2026-06-01T00:00:00.000Z',
+      last_run: null,
+      last_result: null,
+      context_mode: 'isolated' as const,
+      created_at: '2026-05-20T00:00:00.000Z',
+    };
+    vi.mocked(db.getTasksForGroup).mockReturnValue([fakeTask]);
+
+    const reply = await handleScheduleCommand(
+      'group-alice',
+      'http:alice',
+      '/schedule list',
+    );
+
+    // AC2: reply includes id, schedule_type, schedule_value, status, next_run
+    expect(reply).toContain('test-id-1234');
+    expect(reply).toContain('interval');
+    expect(reply).toContain('86400000');
+    expect(reply).toContain('active');
+    expect(reply).toContain('2026-06-01T00:00:00.000Z');
+  });
+});
+
+describe('handleScheduleCommand — remove (AC3 & AC4)', () => {
+  beforeEach(() => {
+    vi.mocked(db.deleteTaskForGroup).mockClear();
+  });
+
+  it('AC3: returns "Removed" for a valid task id', async () => {
+    vi.mocked(db.deleteTaskForGroup).mockReturnValue(true);
+
+    const reply = await handleScheduleCommand(
+      'group-alice',
+      'http:alice',
+      '/schedule remove test-id-1234',
+    );
+
+    expect(db.deleteTaskForGroup).toHaveBeenCalledWith('test-id-1234', 'group-alice');
+    expect(reply).toMatch(/Removed/i);
+  });
+
+  it('AC4: returns "not found" without a stack trace for unknown id', async () => {
+    vi.mocked(db.deleteTaskForGroup).mockReturnValue(false);
+
+    const reply = await handleScheduleCommand(
+      'group-alice',
+      'http:alice',
+      '/schedule remove unknown-uuid',
+    );
+
+    expect(reply).toMatch(/not found/i);
+    expect(reply).not.toMatch(/Error:|stack|at \w/);
+  });
+
+  it('returns usage error when id is missing', async () => {
+    const reply = await handleScheduleCommand(
+      'group-alice',
+      'http:alice',
+      '/schedule remove',
+    );
+    expect(reply).toMatch(/Usage/i);
+    expect(db.deleteTaskForGroup).not.toHaveBeenCalled();
+  });
+});
+
+describe('HELP_TEXT includes /schedule', () => {
+  it('mentions /schedule in the help text', () => {
+    expect(HELP_TEXT).toMatch(/\/schedule/);
+  });
+});
+

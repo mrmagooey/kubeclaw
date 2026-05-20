@@ -937,6 +937,32 @@ export function deleteTask(id: string): void {
   saveDatabase();
 }
 
+/**
+ * Delete a scheduled task only if it belongs to the specified group.
+ * Returns true if a row was deleted, false if the task was not found
+ * or belongs to a different group (cross-group deletion is prevented).
+ */
+export function deleteTaskForGroup(id: string, groupFolder: string): boolean {
+  // Check ownership before deleting run logs (avoids orphan cleanup for
+  // tasks that exist but belong to another group).
+  const stmt = db.prepare(
+    'SELECT id FROM scheduled_tasks WHERE id = ? AND group_folder = ?',
+  );
+  stmt.bind([id, groupFolder]);
+  const exists = stmt.step();
+  stmt.free();
+
+  if (!exists) return false;
+
+  db.run('DELETE FROM task_run_logs WHERE task_id = ?', [id]);
+  db.run(
+    'DELETE FROM scheduled_tasks WHERE id = ? AND group_folder = ?',
+    [id, groupFolder],
+  );
+  saveDatabase();
+  return true;
+}
+
 export function getAllScheduledTasks(): ScheduledTask[] {
   const result = db.exec(
     'SELECT * FROM scheduled_tasks ORDER BY created_at DESC',
