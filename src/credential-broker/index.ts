@@ -37,6 +37,42 @@ const METRICS_PORT = parseInt(process.env.BROKER_METRICS_PORT ?? '9090', 10);
 /** Label selector for per-group credential Secrets. */
 const GROUP_SECRETS_LABEL_SELECTOR = 'kubeclaw.io/group-secrets=true';
 
+export interface ReloadCallbackOpts {
+  configPath: string;
+  getResolver: () => Resolver;
+  setResolver: (r: Resolver) => void;
+  groupSource: K8sSecretSource;
+  operatorSecretReader: (catalogId: string) => Promise<string | null>;
+  metrics: ReturnType<typeof createMetrics>;
+}
+
+/**
+ * Build the watchFile callback that hot-reloads the broker config.
+ *
+ * Extracted so unit and integration tests can drive the reload path
+ * without spinning up a full HTTP server or a real K8s cluster.
+ */
+export function makeReloadCallback(opts: ReloadCallbackOpts): () => void {
+  return () => {
+    try {
+      const next = loadConfigOrThrow(opts.configPath);
+      opts.setResolver(
+        new Resolver({
+          mappings: next.mappings,
+          catalog: next.catalog,
+          groupSource: opts.groupSource,
+          operatorSecretReader: opts.operatorSecretReader,
+        }),
+      );
+      logger.info({ count: next.mappings.length }, 'broker config reloaded');
+      opts.metrics.recordConfigReload({ result: 'success' });
+    } catch (e) {
+      logger.error({ err: e }, 'failed to reload broker config');
+      opts.metrics.recordConfigReload({ result: 'failure' });
+    }
+  };
+}
+
 export function loadConfigOrThrow(path: string) {
   let text: string;
   try {
@@ -194,22 +230,16 @@ export async function startBroker(): Promise<http.Server> {
     operatorSecretReader,
   });
 
-  fs.watchFile(CONFIG_PATH, { interval: 5000 }, () => {
-    try {
-      const next = loadConfigOrThrow(CONFIG_PATH);
-      resolver = new Resolver({
-        mappings: next.mappings,
-        catalog: next.catalog,
-        groupSource: secretSource,
-        operatorSecretReader,
-      });
-      logger.info({ count: next.mappings.length }, 'broker config reloaded');
-      metrics.recordConfigReload({ result: 'success' });
-    } catch (e) {
-      logger.error({ err: e }, 'failed to reload broker config');
-      metrics.recordConfigReload({ result: 'failure' });
-    }
+  const reloadCallback = makeReloadCallback({
+    configPath: CONFIG_PATH,
+    getResolver: () => resolver,
+    setResolver: (r) => { resolver = r; },
+    groupSource: secretSource,
+    operatorSecretReader,
+    metrics,
   });
+
+  fs.watchFile(CONFIG_PATH, { interval: 5000 }, reloadCallback);
 
   const identityVerifier = new IdentityVerifier({
     createTokenReview: async (token, audiences) => {
