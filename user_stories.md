@@ -777,3 +777,26 @@ status: passing 4/4 (HEAD extension to GET /attachments/raw handler)
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-405 --create-namespace`, `--set namespace=kubeclaw-e2e-405`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
 
 status: passing 5/5 (405 Method Not Allowed + Allow header per RFC 9110)
+
+## Story 32: HTTP channel exposes a /healthz liveness endpoint
+
+**As a** KubeClaw operator
+**I want** `GET /healthz` on the HTTP channel to return 200 OK with a tiny JSON body indicating the pod is alive and how long it has been running
+**So that** I can wire it into Kubernetes liveness probes and external uptime monitors (curl from a cron job)
+
+### Acceptance criteria
+
+1. `GET /healthz` (no auth required) → 200 + `Content-Type: application/json` + body `{"status":"ok","uptime_ms":<number>}` where `uptime_ms` is a non-negative integer.
+2. Two successive calls show monotonically non-decreasing `uptime_ms` (drift-tolerant).
+3. `HEAD /healthz` → 200, no body, same headers.
+4. `POST /healthz` → 405 + `Allow: GET, HEAD`.
+5. `GET /healthz/anything` (sub-path) → 404 (the endpoint is exact-match only).
+
+### Notes
+
+- Add the handler in `src/channels/http.ts` near the top of the request dispatch, before authentication, so probes don't need credentials. Capture `processStartMs = Date.now()` once at server construction; `uptime_ms = Date.now() - processStartMs`.
+- Update the `pathMethods` table from Story 31 so `/healthz` returns 405 + `Allow: GET, HEAD` on other verbs.
+- LLM-dependence: **none**.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-healthz --create-namespace`, `--set namespace=kubeclaw-e2e-healthz`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14117` for the kubectl port-forward.
+
+status: drafted
