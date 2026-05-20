@@ -142,6 +142,10 @@ spec:
             {{- if eq (default $name $cfg.type) "http" }}
             - name: HTTP_CHANNEL_RATE_LIMIT_PER_USER_MESSAGES_PER_MINUTE
               value: {{ $.Values.httpChannel.rateLimit.perUserMessagesPerMinute | quote }}
+            - name: HTTP_CHANNEL_MAX_ATTACHMENT_COUNT_PER_USER
+              value: {{ $.Values.httpChannel.attachments.maxCountPerUser | default 0 | quote }}
+            - name: HTTP_CHANNEL_MAX_ATTACHMENT_BYTES_PER_USER
+              value: {{ $.Values.httpChannel.attachments.maxSizeBytesPerUser | default 0 | quote }}
             {{- end }}
             {{- if eq $.Values.credentialInjection.mode "sidecar" }}
             {{- include "kubeclaw.credentialSidecarEnv" $ | nindent 12 }}

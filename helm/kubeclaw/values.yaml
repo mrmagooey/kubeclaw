@@ -160,13 +160,19 @@ networkPolicy:
 #           optional: true
 channels: {}
 
-# HTTP channel settings (applied to all HTTP channel instances).
+# HTTP channel global settings (applied to all HTTP channel instances).
 httpChannel:
   rateLimit:
     # Maximum POST /message requests per user per 60-second sliding window.
-    # 0 = unlimited (preserves backward compatibility for existing deployments).
-    # Default 60 allows one message per second on average.
+    # 0 = unlimited. Default 60 allows one message per second on average.
     perUserMessagesPerMinute: 60
+  attachments:
+    # Maximum number of uploaded files stored per user.
+    # 0 (default) = unlimited.
+    maxCountPerUser: 0
+    # Maximum cumulative bytes of stored files per user.
+    # 0 (default) = unlimited.
+    maxSizeBytesPerUser: 0
 
 # Default resource limits for channel pods.
 channelPod:

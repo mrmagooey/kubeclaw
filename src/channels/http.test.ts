@@ -29,6 +29,17 @@ vi.mock('node:fs', () => ({
   writeFileSync: vi.fn(),
 }));
 
+// Mock fs/promises so the quota helper can be controlled in unit tests.
+// Default: empty directory (count=0, bytes=0). Override per-test via vi.mocked().
+vi.mock('node:fs/promises', () => ({
+  default: {
+    readdir: vi.fn(async () => [] as string[]),
+    stat: vi.fn(async () => ({ isFile: () => true, size: 0 })),
+  },
+  readdir: vi.fn(async () => [] as string[]),
+  stat: vi.fn(async () => ({ isFile: () => true, size: 0 })),
+}));
+
 // Mock the built-in http module so we don't actually bind a port
 const serverListeners = new Map<string, (...args: unknown[]) => void>();
 const mockServerInstance = {
@@ -52,7 +63,14 @@ vi.mock('node:http', async (importOriginal) => {
   };
 });
 
-import { HttpChannel, HttpChannelOpts, detectMediaType } from './http.js';
+import fsPromises from 'node:fs/promises';
+import fs from 'node:fs';
+import {
+  HttpChannel,
+  HttpChannelOpts,
+  detectMediaType,
+  getAttachmentUsage,
+} from './http.js';
 import { appendConversationMessage } from '../db.js';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -1807,4 +1825,232 @@ describe('detectMediaType', () => {
     expect(detectMediaType(Buffer.from([0x00, 0x01, 0x02]))).toBeNull();
   });
 });
+
+
+  // ── getAttachmentUsage() helper ───────────────────────────────────────────
+
+  describe('getAttachmentUsage()', () => {
+    it('returns {count:0, bytes:0} when directory does not exist', async () => {
+      vi.mocked(fsPromises.readdir).mockRejectedValueOnce(
+        Object.assign(new Error('ENOENT'), { code: 'ENOENT' }),
+      );
+      const result = await getAttachmentUsage('/nonexistent/path');
+      expect(result).toEqual({ count: 0, bytes: 0 });
+    });
+
+    it('returns correct count and byte sum for files in directory', async () => {
+      vi.mocked(fsPromises.readdir).mockResolvedValueOnce(
+        ['a.jpg', 'b.png'] as unknown as Awaited<ReturnType<typeof fsPromises.readdir>>,
+      );
+      vi.mocked(fsPromises.stat)
+        .mockResolvedValueOnce({ isFile: () => true, size: 10000 } as unknown as Awaited<ReturnType<typeof fsPromises.stat>>)
+        .mockResolvedValueOnce({ isFile: () => true, size: 20000 } as unknown as Awaited<ReturnType<typeof fsPromises.stat>>);
+      const result = await getAttachmentUsage('/some/dir');
+      expect(result).toEqual({ count: 2, bytes: 30000 });
+    });
+
+    it('skips non-file entries (directories) when summing bytes', async () => {
+      vi.mocked(fsPromises.readdir).mockResolvedValueOnce(
+        ['subdir'] as unknown as Awaited<ReturnType<typeof fsPromises.readdir>>,
+      );
+      vi.mocked(fsPromises.stat).mockResolvedValueOnce(
+        { isFile: () => false, size: 0 } as unknown as Awaited<ReturnType<typeof fsPromises.stat>>,
+      );
+      const result = await getAttachmentUsage('/some/dir');
+      // count still includes the entry (readdir sees it), bytes=0 since not a file
+      expect(result.bytes).toBe(0);
+    });
+
+    it('propagates unexpected errors from readdir', async () => {
+      vi.mocked(fsPromises.readdir).mockRejectedValueOnce(
+        Object.assign(new Error('EACCES'), { code: 'EACCES' }),
+      );
+      await expect(getAttachmentUsage('/locked')).rejects.toThrow('EACCES');
+    });
+  });
+
+  // ── Per-user attachment quota (unit — mocked fs) ──────────────────────────
+
+  describe('POST /message multipart attachment quota', () => {
+    it('returns 413 with count message when attachment count quota is exceeded', async () => {
+      // Simulate: 3 existing files already present — at the max of 3
+      vi.mocked(fsPromises.readdir).mockResolvedValueOnce(
+        ['a.jpg', 'b.jpg', 'c.jpg'] as unknown as Awaited<ReturnType<typeof fsPromises.readdir>>,
+      );
+      vi.mocked(fsPromises.stat)
+        .mockResolvedValueOnce({ isFile: () => true, size: 1000 } as unknown as Awaited<ReturnType<typeof fsPromises.stat>>)
+        .mockResolvedValueOnce({ isFile: () => true, size: 1000 } as unknown as Awaited<ReturnType<typeof fsPromises.stat>>)
+        .mockResolvedValueOnce({ isFile: () => true, size: 1000 } as unknown as Awaited<ReturnType<typeof fsPromises.stat>>);
+
+      const opts = makeOpts({ maxAttachmentCount: 3 });
+      const channel = new HttpChannel(makeConfig(), opts);
+      await channel.connect();
+
+      const boundary = 'quotaboundary1';
+      const body = buildMultipartBody(boundary, [
+        {
+          name: 'image',
+          filename: 'new.jpg',
+          contentType: 'image/jpeg',
+          data: JPEG_MAGIC,
+        },
+      ]);
+      const req = makeMultipartReq({ boundary, body });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(413);
+      expect(res._body).toBe('Attachment limit reached (max 3)');
+      // writeFileSync must NOT have been called
+      expect(vi.mocked(fs.writeFileSync)).not.toHaveBeenCalled();
+
+      await channel.disconnect();
+    });
+
+    it('returns 413 with size message when cumulative byte quota would be exceeded', async () => {
+      // 45 KB already stored; new file is 10 KB; limit is 50 KB
+      vi.mocked(fsPromises.readdir).mockResolvedValueOnce(
+        ['big.jpg'] as unknown as Awaited<ReturnType<typeof fsPromises.readdir>>,
+      );
+      vi.mocked(fsPromises.stat).mockResolvedValueOnce(
+        { isFile: () => true, size: 46080 } as unknown as Awaited<ReturnType<typeof fsPromises.stat>>,
+      );
+
+      const opts = makeOpts({ maxAttachmentBytes: 50000 });
+      const channel = new HttpChannel(makeConfig(), opts);
+      await channel.connect();
+
+      // Build a body whose image part is ~10 KB (larger than available space)
+      const largeImage = Buffer.concat([JPEG_MAGIC, Buffer.alloc(10000)]);
+      const boundary = 'quotaboundary2';
+      const body = buildMultipartBody(boundary, [
+        {
+          name: 'image',
+          filename: 'big2.jpg',
+          contentType: 'image/jpeg',
+          data: largeImage,
+        },
+      ]);
+      const req = makeMultipartReq({ boundary, body });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(413);
+      expect(res._body).toBe('Attachment storage limit reached');
+      expect(vi.mocked(fs.writeFileSync)).not.toHaveBeenCalled();
+
+      await channel.disconnect();
+    });
+
+    it('allows upload when both limits are 0 (unlimited)', async () => {
+      // No files yet — readdir returns empty
+      vi.mocked(fsPromises.readdir).mockResolvedValueOnce(
+        [] as unknown as Awaited<ReturnType<typeof fsPromises.readdir>>,
+      );
+
+      const opts = makeOpts({ maxAttachmentCount: 0, maxAttachmentBytes: 0 });
+      const channel = new HttpChannel(makeConfig(), opts);
+      await channel.connect();
+
+      const boundary = 'quotaboundary3';
+      const body = buildMultipartBody(boundary, [
+        {
+          name: 'image',
+          filename: 'ok.jpg',
+          contentType: 'image/jpeg',
+          data: JPEG_MAGIC,
+        },
+      ]);
+      const req = makeMultipartReq({ boundary, body });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      expect(vi.mocked(fs.writeFileSync)).toHaveBeenCalledOnce();
+
+      await channel.disconnect();
+    });
+
+    it('allows upload when below count limit', async () => {
+      // 2 files stored; limit is 3 → still 1 slot left
+      vi.mocked(fsPromises.readdir).mockResolvedValueOnce(
+        ['a.jpg', 'b.jpg'] as unknown as Awaited<ReturnType<typeof fsPromises.readdir>>,
+      );
+      vi.mocked(fsPromises.stat)
+        .mockResolvedValueOnce({ isFile: () => true, size: 1000 } as unknown as Awaited<ReturnType<typeof fsPromises.stat>>)
+        .mockResolvedValueOnce({ isFile: () => true, size: 1000 } as unknown as Awaited<ReturnType<typeof fsPromises.stat>>);
+
+      const opts = makeOpts({ maxAttachmentCount: 3 });
+      const channel = new HttpChannel(makeConfig(), opts);
+      await channel.connect();
+
+      const boundary = 'quotaboundary4';
+      const body = buildMultipartBody(boundary, [
+        {
+          name: 'image',
+          filename: 'third.jpg',
+          contentType: 'image/jpeg',
+          data: JPEG_MAGIC,
+        },
+      ]);
+      const req = makeMultipartReq({ boundary, body });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+
+      await channel.disconnect();
+    });
+
+    it('alice quota rejection does not affect bob uploads', async () => {
+      // alice: 3 files at limit of 3
+      vi.mocked(fsPromises.readdir).mockResolvedValueOnce(
+        ['a.jpg', 'b.jpg', 'c.jpg'] as unknown as Awaited<ReturnType<typeof fsPromises.readdir>>,
+      );
+      vi.mocked(fsPromises.stat)
+        .mockResolvedValueOnce({ isFile: () => true, size: 1000 } as unknown as Awaited<ReturnType<typeof fsPromises.stat>>)
+        .mockResolvedValueOnce({ isFile: () => true, size: 1000 } as unknown as Awaited<ReturnType<typeof fsPromises.stat>>)
+        .mockResolvedValueOnce({ isFile: () => true, size: 1000 } as unknown as Awaited<ReturnType<typeof fsPromises.stat>>);
+
+      // bob: 0 files
+      vi.mocked(fsPromises.readdir).mockResolvedValueOnce(
+        [] as unknown as Awaited<ReturnType<typeof fsPromises.readdir>>,
+      );
+
+      const opts = makeOpts({
+        maxAttachmentCount: 3,
+        registeredGroups: vi.fn(() => ({
+          'http:alice': { name: 'alice', folder: 'alice', trigger: '', added_at: '' },
+          'http:bob': { name: 'bob', folder: 'bob', trigger: '', added_at: '' },
+        })),
+      });
+      const channel = new HttpChannel(
+        makeConfig({ users: { alice: 'secret', bob: 'hunter2' } }),
+        opts,
+      );
+      await channel.connect();
+
+      // alice → should get 413
+      const aliceBoundary = 'alice-boundary';
+      const aliceBody = buildMultipartBody(aliceBoundary, [
+        { name: 'image', filename: 'new.jpg', contentType: 'image/jpeg', data: JPEG_MAGIC },
+      ]);
+      const aliceReq = makeMultipartReq({ auth: 'alice:secret', boundary: aliceBoundary, body: aliceBody });
+      const aliceRes = makeRes();
+      await dispatch(channel, aliceReq, aliceRes);
+      expect(aliceRes._status).toBe(413);
+
+      // bob → should succeed (different directory, readdir returned empty)
+      const bobBoundary = 'bob-boundary';
+      const bobBody = buildMultipartBody(bobBoundary, [
+        { name: 'image', filename: 'first.jpg', contentType: 'image/jpeg', data: JPEG_MAGIC },
+      ]);
+      const bobReq = makeMultipartReq({ auth: 'bob:hunter2', boundary: bobBoundary, body: bobBody });
+      const bobRes = makeRes();
+      await dispatch(channel, bobReq, bobRes);
+      expect(bobRes._status).toBe(200);
+
+      await channel.disconnect();
+    });
+  });
 

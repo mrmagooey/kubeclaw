@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import fsPromises from 'node:fs/promises';
 import {
   createServer,
   type Server,
@@ -53,6 +54,10 @@ export interface HttpChannelOpts {
    * Defaults to sending PING with a 2 s timeout on the shared Redis client.
    */
   checkRedis?: () => Promise<CheckResult>;
+  /** Maximum number of stored attachments per user. 0 = unlimited. */
+  maxAttachmentCount?: number;
+  /** Maximum cumulative attachment bytes per user. 0 = unlimited. */
+  maxAttachmentBytes?: number;
 }
 
 interface HttpConfig {
@@ -60,12 +65,52 @@ interface HttpConfig {
   users: Record<string, string>; // username → password (plaintext)
   /** Max POST /message requests per 60-second sliding window, per user. 0 = unlimited. */
   perUserMessagesPerMinute: number;
+  /** Maximum number of stored attachments per user. 0 = unlimited. Default: 0. */
+  maxAttachmentCount?: number;
+  /** Maximum cumulative attachment bytes per user. 0 = unlimited. Default: 0. */
+  maxAttachmentBytes?: number;
 }
 
 /** Token-bucket state for a single user. */
 interface Bucket {
   tokens: number;
   lastRefillMs: number;
+}
+
+/**
+ * Returns the count of regular files and total size in bytes of all files in
+ * `attachDir`. If the directory does not exist, returns { count: 0, bytes: 0 }.
+ * Subdirectories are skipped (they don't consume either quota).
+ */
+export async function getAttachmentUsage(
+  attachDir: string,
+): Promise<{ count: number; bytes: number }> {
+  let entries: string[];
+  try {
+    entries = await fsPromises.readdir(attachDir);
+  } catch (err: unknown) {
+    // Directory does not exist yet — no usage
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      return { count: 0, bytes: 0 };
+    }
+    throw err;
+  }
+
+  let bytes = 0;
+  let fileCount = 0;
+  for (const entry of entries) {
+    try {
+      const st = await fsPromises.stat(path.join(attachDir, entry));
+      if (st.isFile()) {
+        bytes += st.size;
+        fileCount += 1;
+      }
+    } catch {
+      // Ignore entries that disappear between readdir and stat
+    }
+  }
+
+  return { count: fileCount, bytes };
 }
 
 // SSE client tracking
@@ -397,6 +442,15 @@ export class HttpChannel implements Channel {
     return { allowed: false, retryAfterSeconds };
   }
 
+  private get maxAttachmentCount(): number {
+    // opts takes precedence (allows test injection); fall back to parsed config
+    return this.opts.maxAttachmentCount ?? this.config.maxAttachmentCount ?? 0;
+  }
+
+  private get maxAttachmentBytes(): number {
+    return this.opts.maxAttachmentBytes ?? this.config.maxAttachmentBytes ?? 0;
+  }
+
   async connect(): Promise<void> {
     this.server = createServer((req, res) => {
       this.handleRequest(req, res).catch((err) => {
@@ -650,6 +704,7 @@ export class HttpChannel implements Channel {
       });
 
       req.on('end', () => {
+        void (async () => {
         const body = Buffer.concat(chunks);
 
         if (contentType.startsWith('multipart/form-data')) {
@@ -700,6 +755,22 @@ export class HttpChannel implements Channel {
           const ext = mime.split('/')[1].replace('jpeg', 'jpg');
           const filename = `img-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.${ext}`;
           const attachDir = path.join(GROUPS_DIR, jid, 'attachments', 'raw');
+
+          // ── Per-user attachment quota check ───────────────────────────────
+          // Re-read the live directory so quota reflects recent DELETEs.
+          const usage = await getAttachmentUsage(attachDir);
+          if (this.maxAttachmentCount > 0 && usage.count >= this.maxAttachmentCount) {
+            res.writeHead(413, { 'Content-Type': 'text/plain' });
+            res.end(`Attachment limit reached (max ${this.maxAttachmentCount})`);
+            return;
+          }
+          if (this.maxAttachmentBytes > 0 && usage.bytes + imagePart.data.length > this.maxAttachmentBytes) {
+            res.writeHead(413, { 'Content-Type': 'text/plain' });
+            res.end('Attachment storage limit reached');
+            return;
+          }
+          // ─────────────────────────────────────────────────────────────────
+
           fs.mkdirSync(attachDir, { recursive: true });
           fs.writeFileSync(path.join(attachDir, filename), imagePart.data);
 
@@ -738,6 +809,7 @@ export class HttpChannel implements Channel {
           res.writeHead(400, { 'Content-Type': 'text/plain' });
           res.end('Invalid JSON');
         }
+        })();
       });
       return;
     }
@@ -1153,6 +1225,8 @@ function parseConfig(): HttpConfig | null {
     'HTTP_CHANNEL_PORT',
     'HTTP_CHANNEL_USERS',
     'HTTP_CHANNEL_RATE_LIMIT_PER_USER_MESSAGES_PER_MINUTE',
+    'HTTP_CHANNEL_MAX_ATTACHMENT_COUNT_PER_USER',
+    'HTTP_CHANNEL_MAX_ATTACHMENT_BYTES_PER_USER',
   ]);
 
   const port = parseInt(
@@ -1198,7 +1272,27 @@ function parseConfig(): HttpConfig | null {
     Number.isNaN(parsedRateLimit) ? 60 : parsedRateLimit,
   );
 
-  return { port, users, perUserMessagesPerMinute };
+  const maxAttachmentCount = parseInt(
+    process.env.HTTP_CHANNEL_MAX_ATTACHMENT_COUNT_PER_USER ||
+      envVars.HTTP_CHANNEL_MAX_ATTACHMENT_COUNT_PER_USER ||
+      '0',
+    10,
+  );
+
+  const maxAttachmentBytes = parseInt(
+    process.env.HTTP_CHANNEL_MAX_ATTACHMENT_BYTES_PER_USER ||
+      envVars.HTTP_CHANNEL_MAX_ATTACHMENT_BYTES_PER_USER ||
+      '0',
+    10,
+  );
+
+  return {
+    port,
+    users,
+    perUserMessagesPerMinute,
+    maxAttachmentCount: isNaN(maxAttachmentCount) ? 0 : maxAttachmentCount,
+    maxAttachmentBytes: isNaN(maxAttachmentBytes) ? 0 : maxAttachmentBytes,
+  };
 }
 
 registerChannel('http', (opts: ChannelOpts) => {
