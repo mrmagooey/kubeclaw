@@ -17,8 +17,11 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { SpecialistCatalogLoader } from './specialists/catalog-loader.js';
 
-// ── The same logic as isSpecialistsCommand / handleSpecialistsCommand in
-//    channel-runner.ts — kept in sync by the build test below.
+// Local reimplementation of `isSpecialistsCommand` / `handleSpecialistsCommand`.
+// We can't import from `./channel-runner.js` here — its module-evaluation
+// triggers a K8s client singleton that throws "No active cluster" in tests.
+// Fork risk acknowledged; the unit tests in `channel-runner.test.ts` exercise
+// the real exports, and the regex below is intentionally trivial.
 
 function isSpecialistsCommand(message: string): boolean {
   return /^\/specialists(\s|$)/i.test(message.trim());
@@ -29,7 +32,10 @@ function handleSpecialistsCommand(
   catalog: Pick<SpecialistCatalogLoader, 'getAll'>,
 ): string {
   const trimmed = message.trim();
-  const subCommand = trimmed.replace(/^\/specialists\s*/i, '').trim().toLowerCase();
+  const subCommand = trimmed
+    .replace(/^\/specialists\s*/i, '')
+    .trim()
+    .toLowerCase();
   if (subCommand !== 'list') {
     return 'Usage: /specialists list';
   }
@@ -38,7 +44,11 @@ function handleSpecialistsCommand(
     return 'No specialists configured';
   }
   const lines = specialists.map((s) => {
-    const desc = s.prompt.length > 80 ? s.prompt.slice(0, 80) + '…' : s.prompt;
+    // Use the spread-iterator slice so we don't split surrogate pairs on
+    // emoji-containing prompts.
+    const codepoints = [...s.prompt];
+    const desc =
+      codepoints.length > 80 ? codepoints.slice(0, 80).join('') + '…' : s.prompt;
     return `@${s.name} — ${desc}`;
   });
   return lines.join('\n');

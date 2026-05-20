@@ -1067,7 +1067,13 @@ export function handleSpecialistsCommand(
   }
 
   const lines = specialists.map((s) => {
-    const desc = s.prompt.length > 80 ? s.prompt.slice(0, 80) + '…' : s.prompt;
+    // Iterate code points so we don't split a surrogate pair (and produce a
+    // mojibake U+FFFD) on emoji-containing prompts.
+    const codepoints = [...s.prompt];
+    const desc =
+      codepoints.length > 80
+        ? codepoints.slice(0, 80).join('') + '…'
+        : s.prompt;
     return `@${s.name} — ${desc}`;
   });
   return lines.join('\n');
