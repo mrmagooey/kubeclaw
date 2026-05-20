@@ -58,11 +58,16 @@ spec:
 {{- if $cfg.enabled }}
 ---
 # Per-channel storage: groups, store, sessions (ReadWriteOnce — each channel pod owns its own PVCs)
+# helm.sh/resource-policy: keep on groups and store prevents Helm from deleting these PVCs
+# during `helm upgrade` or `helm uninstall`, preserving conversation history, SQLite DB,
+# attachments, and per-group memory (Story 35).
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: kubeclaw-channel-{{ $name }}-groups
   namespace: {{ $.Values.namespace }}
+  annotations:
+    helm.sh/resource-policy: keep
 spec:
   accessModes:
     - ReadWriteOnce
@@ -76,6 +81,8 @@ kind: PersistentVolumeClaim
 metadata:
   name: kubeclaw-channel-{{ $name }}-store
   namespace: {{ $.Values.namespace }}
+  annotations:
+    helm.sh/resource-policy: keep
 spec:
   accessModes:
     - ReadWriteOnce
