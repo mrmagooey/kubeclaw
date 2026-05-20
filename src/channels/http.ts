@@ -83,10 +83,25 @@ const MEDIA_MAGIC: Array<{ bytes: number[]; mime: string }> = [
     mime: 'image/png',
   },
   { bytes: [0x47, 0x49, 0x46], mime: 'image/gif' },
-  { bytes: [0x52, 0x49, 0x46, 0x46], mime: 'image/webp' },
 ];
 
-function detectMediaType(buffer: Buffer): string | null {
+export function detectMediaType(buffer: Buffer): string | null {
+  // WebP: RIFF????WEBP (12 bytes minimum, byte 4-7 is the file-size field
+  // which is don't-care for detection). Checked before MEDIA_MAGIC because
+  // the bare RIFF prefix also matches WAV/AVI/etc; we only accept actual WebP.
+  if (
+    buffer.length >= 12 &&
+    buffer[0] === 0x52 &&
+    buffer[1] === 0x49 &&
+    buffer[2] === 0x46 &&
+    buffer[3] === 0x46 &&
+    buffer[8] === 0x57 &&
+    buffer[9] === 0x45 &&
+    buffer[10] === 0x42 &&
+    buffer[11] === 0x50
+  ) {
+    return 'image/webp';
+  }
   for (const sig of MEDIA_MAGIC) {
     if (sig.bytes.every((b, i) => buffer[i] === b)) return sig.mime;
   }

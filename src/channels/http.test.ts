@@ -52,7 +52,7 @@ vi.mock('node:http', async (importOriginal) => {
   };
 });
 
-import { HttpChannel, HttpChannelOpts } from './http.js';
+import { HttpChannel, HttpChannelOpts, detectMediaType } from './http.js';
 import { appendConversationMessage } from '../db.js';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -1751,3 +1751,60 @@ describe('HttpChannel', () => {
     });
   });
 });
+
+// ── detectMediaType — unit tests ──────────────────────────────────────────────
+
+describe('detectMediaType', () => {
+  it('detects GIF from magic prefix [47 49 46]', () => {
+    expect(detectMediaType(Buffer.from([0x47, 0x49, 0x46]))).toBe('image/gif');
+  });
+
+  it('detects GIF with additional bytes (animated GIF prefix)', () => {
+    // Animated GIFs still start with 47 49 46; the check is prefix-only
+    const animatedGifPrefix = Buffer.from([
+      0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x00, 0x01,
+    ]);
+    expect(detectMediaType(animatedGifPrefix)).toBe('image/gif');
+  });
+
+  it('detects WebP from full RIFF????WEBP signature', () => {
+    const webpBuf = Buffer.from([
+      0x52, 0x49, 0x46, 0x46, // RIFF
+      0x00, 0x00, 0x00, 0x00, // file size (don't-care)
+      0x57, 0x45, 0x42, 0x50, // WEBP
+    ]);
+    expect(detectMediaType(webpBuf)).toBe('image/webp');
+  });
+
+  it('rejects RIFF container that is not WebP (e.g. WAV — 52 49 46 46 but no WEBP at [8-11])', () => {
+    // WAV: RIFF at [0-3], then file size, then "WAVE" at [8-11]
+    const wavBuf = Buffer.from([
+      0x52, 0x49, 0x46, 0x46, // RIFF
+      0x24, 0x00, 0x00, 0x00, // file size
+      0x57, 0x41, 0x56, 0x45, // WAVE  ← not WEBP
+    ]);
+    expect(detectMediaType(wavBuf)).toBeNull();
+  });
+
+  it('returns null for a buffer shorter than 12 bytes starting with RIFF', () => {
+    const shortRiff = Buffer.from([0x52, 0x49, 0x46, 0x46, 0x00, 0x00]);
+    expect(detectMediaType(shortRiff)).toBeNull();
+  });
+
+  it('detects JPEG from FF D8 FF magic bytes', () => {
+    expect(detectMediaType(Buffer.from([0xff, 0xd8, 0xff, 0xe0]))).toBe('image/jpeg');
+  });
+
+  it('detects PNG from 8-byte magic prefix', () => {
+    expect(
+      detectMediaType(
+        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      ),
+    ).toBe('image/png');
+  });
+
+  it('returns null for unknown bytes', () => {
+    expect(detectMediaType(Buffer.from([0x00, 0x01, 0x02]))).toBeNull();
+  });
+});
+
