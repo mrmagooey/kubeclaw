@@ -776,4 +776,4 @@ status: passing 4/4 (HEAD extension to GET /attachments/raw handler)
 - LLM-dependence: **none**.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-405 --create-namespace`, `--set namespace=kubeclaw-e2e-405`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
 
-status: drafted
+status: passing 5/5 (405 Method Not Allowed + Allow header per RFC 9110)
