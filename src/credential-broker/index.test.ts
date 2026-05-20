@@ -396,7 +396,6 @@ describe('makeReloadCallback — unit', () => {
 
     const callback = makeReloadCallback({
       configPath: configFile,
-      getResolver: () => resolver,
       setResolver: (r) => { resolver = r; },
       groupSource,
       operatorSecretReader: vi.fn().mockResolvedValue(null),
@@ -423,7 +422,6 @@ describe('makeReloadCallback — unit', () => {
 
     const callback = makeReloadCallback({
       configPath: configFile,
-      getResolver: () => resolver,
       setResolver: (r) => { resolver = r; },
       groupSource,
       operatorSecretReader: vi.fn().mockResolvedValue(null),
@@ -448,7 +446,6 @@ describe('makeReloadCallback — unit', () => {
 
     const callback = makeReloadCallback({
       configPath: path.join(tmpDir, 'does-not-exist.yaml'),
-      getResolver: () => resolver,
       setResolver: (r) => { resolver = r; },
       groupSource,
       operatorSecretReader: vi.fn().mockResolvedValue(null),
@@ -473,7 +470,6 @@ describe('makeReloadCallback — unit', () => {
 
     const callback = makeReloadCallback({
       configPath: configFile,
-      getResolver: () => resolver,
       setResolver: (r) => { resolver = r; },
       groupSource,
       operatorSecretReader: vi.fn().mockResolvedValue(null),
@@ -499,7 +495,6 @@ describe('makeReloadCallback — unit', () => {
 
     const callback = makeReloadCallback({
       configPath: configFile,
-      getResolver: () => resolver,
       setResolver: (r) => { resolver = r; },
       groupSource,
       operatorSecretReader: vi.fn().mockResolvedValue(null),
@@ -521,7 +516,6 @@ describe('makeReloadCallback — unit', () => {
 
     const callback = makeReloadCallback({
       configPath: configFile,
-      getResolver: () => resolver,
       setResolver: (r) => { resolver = r; },
       groupSource,
       operatorSecretReader: vi.fn().mockResolvedValue(null),
@@ -599,7 +593,6 @@ describe('makeReloadCallback — integration', () => {
 
     const callback = makeReloadCallback({
       configPath: configFile,
-      getResolver: () => resolver,
       setResolver: (r) => { resolver = r; },
       groupSource,
       operatorSecretReader: vi.fn().mockResolvedValue(null),
@@ -631,7 +624,6 @@ describe('makeReloadCallback — integration', () => {
 
     const callback = makeReloadCallback({
       configPath: configFile,
-      getResolver: () => resolver,
       setResolver: (r) => { resolver = r; },
       groupSource,
       operatorSecretReader: vi.fn().mockResolvedValue(null),
@@ -659,7 +651,6 @@ describe('makeReloadCallback — integration', () => {
 
     const callback = makeReloadCallback({
       configPath: configFile,
-      getResolver: () => resolver,
       setResolver: (r) => { resolver = r; },
       groupSource,
       operatorSecretReader: vi.fn().mockResolvedValue(null),
@@ -687,7 +678,6 @@ describe('makeReloadCallback — integration', () => {
 
     const callback = makeReloadCallback({
       configPath: configFile,
-      getResolver: () => resolver,
       setResolver: (r) => { resolver = r; },
       groupSource,
       operatorSecretReader: vi.fn().mockResolvedValue(null),

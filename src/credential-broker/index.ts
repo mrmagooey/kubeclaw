@@ -39,7 +39,6 @@ const GROUP_SECRETS_LABEL_SELECTOR = 'kubeclaw.io/group-secrets=true';
 
 export interface ReloadCallbackOpts {
   configPath: string;
-  getResolver: () => Resolver;
   setResolver: (r: Resolver) => void;
   groupSource: K8sSecretSource;
   operatorSecretReader: (catalogId: string) => Promise<string | null>;
@@ -232,8 +231,9 @@ export async function startBroker(): Promise<http.Server> {
 
   const reloadCallback = makeReloadCallback({
     configPath: CONFIG_PATH,
-    getResolver: () => resolver,
-    setResolver: (r) => { resolver = r; },
+    setResolver: (r) => {
+      resolver = r;
+    },
     groupSource: secretSource,
     operatorSecretReader,
     metrics,
