@@ -65,14 +65,14 @@ function sh(
 
 /** Poll until fn() returns truthy or timeoutMs elapses. */
 async function waitUntil(
-  fn: () => boolean,
+  fn: () => boolean | Promise<boolean>,
   timeoutMs: number,
   label: string,
   intervalMs = 2000,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (fn()) return;
+    if (await fn()) return;
     await sleep(intervalMs);
   }
   throw new Error(`Timed out after ${timeoutMs}ms waiting for: ${label}`);
