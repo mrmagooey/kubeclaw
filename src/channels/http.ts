@@ -762,7 +762,7 @@ export class HttpChannel implements Channel {
       req.on('data', (chunk: Buffer) => {
         totalSize += chunk.length;
         if (totalSize > MAX_MULTIPART_SIZE) {
-          res.writeHead(413, { 'Content-Type': 'text/plain' });
+          res.writeHead(413, this.addCorsHeaders({ 'Content-Type': 'text/plain' }));
           res.end('Payload too large');
           req.destroy();
           return;
@@ -959,7 +959,7 @@ export class HttpChannel implements Channel {
         filename.includes('\\') ||
         filename.includes('..')
       ) {
-        res.writeHead(400, { 'Content-Type': 'text/plain' });
+        res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'text/plain' }));
         res.end('Bad Request');
         return;
       }
@@ -1029,7 +1029,7 @@ export class HttpChannel implements Channel {
         filename.includes('\\') ||
         filename.includes('..')
       ) {
-        res.writeHead(400, { 'Content-Type': 'text/plain' });
+        res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'text/plain' }));
         res.end('Bad Request');
         return;
       }
