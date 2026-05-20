@@ -71,9 +71,11 @@ import { resolveToolJob } from '../db.js';
  * Distinct from generic failures so callers can handle it specifically.
  */
 export class DeadlineExceededError extends Error {
+  public readonly jobName: string;
   constructor(jobName: string) {
     super(`DeadlineExceeded: Job ${jobName} exceeded its activeDeadlineSeconds`);
     this.name = 'DeadlineExceededError';
+    this.jobName = jobName;
   }
 }
 
@@ -486,13 +488,15 @@ export class JobRunner {
       // activeDeadlineSeconds.  Publish a user-visible "timed out" notice, mark
       // the DB row as 'timeout', and record the failure metric.
       if (error instanceof DeadlineExceededError) {
-        const jobName = error.message.match(/Job (.+) exceeded/)?.[1] ?? jobId;
+        const jobName = error.jobName;
         logger.error(
           { event: 'tool_job_timeout', groupFolder: group.folder, jobName },
           'Tool job timed out (DeadlineExceeded)',
         );
 
-        // Mark DB row as timed-out (best-effort).
+        // Mark DB row as timed-out (best-effort). Done BEFORE the publish so
+        // an orchestrator crash mid-handler doesn't leave the row 'active'
+        // and re-trigger via orphan reconciliation (Story 37).
         try {
           resolveToolJob(jobId, 'timeout');
         } catch (dbErr) {
@@ -503,9 +507,12 @@ export class JobRunner {
         }
 
         // Publish timeout notice to the channel's pub/sub channel (best-effort).
+        // Note: timeoutPublisher is wired from ipc-redis.ts during
+        // startToolJobSpawnWatcher boot — a job that times out before that
+        // wiring completes silently drops the notice (rare boot-race).
         if (this.timeoutPublisher) {
           const noticeId = `timeout-notice-${jobId}`;
-          const notice = formatTimeoutNotice(group.folder, jobId);
+          const notice = formatTimeoutNotice(group.folder, jobName);
           try {
             await this.timeoutPublisher.publish(
               group.folder,
