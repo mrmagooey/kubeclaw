@@ -1036,7 +1036,12 @@ export async function startToolJobSpawnWatcher(): Promise<void> {
                 // response (Story 25) — passed through the IPC envelope so the
                 // interruption notice (AC2) can reference it.
                 try {
-                  recordToolJob(jobName, groupFolder, chatJid, messageId ?? null);
+                  recordToolJob(
+                    jobName,
+                    groupFolder,
+                    chatJid,
+                    messageId ?? null,
+                  );
                 } catch (err) {
                   logger.warn(
                     { jobName, groupFolder, err },
@@ -1448,7 +1453,8 @@ export async function startTaskRequestWatcher(
             let response: string;
             try {
               const fields = JSON.parse(fieldsJson) as Record<string, string>;
-              if (!_secretManager) throw new Error('SecretManager not initialised');
+              if (!_secretManager)
+                throw new Error('SecretManager not initialised');
               await _secretManager.setGroupSecret(group, catalogId, fields);
               logger.info(
                 { group, catalogId },
@@ -1456,8 +1462,7 @@ export async function startTaskRequestWatcher(
               );
               response = JSON.stringify({ ok: true });
             } catch (err) {
-              const error =
-                err instanceof Error ? err.message : String(err);
+              const error = err instanceof Error ? err.message : String(err);
               logger.warn({ group, catalogId, error }, 'secret.add failed');
               response = JSON.stringify({ ok: false, error });
             }
@@ -1467,7 +1472,8 @@ export async function startTaskRequestWatcher(
             if (!group || !catalogId || !resultStream) continue;
             let response: string;
             try {
-              if (!_secretManager) throw new Error('SecretManager not initialised');
+              if (!_secretManager)
+                throw new Error('SecretManager not initialised');
               await _secretManager.deleteGroupSecret(group, catalogId);
               logger.info(
                 { group, catalogId },
@@ -1475,8 +1481,7 @@ export async function startTaskRequestWatcher(
               );
               response = JSON.stringify({ ok: true });
             } catch (err) {
-              const error =
-                err instanceof Error ? err.message : String(err);
+              const error = err instanceof Error ? err.message : String(err);
               logger.warn({ group, catalogId, error }, 'secret.remove failed');
               response = JSON.stringify({ ok: false, error });
             }
@@ -1486,12 +1491,12 @@ export async function startTaskRequestWatcher(
             if (!group || !resultStream) continue;
             let response: string;
             try {
-              if (!_secretManager) throw new Error('SecretManager not initialised');
+              if (!_secretManager)
+                throw new Error('SecretManager not initialised');
               const entries = await _secretManager.listGroupSecrets(group);
               response = JSON.stringify({ ok: true, result: entries });
             } catch (err) {
-              const error =
-                err instanceof Error ? err.message : String(err);
+              const error = err instanceof Error ? err.message : String(err);
               logger.warn({ group, error }, 'secret.list failed');
               response = JSON.stringify({ ok: false, error });
             }
@@ -1501,12 +1506,12 @@ export async function startTaskRequestWatcher(
             if (!resultStream) continue;
             let response: string;
             try {
-              if (!_catalogInformer) throw new Error('CatalogInformer not initialised');
+              if (!_catalogInformer)
+                throw new Error('CatalogInformer not initialised');
               const catalog = _catalogInformer.getCatalog();
               response = JSON.stringify({ ok: true, result: catalog });
             } catch (err) {
-              const error =
-                err instanceof Error ? err.message : String(err);
+              const error = err instanceof Error ? err.message : String(err);
               logger.warn({ error }, 'catalog.list failed');
               response = JSON.stringify({ ok: false, error });
             }
@@ -1517,7 +1522,8 @@ export async function startTaskRequestWatcher(
             if (!groupFolder || !capabilityType || !resultStream) continue;
             let response: string;
             try {
-              if (!_capabilityDeps) throw new Error('CapabilityDeps not initialised');
+              if (!_capabilityDeps)
+                throw new Error('CapabilityDeps not initialised');
               const result = await provisionCapability(
                 groupFolder,
                 capabilityType,
@@ -1537,7 +1543,10 @@ export async function startTaskRequestWatcher(
               }
             } catch (err) {
               const error = err instanceof Error ? err.message : String(err);
-              logger.warn({ groupFolder, capabilityType, error }, 'capability.add failed');
+              logger.warn(
+                { groupFolder, capabilityType, error },
+                'capability.add failed',
+              );
               response = JSON.stringify({ ok: false, error });
             }
             await redis.xadd(resultStream, '*', 'result', response);
@@ -1547,8 +1556,12 @@ export async function startTaskRequestWatcher(
             if (!groupFolder || !resultStream) continue;
             let response: string;
             try {
-              if (!_capabilityDeps) throw new Error('CapabilityDeps not initialised');
-              const entries = listGroupCapabilities(groupFolder, _capabilityDeps);
+              if (!_capabilityDeps)
+                throw new Error('CapabilityDeps not initialised');
+              const entries = listGroupCapabilities(
+                groupFolder,
+                _capabilityDeps,
+              );
               response = JSON.stringify({ ok: true, result: entries });
             } catch (err) {
               const error = err instanceof Error ? err.message : String(err);
@@ -1562,20 +1575,27 @@ export async function startTaskRequestWatcher(
             if (!groupFolder || !capabilityType || !resultStream) continue;
             let response: string;
             try {
-              if (!_capabilityDeps) throw new Error('CapabilityDeps not initialised');
+              if (!_capabilityDeps)
+                throw new Error('CapabilityDeps not initialised');
               const result = await removeCapabilityInstance(
                 groupFolder,
                 capabilityType,
                 _capabilityDeps,
               );
               if (result.ok) {
-                response = JSON.stringify({ ok: true, result: { message: result.message } });
+                response = JSON.stringify({
+                  ok: true,
+                  result: { message: result.message },
+                });
               } else {
                 response = JSON.stringify({ ok: false, error: result.message });
               }
             } catch (err) {
               const error = err instanceof Error ? err.message : String(err);
-              logger.warn({ groupFolder, capabilityType, error }, 'capability.remove failed');
+              logger.warn(
+                { groupFolder, capabilityType, error },
+                'capability.remove failed',
+              );
               response = JSON.stringify({ ok: false, error });
             }
             await redis.xadd(resultStream, '*', 'result', response);

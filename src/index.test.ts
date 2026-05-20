@@ -353,5 +353,4 @@ describe('index.ts internal functions', () => {
       expect(result[0].isRegistered).toBe(false);
     });
   });
-
 });

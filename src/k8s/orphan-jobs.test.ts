@@ -40,14 +40,28 @@ function makeK8sFake(): OrphanJobK8sClient & { calls: string[] } {
 }
 
 function makePublisherFake(): OrphanJobPublisher & {
-  calls: Array<{ groupFolder: string; chatJid: string; text: string; noticeId: string }>;
+  calls: Array<{
+    groupFolder: string;
+    chatJid: string;
+    text: string;
+    noticeId: string;
+  }>;
 } {
-  const calls: Array<{ groupFolder: string; chatJid: string; text: string; noticeId: string }> =
-    [];
+  const calls: Array<{
+    groupFolder: string;
+    chatJid: string;
+    text: string;
+    noticeId: string;
+  }> = [];
   return {
     calls,
     publish: vi.fn(
-      async (groupFolder: string, chatJid: string, text: string, noticeId: string) => {
+      async (
+        groupFolder: string,
+        chatJid: string,
+        text: string,
+        noticeId: string,
+      ) => {
         calls.push({ groupFolder, chatJid, text, noticeId });
       },
     ),
@@ -110,7 +124,14 @@ describe('reconcileOrphanedJobsOnStartup', () => {
   });
 
   it('publishes an interruption notice for each orphaned job', async () => {
-    const orphans = [makeRecord(), makeRecord({ job_id: 'nc-group2-xyz999', group_folder: 'group2', chat_jid: 'http:bob' })];
+    const orphans = [
+      makeRecord(),
+      makeRecord({
+        job_id: 'nc-group2-xyz999',
+        group_folder: 'group2',
+        chat_jid: 'http:bob',
+      }),
+    ];
 
     await reconcileOrphanedJobsOnStartup({
       k8s,
@@ -122,7 +143,9 @@ describe('reconcileOrphanedJobsOnStartup', () => {
     expect(publisher.calls).toHaveLength(2);
     expect(publisher.calls[0].groupFolder).toBe('group1');
     expect(publisher.calls[0].chatJid).toBe('http:alice');
-    expect(publisher.calls[0].text.toLowerCase()).toContain('tool job interrupted');
+    expect(publisher.calls[0].text.toLowerCase()).toContain(
+      'tool job interrupted',
+    );
     // noticeId must be provided for channel-side persistence (AC4)
     expect(publisher.calls[0].noticeId).toBeDefined();
     expect(publisher.calls[0].noticeId).toBeTruthy();
@@ -132,7 +155,10 @@ describe('reconcileOrphanedJobsOnStartup', () => {
   });
 
   it('calls deleteJob for each orphaned job', async () => {
-    const orphans = [makeRecord({ job_id: 'nc-group1-aaa' }), makeRecord({ job_id: 'nc-group1-bbb' })];
+    const orphans = [
+      makeRecord({ job_id: 'nc-group1-aaa' }),
+      makeRecord({ job_id: 'nc-group1-bbb' }),
+    ];
 
     await reconcileOrphanedJobsOnStartup({
       k8s,
@@ -146,7 +172,10 @@ describe('reconcileOrphanedJobsOnStartup', () => {
   });
 
   it('marks each orphaned job as interrupted in DB', async () => {
-    const orphans = [makeRecord({ job_id: 'job-a' }), makeRecord({ job_id: 'job-b' })];
+    const orphans = [
+      makeRecord({ job_id: 'job-a' }),
+      makeRecord({ job_id: 'job-b' }),
+    ];
 
     await reconcileOrphanedJobsOnStartup({
       k8s,
@@ -187,7 +216,10 @@ describe('reconcileOrphanedJobsOnStartup', () => {
     const failingK8s: OrphanJobK8sClient = {
       deleteJob: vi.fn().mockRejectedValue(new Error('K8s API error')),
     };
-    const orphans = [makeRecord({ job_id: 'job-a' }), makeRecord({ job_id: 'job-b' })];
+    const orphans = [
+      makeRecord({ job_id: 'job-a' }),
+      makeRecord({ job_id: 'job-b' }),
+    ];
 
     await reconcileOrphanedJobsOnStartup({
       k8s: failingK8s,
@@ -206,7 +238,10 @@ describe('reconcileOrphanedJobsOnStartup', () => {
     const failingPublisher: OrphanJobPublisher = {
       publish: vi.fn().mockRejectedValue(new Error('Redis error')),
     };
-    const orphans = [makeRecord({ job_id: 'job-a' }), makeRecord({ job_id: 'job-b' })];
+    const orphans = [
+      makeRecord({ job_id: 'job-a' }),
+      makeRecord({ job_id: 'job-b' }),
+    ];
 
     await reconcileOrphanedJobsOnStartup({
       k8s,
@@ -237,7 +272,10 @@ describe('reconcileOrphanedJobsOnStartup', () => {
   });
 
   it('skips individual job when markInterrupted throws', async () => {
-    const orphans = [makeRecord({ job_id: 'job-bad' }), makeRecord({ job_id: 'job-good' })];
+    const orphans = [
+      makeRecord({ job_id: 'job-bad' }),
+      makeRecord({ job_id: 'job-good' }),
+    ];
     let callCount = 0;
 
     await reconcileOrphanedJobsOnStartup({
@@ -280,7 +318,9 @@ describe('reconcileOrphanedJobsOnStartup', () => {
     await reconcileOrphanedJobsOnStartup({
       k8s,
       publisher,
-      getActiveJobs: () => [makeRecord({ job_id: jobId, message_id: messageId })],
+      getActiveJobs: () => [
+        makeRecord({ job_id: jobId, message_id: messageId }),
+      ],
       markInterrupted: (id) => markedInterrupted.push(id),
     });
 

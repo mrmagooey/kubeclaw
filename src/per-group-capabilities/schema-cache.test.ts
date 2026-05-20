@@ -10,8 +10,12 @@ const schemas = [
   { name: 'echo', description: 'echoes', inputSchema: { type: 'object' } },
 ];
 
-beforeAll(async () => { await _initTestDatabase(); });
-beforeEach(() => { __resetDbForTest(); });
+beforeAll(async () => {
+  await _initTestDatabase();
+});
+beforeEach(() => {
+  __resetDbForTest();
+});
 
 describe('capability_tool_schemas', () => {
   it('round-trips a schema set', () => {

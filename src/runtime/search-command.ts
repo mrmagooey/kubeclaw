@@ -106,7 +106,10 @@ export function isSearchCommand(message: string): boolean {
   return /^\/search(\s|$)/.test(message.trim());
 }
 
-export function handleSearchCommand(groupFolder: string, message: string): string {
+export function handleSearchCommand(
+  groupFolder: string,
+  message: string,
+): string {
   const args = parseSearchArgs(message);
   if (!args) return `Usage:\n${USAGE}`;
 

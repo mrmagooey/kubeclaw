@@ -2,7 +2,11 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { listCandidates, writeCandidate, acceptCandidate } from '../skill-store.js';
+import {
+  listCandidates,
+  writeCandidate,
+  acceptCandidate,
+} from '../skill-store.js';
 import { proposeSkill, ProposeSkillArgs, DupCheckFn } from './propose-skill.js';
 
 let root: string;
@@ -51,7 +55,12 @@ describe('proposeSkill', () => {
 
   it('detects duplicate against an existing accepted skill via the dup-check', async () => {
     const id = writeCandidate(root, GROUP, {
-      frontmatter: { name: 'foo', description: 'foo skill', created: '2026-05-16', source: 'manual' },
+      frontmatter: {
+        name: 'foo',
+        description: 'foo skill',
+        created: '2026-05-16',
+        source: 'manual',
+      },
       body: 'foo body',
     });
     acceptCandidate(root, GROUP, id);

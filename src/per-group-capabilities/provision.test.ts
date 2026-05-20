@@ -83,7 +83,11 @@ describe('provisionCapability — AC1: creates Deployment, Service, NetworkPolic
     const client = new FakePerGroupK8sClient();
     const deps = makeDeps(client);
 
-    const result = await provisionCapability('http-http-alice', 'nonexistent', deps);
+    const result = await provisionCapability(
+      'http-http-alice',
+      'nonexistent',
+      deps,
+    );
 
     expect(result.ok).toBe(false);
     expect(result.message).toMatch(/Unknown capability type/i);
@@ -100,7 +104,11 @@ describe('provisionCapability — AC1: creates Deployment, Service, NetworkPolic
     const client = new FakePerGroupK8sClient();
     const deps = makeDeps(client, [clusterSpec]);
 
-    const result = await provisionCapability('http-http-alice', 'docling', deps);
+    const result = await provisionCapability(
+      'http-http-alice',
+      'docling',
+      deps,
+    );
 
     expect(result.ok).toBe(false);
     expect(client.store.deployments.size).toBe(0);
@@ -218,7 +226,7 @@ describe('listGroupCapabilities — AC2: returns typed list', () => {
 // ── AC5: per-group isolation — alice's capabilities not visible to bob ─────
 
 describe('listGroupCapabilities — AC5: per-group isolation', () => {
-  it('returns only the requesting group\'s capabilities', async () => {
+  it("returns only the requesting group's capabilities", async () => {
     const client = new FakePerGroupK8sClient();
     const deps = makeDeps(client);
 
@@ -244,13 +252,21 @@ describe('removeCapabilityInstance — AC4: removes K8s resources and DB row', (
     const deps = makeDeps(client);
 
     // Provision first
-    const addResult = await provisionCapability('http-http-alice', 'echo', deps);
+    const addResult = await provisionCapability(
+      'http-http-alice',
+      'echo',
+      deps,
+    );
     expect(addResult.ok).toBe(true);
     expect(client.store.deployments.size).toBe(1);
     expect(getInstance('http-http-alice', 'echo')).toBeTruthy();
 
     // Remove
-    const removeResult = await removeCapabilityInstance('http-http-alice', 'echo', deps);
+    const removeResult = await removeCapabilityInstance(
+      'http-http-alice',
+      'echo',
+      deps,
+    );
 
     expect(removeResult.ok).toBe(true);
     expect(removeResult.message).toMatch(/removed/i);
@@ -269,12 +285,16 @@ describe('removeCapabilityInstance — AC4: removes K8s resources and DB row', (
     const client = new FakePerGroupK8sClient();
     const deps = makeDeps(client);
 
-    const result = await removeCapabilityInstance('http-http-alice', 'echo', deps);
+    const result = await removeCapabilityInstance(
+      'http-http-alice',
+      'echo',
+      deps,
+    );
     expect(result.ok).toBe(false);
     expect(result.message).toMatch(/not provisioned/i);
   });
 
-  it('does not remove another group\'s capability', async () => {
+  it("does not remove another group's capability", async () => {
     const client = new FakePerGroupK8sClient();
     const deps = makeDeps(client);
 
@@ -282,7 +302,11 @@ describe('removeCapabilityInstance — AC4: removes K8s resources and DB row', (
     await provisionCapability('http-http-alice', 'echo', deps);
 
     // Bob tries to remove — should fail (not provisioned for bob)
-    const result = await removeCapabilityInstance('http-http-bob', 'echo', deps);
+    const result = await removeCapabilityInstance(
+      'http-http-bob',
+      'echo',
+      deps,
+    );
     expect(result.ok).toBe(false);
 
     // Alice's capability should still exist

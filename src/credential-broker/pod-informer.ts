@@ -30,7 +30,9 @@ export class PodInformer {
     }
   }
 
-  private resolveFromPod(pod: PodSnapshot | undefined): OwnerGroupResolution | null {
+  private resolveFromPod(
+    pod: PodSnapshot | undefined,
+  ): OwnerGroupResolution | null {
     if (!pod) return null;
     if (pod.terminating) return null;
     const og = pod.annotations[OWNER_GROUP_ANNOTATION];

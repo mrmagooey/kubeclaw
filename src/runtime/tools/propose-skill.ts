@@ -42,7 +42,9 @@ export async function proposeSkill(
     return {
       kind: 'duplicate',
       existing: dup.existing ?? '(unknown)',
-      suggestion: dup.suggestion ?? 'edit the existing skill rather than creating a new one',
+      suggestion:
+        dup.suggestion ??
+        'edit the existing skill rather than creating a new one',
     };
   }
   const skill: SkillFile = {

@@ -26,11 +26,16 @@ import { requestGroupCapability } from '../capabilities/discovery-client.js';
 
 const TOOL_PREFIX = 'mcp__';
 
-export function prefixedToolName(capabilityName: string, toolName: string): string {
+export function prefixedToolName(
+  capabilityName: string,
+  toolName: string,
+): string {
   return `${TOOL_PREFIX}${capabilityName}__${toolName}`;
 }
 
-export function parseToolName(name: string): { capability: string; tool: string } | null {
+export function parseToolName(
+  name: string,
+): { capability: string; tool: string } | null {
   if (!name.startsWith(TOOL_PREFIX)) return null;
   const rest = name.slice(TOOL_PREFIX.length);
   const sep = rest.indexOf('__');
@@ -206,7 +211,10 @@ export class McpManager {
         const bare = stripPrefixIfAny(t.function.name);
         tools.push({
           type: 'function',
-          function: { ...t.function, name: prefixedToolName(server.name, bare) },
+          function: {
+            ...t.function,
+            name: prefixedToolName(server.name, bare),
+          },
         });
       }
     }
@@ -215,7 +223,8 @@ export class McpManager {
     for (const tmpl of this.groupTemplates.values()) {
       if (tmpl.state !== 'ready' || !tmpl.toolSchemas) continue;
       for (const schema of tmpl.toolSchemas) {
-        if (tmpl.allowedTools && !tmpl.allowedTools.includes(schema.name)) continue;
+        if (tmpl.allowedTools && !tmpl.allowedTools.includes(schema.name))
+          continue;
         tools.push({
           type: 'function',
           function: {
@@ -242,7 +251,9 @@ export class McpManager {
     if (this.servers.has(parsed.capability)) {
       const server = this.servers.get(parsed.capability)!;
       return server.tools.some(
-        (t) => t.type === 'function' && stripPrefixIfAny(t.function.name) === parsed.tool,
+        (t) =>
+          t.type === 'function' &&
+          stripPrefixIfAny(t.function.name) === parsed.tool,
       );
     }
 
@@ -251,7 +262,10 @@ export class McpManager {
     if (tmpl && tmpl.state === 'ready') {
       const allowed =
         !tmpl.allowedTools || tmpl.allowedTools.includes(parsed.tool);
-      return allowed && (tmpl.toolSchemas?.some((s) => s.name === parsed.tool) ?? false);
+      return (
+        allowed &&
+        (tmpl.toolSchemas?.some((s) => s.name === parsed.tool) ?? false)
+      );
     }
 
     return false;
@@ -282,7 +296,9 @@ export class McpManager {
       if ('error' in resolved) {
         return JSON.stringify({
           isError: true,
-          content: [{ type: 'text', text: `capability unavailable: ${resolved.error}` }],
+          content: [
+            { type: 'text', text: `capability unavailable: ${resolved.error}` },
+          ],
         });
       }
       try {
@@ -302,7 +318,9 @@ export class McpManager {
 
     // Verify the bare tool name actually exists on this server.
     const toolExists = server.tools.some(
-      (t) => t.type === 'function' && stripPrefixIfAny(t.function.name) === parsed.tool,
+      (t) =>
+        t.type === 'function' &&
+        stripPrefixIfAny(t.function.name) === parsed.tool,
     );
     if (!toolExists) return `Unknown MCP tool: ${toolName}`;
 
@@ -513,7 +531,9 @@ async function callOneShotMcp(
   toolName: string,
   args: Record<string, unknown>,
 ): Promise<string> {
-  const transport = new StreamableHTTPClientTransport(new URL(endpointUrl + '/mcp'));
+  const transport = new StreamableHTTPClientTransport(
+    new URL(endpointUrl + '/mcp'),
+  );
   const client = new Client(
     { name: 'kubeclaw-mcp-group-client', version: '0.0.1' },
     { capabilities: {} },
@@ -521,7 +541,10 @@ async function callOneShotMcp(
   await client.connect(transport);
   try {
     const result = await client.callTool({ name: toolName, arguments: args });
-    const content = (result.content ?? []) as Array<{ type?: string; text?: string }>;
+    const content = (result.content ?? []) as Array<{
+      type?: string;
+      text?: string;
+    }>;
     const textParts = content
       .filter((c) => c.type === 'text')
       .map((c) => c.text ?? '')

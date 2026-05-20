@@ -31,7 +31,8 @@ describe('summarize', () => {
     const client = makeStubClient('summary');
     const messages = [{ role: 'user', content: 'Hi' }];
     await summarize(messages, client, 'gpt-4o-mini');
-    const call = (client.chat.completions.create as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    const call = (client.chat.completions.create as ReturnType<typeof vi.fn>)
+      .mock.calls[0][0];
     expect(call.model).toBe('gpt-4o-mini');
   });
 

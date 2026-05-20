@@ -534,12 +534,18 @@ async function executeToolJob(
     // Include the originMessageId so the orchestrator can store it in
     // tool_jobs.message_id for accurate interruption notices (Story 37 AC2).
     const spawnFields: string[] = [
-      'agentJobId', toolJobId,
-      'groupFolder', groupFolder,
-      'chatJid', chatJid,
-      'prompt', task,
-      'timeout', String(TOOL_JOB_TIMEOUT_MS),
-      'channel', KUBECLAW_CHANNEL,
+      'agentJobId',
+      toolJobId,
+      'groupFolder',
+      groupFolder,
+      'chatJid',
+      chatJid,
+      'prompt',
+      task,
+      'timeout',
+      String(TOOL_JOB_TIMEOUT_MS),
+      'channel',
+      KUBECLAW_CHANNEL,
     ];
     if (originMessageId) {
       spawnFields.push('messageId', originMessageId);
@@ -1194,7 +1200,10 @@ export class DirectLLMRunner implements MessageRunner {
             reasoning?: string;
           };
           fullResponse =
-            msg.content || extended.reasoning_content || extended.reasoning || '';
+            msg.content ||
+            extended.reasoning_content ||
+            extended.reasoning ||
+            '';
           break;
         }
 

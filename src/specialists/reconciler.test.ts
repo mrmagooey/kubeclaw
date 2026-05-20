@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { mergeCatalog, renderCatalog, SpecialistReconciler } from './reconciler.js';
+import {
+  mergeCatalog,
+  renderCatalog,
+  SpecialistReconciler,
+} from './reconciler.js';
 import { _initTestDatabase, __resetDbForTest } from '../db.js';
 import { registerSpecialist } from '../skills/orchestrator/specialist-registry.js';
 
@@ -7,24 +11,35 @@ describe('mergeCatalog', () => {
   it('override wins on name collision', () => {
     const baseline = [{ name: 'A', prompt: 'baseline' }];
     const overrides = [{ name: 'A', prompt: 'override' }];
-    expect(mergeCatalog(baseline, overrides)).toEqual([{ name: 'A', prompt: 'override' }]);
+    expect(mergeCatalog(baseline, overrides)).toEqual([
+      { name: 'A', prompt: 'override' },
+    ]);
   });
 
   it('keeps baseline-only and override-only entries', () => {
     const merged = mergeCatalog(
-      [{ name: 'A', prompt: 'a' }, { name: 'B', prompt: 'b' }],
-      [{ name: 'B', prompt: 'b2' }, { name: 'C', prompt: 'c' }],
+      [
+        { name: 'A', prompt: 'a' },
+        { name: 'B', prompt: 'b' },
+      ],
+      [
+        { name: 'B', prompt: 'b2' },
+        { name: 'C', prompt: 'c' },
+      ],
     );
-    expect(merged.map(s => s.name).sort()).toEqual(['A', 'B', 'C']);
-    expect(merged.find(s => s.name === 'B')!.prompt).toBe('b2');
+    expect(merged.map((s) => s.name).sort()).toEqual(['A', 'B', 'C']);
+    expect(merged.find((s) => s.name === 'B')!.prompt).toBe('b2');
   });
 
   it('returns sorted output when inputs are unsorted', () => {
     const merged = mergeCatalog(
-      [{ name: 'Z', prompt: 'z' }, { name: 'A', prompt: 'a' }],
+      [
+        { name: 'Z', prompt: 'z' },
+        { name: 'A', prompt: 'a' },
+      ],
       [],
     );
-    expect(merged.map(s => s.name)).toEqual(['A', 'Z']);
+    expect(merged.map((s) => s.name)).toEqual(['A', 'Z']);
   });
 
   it('returns empty array when both inputs are empty', () => {
@@ -63,7 +78,9 @@ describe('SpecialistReconciler.apply', () => {
     await r.apply();
     expect(apply).toHaveBeenCalledOnce();
     const body = JSON.parse(apply.mock.calls[0][0]);
-    expect(body.specialists.map((s: { name: string }) => s.name).sort()).toEqual(['Baseline', 'OnlyOverride']);
+    expect(
+      body.specialists.map((s: { name: string }) => s.name).sort(),
+    ).toEqual(['Baseline', 'OnlyOverride']);
   });
 
   it('increments generation on each successful apply', async () => {
@@ -80,7 +97,8 @@ describe('SpecialistReconciler.apply', () => {
   });
 
   it('does not bump generation when configMapApply throws', async () => {
-    const apply = vi.fn()
+    const apply = vi
+      .fn()
       .mockRejectedValueOnce(new Error('k8s error'))
       .mockResolvedValue(undefined);
     const r = new SpecialistReconciler({
@@ -108,7 +126,9 @@ describe('SpecialistReconciler.apply', () => {
     const body = JSON.parse(apply.mock.calls[0][0]);
     const names = body.specialists.map((s: { name: string }) => s.name).sort();
     expect(names).toEqual(['BaseOnly', 'Override']);
-    const override = body.specialists.find((s: { name: string }) => s.name === 'Override');
+    const override = body.specialists.find(
+      (s: { name: string }) => s.name === 'Override',
+    );
     expect(override.prompt).toBe('override-prompt');
   });
 });

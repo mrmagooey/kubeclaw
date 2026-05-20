@@ -5,7 +5,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { DirectLLMRunner } from '../runtime/direct-llm-runner.js';
 import type { ChannelMetrics } from '../metrics/channel.js';
-import { _initTestDatabase, __resetDbForTest, setDbQueryCallback } from '../db.js';
+import {
+  _initTestDatabase,
+  __resetDbForTest,
+  setDbQueryCallback,
+} from '../db.js';
 
 // Mock redis-client so tool executions that reach executeToolViaK8s throw
 // (simulating Redis unavailable), which exercises the toolSuccess=false path.
@@ -21,7 +25,9 @@ vi.mock('../k8s/redis-client.js', () => ({
   getToolResultsStream: vi.fn().mockReturnValue('kubeclaw:tool-results:test'),
   getSpawnToolPodStream: vi.fn().mockReturnValue('kubeclaw:spawn-tool-pod'),
   getSpawnToolJobStream: vi.fn().mockReturnValue('kubeclaw:spawn-tool-job'),
-  getToolJobResultStream: vi.fn().mockReturnValue('kubeclaw:tool-job-result:test'),
+  getToolJobResultStream: vi
+    .fn()
+    .mockReturnValue('kubeclaw:tool-job-result:test'),
   getTaskRequestStream: vi.fn().mockReturnValue('kubeclaw:task-mgmt-request'),
   getOutputChannel: vi.fn().mockReturnValue('kubeclaw:output:test'),
   getChannelStatusChannel: vi.fn().mockReturnValue('kubeclaw:channel-status'),
@@ -84,7 +90,9 @@ function makeFakeOpenAI(opts?: {
  * Fake OpenAI client that returns a single tool call on the first invocation
  * and a plain content response on subsequent invocations.
  */
-function makeFakeOpenAIWithToolCall(toolName: string): import('openai').default {
+function makeFakeOpenAIWithToolCall(
+  toolName: string,
+): import('openai').default {
   const usage = { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 };
 
   const messageWithTool = {
@@ -132,7 +140,10 @@ afterEach(() => {
 describe('DirectLLMRunner channel metrics wiring', () => {
   it('records LLM call duration and success on each API call', async () => {
     const metrics = makeMetricsMock();
-    const fakeClient = makeFakeOpenAI({ promptTokens: 50, completionTokens: 100 });
+    const fakeClient = makeFakeOpenAI({
+      promptTokens: 50,
+      completionTokens: 100,
+    });
     const runner = new DirectLLMRunner(fakeClient);
     runner.setChannelMetrics(metrics);
 
@@ -148,7 +159,8 @@ describe('DirectLLMRunner channel metrics wiring', () => {
     );
 
     expect(metrics.recordLlmCall).toHaveBeenCalledOnce();
-    const callArgs = (metrics.recordLlmCall as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    const callArgs = (metrics.recordLlmCall as ReturnType<typeof vi.fn>).mock
+      .calls[0][0];
     expect(callArgs.success).toBe(true);
     expect(callArgs.model).toBeDefined();
     expect(callArgs.durationMs).toBeGreaterThanOrEqual(0);
@@ -156,7 +168,10 @@ describe('DirectLLMRunner channel metrics wiring', () => {
 
   it('records input and output tokens from LLM response', async () => {
     const metrics = makeMetricsMock();
-    const fakeClient = makeFakeOpenAI({ promptTokens: 150, completionTokens: 75 });
+    const fakeClient = makeFakeOpenAI({
+      promptTokens: 150,
+      completionTokens: 75,
+    });
     const runner = new DirectLLMRunner(fakeClient);
     runner.setChannelMetrics(metrics);
 
@@ -171,7 +186,8 @@ describe('DirectLLMRunner channel metrics wiring', () => {
       },
     );
 
-    const tokenCalls = (metrics.recordTokens as ReturnType<typeof vi.fn>).mock.calls;
+    const tokenCalls = (metrics.recordTokens as ReturnType<typeof vi.fn>).mock
+      .calls;
     const inputCall = tokenCalls.find((c) => c[0].direction === 'input');
     const outputCall = tokenCalls.find((c) => c[0].direction === 'output');
     expect(inputCall?.[0].count).toBe(150);
@@ -196,7 +212,9 @@ describe('DirectLLMRunner channel metrics wiring', () => {
     );
 
     expect(metrics.setConversationHistorySize).toHaveBeenCalledOnce();
-    const [labels, size] = (metrics.setConversationHistorySize as ReturnType<typeof vi.fn>).mock.calls[0];
+    const [labels, size] = (
+      metrics.setConversationHistorySize as ReturnType<typeof vi.fn>
+    ).mock.calls[0];
     expect(labels.group).toBe('testgroup');
     expect(size).toBeGreaterThanOrEqual(0);
   });
@@ -230,7 +248,8 @@ describe('DirectLLMRunner channel metrics wiring', () => {
     );
 
     expect(metrics.recordToolCall).toHaveBeenCalledOnce();
-    const callArg = (metrics.recordToolCall as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    const callArg = (metrics.recordToolCall as ReturnType<typeof vi.fn>).mock
+      .calls[0][0];
     expect(callArg.status).toBe('failure');
   });
 
@@ -239,7 +258,9 @@ describe('DirectLLMRunner channel metrics wiring', () => {
   it('buckets hallucinated tool names as "unknown"', async () => {
     const metrics = makeMetricsMock();
     // The tool name here is not in the TOOLS list, so it should be bucketed.
-    const fakeClient = makeFakeOpenAIWithToolCall('query_database_v2_experimental');
+    const fakeClient = makeFakeOpenAIWithToolCall(
+      'query_database_v2_experimental',
+    );
     const runner = new DirectLLMRunner(fakeClient);
     runner.setChannelMetrics(metrics);
 
@@ -255,7 +276,8 @@ describe('DirectLLMRunner channel metrics wiring', () => {
     );
 
     expect(metrics.recordToolCall).toHaveBeenCalledOnce();
-    const callArg = (metrics.recordToolCall as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    const callArg = (metrics.recordToolCall as ReturnType<typeof vi.fn>).mock
+      .calls[0][0];
     expect(callArg.tool).toBe('unknown');
   });
 });

@@ -84,7 +84,11 @@ export class SecretManager {
         code?: number;
         response?: { statusCode?: number };
       };
-      if (e?.statusCode === 404 || e?.response?.statusCode === 404 || e?.code === 404)
+      if (
+        e?.statusCode === 404 ||
+        e?.response?.statusCode === 404 ||
+        e?.code === 404
+      )
         exists = false;
       else throw err;
     }
@@ -134,7 +138,12 @@ export class SecretManager {
         code?: number;
         response?: { statusCode?: number };
       };
-      if (e?.statusCode === 404 || e?.response?.statusCode === 404 || e?.code === 404) return [];
+      if (
+        e?.statusCode === 404 ||
+        e?.response?.statusCode === 404 ||
+        e?.code === 404
+      )
+        return [];
       throw err;
     }
     return Object.entries(secret.data ?? {}).map(([catalogId, b64]) => {
@@ -166,7 +175,12 @@ export class SecretManager {
         code?: number;
         response?: { statusCode?: number };
       };
-      if (e?.statusCode === 404 || e?.response?.statusCode === 404 || e?.code === 404) return {};
+      if (
+        e?.statusCode === 404 ||
+        e?.response?.statusCode === 404 ||
+        e?.code === 404
+      )
+        return {};
       throw err;
     }
     const result: Record<string, Record<string, string>> = {};

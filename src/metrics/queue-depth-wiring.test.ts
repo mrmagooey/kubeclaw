@@ -31,7 +31,9 @@ describe('queue depth wiring', () => {
     metrics.setGroupQueueDepth({ group: 'group-folder-1' }, depth);
 
     const metricsJson = await registry.getMetricsAsJSON();
-    const gauge = metricsJson.find((m) => m.name === 'kubeclaw_group_queue_depth');
+    const gauge = metricsJson.find(
+      (m) => m.name === 'kubeclaw_group_queue_depth',
+    );
     expect(gauge).toBeDefined();
     const row = gauge?.values.find((v) => v.labels?.group === 'group-folder-1');
     expect(row?.value).toBeGreaterThanOrEqual(1);
@@ -51,7 +53,9 @@ describe('queue depth wiring', () => {
     metrics.setGroupQueueDepth({ group: 'empty-group' }, depth);
 
     const metricsJson = await registry.getMetricsAsJSON();
-    const gauge = metricsJson.find((m) => m.name === 'kubeclaw_group_queue_depth');
+    const gauge = metricsJson.find(
+      (m) => m.name === 'kubeclaw_group_queue_depth',
+    );
     const row = gauge?.values.find((v) => v.labels?.group === 'empty-group');
     expect(row?.value).toBe(0);
   });

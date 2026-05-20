@@ -245,15 +245,16 @@ export async function handleExtAuthz(
   const PER_PLACEHOLDER_MAX = 10;
   const TOTAL_MAX = 50;
 
-  const substitutionsParts = subResult.substitutions.map(({ placeholder, value }) => {
-    const b64Value = Buffer.from(value, 'utf8').toString('base64');
-    return `${placeholder}=${b64Value}`;
-  });
+  const substitutionsParts = subResult.substitutions.map(
+    ({ placeholder, value }) => {
+      const b64Value = Buffer.from(value, 'utf8').toString('base64');
+      return `${placeholder}=${b64Value}`;
+    },
+  );
   const substitutionsHeaderValue = substitutionsParts.join(';');
 
   const allowedPositions = subResult.allowedPositions ?? ['header', 'body'];
-  const policyHeaderValue =
-    `positions=${allowedPositions.join(',')};per=${PER_PLACEHOLDER_MAX};total=${TOTAL_MAX}`;
+  const policyHeaderValue = `positions=${allowedPositions.join(',')};per=${PER_PLACEHOLDER_MAX};total=${TOTAL_MAX}`;
 
   // Step (f): Audit log — values NEVER logged.
   deps.audit.record({

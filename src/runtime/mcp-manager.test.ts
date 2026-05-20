@@ -245,7 +245,10 @@ describe('McpManager', () => {
       expect(tools).toHaveLength(2);
       // Both servers emit their own tool (prefixed by server name, no collision)
       const names = tools.map((t) => t.function.name).sort();
-      expect(names).toEqual(['mcp__server1__shared_tool', 'mcp__server2__shared_tool']);
+      expect(names).toEqual([
+        'mcp__server1__shared_tool',
+        'mcp__server2__shared_tool',
+      ]);
     });
 
     it('falls back to SSE transport when StreamableHTTP fails', async () => {
@@ -286,7 +289,9 @@ describe('McpManager', () => {
       const manager = new McpManager();
       await manager.initialize([weatherServer]);
 
-      const result = await manager.callTool('mcp__weather__get_weather', { location: 'NYC' });
+      const result = await manager.callTool('mcp__weather__get_weather', {
+        location: 'NYC',
+      });
 
       expect(mockCallTool).toHaveBeenCalledWith({
         name: 'get_weather',
@@ -308,7 +313,9 @@ describe('McpManager', () => {
       await manager.initialize([weatherServer]);
 
       mockCallTool.mockRejectedValueOnce(new Error('Server timeout'));
-      const result = await manager.callTool('mcp__weather__get_weather', { location: 'NYC' });
+      const result = await manager.callTool('mcp__weather__get_weather', {
+        location: 'NYC',
+      });
       expect(result).toContain('MCP tool error');
       expect(result).toContain('Server timeout');
     });
@@ -324,7 +331,9 @@ describe('McpManager', () => {
         ],
       });
 
-      const result = await manager.callTool('mcp__weather__get_weather', { location: 'NYC' });
+      const result = await manager.callTool('mcp__weather__get_weather', {
+        location: 'NYC',
+      });
       expect(result).toBe('Line 1\nLine 2');
     });
 
@@ -336,7 +345,9 @@ describe('McpManager', () => {
         content: [{ type: 'image', data: 'base64...' }],
       });
 
-      const result = await manager.callTool('mcp__weather__get_weather', { location: 'NYC' });
+      const result = await manager.callTool('mcp__weather__get_weather', {
+        location: 'NYC',
+      });
       expect(result).toBe('Tool returned no text output');
     });
   });
@@ -698,14 +709,25 @@ describe('McpManager', () => {
           kind: 'mcp-group',
           state: 'ready',
           toolSchemas: [
-            { name: 'read_file', description: 'reads', inputSchema: { type: 'object' } },
-            { name: 'list_dir', description: 'lists', inputSchema: { type: 'object' } },
+            {
+              name: 'read_file',
+              description: 'reads',
+              inputSchema: { type: 'object' },
+            },
+            {
+              name: 'list_dir',
+              description: 'lists',
+              inputSchema: { type: 'object' },
+            },
           ],
         },
       ]);
       const tools = mgr.getTools();
       const names = tools.map((t) => t.function.name).sort();
-      expect(names).toEqual(['mcp__filesystem__list_dir', 'mcp__filesystem__read_file']);
+      expect(names).toEqual([
+        'mcp__filesystem__list_dir',
+        'mcp__filesystem__read_file',
+      ]);
     });
 
     it('configureGroupMcpTemplates drops pending-schema entries', async () => {

@@ -68,7 +68,9 @@ describe('db query wiring', () => {
   it('recordDbQuery histogram is populated via the wired callback', async () => {
     const registry = new Registry();
     const metrics = createOrchestratorMetrics(registry);
-    setDbQueryCallback((op, ms) => metrics.recordDbQuery({ operation: op, durationMs: ms }));
+    setDbQueryCallback((op, ms) =>
+      metrics.recordDbQuery({ operation: op, durationMs: ms }),
+    );
 
     getConversationHistory('test-group');
     storeMessage({
@@ -83,14 +85,20 @@ describe('db query wiring', () => {
     });
 
     const metricsJson = await registry.getMetricsAsJSON();
-    const hist = metricsJson.find((m) => m.name === 'kubeclaw_db_query_duration_seconds');
+    const hist = metricsJson.find(
+      (m) => m.name === 'kubeclaw_db_query_duration_seconds',
+    );
     expect(hist).toBeDefined();
     const getHistRow = hist?.values.find(
-      (v) => v.labels?.operation === 'getConversationHistory' && v.metricName?.endsWith('_count'),
+      (v) =>
+        v.labels?.operation === 'getConversationHistory' &&
+        v.metricName?.endsWith('_count'),
     );
     expect(getHistRow?.value).toBe(1);
     const storeHistRow = hist?.values.find(
-      (v) => v.labels?.operation === 'storeMessage' && v.metricName?.endsWith('_count'),
+      (v) =>
+        v.labels?.operation === 'storeMessage' &&
+        v.metricName?.endsWith('_count'),
     );
     expect(storeHistRow?.value).toBe(1);
   });

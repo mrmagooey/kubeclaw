@@ -46,7 +46,9 @@ export interface ResolvedGroupCapability {
   credentialsFrom: 'none' | 'secret';
 }
 
-export function resolveGroupCapability(spec: CapabilitySpec): ResolvedGroupCapability {
+export function resolveGroupCapability(
+  spec: CapabilitySpec,
+): ResolvedGroupCapability {
   if (getScope(spec) !== 'group') {
     throw new PerGroupCapabilityError(
       `resolveGroupCapability called on cluster-scoped ${spec.name}`,

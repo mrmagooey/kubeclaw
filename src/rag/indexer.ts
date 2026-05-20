@@ -76,7 +76,11 @@ export async function indexText(
   }));
 
   await upsertPoints(groupFolder, points);
-  metrics?.recordIndex({ group: groupFolder, chunks: chunks.length, durationMs: Date.now() - start });
+  metrics?.recordIndex({
+    group: groupFolder,
+    chunks: chunks.length,
+    durationMs: Date.now() - start,
+  });
   logger.debug(
     { groupFolder, source, chunks: chunks.length },
     'Indexed text chunks',

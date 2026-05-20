@@ -15,14 +15,23 @@ export const MappingSchema = z.object({
 export type Mapping = z.infer<typeof MappingSchema>;
 
 export const CredentialFieldSchema = z.object({
-  name: z.string().min(1).regex(/^[a-z][a-z0-9_]*$/, 'lowercase snake_case'),
-  envVar: z.string().min(1).regex(/^[A-Z][A-Z0-9_]*$/, 'UPPER_SNAKE'),
+  name: z
+    .string()
+    .min(1)
+    .regex(/^[a-z][a-z0-9_]*$/, 'lowercase snake_case'),
+  envVar: z
+    .string()
+    .min(1)
+    .regex(/^[A-Z][A-Z0-9_]*$/, 'UPPER_SNAKE'),
 });
 export type CredentialField = z.infer<typeof CredentialFieldSchema>;
 
 export const CatalogEntrySchema = z
   .object({
-    id: z.string().min(1).regex(/^[a-z][a-z0-9-]*$/, 'lowercase, digits, hyphens'),
+    id: z
+      .string()
+      .min(1)
+      .regex(/^[a-z][a-z0-9-]*$/, 'lowercase, digits, hyphens'),
     host: z.string().min(1),
     upstreamPort: z.number().int().positive().default(443),
     credentialFields: z.array(CredentialFieldSchema).min(1),
@@ -33,7 +42,9 @@ export const CatalogEntrySchema = z
       z.record(z.string(), z.string()),
     ),
     allowOperatorFallback: z.boolean().default(false),
-    allowedPositions: z.array(z.enum(['header', 'body'])).default(['header', 'body']),
+    allowedPositions: z
+      .array(z.enum(['header', 'body']))
+      .default(['header', 'body']),
     apiKeyShape: z
       .object({
         prefix: z.string(),
@@ -41,10 +52,9 @@ export const CatalogEntrySchema = z
       })
       .optional(),
   })
-  .refine(
-    (e) => !e.allowOperatorFallback || e.credentialFields.length === 1,
-    { message: 'allowOperatorFallback requires exactly one credentialField' },
-  );
+  .refine((e) => !e.allowOperatorFallback || e.credentialFields.length === 1, {
+    message: 'allowOperatorFallback requires exactly one credentialField',
+  });
 export type CatalogEntry = z.infer<typeof CatalogEntrySchema>;
 
 export interface ResolveQuery {
@@ -105,7 +115,10 @@ export class Resolver {
     const entry = this.opts.catalog.find((e) => e.host === q.host);
     if (!entry) return { status: 'unknown_destination' };
     if (!q.ownerGroup) return { status: 'no_owner_group' };
-    const blob = this.opts.groupSource.getGroupCredential(q.ownerGroup, entry.id);
+    const blob = this.opts.groupSource.getGroupCredential(
+      q.ownerGroup,
+      entry.id,
+    );
     if (blob) {
       const subs: Array<{ placeholder: string; value: string }> = [];
       for (const field of entry.credentialFields) {
@@ -125,7 +138,9 @@ export class Resolver {
   }
 
   /** Async variant: also tries operator fallback if catalog entry permits. */
-  async resolveSubstitutionMapAsync(q: ResolveSubMapQuery): Promise<ResolveResult> {
+  async resolveSubstitutionMapAsync(
+    q: ResolveSubMapQuery,
+  ): Promise<ResolveResult> {
     const sync = this.resolveSubstitutionMap(q);
     if (sync.status !== 'no_credential') return sync;
     const entry = this.opts.catalog.find((e) => e.host === q.host)!;
@@ -134,7 +149,9 @@ export class Resolver {
     if (!opVal) return sync;
     return {
       status: 'ok',
-      substitutions: [{ placeholder: `KC_PH_FALLBACK_${entry.id}`, value: opVal }],
+      substitutions: [
+        { placeholder: `KC_PH_FALLBACK_${entry.id}`, value: opVal },
+      ],
       keySource: 'operatorFallback',
       catalogId: entry.id,
       allowedPositions: entry.allowedPositions,

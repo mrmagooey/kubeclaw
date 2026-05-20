@@ -15,7 +15,9 @@ export interface ScaleUpArgs {
   port?: number;
 }
 
-export async function scaleUpInstance(args: ScaleUpArgs): Promise<ScaleUpResult> {
+export async function scaleUpInstance(
+  args: ScaleUpArgs,
+): Promise<ScaleUpResult> {
   const inst = getInstance(args.groupFolder, args.capabilityName);
   if (!inst) {
     return {

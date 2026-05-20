@@ -13,16 +13,23 @@ beforeEach(() => {
 });
 
 const fakeSpec: CapabilitySpec = {
-  name: 'echo', kind: 'mcp', image: 'echo:1',
-  scope: 'group', volumeFromGroupPvc: false, credentialsFrom: 'none',
+  name: 'echo',
+  kind: 'mcp',
+  image: 'echo:1',
+  scope: 'group',
+  volumeFromGroupPvc: false,
+  credentialsFrom: 'none',
 };
 
 describe('reconcileGroupCapabilities', () => {
   it('creates Deployment, Service, NetworkPolicy for each (group, capability) pair', async () => {
     const c = new FakePerGroupK8sClient();
     await reconcileGroupCapabilities({
-      client: c, namespace: 'kubeclaw', groupsPvcName: 'pvc',
-      groups: ['Family', 'Work'], specs: [fakeSpec],
+      client: c,
+      namespace: 'kubeclaw',
+      groupsPvcName: 'pvc',
+      groups: ['Family', 'Work'],
+      specs: [fakeSpec],
     });
     expect(c.store.deployments.size).toBe(2);
     expect(c.store.services.size).toBe(2);
@@ -32,8 +39,13 @@ describe('reconcileGroupCapabilities', () => {
 
   it('is idempotent (second call produces no extra objects)', async () => {
     const c = new FakePerGroupK8sClient();
-    const args = { client: c, namespace: 'kubeclaw', groupsPvcName: 'pvc',
-      groups: ['Family'], specs: [fakeSpec] };
+    const args = {
+      client: c,
+      namespace: 'kubeclaw',
+      groupsPvcName: 'pvc',
+      groups: ['Family'],
+      specs: [fakeSpec],
+    };
     await reconcileGroupCapabilities(args);
     await reconcileGroupCapabilities(args);
     expect(c.store.deployments.size).toBe(1);
@@ -41,10 +53,17 @@ describe('reconcileGroupCapabilities', () => {
 
   it('does not deploy cluster-scoped specs', async () => {
     const c = new FakePerGroupK8sClient();
-    const clusterSpec: CapabilitySpec = { name: 'docling', kind: 'mcp', image: 'd:1' };
+    const clusterSpec: CapabilitySpec = {
+      name: 'docling',
+      kind: 'mcp',
+      image: 'd:1',
+    };
     await reconcileGroupCapabilities({
-      client: c, namespace: 'kubeclaw', groupsPvcName: 'pvc',
-      groups: ['Family'], specs: [clusterSpec, fakeSpec],
+      client: c,
+      namespace: 'kubeclaw',
+      groupsPvcName: 'pvc',
+      groups: ['Family'],
+      specs: [clusterSpec, fakeSpec],
     });
     expect(c.store.deployments.size).toBe(1);
     const dep = [...c.store.deployments.values()][0];
@@ -54,8 +73,11 @@ describe('reconcileGroupCapabilities', () => {
   it('records SQLite rows tagged with the correct group_hash', async () => {
     const c = new FakePerGroupK8sClient();
     await reconcileGroupCapabilities({
-      client: c, namespace: 'kubeclaw', groupsPvcName: 'pvc',
-      groups: ['Family'], specs: [fakeSpec],
+      client: c,
+      namespace: 'kubeclaw',
+      groupsPvcName: 'pvc',
+      groups: ['Family'],
+      specs: [fakeSpec],
     });
     const rows = listAllInstances();
     expect(rows).toHaveLength(1);

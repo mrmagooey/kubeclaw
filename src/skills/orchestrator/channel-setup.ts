@@ -307,7 +307,9 @@ export async function setupChannel(
   const instanceName = input.instanceName || type;
   const secretName = `kubeclaw-${instanceName}-secrets`;
   const deploymentName = `kubeclaw-channel-${instanceName}`;
-  const channelLabel: Record<string, string> = { 'kubeclaw-channel': instanceName };
+  const channelLabel: Record<string, string> = {
+    'kubeclaw-channel': instanceName,
+  };
   const log: string[] = [];
 
   const secretData = buildSecretData(input);

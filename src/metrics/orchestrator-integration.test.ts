@@ -12,8 +12,15 @@ describe('orchestrator metrics integration', () => {
 
     m.recordToolJobSpawn({ image: 'ghcr.io/kubeclaw/tool:v1' });
     m.recordToolJobSpawn({ image: 'ghcr.io/kubeclaw/tool:v1' });
-    m.recordToolJobFailure({ image: 'ghcr.io/kubeclaw/tool:v1', reason: 'timeout' });
-    m.recordToolJobDuration({ image: 'ghcr.io/kubeclaw/tool:v1', success: false, durationMs: 600000 });
+    m.recordToolJobFailure({
+      image: 'ghcr.io/kubeclaw/tool:v1',
+      reason: 'timeout',
+    });
+    m.recordToolJobDuration({
+      image: 'ghcr.io/kubeclaw/tool:v1',
+      success: false,
+      durationMs: 600000,
+    });
 
     const res = await fetch(`http://127.0.0.1:${port}/metrics`);
     expect(res.status).toBe(200);

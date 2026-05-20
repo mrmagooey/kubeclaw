@@ -2,7 +2,11 @@ import { Counter, Gauge, Histogram, Registry } from 'prom-client';
 
 export interface OrchestratorMetrics {
   recordToolJobSpawn(labels: { image: string }): void;
-  recordToolJobDuration(labels: { image: string; success: boolean; durationMs: number }): void;
+  recordToolJobDuration(labels: {
+    image: string;
+    success: boolean;
+    durationMs: number;
+  }): void;
   recordToolJobFailure(labels: { image: string; reason: string }): void;
   recordRedisMessage(labels: { stream: string }): void;
   setGroupQueueDepth(labels: { group: string }, depth: number): void;
@@ -18,7 +22,9 @@ export interface OrchestratorMetrics {
  * lifecycle metrics directly — it is the authoritative source for spawn,
  * completion, and failure events regardless of pod lifespan.
  */
-export function createOrchestratorMetrics(registry: Registry): OrchestratorMetrics {
+export function createOrchestratorMetrics(
+  registry: Registry,
+): OrchestratorMetrics {
   const toolJobSpawned = new Counter({
     name: 'kubeclaw_tool_job_spawned_total',
     help: 'Total tool-job Kubernetes Jobs created by the orchestrator',
@@ -75,7 +81,10 @@ export function createOrchestratorMetrics(registry: Registry): OrchestratorMetri
       toolJobSpawned.inc({ image });
     },
     recordToolJobDuration({ image, success, durationMs }) {
-      toolJobDuration.observe({ image, success: String(success) }, durationMs / 1000);
+      toolJobDuration.observe(
+        { image, success: String(success) },
+        durationMs / 1000,
+      );
     },
     recordToolJobFailure({ image, reason }) {
       toolJobFailures.inc({ image, reason });

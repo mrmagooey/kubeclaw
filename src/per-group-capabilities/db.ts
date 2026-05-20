@@ -55,12 +55,21 @@ export function upsertInstance(input: UpsertInstanceInput): void {
        group_hash = excluded.group_hash,
        deployment_name = excluded.deployment_name,
        service_name = excluded.service_name`,
-    [input.groupFolder, input.capabilityName, input.groupHash,
-     input.deploymentName, input.serviceName, now],
+    [
+      input.groupFolder,
+      input.capabilityName,
+      input.groupHash,
+      input.deploymentName,
+      input.serviceName,
+      now,
+    ],
   );
 }
 
-export function getInstance(groupFolder: string, capabilityName: string): PerGroupInstanceRow | null {
+export function getInstance(
+  groupFolder: string,
+  capabilityName: string,
+): PerGroupInstanceRow | null {
   const rows = all(
     `SELECT * FROM per_group_capability_instances WHERE group_folder=? AND capability_name=?`,
     [groupFolder, capabilityName],
@@ -79,21 +88,31 @@ export function listAllInstances(): PerGroupInstanceRow[] {
   return all(`SELECT * FROM per_group_capability_instances`).map(rowToInstance);
 }
 
-export function listInstancesAtReplicas(replicas: number): PerGroupInstanceRow[] {
+export function listInstancesAtReplicas(
+  replicas: number,
+): PerGroupInstanceRow[] {
   return all(
     `SELECT * FROM per_group_capability_instances WHERE current_replicas=?`,
     [replicas],
   ).map(rowToInstance);
 }
 
-export function setReplicas(groupFolder: string, capabilityName: string, replicas: number): void {
+export function setReplicas(
+  groupFolder: string,
+  capabilityName: string,
+  replicas: number,
+): void {
   run(
     `UPDATE per_group_capability_instances SET current_replicas=? WHERE group_folder=? AND capability_name=?`,
     [replicas, groupFolder, capabilityName],
   );
 }
 
-export function touchLastUsed(groupFolder: string, capabilityName: string, unixSeconds: number): void {
+export function touchLastUsed(
+  groupFolder: string,
+  capabilityName: string,
+  unixSeconds: number,
+): void {
   run(
     `UPDATE per_group_capability_instances SET last_used_at=? WHERE group_folder=? AND capability_name=?`,
     [unixSeconds, groupFolder, capabilityName],
@@ -101,10 +120,15 @@ export function touchLastUsed(groupFolder: string, capabilityName: string, unixS
 }
 
 export function deleteInstancesByGroup(groupFolder: string): void {
-  run(`DELETE FROM per_group_capability_instances WHERE group_folder=?`, [groupFolder]);
+  run(`DELETE FROM per_group_capability_instances WHERE group_folder=?`, [
+    groupFolder,
+  ]);
 }
 
-export function deleteInstance(groupFolder: string, capabilityName: string): void {
+export function deleteInstance(
+  groupFolder: string,
+  capabilityName: string,
+): void {
   run(
     `DELETE FROM per_group_capability_instances WHERE group_folder=? AND capability_name=?`,
     [groupFolder, capabilityName],

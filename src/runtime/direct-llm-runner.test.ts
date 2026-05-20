@@ -70,7 +70,9 @@ vi.mock('./compression/token-estimate.js', () => ({
 }));
 
 vi.mock('./compression/summarizer.js', () => ({
-  summarize: vi.fn().mockResolvedValue({ text: 'Summary text.', tokenCount: 10 }),
+  summarize: vi
+    .fn()
+    .mockResolvedValue({ text: 'Summary text.', tokenCount: 10 }),
 }));
 
 vi.mock('../config.js', () => ({
@@ -551,7 +553,8 @@ describe('DirectLLMRunner', () => {
     });
 
     const { DirectLLMRunner } = await import('./direct-llm-runner.js');
-    const { getConversationHistory, appendConversationHistory } = await import('../db.js');
+    const { getConversationHistory, appendConversationHistory } =
+      await import('../db.js');
     const runner = new DirectLLMRunner();
 
     await runner.runAgent(baseGroup, baseInput, undefined, undefined, {
@@ -559,13 +562,18 @@ describe('DirectLLMRunner', () => {
     });
 
     // Should query by the specialist session key, not group folder
-    expect(getConversationHistory).toHaveBeenCalledWith({ sessionKey: 'specialist-abc' });
+    expect(getConversationHistory).toHaveBeenCalledWith({
+      sessionKey: 'specialist-abc',
+    });
     // Should write back using appendConversationHistory with the specialist key
     expect(appendConversationHistory).toHaveBeenCalledWith(
       expect.objectContaining({ sessionKey: 'specialist-abc', role: 'user' }),
     );
     expect(appendConversationHistory).toHaveBeenCalledWith(
-      expect.objectContaining({ sessionKey: 'specialist-abc', role: 'assistant' }),
+      expect.objectContaining({
+        sessionKey: 'specialist-abc',
+        role: 'assistant',
+      }),
     );
   });
 

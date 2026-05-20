@@ -29,7 +29,9 @@ function labels(capabilityName: string, hash: string): Record<string, string> {
   };
 }
 
-export async function setGroupCredential(args: SetCredentialArgs): Promise<void> {
+export async function setGroupCredential(
+  args: SetCredentialArgs,
+): Promise<void> {
   const hash = groupHash(args.groupFolder);
   const name = credsSecretName(args.capabilityName, hash);
   const existing = await args.client.readSecret(args.namespace, name);
@@ -49,7 +51,9 @@ export async function setGroupCredential(args: SetCredentialArgs): Promise<void>
   await args.client.applySecret(sec);
 }
 
-export async function unsetGroupCredential(args: UnsetCredentialArgs): Promise<void> {
+export async function unsetGroupCredential(
+  args: UnsetCredentialArgs,
+): Promise<void> {
   const hash = groupHash(args.groupFolder);
   const name = credsSecretName(args.capabilityName, hash);
   const existing = await args.client.readSecret(args.namespace, name);

@@ -28,12 +28,24 @@ export function parseSkill(raw: string): SkillFile {
     if (idx === -1) continue;
     const key = line.slice(0, idx).trim();
     const value = line.slice(idx + 1).trim();
-    if (key === 'name' || key === 'description' || key === 'created' || key === 'source' || key === 'target') {
+    if (
+      key === 'name' ||
+      key === 'description' ||
+      key === 'created' ||
+      key === 'source' ||
+      key === 'target'
+    ) {
       fm[key] = value;
     }
   }
-  for (const required of ['name', 'description', 'created', 'source'] as const) {
-    if (!fm[required]) throw new Error(`skill frontmatter missing required field: ${required}`);
+  for (const required of [
+    'name',
+    'description',
+    'created',
+    'source',
+  ] as const) {
+    if (!fm[required])
+      throw new Error(`skill frontmatter missing required field: ${required}`);
   }
   return { frontmatter: fm as SkillFrontmatter, body };
 }

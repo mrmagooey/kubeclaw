@@ -2,7 +2,11 @@ import type { CapabilitySpec } from '../capabilities/types.js';
 import type { PerGroupK8sClient } from './k8s-client.js';
 import { getScope } from './types.js';
 import { listAllInstances } from './db.js';
-import { cacheSchemas, getCachedSchemas, type McpToolSchema } from './schema-cache.js';
+import {
+  cacheSchemas,
+  getCachedSchemas,
+  type McpToolSchema,
+} from './schema-cache.js';
 import { logger } from '../logger.js';
 
 const DEFAULT_SCRAPE_TIMEOUT_MS = 30_000;
@@ -37,7 +41,10 @@ export async function scrapeMissingSchemas(args: ScrapeArgs): Promise<void> {
 
     const instance = allInstances.find((i) => i.capabilityName === spec.name);
     if (!instance) {
-      logger.debug({ capability: spec.name }, 'schema_scrape_skipped_no_instance');
+      logger.debug(
+        { capability: spec.name },
+        'schema_scrape_skipped_no_instance',
+      );
       continue;
     }
 
@@ -49,7 +56,11 @@ export async function scrapeMissingSchemas(args: ScrapeArgs): Promise<void> {
 
     let scaleUpDone = false;
     try {
-      await args.client.patchDeploymentReplicas(args.namespace, instance.deploymentName, 1);
+      await args.client.patchDeploymentReplicas(
+        args.namespace,
+        instance.deploymentName,
+        1,
+      );
       scaleUpDone = true;
       await args.client.waitForReady(
         args.namespace,
@@ -85,7 +96,11 @@ export async function scrapeMissingSchemas(args: ScrapeArgs): Promise<void> {
     } finally {
       if (scaleUpDone) {
         try {
-          await args.client.patchDeploymentReplicas(args.namespace, instance.deploymentName, 0);
+          await args.client.patchDeploymentReplicas(
+            args.namespace,
+            instance.deploymentName,
+            0,
+          );
         } catch (err) {
           logger.warn(
             { err, deployment: instance.deploymentName },

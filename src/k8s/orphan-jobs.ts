@@ -146,7 +146,10 @@ export async function reconcileOrphanedJobsOnStartup(
     }
 
     const { job_id, group_folder, chat_jid } = orphan;
-    logger.info({ jobId: job_id, groupFolder: group_folder, chatJid: chat_jid }, 'Reconciling orphaned tool job');
+    logger.info(
+      { jobId: job_id, groupFolder: group_folder, chatJid: chat_jid },
+      'Reconciling orphaned tool job',
+    );
 
     // Step 1: Mark as interrupted FIRST (idempotency token).
     // If the publish or K8s delete fails we still don't re-emit on the next

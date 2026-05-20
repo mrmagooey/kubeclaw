@@ -8,27 +8,38 @@ describe('setGroupCredential', () => {
   it('creates a Secret with the env key/value', async () => {
     const c = new FakePerGroupK8sClient();
     await setGroupCredential({
-      client: c, namespace: 'kubeclaw',
-      groupFolder: 'Family', capabilityName: 'github',
-      envName: 'GITHUB_TOKEN', value: 'ghp_xxx',
+      client: c,
+      namespace: 'kubeclaw',
+      groupFolder: 'Family',
+      capabilityName: 'github',
+      envName: 'GITHUB_TOKEN',
+      value: 'ghp_xxx',
     });
     const name = credsSecretName('github', groupHash('Family'));
     const sec = await c.readSecret('kubeclaw', name);
     expect(sec).not.toBeNull();
-    expect(sec?.data?.GITHUB_TOKEN).toBe(Buffer.from('ghp_xxx').toString('base64'));
+    expect(sec?.data?.GITHUB_TOKEN).toBe(
+      Buffer.from('ghp_xxx').toString('base64'),
+    );
   });
 
   it('merges multiple keys into the same Secret', async () => {
     const c = new FakePerGroupK8sClient();
     await setGroupCredential({
-      client: c, namespace: 'kubeclaw',
-      groupFolder: 'Family', capabilityName: 'github',
-      envName: 'A', value: '1',
+      client: c,
+      namespace: 'kubeclaw',
+      groupFolder: 'Family',
+      capabilityName: 'github',
+      envName: 'A',
+      value: '1',
     });
     await setGroupCredential({
-      client: c, namespace: 'kubeclaw',
-      groupFolder: 'Family', capabilityName: 'github',
-      envName: 'B', value: '2',
+      client: c,
+      namespace: 'kubeclaw',
+      groupFolder: 'Family',
+      capabilityName: 'github',
+      envName: 'B',
+      value: '2',
     });
     const name = credsSecretName('github', groupHash('Family'));
     const sec = await c.readSecret('kubeclaw', name);
@@ -40,18 +51,27 @@ describe('unsetGroupCredential', () => {
   it('removes a single key and keeps the others', async () => {
     const c = new FakePerGroupK8sClient();
     await setGroupCredential({
-      client: c, namespace: 'kubeclaw',
-      groupFolder: 'Family', capabilityName: 'github',
-      envName: 'A', value: '1',
+      client: c,
+      namespace: 'kubeclaw',
+      groupFolder: 'Family',
+      capabilityName: 'github',
+      envName: 'A',
+      value: '1',
     });
     await setGroupCredential({
-      client: c, namespace: 'kubeclaw',
-      groupFolder: 'Family', capabilityName: 'github',
-      envName: 'B', value: '2',
+      client: c,
+      namespace: 'kubeclaw',
+      groupFolder: 'Family',
+      capabilityName: 'github',
+      envName: 'B',
+      value: '2',
     });
     await unsetGroupCredential({
-      client: c, namespace: 'kubeclaw',
-      groupFolder: 'Family', capabilityName: 'github', envName: 'A',
+      client: c,
+      namespace: 'kubeclaw',
+      groupFolder: 'Family',
+      capabilityName: 'github',
+      envName: 'A',
     });
     const name = credsSecretName('github', groupHash('Family'));
     const sec = await c.readSecret('kubeclaw', name);
@@ -61,13 +81,19 @@ describe('unsetGroupCredential', () => {
   it('deletes the Secret when all keys are unset', async () => {
     const c = new FakePerGroupK8sClient();
     await setGroupCredential({
-      client: c, namespace: 'kubeclaw',
-      groupFolder: 'Family', capabilityName: 'github',
-      envName: 'A', value: '1',
+      client: c,
+      namespace: 'kubeclaw',
+      groupFolder: 'Family',
+      capabilityName: 'github',
+      envName: 'A',
+      value: '1',
     });
     await unsetGroupCredential({
-      client: c, namespace: 'kubeclaw',
-      groupFolder: 'Family', capabilityName: 'github', envName: 'A',
+      client: c,
+      namespace: 'kubeclaw',
+      groupFolder: 'Family',
+      capabilityName: 'github',
+      envName: 'A',
     });
     const name = credsSecretName('github', groupHash('Family'));
     expect(await c.readSecret('kubeclaw', name)).toBeNull();

@@ -60,8 +60,18 @@ describe('PodInformer', () => {
 
   it('IP-recycle: latest upsert wins on same IP', () => {
     const inf = new PodInformer();
-    inf.upsert(mkPod({ uid: 'old', annotations: { 'kubeclaw.io/owner-group': 'group-a' } }));
-    inf.upsert(mkPod({ uid: 'new', annotations: { 'kubeclaw.io/owner-group': 'group-b' } }));
+    inf.upsert(
+      mkPod({
+        uid: 'old',
+        annotations: { 'kubeclaw.io/owner-group': 'group-a' },
+      }),
+    );
+    inf.upsert(
+      mkPod({
+        uid: 'new',
+        annotations: { 'kubeclaw.io/owner-group': 'group-b' },
+      }),
+    );
     // Both pods at 10.0.0.1 simultaneously is a degenerate state, but the
     // last upsert should win for IP lookup
     const r = inf.resolveOwnerGroupByIP('10.0.0.1');

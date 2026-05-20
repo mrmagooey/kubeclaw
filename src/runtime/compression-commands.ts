@@ -64,13 +64,19 @@ export async function handleCompactCommand(
   }
 
   // verb === 'compact'
-  const defaultKeep = parseInt(process.env.MAX_CONVERSATION_HISTORY || '20', 10);
+  const defaultKeep = parseInt(
+    process.env.MAX_CONVERSATION_HISTORY || '20',
+    10,
+  );
   const keepWindow = keep ?? defaultKeep;
   const history = getConversationHistory(groupFolder, 0);
 
   if (history.length === 0) return 'No conversation history to compact.';
 
-  const toSummarize = history.slice(0, Math.max(0, history.length - keepWindow));
+  const toSummarize = history.slice(
+    0,
+    Math.max(0, history.length - keepWindow),
+  );
   if (toSummarize.length === 0) {
     return `Nothing to compact — all messages are within the keep-window of ${keepWindow}.`;
   }

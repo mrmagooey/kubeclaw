@@ -79,14 +79,27 @@ describe('loadConfigOrThrow', () => {
 // is still handled rather than rejected with 404.
 describe('authz route URL matching', () => {
   // Mirror the production check from index.ts so tests stay in sync with the impl.
-  const isAuthzPath = (url: string | undefined) => url?.startsWith('/authz') === true;
+  const isAuthzPath = (url: string | undefined) =>
+    url?.startsWith('/authz') === true;
 
-  it('accepts /authz', () => { expect(isAuthzPath('/authz')).toBe(true); });
-  it('accepts /authz/echo (ext_authz path_prefix appended)', () => { expect(isAuthzPath('/authz/echo')).toBe(true); });
-  it('accepts /authz/v1/path (multi-segment append)', () => { expect(isAuthzPath('/authz/v1/path')).toBe(true); });
-  it('rejects /metrics', () => { expect(isAuthzPath('/metrics')).toBe(false); });
-  it('rejects /healthz', () => { expect(isAuthzPath('/healthz')).toBe(false); });
-  it('rejects undefined url', () => { expect(isAuthzPath(undefined)).toBe(false); });
+  it('accepts /authz', () => {
+    expect(isAuthzPath('/authz')).toBe(true);
+  });
+  it('accepts /authz/echo (ext_authz path_prefix appended)', () => {
+    expect(isAuthzPath('/authz/echo')).toBe(true);
+  });
+  it('accepts /authz/v1/path (multi-segment append)', () => {
+    expect(isAuthzPath('/authz/v1/path')).toBe(true);
+  });
+  it('rejects /metrics', () => {
+    expect(isAuthzPath('/metrics')).toBe(false);
+  });
+  it('rejects /healthz', () => {
+    expect(isAuthzPath('/healthz')).toBe(false);
+  });
+  it('rejects undefined url', () => {
+    expect(isAuthzPath(undefined)).toBe(false);
+  });
 });
 
 // ─── Helpers shared across substitution-header tests ──────────────────────────
@@ -176,7 +189,9 @@ describe('handleExtAuthz — per-group substitution header', () => {
     // Parse: "KC_PH_token_aabbcc=<b64>"
     const [placeholder, b64Value] = subsHeader!.split('=');
     expect(placeholder).toBe('KC_PH_token_aabbcc');
-    expect(Buffer.from(b64Value, 'base64').toString('utf8')).toBe('r8_secret-token');
+    expect(Buffer.from(b64Value, 'base64').toString('utf8')).toBe(
+      'r8_secret-token',
+    );
 
     // x-kubeclaw-policy: positions=header,body;per=10;total=50
     const policyHeader = res.headers['x-kubeclaw-policy'];
@@ -191,7 +206,10 @@ describe('handleExtAuthz — per-group substitution header', () => {
 
   it('403 path emits no substitution headers (no_credential)', async () => {
     // No creds in K8sSecretSource — will hit no_credential
-    const emptySrc = new K8sSecretSource({ readSecret: vi.fn(), cacheTtlMs: 0 });
+    const emptySrc = new K8sSecretSource({
+      readSecret: vi.fn(),
+      cacheTtlMs: 0,
+    });
 
     const deps: Deps = {
       resolver: new Resolver({
@@ -266,8 +284,13 @@ describe('handleExtAuthz — per-group substitution header', () => {
   it('audit log records keySource=operatorFallback for operator-fallback hit', async () => {
     const audit = { record: vi.fn() };
     // No per-group creds — will fall back to operator secret
-    const emptySrc = new K8sSecretSource({ readSecret: vi.fn(), cacheTtlMs: 0 });
-    const operatorSecretReader = vi.fn().mockResolvedValue('sk-operator-secret');
+    const emptySrc = new K8sSecretSource({
+      readSecret: vi.fn(),
+      cacheTtlMs: 0,
+    });
+    const operatorSecretReader = vi
+      .fn()
+      .mockResolvedValue('sk-operator-secret');
 
     const deps: Deps = {
       resolver: new Resolver({

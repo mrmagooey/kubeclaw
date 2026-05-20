@@ -21,9 +21,13 @@ describe('createOrchestratorMetrics', () => {
     const m = createOrchestratorMetrics(registry);
     m.recordToolJobSpawn({ image: 'ghcr.io/kubeclaw/tool:latest' });
     const metrics = await registry.getMetricsAsJSON();
-    const counter = metrics.find((m) => m.name === 'kubeclaw_tool_job_spawned_total');
+    const counter = metrics.find(
+      (m) => m.name === 'kubeclaw_tool_job_spawned_total',
+    );
     expect(counter?.values[0]?.value).toBe(1);
-    expect(counter?.values[0]?.labels?.image).toBe('ghcr.io/kubeclaw/tool:latest');
+    expect(counter?.values[0]?.labels?.image).toBe(
+      'ghcr.io/kubeclaw/tool:latest',
+    );
   });
 
   it('recordToolJobDuration observes into the histogram', async () => {
@@ -31,8 +35,12 @@ describe('createOrchestratorMetrics', () => {
     const m = createOrchestratorMetrics(registry);
     m.recordToolJobDuration({ image: 'img', success: true, durationMs: 4200 });
     const metrics = await registry.getMetricsAsJSON();
-    const hist = metrics.find((m) => m.name === 'kubeclaw_tool_job_duration_seconds');
-    const sum = hist?.values.find((v) => v.metricName === 'kubeclaw_tool_job_duration_seconds_sum');
+    const hist = metrics.find(
+      (m) => m.name === 'kubeclaw_tool_job_duration_seconds',
+    );
+    const sum = hist?.values.find(
+      (v) => v.metricName === 'kubeclaw_tool_job_duration_seconds_sum',
+    );
     expect(sum?.value).toBeCloseTo(4.2, 2);
   });
 
@@ -42,7 +50,9 @@ describe('createOrchestratorMetrics', () => {
     m.recordRedisMessage({ stream: 'kubeclaw:spawn-tool-job' });
     m.recordRedisMessage({ stream: 'kubeclaw:spawn-tool-job' });
     const metrics = await registry.getMetricsAsJSON();
-    const counter = metrics.find((m) => m.name === 'kubeclaw_redis_ipc_messages_total');
+    const counter = metrics.find(
+      (m) => m.name === 'kubeclaw_redis_ipc_messages_total',
+    );
     expect(counter?.values[0]?.value).toBe(2);
   });
 });

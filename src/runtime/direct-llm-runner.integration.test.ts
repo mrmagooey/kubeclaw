@@ -8,7 +8,15 @@
  * Suite 2: real in-memory SQLite database (via _initTestDatabase) + stubbed
  *   OpenAI client. Tests context compression end-to-end.
  */
-import { describe, it, expect, vi, beforeEach, afterEach, beforeAll } from 'vitest';
+import {
+  describe,
+  it,
+  expect,
+  vi,
+  beforeEach,
+  afterEach,
+  beforeAll,
+} from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -44,8 +52,12 @@ vi.mock('../k8s/redis-client.js', () => ({
     xread: vi.fn().mockResolvedValue(null),
     quit: vi.fn().mockResolvedValue(undefined),
   })),
-  getToolCallsStream: vi.fn((id: string, cat: string) => `tool-calls:${id}:${cat}`),
-  getToolResultsStream: vi.fn((id: string, cat: string) => `tool-results:${id}:${cat}`),
+  getToolCallsStream: vi.fn(
+    (id: string, cat: string) => `tool-calls:${id}:${cat}`,
+  ),
+  getToolResultsStream: vi.fn(
+    (id: string, cat: string) => `tool-results:${id}:${cat}`,
+  ),
   getSpawnToolPodStream: vi.fn(() => 'spawn-tool-pod'),
   getSpawnToolJobStream: vi.fn(() => 'spawn-agent-job'),
   getToolJobResultStream: vi.fn((id: string) => `agent-job-result:${id}`),
@@ -83,7 +95,13 @@ vi.mock('./llm-client.js', () => ({
 }));
 
 vi.mock('./tools/propose-skill.js', () => ({
-  proposeSkill: vi.fn().mockResolvedValue({ kind: 'staged', candidateId: 'c1', preview: 'preview' }),
+  proposeSkill: vi
+    .fn()
+    .mockResolvedValue({
+      kind: 'staged',
+      candidateId: 'c1',
+      preview: 'preview',
+    }),
 }));
 
 vi.mock('../rag/provider.js', () => ({
@@ -162,22 +180,38 @@ function makeCompressionStub() {
   const client = {
     chat: {
       completions: {
-        create: vi.fn(async (req: { messages: { role: string; content: string }[]; model: string }) => {
-          // Summarization call: check if system prompt contains our archiver marker
-          const isSummarizationCall = req.messages.some(
-            (m) => m.role === 'system' && m.content.includes('conversation archiver'),
-          );
-          if (isSummarizationCall) {
+        create: vi.fn(
+          async (req: {
+            messages: { role: string; content: string }[];
+            model: string;
+          }) => {
+            // Summarization call: check if system prompt contains our archiver marker
+            const isSummarizationCall = req.messages.some(
+              (m) =>
+                m.role === 'system' &&
+                m.content.includes('conversation archiver'),
+            );
+            if (isSummarizationCall) {
+              return {
+                choices: [
+                  {
+                    message: {
+                      content: 'Dense summary of prior messages.',
+                      tool_calls: [],
+                    },
+                  },
+                ],
+                usage: { total_tokens: 30 },
+              };
+            }
             return {
-              choices: [{ message: { content: 'Dense summary of prior messages.', tool_calls: [] } }],
-              usage: { total_tokens: 30 },
+              choices: [
+                { message: { content: 'Assistant reply.', tool_calls: [] } },
+              ],
+              usage: { total_tokens: 10 },
             };
-          }
-          return {
-            choices: [{ message: { content: 'Assistant reply.', tool_calls: [] } }],
-            usage: { total_tokens: 10 },
-          };
-        }),
+          },
+        ),
       },
     },
   };
@@ -189,7 +223,8 @@ describe('DirectLLMRunner compression integration', () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
-    const { _initTestDatabase, clearConversationHistory } = await import('../db.js');
+    const { _initTestDatabase, clearConversationHistory } =
+      await import('../db.js');
     await _initTestDatabase();
     clearConversationHistory(groupFolder);
   });
@@ -199,12 +234,20 @@ describe('DirectLLMRunner compression integration', () => {
     process.env.MAX_CONVERSATION_HISTORY = '2';
 
     try {
-      const { appendConversationMessage, getLatestSummary, clearConversationHistory } = await import('../db.js');
+      const {
+        appendConversationMessage,
+        getLatestSummary,
+        clearConversationHistory,
+      } = await import('../db.js');
       clearConversationHistory(groupFolder);
 
       // Seed 6 messages (>5 threshold)
       for (let i = 0; i < 6; i++) {
-        appendConversationMessage(groupFolder, i % 2 === 0 ? 'user' : 'assistant', `msg ${i}`);
+        appendConversationMessage(
+          groupFolder,
+          i % 2 === 0 ? 'user' : 'assistant',
+          `msg ${i}`,
+        );
       }
 
       const client = makeCompressionStub() as any;
@@ -212,11 +255,17 @@ describe('DirectLLMRunner compression integration', () => {
       const runner = new DirectLLMRunner(client);
 
       const group = {
-        name: groupFolder, folder: groupFolder, trigger: '', added_at: '',
+        name: groupFolder,
+        folder: groupFolder,
+        trigger: '',
+        added_at: '',
       } as any;
 
       await runner.runAgent(group, {
-        groupFolder, chatJid: groupFolder, prompt: 'New message', isMain: false,
+        groupFolder,
+        chatJid: groupFolder,
+        prompt: 'New message',
+        isMain: false,
       });
 
       const summary = getLatestSummary(groupFolder);
@@ -233,12 +282,17 @@ describe('DirectLLMRunner compression integration', () => {
     process.env.MAX_CONVERSATION_HISTORY = '1';
 
     try {
-      const { appendConversationMessage, clearConversationHistory } = await import('../db.js');
+      const { appendConversationMessage, clearConversationHistory } =
+        await import('../db.js');
       clearConversationHistory(groupFolder);
 
       // Seed 4 messages (>3 threshold)
       for (let i = 0; i < 4; i++) {
-        appendConversationMessage(groupFolder, i % 2 === 0 ? 'user' : 'assistant', `seed ${i}`);
+        appendConversationMessage(
+          groupFolder,
+          i % 2 === 0 ? 'user' : 'assistant',
+          `seed ${i}`,
+        );
       }
 
       const client = makeCompressionStub() as any;
@@ -246,19 +300,30 @@ describe('DirectLLMRunner compression integration', () => {
       const runner = new DirectLLMRunner(client);
 
       const group = {
-        name: groupFolder, folder: groupFolder, trigger: '', added_at: '',
+        name: groupFolder,
+        folder: groupFolder,
+        trigger: '',
+        added_at: '',
       } as any;
 
       await runner.runAgent(group, {
-        groupFolder, chatJid: groupFolder, prompt: 'Follow-up', isMain: false,
+        groupFolder,
+        chatJid: groupFolder,
+        prompt: 'Follow-up',
+        isMain: false,
       });
 
       // The main LLM call should have a system message starting with [summary_id=
-      const createCalls = (client.chat.completions.create as ReturnType<typeof vi.fn>).mock.calls;
-      const mainCall = createCalls.find((c: any[]) =>
-        !c[0].messages.some((m: { role: string; content: string }) =>
-          m.role === 'system' && m.content.includes('conversation archiver'),
-        ),
+      const createCalls = (
+        client.chat.completions.create as ReturnType<typeof vi.fn>
+      ).mock.calls;
+      const mainCall = createCalls.find(
+        (c: any[]) =>
+          !c[0].messages.some(
+            (m: { role: string; content: string }) =>
+              m.role === 'system' &&
+              m.content.includes('conversation archiver'),
+          ),
       );
       expect(mainCall).toBeDefined();
       const hasMarker = mainCall[0].messages.some(
@@ -277,23 +342,38 @@ describe('DirectLLMRunner compression integration', () => {
     process.env.MAX_CONVERSATION_HISTORY = '2';
 
     try {
-      const { appendConversationMessage, getConversationHistory, getLatestSummary, clearConversationHistory } = await import('../db.js');
+      const {
+        appendConversationMessage,
+        getConversationHistory,
+        getLatestSummary,
+        clearConversationHistory,
+      } = await import('../db.js');
       clearConversationHistory(groupFolder);
 
       // Seed 6 messages (>5 threshold)
       for (let i = 0; i < 6; i++) {
-        appendConversationMessage(groupFolder, i % 2 === 0 ? 'user' : 'assistant', `msg ${i}`);
+        appendConversationMessage(
+          groupFolder,
+          i % 2 === 0 ? 'user' : 'assistant',
+          `msg ${i}`,
+        );
       }
 
       const client = makeCompressionStub() as any;
       const { DirectLLMRunner } = await import('./direct-llm-runner.js');
       const runner = new DirectLLMRunner(client);
       const group = {
-        name: groupFolder, folder: groupFolder, trigger: '', added_at: '',
+        name: groupFolder,
+        folder: groupFolder,
+        trigger: '',
+        added_at: '',
       } as any;
 
       await runner.runAgent(group, {
-        groupFolder, chatJid: groupFolder, prompt: 'Turn 1', isMain: false,
+        groupFolder,
+        chatJid: groupFolder,
+        prompt: 'Turn 1',
+        isMain: false,
       });
 
       // After first runAgent: keep-window=2 + 1 new (user) + 1 new (assistant) = 4 rows total
@@ -305,14 +385,21 @@ describe('DirectLLMRunner compression integration', () => {
       const summaryAfterFirst = getLatestSummary(groupFolder);
       expect(summaryAfterFirst).not.toBeNull();
 
-      const callCountAfterFirst = (client.chat.completions.create as ReturnType<typeof vi.fn>).mock.calls.length;
+      const callCountAfterFirst = (
+        client.chat.completions.create as ReturnType<typeof vi.fn>
+      ).mock.calls.length;
 
       // Second runAgent — threshold should NOT fire again
       await runner.runAgent(group, {
-        groupFolder, chatJid: groupFolder, prompt: 'Turn 2', isMain: false,
+        groupFolder,
+        chatJid: groupFolder,
+        prompt: 'Turn 2',
+        isMain: false,
       });
 
-      const callCountAfterSecond = (client.chat.completions.create as ReturnType<typeof vi.fn>).mock.calls.length;
+      const callCountAfterSecond = (
+        client.chat.completions.create as ReturnType<typeof vi.fn>
+      ).mock.calls.length;
       // Only 1 main LLM call for turn 2 (no summarization call)
       expect(callCountAfterSecond - callCountAfterFirst).toBe(1);
 
@@ -326,11 +413,17 @@ describe('DirectLLMRunner compression integration', () => {
   });
 
   it('clearConversationHistory purges both history and summaries', async () => {
-    const { insertSummary, getLatestSummary, clearConversationHistory } = await import('../db.js');
+    const { insertSummary, getLatestSummary, clearConversationHistory } =
+      await import('../db.js');
     insertSummary({
-      groupFolder, sessionKey: groupFolder, parentSummaryId: null,
-      messageStartId: 'a', messageEndId: 'b',
-      summaryText: 'old summary', modelUsed: 'gpt-4o', tokenCount: 5,
+      groupFolder,
+      sessionKey: groupFolder,
+      parentSummaryId: null,
+      messageStartId: 'a',
+      messageEndId: 'b',
+      summaryText: 'old summary',
+      modelUsed: 'gpt-4o',
+      tokenCount: 5,
     });
     clearConversationHistory(groupFolder);
     expect(getLatestSummary(groupFolder)).toBeNull();

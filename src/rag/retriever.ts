@@ -37,7 +37,11 @@ export async function retrieveContext(
     );
 
     const hit = results.length > 0;
-    metrics?.recordQuery({ group: groupFolder, hit, durationMs: Date.now() - start });
+    metrics?.recordQuery({
+      group: groupFolder,
+      hit,
+      durationMs: Date.now() - start,
+    });
 
     if (!hit) return '';
 

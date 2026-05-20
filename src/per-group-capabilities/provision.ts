@@ -160,9 +160,7 @@ export function listGroupCapabilities(
   return rows.map((row) => {
     const spec = specByName.get(row.capabilityName);
     const scaleDownAfterIdleSeconds =
-      spec?.scope === 'group'
-        ? (spec.scaleDownAfterIdleSeconds ?? 600)
-        : 600;
+      spec?.scope === 'group' ? (spec.scaleDownAfterIdleSeconds ?? 600) : 600;
 
     return {
       type: row.capabilityName,

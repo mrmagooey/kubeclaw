@@ -1104,7 +1104,10 @@ describe('HttpChannel', () => {
 
       expect(res._status).toBe(200);
       expect(res._headers['Content-Type']).toMatch(/application\/json/);
-      const parsed = JSON.parse(res._body) as { status: string; uptime_ms: number };
+      const parsed = JSON.parse(res._body) as {
+        status: string;
+        uptime_ms: number;
+      };
       expect(parsed.status).toBe('ok');
       expect(typeof parsed.uptime_ms).toBe('number');
       await channel.disconnect();
@@ -1347,7 +1350,11 @@ describe('HttpChannel', () => {
       const channel = new HttpChannel(makeConfig(), makeOpts());
       await channel.connect();
 
-      const req = makeReq({ url: '/unknown-path-xyz', method: 'DELETE', auth: null });
+      const req = makeReq({
+        url: '/unknown-path-xyz',
+        method: 'DELETE',
+        auth: null,
+      });
       const res = makeRes();
       await dispatch(channel, req, res);
 
@@ -1379,7 +1386,9 @@ describe('HttpChannel', () => {
       );
       const t0 = 0;
       for (let i = 0; i < capacity; i++) {
-        expect(channel.consumeRateLimit('alice', t0)).toEqual({ allowed: true });
+        expect(channel.consumeRateLimit('alice', t0)).toEqual({
+          allowed: true,
+        });
       }
     });
 
@@ -1471,7 +1480,9 @@ describe('HttpChannel', () => {
       // Advance far past one minute — bucket should refill to full capacity only
       const t1 = 120_000; // 2 minutes later
       for (let i = 0; i < capacity; i++) {
-        expect(channel.consumeRateLimit('alice', t1)).toEqual({ allowed: true });
+        expect(channel.consumeRateLimit('alice', t1)).toEqual({
+          allowed: true,
+        });
       }
       // One more should be throttled
       expect(channel.consumeRateLimit('alice', t1).allowed).toBe(false);
@@ -1586,14 +1597,24 @@ describe('HttpChannel', () => {
       for (let i = 0; i < 5; i++) {
         await dispatch(
           channel,
-          makeReq({ method: 'POST', url: '/message', auth: 'alice:secret', body: '{"text":"msg"}' }),
+          makeReq({
+            method: 'POST',
+            url: '/message',
+            auth: 'alice:secret',
+            body: '{"text":"msg"}',
+          }),
           makeRes(),
         );
       }
       const aliceRes = makeRes();
       await dispatch(
         channel,
-        makeReq({ method: 'POST', url: '/message', auth: 'alice:secret', body: '{"text":"throttled"}' }),
+        makeReq({
+          method: 'POST',
+          url: '/message',
+          auth: 'alice:secret',
+          body: '{"text":"throttled"}',
+        }),
         aliceRes,
       );
       expect(aliceRes._status).toBe(429);
@@ -1602,7 +1623,12 @@ describe('HttpChannel', () => {
       const bobRes = makeRes();
       await dispatch(
         channel,
-        makeReq({ method: 'POST', url: '/message', auth: 'bob:hunter2', body: '{"text":"hello"}' }),
+        makeReq({
+          method: 'POST',
+          url: '/message',
+          auth: 'bob:hunter2',
+          body: '{"text":"hello"}',
+        }),
         bobRes,
       );
       expect(bobRes._status).toBe(200);
@@ -1621,23 +1647,36 @@ describe('HttpChannel', () => {
       for (let i = 0; i < 5; i++) {
         await dispatch(
           channel,
-          makeReq({ method: 'POST', url: '/message', auth: 'alice:secret', body: '{"text":"msg"}' }),
+          makeReq({
+            method: 'POST',
+            url: '/message',
+            auth: 'alice:secret',
+            body: '{"text":"msg"}',
+          }),
           makeRes(),
         );
       }
 
-      const callsBefore = (opts.onMessage as ReturnType<typeof vi.fn>).mock.calls.length;
+      const callsBefore = (opts.onMessage as ReturnType<typeof vi.fn>).mock
+        .calls.length;
 
       const res = makeRes();
       await dispatch(
         channel,
-        makeReq({ method: 'POST', url: '/message', auth: 'alice:secret', body: '{"text":"throttled"}' }),
+        makeReq({
+          method: 'POST',
+          url: '/message',
+          auth: 'alice:secret',
+          body: '{"text":"throttled"}',
+        }),
         res,
       );
 
       expect(res._status).toBe(429);
       // onMessage must NOT have been called for the throttled request
-      expect((opts.onMessage as ReturnType<typeof vi.fn>).mock.calls.length).toBe(callsBefore);
+      expect(
+        (opts.onMessage as ReturnType<typeof vi.fn>).mock.calls.length,
+      ).toBe(callsBefore);
 
       await channel.disconnect();
     });
@@ -1675,7 +1714,12 @@ describe('HttpChannel', () => {
       for (let i = 0; i < 5; i++) {
         await dispatch(
           channel,
-          makeReq({ method: 'POST', url: '/message', auth: 'alice:secret', body: '{"text":"msg"}' }),
+          makeReq({
+            method: 'POST',
+            url: '/message',
+            auth: 'alice:secret',
+            body: '{"text":"msg"}',
+          }),
           makeRes(),
         );
       }
@@ -1693,7 +1737,12 @@ describe('HttpChannel', () => {
       const postRes = makeRes();
       await dispatch(
         channel,
-        makeReq({ method: 'POST', url: '/message', auth: 'alice:secret', body: '{"text":"throttled"}' }),
+        makeReq({
+          method: 'POST',
+          url: '/message',
+          auth: 'alice:secret',
+          body: '{"text":"throttled"}',
+        }),
         postRes,
       );
       expect(postRes._status).toBe(429);

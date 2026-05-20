@@ -1,8 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import {
-  estimateTokens,
-  estimateMessagesTokens,
-} from './token-estimate.js';
+import { estimateTokens, estimateMessagesTokens } from './token-estimate.js';
 
 describe('estimateTokens', () => {
   it('returns 0 for empty string', () => {
@@ -28,7 +25,7 @@ describe('estimateTokens', () => {
 describe('estimateMessagesTokens', () => {
   it('sums tokens across all messages including role label overhead', () => {
     const msgs = [
-      { role: 'user' as const, content: 'Hi' },       // 'user' (4) + 'Hi' (2) = 6 chars → 2
+      { role: 'user' as const, content: 'Hi' }, // 'user' (4) + 'Hi' (2) = 6 chars → 2
       { role: 'assistant' as const, content: 'Hello!' }, // 'assistant' (9) + 'Hello!' (6) = 15 chars → 4
     ];
     // total chars = 6 + 15 = 21 → ceil(21/4) = 6

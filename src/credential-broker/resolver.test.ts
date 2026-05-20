@@ -125,7 +125,10 @@ describe('Resolver — substitution map', () => {
             JSON.stringify({
               fields: {
                 user: { value: 'alice', placeholder: 'KC_PH_user_aaaa' },
-                password: { value: 'hunter2', placeholder: 'KC_PH_password_bbbb' },
+                password: {
+                  value: 'hunter2',
+                  placeholder: 'KC_PH_password_bbbb',
+                },
               },
               registeredAt: '2026-05-16T00:00:00Z',
             }),

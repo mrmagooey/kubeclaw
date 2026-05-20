@@ -89,8 +89,7 @@ export async function startBroker(): Promise<http.Server> {
       name: pod.metadata?.name ?? '',
       podIP,
       terminating: pod.metadata?.deletionTimestamp != null,
-      annotations:
-        (pod.metadata?.annotations as Record<string, string>) ?? {},
+      annotations: (pod.metadata?.annotations as Record<string, string>) ?? {},
     });
   };
 
@@ -223,9 +222,7 @@ export async function startBroker(): Promise<http.Server> {
           user: s.user
             ? {
                 username: s.user.username,
-                extra: s.user.extra as
-                  | Record<string, string[]>
-                  | undefined,
+                extra: s.user.extra as Record<string, string[]> | undefined,
               }
             : undefined,
           error: s.error,

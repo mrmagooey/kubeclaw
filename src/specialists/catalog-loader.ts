@@ -33,14 +33,34 @@ export class SpecialistCatalogLoader {
       return;
     }
     let json: string;
-    try { json = readFileSync(this.path, 'utf-8'); }
-    catch (err) { logger.warn({ err, path: this.path }, 'specialist catalog read failed; keeping cache'); return; }
+    try {
+      json = readFileSync(this.path, 'utf-8');
+    } catch (err) {
+      logger.warn(
+        { err, path: this.path },
+        'specialist catalog read failed; keeping cache',
+      );
+      return;
+    }
     const r = parseSpecialists(json);
-    if (!r.ok) { logger.warn({ error: r.error, path: this.path }, 'specialist catalog parse failed; keeping cache'); return; }
-    if (r.generation === this.generation && this.cache.length === r.specialists.length) return; // no-op
+    if (!r.ok) {
+      logger.warn(
+        { error: r.error, path: this.path },
+        'specialist catalog parse failed; keeping cache',
+      );
+      return;
+    }
+    if (
+      r.generation === this.generation &&
+      this.cache.length === r.specialists.length
+    )
+      return; // no-op
     this.cache = r.specialists;
     this.generation = r.generation;
-    logger.info({ count: r.specialists.length, generation: r.generation }, 'specialist catalog loaded');
+    logger.info(
+      { count: r.specialists.length, generation: r.generation },
+      'specialist catalog loaded',
+    );
   }
 
   getAll(): GlobalSpecialist[] {
@@ -49,9 +69,10 @@ export class SpecialistCatalogLoader {
 
   findByMention(name: string): GlobalSpecialist | undefined {
     const lower = name.toLowerCase();
-    return this.cache.find(s =>
-      s.name.toLowerCase() === lower ||
-      (s.triggers ?? []).some(t => t.toLowerCase() === lower),
+    return this.cache.find(
+      (s) =>
+        s.name.toLowerCase() === lower ||
+        (s.triggers ?? []).some((t) => t.toLowerCase() === lower),
     );
   }
 }

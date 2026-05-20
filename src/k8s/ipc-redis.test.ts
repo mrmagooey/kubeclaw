@@ -2093,7 +2093,11 @@ describe('secret/catalog IPC handlers via startTaskRequestWatcher', () => {
 
     await startTaskRequestWatcher();
 
-    expect(mockSetGroupSecret).toHaveBeenCalledWith('family', 'replicate', fields);
+    expect(mockSetGroupSecret).toHaveBeenCalledWith(
+      'family',
+      'replicate',
+      fields,
+    );
     expect(mockXadd).toHaveBeenCalledWith(
       resultStream,
       '*',
@@ -2105,7 +2109,9 @@ describe('secret/catalog IPC handlers via startTaskRequestWatcher', () => {
   it('secret.add with unknown catalogId surfaces { ok: false, error }', async () => {
     startIpcWatcher(createMockDeps());
 
-    mockSetGroupSecret.mockRejectedValueOnce(new Error('unknown_catalog_entry'));
+    mockSetGroupSecret.mockRejectedValueOnce(
+      new Error('unknown_catalog_entry'),
+    );
 
     const resultStream = 'kubeclaw:secret-result:test-add-fail';
 
@@ -2167,9 +2173,9 @@ describe('secret/catalog IPC handlers via startTaskRequestWatcher', () => {
       JSON.stringify({ ok: true, result: expectedResult }),
     );
     // Verify no 'value' or 'fields' property in the result payload
-    const xaddCall = vi.mocked(mockXadd).mock.calls.find(
-      (c) => c[0] === resultStream,
-    );
+    const xaddCall = vi
+      .mocked(mockXadd)
+      .mock.calls.find((c) => c[0] === resultStream);
     const payload = JSON.parse(xaddCall![3] as string) as {
       ok: boolean;
       result: Array<Record<string, unknown>>;

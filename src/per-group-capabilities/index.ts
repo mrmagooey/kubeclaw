@@ -8,7 +8,10 @@ import {
 import { gcGroup } from './gc.js';
 import { setDiscoveryDeps } from '../capabilities/discovery.js';
 import { logger } from '../logger.js';
-import { scrapeMissingSchemas, type CallToolsListFn } from './schema-scraper.js';
+import {
+  scrapeMissingSchemas,
+  type CallToolsListFn,
+} from './schema-scraper.js';
 import { Client as McpClient } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { McpToolSchema } from './schema-cache.js';

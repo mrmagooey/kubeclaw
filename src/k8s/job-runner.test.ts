@@ -309,7 +309,10 @@ describe('JobRunner', () => {
       const volumes = manifest.spec?.template?.spec?.volumes || [];
       const vol = volumes.find((v) => v.name === 'specialists-catalog');
       expect(vol).toBeDefined();
-      expect(vol!.configMap).toEqual({ name: 'kubeclaw-specialists', optional: true });
+      expect(vol!.configMap).toEqual({
+        name: 'kubeclaw-specialists',
+        optional: true,
+      });
 
       const volumeMounts =
         manifest.spec?.template?.spec?.containers?.[0]?.volumeMounts || [];
@@ -1428,9 +1431,7 @@ describe('JobRunner', () => {
       const bridgeEnv: { name: string; value: string }[] = containers[0].env;
       const redisUrl = bridgeEnv.find((e) => e.name === 'REDIS_URL')?.value;
 
-      expect(redisUrl).toBe(
-        'redis://tool-server:testpass@kubeclaw-redis:6379',
-      );
+      expect(redisUrl).toBe('redis://tool-server:testpass@kubeclaw-redis:6379');
       expect(redisUrl).not.toContain('adapter');
     });
 
@@ -1743,7 +1744,10 @@ describe('JobRunner', () => {
         ownerGroup: 'family',
         catalogEntries: [jenkinsCatalogEntry],
         groupPlaceholders: {
-          jenkins: { user: 'KC_PH_user_' + 'b'.repeat(64), password: 'KC_PH_password_' + 'c'.repeat(64) },
+          jenkins: {
+            user: 'KC_PH_user_' + 'b'.repeat(64),
+            password: 'KC_PH_password_' + 'c'.repeat(64),
+          },
         },
       };
       const manifest = jobRunner.generateJobManifest(spec);

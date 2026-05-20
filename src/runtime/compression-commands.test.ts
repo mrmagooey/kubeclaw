@@ -1,13 +1,25 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { isCompactCommand, parseCompactArgs, handleCompactCommand } from './compression-commands.js';
-import { _initTestDatabase, insertSummary, appendConversationMessage, getConversationHistory, db } from '../db.js';
+import {
+  isCompactCommand,
+  parseCompactArgs,
+  handleCompactCommand,
+} from './compression-commands.js';
+import {
+  _initTestDatabase,
+  insertSummary,
+  appendConversationMessage,
+  getConversationHistory,
+  db,
+} from '../db.js';
 
 describe('isCompactCommand', () => {
   it('matches /compact', () => expect(isCompactCommand('/compact')).toBe(true));
   it('matches /summary', () => expect(isCompactCommand('/summary')).toBe(true));
   it('matches /clear', () => expect(isCompactCommand('/clear')).toBe(true));
-  it('does not match /skills', () => expect(isCompactCommand('/skills list')).toBe(false));
-  it('does not match plain text', () => expect(isCompactCommand('hello')).toBe(false));
+  it('does not match /skills', () =>
+    expect(isCompactCommand('/skills list')).toBe(false));
+  it('does not match plain text', () =>
+    expect(isCompactCommand('hello')).toBe(false));
   it('matches /compact with flags', () =>
     expect(isCompactCommand('/compact --keep 5')).toBe(true));
 });
@@ -44,7 +56,12 @@ describe('/summary chain walk', () => {
   });
 
   it('returns a message when no summary exists', async () => {
-    const result = await handleCompactCommand('testgroup', '/summary', stubClient, stubModel);
+    const result = await handleCompactCommand(
+      'testgroup',
+      '/summary',
+      stubClient,
+      stubModel,
+    );
     expect(result).toBe('No summary exists for this group yet.');
   });
 
@@ -60,7 +77,12 @@ describe('/summary chain walk', () => {
       tokenCount: 10,
     });
 
-    const result = await handleCompactCommand('testgroup', '/summary', stubClient, stubModel);
+    const result = await handleCompactCommand(
+      'testgroup',
+      '/summary',
+      stubClient,
+      stubModel,
+    );
     expect(result).toContain('Summary chain (1 entry/entries)');
     expect(result).toContain('First summary text');
   });
@@ -88,12 +110,19 @@ describe('/summary chain walk', () => {
       tokenCount: 8,
     });
 
-    const result = await handleCompactCommand('testgroup', '/summary', stubClient, stubModel);
+    const result = await handleCompactCommand(
+      'testgroup',
+      '/summary',
+      stubClient,
+      stubModel,
+    );
     expect(result).toContain('Summary chain (2 entry/entries)');
     expect(result).toContain('Oldest summary A');
     expect(result).toContain('Newer summary B');
     // Newest-first: B appears before A in the output
-    expect(result.indexOf('Newer summary B')).toBeLessThan(result.indexOf('Oldest summary A'));
+    expect(result.indexOf('Newer summary B')).toBeLessThan(
+      result.indexOf('Oldest summary A'),
+    );
   });
 
   it('three-generation case: output contains all three in newest-first order', async () => {
@@ -130,7 +159,12 @@ describe('/summary chain walk', () => {
       tokenCount: 7,
     });
 
-    const result = await handleCompactCommand('testgroup', '/summary', stubClient, stubModel);
+    const result = await handleCompactCommand(
+      'testgroup',
+      '/summary',
+      stubClient,
+      stubModel,
+    );
     expect(result).toContain('Summary chain (3 entry/entries)');
     expect(result).toContain('Generation 1 (oldest)');
     expect(result).toContain('Generation 2 (middle)');
@@ -157,7 +191,18 @@ describe('/summary chain walk', () => {
          message_start_id, message_end_id, summary_text,
          model_used, token_count, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [idX, 'testgroup', 'testgroup', idY, 'sx', 'ex', 'Cycle X', stubModel, 1, now],
+      [
+        idX,
+        'testgroup',
+        'testgroup',
+        idY,
+        'sx',
+        'ex',
+        'Cycle X',
+        stubModel,
+        1,
+        now,
+      ],
     );
     // Insert Y referencing X (creates a mutual cycle: X→Y→X→…)
     const laterNow = new Date(Date.now() + 1).toISOString();
@@ -167,11 +212,27 @@ describe('/summary chain walk', () => {
          message_start_id, message_end_id, summary_text,
          model_used, token_count, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [idY, 'testgroup', 'testgroup', idX, 'sy', 'ey', 'Cycle Y', stubModel, 1, laterNow],
+      [
+        idY,
+        'testgroup',
+        'testgroup',
+        idX,
+        'sy',
+        'ey',
+        'Cycle Y',
+        stubModel,
+        1,
+        laterNow,
+      ],
     );
 
     // Should return without hanging and cap at ≤50 entries
-    const result = await handleCompactCommand('testgroup', '/summary', stubClient, stubModel);
+    const result = await handleCompactCommand(
+      'testgroup',
+      '/summary',
+      stubClient,
+      stubModel,
+    );
     // The chain must have been capped (not infinite), so we get a bounded result
     const match = result.match(/Summary chain \((\d+) entry\/entries\)/);
     expect(match).not.toBeNull();
@@ -200,7 +261,11 @@ describe('/compact deletes compressed messages', () => {
 
     // Insert 5 messages
     for (let i = 0; i < 5; i++) {
-      appendConversationMessage(groupFolder, i % 2 === 0 ? 'user' : 'assistant', `msg ${i}`);
+      appendConversationMessage(
+        groupFolder,
+        i % 2 === 0 ? 'user' : 'assistant',
+        `msg ${i}`,
+      );
     }
     expect(getConversationHistory(groupFolder, 0).length).toBe(5);
 
@@ -216,7 +281,12 @@ describe('/compact deletes compressed messages', () => {
       },
     } as any;
 
-    await handleCompactCommand(groupFolder, '/compact --keep 2', mockClient, stubModel);
+    await handleCompactCommand(
+      groupFolder,
+      '/compact --keep 2',
+      mockClient,
+      stubModel,
+    );
 
     // Only the 2 keep-window messages should remain
     const remaining = getConversationHistory(groupFolder, 0);

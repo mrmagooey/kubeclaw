@@ -306,32 +306,36 @@ export class HttpChannel implements Channel {
     this.opts = opts;
     this.processStartMs = Date.now();
 
-    this.checkDb = opts.checkDb ?? (() => {
-      try {
-        db.exec('SELECT 1');
-        return 'ok';
-      } catch {
-        return 'failed';
-      }
-    });
+    this.checkDb =
+      opts.checkDb ??
+      (() => {
+        try {
+          db.exec('SELECT 1');
+          return 'ok';
+        } catch {
+          return 'failed';
+        }
+      });
 
-    this.checkRedis = opts.checkRedis ?? (async () => {
-      // Lazy import so tests that mock the module don't pull in ioredis at
-      // module load.
-      const { getRedisClient } = await import('../k8s/redis-client.js');
-      const client = getRedisClient();
-      try {
-        await Promise.race([
-          client.ping(),
-          new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error('Redis PING timeout')), 2000),
-          ),
-        ]);
-        return 'ok';
-      } catch {
-        return 'unreachable';
-      }
-    });
+    this.checkRedis =
+      opts.checkRedis ??
+      (async () => {
+        // Lazy import so tests that mock the module don't pull in ioredis at
+        // module load.
+        const { getRedisClient } = await import('../k8s/redis-client.js');
+        const client = getRedisClient();
+        try {
+          await Promise.race([
+            client.ping(),
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error('Redis PING timeout')), 2000),
+            ),
+          ]);
+          return 'ok';
+        } catch {
+          return 'unreachable';
+        }
+      });
   }
 
   /**
@@ -361,7 +365,10 @@ export class HttpChannel implements Channel {
 
     // Refill based on elapsed time
     const elapsed = Math.max(0, nowMs - bucket.lastRefillMs);
-    bucket.tokens = Math.min(capacity, bucket.tokens + elapsed * refillRatePerMs);
+    bucket.tokens = Math.min(
+      capacity,
+      bucket.tokens + elapsed * refillRatePerMs,
+    );
     bucket.lastRefillMs = nowMs;
 
     if (bucket.tokens >= 1) {
@@ -434,7 +441,10 @@ export class HttpChannel implements Channel {
     res.end('Unauthorized');
   }
 
-  private async handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  private async handleRequest(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
     // Reject any request whose raw URL contains path-traversal sequences
     // before URL normalisation can resolve them away.
     const rawUrl = req.url ?? '/';
@@ -1038,7 +1048,10 @@ export class HttpChannel implements Channel {
         is_bot_message: true,
       });
     } catch (err) {
-      logger.warn({ err, jid }, 'Failed to persist outbound HTTP message for SSE catch-up');
+      logger.warn(
+        { err, jid },
+        'Failed to persist outbound HTTP message for SSE catch-up',
+      );
     }
 
     if (clients.length === 0) {
@@ -1049,9 +1062,7 @@ export class HttpChannel implements Channel {
     // Escape newlines for SSE data field; split into multiple data lines
     const lines = text.split('\n');
     const ssePayload =
-      `id: ${nowMs}\n` +
-      lines.map((l) => `data: ${l}`).join('\n') +
-      '\n\n';
+      `id: ${nowMs}\n` + lines.map((l) => `data: ${l}`).join('\n') + '\n\n';
 
     for (const client of clients) {
       try {

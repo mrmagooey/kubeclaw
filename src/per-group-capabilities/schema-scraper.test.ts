@@ -55,9 +55,15 @@ describe('scrapeMissingSchemas', () => {
     });
     setTimeout(() => client.markReady('kubeclaw', 'mcp-echo-h1'), 5);
 
-    const callToolsList = vi.fn().mockResolvedValue([
-      { name: 'echo', description: 'echoes', inputSchema: { type: 'object' } },
-    ]);
+    const callToolsList = vi
+      .fn()
+      .mockResolvedValue([
+        {
+          name: 'echo',
+          description: 'echoes',
+          inputSchema: { type: 'object' },
+        },
+      ]);
 
     await scrapeMissingSchemas({
       client,

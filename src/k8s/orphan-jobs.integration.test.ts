@@ -39,7 +39,12 @@ function makeK8sFake(): OrphanJobK8sClient & { deleted: string[] } {
 }
 
 function makePublisherFake(): OrphanJobPublisher & {
-  published: Array<{ groupFolder: string; chatJid: string; text: string; noticeId: string }>;
+  published: Array<{
+    groupFolder: string;
+    chatJid: string;
+    text: string;
+    noticeId: string;
+  }>;
 } {
   const published: Array<{
     groupFolder: string;
@@ -50,7 +55,12 @@ function makePublisherFake(): OrphanJobPublisher & {
   return {
     published,
     publish: vi.fn(
-      async (groupFolder: string, chatJid: string, text: string, noticeId: string) => {
+      async (
+        groupFolder: string,
+        chatJid: string,
+        text: string,
+        noticeId: string,
+      ) => {
         published.push({ groupFolder, chatJid, text, noticeId });
       },
     ),
@@ -215,7 +225,9 @@ describe('orphan-jobs integration', () => {
     expect(publisher.published).toHaveLength(3);
 
     for (const j of jobs) {
-      const notice = publisher.published.find((p) => p.groupFolder === j.folder);
+      const notice = publisher.published.find(
+        (p) => p.groupFolder === j.folder,
+      );
       expect(notice, `notice missing for ${j.folder}`).toBeDefined();
       expect(notice!.chatJid).toBe(j.jid);
       expect(notice!.text).toContain(j.id);

@@ -1,9 +1,17 @@
 import { Counter, Histogram, Registry } from 'prom-client';
 
 export interface RagMetrics {
-  recordQuery(labels: { group: string; hit: boolean; durationMs: number }): void;
+  recordQuery(labels: {
+    group: string;
+    hit: boolean;
+    durationMs: number;
+  }): void;
   recordBackendError(labels: { backend: 'qdrant' | 'embedding' }): void;
-  recordIndex(labels: { group: string; chunks: number; durationMs: number }): void;
+  recordIndex(labels: {
+    group: string;
+    chunks: number;
+    durationMs: number;
+  }): void;
 }
 
 export function createRagMetrics(registry: Registry): RagMetrics {

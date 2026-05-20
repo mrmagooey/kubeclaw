@@ -2,17 +2,19 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import {
-  handleSkillsCommand,
-  resetReviewCursors,
-} from './skills-commands.js';
+import { handleSkillsCommand, resetReviewCursors } from './skills-commands.js';
 import { writeCandidate, acceptCandidate } from './skill-store.js';
 import { SkillFile } from './skill-format.js';
 import { _initTestDatabase } from '../db.js';
 
 function mkSkill(name: string): SkillFile {
   return {
-    frontmatter: { name, description: `d-${name}`, created: '2026-05-16', source: 'manual' },
+    frontmatter: {
+      name,
+      description: `d-${name}`,
+      created: '2026-05-16',
+      source: 'manual',
+    },
     body: `body-${name}\n`,
   };
 }
@@ -80,10 +82,18 @@ describe('handleSkillsCommand', () => {
   it('disable + enable round-trip', () => {
     const id = writeCandidate(root, GROUP, mkSkill('alpha'));
     acceptCandidate(root, GROUP, id);
-    expect(handleSkillsCommand(root, GROUP, JID, '/skills disable alpha')).toMatch(/disabled/i);
-    expect(handleSkillsCommand(root, GROUP, JID, '/skills list')).not.toContain('alpha');
-    expect(handleSkillsCommand(root, GROUP, JID, '/skills enable alpha')).toMatch(/enabled/i);
-    expect(handleSkillsCommand(root, GROUP, JID, '/skills list')).toContain('alpha');
+    expect(
+      handleSkillsCommand(root, GROUP, JID, '/skills disable alpha'),
+    ).toMatch(/disabled/i);
+    expect(handleSkillsCommand(root, GROUP, JID, '/skills list')).not.toContain(
+      'alpha',
+    );
+    expect(
+      handleSkillsCommand(root, GROUP, JID, '/skills enable alpha'),
+    ).toMatch(/enabled/i);
+    expect(handleSkillsCommand(root, GROUP, JID, '/skills list')).toContain(
+      'alpha',
+    );
   });
 
   it('unknown verb', () => {
@@ -93,19 +103,33 @@ describe('handleSkillsCommand', () => {
 
   it('plain /skills shows help', () => {
     const reply = handleSkillsCommand(root, GROUP, JID, '/skills');
-    expect(reply).toMatch(/list|review|show|accept|reject|disable|enable|prune/);
+    expect(reply).toMatch(
+      /list|review|show|accept|reject|disable|enable|prune/,
+    );
   });
 
   it('prune-confirm — usage when no arg', () => {
-    const reply = handleSkillsCommand(root, GROUP, JID, '/skills prune-confirm');
+    const reply = handleSkillsCommand(
+      root,
+      GROUP,
+      JID,
+      '/skills prune-confirm',
+    );
     expect(reply).toMatch(/usage/i);
   });
 
   it('prune-confirm — deletes the skill', () => {
     const id = writeCandidate(root, GROUP, mkSkill('alpha'));
     acceptCandidate(root, GROUP, id);
-    const reply = handleSkillsCommand(root, GROUP, JID, '/skills prune-confirm alpha');
+    const reply = handleSkillsCommand(
+      root,
+      GROUP,
+      JID,
+      '/skills prune-confirm alpha',
+    );
     expect(reply).toMatch(/pruned/i);
-    expect(handleSkillsCommand(root, GROUP, JID, '/skills list')).toMatch(/no skills/i);
+    expect(handleSkillsCommand(root, GROUP, JID, '/skills list')).toMatch(
+      /no skills/i,
+    );
   });
 });

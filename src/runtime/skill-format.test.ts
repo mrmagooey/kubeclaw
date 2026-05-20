@@ -78,7 +78,13 @@ describe('skill-format', () => {
 
     it('round-trips with target field', () => {
       const skill: SkillFile = {
-        frontmatter: { name: 'foo', description: 'd', created: '2026-05-16', source: 'manual', target: 'orig' },
+        frontmatter: {
+          name: 'foo',
+          description: 'd',
+          created: '2026-05-16',
+          source: 'manual',
+          target: 'orig',
+        },
         body: 'body\n',
       };
       const reparsed = parseSkill(serializeSkill(skill));
@@ -87,7 +93,12 @@ describe('skill-format', () => {
 
     it('omits target line when undefined', () => {
       const skill: SkillFile = {
-        frontmatter: { name: 'foo', description: 'd', created: '2026-05-16', source: 'manual' },
+        frontmatter: {
+          name: 'foo',
+          description: 'd',
+          created: '2026-05-16',
+          source: 'manual',
+        },
         body: 'body\n',
       };
       expect(serializeSkill(skill)).not.toContain('target:');

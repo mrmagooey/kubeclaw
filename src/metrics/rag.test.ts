@@ -19,11 +19,17 @@ describe('createRagMetrics', () => {
     const m = createRagMetrics(registry);
     m.recordQuery({ group: 'mygroup', hit: true, durationMs: 350 });
     const metrics = await registry.getMetricsAsJSON();
-    const counter = metrics.find((m) => m.name === 'kubeclaw_rag_queries_total');
+    const counter = metrics.find(
+      (m) => m.name === 'kubeclaw_rag_queries_total',
+    );
     expect(counter?.values[0]?.value).toBe(1);
     expect(counter?.values[0]?.labels?.hit).toBe('true');
-    const hist = metrics.find((m) => m.name === 'kubeclaw_rag_query_duration_seconds');
-    const sum = hist?.values.find((v) => v.metricName === 'kubeclaw_rag_query_duration_seconds_sum');
+    const hist = metrics.find(
+      (m) => m.name === 'kubeclaw_rag_query_duration_seconds',
+    );
+    const sum = hist?.values.find(
+      (v) => v.metricName === 'kubeclaw_rag_query_duration_seconds_sum',
+    );
     expect(sum?.value).toBeCloseTo(0.35, 2);
   });
 
@@ -33,7 +39,9 @@ describe('createRagMetrics', () => {
     m.recordBackendError({ backend: 'qdrant' });
     m.recordBackendError({ backend: 'embedding' });
     const metrics = await registry.getMetricsAsJSON();
-    const counter = metrics.find((m) => m.name === 'kubeclaw_rag_backend_errors_total');
+    const counter = metrics.find(
+      (m) => m.name === 'kubeclaw_rag_backend_errors_total',
+    );
     expect(counter?.values).toHaveLength(2);
   });
 
@@ -42,7 +50,9 @@ describe('createRagMetrics', () => {
     const m = createRagMetrics(registry);
     m.recordIndex({ group: 'mygroup', chunks: 8, durationMs: 900 });
     const metrics = await registry.getMetricsAsJSON();
-    const chunksCounter = metrics.find((m) => m.name === 'kubeclaw_rag_chunks_indexed_total');
+    const chunksCounter = metrics.find(
+      (m) => m.name === 'kubeclaw_rag_chunks_indexed_total',
+    );
     expect(chunksCounter?.values[0]?.value).toBe(8);
   });
 });

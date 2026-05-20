@@ -363,7 +363,9 @@ export class JobRunner {
         namespace: this.namespace,
         body: jobManifest,
       });
-      this.metrics?.recordToolJobSpawn({ image: getContainerImage(group.llmProvider ?? 'openai') });
+      this.metrics?.recordToolJobSpawn({
+        image: getContainerImage(group.llmProvider ?? 'openai'),
+      });
 
       const jobName = createdJob.metadata?.name || jobId;
 

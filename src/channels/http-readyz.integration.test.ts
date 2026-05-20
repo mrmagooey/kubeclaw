@@ -37,7 +37,12 @@ vi.mock('../config.js', () => ({
 vi.mock('./registry.js', () => ({ registerChannel: vi.fn() }));
 
 vi.mock('node:fs', () => ({
-  default: { mkdirSync: vi.fn(), writeFileSync: vi.fn(), existsSync: vi.fn(() => false), readFileSync: vi.fn() },
+  default: {
+    mkdirSync: vi.fn(),
+    writeFileSync: vi.fn(),
+    existsSync: vi.fn(() => false),
+    readFileSync: vi.fn(),
+  },
   mkdirSync: vi.fn(),
   writeFileSync: vi.fn(),
   existsSync: vi.fn(() => false),
@@ -67,7 +72,11 @@ async function freePort(): Promise<number> {
 function rawRequest(
   method: string,
   url: string,
-): Promise<{ statusCode: number; headers: Record<string, string>; body: string }> {
+): Promise<{
+  statusCode: number;
+  headers: Record<string, string>;
+  body: string;
+}> {
   return new Promise((resolve, reject) => {
     const parsed = new URL(url);
     const req = nodeHttp.request(
@@ -125,16 +134,13 @@ describe('HTTP channel /readyz integration', () => {
     port = await freePort();
     baseUrl = `http://127.0.0.1:${port}`;
 
-    channel = new HttpChannel(
-      { port, users: { alice: 'pass' } } as any,
-      {
-        onMessage: vi.fn(),
-        onChatMetadata: vi.fn(),
-        registeredGroups: vi.fn(() => ({})),
-        checkDb: checkDbFn,
-        checkRedis: checkRedisFn,
-      },
-    );
+    channel = new HttpChannel({ port, users: { alice: 'pass' } } as any, {
+      onMessage: vi.fn(),
+      onChatMetadata: vi.fn(),
+      registeredGroups: vi.fn(() => ({})),
+      checkDb: checkDbFn,
+      checkRedis: checkRedisFn,
+    });
     await channel.connect();
   }, 15_000);
 
@@ -150,7 +156,10 @@ describe('HTTP channel /readyz integration', () => {
   // AC1: healthy pod → 200 + ready body
   it('AC1: GET /readyz → 200 with ready JSON when DB+Redis healthy', async () => {
     redisReachable = true;
-    const { statusCode, headers, body } = await rawRequest('GET', `${baseUrl}/readyz`);
+    const { statusCode, headers, body } = await rawRequest(
+      'GET',
+      `${baseUrl}/readyz`,
+    );
 
     expect(statusCode).toBe(200);
     expect(headers['content-type']).toMatch(/application\/json/);
@@ -239,9 +248,15 @@ describe('HTTP channel /readyz integration', () => {
     );
     await failingChannel.connect();
 
-    const { statusCode, body } = await rawRequest('GET', `http://127.0.0.1:${port2}/readyz`);
+    const { statusCode, body } = await rawRequest(
+      'GET',
+      `http://127.0.0.1:${port2}/readyz`,
+    );
     expect(statusCode).toBe(503);
-    const parsed = JSON.parse(body) as { status: string; checks: { db: string; redis: string } };
+    const parsed = JSON.parse(body) as {
+      status: string;
+      checks: { db: string; redis: string };
+    };
     expect(parsed.checks.db).toBe('failed');
 
     await failingChannel.disconnect();

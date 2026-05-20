@@ -1,11 +1,17 @@
-import { loadBrokerConfig, type BrokerConfig } from '../credential-broker/config.js';
+import {
+  loadBrokerConfig,
+  type BrokerConfig,
+} from '../credential-broker/config.js';
 import type { CatalogEntry } from '../credential-broker/resolver.js';
 import { logger } from '../logger.js';
 
 export interface CatalogInformerOpts {
   namespace: string;
   configMapName: string;
-  readConfigMap: (namespace: string, name: string) => Promise<{ data?: Record<string, string> }>;
+  readConfigMap: (
+    namespace: string,
+    name: string,
+  ) => Promise<{ data?: Record<string, string> }>;
 }
 
 export class CatalogInformer {
@@ -23,7 +29,10 @@ export class CatalogInformer {
 
   async sync(): Promise<void> {
     try {
-      const cm = await this.opts.readConfigMap(this.opts.namespace, this.opts.configMapName);
+      const cm = await this.opts.readConfigMap(
+        this.opts.namespace,
+        this.opts.configMapName,
+      );
       const yamlText = cm.data?.['config.yaml'] ?? '';
       const cfg: BrokerConfig = loadBrokerConfig(yamlText);
       this.catalog = cfg.catalog;

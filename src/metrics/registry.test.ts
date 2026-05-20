@@ -34,7 +34,9 @@ describe('createMetricsServer', () => {
     const server = createMetricsServer({ registry, port: 0 });
     servers.push(server);
     const addr = await server.listen();
-    const res = await fetch(`http://127.0.0.1:${addr.port}/metrics`, { method: 'POST' });
+    const res = await fetch(`http://127.0.0.1:${addr.port}/metrics`, {
+      method: 'POST',
+    });
     expect(res.status).toBe(404);
   });
 });

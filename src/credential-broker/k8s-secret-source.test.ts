@@ -17,7 +17,9 @@ describe('K8sSecretSource — group secrets', () => {
         data: {
           replicate: Buffer.from(
             JSON.stringify({
-              fields: { token: { value: 'r8_real', placeholder: 'KC_PH_token_xxx' } },
+              fields: {
+                token: { value: 'r8_real', placeholder: 'KC_PH_token_xxx' },
+              },
               registeredAt: '2026-05-16T10:00:00Z',
             }),
           ).toString('base64'),
@@ -45,9 +47,9 @@ describe('K8sSecretSource — group secrets', () => {
           labels: { [GROUP_SECRETS_LABEL]: 'true' },
         },
         data: {
-          replicate: Buffer.from(
-            '{"fields":{},"registeredAt":""}',
-          ).toString('base64'),
+          replicate: Buffer.from('{"fields":{},"registeredAt":""}').toString(
+            'base64',
+          ),
         },
       },
     });
@@ -66,9 +68,9 @@ describe('K8sSecretSource — group secrets', () => {
       secret: {
         metadata: { name: 'unrelated', labels: {} },
         data: {
-          something: Buffer.from(
-            '{"fields":{},"registeredAt":""}',
-          ).toString('base64'),
+          something: Buffer.from('{"fields":{},"registeredAt":""}').toString(
+            'base64',
+          ),
         },
       },
     });
@@ -134,7 +136,9 @@ describe('K8sSecretSource — group secrets', () => {
         data: {
           replicate: Buffer.from(
             JSON.stringify({
-              fields: { token: { value: 'r8_old', placeholder: 'KC_PH_token_aaa' } },
+              fields: {
+                token: { value: 'r8_old', placeholder: 'KC_PH_token_aaa' },
+              },
               registeredAt: '2026-05-16T09:00:00Z',
             }),
           ).toString('base64'),
@@ -151,16 +155,18 @@ describe('K8sSecretSource — group secrets', () => {
         data: {
           replicate: Buffer.from(
             JSON.stringify({
-              fields: { token: { value: 'r8_new', placeholder: 'KC_PH_token_bbb' } },
+              fields: {
+                token: { value: 'r8_new', placeholder: 'KC_PH_token_bbb' },
+              },
               registeredAt: '2026-05-16T10:00:00Z',
             }),
           ).toString('base64'),
         },
       },
     });
-    expect(src.getGroupCredential('family', 'replicate')?.fields.token.value).toBe(
-      'r8_new',
-    );
+    expect(
+      src.getGroupCredential('family', 'replicate')?.fields.token.value,
+    ).toBe('r8_new');
   });
 
   it('listGroups reflects currently cached groups', () => {
@@ -173,9 +179,9 @@ describe('K8sSecretSource — group secrets', () => {
           labels: { [GROUP_SECRETS_LABEL]: 'true' },
         },
         data: {
-          replicate: Buffer.from(
-            '{"fields":{},"registeredAt":""}',
-          ).toString('base64'),
+          replicate: Buffer.from('{"fields":{},"registeredAt":""}').toString(
+            'base64',
+          ),
         },
       },
     });
@@ -187,9 +193,9 @@ describe('K8sSecretSource — group secrets', () => {
           labels: { [GROUP_SECRETS_LABEL]: 'true' },
         },
         data: {
-          jenkins: Buffer.from(
-            '{"fields":{},"registeredAt":""}',
-          ).toString('base64'),
+          jenkins: Buffer.from('{"fields":{},"registeredAt":""}').toString(
+            'base64',
+          ),
         },
       },
     });

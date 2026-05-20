@@ -1329,7 +1329,10 @@ describe('conversation history', () => {
     const history = getConversationHistory('group-x');
     expect(history).toHaveLength(3);
     expect(history[0]).toMatchObject({ role: 'user', content: 'hello' });
-    expect(history[1]).toMatchObject({ role: 'assistant', content: 'hi there' });
+    expect(history[1]).toMatchObject({
+      role: 'assistant',
+      content: 'hi there',
+    });
     expect(history[2]).toMatchObject({ role: 'user', content: 'how are you?' });
   });
 
@@ -1425,12 +1428,18 @@ describe('searchConversations', () => {
   });
 
   it('returns rows matching the query term', () => {
-    const results = searchConversations({ groupFolder: 'search-group', query: 'hello' });
+    const results = searchConversations({
+      groupFolder: 'search-group',
+      query: 'hello',
+    });
     expect(results.length).toBe(2);
   });
 
   it('snippet contains the matched term wrapped in brackets', () => {
-    const results = searchConversations({ groupFolder: 'search-group', query: 'hello' });
+    const results = searchConversations({
+      groupFolder: 'search-group',
+      query: 'hello',
+    });
     expect(results.every((r) => r.snippet.includes('[hello]'))).toBe(true);
   });
 
@@ -1453,7 +1462,10 @@ describe('searchConversations', () => {
 
   it('does not return rows from a different group', () => {
     appendConversationMessage('other-group', 'user', 'hello from other group');
-    const results = searchConversations({ groupFolder: 'search-group', query: 'hello' });
+    const results = searchConversations({
+      groupFolder: 'search-group',
+      query: 'hello',
+    });
     expect(results.every((r) => r.groupFolder === 'search-group')).toBe(true);
   });
 
@@ -1774,8 +1786,8 @@ describe('conversation_history session_key', () => {
     expect(researchHist).toHaveLength(1);
     expect(researchHist[0].content).toBe('research-private');
     // Negative: session boundary must be enforced — each key must not see the other's rows
-    expect(groupHist.some(r => r.content === 'research-private')).toBe(false);
-    expect(researchHist.some(r => r.content === 'hello')).toBe(false);
+    expect(groupHist.some((r) => r.content === 'research-private')).toBe(false);
+    expect(researchHist.some((r) => r.content === 'hello')).toBe(false);
   });
 
   it('backfills existing NULL session_key rows with group_folder on startup', () => {
@@ -1954,12 +1966,18 @@ describe('searchConversations', () => {
   });
 
   it('returns rows matching the query term', () => {
-    const results = searchConversations({ groupFolder: 'search-group', query: 'hello' });
+    const results = searchConversations({
+      groupFolder: 'search-group',
+      query: 'hello',
+    });
     expect(results.length).toBe(2);
   });
 
   it('snippet contains the matched term wrapped in brackets', () => {
-    const results = searchConversations({ groupFolder: 'search-group', query: 'hello' });
+    const results = searchConversations({
+      groupFolder: 'search-group',
+      query: 'hello',
+    });
     expect(results.every((r) => r.snippet.includes('[hello]'))).toBe(true);
   });
 
@@ -1982,7 +2000,10 @@ describe('searchConversations', () => {
 
   it('does not return rows from a different group', () => {
     appendConversationMessage('other-group', 'user', 'hello from other group');
-    const results = searchConversations({ groupFolder: 'search-group', query: 'hello' });
+    const results = searchConversations({
+      groupFolder: 'search-group',
+      query: 'hello',
+    });
     expect(results.every((r) => r.groupFolder === 'search-group')).toBe(true);
   });
 

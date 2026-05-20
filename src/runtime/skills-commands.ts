@@ -48,7 +48,9 @@ export function handleSkillsCommand(
     case 'list': {
       const skills = listAcceptedSkills(groupsRoot, group);
       if (skills.length === 0) return 'No skills installed for this group.';
-      const stats = new Map(getSkillLoadStats(group).map((s) => [s.skill_name, s]));
+      const stats = new Map(
+        getSkillLoadStats(group).map((s) => [s.skill_name, s]),
+      );
       return (
         'Installed skills:\n' +
         skills
@@ -76,7 +78,9 @@ export function handleSkillsCommand(
       const next = cursor >= cands.length ? 0 : cursor;
       const c = cands[next];
       reviewCursors.set(cursorKey, next + 1);
-      const targetNote = c.skill.frontmatter.target ? ` (proposed as edit of '${c.skill.frontmatter.target}')` : '';
+      const targetNote = c.skill.frontmatter.target
+        ? ` (proposed as edit of '${c.skill.frontmatter.target}')`
+        : '';
       return (
         `Candidate ${next + 1} of ${cands.length}: ${c.id}${targetNote}\n` +
         `name: ${c.skill.frontmatter.name}\n` +
@@ -128,7 +132,8 @@ export function handleSkillsCommand(
       const stale = skills
         .map((s) => s.frontmatter.name)
         .filter((n) => !recentlyLoaded.has(n));
-      if (stale.length === 0) return 'No stale skills (all loaded in last 60 days).';
+      if (stale.length === 0)
+        return 'No stale skills (all loaded in last 60 days).';
       return (
         'Stale skills (0 loads in 60 days). Confirm with /skills prune-confirm <name>:\n' +
         stale.map((n) => `  ${n}`).join('\n')

@@ -66,7 +66,9 @@ describe('skill-store', () => {
     const id2 = writeCandidate(groupsRoot, GROUP, mkSkill({ name: 'dup' }));
     const firstId = listCandidates(groupsRoot, GROUP)[0].id;
     acceptCandidate(groupsRoot, GROUP, firstId);
-    expect(() => acceptCandidate(groupsRoot, GROUP, id2)).toThrow(/already exists/);
+    expect(() => acceptCandidate(groupsRoot, GROUP, id2)).toThrow(
+      /already exists/,
+    );
   });
 
   it('rejectCandidate deletes the candidate file', () => {
@@ -80,7 +82,9 @@ describe('skill-store', () => {
     acceptCandidate(groupsRoot, GROUP, id);
     disableSkill(groupsRoot, GROUP, 'x');
     expect(listAcceptedSkills(groupsRoot, GROUP)).toEqual([]);
-    expect(listArchived(groupsRoot, GROUP).map((s) => s.frontmatter.name)).toEqual(['x']);
+    expect(
+      listArchived(groupsRoot, GROUP).map((s) => s.frontmatter.name),
+    ).toEqual(['x']);
   });
 
   it('enableSkill moves back from _archive', () => {
@@ -89,7 +93,9 @@ describe('skill-store', () => {
     disableSkill(groupsRoot, GROUP, 'x');
     enableSkill(groupsRoot, GROUP, 'x');
     expect(listArchived(groupsRoot, GROUP)).toEqual([]);
-    expect(listAcceptedSkills(groupsRoot, GROUP).map((s) => s.frontmatter.name)).toEqual(['x']);
+    expect(
+      listAcceptedSkills(groupsRoot, GROUP).map((s) => s.frontmatter.name),
+    ).toEqual(['x']);
   });
 
   it('pruneSkill deletes accepted skill outright', () => {
@@ -106,16 +112,26 @@ describe('skill-store', () => {
 
   it('writeCandidate sanitizes filename from slug', () => {
     const id = writeCandidate(groupsRoot, GROUP, mkSkill({ name: 'my-skill' }));
-    const candFile = path.join(groupsRoot, GROUP, 'skills', '_candidates', `${id}.md`);
+    const candFile = path.join(
+      groupsRoot,
+      GROUP,
+      'skills',
+      '_candidates',
+      `${id}.md`,
+    );
     expect(fs.existsSync(candFile)).toBe(true);
   });
 
   it('writeCandidate rejects invalid slug', () => {
-    expect(() => writeCandidate(groupsRoot, GROUP, mkSkill({ name: 'Bad Name' }))).toThrow(/slug/);
+    expect(() =>
+      writeCandidate(groupsRoot, GROUP, mkSkill({ name: 'Bad Name' })),
+    ).toThrow(/slug/);
   });
 
   it('rejectCandidate throws on missing id', () => {
-    expect(() => rejectCandidate(groupsRoot, GROUP, 'nope')).toThrow(/not found/);
+    expect(() => rejectCandidate(groupsRoot, GROUP, 'nope')).toThrow(
+      /not found/,
+    );
   });
 
   it('acceptCandidate with target archives existing skill and writes candidate at target slug', () => {
@@ -123,7 +139,9 @@ describe('skill-store', () => {
     const id1 = writeCandidate(groupsRoot, GROUP, mkSkill({ name: 'foo' }));
     acceptCandidate(groupsRoot, GROUP, id1);
     expect(listAcceptedSkills(groupsRoot, GROUP)).toHaveLength(1);
-    expect(listAcceptedSkills(groupsRoot, GROUP)[0].frontmatter.name).toBe('foo');
+    expect(listAcceptedSkills(groupsRoot, GROUP)[0].frontmatter.name).toBe(
+      'foo',
+    );
 
     // Stage an edit candidate that targets 'foo' but has a different candidate name
     const id2 = writeCandidate(groupsRoot, GROUP, {
@@ -154,7 +172,9 @@ describe('skill-store', () => {
     const id1 = writeCandidate(groupsRoot, GROUP, mkSkill({ name: 'dup' }));
     acceptCandidate(groupsRoot, GROUP, id1);
     const id2 = writeCandidate(groupsRoot, GROUP, mkSkill({ name: 'dup' }));
-    expect(() => acceptCandidate(groupsRoot, GROUP, id2)).toThrow(/already exists/);
+    expect(() => acceptCandidate(groupsRoot, GROUP, id2)).toThrow(
+      /already exists/,
+    );
   });
 
   it('listCandidates ignores underscore- and dot-prefixed files', () => {

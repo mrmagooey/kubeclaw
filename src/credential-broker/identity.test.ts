@@ -141,15 +141,16 @@ describe('IdentityVerifier — resolveOwnerGroup', () => {
       annotations: { [OWNER_GROUP_ANNOTATION]: 'family' },
     });
     const v = new IdentityVerifier({
-      createTokenReview: async () => ({
-        status: {
-          authenticated: true,
-          user: {
-            username: 'system:serviceaccount:kubeclaw:kubeclaw-tool-job',
-            extra: { 'authentication.kubernetes.io/pod-uid': ['uid-1'] },
+      createTokenReview: async () =>
+        ({
+          status: {
+            authenticated: true,
+            user: {
+              username: 'system:serviceaccount:kubeclaw:kubeclaw-tool-job',
+              extra: { 'authentication.kubernetes.io/pod-uid': ['uid-1'] },
+            },
           },
-        },
-      } as any),
+        }) as any,
       audience: 'kubeclaw-credential-broker',
       namespace: 'kubeclaw',
       podInformer: inf,
@@ -196,15 +197,16 @@ describe('IdentityVerifier — resolveOwnerGroup', () => {
       annotations: {},
     });
     const v = new IdentityVerifier({
-      createTokenReview: async () => ({
-        status: {
-          authenticated: true,
-          user: {
-            username: 'system:serviceaccount:kubeclaw:kubeclaw-tool-job',
-            extra: { 'authentication.kubernetes.io/pod-uid': ['uid-3'] },
+      createTokenReview: async () =>
+        ({
+          status: {
+            authenticated: true,
+            user: {
+              username: 'system:serviceaccount:kubeclaw:kubeclaw-tool-job',
+              extra: { 'authentication.kubernetes.io/pod-uid': ['uid-3'] },
+            },
           },
-        },
-      } as any),
+        }) as any,
       audience: 'x',
       namespace: 'kubeclaw',
       podInformer: inf,

@@ -32,7 +32,10 @@ export interface CuratorResult {
   candidatesWritten: number;
 }
 
-export async function runCurator(group: string, deps: CuratorDeps): Promise<CuratorResult> {
+export async function runCurator(
+  group: string,
+  deps: CuratorDeps,
+): Promise<CuratorResult> {
   const transcript = deps.getTranscript();
   const userTurns = transcript.filter((t) => t.role === 'user').length;
   if (userTurns < MIN_USER_TURNS) {

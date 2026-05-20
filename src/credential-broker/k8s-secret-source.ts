@@ -94,7 +94,10 @@ export class K8sSecretSource {
     this.groupCreds.set(group, newMap);
   }
 
-  getGroupCredential(group: string, catalogId: string): GroupCredentialBlob | null {
+  getGroupCredential(
+    group: string,
+    catalogId: string,
+  ): GroupCredentialBlob | null {
     return this.groupCreds.get(group)?.get(catalogId) ?? null;
   }
 

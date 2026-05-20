@@ -47,7 +47,10 @@ catalog:
     mockK8s.readSecret.mockRejectedValue({ statusCode: 404 });
     mockK8s.createSecret.mockResolvedValue({});
 
-    await mgr.setGroupSecret('family', 'jenkins', { user: 'alice', password: 'hunter2' });
+    await mgr.setGroupSecret('family', 'jenkins', {
+      user: 'alice',
+      password: 'hunter2',
+    });
 
     const createCall = mockK8s.createSecret.mock.calls[0][0];
     expect(createCall.metadata.name).toBe('kubeclaw-group-secrets-family');
@@ -57,36 +60,46 @@ catalog:
       Buffer.from(createCall.data.jenkins, 'base64').toString('utf8'),
     );
     expect(jenkinsBlob.fields.user.value).toBe('alice');
-    expect(jenkinsBlob.fields.user.placeholder).toMatch(/^KC_PH_user_[0-9a-f]{64}$/);
-    expect(jenkinsBlob.fields.password.placeholder).toMatch(/^KC_PH_password_[0-9a-f]{64}$/);
-    expect(jenkinsBlob.fields.user.placeholder)
-      .not.toEqual(jenkinsBlob.fields.password.placeholder);
+    expect(jenkinsBlob.fields.user.placeholder).toMatch(
+      /^KC_PH_user_[0-9a-f]{64}$/,
+    );
+    expect(jenkinsBlob.fields.password.placeholder).toMatch(
+      /^KC_PH_password_[0-9a-f]{64}$/,
+    );
+    expect(jenkinsBlob.fields.user.placeholder).not.toEqual(
+      jenkinsBlob.fields.password.placeholder,
+    );
     expect(jenkinsBlob.registeredAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
 
   it('rejects unknown catalog id', async () => {
-    await expect(mgr.setGroupSecret('family', 'unknown', { x: 'y' }))
-      .rejects.toThrow(/unknown_catalog_entry/);
+    await expect(
+      mgr.setGroupSecret('family', 'unknown', { x: 'y' }),
+    ).rejects.toThrow(/unknown_catalog_entry/);
   });
 
   it('rejects missing required field', async () => {
-    await expect(mgr.setGroupSecret('family', 'jenkins', { user: 'alice' }))
-      .rejects.toThrow(/missing field/);
+    await expect(
+      mgr.setGroupSecret('family', 'jenkins', { user: 'alice' }),
+    ).rejects.toThrow(/missing field/);
   });
 
   it('rejects empty value', async () => {
-    await expect(mgr.setGroupSecret('family', 'replicate', { token: '' }))
-      .rejects.toThrow(/empty/);
+    await expect(
+      mgr.setGroupSecret('family', 'replicate', { token: '' }),
+    ).rejects.toThrow(/empty/);
   });
 
   it('rejects value with control chars', async () => {
-    await expect(mgr.setGroupSecret('family', 'replicate', { token: 'abc\nxyz' }))
-      .rejects.toThrow(/invalid characters/);
+    await expect(
+      mgr.setGroupSecret('family', 'replicate', { token: 'abc\nxyz' }),
+    ).rejects.toThrow(/invalid characters/);
   });
 
   it('rejects value over 4KB', async () => {
-    await expect(mgr.setGroupSecret('family', 'replicate', { token: 'a'.repeat(5000) }))
-      .rejects.toThrow(/too long/);
+    await expect(
+      mgr.setGroupSecret('family', 'replicate', { token: 'a'.repeat(5000) }),
+    ).rejects.toThrow(/too long/);
   });
 
   it('patches existing Secret without disturbing other entries', async () => {
@@ -94,7 +107,9 @@ catalog:
       data: {
         replicate: Buffer.from(
           JSON.stringify({
-            fields: { token: { value: 'r8_old', placeholder: 'KC_PH_token_aaaa' } },
+            fields: {
+              token: { value: 'r8_old', placeholder: 'KC_PH_token_aaaa' },
+            },
             registeredAt: '2026-05-15T00:00:00Z',
           }),
         ).toString('base64'),
@@ -103,7 +118,10 @@ catalog:
     });
     mockK8s.patchSecret.mockResolvedValue({});
 
-    await mgr.setGroupSecret('family', 'jenkins', { user: 'alice', password: 'hunter2' });
+    await mgr.setGroupSecret('family', 'jenkins', {
+      user: 'alice',
+      password: 'hunter2',
+    });
 
     const patchCall = mockK8s.patchSecret.mock.calls[0];
     expect(patchCall[0]).toBe('kubeclaw-group-secrets-family');
@@ -116,7 +134,9 @@ catalog:
       data: {
         replicate: Buffer.from(
           JSON.stringify({
-            fields: { token: { value: 'r8_secret', placeholder: 'KC_PH_token_x' } },
+            fields: {
+              token: { value: 'r8_secret', placeholder: 'KC_PH_token_x' },
+            },
             registeredAt: '2026-05-16T10:00:00Z',
           }),
         ).toString('base64'),
@@ -137,7 +157,10 @@ catalog:
           replicate: Buffer.from(
             JSON.stringify({
               fields: {
-                token: { value: 'r8_secret_value', placeholder: 'KC_PH_token_abcd1234' },
+                token: {
+                  value: 'r8_secret_value',
+                  placeholder: 'KC_PH_token_abcd1234',
+                },
               },
               registeredAt: '2026-05-16T10:00:00Z',
             }),
@@ -146,7 +169,10 @@ catalog:
             JSON.stringify({
               fields: {
                 user: { value: 'alice_secret', placeholder: 'KC_PH_user_1111' },
-                password: { value: 'hunter2_secret', placeholder: 'KC_PH_password_2222' },
+                password: {
+                  value: 'hunter2_secret',
+                  placeholder: 'KC_PH_password_2222',
+                },
               },
               registeredAt: '2026-05-16T11:00:00Z',
             }),
@@ -189,7 +215,10 @@ catalog:
           replicate: Buffer.from(
             JSON.stringify({
               fields: {
-                token: { value: secretValue, placeholder: 'KC_PH_token_safe_placeholder' },
+                token: {
+                  value: secretValue,
+                  placeholder: 'KC_PH_token_safe_placeholder',
+                },
               },
               registeredAt: '2026-05-16T10:00:00Z',
             }),
@@ -197,8 +226,14 @@ catalog:
           jenkins: Buffer.from(
             JSON.stringify({
               fields: {
-                user: { value: 'alice_secret_user', placeholder: 'KC_PH_user_safe' },
-                password: { value: secretPassword, placeholder: 'KC_PH_password_safe' },
+                user: {
+                  value: 'alice_secret_user',
+                  placeholder: 'KC_PH_user_safe',
+                },
+                password: {
+                  value: secretPassword,
+                  placeholder: 'KC_PH_password_safe',
+                },
               },
               registeredAt: '2026-05-16T11:00:00Z',
             }),
@@ -222,8 +257,12 @@ catalog:
   it('deleteGroupSecret removes named entry; deletes Secret if last', async () => {
     mockK8s.readSecret.mockResolvedValueOnce({
       data: {
-        replicate: Buffer.from(JSON.stringify({ fields: {}, registeredAt: '' })).toString('base64'),
-        jenkins: Buffer.from(JSON.stringify({ fields: {}, registeredAt: '' })).toString('base64'),
+        replicate: Buffer.from(
+          JSON.stringify({ fields: {}, registeredAt: '' }),
+        ).toString('base64'),
+        jenkins: Buffer.from(
+          JSON.stringify({ fields: {}, registeredAt: '' }),
+        ).toString('base64'),
       },
     });
     await mgr.deleteGroupSecret('family', 'replicate');
@@ -236,6 +275,8 @@ catalog:
       },
     });
     await mgr.deleteGroupSecret('family', 'replicate');
-    expect(mockK8s.deleteSecret).toHaveBeenCalledWith('kubeclaw-group-secrets-family');
+    expect(mockK8s.deleteSecret).toHaveBeenCalledWith(
+      'kubeclaw-group-secrets-family',
+    );
   });
 });

@@ -2,8 +2,18 @@ import { Counter, Gauge, Histogram, Registry } from 'prom-client';
 
 export interface ChannelMetrics {
   recordMessage(labels: { channelKind: string; group: string }): void;
-  recordLlmCall(labels: { provider: string; model: string; success: boolean; durationMs: number }): void;
-  recordTokens(labels: { provider: string; model: string; direction: 'input' | 'output'; count: number }): void;
+  recordLlmCall(labels: {
+    provider: string;
+    model: string;
+    success: boolean;
+    durationMs: number;
+  }): void;
+  recordTokens(labels: {
+    provider: string;
+    model: string;
+    direction: 'input' | 'output';
+    count: number;
+  }): void;
   recordToolCall(labels: { tool: string; status: 'success' | 'failure' }): void;
   recordSkillLoad(labels: { group: string }): void;
   setConversationHistorySize(labels: { group: string }, size: number): void;
@@ -58,7 +68,10 @@ export function createChannelMetrics(registry: Registry): ChannelMetrics {
       messagesReceived.inc({ channel_kind: channelKind, group });
     },
     recordLlmCall({ provider, model, success, durationMs }) {
-      llmCallDuration.observe({ provider, model, success: String(success) }, durationMs / 1000);
+      llmCallDuration.observe(
+        { provider, model, success: String(success) },
+        durationMs / 1000,
+      );
     },
     recordTokens({ provider, model, direction, count }) {
       tokensTotal.inc({ provider, model, direction }, count);

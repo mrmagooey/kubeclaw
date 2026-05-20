@@ -50,8 +50,7 @@ export function createMetricsServer(opts: MetricsServerOptions): MetricsServer {
         server.once('error', reject);
         server.listen(port, () => {
           const addr = server.address();
-          const boundPort =
-            addr && typeof addr === 'object' ? addr.port : port;
+          const boundPort = addr && typeof addr === 'object' ? addr.port : port;
           logger.info({ port: boundPort }, 'metrics server listening');
           resolve({ port: boundPort });
         });

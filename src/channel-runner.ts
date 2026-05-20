@@ -1387,10 +1387,7 @@ export async function processGroupMessages(chatJid: string): Promise<boolean> {
   }
 
   // /clear chat command: wipe conversation history without invoking the LLM.
-  if (
-    lastMsg &&
-    /^\/clear(\s|$)/.test(lastMsg.content.trim())
-  ) {
+  if (lastMsg && /^\/clear(\s|$)/.test(lastMsg.content.trim())) {
     clearConversationHistory(group.folder);
     lastAgentTimestamp[chatJid] = lastMsg.timestamp;
     saveState();
@@ -1455,7 +1452,10 @@ export async function processGroupMessages(chatJid: string): Promise<boolean> {
           `Command failed: ${err instanceof Error ? err.message : String(err)}`,
         );
       } catch (sendErr) {
-        logger.error({ err: sendErr, chatJid }, 'Failed to send compact error reply');
+        logger.error(
+          { err: sendErr, chatJid },
+          'Failed to send compact error reply',
+        );
       }
     } finally {
       await channel.setTyping?.(chatJid, false);

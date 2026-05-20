@@ -1,10 +1,6 @@
 import { listAcceptedSkills } from './skill-store.js';
 import { SkillFile } from './skill-format.js';
-import {
-  recordSkillLoad,
-  getSkillLoadStats,
-  SkillLoadStat,
-} from '../db.js';
+import { recordSkillLoad, getSkillLoadStats, SkillLoadStat } from '../db.js';
 
 export const SKILL_CAP = 20;
 
@@ -24,7 +20,10 @@ export function loadSkills(groupsRoot: string, group: string): LoadResult {
     selected = skills;
   } else {
     const stats = new Map<string, number>(
-      getSkillLoadStats(group).map((s: SkillLoadStat) => [s.skill_name, s.last_loaded]),
+      getSkillLoadStats(group).map((s: SkillLoadStat) => [
+        s.skill_name,
+        s.last_loaded,
+      ]),
     );
     selected = [...skills]
       .sort(
@@ -44,7 +43,6 @@ export function loadSkills(groupsRoot: string, group: string): LoadResult {
     bodies.push(skill.body.trim());
   }
 
-  const promptSuffix =
-    '\n\n## Learned skills\n\n' + bodies.join('\n\n---\n\n');
+  const promptSuffix = '\n\n## Learned skills\n\n' + bodies.join('\n\n---\n\n');
   return { promptSuffix, loadedSkills };
 }

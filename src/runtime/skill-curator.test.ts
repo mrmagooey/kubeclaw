@@ -2,7 +2,12 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { listCandidates, listAcceptedSkills, writeCandidate, acceptCandidate } from './skill-store.js';
+import {
+  listCandidates,
+  listAcceptedSkills,
+  writeCandidate,
+  acceptCandidate,
+} from './skill-store.js';
 import { runCurator, CuratorDeps, CuratorLLMFn } from './skill-curator.js';
 
 let root: string;
@@ -13,7 +18,10 @@ beforeEach(() => {
   fs.mkdirSync(path.join(root, GROUP), { recursive: true });
 });
 
-function deps(transcript: { role: string; content: string }[], llm: CuratorLLMFn): CuratorDeps {
+function deps(
+  transcript: { role: string; content: string }[],
+  llm: CuratorLLMFn,
+): CuratorDeps {
   return {
     groupsRoot: root,
     getTranscript: () => transcript,
@@ -28,32 +36,67 @@ describe('runCurator', () => {
       calls.push(1);
       return [];
     };
-    const res = await runCurator(GROUP, deps([{ role: 'user', content: 'hi' }], llm));
+    const res = await runCurator(
+      GROUP,
+      deps([{ role: 'user', content: 'hi' }], llm),
+    );
     expect(res.candidatesWritten).toBe(0);
     expect(calls).toEqual([]);
   });
 
   it('writes candidates for each LLM-returned new entry', async () => {
-    const transcript = Array.from({ length: 5 }, (_, i) => ({ role: 'user', content: `t${i}` }));
+    const transcript = Array.from({ length: 5 }, (_, i) => ({
+      role: 'user',
+      content: `t${i}`,
+    }));
     const llm: CuratorLLMFn = async () => [
-      { action: 'new', target: null, name: 'alpha', description: 'alpha', body: 'A' },
-      { action: 'new', target: null, name: 'beta', description: 'beta', body: 'B' },
+      {
+        action: 'new',
+        target: null,
+        name: 'alpha',
+        description: 'alpha',
+        body: 'A',
+      },
+      {
+        action: 'new',
+        target: null,
+        name: 'beta',
+        description: 'beta',
+        body: 'B',
+      },
     ];
     const res = await runCurator(GROUP, deps(transcript, llm));
     expect(res.candidatesWritten).toBe(2);
     const cands = listCandidates(root, GROUP);
-    expect(cands.map((c) => c.skill.frontmatter.name).sort()).toEqual(['alpha', 'beta']);
+    expect(cands.map((c) => c.skill.frontmatter.name).sort()).toEqual([
+      'alpha',
+      'beta',
+    ]);
   });
 
   it('writes an edit candidate referencing existing skill', async () => {
     const id = writeCandidate(root, GROUP, {
-      frontmatter: { name: 'foo', description: 'foo', created: '2026-05-16', source: 'manual' },
+      frontmatter: {
+        name: 'foo',
+        description: 'foo',
+        created: '2026-05-16',
+        source: 'manual',
+      },
       body: 'old body',
     });
     acceptCandidate(root, GROUP, id);
-    const transcript = Array.from({ length: 5 }, (_, i) => ({ role: 'user', content: `t${i}` }));
+    const transcript = Array.from({ length: 5 }, (_, i) => ({
+      role: 'user',
+      content: `t${i}`,
+    }));
     const llm: CuratorLLMFn = async () => [
-      { action: 'edit', target: 'foo', name: 'foo', description: 'foo updated', body: 'new body' },
+      {
+        action: 'edit',
+        target: 'foo',
+        name: 'foo',
+        description: 'foo updated',
+        body: 'new body',
+      },
     ];
     const res = await runCurator(GROUP, deps(transcript, llm));
     expect(res.candidatesWritten).toBe(1);
@@ -66,13 +109,27 @@ describe('runCurator', () => {
 
   it('edit proposal candidate carries target in frontmatter', async () => {
     const id = writeCandidate(root, GROUP, {
-      frontmatter: { name: 'foo', description: 'foo', created: '2026-05-16', source: 'manual' },
+      frontmatter: {
+        name: 'foo',
+        description: 'foo',
+        created: '2026-05-16',
+        source: 'manual',
+      },
       body: 'old',
     });
     acceptCandidate(root, GROUP, id);
-    const transcript = Array.from({ length: 5 }, (_, i) => ({ role: 'user', content: `t${i}` }));
+    const transcript = Array.from({ length: 5 }, (_, i) => ({
+      role: 'user',
+      content: `t${i}`,
+    }));
     const llm: CuratorLLMFn = async () => [
-      { action: 'edit', target: 'foo', name: 'foo-edit', description: 'better foo', body: 'new content' },
+      {
+        action: 'edit',
+        target: 'foo',
+        name: 'foo-edit',
+        description: 'better foo',
+        body: 'new content',
+      },
     ];
     await runCurator(GROUP, deps(transcript, llm));
     const cands = listCandidates(root, GROUP);
@@ -81,11 +138,20 @@ describe('runCurator', () => {
   });
 
   it('ignores entries with missing required fields', async () => {
-    const transcript = Array.from({ length: 5 }, (_, i) => ({ role: 'user', content: `t${i}` }));
+    const transcript = Array.from({ length: 5 }, (_, i) => ({
+      role: 'user',
+      content: `t${i}`,
+    }));
     const llm: CuratorLLMFn = async () =>
       [
         { action: 'new', target: null, name: '', description: 'd', body: 'b' },
-        { action: 'new', target: null, name: 'good', description: 'd', body: 'b' },
+        {
+          action: 'new',
+          target: null,
+          name: 'good',
+          description: 'd',
+          body: 'b',
+        },
       ] as any;
     const res = await runCurator(GROUP, deps(transcript, llm));
     expect(res.candidatesWritten).toBe(1);

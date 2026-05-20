@@ -13,7 +13,9 @@ export interface SweepArgs {
 }
 
 export async function sweepIdleInstances(args: SweepArgs): Promise<void> {
-  const now = args.nowSeconds ? args.nowSeconds() : Math.floor(Date.now() / 1000);
+  const now = args.nowSeconds
+    ? args.nowSeconds()
+    : Math.floor(Date.now() / 1000);
   const specByName = new Map<string, CapabilitySpec>();
   for (const s of args.specs) {
     if (getScope(s) === 'group') specByName.set(s.name, s);
@@ -27,7 +29,11 @@ export async function sweepIdleInstances(args: SweepArgs): Promise<void> {
     const idleFor = inst.lastUsedAt === null ? Infinity : now - inst.lastUsedAt;
     if (idleFor < threshold) continue;
     try {
-      await args.client.patchDeploymentReplicas(args.namespace, inst.deploymentName, 0);
+      await args.client.patchDeploymentReplicas(
+        args.namespace,
+        inst.deploymentName,
+        0,
+      );
       setReplicas(inst.groupFolder, inst.capabilityName, 0);
       logger.info(
         {
@@ -38,7 +44,10 @@ export async function sweepIdleInstances(args: SweepArgs): Promise<void> {
         'per_group_capability_scale_down',
       );
     } catch (err) {
-      logger.warn({ err, deployment: inst.deploymentName }, 'sweepIdleInstances: scale-down failed');
+      logger.warn(
+        { err, deployment: inst.deploymentName },
+        'sweepIdleInstances: scale-down failed',
+      );
     }
   }
 }
@@ -47,14 +56,28 @@ export interface SweeperLoopHandle {
   stop(): void;
 }
 
-export function startSweeperLoop(args: SweepArgs & { intervalMs: number }): SweeperLoopHandle {
+export function startSweeperLoop(
+  args: SweepArgs & { intervalMs: number },
+): SweeperLoopHandle {
   let stopped = false;
   const tick = async (): Promise<void> => {
     if (stopped) return;
-    try { await sweepIdleInstances(args); }
-    catch (err) { logger.warn({ err }, 'sweepIdleInstances threw'); }
-    if (!stopped) setTimeout(() => { void tick(); }, args.intervalMs);
+    try {
+      await sweepIdleInstances(args);
+    } catch (err) {
+      logger.warn({ err }, 'sweepIdleInstances threw');
+    }
+    if (!stopped)
+      setTimeout(() => {
+        void tick();
+      }, args.intervalMs);
   };
-  setTimeout(() => { void tick(); }, args.intervalMs);
-  return { stop() { stopped = true; } };
+  setTimeout(() => {
+    void tick();
+  }, args.intervalMs);
+  return {
+    stop() {
+      stopped = true;
+    },
+  };
 }

@@ -51,7 +51,9 @@ function isNotFound(err: unknown): boolean {
   return false;
 }
 
-async function tryDeleteDeployment(name: string): Promise<'deleted' | 'absent'> {
+async function tryDeleteDeployment(
+  name: string,
+): Promise<'deleted' | 'absent'> {
   const { appsV1 } = getK8sClients();
   try {
     await appsV1.deleteNamespacedDeployment({ name, namespace: NAMESPACE });
@@ -76,7 +78,10 @@ async function tryDeleteSecret(name: string): Promise<'deleted' | 'absent'> {
 async function tryDeletePvc(name: string): Promise<'deleted' | 'absent'> {
   const { coreV1 } = getK8sClients();
   try {
-    await coreV1.deleteNamespacedPersistentVolumeClaim({ name, namespace: NAMESPACE });
+    await coreV1.deleteNamespacedPersistentVolumeClaim({
+      name,
+      namespace: NAMESPACE,
+    });
     return 'deleted';
   } catch (err) {
     if (isNotFound(err)) return 'absent';
@@ -88,7 +93,9 @@ async function tryDeletePvc(name: string): Promise<'deleted' | 'absent'> {
  * Remove all K8s resources associated with a channel instance.
  * Idempotent: treats 404 as success.
  */
-export async function removeChannel(instanceName: string): Promise<ChannelRemoveResult> {
+export async function removeChannel(
+  instanceName: string,
+): Promise<ChannelRemoveResult> {
   const deploymentName = `kubeclaw-channel-${instanceName}`;
   const secretName = `kubeclaw-${instanceName}-secrets`;
   const pvcNames = [

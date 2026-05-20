@@ -200,9 +200,7 @@ describe('registry', () => {
       });
 
       // Mock the schema cache to return a mock schema.
-      mockGetCachedSchemas.mockReturnValue([
-        { name: 'echo', inputSchema: {} },
-      ]);
+      mockGetCachedSchemas.mockReturnValue([{ name: 'echo', inputSchema: {} }]);
 
       mockPublish.mockClear();
       await notifyAllChannels();
@@ -219,7 +217,8 @@ describe('registry', () => {
 
       // Verify that a mcp-group entry for 'echo' is present.
       const groupEntry = entries.find(
-        (e: { kind: string; name: string }) => e.kind === 'mcp-group' && e.name === 'echo',
+        (e: { kind: string; name: string }) =>
+          e.kind === 'mcp-group' && e.name === 'echo',
       );
       expect(groupEntry).toBeDefined();
       expect(groupEntry?.state).toBe('ready');

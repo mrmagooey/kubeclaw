@@ -32,7 +32,9 @@ function listMd(dir: string): string[] {
   if (!fs.existsSync(dir)) return [];
   return fs
     .readdirSync(dir)
-    .filter((f) => f.endsWith('.md') && !f.startsWith('_') && !f.startsWith('.'))
+    .filter(
+      (f) => f.endsWith('.md') && !f.startsWith('_') && !f.startsWith('.'),
+    )
     .map((f) => path.join(dir, f));
 }
 
@@ -55,7 +57,9 @@ export function listCandidates(root: string, group: string): Candidate[] {
   if (!fs.existsSync(dir)) return [];
   return fs
     .readdirSync(dir)
-    .filter((f) => f.endsWith('.md') && !f.startsWith('_') && !f.startsWith('.'))
+    .filter(
+      (f) => f.endsWith('.md') && !f.startsWith('_') && !f.startsWith('.'),
+    )
     .map((f) => {
       const id = f.replace(/\.md$/, '');
       const skill = readSkillFile(path.join(dir, f));
@@ -72,14 +76,22 @@ export function listArchived(root: string, group: string): SkillFile[] {
     .map((f) => readSkillFile(path.join(dir, f)));
 }
 
-export function readSkill(root: string, group: string, name: string): SkillFile | null {
+export function readSkill(
+  root: string,
+  group: string,
+  name: string,
+): SkillFile | null {
   if (!validateSlug(name)) return null;
   const file = path.join(skillsDir(root, group), `${name}.md`);
   if (!fs.existsSync(file)) return null;
   return readSkillFile(file);
 }
 
-export function writeCandidate(root: string, group: string, skill: SkillFile): string {
+export function writeCandidate(
+  root: string,
+  group: string,
+  skill: SkillFile,
+): string {
   if (!validateSlug(skill.frontmatter.name)) {
     throw new Error(`invalid skill slug: ${skill.frontmatter.name}`);
   }
@@ -122,7 +134,11 @@ export function acceptCandidate(root: string, group: string, id: string): void {
     // Rewrite the file so the accepted version carries `name: <target>` and
     // has no `target` field (target only makes sense while a candidate).
     const cleaned: SkillFile = {
-      frontmatter: { ...skill.frontmatter, name: targetName, target: undefined },
+      frontmatter: {
+        ...skill.frontmatter,
+        name: targetName,
+        target: undefined,
+      },
       body: skill.body,
     };
     fs.writeFileSync(dest, serializeSkill(cleaned));

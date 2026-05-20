@@ -10,7 +10,9 @@ export class SubstitutionPolicy {
     let total = 0;
     for (const [k, v] of Object.entries(counts)) {
       if (v > this.opts.perPlaceholderMax) {
-        throw new Error(`substitution_limit_exceeded: per-placeholder for ${k}`);
+        throw new Error(
+          `substitution_limit_exceeded: per-placeholder for ${k}`,
+        );
       }
       total += v;
     }
@@ -19,7 +21,10 @@ export class SubstitutionPolicy {
     }
   }
 
-  validatePosition(position: 'header' | 'body', allowed: ReadonlyArray<'header' | 'body'>): void {
+  validatePosition(
+    position: 'header' | 'body',
+    allowed: ReadonlyArray<'header' | 'body'>,
+  ): void {
     if (!allowed.includes(position)) {
       throw new Error(`substitution_position_disallowed: ${position}`);
     }
