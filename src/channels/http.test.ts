@@ -60,10 +60,13 @@ import { appendConversationMessage } from '../db.js';
 function makeConfig(overrides?: {
   port?: number;
   users?: Record<string, string>;
+  perUserMessagesPerMinute?: number;
 }) {
   return {
     port: overrides?.port ?? 4080,
     users: overrides?.users ?? { alice: 'secret', bob: 'hunter2' },
+    // Default to unlimited so existing tests don't get throttled.
+    perUserMessagesPerMinute: overrides?.perUserMessagesPerMinute ?? 0,
   };
 }
 
@@ -92,10 +95,19 @@ function makeReq(overrides: {
   url?: string;
   auth?: string | null; // null = no header, string = "user:pass"
   body?: string;
+  contentType?: string;
 }): IncomingMessage {
   const headers: Record<string, string> = {};
   if (overrides.auth !== null) {
     headers.authorization = `Basic ${b64(overrides.auth ?? 'alice:secret')}`;
+  }
+  // Default Content-Type to application/json when a body is provided —
+  // matches Story 29's 415 guard so POST /message tests don't need to repeat
+  // the header in every test. Pass contentType:'' to force absence.
+  if (overrides.body !== undefined && overrides.contentType !== '') {
+    headers['content-type'] = overrides.contentType ?? 'application/json';
+  } else if (overrides.contentType) {
+    headers['content-type'] = overrides.contentType;
   }
   const req = {
     method: overrides.method ?? 'GET',
@@ -1340,6 +1352,352 @@ describe('HttpChannel', () => {
       await dispatch(channel, req, res);
 
       expect(res._status).toBe(404);
+      await channel.disconnect();
+    });
+  });
+  // ── Rate limiter unit tests ───────────────────────────────────────────────
+  //
+  // These exercise consumeRateLimit() directly with an injectable nowMs so no
+  // real time passes and results are deterministic.
+
+  describe('consumeRateLimit() — token-bucket unit tests', () => {
+    it('allows requests when capacity is 0 (unlimited)', () => {
+      const channel = new HttpChannel(
+        makeConfig({ perUserMessagesPerMinute: 0 }),
+        makeOpts(),
+      );
+      for (let i = 0; i < 100; i++) {
+        expect(channel.consumeRateLimit('alice', 0)).toEqual({ allowed: true });
+      }
+    });
+
+    it('allows up to capacity requests in a fresh bucket', () => {
+      const capacity = 5;
+      const channel = new HttpChannel(
+        makeConfig({ perUserMessagesPerMinute: capacity }),
+        makeOpts(),
+      );
+      const t0 = 0;
+      for (let i = 0; i < capacity; i++) {
+        expect(channel.consumeRateLimit('alice', t0)).toEqual({ allowed: true });
+      }
+    });
+
+    it('returns 429-path result after capacity is exhausted', () => {
+      const capacity = 5;
+      const channel = new HttpChannel(
+        makeConfig({ perUserMessagesPerMinute: capacity }),
+        makeOpts(),
+      );
+      const t0 = 0;
+      for (let i = 0; i < capacity; i++) {
+        channel.consumeRateLimit('alice', t0);
+      }
+      // 6th call at the same instant — bucket empty
+      const result = channel.consumeRateLimit('alice', t0);
+      expect(result.allowed).toBe(false);
+      if (!result.allowed) {
+        expect(result.retryAfterSeconds).toBeGreaterThan(0);
+        expect(result.retryAfterSeconds).toBeLessThanOrEqual(60);
+      }
+    });
+
+    it('Retry-After is a positive integer ≤ 60', () => {
+      const capacity = 5;
+      const channel = new HttpChannel(
+        makeConfig({ perUserMessagesPerMinute: capacity }),
+        makeOpts(),
+      );
+      const t0 = 0;
+      for (let i = 0; i < capacity; i++) {
+        channel.consumeRateLimit('alice', t0);
+      }
+      const result = channel.consumeRateLimit('alice', t0);
+      expect(result.allowed).toBe(false);
+      if (!result.allowed) {
+        expect(Number.isInteger(result.retryAfterSeconds)).toBe(true);
+        expect(result.retryAfterSeconds).toBeGreaterThanOrEqual(1);
+        expect(result.retryAfterSeconds).toBeLessThanOrEqual(60);
+      }
+    });
+
+    it('refills tokens over time — allows request after waiting Retry-After', () => {
+      const capacity = 5;
+      const channel = new HttpChannel(
+        makeConfig({ perUserMessagesPerMinute: capacity }),
+        makeOpts(),
+      );
+      const t0 = 0;
+      // Drain the bucket
+      for (let i = 0; i < capacity; i++) {
+        channel.consumeRateLimit('alice', t0);
+      }
+      const throttled = channel.consumeRateLimit('alice', t0);
+      expect(throttled.allowed).toBe(false);
+      if (!throttled.allowed) {
+        // Advance time by retryAfterSeconds seconds
+        const tAfter = t0 + throttled.retryAfterSeconds * 1000;
+        const result = channel.consumeRateLimit('alice', tAfter);
+        expect(result.allowed).toBe(true);
+      }
+    });
+
+    it('buckets are keyed per user — alice throttled does not affect bob', () => {
+      const capacity = 5;
+      const channel = new HttpChannel(
+        makeConfig({ perUserMessagesPerMinute: capacity }),
+        makeOpts(),
+      );
+      const t0 = 0;
+      // Drain alice's bucket
+      for (let i = 0; i < capacity; i++) {
+        channel.consumeRateLimit('alice', t0);
+      }
+      expect(channel.consumeRateLimit('alice', t0).allowed).toBe(false);
+      // Bob has a fresh bucket
+      expect(channel.consumeRateLimit('bob', t0)).toEqual({ allowed: true });
+    });
+
+    it('partial refill: does not allow more than capacity from full refill', () => {
+      const capacity = 5;
+      const channel = new HttpChannel(
+        makeConfig({ perUserMessagesPerMinute: capacity }),
+        makeOpts(),
+      );
+      // Consume all tokens at t=0
+      for (let i = 0; i < capacity; i++) {
+        channel.consumeRateLimit('alice', 0);
+      }
+      // Advance far past one minute — bucket should refill to full capacity only
+      const t1 = 120_000; // 2 minutes later
+      for (let i = 0; i < capacity; i++) {
+        expect(channel.consumeRateLimit('alice', t1)).toEqual({ allowed: true });
+      }
+      // One more should be throttled
+      expect(channel.consumeRateLimit('alice', t1).allowed).toBe(false);
+    });
+  });
+
+  // ── Rate limiting integration tests ──────────────────────────────────────
+  //
+  // Full HttpChannel with a limit of 5, sending 6 POST /message requests.
+  // Verifies AC1–AC5 at the in-process level (no kind cluster required).
+
+  describe('POST /message rate limiting — integration', () => {
+    it('AC1: first 5 POSTs return 200; 6th returns 429 with Retry-After', async () => {
+      const channel = new HttpChannel(
+        makeConfig({ perUserMessagesPerMinute: 5 }),
+        makeOpts(),
+      );
+      await channel.connect();
+
+      for (let i = 0; i < 5; i++) {
+        const req = makeReq({
+          method: 'POST',
+          url: '/message',
+          auth: 'alice:secret',
+          body: '{"text":"msg"}',
+        });
+        const res = makeRes();
+        await dispatch(channel, req, res);
+        expect(res._status).toBe(200);
+      }
+
+      // 6th request — should be rate-limited
+      const req6 = makeReq({
+        method: 'POST',
+        url: '/message',
+        auth: 'alice:secret',
+        body: '{"text":"msg6"}',
+      });
+      const res6 = makeRes();
+      await dispatch(channel, req6, res6);
+
+      expect(res6._status).toBe(429);
+      const retryAfter = parseInt(res6._headers['Retry-After'] ?? '0', 10);
+      expect(retryAfter).toBeGreaterThan(0);
+      expect(retryAfter).toBeLessThanOrEqual(60);
+
+      await channel.disconnect();
+    });
+
+    it('AC2: Retry-After is a positive integer ≤ 60 on the header', async () => {
+      const channel = new HttpChannel(
+        makeConfig({ perUserMessagesPerMinute: 5 }),
+        makeOpts(),
+      );
+      await channel.connect();
+
+      for (let i = 0; i < 5; i++) {
+        const req = makeReq({
+          method: 'POST',
+          url: '/message',
+          auth: 'alice:secret',
+          body: '{"text":"msg"}',
+        });
+        await dispatch(channel, req, makeRes());
+      }
+
+      const req = makeReq({
+        method: 'POST',
+        url: '/message',
+        auth: 'alice:secret',
+        body: '{"text":"throttled"}',
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      const retryAfter = res._headers['Retry-After'];
+      expect(retryAfter).toBeDefined();
+      const seconds = parseInt(retryAfter, 10);
+      expect(Number.isInteger(seconds)).toBe(true);
+      expect(seconds).toBeGreaterThanOrEqual(1);
+      expect(seconds).toBeLessThanOrEqual(60);
+
+      await channel.disconnect();
+    });
+
+    it('AC3: alice throttled, bob can POST normally', async () => {
+      const channel = new HttpChannel(
+        makeConfig({
+          perUserMessagesPerMinute: 5,
+          users: { alice: 'secret', bob: 'hunter2' },
+        }),
+        makeOpts({
+          registeredGroups: vi.fn(() => ({
+            'http:alice': {
+              name: 'alice',
+              folder: 'alice',
+              trigger: '@Andy',
+              added_at: '2024-01-01T00:00:00.000Z',
+            },
+            'http:bob': {
+              name: 'bob',
+              folder: 'bob',
+              trigger: '@Andy',
+              added_at: '2024-01-01T00:00:00.000Z',
+            },
+          })),
+        }),
+      );
+      await channel.connect();
+
+      // Drain alice's bucket
+      for (let i = 0; i < 5; i++) {
+        await dispatch(
+          channel,
+          makeReq({ method: 'POST', url: '/message', auth: 'alice:secret', body: '{"text":"msg"}' }),
+          makeRes(),
+        );
+      }
+      const aliceRes = makeRes();
+      await dispatch(
+        channel,
+        makeReq({ method: 'POST', url: '/message', auth: 'alice:secret', body: '{"text":"throttled"}' }),
+        aliceRes,
+      );
+      expect(aliceRes._status).toBe(429);
+
+      // Bob has an independent bucket — first POST returns 200
+      const bobRes = makeRes();
+      await dispatch(
+        channel,
+        makeReq({ method: 'POST', url: '/message', auth: 'bob:hunter2', body: '{"text":"hello"}' }),
+        bobRes,
+      );
+      expect(bobRes._status).toBe(200);
+
+      await channel.disconnect();
+    });
+
+    it('AC4: throttled requests do NOT invoke onMessage (no DB write)', async () => {
+      const opts = makeOpts();
+      const channel = new HttpChannel(
+        makeConfig({ perUserMessagesPerMinute: 5 }),
+        opts,
+      );
+      await channel.connect();
+
+      for (let i = 0; i < 5; i++) {
+        await dispatch(
+          channel,
+          makeReq({ method: 'POST', url: '/message', auth: 'alice:secret', body: '{"text":"msg"}' }),
+          makeRes(),
+        );
+      }
+
+      const callsBefore = (opts.onMessage as ReturnType<typeof vi.fn>).mock.calls.length;
+
+      const res = makeRes();
+      await dispatch(
+        channel,
+        makeReq({ method: 'POST', url: '/message', auth: 'alice:secret', body: '{"text":"throttled"}' }),
+        res,
+      );
+
+      expect(res._status).toBe(429);
+      // onMessage must NOT have been called for the throttled request
+      expect((opts.onMessage as ReturnType<typeof vi.fn>).mock.calls.length).toBe(callsBefore);
+
+      await channel.disconnect();
+    });
+
+    it('AC5: GET /history is NOT throttled by the message limiter', async () => {
+      // The GET /history endpoint does not exist in the core http.ts (it's a
+      // separate addon), so we test a representative read-only path: GET /stream
+      // (no auth needed path-wise, same assertion applies to any non-POST route).
+      // We verify that 20 rapid dispatches to GET / all return 200, confirming
+      // the limiter only applies to POST /message.
+      const channel = new HttpChannel(
+        makeConfig({ perUserMessagesPerMinute: 5 }),
+        makeOpts(),
+      );
+      await channel.connect();
+
+      for (let i = 0; i < 20; i++) {
+        const req = makeReq({ method: 'GET', url: '/', auth: 'alice:secret' });
+        const res = makeRes();
+        await dispatch(channel, req, res);
+        expect(res._status).toBe(200);
+      }
+
+      await channel.disconnect();
+    });
+
+    it('AC5b: POST /message from alice is still throttled while GET / is free', async () => {
+      const channel = new HttpChannel(
+        makeConfig({ perUserMessagesPerMinute: 5 }),
+        makeOpts(),
+      );
+      await channel.connect();
+
+      // Drain alice's bucket
+      for (let i = 0; i < 5; i++) {
+        await dispatch(
+          channel,
+          makeReq({ method: 'POST', url: '/message', auth: 'alice:secret', body: '{"text":"msg"}' }),
+          makeRes(),
+        );
+      }
+
+      // GET / still works
+      const getRes = makeRes();
+      await dispatch(
+        channel,
+        makeReq({ method: 'GET', url: '/', auth: 'alice:secret' }),
+        getRes,
+      );
+      expect(getRes._status).toBe(200);
+
+      // POST /message is throttled
+      const postRes = makeRes();
+      await dispatch(
+        channel,
+        makeReq({ method: 'POST', url: '/message', auth: 'alice:secret', body: '{"text":"throttled"}' }),
+        postRes,
+      );
+      expect(postRes._status).toBe(429);
+
       await channel.disconnect();
     });
   });

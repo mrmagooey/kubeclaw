@@ -58,6 +58,14 @@ export interface HttpChannelOpts {
 interface HttpConfig {
   port: number;
   users: Record<string, string>; // username → password (plaintext)
+  /** Max POST /message requests per 60-second sliding window, per user. 0 = unlimited. */
+  perUserMessagesPerMinute: number;
+}
+
+/** Token-bucket state for a single user. */
+interface Bucket {
+  tokens: number;
+  lastRefillMs: number;
 }
 
 // SSE client tracking
@@ -290,6 +298,8 @@ export class HttpChannel implements Channel {
   private processStartMs: number;
   private checkDb: () => CheckResult;
   private checkRedis: () => Promise<CheckResult>;
+  /** Per-user token buckets for POST /message rate limiting. */
+  private rateBuckets: Map<string, Bucket> = new Map();
 
   constructor(config: HttpConfig, opts: HttpChannelOpts) {
     this.config = config;
@@ -322,6 +332,47 @@ export class HttpChannel implements Channel {
         return 'unreachable';
       }
     });
+  }
+
+  /**
+   * Token-bucket consume: refills tokens at rate=capacity/60s, then tries to
+   * consume 1 token.
+   *
+   * Returns `{ allowed: true }` when the request is permitted, or
+   * `{ allowed: false, retryAfterSeconds: N }` when throttled.
+   *
+   * @param username - the authenticated username (bucket key)
+   * @param nowMs    - current time in milliseconds (injectable for testing)
+   */
+  consumeRateLimit(
+    username: string,
+    nowMs: number = Date.now(),
+  ): { allowed: true } | { allowed: false; retryAfterSeconds: number } {
+    const capacity = this.config.perUserMessagesPerMinute;
+    if (capacity === 0) return { allowed: true }; // unlimited
+
+    const refillRatePerMs = capacity / 60_000; // tokens per millisecond
+
+    let bucket = this.rateBuckets.get(username);
+    if (!bucket) {
+      bucket = { tokens: capacity, lastRefillMs: nowMs };
+      this.rateBuckets.set(username, bucket);
+    }
+
+    // Refill based on elapsed time
+    const elapsed = Math.max(0, nowMs - bucket.lastRefillMs);
+    bucket.tokens = Math.min(capacity, bucket.tokens + elapsed * refillRatePerMs);
+    bucket.lastRefillMs = nowMs;
+
+    if (bucket.tokens >= 1) {
+      bucket.tokens -= 1;
+      return { allowed: true };
+    }
+
+    // Compute how many seconds until the next token is available
+    const tokensNeeded = 1 - bucket.tokens;
+    const retryAfterSeconds = Math.ceil(tokensNeeded / refillRatePerMs / 1000);
+    return { allowed: false, retryAfterSeconds };
   }
 
   async connect(): Promise<void> {
@@ -533,6 +584,18 @@ export class HttpChannel implements Channel {
       const username = this.authenticate(req);
       if (!username) {
         this.sendUnauthorized(res);
+        return;
+      }
+
+      // Rate-limit check — BEFORE any DB or LLM work so rejected requests
+      // do not consume resources (AC4: no DB row increment on 429 path).
+      const rl = this.consumeRateLimit(username);
+      if (!rl.allowed) {
+        res.writeHead(429, {
+          'Content-Type': 'text/plain',
+          'Retry-After': String(rl.retryAfterSeconds),
+        });
+        res.end('Too Many Requests');
         return;
       }
 
@@ -1051,7 +1114,11 @@ export class HttpChannel implements Channel {
 }
 
 function parseConfig(): HttpConfig | null {
-  const envVars = readEnvFile(['HTTP_CHANNEL_PORT', 'HTTP_CHANNEL_USERS']);
+  const envVars = readEnvFile([
+    'HTTP_CHANNEL_PORT',
+    'HTTP_CHANNEL_USERS',
+    'HTTP_CHANNEL_RATE_LIMIT_PER_USER_MESSAGES_PER_MINUTE',
+  ]);
 
   const port = parseInt(
     process.env.HTTP_CHANNEL_PORT || envVars.HTTP_CHANNEL_PORT || '4080',
@@ -1084,7 +1151,15 @@ function parseConfig(): HttpConfig | null {
     return null;
   }
 
-  return { port, users };
+  // HTTP_CHANNEL_RATE_LIMIT_PER_USER_MESSAGES_PER_MINUTE: max POST /message
+  // requests per user per 60-second window. 0 = unlimited. Default 60.
+  const rateLimitRaw =
+    process.env.HTTP_CHANNEL_RATE_LIMIT_PER_USER_MESSAGES_PER_MINUTE ||
+    envVars.HTTP_CHANNEL_RATE_LIMIT_PER_USER_MESSAGES_PER_MINUTE ||
+    '60';
+  const perUserMessagesPerMinute = Math.max(0, parseInt(rateLimitRaw, 10) || 60);
+
+  return { port, users, perUserMessagesPerMinute };
 }
 
 registerChannel('http', (opts: ChannelOpts) => {

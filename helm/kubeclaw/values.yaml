@@ -160,6 +160,14 @@ networkPolicy:
 #           optional: true
 channels: {}
 
+# HTTP channel settings (applied to all HTTP channel instances).
+httpChannel:
+  rateLimit:
+    # Maximum POST /message requests per user per 60-second sliding window.
+    # 0 = unlimited (preserves backward compatibility for existing deployments).
+    # Default 60 allows one message per second on average.
+    perUserMessagesPerMinute: 60
+
 # Default resource limits for channel pods.
 channelPod:
   resources:

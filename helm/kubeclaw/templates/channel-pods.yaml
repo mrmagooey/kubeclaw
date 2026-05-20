@@ -139,6 +139,10 @@ spec:
                   optional: {{ default false .optional }}
             {{- end }}
             {{- end }}
+            {{- if eq (default $name $cfg.type) "http" }}
+            - name: HTTP_CHANNEL_RATE_LIMIT_PER_USER_MESSAGES_PER_MINUTE
+              value: {{ $.Values.httpChannel.rateLimit.perUserMessagesPerMinute | quote }}
+            {{- end }}
             {{- if eq $.Values.credentialInjection.mode "sidecar" }}
             {{- include "kubeclaw.credentialSidecarEnv" $ | nindent 12 }}
             {{- end }}
