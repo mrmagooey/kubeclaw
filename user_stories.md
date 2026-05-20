@@ -1152,3 +1152,74 @@ status: drafted
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-oomkill --create-namespace`, `--set namespace=kubeclaw-e2e-oomkill`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14130`.
 
 status: drafted
+
+## Story 47: CORS preflight (OPTIONS) returns correct Allow and Access-Control headers
+
+**As a** KubeClaw operator embedding the HTTP channel in a web app served from a different origin
+**I want** `OPTIONS` requests to channel endpoints to return the correct `Access-Control-Allow-*` headers
+**So that** browser clients can make cross-origin `POST /message` and `GET /stream` requests without being blocked by CORS preflight rejections
+
+### Acceptance criteria
+
+1. `OPTIONS /message` with `Origin: https://app.example.com` and `Access-Control-Request-Method: POST` → 204 with headers `Access-Control-Allow-Origin: *`, `Access-Control-Allow-Methods: POST`, `Access-Control-Allow-Headers: Authorization, Content-Type`, `Access-Control-Max-Age: 86400`.
+2. `OPTIONS /stream` with the same pattern → 204 with `Access-Control-Allow-Methods: GET`.
+3. `OPTIONS /healthz` (no auth) → 204 with `Access-Control-Allow-Origin: *`.
+4. Every non-OPTIONS authenticated response (`GET /history`, `POST /message`, `GET /stream`) carries `Access-Control-Allow-Origin: *` so the browser accepts the actual response.
+5. Unit test: inject `OPTIONS /message` into `HttpChannel.handleRequest`, assert status 204 and correct header values.
+
+### Notes
+
+- Add an early dispatch block in `src/channels/http.ts` `handleRequest`, before auth, matching `req.method === 'OPTIONS'`. Respond 204 with the headers above.
+- For non-OPTIONS responses, add `Access-Control-Allow-Origin: *` in a common header-set helper (or sprinkle into each writeHead call).
+- CORS origin configurable via `HTTP_CHANNEL_CORS_ORIGIN` env var (default `*`).
+- LLM-dependence: **none**.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-cors --create-namespace`, `--set namespace=kubeclaw-e2e-cors`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14131`.
+
+status: drafted
+
+## Story 48: Per-user attachment quota returns 413 when count or size limit is exceeded
+
+**As a** KubeClaw operator bounding storage costs per user
+**I want** `POST /message` (multipart) to return HTTP 413 with a plain-text reason once a user has exceeded their attachment count or cumulative size limit
+**So that** a single user cannot fill the PVC or exhaust disk budget by uploading unbounded files
+
+### Acceptance criteria
+
+1. With `httpChannel.attachments.maxCountPerUser=3`, a 4th upload from `alice` returns 413 with body `Attachment limit reached (max 3)`; no file written.
+2. With `httpChannel.attachments.maxSizeBytesPerUser=50000` (50 KB), uploading a 60 KB image returns 413 with body `Attachment storage limit reached`; no file written.
+3. After `alice` hits the quota, `bob` can still upload normally — per-user, not global.
+4. After `DELETE /attachments/raw/<filename>` removes one of alice's files, a subsequent upload succeeds — the quota re-check reads the live directory, not a cached counter.
+5. Unit test: stub `fs.promises.readdir` + `fs.promises.stat` to simulate a full quota; assert 413 returned before any `writeFile` call.
+
+### Notes
+
+- Implement in `src/channels/http.ts` multipart POST branch, before `writeFile`. Call a `getAttachmentUsage(attachDir)` helper that runs `readdir` + `stat` sum; compare against quota.
+- Helm values: `httpChannel.attachments.maxCountPerUser` (default `0` = unlimited) and `httpChannel.attachments.maxSizeBytesPerUser` (default `0` = unlimited). Inject as env vars.
+- LLM-dependence: **none**.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-attach-quota --create-namespace`, `--set namespace=kubeclaw-e2e-attach-quota`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14132`.
+
+status: drafted
+
+## Story 49: `/cancel` chat command aborts an in-flight tool job
+
+**As a** KubeClaw user via the HTTP channel
+**I want** to type `/cancel` to abort my currently running tool job
+**So that** I can stop a runaway specialist without waiting for the timeout, freeing the concurrency slot for my next request
+
+### Acceptance criteria
+
+1. While a tool job is running (verified: `kubectl get pod -l kubeclaw.io/job-id=<jobId>` shows `Running`), a `POST /message` containing `/cancel` returns an SSE reply containing "Cancelled" (case-insensitive) within 5 s.
+2. Within 30 s of the cancel reply, `kubectl get pod -l kubeclaw.io/job-id=<jobId>` returns no items — the job was deleted, not merely flagged.
+3. After cancellation, the group is not wedged: a subsequent `POST /message` from the same user returns 200 and is dispatched normally.
+4. `/cancel` when no tool job is running returns an SSE reply containing "No active job"; no error.
+5. Unit test: stub a runner with a `cancel(jobId)` method; assert it was called and `sendMessage` was called with `/cancel/i`.
+
+### Notes
+
+- Add `isCancelCommand` / `handleCancelCommand` to `src/channel-runner.ts` mirroring the `/secret` intercept pattern. The handler looks up the active jobId for the group from the runtime's `activeJobs` map and publishes a `job.cancel` IPC verb.
+- Add IPC verb `job.cancel` to `src/k8s/ipc-redis.ts` task-stream handler. The orchestrator calls `jobRunner.deleteJob(jobId)` and publishes a "Cancelled" notice to the group's channel stream (mirror Story 37's interruption-notice pattern).
+- For the e2e: configure a `sleep 30` alpine specialist, fire `/cancel` immediately, assert pod cleanup + reply.
+- LLM-dependence: ACs 1-4 **none**; AC5 unit-test only.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-cancel --create-namespace`, `--set namespace=kubeclaw-e2e-cancel`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14133`.
+
+status: drafted
