@@ -264,10 +264,12 @@ export class HttpChannel implements Channel {
   private server: Server | null = null;
   private sseClients: SseClient[] = [];
   private messageSeq = 0;
+  private processStartMs: number;
 
   constructor(config: HttpConfig, opts: HttpChannelOpts) {
     this.config = config;
     this.opts = opts;
+    this.processStartMs = Date.now();
   }
 
   async connect(): Promise<void> {
@@ -340,6 +342,31 @@ export class HttpChannel implements Channel {
     }
 
     const url = new URL(rawUrl, `http://localhost:${this.config.port}`);
+
+    // Health check — no auth required (before auth so probes don't need credentials)
+    if (url.pathname === '/healthz') {
+      if (req.method === 'GET') {
+        const uptime_ms = Date.now() - this.processStartMs;
+        const body = JSON.stringify({ status: 'ok', uptime_ms });
+        res.writeHead(200, {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body),
+        });
+        res.end(body);
+        return;
+      }
+      if (req.method === 'HEAD') {
+        const uptime_ms = Date.now() - this.processStartMs;
+        const body = JSON.stringify({ status: 'ok', uptime_ms });
+        res.writeHead(200, {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body),
+        });
+        res.end();
+        return;
+      }
+      // Other methods fall through to pathMethods 405 handler below
+    }
 
     // Serve chat UI without auth (browser will prompt via Basic auth challenge)
     if (req.method === 'GET' && url.pathname === '/') {
@@ -761,6 +788,7 @@ export class HttpChannel implements Channel {
     // Per RFC 9110: known paths reached with an unsupported method → 405 + Allow
     const pathMethods: Record<string, string[]> = {
       '/': ['GET'],
+      '/healthz': ['GET', 'HEAD'],
       '/stream': ['GET'],
       '/message': ['POST'],
       '/history': ['GET', 'DELETE'],
