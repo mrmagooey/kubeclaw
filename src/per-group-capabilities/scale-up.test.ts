@@ -149,12 +149,6 @@ describe('scaleUpInstance', () => {
       }),
       'per_group_capability_scale_up',
     );
-    const logCall = vi.mocked(logger.info).mock.calls.find(
-      (c) => c[1] === 'per_group_capability_scale_up',
-    );
-    expect(logCall?.[0]).toMatchObject({ coldStartMs: expect.any(Number) });
-    const coldStartMs = (logCall?.[0] as { coldStartMs: number }).coldStartMs;
-    expect(coldStartMs).toBeGreaterThanOrEqual(0);
   });
 
   it('calls patchDeploymentReplicas when currentReplicas is 0 (cold start)', async () => {

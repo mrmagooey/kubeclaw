@@ -182,13 +182,20 @@ describe('wake-from-zero: per-group capability wakes on first use (Story 39)', (
     // Mark ready slightly later than requests are issued.
     setTimeout(() => client.markReady(NAMESPACE, ALICE_DEP), 30);
 
-    // Fire two concurrent discovery requests.
-    const [res1, res2] = await Promise.all([
-      __handleRequestForTest({ requestId: 'wake-ac3-a', capability: 'echo', group: ALICE_GROUP }),
-      __handleRequestForTest({ requestId: 'wake-ac3-b', capability: 'echo', group: ALICE_GROUP }),
+    // Fire two concurrent discovery requests. Both settle without error;
+    // the assertions below check the responses were written.
+    await Promise.all([
+      __handleRequestForTest({
+        requestId: 'wake-ac3-a',
+        capability: 'echo',
+        group: ALICE_GROUP,
+      }),
+      __handleRequestForTest({
+        requestId: 'wake-ac3-b',
+        capability: 'echo',
+        group: ALICE_GROUP,
+      }),
     ]);
-    void res1; // both settle without error
-    void res2;
 
     // Both requestIds should have had a response written.
     const writtenKeys = mockSet.mock.calls.map((c) => c[0] as string);
