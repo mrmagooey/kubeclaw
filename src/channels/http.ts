@@ -758,6 +758,35 @@ export class HttpChannel implements Channel {
       return;
     }
 
+    // Per RFC 9110: known paths reached with an unsupported method → 405 + Allow
+    const pathMethods: Record<string, string[]> = {
+      '/': ['GET'],
+      '/stream': ['GET'],
+      '/message': ['POST'],
+      '/history': ['GET', 'DELETE'],
+      '/attachments/list': ['GET'],
+    };
+    const allowed = pathMethods[url.pathname];
+    if (allowed && !allowed.includes(req.method ?? '')) {
+      res.writeHead(405, {
+        'Content-Type': 'text/plain',
+        Allow: allowed.join(', '),
+      });
+      res.end('Method Not Allowed');
+      return;
+    }
+    if (url.pathname.startsWith('/attachments/raw/')) {
+      const allowedRaw = ['GET', 'HEAD', 'DELETE'];
+      if (!allowedRaw.includes(req.method ?? '')) {
+        res.writeHead(405, {
+          'Content-Type': 'text/plain',
+          Allow: allowedRaw.join(', '),
+        });
+        res.end('Method Not Allowed');
+        return;
+      }
+    }
+
     res.writeHead(404, { 'Content-Type': 'text/plain' });
     res.end('Not found');
   }
