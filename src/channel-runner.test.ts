@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vitest';
 
 // channel-runner.ts has a module-level `if (!KUBECLAW_CHANNEL) process.exit(1)`
 // guard. Hoist the env stub above the import so the guard passes.
@@ -1382,6 +1382,121 @@ describe('processGroupMessages dispatch', () => {
     // contaminated by this test's emitting implementation.
     fakeRunner.runAgent = vi.fn().mockResolvedValue({ status: 'success', result: null });
     mockGetMessagesSince.mockReturnValue([]);
+  });
+
+  // ── Story 51: agentStatus='error' non-throw path ──────────────────────────
+
+  it('Story 51 — AC1: sends [@Specialist] error message when runAgent resolves { status: error }', async () => {
+    _setSpecialistCatalogForTesting(makeCatalog([{ name: 'Alpha', prompt: 'p' }]));
+    mockGetMessagesSince.mockReturnValue([makeMessage('@Alpha hi')]);
+
+    fakeRunner.runAgent = vi.fn().mockResolvedValue({ status: 'error', result: null });
+
+    await processGroupMessages(chatJid);
+
+    expect(mockChannel.sendMessage).toHaveBeenCalledOnce();
+    const [, text] = mockChannel.sendMessage.mock.calls[0];
+    expect(text).toBe('[@Alpha] Error: specialist run failed');
+  });
+
+  it('Story 51 — AC2: does NOT send error message when partial output was already sent', async () => {
+    _setSpecialistCatalogForTesting(makeCatalog([{ name: 'Alpha', prompt: 'p' }]));
+    mockGetMessagesSince.mockReturnValue([makeMessage('@Alpha hi')]);
+
+    // Runner calls onOutput with some text first (sets outputSentToUser = true),
+    // then resolves with { status: 'error' }.
+    fakeRunner.runAgent = vi.fn().mockImplementation(async (
+      _g: any,
+      _input: any,
+      _spec: any,
+      onOutput: any,
+    ) => {
+      if (onOutput) await onOutput({ status: 'success', result: 'partial text' });
+      return { status: 'error', result: null };
+    });
+
+    await processGroupMessages(chatJid);
+
+    // Only the partial-output message should have been sent — no error message.
+    const calls = (mockChannel.sendMessage as ReturnType<typeof vi.fn>).mock.calls;
+    expect(calls).toHaveLength(1);
+    expect(calls[0][1]).toBe('[@Alpha] partial text');
+  });
+
+  it('Story 51 — AC3: processGroupMessages returns true when runAgent resolves { status: error }', async () => {
+    _setSpecialistCatalogForTesting(makeCatalog([{ name: 'Alpha', prompt: 'p' }]));
+    mockGetMessagesSince.mockReturnValue([makeMessage('@Alpha hi')]);
+
+    fakeRunner.runAgent = vi.fn().mockResolvedValue({ status: 'error', result: null });
+
+    const result = await processGroupMessages(chatJid);
+
+    expect(result).toBe(true);
+  });
+
+  it('Story 51 — AC4: only the errored specialist appears in failedSpecialists (via recordSpecialistUsage)', async () => {
+    _setSpecialistCatalogForTesting(makeCatalog([
+      { name: 'Alpha', prompt: 'pa' },
+      { name: 'Beta', prompt: 'pb' },
+    ]));
+    mockGetMessagesSince.mockReturnValue([makeMessage('@Alpha @Beta please')]);
+
+    fakeRunner.runAgent = vi.fn().mockImplementation(async (_g: any, input: any) => {
+      if (input.prompt.includes('name="Alpha"')) return { status: 'error', result: null };
+      return { status: 'success', result: null };
+    });
+
+    await processGroupMessages(chatJid);
+
+    const alphaCalls = recordSpecialistUsageCalls.filter((c) => c.specialistName === 'Alpha');
+    const betaCalls = recordSpecialistUsageCalls.filter((c) => c.specialistName === 'Beta');
+    expect(alphaCalls).toHaveLength(1);
+    expect(alphaCalls[0].status).toBe('error');
+    expect(betaCalls).toHaveLength(1);
+    expect(betaCalls[0].status).toBe('success');
+  });
+
+  it('Story 51 — AC5 (integration): no duplicate message when outputSentToUser=true before error resolve', async () => {
+    // This integration test exercises the partial-output guard end-to-end.
+    // The runner emits partial text via onOutput first, then resolves with
+    // { status: 'error', result: 'partial text' }. Only the streamed message
+    // should reach the channel — the error path must be suppressed.
+    _setSpecialistCatalogForTesting(makeCatalog([{ name: 'Alpha', prompt: 'p' }]));
+    mockGetMessagesSince.mockReturnValue([makeMessage('@Alpha do work')]);
+
+    fakeRunner.runAgent = vi.fn().mockImplementation(async (
+      _g: any,
+      _input: any,
+      _spec: any,
+      onOutput: any,
+    ) => {
+      // Simulate streaming: first emit a partial result that sets outputSentToUser
+      if (onOutput) await onOutput({ status: 'success', result: 'partial output here' });
+      // Then resolve as an error (e.g. runner finished with error status)
+      return { status: 'error', result: 'partial text' };
+    });
+
+    await processGroupMessages(chatJid);
+
+    const allSent = (mockChannel.sendMessage as ReturnType<typeof vi.fn>).mock.calls.map(
+      (c: any[]) => c[1] as string,
+    );
+    // Exactly one message: the streamed partial output
+    expect(allSent).toHaveLength(1);
+    expect(allSent[0]).toBe('[@Alpha] partial output here');
+    // No error message sent
+    expect(allSent.some((m: string) => m.includes('Error: specialist run failed'))).toBe(false);
+  });
+
+  // Reset the runner mock so subsequent describe blocks that don't call
+  // beforeEach (and thus don't re-initialise mockGetDirectLLMRunner) don't
+  // inherit an onOutput-emitting implementation from the last test above.
+  afterAll(() => {
+    mockGetDirectLLMRunner.mockReturnValue({
+      runAgent: vi.fn().mockResolvedValue({ status: 'success', result: null }),
+      writeTasksSnapshot: vi.fn(),
+      writeGroupsSnapshot: vi.fn(),
+    });
   });
 });
 

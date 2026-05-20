@@ -2169,6 +2169,10 @@ export async function processGroupMessages(chatJid: string): Promise<boolean> {
       if (agentStatus === 'error') {
         status = 'error';
         hadError = true;
+        // Story 51: track in failedSpecialists so the post-loop block sends
+        // the user-visible reply + storeMessage. The guard mirrors the
+        // throw-path's catch-arm push: skip if partial output already reached
+        // the user (post-loop's outputSentToUser early-return then suppresses).
         if (run.specialistName && !outputSentToUser) {
           failedSpecialists.push(run.specialistName);
         }
