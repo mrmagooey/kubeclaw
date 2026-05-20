@@ -939,3 +939,76 @@ status: drafted
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-orch-restart --create-namespace`, `--set namespace=kubeclaw-e2e-orch-restart`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14121` for the kubectl port-forward.
 
 status: drafted
+
+## Story 38: `/specialists list` lets users discover available @mentions
+
+**As a** KubeClaw user via the HTTP channel
+**I want** to type `/specialists list` and receive a plain-text list of all specialists the channel is aware of
+**So that** I can discover which `@name` handles are available before trying to @mention one, without needing kubectl or admin shell access
+
+### Acceptance criteria
+
+1. A `POST /message` containing `/specialists list` returns an SSE reply that lists at least the name and a one-line description (prompt truncated to 80 chars) for each specialist currently in the `kubeclaw-specialists` ConfigMap — without invoking the LLM.
+2. When the `kubeclaw-specialists` ConfigMap defines zero specialists, `/specialists list` returns a reply containing "No specialists configured" (case-insensitive) and does not error.
+3. After the ConfigMap is patched to add a new specialist (`@Tester`), a subsequent `/specialists list` shows `@Tester` — confirming the channel's in-process catalog is re-read (hot-reload path from Story 13 AC4).
+4. The reply is scoped to the channel's catalog (the `SpecialistCatalogLoader` state), not an IPC round-trip to the orchestrator — confirmed by the reply arriving in under 2 s.
+5. A `POST /message` containing `/specialists foobar` (unknown sub-command) returns an SSE reply containing "Usage: /specialists list" and no stack trace.
+
+### Notes
+
+- Add `isSpecialistsCommand` / `handleSpecialistsCommand` to `src/channel-runner.ts` following the intercept pattern from `isSearchCommand` (~line 1147). Handler reads from the `SpecialistCatalogLoader` singleton in the channel's runner state. No IPC needed.
+- For AC3: patch the `kubeclaw-specialists` ConfigMap to add a new specialist and poll `/specialists list` until it appears (≤ 30 s kubelet propagation).
+- LLM-dependence: **none**.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-spec-list --create-namespace`, `--set namespace=kubeclaw-e2e-spec-list`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14122`.
+
+status: drafted
+
+## Story 39: Per-group capability wakes from zero on first use after scale-down
+
+**As a** KubeClaw user via the HTTP channel
+**I want** a per-group capability that was scaled to zero by the idle sweeper to automatically wake up when I send a message that needs it
+**So that** I don't need to manually re-provision a capability after it idles out — the system transparently restores service
+
+### Acceptance criteria
+
+1. After a per-group capability is provisioned (`/capabilities add echo` from Story 36) and then scaled to zero (verified: `kubectl get deployment -l kubeclaw-capability=echo,kubeclaw-group=http-http-alice` shows `replicas=0`), a request routed to that capability returns within 60 s — confirming wake-from-zero.
+2. The orchestrator log contains `per_group_capability_scale_up` with `coldStartMs >= 0` for the wake event (confirming `scaleUpInstance` ran on the discovery path).
+3. While the capability is waking (between the first request and `readyReplicas=1`), a second request from the same user is held in the group queue and answered after readiness — not dropped, not errored.
+4. After the wake-up in AC1, `kubectl get deployment -l kubeclaw-capability=echo,kubeclaw-group=http-http-alice` shows `replicas=1` and `per_group_capability_instances.last_used_at` is updated.
+5. `bob`'s capabilities are not woken by `alice`'s request — per-group isolation confirmed by checking that `bob`'s Deployments (if any) remain at their prior replica count.
+
+### Notes
+
+- Exercises `scaleUpInstance` → `waitForReady` in `src/capabilities/discovery.ts:85-107`, already implemented but uncovered by any story.
+- Setup: provision via `/capabilities add echo` (Story 36 pattern), then `kubectl scale deployment <name> --replicas=0` (or use `scaleDownAfterIdleSeconds: 10` with the Story 7 sweeper).
+- The echo image (`kubeclaw-echo:e2e-test`) must serve `/health` so `waitForReady` can poll. Pre-load: `kind load docker-image kubeclaw-echo:e2e-test --name kubeclaw-e2e-istio`.
+- Trigger the wake by sending a capability discovery IPC directly (Story 8 IPC pattern) to keep AC1/AC2/AC4/AC5 LLM-free. AC3 (queue-during-wake) can use either path.
+- LLM-dependence: ACs 1, 2, 4, 5 independent (direct IPC). AC3 may need LLM; gate with `it.skipIf(KUBECLAW_NO_LLM)` if so.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-cap-wakeup --create-namespace`, `--set namespace=kubeclaw-e2e-cap-wakeup`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14123`.
+
+status: drafted
+
+## Story 40: Credential broker live config reload without restart
+
+**As a** KubeClaw operator needing to add or rotate a credential mapping
+**I want** the credential broker to pick up changes to its ConfigMap within 30 seconds, without a pod restart
+**So that** I can add new API providers or rotate keys in a running cluster without downtime
+
+### Acceptance criteria
+
+1. After helm install, `credential_broker_config_reloads_total` is 0 (or absent) at `GET :9090/metrics`. After patching the ConfigMap to add a new host mapping (e.g. `api.newprovider.example.com`), the metric increments to ≥ 1 within 30 s.
+2. A `POST /authz` for `api.newprovider.example.com` with a valid bearer token returns 200 after the reload — confirming the new mapping is active without restarting the broker pod.
+3. Patching the ConfigMap to remove a previously working mapping causes a subsequent `POST /authz` for that host to return 403 within 30 s of the patch.
+4. The broker pod's `kubectl get pod` status remains `Running` throughout ACs 1-3 — no crash or restart.
+5. The broker log contains `broker config reloaded` (matching `src/credential-broker/index.ts:206`) after each patch, with a `count` field reflecting the new mapping count.
+
+### Notes
+
+- Reload mechanism: `fs.watchFile(CONFIG_PATH, { interval: 5000 }, ...)` in `src/credential-broker/index.ts:197`. On kind, kubelet atomic-symlink propagation is ~10-20 s; allow 30 s for poll + propagation.
+- Patch via `kubectl patch configmap kubeclaw-credential-broker-config -n <ns> --type merge -p '{"data":{"config.yaml":"<new-yaml>"}}'`. Include all original mappings plus the new one.
+- For AC2: pre-create the K8s Secret key for `new-api-key` so authz can stamp it.
+- For AC5: stream logs with `kubectl logs deployment/kubeclaw-credential-broker -n <ns> --follow --since=35s` immediately after the patch.
+- LLM-dependence: **none**.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-cbreload --create-namespace`, `--set namespace=kubeclaw-e2e-cbreload`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14124`.
+
+status: drafted
