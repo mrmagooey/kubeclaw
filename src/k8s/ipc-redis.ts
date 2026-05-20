@@ -16,6 +16,8 @@ import {
   getTaskById,
   getTasksForGroup,
   updateTask,
+  recordToolJob,
+  resolveToolJob,
 } from '../db.js';
 import { isValidGroupFolder } from '../group-folder.js';
 import { logger } from '../logger.js';
@@ -995,6 +997,15 @@ export async function startToolJobSpawnWatcher(): Promise<void> {
               // causing waitForJobCompletion — and therefore the result write to
               // resultStream — to never fire.
               (jobName: string) => {
+                // Record the job so orphan reconciliation can detect it on restart.
+                try {
+                  recordToolJob(jobName, groupFolder, chatJid);
+                } catch (err) {
+                  logger.warn(
+                    { jobName, groupFolder, err },
+                    'Failed to record tool job for orphan tracking',
+                  );
+                }
                 const inputStream = getInputStream(jobName);
                 redis
                   .xadd(inputStream, '*', 'type', 'close')
@@ -1013,6 +1024,17 @@ export async function startToolJobSpawnWatcher(): Promise<void> {
               },
             )
             .then(async (output) => {
+              // Mark the job as completed so it is not treated as an orphan.
+              if (output.jobId) {
+                try {
+                  resolveToolJob(output.jobId, 'completed');
+                } catch (err) {
+                  logger.warn(
+                    { jobId: output.jobId, err },
+                    'Failed to resolve tool job tracking record',
+                  );
+                }
+              }
               const result =
                 output.result ?? output.error ?? 'Tool job completed';
               await redis.xadd(

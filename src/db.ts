@@ -381,6 +381,28 @@ function createSchema(database: SqlJsDatabase): void {
       PRIMARY KEY (capability_name, image)
     )
   `);
+
+  // Tool job tracking table — used by orphan reconciliation on orchestrator restart.
+  // Each row represents a K8s tool job that was spawned.
+  // status: 'active' | 'completed' | 'interrupted'
+  // The chat_jid is stored so we can route the interruption notice back to the
+  // correct channel SSE stream via the Redis pub/sub channel for the group.
+  database.run(`
+    CREATE TABLE IF NOT EXISTS tool_jobs (
+      job_id       TEXT PRIMARY KEY,
+      group_folder TEXT NOT NULL,
+      chat_jid     TEXT NOT NULL,
+      status       TEXT NOT NULL DEFAULT 'active',
+      created_at   TEXT NOT NULL,
+      resolved_at  TEXT
+    )
+  `);
+  database.run(
+    `CREATE INDEX IF NOT EXISTS idx_tool_jobs_status ON tool_jobs(status)`,
+  );
+  database.run(
+    `CREATE INDEX IF NOT EXISTS idx_tool_jobs_group ON tool_jobs(group_folder)`,
+  );
 }
 
 /**
@@ -1889,4 +1911,67 @@ export function getSkillsLoadedSince(
   );
   if (rows.length === 0) return [];
   return rows[0].values.map((r: unknown[]) => r[0] as string);
+}
+
+// --- Tool Job Tracking Functions ---
+
+export interface ToolJobRecord {
+  job_id: string;
+  group_folder: string;
+  chat_jid: string;
+  status: 'active' | 'completed' | 'interrupted';
+  created_at: string;
+  resolved_at: string | null;
+}
+
+/**
+ * Record a newly spawned tool job so it can be detected as an orphan if the
+ * orchestrator restarts while the job is still running.
+ */
+export function recordToolJob(
+  jobId: string,
+  groupFolder: string,
+  chatJid: string,
+): void {
+  db.run(
+    `INSERT OR IGNORE INTO tool_jobs (job_id, group_folder, chat_jid, status, created_at)
+     VALUES (?, ?, ?, 'active', ?)`,
+    [jobId, groupFolder, chatJid, new Date().toISOString()],
+  );
+  saveDatabase();
+}
+
+/**
+ * Mark a tool job as completed (normal termination — not an orphan).
+ * Idempotent: safe to call even if the row is already resolved.
+ */
+export function resolveToolJob(
+  jobId: string,
+  status: 'completed' | 'interrupted',
+): void {
+  db.run(
+    `UPDATE tool_jobs SET status = ?, resolved_at = ? WHERE job_id = ? AND status = 'active'`,
+    [status, new Date().toISOString(), jobId],
+  );
+  saveDatabase();
+}
+
+/**
+ * Return all tool job rows that are still in `active` status.
+ * These are candidates for orphan reconciliation on orchestrator startup.
+ */
+export function getActiveToolJobs(): ToolJobRecord[] {
+  const result = db.exec(
+    `SELECT job_id, group_folder, chat_jid, status, created_at, resolved_at
+     FROM tool_jobs WHERE status = 'active'`,
+  );
+  if (result.length === 0) return [];
+  return result[0].values.map((row: unknown[]) => ({
+    job_id: row[0] as string,
+    group_folder: row[1] as string,
+    chat_jid: row[2] as string,
+    status: row[3] as 'active',
+    created_at: row[4] as string,
+    resolved_at: row[5] as string | null,
+  }));
 }

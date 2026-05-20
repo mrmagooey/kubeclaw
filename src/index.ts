@@ -52,6 +52,7 @@ import { KubeConfig, CoreV1Api } from '@kubernetes/client-node';
 import { KUBECLAW_NAMESPACE } from './config.js';
 import { getOutputChannel, getRedisClient } from './k8s/redis-client.js';
 import { jobRunner } from './k8s/job-runner.js';
+import { reconcileOrphanedJobsOnStartup } from './k8s/orphan-jobs.js';
 import { findChannel, formatMessages, formatOutbound } from './router.js';
 import {
   isSenderAllowed,
@@ -402,6 +403,31 @@ async function main(): Promise<void> {
       );
     }
   }
+
+  // ── Orphaned tool-job reconciliation (Story 37) ───────────────────────────
+  // Detect any tool jobs that were still `active` in the DB when the previous
+  // orchestrator incarnation terminated. For each orphan: publish a user-
+  // visible interruption notice via Redis, delete the K8s Job, and mark the
+  // DB row as `interrupted`. Bounded to 30 s so a hung K8s API does not
+  // block the rest of the boot sequence.
+  void reconcileOrphanedJobsOnStartup({
+    k8s: {
+      deleteJob: async (jobName: string) => {
+        await jobRunner.stopJob(jobName);
+      },
+    },
+    publisher: {
+      publish: async (groupFolder: string, chatJid: string, text: string) => {
+        await getRedisClient().publish(
+          getOutputChannel(groupFolder),
+          JSON.stringify({ type: 'message', chatJid, text }),
+        );
+      },
+    },
+    timeoutMs: 30_000,
+  }).catch((err) => {
+    logger.warn({ err }, 'Orphan tool-job reconciliation failed');
+  });
 
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
