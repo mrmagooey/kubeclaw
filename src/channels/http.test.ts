@@ -18,6 +18,7 @@ vi.mock('../db.js', () => {
     getRecentToolJobsForGroup: vi.fn(() => []),
     getActiveToolJobs: vi.fn(() => []),
     getTaskById: vi.fn(() => null),
+    getTaskRunLogs: vi.fn(() => []),
     getTasksForGroup: vi.fn(() => []),
     getToolJobByIdForGroup: vi.fn(() => null),
     pauseTask: vi.fn(() => false),
@@ -127,6 +128,7 @@ import {
   getRecentToolJobsForGroup,
   getActiveToolJobs,
   getTaskById,
+  getTaskRunLogs,
   getTasksForGroup,
   getToolJobByIdForGroup,
   pauseTask,
@@ -6145,6 +6147,238 @@ describe('detectMediaType', () => {
 
       expect(res._status).toBe(404);
       expect(res._body).toContain('Not found');
+      await channel.disconnect();
+    });
+  });
+
+  // ── GET /schedule/<id>/runs — Story 80 ──────────────────────────────────
+
+  describe('GET /schedule/<id>/runs', () => {
+    const TASK_ID = 'task-abc-123';
+    const GROUP_FOLDER = 'alice';
+    const MOCK_TASK = {
+      id: TASK_ID,
+      group_folder: GROUP_FOLDER,
+      chat_jid: 'http:alice',
+      prompt: 'Test prompt',
+      schedule_type: 'cron' as const,
+      schedule_value: '0 9 * * *',
+      context_mode: 'isolated' as const,
+      next_run: null,
+      status: 'active' as const,
+      created_at: '2024-01-01T00:00:00.000Z',
+    };
+    const MOCK_RUNS = [
+      {
+        run_at: '2024-01-02T09:00:00.000Z',
+        status: 'error' as const,
+        duration_ms: 50,
+        result: null,
+        error: 'Agent timed out',
+      },
+      {
+        run_at: '2024-01-01T09:00:00.000Z',
+        status: 'success' as const,
+        duration_ms: 300,
+        result: 'Done',
+        error: null,
+      },
+    ];
+
+    it('AC1: returns 200 JSON { runs: [...] } with both rows (newest-first)', async () => {
+      vi.mocked(getTaskById).mockReturnValue(MOCK_TASK as any);
+      vi.mocked(getTaskRunLogs).mockReturnValue(MOCK_RUNS as any);
+
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: `/schedule/${TASK_ID}/runs`, auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      expect(res._headers['Content-Type']).toContain('application/json');
+      const body = JSON.parse(res._body) as { runs: typeof MOCK_RUNS };
+      expect(body.runs).toHaveLength(2);
+      // Newest first: error row at index 0, success at index 1
+      expect(body.runs[0].status).toBe('error');
+      expect(body.runs[0].error).toBe('Agent timed out');
+      expect(body.runs[0].result).toBeNull();
+      expect(body.runs[1].status).toBe('success');
+      expect(body.runs[1].result).toBe('Done');
+      expect(body.runs[1].error).toBeNull();
+      await channel.disconnect();
+    });
+
+    it('AC2: passes ?limit=N to getTaskRunLogs (capped at 100)', async () => {
+      vi.mocked(getTaskById).mockReturnValue(MOCK_TASK as any);
+      vi.mocked(getTaskRunLogs).mockReturnValue([]);
+
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: `/schedule/${TASK_ID}/runs?limit=5`, auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      expect(vi.mocked(getTaskRunLogs)).toHaveBeenCalledWith(TASK_ID, GROUP_FOLDER, 5);
+      await channel.disconnect();
+    });
+
+    it('AC2: ?limit=200 is capped to 100', async () => {
+      vi.mocked(getTaskById).mockReturnValue(MOCK_TASK as any);
+      vi.mocked(getTaskRunLogs).mockReturnValue([]);
+
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: `/schedule/${TASK_ID}/runs?limit=200`, auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      expect(vi.mocked(getTaskRunLogs)).toHaveBeenCalledWith(TASK_ID, GROUP_FOLDER, 100);
+      await channel.disconnect();
+    });
+
+    it('AC3: unknown id → 404 "Not found"', async () => {
+      vi.mocked(getTaskById).mockReturnValue(undefined);
+
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: `/schedule/nonexistent/runs`, auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(404);
+      const body = JSON.parse(res._body) as { error: string };
+      expect(body.error).toBe('Not found');
+      await channel.disconnect();
+    });
+
+    it('AC3: cross-group id → 404 (same wording)', async () => {
+      vi.mocked(getTaskById).mockReturnValue({
+        ...MOCK_TASK,
+        group_folder: 'other-group',
+      } as any);
+
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: `/schedule/${TASK_ID}/runs`, auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(404);
+      const body = JSON.parse(res._body) as { error: string };
+      expect(body.error).toBe('Not found');
+      await channel.disconnect();
+    });
+
+    it('AC4: unauthenticated → 401', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: `/schedule/${TASK_ID}/runs`, auth: null });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(401);
+      await channel.disconnect();
+    });
+
+    it('AC4: POST /schedule/<id>/runs → 405 Allow: GET, HEAD', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: `/schedule/${TASK_ID}/runs`, method: 'POST', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(405);
+      expect(res._headers['Allow']).toBe('GET, HEAD');
+      await channel.disconnect();
+    });
+
+    it('AC4: HEAD → same headers as GET, no body', async () => {
+      vi.mocked(getTaskById).mockReturnValue(MOCK_TASK as any);
+      vi.mocked(getTaskRunLogs).mockReturnValue(MOCK_RUNS as any);
+
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const getReq = makeReq({ url: `/schedule/${TASK_ID}/runs`, method: 'GET', auth: 'alice:secret' });
+      const getRes = makeRes();
+      await dispatch(channel, getReq, getRes);
+
+      const headReq = makeReq({ url: `/schedule/${TASK_ID}/runs`, method: 'HEAD', auth: 'alice:secret' });
+      const headRes = makeRes();
+      await dispatch(channel, headReq, headRes);
+
+      expect(headRes._status).toBe(200);
+      expect(headRes._headers['Content-Type']).toBe(getRes._headers['Content-Type']);
+      expect(headRes._headers['Content-Length']).toBe(getRes._headers['Content-Length']);
+      expect(headRes._body).toBe('');
+      await channel.disconnect();
+    });
+
+    it('AC5: unit — 2-row stub returns both status tags and correct result/error fields', async () => {
+      vi.mocked(getTaskById).mockReturnValue(MOCK_TASK as any);
+      vi.mocked(getTaskRunLogs).mockReturnValue(MOCK_RUNS as any);
+
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: `/schedule/${TASK_ID}/runs`, auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      const body = JSON.parse(res._body) as { runs: Array<{ status: string; result: string | null; error: string | null; run_at: string; duration_ms: number }> };
+      const statusTags = body.runs.map((r) => r.status);
+      expect(statusTags).toContain('success');
+      expect(statusTags).toContain('error');
+      const successRow = body.runs.find((r) => r.status === 'success')!;
+      expect(successRow.result).toBe('Done');
+      expect(successRow.error).toBeNull();
+      const errorRow = body.runs.find((r) => r.status === 'error')!;
+      expect(errorRow.error).toBe('Agent timed out');
+      expect(errorRow.result).toBeNull();
+      await channel.disconnect();
+    });
+
+    it('returns 200 with empty runs array when task exists but has no run history', async () => {
+      vi.mocked(getTaskById).mockReturnValue(MOCK_TASK as any);
+      vi.mocked(getTaskRunLogs).mockReturnValue([]);
+
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: `/schedule/${TASK_ID}/runs`, auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      const body = JSON.parse(res._body) as { runs: unknown[] };
+      expect(body.runs).toHaveLength(0);
+      await channel.disconnect();
+    });
+
+    it('defaults to limit=20 when no ?limit param', async () => {
+      vi.mocked(getTaskById).mockReturnValue(MOCK_TASK as any);
+      vi.mocked(getTaskRunLogs).mockReturnValue([]);
+
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: `/schedule/${TASK_ID}/runs`, auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      expect(vi.mocked(getTaskRunLogs)).toHaveBeenCalledWith(TASK_ID, GROUP_FOLDER, 20);
       await channel.disconnect();
     });
   });

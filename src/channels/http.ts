@@ -34,6 +34,7 @@ import {
   getOutboundMessagesSince,
   getRecentToolJobsForGroup,
   getTaskById,
+  getTaskRunLogs,
   getTasksForGroup,
   getToolJobByIdForGroup,
   pauseTask,
@@ -800,7 +801,7 @@ export class HttpChannel implements Channel {
     '/jobs': ['GET', 'HEAD'],
     '/jobs/': ['GET', 'HEAD', 'DELETE'], // prefix — dynamic ids
     '/schedule': ['GET', 'HEAD', 'POST'],
-    '/schedule/': ['DELETE', 'PATCH', 'HEAD'], // prefix — dynamic ids
+    '/schedule/': ['DELETE', 'PATCH', 'HEAD', 'GET'], // prefix — dynamic ids + /runs sub-resource
     '/capabilities': ['GET', 'HEAD'],
     '/search': ['GET', 'HEAD'],
     '/secrets': ['GET', 'HEAD', 'POST'],
@@ -844,6 +845,9 @@ export class HttpChannel implements Channel {
       }
       if (!allowedMethods && /^\/jobs\/[^/]+$/.test(url.pathname)) {
         allowedMethods = HttpChannel.CORS_PATH_METHODS['/jobs/'];
+      }
+      if (!allowedMethods && /^\/schedule\/[^/]+\/runs$/.test(url.pathname)) {
+        allowedMethods = HttpChannel.CORS_PATH_METHODS['/schedule/'];
       }
       if (!allowedMethods && /^\/schedule\/[^/]+$/.test(url.pathname)) {
         allowedMethods = HttpChannel.CORS_PATH_METHODS['/schedule/'];
@@ -2119,6 +2123,59 @@ export class HttpChannel implements Channel {
       }
     }
 
+    // Story 80: GET /schedule/<id>/runs — run-log history for a single task
+    const scheduleRunsMatch = /^\/schedule\/([^/]+)\/runs$/.exec(url.pathname);
+    if (scheduleRunsMatch) {
+      const taskId = scheduleRunsMatch[1];
+
+      // Method guard before auth so 405 is returned without leaking auth info
+      if (req.method !== 'GET' && req.method !== 'HEAD') {
+        res.writeHead(405, this.addCorsHeaders({
+          'Content-Type': 'text/plain',
+          Allow: 'GET, HEAD',
+        }));
+        res.end('Method Not Allowed');
+        return;
+      }
+
+      const username = this.authenticate(req);
+      if (!username) {
+        this.sendUnauthorized(res);
+        return;
+      }
+
+      const jid = `http:${username}`;
+      const group = this.opts.registeredGroups()[jid];
+      const groupFolder = group?.folder ?? jid;
+
+      // Ownership pre-check: task must exist and belong to this group
+      const task = getTaskById(taskId);
+      if (!task || task.group_folder !== groupFolder) {
+        res.writeHead(404, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+        res.end(JSON.stringify({ error: 'Not found' }));
+        return;
+      }
+
+      // Parse optional ?limit=N (default 20, cap 100)
+      const rawLimit = url.searchParams.get('limit');
+      const parsedLimit = rawLimit !== null ? parseInt(rawLimit, 10) : 20;
+      const limit = Number.isNaN(parsedLimit) || parsedLimit < 1 ? 20 : Math.min(parsedLimit, 100);
+
+      const runs = getTaskRunLogs(taskId, groupFolder, limit);
+      const respBody = JSON.stringify({ runs });
+
+      res.writeHead(200, this.addCorsHeaders({
+        'Content-Type': 'application/json',
+        'Content-Length': String(Buffer.byteLength(respBody)),
+      }));
+      if (req.method === 'HEAD') {
+        res.end();
+      } else {
+        res.end(respBody);
+      }
+      return;
+    }
+
     // Story 70: GET /capabilities — list provisioned per-group capabilities
     if (url.pathname === '/capabilities') {
       // Method guard before auth so 405 is returned without leaking auth info
@@ -2554,6 +2611,17 @@ export class HttpChannel implements Channel {
         res.writeHead(405, this.addCorsHeaders({
           'Content-Type': 'text/plain',
           Allow: allowedRaw.join(', '),
+        }));
+        res.end('Method Not Allowed');
+        return;
+      }
+    }
+    if (/^\/schedule\/[^/]+\/runs$/.test(url.pathname)) {
+      const allowedScheduleRuns = ['GET', 'HEAD'];
+      if (!allowedScheduleRuns.includes(req.method ?? '')) {
+        res.writeHead(405, this.addCorsHeaders({
+          'Content-Type': 'text/plain',
+          Allow: allowedScheduleRuns.join(', '),
         }));
         res.end('Method Not Allowed');
         return;
