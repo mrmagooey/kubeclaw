@@ -211,6 +211,7 @@ interface SseClient {
 }
 
 const MAX_MULTIPART_SIZE = 10 * 1024 * 1024; // 10 MB
+const MAX_MEMORY_BODY_SIZE = 1 * 1024 * 1024; // 1 MiB cap for PUT/PATCH /memory
 
 const MEDIA_MAGIC: Array<{ bytes: number[]; mime: string }> = [
   { bytes: [0xff, 0xd8, 0xff], mime: 'image/jpeg' },
@@ -777,6 +778,7 @@ export class HttpChannel implements Channel {
     '/secrets': ['GET', 'HEAD'],
     '/secrets/': ['DELETE', 'HEAD'], // prefix — dynamic types
     '/secrets/catalog': ['GET', 'HEAD'],
+    '/memory': ['GET', 'HEAD', 'PUT', 'PATCH'],
   };
 
   private async handleRequest(
@@ -2267,6 +2269,44 @@ export class HttpChannel implements Channel {
       return;
     }
 
+    // ── /memory — per-group CLAUDE.md REST API ────────────────────────────────
+    // Method guard FIRST — 405 before auth so unsupported methods don't leak info
+    if (url.pathname === '/memory') {
+      const method = req.method ?? '';
+
+      if (!['GET', 'HEAD', 'PUT', 'PATCH'].includes(method)) {
+        res.writeHead(405, this.addCorsHeaders({
+          'Content-Type': 'text/plain',
+          Allow: 'GET, HEAD, PUT, PATCH',
+        }));
+        res.end('Method Not Allowed');
+        return;
+      }
+
+      const username = this.authenticate(req);
+      if (!username) {
+        this.sendUnauthorized(res);
+        return;
+      }
+
+      const jid = `http:${username}`;
+      const group = this.opts.registeredGroups()[jid];
+      if (!group) {
+        res.writeHead(404, this.addCorsHeaders({ 'Content-Type': 'text/plain' }));
+        res.end('Not found');
+        return;
+      }
+
+      if (method === 'GET' || method === 'HEAD') {
+        void this.handleGetMemory(group.folder, method, res);
+        return;
+      }
+
+      // PUT or PATCH — body parsing required
+      this.handleMemoryWrite(req, res, method, group.folder);
+      return;
+    }
+
     // Per RFC 9110: known paths reached with an unsupported method → 405 + Allow
     const pathMethods: Record<string, string[]> = {
       '/': ['GET'],
@@ -2286,6 +2326,7 @@ export class HttpChannel implements Channel {
       '/search': ['GET', 'HEAD'],
       '/secrets': ['GET', 'HEAD'],
       '/secrets/catalog': ['GET', 'HEAD'],
+      '/memory': ['GET', 'HEAD', 'PUT', 'PATCH'],
     };
     const allowed = pathMethods[url.pathname];
     if (allowed && !allowed.includes(req.method ?? '')) {
@@ -2441,6 +2482,140 @@ export class HttpChannel implements Channel {
       res.writeHead(500, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
       res.end(JSON.stringify({ error: 'Internal error' }));
     }
+  }
+
+  /** Handle GET/HEAD /memory — return per-group CLAUDE.md content. */
+  private async handleGetMemory(
+    groupFolder: string,
+    method: string,
+    res: ServerResponse,
+  ): Promise<void> {
+    const memoryPath = path.join(GROUPS_DIR, groupFolder, 'CLAUDE.md');
+    let content = '';
+    try {
+      content = await fsPromises.readFile(memoryPath, 'utf8');
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+        logger.error({ err, groupFolder }, 'GET /memory read error');
+        res.writeHead(500, this.addCorsHeaders({ 'Content-Type': 'text/plain' }));
+        res.end('Internal Server Error');
+        return;
+      }
+      // ENOENT → empty content per spec (NOT 404)
+    }
+    const body = JSON.stringify({ content });
+    if (method === 'HEAD') {
+      res.writeHead(200, this.addCorsHeaders({
+        'Content-Type': 'application/json',
+        'Content-Length': String(Buffer.byteLength(body)),
+      }));
+      res.end();
+      return;
+    }
+    res.writeHead(200, this.addCorsHeaders({
+      'Content-Type': 'application/json',
+      'Content-Length': String(Buffer.byteLength(body)),
+    }));
+    res.end(body);
+  }
+
+  /** Handle PUT/PATCH /memory — write or append to per-group CLAUDE.md atomically. */
+  private handleMemoryWrite(
+    req: IncomingMessage,
+    res: ServerResponse,
+    method: string,
+    groupFolder: string,
+  ): void {
+    const chunks: Buffer[] = [];
+    let totalSize = 0;
+    let oversized = false;
+
+    req.on('data', (chunk: Buffer) => {
+      totalSize += chunk.length;
+      if (totalSize > MAX_MEMORY_BODY_SIZE) {
+        if (!oversized) {
+          oversized = true;
+          res.writeHead(413, this.addCorsHeaders({ 'Content-Type': 'text/plain' }));
+          res.end('Payload Too Large');
+          req.resume(); // drain without buffering
+        }
+        return;
+      }
+      chunks.push(chunk);
+    });
+
+    req.on('end', () => {
+      if (oversized) return;
+      void (async () => {
+        try {
+          const bodyStr = Buffer.concat(chunks).toString('utf8');
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(bodyStr);
+          } catch {
+            res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'text/plain' }));
+            res.end('Bad Request: invalid JSON');
+            return;
+          }
+
+          const memoryPath = path.join(GROUPS_DIR, groupFolder, 'CLAUDE.md');
+
+          if (method === 'PUT') {
+            const obj = parsed as Record<string, unknown>;
+            if (typeof obj?.content !== 'string') {
+              res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'text/plain' }));
+              res.end('Bad Request: content must be a string');
+              return;
+            }
+            await fsPromises.mkdir(path.dirname(memoryPath), { recursive: true });
+            // Atomic write: temp file then rename
+            const tmpPath = path.join(
+              path.dirname(memoryPath),
+              `.claude-md-tmp-${Date.now()}-${process.pid}`,
+            );
+            await fsPromises.writeFile(tmpPath, obj.content, 'utf8');
+            await fsPromises.rename(tmpPath, memoryPath);
+            res.writeHead(204, this.addCorsHeaders({}));
+            res.end();
+            return;
+          }
+
+          if (method === 'PATCH') {
+            const obj = parsed as Record<string, unknown>;
+            if (typeof obj?.append !== 'string') {
+              res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'text/plain' }));
+              res.end('Bad Request: append must be a string');
+              return;
+            }
+            await fsPromises.mkdir(path.dirname(memoryPath), { recursive: true });
+            let existing = '';
+            try {
+              existing = await fsPromises.readFile(memoryPath, 'utf8');
+            } catch (err: unknown) {
+              if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+            }
+            const separator = existing.length > 0 ? '\n' : '';
+            const newContent = existing + separator + obj.append;
+            // Atomic write
+            const tmpPath = path.join(
+              path.dirname(memoryPath),
+              `.claude-md-tmp-${Date.now()}-${process.pid}`,
+            );
+            await fsPromises.writeFile(tmpPath, newContent, 'utf8');
+            await fsPromises.rename(tmpPath, memoryPath);
+            res.writeHead(204, this.addCorsHeaders({}));
+            res.end();
+            return;
+          }
+        } catch (err) {
+          logger.error({ err, groupFolder }, '/memory write error');
+          if (!res.writableEnded) {
+            res.writeHead(500, this.addCorsHeaders({ 'Content-Type': 'text/plain' }));
+            res.end('Internal Server Error');
+          }
+        }
+      })();
+    });
   }
 
   private sendSse(username: string, eventType: string, data: string): void {

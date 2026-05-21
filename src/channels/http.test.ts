@@ -58,9 +58,17 @@ vi.mock('node:fs/promises', () => ({
   default: {
     readdir: vi.fn(async () => [] as string[]),
     stat: vi.fn(async () => ({ isFile: () => true, size: 0 })),
+    readFile: vi.fn(async () => ''),
+    writeFile: vi.fn(async () => undefined),
+    mkdir: vi.fn(async () => undefined),
+    rename: vi.fn(async () => undefined),
   },
   readdir: vi.fn(async () => [] as string[]),
   stat: vi.fn(async () => ({ isFile: () => true, size: 0 })),
+  readFile: vi.fn(async () => ''),
+  writeFile: vi.fn(async () => undefined),
+  mkdir: vi.fn(async () => undefined),
+  rename: vi.fn(async () => undefined),
 }));
 
 // Mock the built-in http module so we don't actually bind a port
@@ -5031,3 +5039,345 @@ describe('detectMediaType', () => {
     });
   });
 
+  // ── /memory REST API ──────────────────────────────────────────────────────
+
+  describe('GET /memory', () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+      serverListeners.clear();
+    });
+
+    it('returns 200 JSON with content when file exists', async () => {
+      vi.mocked(fsPromises.readFile).mockResolvedValueOnce('# My notes\nSome memory' as never);
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/memory', method: 'GET', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      const parsed = JSON.parse(res._body);
+      expect(parsed.content).toBe('# My notes\nSome memory');
+      await channel.disconnect();
+    });
+
+    it('returns 200 with empty content when file does not exist', async () => {
+      const enoent = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+      vi.mocked(fsPromises.readFile).mockRejectedValueOnce(enoent as never);
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/memory', method: 'GET', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      const parsed = JSON.parse(res._body);
+      expect(parsed.content).toBe('');
+      await channel.disconnect();
+    });
+
+    it('returns 401 without auth', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/memory', method: 'GET', auth: null });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(401);
+      await channel.disconnect();
+    });
+
+    it('HEAD returns same headers as GET but no body', async () => {
+      vi.mocked(fsPromises.readFile).mockResolvedValueOnce('# Memory content' as never);
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const reqHead = makeReq({ url: '/memory', method: 'HEAD', auth: 'alice:secret' });
+      const resHead = makeRes();
+      await dispatch(channel, reqHead, resHead);
+
+      expect(resHead._status).toBe(200);
+      expect(resHead._headers['Content-Type']).toBe('application/json');
+      expect(resHead._headers['Content-Length']).toBeDefined();
+      // HEAD should have no body written via end() with data
+      const endCalls = (resHead.end as ReturnType<typeof vi.fn>).mock.calls;
+      expect(endCalls[0][0]).toBeUndefined();
+      await channel.disconnect();
+    });
+  });
+
+  describe('PUT /memory', () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+      serverListeners.clear();
+    });
+
+    function makePutReq(body: string, auth: string | null = 'alice:secret'): IncomingMessage {
+      const headers: Record<string, string> = { 'content-type': 'application/json' };
+      if (auth !== null) {
+        headers.authorization = `Basic ${b64(auth)}`;
+      }
+      const req = {
+        method: 'PUT',
+        url: '/memory',
+        headers,
+        on: vi.fn(),
+        destroy: vi.fn(),
+        resume: vi.fn(),
+      } as unknown as IncomingMessage;
+      (req.on as ReturnType<typeof vi.fn>).mockImplementation(
+        (event: string, cb: (...args: unknown[]) => void) => {
+          if (event === 'data') cb(Buffer.from(body));
+          if (event === 'end') cb();
+        },
+      );
+      return req;
+    }
+
+    it('returns 204 for valid PUT', async () => {
+      vi.mocked(fsPromises.mkdir).mockResolvedValueOnce(undefined as never);
+      vi.mocked(fsPromises.writeFile).mockResolvedValueOnce(undefined as never);
+      vi.mocked(fsPromises.rename).mockResolvedValueOnce(undefined as never);
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makePutReq(JSON.stringify({ content: 'New memory content' }));
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(204);
+      expect(vi.mocked(fsPromises.writeFile)).toHaveBeenCalledWith(
+        expect.stringContaining('.claude-md-tmp-'),
+        'New memory content',
+        'utf8',
+      );
+      expect(vi.mocked(fsPromises.rename)).toHaveBeenCalledWith(
+        expect.stringContaining('.claude-md-tmp-'),
+        expect.stringContaining('CLAUDE.md'),
+      );
+      await channel.disconnect();
+    });
+
+    it('returns 400 when content field is missing', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makePutReq(JSON.stringify({ other: 'field' }));
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(400);
+      await channel.disconnect();
+    });
+
+    it('returns 400 when content is not a string', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makePutReq(JSON.stringify({ content: 42 }));
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(400);
+      await channel.disconnect();
+    });
+
+    it('returns 400 for invalid JSON body', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makePutReq('not-json');
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(400);
+      await channel.disconnect();
+    });
+
+    it('returns 401 without auth', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makePutReq(JSON.stringify({ content: 'hello' }), null);
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(401);
+      await channel.disconnect();
+    });
+
+    it('returns 413 for oversized body', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const oversizedBody = 'x'.repeat(2 * 1024 * 1024); // 2 MiB
+      const headers: Record<string, string> = {
+        'content-type': 'application/json',
+        authorization: `Basic ${b64('alice:secret')}`,
+      };
+      const req = {
+        method: 'PUT',
+        url: '/memory',
+        headers,
+        on: vi.fn(),
+        destroy: vi.fn(),
+        resume: vi.fn(),
+      } as unknown as IncomingMessage;
+      (req.on as ReturnType<typeof vi.fn>).mockImplementation(
+        (event: string, cb: (...args: unknown[]) => void) => {
+          if (event === 'data') cb(Buffer.from(oversizedBody));
+          if (event === 'end') cb();
+        },
+      );
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(413);
+      await channel.disconnect();
+    });
+  });
+
+  describe('PATCH /memory', () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+      serverListeners.clear();
+    });
+
+    function makePatchReq(body: string, auth: string | null = 'alice:secret'): IncomingMessage {
+      const headers: Record<string, string> = { 'content-type': 'application/json' };
+      if (auth !== null) {
+        headers.authorization = `Basic ${b64(auth)}`;
+      }
+      const req = {
+        method: 'PATCH',
+        url: '/memory',
+        headers,
+        on: vi.fn(),
+        destroy: vi.fn(),
+        resume: vi.fn(),
+      } as unknown as IncomingMessage;
+      (req.on as ReturnType<typeof vi.fn>).mockImplementation(
+        (event: string, cb: (...args: unknown[]) => void) => {
+          if (event === 'data') cb(Buffer.from(body));
+          if (event === 'end') cb();
+        },
+      );
+      return req;
+    }
+
+    it('returns 204 and appends with newline when file has existing content', async () => {
+      vi.mocked(fsPromises.readFile).mockResolvedValueOnce('Existing content' as never);
+      vi.mocked(fsPromises.mkdir).mockResolvedValueOnce(undefined as never);
+      vi.mocked(fsPromises.writeFile).mockResolvedValueOnce(undefined as never);
+      vi.mocked(fsPromises.rename).mockResolvedValueOnce(undefined as never);
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makePatchReq(JSON.stringify({ append: 'New paragraph' }));
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(204);
+      expect(vi.mocked(fsPromises.writeFile)).toHaveBeenCalledWith(
+        expect.stringContaining('.claude-md-tmp-'),
+        'Existing content\nNew paragraph',
+        'utf8',
+      );
+      await channel.disconnect();
+    });
+
+    it('returns 204 and writes directly when file does not exist', async () => {
+      const enoent = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+      vi.mocked(fsPromises.readFile).mockRejectedValueOnce(enoent as never);
+      vi.mocked(fsPromises.mkdir).mockResolvedValueOnce(undefined as never);
+      vi.mocked(fsPromises.writeFile).mockResolvedValueOnce(undefined as never);
+      vi.mocked(fsPromises.rename).mockResolvedValueOnce(undefined as never);
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makePatchReq(JSON.stringify({ append: 'First line' }));
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(204);
+      expect(vi.mocked(fsPromises.writeFile)).toHaveBeenCalledWith(
+        expect.stringContaining('.claude-md-tmp-'),
+        'First line',
+        'utf8',
+      );
+      await channel.disconnect();
+    });
+
+    it('returns 400 when append field is missing', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makePatchReq(JSON.stringify({ other: 'field' }));
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(400);
+      await channel.disconnect();
+    });
+
+    it('returns 400 when append is not a string', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makePatchReq(JSON.stringify({ append: true }));
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(400);
+      await channel.disconnect();
+    });
+
+    it('returns 401 without auth', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makePatchReq(JSON.stringify({ append: 'text' }), null);
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(401);
+      await channel.disconnect();
+    });
+  });
+
+  describe('POST /memory — 405 Method Not Allowed', () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+      serverListeners.clear();
+    });
+
+    it('returns 405 with Allow header for POST /memory', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/memory', method: 'POST', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(405);
+      expect(res._headers['Allow']).toContain('GET');
+      expect(res._headers['Allow']).toContain('PUT');
+      expect(res._headers['Allow']).toContain('PATCH');
+      await channel.disconnect();
+    });
+
+    it('returns 405 for DELETE /memory (before auth — no info leak)', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/memory', method: 'DELETE', auth: null });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(405);
+      await channel.disconnect();
+    });
+  });
