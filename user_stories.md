@@ -1665,3 +1665,79 @@ status: passing 5/5
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-schedule-next --create-namespace`, `--set namespace=kubeclaw-e2e-schedule-next`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14150`.
 
 status: passing 5/5
+
+## Story 68: `GET /schedule` HTTP endpoint lists scheduled tasks as JSON
+
+**As a** KubeClaw user building a UI client or operations dashboard
+**I want** `GET /schedule` to return the group's scheduled tasks as JSON
+**So that** my UI can render a schedule panel without round-tripping through chat
+
+### Acceptance criteria
+
+1. Authenticated `GET /schedule` → HTTP 200 with `Content-Type: application/json` and a JSON array of `{ id, schedule_type, schedule_expression, prompt, status, next_run, created_at }` for the authenticated group, ordered newest-created first.
+2. `GET /schedule?status=active` filters to active tasks only; `?status=paused` filters paused; invalid status → 400.
+3. Unauthenticated → 401.
+4. `POST /schedule` → 405 with `Allow: GET, HEAD`. `HEAD /schedule` → same headers as GET, no body.
+5. Unit test: stub `getTasksForGroup` returning 2 tasks (1 active, 1 paused); assert JSON has both ids and the `status` field correctly populated.
+
+### Notes
+
+- Add `/schedule` route to `src/channels/http.ts` near other REST endpoints.
+- Reuse `getTasksForGroup(groupFolder)` from `src/db.ts`. Filter by status in JS (cheap — typically few tasks per group).
+- Update `CORS_PATH_METHODS['/schedule']: ['GET', 'HEAD']` and the 405 `pathMethods` table.
+- Field shape must match the existing DB columns; avoid expanding the response with fields the UI doesn't need.
+- LLM-dependence: **none**.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-schedule-http --create-namespace`, `--set namespace=kubeclaw-e2e-schedule-http`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14151`.
+
+status: drafted
+
+## Story 69: `GET /jobs/<id>` and `DELETE /jobs/<id>` complete the jobs REST surface
+
+**As a** KubeClaw user building a UI client
+**I want** REST endpoints to fetch a specific job's detail and to kill it by id
+**So that** my UI can show a job-detail panel and a "kill" button without going through chat
+
+### Acceptance criteria
+
+1. Authenticated `GET /jobs/<id>` for an active or resolved job in the user's group → HTTP 200 with `Content-Type: application/json` and a JSON body with `{ job_id, specialist_name, status, created_at, resolved_at }`.
+2. `GET /jobs/<unknown-id>` and `GET /jobs/<id-from-another-group>` both return HTTP 404 with identical wording (no enumeration).
+3. `DELETE /jobs/<id>` for an active job in the user's group → publishes the `job.cancel` IPC (same as Story 66's `/jobs <id> kill`) with `jobId`, returns HTTP 200 `{ "status": "cancelled", "job_id": "<id>" }` within 5 s.
+4. `DELETE /jobs/<id>` for a resolved job → HTTP 409 `{ "error": "not_active", "current_status": "<X>" }`. `DELETE` for unknown/cross-group → HTTP 404 (same wording as AC2).
+5. `POST /jobs/<id>` → HTTP 405 with `Allow: GET, HEAD, DELETE`. `HEAD /jobs/<id>` → same headers as GET, no body. Unauthenticated → HTTP 401.
+
+### Notes
+
+- Extend the existing `/jobs` route block (from Story 65) with a path-parameter branch for `/jobs/<id>`. Match via regex like `/^\/jobs\/([^/]+)$/`.
+- Reuse `getToolJobByIdForGroup(jobId, groupFolder)` from `src/db.ts` (added in Story 59).
+- For DELETE, reuse the `job.cancel`-with-`jobId` IPC flow from Story 66 (channel sends, orchestrator dispatches `getToolJobByIdForGroup` → K8s delete). Map IPC `not_found`/`not_active`/`cancelled` replies to HTTP 404/409/200 respectively.
+- Update `CORS_PATH_METHODS['/jobs/']` (prefix entry, distinct from Story 65's `/jobs` exact match) with `['GET', 'HEAD', 'DELETE']`.
+- Update the 405 `pathMethods` table.
+- LLM-dependence: **none**.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-jobs-id --create-namespace`, `--set namespace=kubeclaw-e2e-jobs-id`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14152`.
+
+status: drafted
+
+## Story 70: `GET /capabilities` HTTP endpoint lists per-group capabilities
+
+**As a** KubeClaw user building a UI client
+**I want** `GET /capabilities` to return the group's per-group capabilities as JSON
+**So that** my UI can render a capabilities panel without going through `/capabilities list` chat command
+
+### Acceptance criteria
+
+1. Authenticated `GET /capabilities` → HTTP 200 with `Content-Type: application/json` and a JSON array of `{ type, state, provisioned_at, scale }` (or whichever fields the existing capability registry exposes) for the authenticated group.
+2. The response is sourced from the same in-memory `_groupCapabilityEntries` map (or DB) that `/capabilities list` reads. Empty array when no capabilities are provisioned.
+3. Unauthenticated → 401.
+4. `POST /capabilities` → 405 `Allow: GET, HEAD`. `HEAD /capabilities` → same headers as GET, no body.
+5. Unit test: stub the registry/map with two entries; assert JSON has both types.
+
+### Notes
+
+- Add `/capabilities` route to `src/channels/http.ts`. Reuse `_groupCapabilityEntries` (Story 54) or the existing capability DB accessors.
+- The `/capabilities` slash command in `channel-runner.ts` is separate code and must not be broken.
+- Update `CORS_PATH_METHODS['/capabilities']: ['GET', 'HEAD']` and the 405 `pathMethods` table.
+- Response shape: be conservative — only stable fields that exist today, no schemas. UI can deep-fetch via `/capabilities tools <type>` slash command if it needs MCP schemas.
+- LLM-dependence: **none**.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-capabilities-http --create-namespace`, `--set namespace=kubeclaw-e2e-capabilities-http`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14153`.
+
+status: drafted
