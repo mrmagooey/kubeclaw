@@ -2059,3 +2059,58 @@ status: passing 5/5
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-history-edit --create-namespace`, `--set namespace=kubeclaw-e2e-history-edit`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14165`.
 
 status: passing 5/5
+
+## Story 83: Audit slash-command destructive actions (parallels Story 81 REST audit)
+
+**As a** KubeClaw operator
+**I want** destructive slash commands recorded in `audit_log` just like their HTTP counterparts
+**So that** the audit trail is complete regardless of whether a user used REST or chat — Story 81 only covered REST
+
+### Acceptance criteria
+
+1. `/secret remove <type>` via slash command writes `audit_log` row with `action: 'secret.remove'`, `target: <type>`, `actor: <group.jid or username>` BEFORE returning the user-visible reply.
+2. `/secret set <type>` (sometimes named `add`) writes `action: 'secret.add'`, `target: <type>`, `detail: 'fields=<csv of field names>'`. **VALUES NEVER LOGGED** — only field NAMES.
+3. `/schedule remove <id>` writes `action: 'schedule.delete'`, `target: <id>`.
+4. `/schedule pause <id>` and `/schedule resume <id>` (Story 62) write `action: 'schedule.pause'` / `'schedule.resume'`, `target: <id>`.
+5. `GET /audit` (Story 81) returns slash-command entries alongside HTTP entries, indistinguishable in shape. Unit test: stub the slash handlers; assert each write call has the correct `action`+`target`.
+
+### Notes
+
+- Add `writeAuditEntry` import + call to each destructive slash handler in `src/channel-runner.ts` (or `src/runtime/skills-commands.ts` for `/skills` if applicable — but that's not destructive). Find each `handleSecretCommand` `case 'remove'`/`'set'`, `handleScheduleCommand` `case 'remove'`/`'pause'`/`'resume'`.
+- The `actor` for slash commands is the group's JID or the registered username — use whatever Story 81 used for REST audit. Consistent shape.
+- Wrap each audit-write in try/catch — never fail the user's slash command if the audit write fails.
+- DO NOT include secret values. For `/secret set`, the audit detail is `fields=<comma-separated field names>` — same redaction as Story 81.
+- DO NOT instrument `/clear` (history clear) or `/cancel` (job kill) yet — verify these go through the HTTP path that Story 81 already audits, OR add them here if they don't.
+- Add ~5 unit tests in `src/channel-runner.test.ts` (or wherever) verifying each slash handler writes the correct audit row. Include the secret-values-redaction test.
+- LLM-dependence: **none**.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-audit-slash --create-namespace`, `--set namespace=kubeclaw-e2e-audit-slash`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14166`.
+
+status: drafted
+
+## Story 84: `edited_at` timestamp on edited conversation messages
+
+**As a** KubeClaw user or auditor
+**I want** `PATCH /history/<id>` to record when a message was edited and expose `edited_at` in subsequent reads
+**So that** I can distinguish original messages from edited ones — Story 82 added editing but no provenance
+
+### Acceptance criteria
+
+1. Additive migration: `ALTER TABLE conversation_history ADD COLUMN edited_at TEXT` (nullable; NULL means never edited). Existing rows get NULL — migration MUST NOT fail on rows already present.
+2. `updateConversationMessage(id, content, groupFolder)` sets `edited_at = new Date().toISOString()` on the updated row alongside `content`.
+3. `getMessageById(id, groupFolder)` returns `edited_at` in the row. `PATCH /history/<id>` response (200 body) includes `edited_at: "<ISO>"`. `GET /history/<id>` on an unedited message returns `edited_at: null` (NOT omitted — explicitly null).
+4. `GET /history` paginated list (Story 18) also exposes `edited_at` on each row (null when unedited).
+5. Unit test: insert a row (unedited), `GET /history/<id>` → `edited_at: null`; PATCH it → response has non-null ISO timestamp; subsequent `GET /history/<id>` returns the same `edited_at`.
+
+### Notes
+
+- Additive ALTER TABLE migration in `src/db.ts`. Use `try { ALTER TABLE ... } catch { /* already added */ }` pattern (matches existing additive migrations in the codebase).
+- Update `updateConversationMessage` SQL to `UPDATE conversation_history SET content = ?, edited_at = ? WHERE id = ? AND group_folder = ?`. Pass `new Date().toISOString()` for the timestamp.
+- Update `getMessageById` SELECT to include `edited_at`.
+- Update the existing `GET /history` SELECT (Story 18) to also include `edited_at` in the response shape.
+- Update `ConversationHistoryRow` interface in `src/db.ts` (added in Story 64) to include `edited_at?: string | null`.
+- Update or add unit tests for both `updateConversationMessage` and `getMessageById`.
+- DO NOT break Story 18 `GET /history` callers — adding a new field is backward-compatible.
+- LLM-dependence: **none**.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-history-edited-at --create-namespace`, `--set namespace=kubeclaw-e2e-history-edited-at`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14167`.
+
+status: drafted
