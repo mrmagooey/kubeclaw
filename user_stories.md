@@ -1818,3 +1818,79 @@ status: passing 5/5
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-secrets-http --create-namespace`, `--set namespace=kubeclaw-e2e-secrets-http`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14156`.
 
 status: passing 5/5
+
+## Story 74: `GET /memory`, `PUT /memory`, `PATCH /memory` REST surface
+
+**As a** KubeClaw user with a UI client or automation script
+**I want** REST endpoints to read and update the group's `CLAUDE.md` memory file
+**So that** I can manage memory without sending chat messages
+
+### Acceptance criteria
+
+1. Authenticated `GET /memory` returns HTTP 200 with `Content-Type: application/json` and body `{ "content": "<file contents>" }`. When the memory file does not exist, returns `{ "content": "" }` (NOT a 404).
+2. Authenticated `PUT /memory` with JSON body `{ "content": "<text>" }` overwrites `groups/<groupFolder>/CLAUDE.md` with the supplied content (atomic write via temp+rename). Returns HTTP 204 (no body). Missing or non-string `content` → 400.
+3. Authenticated `PATCH /memory` with JSON body `{ "append": "<text>" }` appends the text to the existing file (creating it if necessary), prefixed with a newline if the file already has content. Returns HTTP 204. Missing or non-string `append` → 400.
+4. Cross-group isolation: `GET /memory` for user `alice` returns only `alice`'s memory; even if she sets `groupFolder=bob` somewhere, the server uses the authenticated user's group folder.
+5. `POST /memory` returns HTTP 405 with `Allow: GET, HEAD, PUT, PATCH`. Unauthenticated → 401. `HEAD /memory` returns same headers as GET with no body.
+
+### Notes
+
+- Add `/memory` route to `src/channels/http.ts`. Use `fs.promises` for reads/writes.
+- Memory file path: derive from `groupFolder` via the existing helper (e.g. `path.join(GROUPS_DIR, groupFolder, 'CLAUDE.md')`) — find the helper that `/memory` slash command uses in `src/channel-runner.ts`.
+- Atomic writes: write to a temp file in the same directory, then rename. Avoid partial writes.
+- Cap PUT/PATCH body size to prevent OOM (e.g. 1 MiB). Larger → 413.
+- Update `CORS_PATH_METHODS['/memory']: ['GET', 'HEAD', 'PUT', 'PATCH']` and the 405 `pathMethods` table.
+- LLM-dependence: **none**.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-memory-http --create-namespace`, `--set namespace=kubeclaw-e2e-memory-http`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14157`.
+
+status: drafted
+
+## Story 75: `GET /whoami` authenticated identity endpoint
+
+**As a** KubeClaw user with a UI client
+**I want** `GET /whoami` to return my authenticated identity
+**So that** my UI can display "logged in as X" without separate auth-introspection
+
+### Acceptance criteria
+
+1. Authenticated `GET /whoami` returns HTTP 200 with `Content-Type: application/json` and body `{ "username": "<username>", "group": "http:<username>", "group_folder": "<folder>" }`.
+2. Unauthenticated `GET /whoami` returns HTTP 401.
+3. `POST /whoami` returns HTTP 405 with `Allow: GET, HEAD`. `HEAD /whoami` returns same headers as GET with no body.
+4. Unit test: stub the username on the authenticated request and the group registry; assert the response has exactly the three documented fields.
+5. The endpoint MUST NOT expose sensitive identity material (no token, no auth-secret, no session ID — only the public username + group folder).
+
+### Notes
+
+- Add `/whoami` route to `src/channels/http.ts`.
+- Reuse `this.authenticate(req)` to obtain the username (returns the authenticated identity).
+- Use `this.opts.registeredGroups()` to look up `group_folder` from `http:<username>`.
+- Add `/whoami` to `CORS_PATH_METHODS` with `['GET', 'HEAD']` and the 405 `pathMethods` table.
+- LLM-dependence: **none**.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-whoami --create-namespace`, `--set namespace=kubeclaw-e2e-whoami`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14158`.
+
+status: drafted
+
+## Story 76: `POST /secrets` completes the secrets REST CRUD
+
+**As a** KubeClaw operator
+**I want** a `POST /secrets` endpoint to provision a credential via REST
+**So that** scripted provisioning flows can add secrets without a chat session
+
+### Acceptance criteria
+
+1. Authenticated `POST /secrets` with JSON body `{ "type": "<id>", "fields": { "<fieldName>": "<value>", ... } }` publishes `secret.add` (or whatever the existing IPC verb is — check `src/k8s/ipc-redis.ts`) with the group_folder of the authenticated user. Returns HTTP 201 `{ "status": "ok", "type": "<id>" }` on success.
+2. Missing or non-object `fields`, missing/non-string `type` → 400 with `{ "error": "<message>" }`. The error message names which field is missing.
+3. IPC timeout (no reply within ~5 s) → 504. IPC error reply → 502 with the reply's error message (sanitized; do NOT leak K8s/internal details).
+4. Cross-group isolation: the orchestrator-side `secret.add` IPC handler must verify it's writing to the authenticated user's group folder (the channel passes it, but the orchestrator must NOT trust client-supplied group params if the verb has one).
+5. `CORS_PATH_METHODS['/secrets']` is extended from `['GET', 'HEAD']` to `['GET', 'HEAD', 'POST']`. Update the 405 `pathMethods` table to allow POST. `PUT /secrets` and other non-allowed methods still return 405 with the new `Allow: GET, HEAD, POST`.
+
+### Notes
+
+- Extend the existing `/secrets` route from Story 73 with a POST branch.
+- Inject an `addSecretFn` callback on `HttpChannelOpts` (matching the existing `listSecretsFn`/`removeSecretFn` pattern from Story 73). Wire it in `configureHttpSecretIpc()` to publish the existing `secret.add` IPC verb.
+- DO NOT echo the supplied secret values in the response body or logs.
+- Cap the request body size at e.g. 64 KiB to prevent OOM via giant payloads.
+- LLM-dependence: **none**.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-secrets-write --create-namespace`, `--set namespace=kubeclaw-e2e-secrets-write`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14159`.
+
+status: drafted
