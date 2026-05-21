@@ -1537,7 +1537,7 @@ status: passing 5/5
 - LLM-dependence: **none**.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-schedule-pause --create-namespace`, `--set namespace=kubeclaw-e2e-schedule-pause`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14145`.
 
-status: drafted
+status: passing 5/5
 
 ## Story 63: `/skills history` exposes skill_usage load stats
 
@@ -1561,7 +1561,7 @@ status: drafted
 - LLM-dependence: **none**.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-skills-history --create-namespace`, `--set namespace=kubeclaw-e2e-skills-history`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14146`.
 
-status: drafted
+status: passing 5/5
 
 ## Story 64: `GET /history/<id>` fetches a single message by id
 
@@ -1586,4 +1586,4 @@ status: drafted
 - LLM-dependence: **none**.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-history-id --create-namespace`, `--set namespace=kubeclaw-e2e-history-id`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14147`.
 
-status: drafted
+status: passing 5/5
