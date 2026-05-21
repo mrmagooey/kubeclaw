@@ -15,6 +15,7 @@ vi.mock('../db.js', () => {
     deleteTaskForGroup: vi.fn(() => false),
     getConversationHistory: vi.fn(() => []),
     getMessageById: vi.fn(() => null),
+    updateConversationMessage: vi.fn(() => false),
     getRecentToolJobsForGroup: vi.fn(() => []),
     getActiveToolJobs: vi.fn(() => []),
     getTaskById: vi.fn(() => null),
@@ -125,6 +126,7 @@ import {
   deleteTaskForGroup,
   getConversationHistory,
   getMessageById,
+  updateConversationMessage,
   getRecentToolJobsForGroup,
   getActiveToolJobs,
   getTaskById,
@@ -206,6 +208,7 @@ function makeReq(overrides: {
     headers,
     on: vi.fn(),
     destroy: vi.fn(),
+    resume: vi.fn(),
   } as unknown as IncomingMessage;
 
   // Simulate body streaming
@@ -2246,8 +2249,8 @@ describe('HttpChannel', () => {
       await channel.disconnect();
     });
 
-    // AC5: POST /history/<id> → 405 with Allow: GET, HEAD, DELETE (updated by Story 64)
-    it('returns 405 with Allow: GET, HEAD, DELETE for POST /history/<id>', async () => {
+    // AC5: POST /history/<id> → 405 with Allow: GET, HEAD, DELETE, PATCH (updated by Story 82)
+    it('returns 405 with Allow: GET, HEAD, DELETE, PATCH for POST /history/<id>', async () => {
       const channel = new HttpChannel(makeConfig(), makeOpts());
       await channel.connect();
 
@@ -2256,7 +2259,7 @@ describe('HttpChannel', () => {
       await dispatch(channel, req, res);
 
       expect(res._status).toBe(405);
-      expect(res._headers['Allow']).toBe('GET, HEAD, DELETE');
+      expect(res._headers['Allow']).toBe('GET, HEAD, DELETE, PATCH');
       await channel.disconnect();
     });
   });
@@ -2386,8 +2389,8 @@ describe('HttpChannel', () => {
       await channel.disconnect();
     });
 
-    // AC5: POST /history/<id> → 405 with Allow: GET, HEAD, DELETE
-    it('returns 405 with Allow: GET, HEAD, DELETE for POST /history/<id>', async () => {
+    // AC5: POST /history/<id> → 405 with Allow: GET, HEAD, DELETE, PATCH (updated by Story 82)
+    it('returns 405 with Allow: GET, HEAD, DELETE, PATCH for POST /history/<id>', async () => {
       const channel = new HttpChannel(makeConfig(), makeOpts());
       await channel.connect();
 
@@ -2396,7 +2399,7 @@ describe('HttpChannel', () => {
       await dispatch(channel, req, res);
 
       expect(res._status).toBe(405);
-      expect(res._headers['Allow']).toBe('GET, HEAD, DELETE');
+      expect(res._headers['Allow']).toBe('GET, HEAD, DELETE, PATCH');
       await channel.disconnect();
     });
   });
@@ -6379,6 +6382,167 @@ describe('detectMediaType', () => {
 
       expect(res._status).toBe(200);
       expect(vi.mocked(getTaskRunLogs)).toHaveBeenCalledWith(TASK_ID, GROUP_FOLDER, 20);
+      await channel.disconnect();
+    });
+  });
+
+  describe('PATCH /history/<id> — Story 82', () => {
+    it('AC1: returns 200 with updated JSON on valid PATCH', async () => {
+      const updatedRow = {
+        id: 'msg-patch',
+        role: 'user' as const,
+        content: 'redacted',
+        created_at: '2026-01-01T00:00:00Z',
+      };
+      (updateConversationMessage as ReturnType<typeof vi.fn>).mockReturnValue(true);
+      (getMessageById as ReturnType<typeof vi.fn>).mockReturnValue(updatedRow);
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+      const req = makeReq({
+        method: 'PATCH',
+        url: '/history/msg-patch',
+        auth: 'alice:secret',
+        body: JSON.stringify({ content: 'redacted' }),
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+      expect(res._status).toBe(200);
+      const body = JSON.parse(res._body);
+      expect(body.id).toBe('msg-patch');
+      expect(body.content).toBe('redacted');
+      expect(updateConversationMessage).toHaveBeenCalledWith('msg-patch', 'redacted', 'alice');
+      await channel.disconnect();
+    });
+
+    it('AC1: empty string content is permitted', async () => {
+      const updatedRow = {
+        id: 'msg-empty',
+        role: 'user' as const,
+        content: '',
+        created_at: '2026-01-01T00:00:00Z',
+      };
+      (updateConversationMessage as ReturnType<typeof vi.fn>).mockReturnValue(true);
+      (getMessageById as ReturnType<typeof vi.fn>).mockReturnValue(updatedRow);
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+      const req = makeReq({
+        method: 'PATCH',
+        url: '/history/msg-empty',
+        auth: 'alice:secret',
+        body: JSON.stringify({ content: '' }),
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+      expect(res._status).toBe(200);
+      expect(JSON.parse(res._body).content).toBe('');
+      await channel.disconnect();
+    });
+
+    it('AC2: missing content field → 400 with correct error message', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+      const req = makeReq({
+        method: 'PATCH',
+        url: '/history/msg-bad',
+        auth: 'alice:secret',
+        body: JSON.stringify({ something: 'else' }),
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+      expect(res._status).toBe(400);
+      expect(JSON.parse(res._body).error).toBe('content must be a string');
+      await channel.disconnect();
+    });
+
+    it('AC2: non-string content → 400', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+      const req = makeReq({
+        method: 'PATCH',
+        url: '/history/msg-bad',
+        auth: 'alice:secret',
+        body: JSON.stringify({ content: 42 }),
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+      expect(res._status).toBe(400);
+      expect(JSON.parse(res._body).error).toBe('content must be a string');
+      await channel.disconnect();
+    });
+
+    it('AC3: unknown id → 404', async () => {
+      (updateConversationMessage as ReturnType<typeof vi.fn>).mockReturnValue(false);
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+      const req = makeReq({
+        method: 'PATCH',
+        url: '/history/no-such-id',
+        auth: 'alice:secret',
+        body: JSON.stringify({ content: 'new' }),
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+      expect(res._status).toBe(404);
+      expect(JSON.parse(res._body).error).toBe('Not found');
+      await channel.disconnect();
+    });
+
+    it('AC4: unauthenticated → 401', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+      const req = makeReq({
+        method: 'PATCH',
+        url: '/history/msg-patch',
+        auth: null,
+        body: JSON.stringify({ content: 'redacted' }),
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+      expect(res._status).toBe(401);
+      await channel.disconnect();
+    });
+
+    it('AC4: PUT /history/<id> → 405 with Allow: GET, HEAD, DELETE, PATCH', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+      const req = makeReq({ method: 'PUT', url: '/history/msg-42', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+      expect(res._status).toBe(405);
+      expect(res._headers['Allow']).toBe('GET, HEAD, DELETE, PATCH');
+      await channel.disconnect();
+    });
+
+    it('AC4: POST /history/<id> → 405 with Allow: GET, HEAD, DELETE, PATCH', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+      const req = makeReq({ method: 'POST', url: '/history/msg-42', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+      expect(res._status).toBe(405);
+      expect(res._headers['Allow']).toBe('GET, HEAD, DELETE, PATCH');
+      await channel.disconnect();
+    });
+
+    it('AC5: PATCH /history/<id> body larger than 256 KiB returns 413', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      // Create a body where the JSON-encoded string is > 256 KiB
+      const oversizedContent = 'X'.repeat(256 * 1024 + 1);
+      const body = JSON.stringify({ content: oversizedContent });
+
+      const req = makeReq({
+        method: 'PATCH',
+        url: '/history/msg-large',
+        auth: 'alice:secret',
+        body,
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(413);
+      expect(JSON.parse(res._body).error).toBe('Payload too large');
       await channel.disconnect();
     });
   });

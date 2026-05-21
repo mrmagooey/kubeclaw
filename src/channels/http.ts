@@ -31,6 +31,7 @@ import {
   getConversationHistoryPage,
   getDiagSnapshot,
   getMessageById,
+  updateConversationMessage,
   getOutboundMessagesSince,
   getRecentToolJobsForGroup,
   getTaskById,
@@ -794,7 +795,7 @@ export class HttpChannel implements Channel {
     '/message/rate-limit': ['GET', 'HEAD'],
     '/message': ['POST'],
     '/history': ['GET', 'DELETE'],
-    '/history/': ['GET', 'HEAD', 'DELETE'], // prefix — dynamic ids
+    '/history/': ['GET', 'HEAD', 'DELETE', 'PATCH'], // prefix — dynamic ids
     '/attachments/list': ['GET'],
     '/attachments/raw/': ['GET', 'HEAD', 'DELETE'], // prefix — dynamic filenames
     '/export': ['GET', 'HEAD'],
@@ -1517,14 +1518,14 @@ export class HttpChannel implements Channel {
       return;
     }
 
-    // Stories 56 + 64: /history/<id> — single-message GET, HEAD, DELETE
+    // Stories 56 + 64 + 82: /history/<id> — single-message GET, HEAD, DELETE, PATCH
     const historyIdMatch = url.pathname.match(/^\/history\/([^/]+)$/);
     if (historyIdMatch) {
       const method = req.method ?? '';
-      if (!['GET', 'HEAD', 'DELETE'].includes(method)) {
+      if (!['GET', 'HEAD', 'DELETE', 'PATCH'].includes(method)) {
         res.writeHead(405, this.addCorsHeaders({
           'Content-Type': 'text/plain',
-          Allow: 'GET, HEAD, DELETE',
+          Allow: 'GET, HEAD, DELETE, PATCH',
         }));
         res.end('Method Not Allowed');
         return;
@@ -1542,6 +1543,68 @@ export class HttpChannel implements Channel {
         return;
       }
       const msgId = historyIdMatch[1];
+
+      // Story 82: PATCH /history/<id> — edit/redact a single message
+      if (method === 'PATCH') {
+        const MAX_PATCH_BODY = 256 * 1024; // 256 KiB
+        const chunks: Buffer[] = [];
+        let totalSize = 0;
+        let tooLarge = false;
+
+        req.on('data', (chunk: Buffer) => {
+          if (tooLarge) return;
+          totalSize += chunk.length;
+          if (totalSize > MAX_PATCH_BODY) {
+            tooLarge = true;
+            res.writeHead(413, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+            res.end(JSON.stringify({ error: 'Payload too large' }));
+            req.resume();
+            return;
+          }
+          chunks.push(chunk);
+        });
+
+        req.on('end', () => {
+          if (tooLarge) return;
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+          } catch {
+            res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+            res.end(JSON.stringify({ error: 'Invalid JSON' }));
+            return;
+          }
+          if (
+            typeof parsed !== 'object' ||
+            parsed === null ||
+            typeof (parsed as Record<string, unknown>).content !== 'string'
+          ) {
+            res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+            res.end(JSON.stringify({ error: 'content must be a string' }));
+            return;
+          }
+          const newContent = (parsed as { content: string }).content;
+          const updated = updateConversationMessage(msgId, newContent, group.folder);
+          if (!updated) {
+            res.writeHead(404, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+            res.end(JSON.stringify({ error: 'Not found' }));
+            return;
+          }
+          const row = getMessageById(msgId, group.folder);
+          if (!row) {
+            res.writeHead(404, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+            res.end(JSON.stringify({ error: 'Not found' }));
+            return;
+          }
+          const body = JSON.stringify(row);
+          res.writeHead(200, this.addCorsHeaders({
+            'Content-Type': 'application/json',
+            'Content-Length': String(Buffer.byteLength(body)),
+          }));
+          res.end(body);
+        });
+        return;
+      }
 
       // Story 64: GET /history/<id> — fetch single message
       if (method === 'GET' || method === 'HEAD') {

@@ -51,6 +51,7 @@ import {
   backfillFts,
   deleteMessageById,
   getMessageById,
+  updateConversationMessage,
   recordToolJob,
   resolveToolJob,
   getActiveToolJobs,
@@ -2803,5 +2804,70 @@ describe('deleteConversationHistoryBefore', () => {
       `SELECT id FROM conversation_history WHERE group_folder = 'future-group'`,
     );
     expect(remaining.length).toBe(0);
+  });
+});
+
+// --- updateConversationMessage ---
+
+describe('updateConversationMessage', () => {
+  it('updates content and returns true for a row in the group', async () => {
+    await _initTestDatabase();
+    appendConversationMessage('upd-group', 'user', 'original content');
+    const history = getConversationHistory('upd-group');
+    const id = history[0].id;
+    const result = updateConversationMessage(id, 'updated content', 'upd-group');
+    expect(result).toBe(true);
+    const row = getMessageById(id, 'upd-group');
+    expect(row!.content).toBe('updated content');
+  });
+
+  it('permits empty string as new content', async () => {
+    await _initTestDatabase();
+    appendConversationMessage('upd-group', 'user', 'some content');
+    const history = getConversationHistory('upd-group');
+    const id = history[0].id;
+    const result = updateConversationMessage(id, '', 'upd-group');
+    expect(result).toBe(true);
+    const row = getMessageById(id, 'upd-group');
+    expect(row!.content).toBe('');
+  });
+
+  it('returns false for unknown id', async () => {
+    await _initTestDatabase();
+    const result = updateConversationMessage('nonexistent', 'new', 'upd-group');
+    expect(result).toBe(false);
+  });
+
+  it('returns false when id belongs to another group (cross-group denial)', async () => {
+    await _initTestDatabase();
+    appendConversationMessage('owner-group', 'user', 'sensitive');
+    const history = getConversationHistory('owner-group');
+    const id = history[0].id;
+    const result = updateConversationMessage(id, 'redacted', 'other-group');
+    expect(result).toBe(false);
+    // Original content preserved
+    const row = getMessageById(id, 'owner-group');
+    expect(row!.content).toBe('sensitive');
+  });
+
+  it('FTS coherence: old tokens are removed and new tokens are searchable', async () => {
+    await _initTestDatabase();
+    appendConversationMessage('fts-group', 'user', 'secret abcdef');
+    const history = getConversationHistory('fts-group');
+    const id = history[0].id;
+
+    updateConversationMessage(id, 'redacted xyz', 'fts-group');
+
+    // Old token must be gone
+    const oldResult = db.exec(
+      `SELECT id FROM conversation_history_fts WHERE conversation_history_fts MATCH 'abcdef'`,
+    );
+    expect(oldResult.length).toBe(0);
+
+    // New token must be present
+    const newResult = db.exec(
+      `SELECT id FROM conversation_history_fts WHERE conversation_history_fts MATCH 'xyz'`,
+    );
+    expect(newResult[0].values.length).toBe(1);
   });
 });

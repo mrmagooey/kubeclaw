@@ -1684,6 +1684,37 @@ export function getMessageById(
   };
 }
 
+/**
+ * Update the `content` of a single conversation_history row, scoped to groupFolder.
+ * Returns false without making any change if the row does not exist or the
+ * row belongs to another group.
+ *
+ * The FTS index is kept coherent automatically by the `conv_fts_au` trigger
+ * (AFTER UPDATE OF content ON conversation_history) defined in createSchema().
+ */
+export function updateConversationMessage(
+  id: string,
+  content: string,
+  groupFolder: string,
+): boolean {
+  const before = db.exec(
+    `SELECT COUNT(*) FROM conversation_history WHERE id = ? AND group_folder = ?`,
+    [id, groupFolder],
+  );
+  const count =
+    before.length > 0 && before[0].values.length > 0
+      ? (before[0].values[0][0] as number)
+      : 0;
+  if (count === 0) return false;
+
+  db.run(
+    `UPDATE conversation_history SET content = ? WHERE id = ? AND group_folder = ?`,
+    [content, id, groupFolder],
+  );
+  saveDatabase();
+  return true;
+}
+
 // --- Conversation Summary Functions ---
 
 export interface SummaryRecord {
