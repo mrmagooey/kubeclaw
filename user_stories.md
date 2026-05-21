@@ -1689,7 +1689,7 @@ status: passing 5/5
 - LLM-dependence: **none**.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-schedule-http --create-namespace`, `--set namespace=kubeclaw-e2e-schedule-http`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14151`.
 
-status: drafted
+status: passing 5/5
 
 ## Story 69: `GET /jobs/<id>` and `DELETE /jobs/<id>` complete the jobs REST surface
 
@@ -1715,7 +1715,7 @@ status: drafted
 - LLM-dependence: **none**.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-jobs-id --create-namespace`, `--set namespace=kubeclaw-e2e-jobs-id`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14152`.
 
-status: drafted
+status: passing 5/5
 
 ## Story 70: `GET /capabilities` HTTP endpoint lists per-group capabilities
 
@@ -1740,4 +1740,4 @@ status: drafted
 - LLM-dependence: **none**.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-capabilities-http --create-namespace`, `--set namespace=kubeclaw-e2e-capabilities-http`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14153`.
 
-status: drafted
+status: passing 5/5
