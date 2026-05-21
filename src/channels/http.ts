@@ -13,6 +13,7 @@ import {
   appendConversationMessage,
   clearConversationHistory,
   db,
+  deleteMessageById,
   getAllConversationHistory,
   getConversationHistoryPage,
   getOutboundMessagesSince,
@@ -1113,6 +1114,51 @@ export class HttpChannel implements Channel {
         logger.error({ err, jid }, 'DELETE /history failed');
         res.writeHead(500, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
         res.end(JSON.stringify({ error: 'Internal server error' }));
+      }
+      return;
+    }
+
+    // Story 56: DELETE /history/<id> — single-message delete
+    const historyIdMatch = url.pathname.match(/^\/history\/([^/]+)$/);
+    if (historyIdMatch) {
+      if (req.method !== 'DELETE') {
+        res.writeHead(405, this.addCorsHeaders({
+          'Content-Type': 'text/plain',
+          Allow: 'DELETE',
+        }));
+        res.end('Method Not Allowed');
+        return;
+      }
+      const username = this.authenticate(req);
+      if (!username) {
+        this.sendUnauthorized(res);
+        return;
+      }
+      const jid = `http:${username}`;
+      const group = this.opts.registeredGroups()[jid];
+      if (!group) {
+        res.writeHead(404, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+        res.end(JSON.stringify({ error: 'Group not found' }));
+        return;
+      }
+      const msgId = historyIdMatch[1];
+      const deleted = deleteMessageById(msgId, group.folder);
+      if (deleted) {
+        res.writeHead(204, this.addCorsHeaders({}));
+        res.end();
+        return;
+      }
+      // Row not found for this group — disambiguate: exists in another group → 403; truly gone → 404
+      const unscopedRows = db.exec(
+        `SELECT group_folder FROM conversation_history WHERE id = ?`,
+        [msgId],
+      );
+      if (unscopedRows.length > 0 && unscopedRows[0].values.length > 0) {
+        res.writeHead(403, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+        res.end(JSON.stringify({ error: 'Forbidden' }));
+      } else {
+        res.writeHead(404, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+        res.end(JSON.stringify({ error: 'Not found' }));
       }
       return;
     }

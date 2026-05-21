@@ -4,7 +4,16 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 // ── Mocks ──────────────────────────────────────────────────────────────────
 
 vi.mock('./registry.js', () => ({ registerChannel: vi.fn() }));
-vi.mock('../db.js', () => ({ appendConversationMessage: vi.fn() }));
+vi.mock('../db.js', () => {
+  const dbExec = vi.fn(() => []);
+  return {
+    appendConversationMessage: vi.fn(),
+    clearConversationHistory: vi.fn(),
+    deleteMessageById: vi.fn(() => false),
+    getConversationHistory: vi.fn(() => []),
+    db: { exec: dbExec },
+  };
+});
 vi.mock('../env.js', () => ({ readEnvFile: vi.fn(() => ({})) }));
 vi.mock('../config.js', () => ({
   ASSISTANT_NAME: 'Andy',
@@ -71,7 +80,12 @@ import {
   detectMediaType,
   getAttachmentUsage,
 } from './http.js';
-import { appendConversationMessage } from '../db.js';
+import {
+  appendConversationMessage,
+  clearConversationHistory,
+  deleteMessageById,
+  getConversationHistory,
+} from '../db.js';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -1953,6 +1967,94 @@ describe('HttpChannel', () => {
       expect(res._status).toBe(200);
       expect(res._headers['Access-Control-Allow-Origin']).toBe('*');
       closeHandlers.forEach((h) => h());
+      await channel.disconnect();
+    });
+  });
+
+  // ── DELETE /history/<id> — single message delete ──────────────────────────
+
+  describe('DELETE /history/<id>', () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+      serverListeners.clear();
+    });
+
+    // AC1: authenticated delete with matching id → 204; row gone from history
+    it('returns 204 when id exists in the user group', async () => {
+      (deleteMessageById as ReturnType<typeof vi.fn>).mockReturnValue(true);
+
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ method: 'DELETE', url: '/history/msg-42', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(204);
+      expect(deleteMessageById).toHaveBeenCalledWith('msg-42', 'alice');
+      await channel.disconnect();
+    });
+
+    // AC2: id exists but belongs to a different group → 403, row preserved
+    it('returns 403 when id exists in a different group', async () => {
+      (deleteMessageById as ReturnType<typeof vi.fn>).mockReturnValue(false);
+      // Simulate unscoped SELECT finding the row (belongs to another group)
+      const { db: mockDbRef } = await import('../db.js');
+      (mockDbRef.exec as ReturnType<typeof vi.fn>).mockReturnValueOnce([
+        { columns: ['group_folder'], values: [['other-group']] },
+      ]);
+
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ method: 'DELETE', url: '/history/msg-foreign', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(403);
+      await channel.disconnect();
+    });
+
+    // AC3: nonexistent id → 404
+    it('returns 404 when id does not exist anywhere', async () => {
+      (deleteMessageById as ReturnType<typeof vi.fn>).mockReturnValue(false);
+      // mockDb.exec returns [] by default (no rows found)
+
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ method: 'DELETE', url: '/history/msg-ghost', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(404);
+      await channel.disconnect();
+    });
+
+    // AC4: unauthenticated → 401
+    it('returns 401 when not authenticated', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ method: 'DELETE', url: '/history/msg-42', auth: null });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(401);
+      await channel.disconnect();
+    });
+
+    // AC5: POST /history/<id> → 405 with Allow: DELETE
+    it('returns 405 with Allow: DELETE for POST /history/<id>', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ method: 'POST', url: '/history/msg-42', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(405);
+      expect(res._headers['Allow']).toBe('DELETE');
       await channel.disconnect();
     });
   });

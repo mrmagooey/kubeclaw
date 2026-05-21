@@ -1489,6 +1489,26 @@ export function clearConversationHistory(groupFolder: string): void {
   saveDatabase();
 }
 
+export function deleteMessageById(id: string, groupFolder: string): boolean {
+  // Count rows before — sql.js does not expose getChanges() / affected rows.
+  const before = db.exec(
+    `SELECT COUNT(*) FROM conversation_history WHERE id = ? AND group_folder = ?`,
+    [id, groupFolder],
+  );
+  const count =
+    before.length > 0 && before[0].values.length > 0
+      ? (before[0].values[0][0] as number)
+      : 0;
+  if (count === 0) return false;
+
+  db.run(
+    `DELETE FROM conversation_history WHERE id = ? AND group_folder = ?`,
+    [id, groupFolder],
+  );
+  saveDatabase();
+  return true;
+}
+
 // --- Conversation Summary Functions ---
 
 export interface SummaryRecord {

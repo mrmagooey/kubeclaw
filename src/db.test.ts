@@ -48,6 +48,7 @@ import {
   getSkillsLoadedSince,
   searchConversations,
   backfillFts,
+  deleteMessageById,
   recordToolJob,
   resolveToolJob,
   getActiveToolJobs,
@@ -2245,5 +2246,53 @@ describe('pruneOldToolJobs', () => {
     expect(deleted).toBe(0);
     const all = db.exec(`SELECT COUNT(*) FROM tool_jobs`);
     expect(all[0].values[0][0]).toBe(1);
+  });
+});
+
+// --- deleteMessageById ---
+
+describe('deleteMessageById', () => {
+  it('returns true and deletes the row when id matches group', () => {
+    appendConversationMessage('grp-del', 'user', 'hello');
+    const history = getConversationHistory('grp-del');
+    expect(history).toHaveLength(1);
+    const id = history[0].id;
+
+    const result = deleteMessageById(id, 'grp-del');
+    expect(result).toBe(true);
+    expect(getConversationHistory('grp-del')).toHaveLength(0);
+  });
+
+  it('returns false and does NOT delete when id belongs to a different group', () => {
+    appendConversationMessage('grp-owner', 'user', 'sensitive message');
+    const history = getConversationHistory('grp-owner');
+    const id = history[0].id;
+
+    // Attempt delete from a different group
+    const result = deleteMessageById(id, 'grp-attacker');
+    expect(result).toBe(false);
+
+    // Row must still be present in the original group
+    expect(getConversationHistory('grp-owner')).toHaveLength(1);
+  });
+
+  it('returns false for a nonexistent id', () => {
+    const result = deleteMessageById('nonexistent-id-99999', 'grp-any');
+    expect(result).toBe(false);
+  });
+
+  it('only deletes the targeted row, leaving other rows intact', () => {
+    appendConversationMessage('grp-multi', 'user', 'first');
+    appendConversationMessage('grp-multi', 'assistant', 'second');
+    appendConversationMessage('grp-multi', 'user', 'third');
+    const history = getConversationHistory('grp-multi');
+    expect(history).toHaveLength(3);
+    const idToDelete = history[1].id; // delete the middle one
+
+    deleteMessageById(idToDelete, 'grp-multi');
+
+    const after = getConversationHistory('grp-multi');
+    expect(after).toHaveLength(2);
+    expect(after.map((m) => m.content)).toEqual(['first', 'third']);
   });
 });
