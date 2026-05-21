@@ -55,6 +55,7 @@ import {
   pruneOldToolJobs,
   recordSpecialistUsage,
   getSpecialistUsage,
+  getTaskRunLogs,
 } from './db.js';
 import { JobACL } from './types.js';
 
@@ -2378,5 +2379,110 @@ describe('getSpecialistUsage', () => {
     expect(rows[0].specialistName).toBe('echo');
     expect(rows[0].durationMs).toBe(42);
     expect(rows[0].status).toBe('success');
+  });
+});
+
+// --- getTaskRunLogs ---
+
+describe('getTaskRunLogs', () => {
+  function makeTask(id: string, groupFolder: string) {
+    createTask({
+      id,
+      group_folder: groupFolder,
+      chat_jid: 'group@g.us',
+      prompt: 'test',
+      schedule_type: 'once',
+      schedule_value: '',
+      context_mode: 'isolated',
+      next_run: null,
+      status: 'active',
+      created_at: '2024-01-01T00:00:00.000Z',
+    });
+  }
+
+  it('returns rows ordered newest-first', () => {
+    makeTask('trl-1', 'grp-trl');
+    logTaskRun({
+      task_id: 'trl-1',
+      run_at: '2024-01-01T10:00:00.000Z',
+      duration_ms: 100,
+      status: 'success',
+      result: 'first',
+      error: null,
+    });
+    logTaskRun({
+      task_id: 'trl-1',
+      run_at: '2024-01-01T11:00:00.000Z',
+      duration_ms: 200,
+      status: 'error',
+      result: null,
+      error: 'boom',
+    });
+
+    const rows = getTaskRunLogs('trl-1', 'grp-trl', 10);
+    expect(rows).toHaveLength(2);
+    // newest-first: 11:00 before 10:00
+    expect(rows[0].run_at).toBe('2024-01-01T11:00:00.000Z');
+    expect(rows[0].status).toBe('error');
+    expect(rows[0].error).toBe('boom');
+    expect(rows[1].run_at).toBe('2024-01-01T10:00:00.000Z');
+    expect(rows[1].status).toBe('success');
+    expect(rows[1].result).toBe('first');
+  });
+
+  it('respects the limit parameter', () => {
+    makeTask('trl-2', 'grp-trl2');
+    for (let i = 0; i < 5; i++) {
+      logTaskRun({
+        task_id: 'trl-2',
+        run_at: `2024-01-0${i + 1}T00:00:00.000Z`,
+        duration_ms: i * 10,
+        status: 'success',
+        result: `run-${i}`,
+        error: null,
+      });
+    }
+
+    const rows = getTaskRunLogs('trl-2', 'grp-trl2', 3);
+    expect(rows).toHaveLength(3);
+  });
+
+  it('is group-scoped: returns empty for wrong group_folder', () => {
+    makeTask('trl-3', 'grp-owner');
+    logTaskRun({
+      task_id: 'trl-3',
+      run_at: '2024-01-01T00:00:00.000Z',
+      duration_ms: 50,
+      status: 'success',
+      result: 'ok',
+      error: null,
+    });
+
+    // Same task_id but wrong group_folder → empty
+    const rows = getTaskRunLogs('trl-3', 'grp-other', 10);
+    expect(rows).toHaveLength(0);
+  });
+
+  it('returns empty array for unknown task_id', () => {
+    const rows = getTaskRunLogs('no-such-task', 'any-group', 10);
+    expect(rows).toHaveLength(0);
+  });
+
+  it('caps limit at 100', () => {
+    makeTask('trl-4', 'grp-cap');
+    // Insert 5 rows; request 9999 — should still return only 5
+    for (let i = 0; i < 5; i++) {
+      logTaskRun({
+        task_id: 'trl-4',
+        run_at: `2024-01-0${i + 1}T00:00:00.000Z`,
+        duration_ms: 10,
+        status: 'success',
+        result: null,
+        error: null,
+      });
+    }
+    const rows = getTaskRunLogs('trl-4', 'grp-cap', 9999);
+    // 9999 is capped to 100; 5 rows exist so 5 are returned
+    expect(rows).toHaveLength(5);
   });
 });

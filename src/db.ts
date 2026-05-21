@@ -1034,6 +1034,47 @@ export function logTaskRun(log: TaskRunLog): void {
   saveDatabase();
 }
 
+/** A single row returned by {@link getTaskRunLogs}. */
+export interface TaskRunLogRow {
+  run_at: string;
+  status: 'success' | 'error';
+  duration_ms: number;
+  result: string | null;
+  error: string | null;
+}
+
+/**
+ * Return recent run-log entries for a task, scoped by group ownership.
+ *
+ * @param taskId      - The scheduled task ID.
+ * @param groupFolder - The group_folder that must own the task (ownership check).
+ * @param limit       - Maximum number of rows to return (capped at 100).
+ * @returns Rows ordered newest-first, empty array if none or task not owned by group.
+ */
+export function getTaskRunLogs(
+  taskId: string,
+  groupFolder: string,
+  limit: number,
+): TaskRunLogRow[] {
+  const safeLimit = Math.min(Math.max(1, limit), 100);
+  const stmt = db.prepare(`
+    SELECT trl.run_at, trl.status, trl.duration_ms, trl.result, trl.error
+    FROM task_run_logs trl
+    JOIN scheduled_tasks st ON trl.task_id = st.id
+    WHERE trl.task_id = ? AND st.group_folder = ?
+    ORDER BY trl.run_at DESC
+    LIMIT ?
+  `);
+  stmt.bind([taskId, groupFolder, safeLimit]);
+
+  const rows: TaskRunLogRow[] = [];
+  while (stmt.step()) {
+    rows.push(stmt.getAsObject() as unknown as TaskRunLogRow);
+  }
+  stmt.free();
+  return rows;
+}
+
 export function getRouterState(key: string): string | undefined {
   const stmt = db.prepare('SELECT value FROM router_state WHERE key = ?');
   stmt.bind([key]);

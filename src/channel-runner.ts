@@ -49,6 +49,8 @@ import {
   getNewMessages,
   getRecentToolJobsForGroup,
   getRouterState,
+  getTaskById,
+  getTaskRunLogs,
   getTasksForGroup,
   initDatabase,
   pruneOldToolJobs,
@@ -59,6 +61,7 @@ import {
   setSession,
   storeChatMetadata,
   storeMessage,
+  type TaskRunLogRow,
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath, isValidGroupFolder } from './group-folder.js';
@@ -1204,6 +1207,8 @@ export async function handleSecretCommand(
 // ── /schedule command ──────────────────────────────────────────────────────
 
 
+const MAX_SCHEDULE_HISTORY_LIMIT = 100;
+
 const SCHEDULE_HELP = [
   'Schedule commands:',
   '  /schedule add interval <ms> <prompt>    — run every <ms> milliseconds',
@@ -1211,8 +1216,26 @@ const SCHEDULE_HELP = [
   '  /schedule add once <iso-date> <prompt>  — run once at the given time',
   '  /schedule list                          — list tasks for this group',
   '  /schedule remove <id>                   — remove a task by id',
+  '  /schedule history <id>                  — recent runs (default 10 rows)',
+  '  /schedule history <id> <limit>          — at most <limit> rows (max 100)',
   '  /schedule help                          — show this help',
 ].join('\n');
+
+function truncateScheduleResult(s: string | null, max = 120): string {
+  if (!s) return '';
+  return s.length <= max ? s : s.slice(0, max) + '…';
+}
+
+function formatTaskRunLogRow(row: TaskRunLogRow, index: number): string {
+  const status = row.status === 'success' ? '[ok]' : '[error]';
+  const dur = `${row.duration_ms}ms`;
+  const detail =
+    row.status === 'error'
+      ? truncateScheduleResult(row.error)
+      : truncateScheduleResult(row.result);
+  const detailStr = detail ? `  ${detail}` : '';
+  return `${index + 1}. ${row.run_at} ${status} ${dur}${detailStr}`;
+}
 
 export function isScheduleCommand(message: string): boolean {
   return /^\/schedule(\s|$)/.test(message.trim());
@@ -1354,6 +1377,37 @@ export async function handleScheduleCommand(
         return `Task '${id}' not found for this group.`;
       }
       return `Removed task '${id}'.`;
+    }
+
+    case 'history': {
+      const taskId = parts[2];
+      if (!taskId) return 'Usage: /schedule history <id> [limit]';
+
+      // Verify the task exists globally first
+      const task = getTaskById(taskId);
+      if (!task) return `Task '${taskId}' not found.`;
+
+      // Group ownership check — task_id exists but belongs to another group
+      if (task.group_folder !== groupFolder) return `Task '${taskId}' not found.`;
+
+      const rawLimit = parts[3];
+      let limit = 10;
+      if (rawLimit !== undefined) {
+        const parsed = Number(rawLimit);
+        if (Number.isNaN(parsed) || !Number.isInteger(parsed) || parsed < 1) {
+          return `Invalid limit '${rawLimit}'. Must be a positive integer.`;
+        }
+        limit = Math.min(parsed, MAX_SCHEDULE_HISTORY_LIMIT);
+      }
+
+      const rows = getTaskRunLogs(taskId, groupFolder, limit);
+      if (rows.length === 0) {
+        return `No run history for task '${taskId}' yet.`;
+      }
+
+      const header = `Run history for '${taskId}' (${rows.length} row${rows.length === 1 ? '' : 's'}):`;
+      const lines = rows.map((row, i) => formatTaskRunLogRow(row, i));
+      return [header, ...lines].join('\n');
     }
 
     default:

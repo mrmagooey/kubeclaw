@@ -44,6 +44,8 @@ vi.mock('./db.js', async (importOriginal) => {
     appendConversationMessage: vi.fn(),
     getNewMessages: vi.fn().mockReturnValue({ messages: [], newTimestamp: '' }),
     createTask: vi.fn(),
+    getTaskById: vi.fn().mockReturnValue(undefined),
+    getTaskRunLogs: vi.fn().mockReturnValue([]),
     getTasksForGroup: vi.fn().mockReturnValue([]),
     deleteTaskForGroup: vi.fn().mockReturnValue(true),
     recordSpecialistUsage: vi
@@ -2727,6 +2729,140 @@ describe('handleScheduleCommand — remove (AC3 & AC4)', () => {
 describe('HELP_TEXT includes /schedule', () => {
   it('mentions /schedule in the help text', () => {
     expect(HELP_TEXT).toMatch(/\/schedule/);
+  });
+});
+
+describe('handleScheduleCommand — history (Story 60)', () => {
+  const STUB_ROWS = [
+    {
+      run_at: '2025-01-02T10:00:00.000Z',
+      status: 'success' as const,
+      duration_ms: 250,
+      result: 'All done',
+      error: null,
+    },
+    {
+      run_at: '2025-01-01T09:00:00.000Z',
+      status: 'error' as const,
+      duration_ms: 100,
+      result: null,
+      error: 'Something went wrong',
+    },
+  ];
+
+  const TASK_OWNER = {
+    id: 'task-abc',
+    group_folder: 'mygroup',
+    chat_jid: 'jid@g.us',
+    prompt: 'do thing',
+    schedule_type: 'once' as const,
+    schedule_value: '',
+    context_mode: 'isolated' as const,
+    next_run: null,
+    last_run: null,
+    last_result: null,
+    status: 'active' as const,
+    created_at: '2025-01-01T00:00:00.000Z',
+  };
+
+  beforeEach(() => {
+    vi.mocked(db.getTaskById).mockReset();
+    vi.mocked(db.getTaskRunLogs).mockReset();
+  });
+
+  it('returns both rows with timestamps and status tags', async () => {
+    vi.mocked(db.getTaskById).mockReturnValue(TASK_OWNER);
+    vi.mocked(db.getTaskRunLogs).mockReturnValue(STUB_ROWS);
+
+    const reply = await handleScheduleCommand('mygroup', 'jid@g.us', '/schedule history task-abc');
+
+    expect(reply).toContain('2025-01-02T10:00:00.000Z');
+    expect(reply).toContain('[ok]');
+    expect(reply).toContain('All done');
+    expect(reply).toContain('2025-01-01T09:00:00.000Z');
+    expect(reply).toContain('[error]');
+    expect(reply).toContain('Something went wrong');
+  });
+
+  it('shows header with task id and row count', async () => {
+    vi.mocked(db.getTaskById).mockReturnValue(TASK_OWNER);
+    vi.mocked(db.getTaskRunLogs).mockReturnValue(STUB_ROWS);
+
+    const reply = await handleScheduleCommand('mygroup', 'jid@g.us', '/schedule history task-abc');
+    expect(reply).toContain('task-abc');
+    expect(reply).toContain('2 rows');
+  });
+
+  it('returns not-found for unknown task id', async () => {
+    vi.mocked(db.getTaskById).mockReturnValue(undefined);
+
+    const reply = await handleScheduleCommand('mygroup', 'jid@g.us', '/schedule history no-such-task');
+    expect(reply).toMatch(/not found/i);
+  });
+
+  it('returns not-found when task belongs to another group', async () => {
+    const otherGroupTask = { ...TASK_OWNER, group_folder: 'other-group' };
+    vi.mocked(db.getTaskById).mockReturnValue(otherGroupTask);
+
+    const reply = await handleScheduleCommand('mygroup', 'jid@g.us', '/schedule history task-abc');
+    expect(reply).toMatch(/not found/i);
+  });
+
+  it('respects an explicit row limit argument', async () => {
+    vi.mocked(db.getTaskById).mockReturnValue(TASK_OWNER);
+    vi.mocked(db.getTaskRunLogs).mockReturnValue(STUB_ROWS);
+
+    await handleScheduleCommand('mygroup', 'jid@g.us', '/schedule history task-abc 3');
+    expect(db.getTaskRunLogs).toHaveBeenCalledWith('task-abc', 'mygroup', 3);
+  });
+
+  it('returns "no history yet" when run logs are empty', async () => {
+    vi.mocked(db.getTaskById).mockReturnValue(TASK_OWNER);
+    vi.mocked(db.getTaskRunLogs).mockReturnValue([]);
+
+    const reply = await handleScheduleCommand('mygroup', 'jid@g.us', '/schedule history task-abc');
+    expect(reply).toMatch(/no run history/i);
+  });
+
+  it('truncates long result to ~120 chars', async () => {
+    const longResult = 'x'.repeat(200);
+    const rows = [{ run_at: '2025-01-01T00:00:00.000Z', status: 'success' as const, duration_ms: 10, result: longResult, error: null }];
+    vi.mocked(db.getTaskById).mockReturnValue(TASK_OWNER);
+    vi.mocked(db.getTaskRunLogs).mockReturnValue(rows);
+
+    const reply = await handleScheduleCommand('mygroup', 'jid@g.us', '/schedule history task-abc');
+    expect(reply).toContain('…');
+    expect(reply).not.toContain(longResult);
+  });
+
+  it('shows error detail when status is error', async () => {
+    const rows = [{ run_at: '2025-01-01T00:00:00.000Z', status: 'error' as const, duration_ms: 10, result: null, error: 'Task timed out' }];
+    vi.mocked(db.getTaskById).mockReturnValue(TASK_OWNER);
+    vi.mocked(db.getTaskRunLogs).mockReturnValue(rows);
+
+    const reply = await handleScheduleCommand('mygroup', 'jid@g.us', '/schedule history task-abc');
+    expect(reply).toContain('Task timed out');
+    expect(reply).toContain('[error]');
+  });
+
+  it('SCHEDULE_HELP includes /schedule history', async () => {
+    vi.mocked(db.getTaskById).mockReturnValue(TASK_OWNER);
+    vi.mocked(db.getTaskRunLogs).mockReturnValue([]);
+
+    const reply = await handleScheduleCommand('mygroup', 'jid@g.us', '/schedule help');
+    expect(reply).toMatch(/history/i);
+  });
+
+  it('rejects non-integer limit', async () => {
+    vi.mocked(db.getTaskById).mockReturnValue(TASK_OWNER);
+
+    const reply = await handleScheduleCommand('mygroup', 'jid@g.us', '/schedule history task-abc abc');
+    expect(reply).toMatch(/invalid limit/i);
+  });
+
+  it('returns usage for missing task id', async () => {
+    const reply = await handleScheduleCommand('mygroup', 'jid@g.us', '/schedule history');
+    expect(reply).toMatch(/usage/i);
   });
 });
 
