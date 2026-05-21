@@ -1996,7 +1996,7 @@ status: passing 5/5
 - LLM-dependence: **none**.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-schedule-runs --create-namespace`, `--set namespace=kubeclaw-e2e-schedule-runs`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14163`.
 
-status: drafted
+status: passing 5/5
 
 ## Story 81: `GET /audit` audit log of destructive admin actions
 
@@ -2032,7 +2032,7 @@ status: drafted
 - LLM-dependence: **none**.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-audit --create-namespace`, `--set namespace=kubeclaw-e2e-audit`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14164`.
 
-status: drafted
+status: passing 5/5
 
 ## Story 82: `PATCH /history/<id>` redact or edit a single message
 
@@ -2058,4 +2058,4 @@ status: drafted
 - LLM-dependence: **none**.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-history-edit --create-namespace`, `--set namespace=kubeclaw-e2e-history-edit`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14165`.
 
-status: drafted
+status: passing 5/5
