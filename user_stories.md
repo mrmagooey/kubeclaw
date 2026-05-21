@@ -1512,3 +1512,78 @@ status: passing 5/5
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-version --create-namespace`, `--set namespace=kubeclaw-e2e-version`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14144`.
 
 status: passing 5/5
+
+## Story 62: `/schedule pause <id>` and `/schedule resume <id>` toggle a scheduled task
+
+**As a** KubeClaw user with a recurring scheduled task
+**I want** to pause and resume tasks by id without recreating them
+**So that** I can temporarily disable a noisy task and restore it without losing the configuration
+
+### Acceptance criteria
+
+1. After `/schedule add` creates a recurring task, `/schedule pause <id>` returns confirmation and the task's `status` column in `scheduled_tasks` becomes `'paused'`; subsequent fires of the scheduler tick skip paused tasks.
+2. `/schedule resume <id>` on a paused task returns confirmation and the status returns to `'active'` — the task fires at the next interval boundary.
+3. `/schedule pause <unknown-id>` and `/schedule pause <id-from-another-group>` both return "not found" (identical wording — no enumeration).
+4. `/schedule list` annotates paused tasks with `[paused]` prefix; active tasks are unchanged.
+5. Unit test: stub IPC sender; assert `handleScheduleCommand('/schedule pause task-abc', deps)` sends the appropriate IPC verb (or directly updates the DB if the implementation chooses DB writes from the channel) and returns confirmation.
+
+### Notes
+
+- Look at how `pause_task` / `resume_task` IPC verbs are currently dispatched (the gap-analysis confirmed they exist in `src/k8s/ipc-redis.ts`). If they're already wired to update DB rows, the channel-side change is just to call them.
+- Alternative: the channel can update the DB directly if `scheduled_tasks` is in the channel-side SQLite. Pick the simpler approach and justify.
+- The scheduler's tick loop in `src/task-scheduler.ts` must skip rows where `status = 'paused'`. Verify this guard exists or add it.
+- Two-tier ownership: handler-level `getTaskById` check returns "not found" for cross-group + unknown id with identical wording.
+- Add `/schedule pause <id>` and `/schedule resume <id>` to SCHEDULE_HELP and HELP_TEXT.
+- LLM-dependence: **none**.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-schedule-pause --create-namespace`, `--set namespace=kubeclaw-e2e-schedule-pause`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14145`.
+
+status: drafted
+
+## Story 63: `/skills history` exposes skill_usage load stats
+
+**As a** KubeClaw user who has accepted learned skills
+**I want** `/skills history` to list which skills have been loaded into recent conversations and how often
+**So that** I can decide which accepted skills are pulling weight and which are dead weight — data the system already collects but never exposes
+
+### Acceptance criteria
+
+1. After a conversation that loads at least one skill, `/skills history` returns a reply with at least one row in format `<count>x  <skill-name>` (or similar), aggregated from `skill_usage`. Aggregation is by `skill_name`, summed over `load_count` (or row count).
+2. With no skill loads in the group, `/skills history` returns "No skill load history for this group."
+3. `/skills history 5` (optional limit arg) returns at most 5 rows ordered by count desc. `/skills history 0` and `/skills history abc` fall back to default 10. Limit capped at `MAX_SKILLS_HISTORY_LIMIT = 100`.
+4. Unit test: stub `getSkillLoadStats` returning 2 rows; assert `handleSkillsCommand('/skills history', deps)` reply contains both skill names.
+5. Add `/skills history [limit]` to SKILLS_HELP and HELP_TEXT.
+
+### Notes
+
+- `getSkillLoadStats(groupFolder, limit?)` already exists in `src/db.ts` per gap-analysis. Verify the signature; if it doesn't take a `limit` arg, add it.
+- Add a `'history'` case to the switch in `handleSkillsCommand` in `src/runtime/skills-commands.ts`. Follow the same pattern as Story 58 (`/specialists history`) and Story 60 (`/schedule history`): use `Number.isNaN`, apply cap, group-scoped DB query.
+- Format aggregated count: `<count>x  <skill-name>` newest-first (highest count first).
+- LLM-dependence: **none**.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-skills-history --create-namespace`, `--set namespace=kubeclaw-e2e-skills-history`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14146`.
+
+status: drafted
+
+## Story 64: `GET /history/<id>` fetches a single message by id
+
+**As a** KubeClaw user building a UI client
+**I want** to fetch a single conversation-history row by id
+**So that** the UI can confirm a message after creation, prefill an edit form, or render a permalink — symmetry with the existing `DELETE /history/<id>`
+
+### Acceptance criteria
+
+1. Authenticated `GET /history/<id>` for an id in the user's group returns HTTP 200 with `Content-Type: application/json`. Body is an object with at least the keys `id`, `role`, `content`, `timestamp` (or `created_at`, whichever the existing schema uses).
+2. `GET /history/<unknown-id>` returns HTTP 404.
+3. `GET /history/<id-from-another-group>` returns HTTP 404 (group ownership enforced — same wording as AC2; no enumeration).
+4. Unauthenticated `GET /history/<id>` returns HTTP 401.
+5. `POST /history/<id>` returns HTTP 405 with `Allow: GET, DELETE`. `HEAD /history/<id>` returns same headers as GET with no body.
+
+### Notes
+
+- Extend the existing `/history/<id>` route block (the one Story 56 added for DELETE). Add a `GET` branch (and `HEAD` branch) before/alongside the `DELETE` branch.
+- Add `getMessageById(id: string, groupFolder: string): ConversationHistoryRow | null` to `src/db.ts`. SQL: `SELECT id, role, content, timestamp, ... FROM conversation_history WHERE id = ? AND group_folder = ? LIMIT 1`. Returns `null` when no row OR row belongs to another group (no enumeration distinction).
+- Update `CORS_PATH_METHODS` for `/history/` prefix to include `GET` and `HEAD` (in addition to `DELETE`).
+- Update the 405 `pathMethods` table.
+- LLM-dependence: **none**.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-history-id --create-namespace`, `--set namespace=kubeclaw-e2e-history-id`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14147`.
+
+status: drafted
