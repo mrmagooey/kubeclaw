@@ -1766,7 +1766,7 @@ status: passing 5/5
 - LLM-dependence: **none**.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-schedule-write --create-namespace`, `--set namespace=kubeclaw-e2e-schedule-write`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14154`.
 
-status: drafted
+status: passing 5/5
 
 ## Story 72: `GET /search?q=` HTTP endpoint for full-text history search
 
@@ -1792,7 +1792,7 @@ status: drafted
 - LLM-dependence: **none**.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-search-http --create-namespace`, `--set namespace=kubeclaw-e2e-search-http`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14155`.
 
-status: drafted
+status: passing 5/5
 
 ## Story 73: `GET /secrets` and `DELETE /secrets/<type>` and `GET /secrets/catalog`
 
@@ -1817,4 +1817,4 @@ status: drafted
 - LLM-dependence: **none**.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-secrets-http --create-namespace`, `--set namespace=kubeclaw-e2e-secrets-http`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14156`.
 
-status: drafted
+status: passing 5/5
