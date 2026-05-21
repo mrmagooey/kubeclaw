@@ -58,6 +58,8 @@ spec:
             seccompProfile:
               type: RuntimeDefault
           env:
+            - name: KUBECLAW_VERSION
+              value: {{ $.Chart.AppVersion | quote }}
             - name: KUBECLAW_MODE
               value: channel
             - name: KUBECLAW_CHANNEL

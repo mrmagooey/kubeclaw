@@ -19,6 +19,8 @@ vi.mock('../config.js', () => ({
   ASSISTANT_NAME: 'Andy',
   TRIGGER_PATTERN: /^@Andy\b/i,
   GROUPS_DIR: '/tmp/test-groups',
+  RATE_LIMIT_WINDOW_MS: 60000,
+  TOOL_JOBS_RETENTION_DAYS: 30,
 }));
 vi.mock('../logger.js', () => ({
   logger: {
@@ -77,6 +79,7 @@ import fs from 'node:fs';
 import {
   HttpChannel,
   HttpChannelOpts,
+  buildVersionPayload,
   detectMediaType,
   getAttachmentUsage,
 } from './http.js';
@@ -2671,6 +2674,137 @@ describe('detectMediaType', () => {
       expect(bobRes._status).toBe(200);
 
       await channel.disconnect();
+    });
+  });
+
+  // ── GET /version — build info ─────────────────────────────────────────────
+
+  describe('GET /version', () => {
+    it('returns 200 with Content-Type application/json', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/version', method: 'GET', auth: null });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      expect(res._headers['Content-Type']).toBe('application/json');
+      await channel.disconnect();
+    });
+
+    it('requires no authentication (auth: null still returns 200)', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/version', method: 'GET', auth: null });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      await channel.disconnect();
+    });
+
+    it('response body contains all 4 required keys', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/version', method: 'GET', auth: null });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      const parsed = JSON.parse(res._body);
+      expect(parsed).toHaveProperty('version');
+      expect(parsed).toHaveProperty('model');
+      expect(parsed).toHaveProperty('rateLimitWindowMs');
+      expect(parsed).toHaveProperty('toolJobsRetentionDays');
+      await channel.disconnect();
+    });
+
+    it('returns 405 with Allow: GET, HEAD for POST /version', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/version', method: 'POST', auth: null });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(405);
+      expect(res._headers['Allow']).toBe('GET, HEAD');
+      await channel.disconnect();
+    });
+
+    it('HEAD /version returns 200 with no body but correct headers', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/version', method: 'HEAD', auth: null });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      expect(res._headers['Content-Type']).toBe('application/json');
+      // HEAD must not send a body — only writeHead called, not end(body)
+      // The mock captures body via end(data?) — body should be empty string
+      expect(res._body).toBe('');
+      await channel.disconnect();
+    });
+  });
+
+  // ── buildVersionPayload() unit tests ─────────────────────────────────────
+
+  describe('buildVersionPayload()', () => {
+    it('returns "dev" when KUBECLAW_VERSION env var is absent', () => {
+      const saved = process.env.KUBECLAW_VERSION;
+      delete process.env.KUBECLAW_VERSION;
+      try {
+        const payload = buildVersionPayload();
+        expect(payload.version).toBe('dev');
+      } finally {
+        if (saved !== undefined) process.env.KUBECLAW_VERSION = saved;
+      }
+    });
+
+    it('returns env var value when KUBECLAW_VERSION is set', () => {
+      const saved = process.env.KUBECLAW_VERSION;
+      process.env.KUBECLAW_VERSION = '1.2.3-abc';
+      try {
+        const payload = buildVersionPayload();
+        expect(payload.version).toBe('1.2.3-abc');
+      } finally {
+        if (saved !== undefined) {
+          process.env.KUBECLAW_VERSION = saved;
+        } else {
+          delete process.env.KUBECLAW_VERSION;
+        }
+      }
+    });
+
+    it('returns model from DEFAULT_DIRECT_MODEL', () => {
+      const payload = buildVersionPayload();
+      expect(payload.model).toBe('gpt-4o');
+    });
+
+    it('returns rateLimitWindowMs as number', () => {
+      const payload = buildVersionPayload();
+      expect(payload.rateLimitWindowMs).toBe(60000);
+    });
+
+    it('returns toolJobsRetentionDays as number', () => {
+      const payload = buildVersionPayload();
+      expect(payload.toolJobsRetentionDays).toBe(30);
+    });
+
+    it('all required keys are present', () => {
+      const payload = buildVersionPayload();
+      expect(Object.keys(payload)).toEqual(
+        expect.arrayContaining([
+          'version',
+          'model',
+          'rateLimitWindowMs',
+          'toolJobsRetentionDays',
+        ]),
+      );
     });
   });
 

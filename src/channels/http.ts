@@ -8,7 +8,12 @@ import {
 } from 'node:http';
 import path from 'node:path';
 
-import { ASSISTANT_NAME, GROUPS_DIR } from '../config.js';
+import {
+  ASSISTANT_NAME,
+  GROUPS_DIR,
+  RATE_LIMIT_WINDOW_MS,
+  TOOL_JOBS_RETENTION_DAYS,
+} from '../config.js';
 import {
   appendConversationMessage,
   clearConversationHistory,
@@ -29,6 +34,7 @@ import {
   OnInboundMessage,
   RegisteredGroup,
 } from '../types.js';
+import { DEFAULT_DIRECT_MODEL } from '../runtime/llm-client.js';
 
 /** Result of a single readiness sub-check. */
 export type CheckResult = 'ok' | 'failed' | 'unreachable';
@@ -350,6 +356,25 @@ form.addEventListener('submit', async (e) => {
 </body>
 </html>`;
 
+/** Build the JSON payload for GET /version. Exported for unit testing. */
+export function buildVersionPayload(): {
+  version: string | null;
+  model: string | null;
+  rateLimitWindowMs: number | null;
+  toolJobsRetentionDays: number | null;
+} {
+  return {
+    version: process.env.KUBECLAW_VERSION ?? 'dev',
+    model: DEFAULT_DIRECT_MODEL ?? null,
+    rateLimitWindowMs: Number.isFinite(RATE_LIMIT_WINDOW_MS)
+      ? RATE_LIMIT_WINDOW_MS
+      : null,
+    toolJobsRetentionDays: Number.isFinite(TOOL_JOBS_RETENTION_DAYS)
+      ? TOOL_JOBS_RETENTION_DAYS
+      : null,
+  };
+}
+
 export class HttpChannel implements Channel {
   name = 'http';
   readonly capabilities: ChannelCapabilities = {
@@ -606,6 +631,7 @@ export class HttpChannel implements Channel {
     '/': ['GET'],
     '/healthz': ['GET', 'HEAD'],
     '/readyz': ['GET', 'HEAD'],
+    '/version': ['GET', 'HEAD'],
     '/stream': ['GET'],
     '/message/rate-limit': ['GET', 'HEAD'],
     '/message': ['POST'],
@@ -706,6 +732,31 @@ export class HttpChannel implements Channel {
         } else {
           res.end(body);
         }
+        return;
+      }
+      // Other methods fall through to pathMethods 405 handler below
+    }
+
+    // Version info — no auth required (parity with /healthz)
+    if (url.pathname === '/version') {
+      if (req.method === 'GET') {
+        const body = JSON.stringify(buildVersionPayload());
+        res.writeHead(200, this.addCorsHeaders({
+          'Content-Type': 'application/json',
+          'Content-Length': String(Buffer.byteLength(body)),
+          'Cache-Control': 'no-store',
+        }));
+        res.end(body);
+        return;
+      }
+      if (req.method === 'HEAD') {
+        const body = JSON.stringify(buildVersionPayload());
+        res.writeHead(200, this.addCorsHeaders({
+          'Content-Type': 'application/json',
+          'Content-Length': String(Buffer.byteLength(body)),
+          'Cache-Control': 'no-store',
+        }));
+        res.end();
         return;
       }
       // Other methods fall through to pathMethods 405 handler below
@@ -1299,6 +1350,7 @@ export class HttpChannel implements Channel {
       '/': ['GET'],
       '/healthz': ['GET', 'HEAD'],
       '/readyz': ['GET', 'HEAD'],
+      '/version': ['GET', 'HEAD'],
       '/stream': ['GET'],
       '/message/rate-limit': ['GET', 'HEAD'],
       '/message': ['POST'],

@@ -73,6 +73,20 @@ export const CONTAINER_MAX_OUTPUT_SIZE = parseInt(
 ); // 10MB default
 export const IDLE_TIMEOUT = parseInt(process.env.IDLE_TIMEOUT || '1800000', 10); // 30min default — how long to keep container alive after last result
 
+// --- Rate-limit window (HTTP channel) ---
+// Rolling window size (ms) for per-user message rate limiting.
+export const RATE_LIMIT_WINDOW_MS = parseInt(
+  process.env.RATE_LIMIT_WINDOW_MS || '60000',
+  10,
+);
+
+// --- Tool-job retention (channel runner) ---
+// Resolved tool-job rows older than this many days are pruned.
+export const TOOL_JOBS_RETENTION_DAYS = parseInt(
+  process.env.TOOL_JOBS_RETENTION_DAYS ?? '30',
+  10,
+);
+
 function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
