@@ -178,6 +178,10 @@ httpChannel:
     # Use "*" to allow any origin (default), or set to a specific origin such
     # as "https://app.example.com" to restrict cross-origin access.
     origin: "*"
+  # Number of days to retain resolved tool_jobs rows in the channel SQLite DB.
+  # Resolved rows older than this are deleted once per hour.
+  # Set to 0 to disable pruning entirely.
+  toolJobsRetentionDays: 30
 
 # Default resource limits for channel pods.
 channelPod:

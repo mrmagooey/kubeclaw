@@ -139,6 +139,8 @@ spec:
                   optional: {{ default false .optional }}
             {{- end }}
             {{- end }}
+            - name: TOOL_JOBS_RETENTION_DAYS
+              value: {{ $.Values.httpChannel.toolJobsRetentionDays | quote }}
             {{- if eq (default $name $cfg.type) "http" }}
             - name: HTTP_CHANNEL_RATE_LIMIT_PER_USER_MESSAGES_PER_MINUTE
               value: {{ $.Values.httpChannel.rateLimit.perUserMessagesPerMinute | quote }}

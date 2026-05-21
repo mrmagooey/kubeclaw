@@ -50,6 +50,7 @@ import {
   getRouterState,
   getTasksForGroup,
   initDatabase,
+  pruneOldToolJobs,
   recordSpecialistUsage,
   setRegisteredGroup,
   setRouterState,
@@ -2466,6 +2467,59 @@ function startSkillCuratorInterval(): void {
   }, CURATOR_INTERVAL_MS).unref();
 }
 
+// ── Tool-job prune scheduler ──────────────────────────────────────────────────
+
+/**
+ * How many days to retain resolved tool_jobs rows.
+ * 0 = disabled (no pruning). Defaults to 30 days.
+ * Injected via TOOL_JOBS_RETENTION_DAYS env var (set from Helm value
+ * httpChannel.toolJobsRetentionDays).
+ */
+export const TOOL_JOBS_RETENTION_DAYS = parseInt(
+  process.env.TOOL_JOBS_RETENTION_DAYS ?? '30',
+  10,
+);
+
+/**
+ * The prune interval in milliseconds. Runs once per hour by default.
+ * Exported for testing.
+ */
+export const TOOL_JOBS_PRUNE_INTERVAL_MS = Number(
+  process.env.TOOL_JOBS_PRUNE_INTERVAL_MS ?? 60 * 60 * 1000,
+);
+
+/**
+ * Start a low-frequency interval that deletes resolved tool_jobs rows older
+ * than TOOL_JOBS_RETENTION_DAYS.
+ *
+ * Fires once per hour (3 600 000 ms) — well below the poll tick frequency so
+ * it has no measurable effect on message throughput.
+ *
+ * When TOOL_JOBS_RETENTION_DAYS=0 the function returns immediately without
+ * scheduling anything.
+ */
+export function startToolJobPruneInterval(): void {
+  if (!Number.isFinite(TOOL_JOBS_RETENTION_DAYS) || TOOL_JOBS_RETENTION_DAYS <= 0) {
+    logger.info(
+      'tool-job prune disabled (TOOL_JOBS_RETENTION_DAYS=0)',
+    );
+    return;
+  }
+  setInterval(() => {
+    try {
+      const deleted = pruneOldToolJobs(TOOL_JOBS_RETENTION_DAYS);
+      if (deleted > 0) {
+        logger.info(
+          { deleted, retentionDays: TOOL_JOBS_RETENTION_DAYS },
+          'Pruned old tool_jobs rows',
+        );
+      }
+    } catch (err) {
+      logger.warn({ err }, 'tool-job prune interval iteration failed');
+    }
+  }, TOOL_JOBS_PRUNE_INTERVAL_MS).unref();
+}
+
 /**
  * Build the reusable IPC client for credential tool calls.
  * Wraps createSecretIpcFn to match the IpcClient call signature.
@@ -2552,6 +2606,7 @@ async function main(): Promise<void> {
   await initDatabase();
   logger.info(`Database initialized (channel: ${KUBECLAW_CHANNEL})`);
   startSkillCuratorInterval();
+  startToolJobPruneInterval();
   loadState();
   await loadChannelPlugins('/workspace/plugins');
   registerCredentialTools(getDirectLLMRunner());

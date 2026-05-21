@@ -48,6 +48,10 @@ import {
   getSkillsLoadedSince,
   searchConversations,
   backfillFts,
+  recordToolJob,
+  resolveToolJob,
+  getActiveToolJobs,
+  pruneOldToolJobs,
 } from './db.js';
 import { JobACL } from './types.js';
 
@@ -2135,5 +2139,111 @@ describe('clearConversationHistory FTS regression', () => {
       `SELECT id FROM conversation_history_fts WHERE conversation_history_fts MATCH 'xqzg' AND group_folder = 'bystander-group'`,
     );
     expect(bystander[0].values.length).toBe(1);
+  });
+});
+
+// --- pruneOldToolJobs (Story 55) ---
+
+describe('pruneOldToolJobs', () => {
+  /**
+   * Insert a resolved tool_job row with an explicit resolved_at timestamp.
+   * We write directly via db.run to control resolved_at values.
+   */
+  function insertResolved(
+    jobId: string,
+    resolvedAt: string,
+    status: 'completed' | 'interrupted' | 'timeout' = 'completed',
+  ): void {
+    db.run(
+      `INSERT INTO tool_jobs (job_id, group_folder, chat_jid, status, created_at, resolved_at, specialist_name)
+       VALUES (?, 'grp', 'jid@test', ?, datetime('now', '-10 days'), ?, '')`,
+      [jobId, status, resolvedAt],
+    );
+  }
+
+  it('deletes 2 old resolved rows and leaves 1 recent row intact', () => {
+    // 2 days ago — older than retention=1
+    insertResolved('job-old-1', new Date(Date.now() - 2 * 86400_000).toISOString());
+    insertResolved('job-old-2', new Date(Date.now() - 3 * 86400_000).toISOString());
+    // 1 hour ago — within retention=1
+    insertResolved('job-recent', new Date(Date.now() - 3600_000).toISOString());
+
+    const deleted = pruneOldToolJobs(1);
+
+    expect(deleted).toBe(2);
+
+    const remaining = db.exec(
+      `SELECT job_id FROM tool_jobs WHERE status != 'active'`,
+    );
+    expect(remaining[0].values.length).toBe(1);
+    expect(remaining[0].values[0][0]).toBe('job-recent');
+  });
+
+  it('never prunes active rows even when created_at is older than the retention window', () => {
+    // Insert an active job with a very old created_at
+    db.run(
+      `INSERT INTO tool_jobs (job_id, group_folder, chat_jid, status, created_at, specialist_name)
+       VALUES ('active-old', 'grp', 'jid@test', 'active', datetime('now', '-100 days'), '')`,
+    );
+
+    const deleted = pruneOldToolJobs(1);
+
+    expect(deleted).toBe(0);
+    const active = getActiveToolJobs();
+    expect(active.some((r) => r.job_id === 'active-old')).toBe(true);
+  });
+
+  it('returns 0 when retentionDays=0 (disabled) without deleting anything', () => {
+    insertResolved('job-a', new Date(Date.now() - 5 * 86400_000).toISOString());
+    insertResolved('job-b', new Date(Date.now() - 10 * 86400_000).toISOString());
+
+    const deleted = pruneOldToolJobs(0);
+
+    expect(deleted).toBe(0);
+    const all = db.exec(`SELECT COUNT(*) FROM tool_jobs`);
+    expect(all[0].values[0][0]).toBe(2);
+  });
+
+  it('returns 0 and leaves the DB untouched when nothing qualifies', () => {
+    // Insert a job resolved only 1 hour ago (retention=1 day - not prunable)
+    insertResolved('job-fresh', new Date(Date.now() - 3600_000).toISOString());
+
+    const deleted = pruneOldToolJobs(1);
+
+    expect(deleted).toBe(0);
+    const all = db.exec(`SELECT COUNT(*) FROM tool_jobs`);
+    expect(all[0].values[0][0]).toBe(1);
+  });
+
+  it('correctly handles rows with NULL resolved_at (never pruned)', () => {
+    // Insert a completed row with no resolved_at — should be safe from pruning
+    db.run(
+      `INSERT INTO tool_jobs (job_id, group_folder, chat_jid, status, created_at, resolved_at, specialist_name)
+       VALUES ('no-resolved-at', 'grp', 'jid@test', 'completed', datetime('now', '-100 days'), NULL, '')`,
+    );
+
+    const deleted = pruneOldToolJobs(1);
+
+    expect(deleted).toBe(0);
+  });
+
+  it('returns 0 and is a no-op when retentionDays is NaN', () => {
+    insertResolved('job-a', new Date(Date.now() - 5 * 86400_000).toISOString());
+
+    const deleted = pruneOldToolJobs(NaN);
+
+    expect(deleted).toBe(0);
+    const all = db.exec(`SELECT COUNT(*) FROM tool_jobs`);
+    expect(all[0].values[0][0]).toBe(1);
+  });
+
+  it('returns 0 and is a no-op when retentionDays is undefined', () => {
+    insertResolved('job-b', new Date(Date.now() - 10 * 86400_000).toISOString());
+
+    const deleted = pruneOldToolJobs(undefined as unknown as number);
+
+    expect(deleted).toBe(0);
+    const all = db.exec(`SELECT COUNT(*) FROM tool_jobs`);
+    expect(all[0].values[0][0]).toBe(1);
   });
 });

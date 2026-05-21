@@ -2112,3 +2112,44 @@ export function getRecentToolJobsForGroup(
     specialist_name: (row[7] as string | null) ?? '',
   }));
 }
+
+/**
+ * Delete resolved tool_jobs rows older than `retentionDays`.
+ *
+ * Rules:
+ * - Only rows with status != 'active' are eligible.
+ * - Pass retentionDays=0 to disable pruning (no rows are deleted).
+ * - Returns the number of rows deleted.
+ *
+ * SQL expression: resolved_at must be non-NULL and older than the window.
+ */
+export function pruneOldToolJobs(retentionDays: number): number {
+  if (!Number.isFinite(retentionDays) || retentionDays <= 0) return 0;
+
+  // sql.js doesn't expose affected row count from db.run directly, so we
+  // count matching rows first, delete, then return the pre-count.
+  const countResult = db.exec(
+    `SELECT COUNT(*) FROM tool_jobs
+     WHERE status != 'active'
+       AND resolved_at IS NOT NULL
+       AND datetime(resolved_at) < datetime('now', '-' || ? || ' days')`,
+    [retentionDays],
+  );
+  const deleted =
+    countResult.length > 0
+      ? (countResult[0].values[0][0] as number)
+      : 0;
+
+  if (deleted > 0) {
+    db.run(
+      `DELETE FROM tool_jobs
+       WHERE status != 'active'
+         AND resolved_at IS NOT NULL
+         AND datetime(resolved_at) < datetime('now', '-' || ? || ' days')`,
+      [retentionDays],
+    );
+    saveDatabase();
+  }
+
+  return deleted;
+}
