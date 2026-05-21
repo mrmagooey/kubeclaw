@@ -1292,3 +1292,74 @@ status: drafted
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-export --create-namespace`, `--set namespace=kubeclaw-e2e-export`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14135`.
 
 status: drafted
+
+## Story 53: Non-slash messages preceding a slash command are not silently dropped
+
+**As a** KubeClaw user via the HTTP channel
+**I want** every message I send to be responded to, even when I rapidly follow a normal message with a slash command
+**So that** quick-fire sequences like "summarise my notes" then "/search notes" do not silently lose the first message
+
+### Acceptance criteria
+
+1. When `alice` sends two `POST /message` requests back-to-back (within 100 ms) where the first is a normal text message and the second is `/search <token>`, both receive replies: the `/search` reply arrives on the SSE stream AND the normal message is queued for LLM processing, not silently discarded.
+2. Unit test: call `processGroupMessages` with `missedMessages = [{content: "tell me about Rust"}, {content: "/search rust"}]`; assert `channel.sendMessage` is called with the search reply AND the LLM runner is also invoked (or the normal message is re-queued).
+3. Integration test: insert two `conversation_history` rows with the same `chat_jid` — first a normal message, second `/help` — call `processGroupMessages`; confirm `/help` reply is sent AND `lastAgentTimestamp` is NOT advanced past the normal message's timestamp.
+4. When both messages are slash commands (e.g. `/help` then `/search foo`), both receive replies in order.
+5. After the fix, `lastAgentTimestamp` is advanced to the timestamp of the last message that was actually responded to, not the last message in the batch regardless of type.
+
+### Notes
+
+- The fix is in `src/channel-runner.ts` `processGroupMessages`: currently it checks ONLY `lastMsg` for slash-command dispatch and advances `lastAgentTimestamp` past the whole batch. Either iterate `missedMessages` and process each slash command individually (then pass remaining non-slash messages to the LLM) OR partition the batch into slash-commands + LLM-bound messages and process both.
+- The `lastMsg`-only check pattern repeats for every slash command intercept (~12 sites). The fix needs to be applied uniformly.
+- LLM-dependence: ACs 2, 3, 4, 5 **none**. AC1 partially.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-msg-batch --create-namespace`, `--set namespace=kubeclaw-e2e-msg-batch`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14136`.
+
+status: drafted
+
+## Story 54: `/capabilities tools <type>` lists MCP tools exposed by a provisioned capability
+
+**As a** KubeClaw user via the HTTP channel who has provisioned a per-group capability
+**I want** to type `/capabilities tools <type>` and see which MCP tool functions the capability exposes
+**So that** I know what I can ask the assistant to do with a capability I provisioned, without reading source code
+
+### Acceptance criteria
+
+1. With a running per-group capability whose schema has been scraped, `POST /message` containing `/capabilities tools <type>` returns an SSE reply listing each MCP tool by name and one-line description (first 80 chars of `description` field).
+2. `/capabilities tools <type>` when no capability of `<type>` is provisioned for the group returns a reply containing "not provisioned" — not a crash or empty list.
+3. `/capabilities tools <type>` when the capability is provisioned but the schema has not yet been scraped returns a reply containing "schema not yet available, try again in a few seconds".
+4. `/capabilities tools` (no type argument) returns usage help, not a crash.
+5. Unit test: stub the schema lookup returning two tool schemas; assert `handleCapabilitiesCommand('/capabilities tools echo', ...)` returns a reply containing both tool names.
+
+### Notes
+
+- Add a `'tools'` case to the existing `switch(verb)` block in `handleCapabilitiesCommand` (`src/channel-runner.ts`). Look up schemas from the capability registry or the per-group-capability DB (see `src/capabilities/db.ts` and `src/per-group-capabilities/`).
+- The `toolSchemas` array is `McpToolSchema[]` (fields: `name`, `description`, `inputSchema`). The channel-side DB is populated by the orchestrator's schema-scraper (`src/per-group-capabilities/schema-scraper.ts`).
+- Add `/capabilities tools <type>` to CAPABILITIES_HELP and to HELP_TEXT.
+- LLM-dependence: **none**.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-cap-tools --create-namespace`, `--set namespace=kubeclaw-e2e-cap-tools`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14137`.
+
+status: drafted
+
+## Story 55: Old tool-job records are pruned after a configurable retention window
+
+**As a** KubeClaw operator running a long-lived cluster
+**I want** resolved tool-job records older than `toolJobsRetentionDays` to be automatically deleted from the channel's SQLite database
+**So that** the `tool_jobs` table does not grow without bound and `/jobs` remains responsive after thousands of jobs
+
+### Acceptance criteria
+
+1. With `httpChannel.toolJobsRetentionDays=1`, after the prune interval fires, any `tool_jobs` rows with `resolved_at` older than 1 day are absent from the DB.
+2. Active jobs (`status = 'active'`) are never pruned, even if `created_at` is older than the retention window.
+3. After pruning, `/jobs` (Story 50) still returns correctly formatted output for the remaining recent jobs.
+4. Unit test: insert 3 resolved rows (2 older than retention, 1 within), call `pruneOldToolJobs(retentionDays)`, assert 2 rows deleted and 1 remains; assert active rows are untouched.
+5. Integration test: seed rows via `recordToolJob` + `resolveToolJob`, call `pruneOldToolJobs` with a 0-day window (prune everything resolved), confirm only active rows remain.
+
+### Notes
+
+- Add `pruneOldToolJobs(retentionDays: number): number` to `src/db.ts`. SQL: `DELETE FROM tool_jobs WHERE status != 'active' AND resolved_at IS NOT NULL AND datetime(resolved_at) < datetime('now', '-' || ? || ' days')`. Return deleted row count.
+- Schedule the prune in `src/channel-runner.ts` on a low-frequency timer (e.g. once per hour). Guard with a last-pruned timestamp.
+- Helm value: `httpChannel.toolJobsRetentionDays` (default `30`). Inject as `TOOL_JOBS_RETENTION_DAYS` env var. `0` = disabled.
+- LLM-dependence: **none**.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-job-prune --create-namespace`, `--set namespace=kubeclaw-e2e-job-prune`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14138`.
+
+status: drafted
