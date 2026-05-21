@@ -106,6 +106,17 @@ export type RemoveSecretFn = (
  */
 export type ListCatalogFn = () => Promise<CatalogListEntry[]>;
 
+/**
+ * Provisions a credential for a group.
+ * Returns { ok: true } on success, { ok: false, error: string } on failure.
+ * SECURITY: fields contain secret values — must NEVER be echoed in responses.
+ */
+export type AddSecretFn = (
+  group: string,
+  type: string,
+  fields: Record<string, string>,
+) => Promise<{ ok: true } | { ok: false; error: string }>;
+
 export interface HttpChannelOpts {
   onMessage: OnInboundMessage;
   onChatMetadata: OnChatMetadata;
@@ -144,6 +155,8 @@ export interface HttpChannelOpts {
   removeSecretFn?: RemoveSecretFn;
   /** Injectable for listing catalog entries. Defaults to IPC-backed implementation. */
   listCatalogFn?: ListCatalogFn;
+  /** Injectable for provisioning a credential. Defaults to IPC-backed implementation. */
+  addSecretFn?: AddSecretFn;
 }
 
 interface HttpConfig {
@@ -211,6 +224,7 @@ interface SseClient {
 }
 
 const MAX_MULTIPART_SIZE = 10 * 1024 * 1024; // 10 MB
+const MAX_SECRETS_BODY_SIZE = 64 * 1024; // 64 KiB (Story 76 AC5)
 const MAX_MEMORY_BODY_SIZE = 1 * 1024 * 1024; // 1 MiB cap for PUT/PATCH /memory
 
 const MEDIA_MAGIC: Array<{ bytes: number[]; mime: string }> = [
@@ -775,7 +789,7 @@ export class HttpChannel implements Channel {
     '/schedule/': ['DELETE', 'PATCH', 'HEAD'], // prefix — dynamic ids
     '/capabilities': ['GET', 'HEAD'],
     '/search': ['GET', 'HEAD'],
-    '/secrets': ['GET', 'HEAD'],
+    '/secrets': ['GET', 'HEAD', 'POST'],
     '/secrets/': ['DELETE', 'HEAD'], // prefix — dynamic types
     '/secrets/catalog': ['GET', 'HEAD'],
     '/memory': ['GET', 'HEAD', 'PUT', 'PATCH'],
@@ -2241,11 +2255,11 @@ export class HttpChannel implements Channel {
       return;
     }
 
-    // ── GET /secrets — list group secrets (no values exposed) ────────────────
+    // ── GET/POST /secrets — list group secrets or provision a credential ────────
     if (url.pathname === '/secrets') {
-      if (req.method !== 'GET' && req.method !== 'HEAD') {
+      if (req.method !== 'GET' && req.method !== 'HEAD' && req.method !== 'POST') {
         res.writeHead(405, this.addCorsHeaders({
-          Allow: 'GET, HEAD',
+          Allow: 'GET, HEAD, POST',
           'Content-Type': 'text/plain',
         }));
         res.end('Method Not Allowed');
@@ -2263,6 +2277,10 @@ export class HttpChannel implements Channel {
       if (req.method === 'HEAD') {
         res.writeHead(200, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
         res.end();
+        return;
+      }
+      if (req.method === 'POST') {
+        void this.handleAddSecret(groupFolder, req, res);
         return;
       }
       void this.handleListSecrets(groupFolder, res);
@@ -2324,7 +2342,7 @@ export class HttpChannel implements Channel {
       '/schedule': ['GET', 'HEAD', 'POST'],
       '/capabilities': ['GET', 'HEAD'],
       '/search': ['GET', 'HEAD'],
-      '/secrets': ['GET', 'HEAD'],
+      '/secrets': ['GET', 'HEAD', 'POST'],
       '/secrets/catalog': ['GET', 'HEAD'],
       '/memory': ['GET', 'HEAD', 'PUT', 'PATCH'],
     };
@@ -2424,6 +2442,138 @@ export class HttpChannel implements Channel {
       res.writeHead(500, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
       res.end(JSON.stringify({ error: 'Internal error' }));
     }
+  }
+
+  /**
+   * Handle POST /secrets — provision a credential for the authenticated group.
+   *
+   * SECURITY:
+   * - Body is capped at MAX_SECRETS_BODY_SIZE (64 KiB).
+   * - Secret values from `fields` are NEVER echoed in any response.
+   * - The group folder comes from the authenticated session — client-supplied
+   *   group params are NOT trusted (cross-group isolation).
+   */
+  private async handleAddSecret(
+    groupFolder: string,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    const fn = this.opts.addSecretFn;
+    if (!fn) {
+      res.writeHead(503, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+      res.end(JSON.stringify({ error: 'Secret IPC not configured' }));
+      return;
+    }
+
+    // Collect body with size cap
+    const chunks: Buffer[] = [];
+    let totalSize = 0;
+    let oversized = false;
+
+    await new Promise<void>((resolve) => {
+      req.on('data', (chunk: Buffer) => {
+        if (oversized) return;
+        totalSize += chunk.length;
+        if (totalSize > MAX_SECRETS_BODY_SIZE) {
+          oversized = true;
+          // Write 413 before draining/destroying so the client receives it
+          if (!res.writableEnded) {
+            res.writeHead(413, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+            res.end(JSON.stringify({ error: 'Request body too large' }));
+          }
+          // Drain remaining data without buffering it
+          if (typeof req.resume === 'function') req.resume();
+          resolve();
+          return;
+        }
+        chunks.push(chunk);
+      });
+      req.on('end', resolve);
+      req.on('error', resolve);
+    });
+
+    if (oversized) return;
+
+    // Parse JSON body
+    let body: unknown;
+    try {
+      body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    } catch {
+      res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+      res.end(JSON.stringify({ error: 'Invalid JSON body' }));
+      return;
+    }
+
+    // Validate shape: { type: string, fields: object }
+    if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+      res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+      res.end(JSON.stringify({ error: '{"type":"<id>","fields":{...}} required' }));
+      return;
+    }
+    const raw = body as Record<string, unknown>;
+
+    if (typeof raw.type !== 'string' || raw.type.trim() === '') {
+      res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+      res.end(JSON.stringify({ error: '"type" must be a non-empty string' }));
+      return;
+    }
+
+    if (
+      typeof raw.fields !== 'object' ||
+      raw.fields === null ||
+      Array.isArray(raw.fields)
+    ) {
+      res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+      res.end(JSON.stringify({ error: '"fields" must be a non-null object' }));
+      return;
+    }
+
+    const secretType = raw.type.trim();
+    const fields = raw.fields as Record<string, unknown>;
+
+    // Validate all field values are strings
+    for (const [k, v] of Object.entries(fields)) {
+      if (typeof v !== 'string') {
+        res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+        res.end(JSON.stringify({ error: `field "${k}" must be a string` }));
+        return;
+      }
+    }
+
+    // Call the injected fn — group comes from auth, never from client body
+    let result: { ok: true } | { ok: false; error: string };
+    try {
+      result = await Promise.race([
+        fn(groupFolder, secretType, fields as Record<string, string>),
+        new Promise<{ ok: false; error: string }>((resolve) =>
+          setTimeout(() => resolve({ ok: false, error: 'timeout' }), 5500),
+        ),
+      ]);
+    } catch (err) {
+      logger.error({ err, groupFolder, secretType }, 'POST /secrets IPC error');
+      // SECURITY: never echo err message that might contain field values
+      res.writeHead(502, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+      res.end(JSON.stringify({ error: 'IPC error' }));
+      return;
+    }
+
+    if (!result.ok) {
+      const errMsg = result.error ?? 'unknown';
+      if (errMsg === 'timeout') {
+        res.writeHead(504, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+        res.end(JSON.stringify({ error: 'IPC timeout' }));
+        return;
+      }
+      // SECURITY: sanitize error — redact tokens ≥20 chars that might be secret values
+      const sanitized = errMsg.replace(/\b[A-Za-z0-9_\-]{20,}\b/g, '[redacted]');
+      res.writeHead(502, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+      res.end(JSON.stringify({ error: sanitized }));
+      return;
+    }
+
+    // SECURITY: response contains ONLY status and type — no field values, no echo
+    res.writeHead(201, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+    res.end(JSON.stringify({ status: 'ok', type: secretType }));
   }
 
   /** Handle DELETE /secrets/:type — remove a secret for authenticated user's group. */
@@ -2830,6 +2980,7 @@ function parseConfig(): HttpConfig | null {
 let _listSecretsFn: ListSecretsFn | undefined;
 let _removeSecretFn: RemoveSecretFn | undefined;
 let _listCatalogFn: ListCatalogFn | undefined;
+let _addSecretFn: AddSecretFn | undefined;
 
 /**
  * Wire up IPC-backed callbacks for the /secrets REST endpoints.
@@ -2839,10 +2990,12 @@ export function configureHttpSecretIpc(
   listSecretsFn: ListSecretsFn,
   removeSecretFn: RemoveSecretFn,
   listCatalogFn: ListCatalogFn,
+  addSecretFn: AddSecretFn,
 ): void {
   _listSecretsFn = listSecretsFn;
   _removeSecretFn = removeSecretFn;
   _listCatalogFn = listCatalogFn;
+  _addSecretFn = addSecretFn;
 }
 
 registerChannel('http', (opts: ChannelOpts) => {
@@ -2855,5 +3008,6 @@ registerChannel('http', (opts: ChannelOpts) => {
     listSecretsFn: _listSecretsFn,
     removeSecretFn: _removeSecretFn,
     listCatalogFn: _listCatalogFn,
+    addSecretFn: _addSecretFn,
   });
 });

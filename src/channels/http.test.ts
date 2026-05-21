@@ -103,6 +103,7 @@ import {
   buildVersionPayload,
   detectMediaType,
   getAttachmentUsage,
+  type AddSecretFn,
 } from './http.js';
 import {
   appendConversationMessage,
@@ -4569,16 +4570,16 @@ describe('detectMediaType', () => {
       await channel.disconnect();
     });
 
-    it('POST /secrets returns 405 with Allow: GET, HEAD', async () => {
+    it('PUT /secrets returns 405 with Allow: GET, HEAD, POST', async () => {
       const channel = new HttpChannel(makeConfig(), makeOpts());
       await channel.connect();
 
-      const req = makeReq({ url: '/secrets', method: 'POST', auth: 'alice:secret' });
+      const req = makeReq({ url: '/secrets', method: 'PUT', auth: 'alice:secret' });
       const res = makeRes();
       await dispatch(channel, req, res);
 
       expect(res._status).toBe(405);
-      expect(res._headers['Allow']).toBe('GET, HEAD');
+      expect(res._headers['Allow']).toBe('GET, HEAD, POST');
       await channel.disconnect();
     });
   });
@@ -5378,6 +5379,286 @@ describe('detectMediaType', () => {
       await dispatch(channel, req, res);
 
       expect(res._status).toBe(405);
+      await channel.disconnect();
+    });
+  });
+
+  // ── POST /secrets — Story 76 ──────────────────────────────────────────────
+
+  describe('POST /secrets', () => {
+    function makeAddSecretOpts(addSecretFn: AddSecretFn): HttpChannelOpts {
+      return makeOpts({ addSecretFn });
+    }
+
+    function makePostReq(overrides: {
+      auth?: string | null;
+      body?: string;
+    }): ReturnType<typeof makeReq> {
+      const req = makeReq({
+        method: 'POST',
+        url: '/secrets',
+        auth: overrides.auth !== undefined ? overrides.auth : 'alice:secret',
+        body: overrides.body,
+      });
+      return req;
+    }
+
+    it('returns 201 { status: ok, type: <id> } on success', async () => {
+      const addFn: AddSecretFn = vi.fn(async () => ({ ok: true }));
+      const channel = new HttpChannel(makeConfig(), makeAddSecretOpts(addFn));
+      await channel.connect();
+
+      const req = makePostReq({
+        body: JSON.stringify({ type: 'openai', fields: { api_key: 'sk-test' } }),
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(201);
+      const body = JSON.parse(res._body);
+      expect(body).toEqual({ status: 'ok', type: 'openai' });
+
+      // SECURITY: response must NOT contain the secret value
+      expect(res._body).not.toContain('sk-test');
+
+      await channel.disconnect();
+    });
+
+    it('calls addSecretFn with authenticated group — not client-supplied group', async () => {
+      let capturedGroup: string | undefined;
+      const addFn: AddSecretFn = vi.fn(async (group) => {
+        capturedGroup = group;
+        return { ok: true };
+      });
+      const channel = new HttpChannel(makeConfig(), makeAddSecretOpts(addFn));
+      await channel.connect();
+
+      // Body includes a "group" field that should be IGNORED
+      const req = makePostReq({
+        body: JSON.stringify({
+          type: 'openai',
+          fields: { api_key: 'sk-x' },
+          group: 'hacker-group',  // must be ignored
+        }),
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(201);
+      // Group comes from auth session ('alice'), not from client body
+      expect(capturedGroup).toBe('alice'); // folder from makeOpts
+      await channel.disconnect();
+    });
+
+    it('returns 400 when fields is missing', async () => {
+      const addFn: AddSecretFn = vi.fn(async () => ({ ok: true }));
+      const channel = new HttpChannel(makeConfig(), makeAddSecretOpts(addFn));
+      await channel.connect();
+
+      const req = makePostReq({
+        body: JSON.stringify({ type: 'openai' }),
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(400);
+      const body = JSON.parse(res._body);
+      expect(body.error).toBeDefined();
+      await channel.disconnect();
+    });
+
+    it('returns 400 when fields is not an object (array)', async () => {
+      const addFn: AddSecretFn = vi.fn(async () => ({ ok: true }));
+      const channel = new HttpChannel(makeConfig(), makeAddSecretOpts(addFn));
+      await channel.connect();
+
+      const req = makePostReq({
+        body: JSON.stringify({ type: 'openai', fields: ['bad'] }),
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(400);
+      await channel.disconnect();
+    });
+
+    it('returns 400 when fields is null', async () => {
+      const addFn: AddSecretFn = vi.fn(async () => ({ ok: true }));
+      const channel = new HttpChannel(makeConfig(), makeAddSecretOpts(addFn));
+      await channel.connect();
+
+      const req = makePostReq({
+        body: JSON.stringify({ type: 'openai', fields: null }),
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(400);
+      await channel.disconnect();
+    });
+
+    it('returns 400 when type is missing', async () => {
+      const addFn: AddSecretFn = vi.fn(async () => ({ ok: true }));
+      const channel = new HttpChannel(makeConfig(), makeAddSecretOpts(addFn));
+      await channel.connect();
+
+      const req = makePostReq({
+        body: JSON.stringify({ fields: { api_key: 'sk-x' } }),
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(400);
+      await channel.disconnect();
+    });
+
+    it('returns 400 when type is not a string', async () => {
+      const addFn: AddSecretFn = vi.fn(async () => ({ ok: true }));
+      const channel = new HttpChannel(makeConfig(), makeAddSecretOpts(addFn));
+      await channel.connect();
+
+      const req = makePostReq({
+        body: JSON.stringify({ type: 42, fields: { api_key: 'sk-x' } }),
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(400);
+      await channel.disconnect();
+    });
+
+    it('returns 413 when body exceeds 64 KiB', async () => {
+      const addFn: AddSecretFn = vi.fn(async () => ({ ok: true }));
+      const channel = new HttpChannel(makeConfig(), makeAddSecretOpts(addFn));
+      await channel.connect();
+
+      const bigValue = 'x'.repeat(70 * 1024);
+      const req = makePostReq({
+        body: JSON.stringify({ type: 'openai', fields: { api_key: bigValue } }),
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(413);
+      await channel.disconnect();
+    });
+
+    it('returns 401 without credentials', async () => {
+      const addFn: AddSecretFn = vi.fn(async () => ({ ok: true }));
+      const channel = new HttpChannel(makeConfig(), makeAddSecretOpts(addFn));
+      await channel.connect();
+
+      const req = makePostReq({ auth: null, body: JSON.stringify({ type: 'openai', fields: { api_key: 'sk-x' } }) });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(401);
+      await channel.disconnect();
+    });
+
+    it('returns 502 when addSecretFn rejects with error', async () => {
+      const addFn: AddSecretFn = vi.fn(async () => ({
+        ok: false,
+        error: 'k8s_error',
+      }));
+      const channel = new HttpChannel(makeConfig(), makeAddSecretOpts(addFn));
+      await channel.connect();
+
+      const req = makePostReq({
+        body: JSON.stringify({ type: 'openai', fields: { api_key: 'sk-test' } }),
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(502);
+      const body = JSON.parse(res._body);
+      expect(body.error).toBeDefined();
+      // SECURITY: error body must NOT contain the secret value
+      expect(res._body).not.toContain('sk-test');
+      await channel.disconnect();
+    });
+
+    it('returns 504 when addSecretFn returns timeout error', async () => {
+      const addFn: AddSecretFn = vi.fn(async () => ({
+        ok: false,
+        error: 'timeout',
+      }));
+      const channel = new HttpChannel(makeConfig(), makeAddSecretOpts(addFn));
+      await channel.connect();
+
+      const req = makePostReq({
+        body: JSON.stringify({ type: 'openai', fields: { api_key: 'sk-test' } }),
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(504);
+      // SECURITY: response must NOT contain the secret value
+      expect(res._body).not.toContain('sk-test');
+      await channel.disconnect();
+    });
+
+    it('SECURITY: secret values never appear in 201 response body', async () => {
+      const secretValue = 'sk-supersecretkey12345678';
+      const addFn: AddSecretFn = vi.fn(async () => ({ ok: true }));
+      const channel = new HttpChannel(makeConfig(), makeAddSecretOpts(addFn));
+      await channel.connect();
+
+      const req = makePostReq({
+        body: JSON.stringify({ type: 'openai', fields: { api_key: secretValue } }),
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(201);
+      expect(res._body).not.toContain(secretValue);
+      await channel.disconnect();
+    });
+
+    it('SECURITY: secret values never appear in 502 error response body', async () => {
+      const secretValue = 'r8_supersecrettoken123456789';
+      const addFn: AddSecretFn = vi.fn(async () => ({
+        ok: false,
+        error: `storage failed for value ${secretValue}`, // deliberately leaky error
+      }));
+      const channel = new HttpChannel(makeConfig(), makeAddSecretOpts(addFn));
+      await channel.connect();
+
+      const req = makePostReq({
+        body: JSON.stringify({ type: 'replicate', fields: { token: secretValue } }),
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(502);
+      // The response must NOT echo back the secret value even if it appeared in the error
+      expect(res._body).not.toContain(secretValue);
+      await channel.disconnect();
+    });
+
+    it('PUT /secrets returns 405 with Allow: GET, HEAD, POST', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ method: 'PUT', url: '/secrets', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(405);
+      expect(res._headers['Allow']).toBe('GET, HEAD, POST');
+      await channel.disconnect();
+    });
+
+    it('returns 400 for invalid JSON body', async () => {
+      const addFn: AddSecretFn = vi.fn(async () => ({ ok: true }));
+      const channel = new HttpChannel(makeConfig(), makeAddSecretOpts(addFn));
+      await channel.connect();
+
+      const req = makePostReq({ body: 'not-json' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(400);
       await channel.disconnect();
     });
   });

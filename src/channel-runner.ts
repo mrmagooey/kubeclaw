@@ -3084,6 +3084,12 @@ async function main(): Promise<void> {
         description: e.host ?? '',
       }));
     },
+    async (group, type, fields) => {
+      const ipc = buildCredentialIpcClient();
+      const res = await ipc('secret.add', { group, catalogId: type, fields: JSON.stringify(fields) });
+      if (!res.ok) return { ok: false as const, error: (res as { ok: false; error: string }).error };
+      return { ok: true as const };
+    },
   );
 
   const shutdown = _buildShutdown(channelMetricsServer, queue, channels);
