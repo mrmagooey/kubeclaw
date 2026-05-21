@@ -1,5 +1,7 @@
 import fs from 'node:fs';
 import fsPromises from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
+import { CronExpressionParser } from 'cron-parser';
 import {
   createServer,
   type Server,
@@ -12,21 +14,27 @@ import {
   ASSISTANT_NAME,
   GROUPS_DIR,
   RATE_LIMIT_WINDOW_MS,
+  TIMEZONE,
   TOOL_JOBS_RETENTION_DAYS,
 } from '../config.js';
 import {
   appendConversationMessage,
   clearConversationHistory,
+  createTask,
   db,
   deleteMessageById,
+  deleteTaskForGroup,
   getAllConversationHistory,
   getActiveToolJobs,
   getConversationHistoryPage,
   getMessageById,
   getOutboundMessagesSince,
   getRecentToolJobsForGroup,
+  getTaskById,
   getTasksForGroup,
   getToolJobByIdForGroup,
+  pauseTask,
+  resumeTask,
   searchConversations,
   storeMessageDirect,
 } from '../db.js';
@@ -761,7 +769,8 @@ export class HttpChannel implements Channel {
     '/export': ['GET', 'HEAD'],
     '/jobs': ['GET', 'HEAD'],
     '/jobs/': ['GET', 'HEAD', 'DELETE'], // prefix — dynamic ids
-    '/schedule': ['GET', 'HEAD'],
+    '/schedule': ['GET', 'HEAD', 'POST'],
+    '/schedule/': ['DELETE', 'PATCH', 'HEAD'], // prefix — dynamic ids
     '/capabilities': ['GET', 'HEAD'],
     '/search': ['GET', 'HEAD'],
     '/secrets': ['GET', 'HEAD'],
@@ -801,6 +810,9 @@ export class HttpChannel implements Channel {
       }
       if (!allowedMethods && /^\/jobs\/[^/]+$/.test(url.pathname)) {
         allowedMethods = HttpChannel.CORS_PATH_METHODS['/jobs/'];
+      }
+      if (!allowedMethods && /^\/schedule\/[^/]+$/.test(url.pathname)) {
+        allowedMethods = HttpChannel.CORS_PATH_METHODS['/schedule/'];
       }
       if (!allowedMethods && /^\/secrets\/[^/]+$/.test(url.pathname) && url.pathname !== '/secrets/catalog') {
         allowedMethods = HttpChannel.CORS_PATH_METHODS['/secrets/'];
@@ -1681,13 +1693,13 @@ export class HttpChannel implements Channel {
       return;
     }
 
-    // Story 68: GET /schedule — list scheduled tasks for the authenticated group
+    // Stories 68 + 71: /schedule — list and create scheduled tasks
     if (url.pathname === '/schedule') {
       // Method check before auth so 405 is returned for unsupported methods
-      if (req.method !== 'GET' && req.method !== 'HEAD') {
+      if (req.method !== 'GET' && req.method !== 'HEAD' && req.method !== 'POST') {
         res.writeHead(405, this.addCorsHeaders({
           'Content-Type': 'text/plain',
-          Allow: 'GET, HEAD',
+          Allow: 'GET, HEAD, POST',
         }));
         res.end('Method Not Allowed');
         return;
@@ -1699,6 +1711,142 @@ export class HttpChannel implements Channel {
         return;
       }
 
+      const jid = `http:${username}`;
+      const group = this.opts.registeredGroups()[jid];
+      const groupFolder = group?.folder ?? jid;
+
+      // Story 71: POST /schedule — create a new scheduled task
+      if (req.method === 'POST') {
+        const chunks: Buffer[] = [];
+        req.on('data', (chunk: Buffer) => chunks.push(chunk));
+        await new Promise<void>((resolve) => req.on('end', resolve));
+        const rawBody = Buffer.concat(chunks).toString('utf8');
+
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(rawBody);
+        } catch {
+          res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+          res.end(JSON.stringify({ error: 'Invalid JSON body' }));
+          return;
+        }
+
+        if (
+          typeof parsed !== 'object' ||
+          parsed === null ||
+          Array.isArray(parsed)
+        ) {
+          res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+          res.end(JSON.stringify({ error: 'Body must be a JSON object' }));
+          return;
+        }
+
+        const body = parsed as Record<string, unknown>;
+        const { schedule_type, schedule_expression, prompt } = body;
+
+        // Validate required fields
+        if (
+          typeof schedule_type !== 'string' ||
+          typeof schedule_expression !== 'string' ||
+          typeof prompt !== 'string'
+        ) {
+          res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+          res.end(JSON.stringify({ error: 'schedule_type, schedule_expression, and prompt are required strings' }));
+          return;
+        }
+
+        if (!prompt.trim()) {
+          res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+          res.end(JSON.stringify({ error: 'prompt must not be empty' }));
+          return;
+        }
+
+        // Validate schedule_type strictly
+        if (
+          schedule_type !== 'interval' &&
+          schedule_type !== 'cron' &&
+          schedule_type !== 'once'
+        ) {
+          res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+          res.end(JSON.stringify({ error: 'schedule_type must be "interval", "cron", or "once"' }));
+          return;
+        }
+
+        // Validate schedule_expression semantics and compute next_run
+        let next_run: string | null;
+        if (schedule_type === 'once') {
+          // Must be a valid ISO date
+          const d = new Date(schedule_expression);
+          if (isNaN(d.getTime())) {
+            res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+            res.end(JSON.stringify({ error: 'schedule_expression must be a valid ISO date for schedule_type "once"' }));
+            return;
+          }
+          next_run = schedule_expression;
+        } else if (schedule_type === 'interval') {
+          const ms = parseInt(schedule_expression, 10);
+          if (!ms || ms <= 0 || String(ms) !== schedule_expression.trim()) {
+            res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+            res.end(JSON.stringify({ error: 'schedule_expression must be a positive integer (milliseconds) for schedule_type "interval"' }));
+            return;
+          }
+          next_run = new Date(Date.now() + ms).toISOString();
+        } else {
+          // cron — validate by attempting parse
+          try {
+            next_run = CronExpressionParser.parse(schedule_expression, {
+              tz: TIMEZONE,
+            })
+              .next()
+              .toISOString();
+          } catch {
+            res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+            res.end(JSON.stringify({ error: `Invalid cron expression: '${schedule_expression}'` }));
+            return;
+          }
+        }
+
+        // Generate a UUID-style id
+        const id = randomBytes(16)
+          .toString('hex')
+          .replace(
+            /(.{8})(.{4})(.{4})(.{4})(.{12})/,
+            '$1-$2-$3-$4-$5',
+          );
+
+        const created_at = new Date().toISOString();
+        createTask({
+          id,
+          group_folder: groupFolder,
+          chat_jid: jid,
+          prompt: prompt.trim(),
+          schedule_type: schedule_type as 'interval' | 'cron' | 'once',
+          schedule_value: schedule_expression,
+          context_mode: 'isolated',
+          next_run,
+          status: 'active',
+          created_at,
+        });
+
+        const responseBody = JSON.stringify({
+          id,
+          status: 'active',
+          schedule_type,
+          schedule_expression,
+          prompt: prompt.trim(),
+          next_run,
+          created_at,
+        });
+
+        res.writeHead(201, this.addCorsHeaders({
+          'Content-Type': 'application/json',
+          'Content-Length': String(Buffer.byteLength(responseBody)),
+        }));
+        res.end(responseBody);
+        return;
+      }
+
+      // GET / HEAD — list scheduled tasks for the authenticated group
       // Validate status query param (must be 'active', 'paused', or absent)
       const statusParam = url.searchParams.get('status');
       if (statusParam !== null && statusParam !== 'active' && statusParam !== 'paused') {
@@ -1706,10 +1854,6 @@ export class HttpChannel implements Channel {
         res.end(JSON.stringify({ error: 'Invalid status parameter. Must be "active" or "paused".' }));
         return;
       }
-
-      const jid = `http:${username}`;
-      const group = this.opts.registeredGroups()[jid];
-      const groupFolder = group?.folder ?? jid;
 
       let tasks = getTasksForGroup(groupFolder);
 
@@ -1728,22 +1872,145 @@ export class HttpChannel implements Channel {
         created_at: t.created_at,
       }));
 
-      const body = JSON.stringify(payload);
-      const headers = this.addCorsHeaders({
+      const listBody = JSON.stringify(payload);
+      const listHeaders = this.addCorsHeaders({
         'Content-Type': 'application/json',
         'Cache-Control': 'no-cache',
-        'Content-Length': String(Buffer.byteLength(body)),
+        'Content-Length': String(Buffer.byteLength(listBody)),
       });
 
       if (req.method === 'HEAD') {
-        res.writeHead(200, headers);
+        res.writeHead(200, listHeaders);
         res.end();
         return;
       }
 
-      res.writeHead(200, headers);
-      res.end(body);
+      res.writeHead(200, listHeaders);
+      res.end(listBody);
       return;
+    }
+
+    // Story 71: /schedule/<id> — DELETE and PATCH individual scheduled tasks
+    const scheduleIdMatch = /^\/schedule\/([^/]+)$/.exec(url.pathname);
+    if (scheduleIdMatch) {
+      const taskId = scheduleIdMatch[1];
+
+      // Method guard before auth so 405 is returned without leaking auth info
+      if (
+        req.method !== 'DELETE' &&
+        req.method !== 'PATCH' &&
+        req.method !== 'HEAD'
+      ) {
+        res.writeHead(405, this.addCorsHeaders({
+          'Content-Type': 'text/plain',
+          Allow: 'DELETE, PATCH, HEAD',
+        }));
+        res.end('Method Not Allowed');
+        return;
+      }
+
+      const username = this.authenticate(req);
+      if (!username) {
+        this.sendUnauthorized(res);
+        return;
+      }
+
+      const jid = `http:${username}`;
+      const group = this.opts.registeredGroups()[jid];
+      const groupFolder = group?.folder ?? jid;
+
+      if (req.method === 'HEAD') {
+        // HEAD mirrors GET existence check — 200 if owned, 404 if not
+        const task = getTaskById(taskId);
+        if (!task || task.group_folder !== groupFolder) {
+          res.writeHead(404, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+          res.end();
+          return;
+        }
+        res.writeHead(200, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+        res.end();
+        return;
+      }
+
+      if (req.method === 'DELETE') {
+        const deleted = deleteTaskForGroup(taskId, groupFolder);
+        if (!deleted) {
+          res.writeHead(404, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+          res.end(JSON.stringify({ error: 'Not found' }));
+          return;
+        }
+        res.writeHead(204, this.addCorsHeaders({}));
+        res.end();
+        return;
+      }
+
+      if (req.method === 'PATCH') {
+        // Read and parse body
+        const chunks: Buffer[] = [];
+        req.on('data', (chunk: Buffer) => chunks.push(chunk));
+        await new Promise<void>((resolve) => req.on('end', resolve));
+        const rawBody = Buffer.concat(chunks).toString('utf8');
+
+        let patchBody: unknown;
+        try {
+          patchBody = JSON.parse(rawBody);
+        } catch {
+          res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+          res.end(JSON.stringify({ error: 'Invalid JSON body' }));
+          return;
+        }
+
+        if (
+          typeof patchBody !== 'object' ||
+          patchBody === null ||
+          Array.isArray(patchBody) ||
+          typeof (patchBody as Record<string, unknown>).paused !== 'boolean'
+        ) {
+          res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+          res.end(JSON.stringify({ error: '{ paused: boolean } required' }));
+          return;
+        }
+
+        const { paused } = patchBody as { paused: boolean };
+
+        // Verify the task exists and belongs to this group
+        const task = getTaskById(taskId);
+        if (!task || task.group_folder !== groupFolder) {
+          res.writeHead(404, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+          res.end(JSON.stringify({ error: 'Not found' }));
+          return;
+        }
+
+        const ok = paused
+          ? pauseTask(taskId, groupFolder)
+          : resumeTask(taskId, groupFolder);
+
+        if (!ok) {
+          // Task disappeared between the existence check and the update — treat as 404
+          res.writeHead(404, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+          res.end(JSON.stringify({ error: 'Not found' }));
+          return;
+        }
+
+        // Re-fetch to return the current state
+        const updated = getTaskById(taskId)!;
+        const respBody = JSON.stringify({
+          id: updated.id,
+          status: updated.status,
+          schedule_type: updated.schedule_type,
+          schedule_expression: updated.schedule_value,
+          prompt: updated.prompt,
+          next_run: updated.next_run,
+          created_at: updated.created_at,
+        });
+
+        res.writeHead(200, this.addCorsHeaders({
+          'Content-Type': 'application/json',
+          'Content-Length': String(Buffer.byteLength(respBody)),
+        }));
+        res.end(respBody);
+        return;
+      }
     }
 
     // Story 70: GET /capabilities — list provisioned per-group capabilities
@@ -1970,7 +2237,7 @@ export class HttpChannel implements Channel {
       '/attachments/list': ['GET'],
       '/export': ['GET', 'HEAD'],
       '/jobs': ['GET', 'HEAD'],
-      '/schedule': ['GET', 'HEAD'],
+      '/schedule': ['GET', 'HEAD', 'POST'],
       '/capabilities': ['GET', 'HEAD'],
       '/search': ['GET', 'HEAD'],
       '/secrets': ['GET', 'HEAD'],
@@ -1991,6 +2258,17 @@ export class HttpChannel implements Channel {
         res.writeHead(405, this.addCorsHeaders({
           'Content-Type': 'text/plain',
           Allow: allowedRaw.join(', '),
+        }));
+        res.end('Method Not Allowed');
+        return;
+      }
+    }
+    if (/^\/schedule\/[^/]+$/.test(url.pathname)) {
+      const allowedScheduleId = ['DELETE', 'PATCH', 'HEAD'];
+      if (!allowedScheduleId.includes(req.method ?? '')) {
+        res.writeHead(405, this.addCorsHeaders({
+          'Content-Type': 'text/plain',
+          Allow: allowedScheduleId.join(', '),
         }));
         res.end('Method Not Allowed');
         return;

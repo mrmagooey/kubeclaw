@@ -9,13 +9,18 @@ vi.mock('../db.js', () => {
   return {
     appendConversationMessage: vi.fn(),
     clearConversationHistory: vi.fn(),
+    createTask: vi.fn(),
     deleteMessageById: vi.fn(() => false),
+    deleteTaskForGroup: vi.fn(() => false),
     getConversationHistory: vi.fn(() => []),
     getMessageById: vi.fn(() => null),
     getRecentToolJobsForGroup: vi.fn(() => []),
     getActiveToolJobs: vi.fn(() => []),
+    getTaskById: vi.fn(() => null),
     getTasksForGroup: vi.fn(() => []),
     getToolJobByIdForGroup: vi.fn(() => null),
+    pauseTask: vi.fn(() => false),
+    resumeTask: vi.fn(() => false),
     searchConversations: vi.fn(() => []),
     db: { exec: dbExec },
   };
@@ -26,6 +31,7 @@ vi.mock('../config.js', () => ({
   TRIGGER_PATTERN: /^@Andy\b/i,
   GROUPS_DIR: '/tmp/test-groups',
   RATE_LIMIT_WINDOW_MS: 60000,
+  TIMEZONE: 'UTC',
   TOOL_JOBS_RETENTION_DAYS: 30,
 }));
 vi.mock('../logger.js', () => ({
@@ -93,13 +99,18 @@ import {
 import {
   appendConversationMessage,
   clearConversationHistory,
+  createTask,
   deleteMessageById,
+  deleteTaskForGroup,
   getConversationHistory,
   getMessageById,
   getRecentToolJobsForGroup,
   getActiveToolJobs,
+  getTaskById,
   getTasksForGroup,
   getToolJobByIdForGroup,
+  pauseTask,
+  resumeTask,
   searchConversations,
 } from '../db.js';
 
@@ -3440,17 +3451,19 @@ describe('detectMediaType', () => {
       await channel.disconnect();
     });
 
-    // AC4: POST → 405 with Allow: GET, HEAD
-    it('returns 405 for POST /schedule with Allow: GET, HEAD header', async () => {
+    // AC4: DELETE → 405 with Allow: GET, HEAD, POST (POST is now valid per Story 71)
+    it('returns 405 for DELETE /schedule with Allow: GET, HEAD, POST header', async () => {
       const channel = new HttpChannel(makeConfig(), makeOpts());
       await channel.connect();
 
-      const req = makeReq({ method: 'POST', url: '/schedule', auth: 'alice:secret' });
+      const req = makeReq({ method: 'DELETE', url: '/schedule', auth: 'alice:secret' });
       const res = makeRes();
       await dispatch(channel, req, res);
 
       expect(res._status).toBe(405);
-      expect(res._headers['Allow']).toBe('GET, HEAD');
+      expect(res._headers['Allow']).toMatch(/GET/);
+      expect(res._headers['Allow']).toMatch(/HEAD/);
+      expect(res._headers['Allow']).toMatch(/POST/);
       await channel.disconnect();
     });
 
@@ -3469,6 +3482,496 @@ describe('detectMediaType', () => {
       expect(res._body).toBe('');
       await channel.disconnect();
     });
+  });
+
+  // ── POST /schedule — create scheduled task (Story 71) ────────────────────
+
+  describe('POST /schedule', () => {
+    const sampleTask = {
+      id: 'task-unit-001',
+      group_folder: 'alice',
+      chat_jid: 'http:alice',
+      prompt: 'Say hello',
+      schedule_type: 'cron' as const,
+      schedule_value: '0 9 * * *',
+      context_mode: 'isolated' as const,
+      next_run: '2024-06-02T09:00:00.000Z',
+      last_run: null,
+      last_result: null,
+      status: 'active' as const,
+      created_at: '2024-06-01T10:00:00.000Z',
+    };
+
+    beforeEach(() => {
+      vi.mocked(createTask).mockReset();
+      vi.mocked(getTaskById).mockReset();
+    });
+
+    // AC1: valid cron body → 201 JSON
+    it('returns 201 with task JSON for valid cron body', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({
+        method: 'POST',
+        url: '/schedule',
+        auth: 'alice:secret',
+        body: JSON.stringify({ schedule_type: 'cron', schedule_expression: '0 9 * * *', prompt: 'Say hello' }),
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(201);
+      expect(res._headers['Content-Type']).toContain('application/json');
+      const parsed = JSON.parse(res._body);
+      expect(parsed).toHaveProperty('id');
+      expect(parsed.status).toBe('active');
+      expect(parsed.schedule_type).toBe('cron');
+      expect(parsed.schedule_expression).toBe('0 9 * * *');
+      expect(parsed.prompt).toBe('Say hello');
+      expect(parsed).toHaveProperty('next_run');
+      expect(parsed).toHaveProperty('created_at');
+      expect(vi.mocked(createTask)).toHaveBeenCalledOnce();
+      await channel.disconnect();
+    });
+
+    // AC1: valid interval body → 201
+    it('returns 201 for valid interval body', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({
+        method: 'POST',
+        url: '/schedule',
+        auth: 'alice:secret',
+        body: JSON.stringify({ schedule_type: 'interval', schedule_expression: '60000', prompt: 'Ping' }),
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(201);
+      const parsed = JSON.parse(res._body);
+      expect(parsed.schedule_type).toBe('interval');
+      await channel.disconnect();
+    });
+
+    // AC1: valid once body → 201
+    it('returns 201 for valid once body with ISO date', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({
+        method: 'POST',
+        url: '/schedule',
+        auth: 'alice:secret',
+        body: JSON.stringify({ schedule_type: 'once', schedule_expression: '2099-01-01T00:00:00.000Z', prompt: 'One-shot' }),
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(201);
+      await channel.disconnect();
+    });
+
+    // AC1: invalid body — missing fields → 400
+    it('returns 400 when required fields are missing', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({
+        method: 'POST',
+        url: '/schedule',
+        auth: 'alice:secret',
+        body: JSON.stringify({ schedule_type: 'cron' }), // missing schedule_expression and prompt
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(400);
+      await channel.disconnect();
+    });
+
+    // AC1: invalid schedule_type → 400
+    it('returns 400 for unrecognised schedule_type', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({
+        method: 'POST',
+        url: '/schedule',
+        auth: 'alice:secret',
+        body: JSON.stringify({ schedule_type: 'weekly', schedule_expression: '0 9 * * *', prompt: 'Hi' }),
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(400);
+      const parsed = JSON.parse(res._body);
+      expect(parsed.error).toMatch(/schedule_type/i);
+      await channel.disconnect();
+    });
+
+    // AC1: invalid cron expression → 400
+    it('returns 400 for invalid cron expression', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({
+        method: 'POST',
+        url: '/schedule',
+        auth: 'alice:secret',
+        body: JSON.stringify({ schedule_type: 'cron', schedule_expression: 'not-a-cron', prompt: 'Hi' }),
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(400);
+      await channel.disconnect();
+    });
+
+    // AC1: invalid interval (non-integer) → 400
+    it('returns 400 for non-integer interval value', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({
+        method: 'POST',
+        url: '/schedule',
+        auth: 'alice:secret',
+        body: JSON.stringify({ schedule_type: 'interval', schedule_expression: 'abc', prompt: 'Hi' }),
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(400);
+      await channel.disconnect();
+    });
+
+    // AC5: unauthenticated POST → 401
+    it('returns 401 for unauthenticated POST /schedule', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({
+        method: 'POST',
+        url: '/schedule',
+        auth: null,
+        body: JSON.stringify({ schedule_type: 'cron', schedule_expression: '0 9 * * *', prompt: 'Hi' }),
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(401);
+      await channel.disconnect();
+    });
+
+    // POST /schedule with empty/whitespace prompt returns 400
+    it('POST /schedule with empty/whitespace prompt returns 400', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({
+        method: 'POST',
+        url: '/schedule',
+        auth: 'alice:secret',
+        body: JSON.stringify({ schedule_type: 'interval', schedule_expression: '60000', prompt: '   ' }),
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(400);
+      const responseBody = res._body;
+      expect(responseBody).toBeTruthy(); // Should contain error
+      await channel.disconnect();
+    });
+
+    // POST /schedule with schedule_type=once and invalid ISO date returns 400
+    it('POST /schedule with schedule_type=once and invalid ISO date returns 400', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({
+        method: 'POST',
+        url: '/schedule',
+        auth: 'alice:secret',
+        body: JSON.stringify({ schedule_type: 'once', schedule_expression: 'not-a-date', prompt: 'hi' }),
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(400);
+      const responseBody = res._body;
+      expect(responseBody).toBeTruthy(); // Should contain error
+      await channel.disconnect();
+    });
+
+    void sampleTask; // suppress unused variable warning
+  });
+
+  // ── DELETE /schedule/<id> (Story 71) ─────────────────────────────────────
+
+  describe('DELETE /schedule/<id>', () => {
+    beforeEach(() => {
+      vi.mocked(deleteTaskForGroup).mockReset();
+    });
+
+    // AC2: authenticated DELETE for own group → 204 no body
+    it('returns 204 for authenticated DELETE of owned task', async () => {
+      vi.mocked(deleteTaskForGroup).mockReturnValue(true);
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ method: 'DELETE', url: '/schedule/task-id-001', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(204);
+      expect(res._body).toBe('');
+      expect(vi.mocked(deleteTaskForGroup)).toHaveBeenCalledWith('task-id-001', 'alice');
+      await channel.disconnect();
+    });
+
+    // AC3: unknown id → 404
+    it('returns 404 for unknown task id', async () => {
+      vi.mocked(deleteTaskForGroup).mockReturnValue(false);
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ method: 'DELETE', url: '/schedule/no-such-task', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(404);
+      await channel.disconnect();
+    });
+
+    // AC3: cross-group id → same 404 wording
+    it('returns 404 (same wording) for cross-group task id', async () => {
+      vi.mocked(deleteTaskForGroup).mockReturnValue(false);
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ method: 'DELETE', url: '/schedule/other-group-task', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(404);
+      const body = JSON.parse(res._body);
+      expect(body.error).toBe('Not found');
+      await channel.disconnect();
+    });
+
+    // AC5: unauthenticated → 401
+    it('returns 401 for unauthenticated DELETE /schedule/<id>', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ method: 'DELETE', url: '/schedule/task-id-001', auth: null });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(401);
+      await channel.disconnect();
+    });
+  });
+
+  // ── PATCH /schedule/<id> (Story 71) ──────────────────────────────────────
+
+  describe('PATCH /schedule/<id>', () => {
+    const activeTask = {
+      id: 'task-patch-001',
+      group_folder: 'alice',
+      chat_jid: 'http:alice',
+      prompt: 'Say hello',
+      schedule_type: 'cron' as const,
+      schedule_value: '0 9 * * *',
+      context_mode: 'isolated' as const,
+      next_run: '2024-06-02T09:00:00.000Z',
+      last_run: null,
+      last_result: null,
+      status: 'active' as const,
+      created_at: '2024-06-01T10:00:00.000Z',
+    };
+    const pausedTask = { ...activeTask, status: 'paused' as const };
+
+    beforeEach(() => {
+      vi.mocked(getTaskById).mockReset();
+      vi.mocked(pauseTask).mockReset();
+      vi.mocked(resumeTask).mockReset();
+    });
+
+    // AC4: PATCH { paused: true } → 200 status "paused"
+    it('returns 200 with status "paused" when pausing an active task', async () => {
+      vi.mocked(getTaskById)
+        .mockReturnValueOnce(activeTask) // existence check
+        .mockReturnValueOnce(pausedTask); // re-fetch after update
+      vi.mocked(pauseTask).mockReturnValue(true);
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({
+        method: 'PATCH',
+        url: '/schedule/task-patch-001',
+        auth: 'alice:secret',
+        body: JSON.stringify({ paused: true }),
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      const parsed = JSON.parse(res._body);
+      expect(parsed.status).toBe('paused');
+      expect(vi.mocked(pauseTask)).toHaveBeenCalledWith('task-patch-001', 'alice');
+      await channel.disconnect();
+    });
+
+    // AC4: PATCH { paused: false } → 200 status "active"
+    it('returns 200 with status "active" when resuming a paused task', async () => {
+      vi.mocked(getTaskById)
+        .mockReturnValueOnce(pausedTask)
+        .mockReturnValueOnce(activeTask);
+      vi.mocked(resumeTask).mockReturnValue(true);
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({
+        method: 'PATCH',
+        url: '/schedule/task-patch-001',
+        auth: 'alice:secret',
+        body: JSON.stringify({ paused: false }),
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      const parsed = JSON.parse(res._body);
+      expect(parsed.status).toBe('active');
+      expect(vi.mocked(resumeTask)).toHaveBeenCalledWith('task-patch-001', 'alice');
+      await channel.disconnect();
+    });
+
+    // AC4: unknown/cross-group → 404
+    it('returns 404 for unknown task id', async () => {
+      vi.mocked(getTaskById).mockReturnValue(undefined);
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({
+        method: 'PATCH',
+        url: '/schedule/no-such-task',
+        auth: 'alice:secret',
+        body: JSON.stringify({ paused: true }),
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(404);
+      const parsed = JSON.parse(res._body);
+      expect(parsed.error).toBe('Not found');
+      await channel.disconnect();
+    });
+
+    it('returns 404 for cross-group task id (same wording)', async () => {
+      // Task exists but for a different group
+      vi.mocked(getTaskById).mockReturnValue({ ...activeTask, group_folder: 'other-group' });
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({
+        method: 'PATCH',
+        url: '/schedule/other-task',
+        auth: 'alice:secret',
+        body: JSON.stringify({ paused: true }),
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(404);
+      const parsed = JSON.parse(res._body);
+      expect(parsed.error).toBe('Not found');
+      await channel.disconnect();
+    });
+
+    // AC4: bad PATCH body → 400
+    it('returns 400 for PATCH body without paused field', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({
+        method: 'PATCH',
+        url: '/schedule/task-patch-001',
+        auth: 'alice:secret',
+        body: JSON.stringify({ status: 'paused' }),
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(400);
+      await channel.disconnect();
+    });
+
+    // AC5: POST /schedule/<id> → 405 Allow: DELETE, PATCH, HEAD
+    it('returns 405 for POST /schedule/<id> with Allow: DELETE, PATCH, HEAD', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ method: 'POST', url: '/schedule/task-id-001', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(405);
+      expect(res._headers['Allow']).toBe('DELETE, PATCH, HEAD');
+      await channel.disconnect();
+    });
+
+    // AC5: unauthenticated → 401
+    it('returns 401 for unauthenticated PATCH /schedule/<id>', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({
+        method: 'PATCH',
+        url: '/schedule/task-patch-001',
+        auth: null,
+        body: JSON.stringify({ paused: true }),
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(401);
+      await channel.disconnect();
+    });
+
+    // AC5: HEAD /schedule/<id> → 200/404 same headers as GET, no body
+    it('returns 200 for HEAD /schedule/<id> when task exists and belongs to group', async () => {
+      vi.mocked(getTaskById).mockReturnValue(activeTask);
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ method: 'HEAD', url: '/schedule/task-patch-001', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      expect(res._body).toBe('');
+      await channel.disconnect();
+    });
+
+    it('returns 404 for HEAD /schedule/<id> when task does not exist', async () => {
+      vi.mocked(getTaskById).mockReturnValue(undefined);
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ method: 'HEAD', url: '/schedule/no-such-task', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(404);
+      expect(res._body).toBe('');
+      await channel.disconnect();
+    });
+
+    void pausedTask; // suppress unused variable warning
   });
 
   // ── GET /jobs/<id> and DELETE /jobs/<id> (Story 69) ──────────────────────
