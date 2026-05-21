@@ -50,6 +50,13 @@ import {
   RegisteredGroup,
 } from '../types.js';
 import { DEFAULT_DIRECT_MODEL } from '../runtime/llm-client.js';
+import {
+  listAcceptedSkills,
+  listCandidates,
+  listArchived,
+  acceptCandidate,
+  rejectCandidate,
+} from '../runtime/skill-store.js';
 
 /** Stable capability entry shape exposed by GET /capabilities. */
 export interface CapabilityEntry {
@@ -227,6 +234,10 @@ interface SseClient {
 const MAX_MULTIPART_SIZE = 10 * 1024 * 1024; // 10 MB
 const MAX_SECRETS_BODY_SIZE = 64 * 1024; // 64 KiB (Story 76 AC5)
 const MAX_MEMORY_BODY_SIZE = 1 * 1024 * 1024; // 1 MiB cap for PUT/PATCH /memory
+
+// Candidate IDs: timestamp-hrtime-slug, e.g. "1714059600000-1a2b3c-my-skill"
+// Must allow digits, lowercase letters, hyphens, underscores.  No dots or slashes.
+const CANDIDATE_ID_RE = /^[a-z0-9][-a-z0-9_]{0,255}$/;
 
 const MEDIA_MAGIC: Array<{ bytes: number[]; mime: string }> = [
   { bytes: [0xff, 0xd8, 0xff], mime: 'image/jpeg' },
@@ -794,6 +805,8 @@ export class HttpChannel implements Channel {
     '/secrets/': ['DELETE', 'HEAD'], // prefix — dynamic types
     '/secrets/catalog': ['GET', 'HEAD'],
     '/memory': ['GET', 'HEAD', 'PUT', 'PATCH'],
+    '/skills': ['GET', 'HEAD'],
+    '/skills/': ['POST'], // prefix — candidates/<id>/accept|reject
   };
 
   private async handleRequest(
@@ -834,6 +847,9 @@ export class HttpChannel implements Channel {
       }
       if (!allowedMethods && /^\/secrets\/[^/]+$/.test(url.pathname) && url.pathname !== '/secrets/catalog') {
         allowedMethods = HttpChannel.CORS_PATH_METHODS['/secrets/'];
+      }
+      if (!allowedMethods && /^\/skills\/candidates\/[^/]+\/(accept|reject)$/.test(url.pathname)) {
+        allowedMethods = HttpChannel.CORS_PATH_METHODS['/skills/'];
       }
 
       const methodsList = allowedMethods
@@ -2315,6 +2331,109 @@ export class HttpChannel implements Channel {
       return;
     }
 
+    // ── GET /skills — list accepted, candidates, archived ────────────────────
+    // Method guard FIRST — 405 before auth so unsupported methods don't leak info
+    if (url.pathname === '/skills') {
+      if (req.method !== 'GET' && req.method !== 'HEAD') {
+        res.writeHead(405, this.addCorsHeaders({
+          Allow: 'GET, HEAD',
+          'Content-Type': 'text/plain',
+        }));
+        res.end('Method Not Allowed');
+        return;
+      }
+      const username = this.authenticate(req);
+      if (!username) {
+        this.sendUnauthorized(res);
+        return;
+      }
+      const jid = `http:${username}`;
+      const group = this.opts.registeredGroups()[jid];
+      if (!group) {
+        res.writeHead(404, this.addCorsHeaders({ 'Content-Type': 'text/plain' }));
+        res.end('Not found');
+        return;
+      }
+
+      const accepted = listAcceptedSkills(GROUPS_DIR, group.folder).map((s) => ({
+        slug: s.frontmatter.name,
+        title: s.frontmatter.name,
+        description: s.frontmatter.description,
+      }));
+      const candidates = listCandidates(GROUPS_DIR, group.folder).map((c) => ({
+        slug: c.id,
+        title: c.skill.frontmatter.name,
+        description: c.skill.frontmatter.description,
+      }));
+      const archived = listArchived(GROUPS_DIR, group.folder).map((s) => ({
+        slug: s.frontmatter.name,
+        title: s.frontmatter.name,
+        description: s.frontmatter.description,
+      }));
+
+      const payload = JSON.stringify({ accepted, candidates, archived });
+      res.writeHead(200, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+      if (req.method === 'HEAD') {
+        res.end();
+      } else {
+        res.end(payload);
+      }
+      return;
+    }
+
+    // ── POST /skills/candidates/<id>/accept|reject ────────────────────────────
+    const candidateActionMatch = url.pathname.match(
+      /^\/skills\/candidates\/([^/]+)\/(accept|reject)$/,
+    );
+    if (candidateActionMatch) {
+      // Method guard FIRST — 405 before auth so unsupported methods don't leak info
+      if (req.method !== 'POST') {
+        res.writeHead(405, this.addCorsHeaders({
+          Allow: 'POST',
+          'Content-Type': 'text/plain',
+        }));
+        res.end('Method Not Allowed');
+        return;
+      }
+      const username = this.authenticate(req);
+      if (!username) {
+        this.sendUnauthorized(res);
+        return;
+      }
+      const candidateId = candidateActionMatch[1];
+      const action = candidateActionMatch[2] as 'accept' | 'reject';
+
+      // Validate candidate ID to prevent path traversal
+      if (!CANDIDATE_ID_RE.test(candidateId)) {
+        res.writeHead(404, this.addCorsHeaders({ 'Content-Type': 'text/plain' }));
+        res.end('Not found');
+        return;
+      }
+
+      const jid = `http:${username}`;
+      const group = this.opts.registeredGroups()[jid];
+      if (!group) {
+        res.writeHead(404, this.addCorsHeaders({ 'Content-Type': 'text/plain' }));
+        res.end('Not found');
+        return;
+      }
+
+      try {
+        if (action === 'accept') {
+          acceptCandidate(GROUPS_DIR, group.folder, candidateId);
+        } else {
+          rejectCandidate(GROUPS_DIR, group.folder, candidateId);
+        }
+        const result = action === 'accept' ? 'accepted' : 'rejected';
+        res.writeHead(200, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+        res.end(JSON.stringify({ status: result, slug: candidateId }));
+      } catch {
+        res.writeHead(404, this.addCorsHeaders({ 'Content-Type': 'text/plain' }));
+        res.end('Not found');
+      }
+      return;
+    }
+
     // ── /memory — per-group CLAUDE.md REST API ────────────────────────────────
     // Method guard FIRST — 405 before auth so unsupported methods don't leak info
     if (url.pathname === '/memory') {
@@ -2373,6 +2492,7 @@ export class HttpChannel implements Channel {
       '/secrets': ['GET', 'HEAD', 'POST'],
       '/secrets/catalog': ['GET', 'HEAD'],
       '/memory': ['GET', 'HEAD', 'PUT', 'PATCH'],
+      '/skills': ['GET', 'HEAD'],
     };
     const allowed = pathMethods[url.pathname];
     if (allowed && !allowed.includes(req.method ?? '')) {

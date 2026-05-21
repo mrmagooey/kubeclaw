@@ -82,6 +82,15 @@ const mockServerInstance = {
   }),
 };
 
+// Mock skill-store so unit tests don't touch the real filesystem
+vi.mock('../runtime/skill-store.js', () => ({
+  listAcceptedSkills: vi.fn(),
+  listCandidates: vi.fn(),
+  listArchived: vi.fn(),
+  acceptCandidate: vi.fn(),
+  rejectCandidate: vi.fn(),
+}));
+
 vi.mock('node:http', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:http')>();
   return {
@@ -124,6 +133,13 @@ import {
   resumeTask,
   searchConversations,
 } from '../db.js';
+import {
+  listAcceptedSkills,
+  listCandidates,
+  listArchived,
+  acceptCandidate,
+  rejectCandidate,
+} from '../runtime/skill-store.js';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -5806,6 +5822,329 @@ describe('detectMediaType', () => {
       await dispatch(channel, req, res);
 
       expect(res._status).toBe(400);
+      await channel.disconnect();
+    });
+  });
+
+  // ── GET /skills ──────────────────────────────────────────────────────────
+
+  describe('GET /skills', () => {
+    it('returns 401 when unauthenticated', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/skills', auth: null });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(401);
+      await channel.disconnect();
+    });
+
+    it('returns 405 with Allow: GET, HEAD for non-GET/HEAD method (POST)', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/skills', method: 'POST', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(405);
+      expect(res._headers['Allow']).toBe('GET, HEAD');
+      await channel.disconnect();
+    });
+
+    it('returns 200 JSON with accepted, candidates, archived arrays', async () => {
+      vi.mocked(listAcceptedSkills).mockReturnValue([
+        { frontmatter: { name: 'accepted-skill', description: 'Accepted desc', created: '2026-01-01', source: 'manual' }, body: 'body' },
+      ]);
+      vi.mocked(listCandidates).mockReturnValue([
+        { id: '111-abc-candidate-skill', skill: { frontmatter: { name: 'candidate-skill', description: 'Candidate desc', created: '2026-01-02', source: 'harvest' }, body: 'cbody' } },
+      ]);
+      vi.mocked(listArchived).mockReturnValue([
+        { frontmatter: { name: 'archived-skill', description: 'Archived desc', created: '2026-01-03', source: 'manual' }, body: 'abody' },
+      ]);
+
+      const opts = makeOpts({
+        registeredGroups: vi.fn(() => ({
+          'http:alice': { name: 'alice', folder: 'alice-group', trigger: '', added_at: '' },
+        })),
+      });
+      const channel = new HttpChannel(makeConfig(), opts);
+      await channel.connect();
+
+      const req = makeReq({ url: '/skills', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      expect(res._headers['Content-Type']).toContain('application/json');
+      const body = JSON.parse(res._body);
+      expect(body.accepted).toHaveLength(1);
+      expect(body.accepted[0].slug).toBe('accepted-skill');
+      expect(body.accepted[0].description).toBe('Accepted desc');
+      expect(body.accepted[0]).not.toHaveProperty('body');
+      expect(body.candidates).toHaveLength(1);
+      expect(body.candidates[0].slug).toBe('111-abc-candidate-skill');
+      expect(body.candidates[0]).not.toHaveProperty('body');
+      expect(body.archived).toHaveLength(1);
+      expect(body.archived[0].slug).toBe('archived-skill');
+      expect(body.archived[0]).not.toHaveProperty('body');
+      await channel.disconnect();
+    });
+
+    it('returns 404 if user has no registered group', async () => {
+      const opts = makeOpts({ registeredGroups: vi.fn(() => ({})) });
+      const channel = new HttpChannel(makeConfig(), opts);
+      await channel.connect();
+
+      const req = makeReq({ url: '/skills', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(404);
+      await channel.disconnect();
+    });
+
+    it('HEAD /skills returns 200 with no body', async () => {
+      vi.mocked(listAcceptedSkills).mockReturnValue([]);
+      vi.mocked(listCandidates).mockReturnValue([]);
+      vi.mocked(listArchived).mockReturnValue([]);
+
+      const opts = makeOpts({
+        registeredGroups: vi.fn(() => ({
+          'http:alice': { name: 'alice', folder: 'alice-group', trigger: '', added_at: '' },
+        })),
+      });
+      const channel = new HttpChannel(makeConfig(), opts);
+      await channel.connect();
+
+      const req = makeReq({ url: '/skills', method: 'HEAD', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      // HEAD must not include a body
+      expect(res._body).toBe('');
+      await channel.disconnect();
+    });
+  });
+
+  // ── POST /skills/candidates/<id>/accept ──────────────────────────────────
+
+  describe('POST /skills/candidates/<id>/accept', () => {
+    it('returns 401 when unauthenticated', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/skills/candidates/my-skill/accept', method: 'POST', auth: null });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(401);
+      await channel.disconnect();
+    });
+
+    it('returns 405 with Allow: POST for wrong method (GET)', async () => {
+      const opts = makeOpts({
+        registeredGroups: vi.fn(() => ({
+          'http:alice': { name: 'alice', folder: 'alice-group', trigger: '', added_at: '' },
+        })),
+      });
+      const channel = new HttpChannel(makeConfig(), opts);
+      await channel.connect();
+
+      const req = makeReq({ url: '/skills/candidates/my-skill/accept', method: 'GET', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(405);
+      expect(res._headers['Allow']).toBe('POST');
+      await channel.disconnect();
+    });
+
+    it('returns 404 for unknown candidate id', async () => {
+      vi.mocked(acceptCandidate).mockImplementation(() => { throw new Error('candidate not found: no-such-id'); });
+
+      const opts = makeOpts({
+        registeredGroups: vi.fn(() => ({
+          'http:alice': { name: 'alice', folder: 'alice-group', trigger: '', added_at: '' },
+        })),
+      });
+      const channel = new HttpChannel(makeConfig(), opts);
+      await channel.connect();
+
+      const req = makeReq({ url: '/skills/candidates/no-such-id/accept', method: 'POST', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(404);
+      expect(res._body).toContain('Not found');
+      await channel.disconnect();
+    });
+
+    it('returns 404 for invalid slug (path traversal attempt)', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/skills/candidates/../evil/accept', method: 'POST', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      // 400 when the early path-traversal guard fires; 404 from CANDIDATE_ID_RE
+      expect([400, 404]).toContain(res._status);
+      await channel.disconnect();
+    });
+
+    it('returns 200 { status: "accepted", slug } on success', async () => {
+      vi.mocked(acceptCandidate).mockReturnValue(undefined);
+
+      const opts = makeOpts({
+        registeredGroups: vi.fn(() => ({
+          'http:alice': { name: 'alice', folder: 'alice-group', trigger: '', added_at: '' },
+        })),
+      });
+      const channel = new HttpChannel(makeConfig(), opts);
+      await channel.connect();
+
+      const req = makeReq({ url: '/skills/candidates/111-abc-my-skill/accept', method: 'POST', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      const body = JSON.parse(res._body);
+      expect(body.status).toBe('accepted');
+      expect(body.slug).toBe('111-abc-my-skill');
+      await channel.disconnect();
+    });
+
+    it('returns 404 for user with no registered group (cross-group denial)', async () => {
+      const opts = makeOpts({ registeredGroups: vi.fn(() => ({})) });
+      const channel = new HttpChannel(makeConfig(), opts);
+      await channel.connect();
+
+      const req = makeReq({ url: '/skills/candidates/some-skill/accept', method: 'POST', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(404);
+      expect(res._body).toContain('Not found');
+      await channel.disconnect();
+    });
+  });
+
+  // ── POST /skills/candidates/<id>/reject ──────────────────────────────────
+
+  describe('POST /skills/candidates/<id>/reject', () => {
+    it('returns 401 when unauthenticated', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/skills/candidates/my-skill/reject', method: 'POST', auth: null });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(401);
+      await channel.disconnect();
+    });
+
+    it('returns 405 with Allow: POST for wrong method (DELETE)', async () => {
+      const opts = makeOpts({
+        registeredGroups: vi.fn(() => ({
+          'http:alice': { name: 'alice', folder: 'alice-group', trigger: '', added_at: '' },
+        })),
+      });
+      const channel = new HttpChannel(makeConfig(), opts);
+      await channel.connect();
+
+      const req = makeReq({ url: '/skills/candidates/my-skill/reject', method: 'DELETE', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(405);
+      expect(res._headers['Allow']).toBe('POST');
+      await channel.disconnect();
+    });
+
+    it('unauthenticated GET /skills/candidates/xxx/accept returns 405 not 401', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/skills/candidates/xxx/accept', method: 'GET', auth: null });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(405);
+      expect(res._headers['Allow']).toBe('POST');
+      await channel.disconnect();
+    });
+
+    it('returns 404 for unknown candidate id', async () => {
+      vi.mocked(rejectCandidate).mockImplementation(() => { throw new Error('candidate not found: no-such-id'); });
+
+      const opts = makeOpts({
+        registeredGroups: vi.fn(() => ({
+          'http:alice': { name: 'alice', folder: 'alice-group', trigger: '', added_at: '' },
+        })),
+      });
+      const channel = new HttpChannel(makeConfig(), opts);
+      await channel.connect();
+
+      const req = makeReq({ url: '/skills/candidates/no-such-id/reject', method: 'POST', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(404);
+      expect(res._body).toContain('Not found');
+      await channel.disconnect();
+    });
+
+    it('returns 404 for invalid slug (path traversal attempt)', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/skills/candidates/../evil/reject', method: 'POST', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      // 400 when the early path-traversal guard fires; 404 from CANDIDATE_ID_RE
+      expect([400, 404]).toContain(res._status);
+      await channel.disconnect();
+    });
+
+    it('returns 200 { status: "rejected", slug } on success', async () => {
+      vi.mocked(rejectCandidate).mockReturnValue(undefined);
+
+      const opts = makeOpts({
+        registeredGroups: vi.fn(() => ({
+          'http:alice': { name: 'alice', folder: 'alice-group', trigger: '', added_at: '' },
+        })),
+      });
+      const channel = new HttpChannel(makeConfig(), opts);
+      await channel.connect();
+
+      const req = makeReq({ url: '/skills/candidates/111-abc-my-skill/reject', method: 'POST', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      const body = JSON.parse(res._body);
+      expect(body.status).toBe('rejected');
+      expect(body.slug).toBe('111-abc-my-skill');
+      await channel.disconnect();
+    });
+
+    it('returns 404 for user with no registered group (cross-group denial)', async () => {
+      const opts = makeOpts({ registeredGroups: vi.fn(() => ({})) });
+      const channel = new HttpChannel(makeConfig(), opts);
+      await channel.connect();
+
+      const req = makeReq({ url: '/skills/candidates/some-skill/reject', method: 'POST', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(404);
+      expect(res._body).toContain('Not found');
       await channel.disconnect();
     });
   });
