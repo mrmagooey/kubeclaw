@@ -1387,7 +1387,7 @@ status: passing 5/5
 - LLM-dependence: **none**.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-history-delete-id --create-namespace`, `--set namespace=kubeclaw-e2e-history-delete-id`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14139`.
 
-status: drafted
+status: passing 5/5
 
 ## Story 57: `GET /message/rate-limit` exposes remaining quota to clients
 
@@ -1411,7 +1411,7 @@ status: drafted
 - LLM-dependence: **none**.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-ratelimit-status --create-namespace`, `--set namespace=kubeclaw-e2e-ratelimit-status`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14140`.
 
-status: drafted
+status: passing 5/5
 
 ## Story 58: `/specialists history` shows recent specialist invocations
 
@@ -1436,4 +1436,4 @@ status: drafted
 - LLM-dependence: **none**.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-specialists-history --create-namespace`, `--set namespace=kubeclaw-e2e-specialists-history`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14141`.
 
-status: drafted
+status: passing 5/5
