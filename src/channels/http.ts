@@ -27,6 +27,7 @@ import {
   getRecentToolJobsForGroup,
   getTasksForGroup,
   getToolJobByIdForGroup,
+  searchConversations,
   storeMessageDirect,
 } from '../db.js';
 import { readEnvFile } from '../env.js';
@@ -720,6 +721,7 @@ export class HttpChannel implements Channel {
     '/jobs/': ['GET', 'HEAD', 'DELETE'], // prefix — dynamic ids
     '/schedule': ['GET', 'HEAD'],
     '/capabilities': ['GET', 'HEAD'],
+    '/search': ['GET', 'HEAD'],
   };
 
   private async handleRequest(
@@ -1740,6 +1742,91 @@ export class HttpChannel implements Channel {
       return;
     }
 
+    // Story 72: GET /search?q= — full-text history search for the authenticated group
+    if (url.pathname === '/search') {
+      // 405 for methods other than GET and HEAD (before auth)
+      if (req.method !== 'GET' && req.method !== 'HEAD') {
+        res.writeHead(405, this.addCorsHeaders({
+          'Content-Type': 'application/json',
+          Allow: 'GET, HEAD',
+        }));
+        res.end(JSON.stringify({ error: 'Method Not Allowed' }));
+        return;
+      }
+
+      const username = this.authenticate(req);
+      if (!username) {
+        this.sendUnauthorized(res);
+        return;
+      }
+
+      // Validate q parameter
+      const q = url.searchParams.get('q');
+      if (q === null || q.trim() === '') {
+        res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+        res.end(JSON.stringify({ error: 'q required' }));
+        return;
+      }
+      if (q.length > 500) {
+        res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+        res.end(JSON.stringify({ error: 'q must be 500 characters or fewer' }));
+        return;
+      }
+
+      // Resolve group folder from authenticated user's registered group
+      const jid = `http:${username}`;
+      const group = this.opts.registeredGroups()[jid];
+      if (!group) {
+        res.writeHead(404, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+        res.end(JSON.stringify({ error: 'Group not found' }));
+        return;
+      }
+
+      // Parse and cap limit
+      const DEFAULT_LIMIT = 20;
+      const MAX_LIMIT = 100;
+      const rawLimit = url.searchParams.get('limit');
+      let limit = DEFAULT_LIMIT;
+      if (rawLimit !== null) {
+        const parsed = Number(rawLimit);
+        limit = Number.isFinite(parsed) && parsed > 0
+          ? Math.min(Math.floor(parsed), MAX_LIMIT)
+          : DEFAULT_LIMIT;
+      }
+
+      const results = searchConversations({
+        groupFolder: group.folder,
+        query: q.trim(),
+        limit,
+      });
+
+      // Map to wire format: { id, role, content, timestamp }
+      const payload = JSON.stringify(
+        results.map((r) => ({
+          id: r.id,
+          role: r.role,
+          content: r.content,
+          timestamp: r.createdAt,
+        })),
+      );
+
+      const headers = this.addCorsHeaders({
+        'Content-Type': 'application/json',
+        'Content-Length': String(Buffer.byteLength(payload)),
+        'Cache-Control': 'no-cache',
+      });
+
+      if (req.method === 'HEAD') {
+        res.writeHead(200, headers);
+        res.end();
+        return;
+      }
+
+      res.writeHead(200, headers);
+      res.end(payload);
+      return;
+    }
+
     // Per RFC 9110: known paths reached with an unsupported method → 405 + Allow
     const pathMethods: Record<string, string[]> = {
       '/': ['GET'],
@@ -1755,6 +1842,7 @@ export class HttpChannel implements Channel {
       '/jobs': ['GET', 'HEAD'],
       '/schedule': ['GET', 'HEAD'],
       '/capabilities': ['GET', 'HEAD'],
+      '/search': ['GET', 'HEAD'],
     };
     const allowed = pathMethods[url.pathname];
     if (allowed && !allowed.includes(req.method ?? '')) {

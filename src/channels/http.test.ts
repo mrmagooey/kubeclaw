@@ -16,6 +16,7 @@ vi.mock('../db.js', () => {
     getActiveToolJobs: vi.fn(() => []),
     getTasksForGroup: vi.fn(() => []),
     getToolJobByIdForGroup: vi.fn(() => null),
+    searchConversations: vi.fn(() => []),
     db: { exec: dbExec },
   };
 });
@@ -99,6 +100,7 @@ import {
   getActiveToolJobs,
   getTasksForGroup,
   getToolJobByIdForGroup,
+  searchConversations,
 } from '../db.js';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -3702,6 +3704,223 @@ describe('detectMediaType', () => {
       await dispatch(channel, req, res);
 
       expect(res._status).toBe(504);
+      await channel.disconnect();
+    });
+  });
+
+  // ── GET /search ──────────────────────────────────────────────────────────
+
+  describe('GET /search', () => {
+    const SAMPLE_ROWS = [
+      {
+        id: 'row-2',
+        groupFolder: 'alice',
+        role: 'assistant' as const,
+        content: 'The sidecar handles TLS.',
+        createdAt: '2026-05-21T12:00:00.000Z',
+        snippet: 'The [sidecar] handles TLS.',
+      },
+      {
+        id: 'row-1',
+        groupFolder: 'alice',
+        role: 'user' as const,
+        content: 'What does the sidecar do?',
+        createdAt: '2026-05-21T11:00:00.000Z',
+        snippet: 'What does the [sidecar] do?',
+      },
+    ];
+
+    it('returns 401 when not authenticated', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/search?q=sidecar', auth: null });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(401);
+      await channel.disconnect();
+    });
+
+    it('returns 400 when q is missing', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/search', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(400);
+      const body = JSON.parse(res._body);
+      expect(body.error).toMatch(/q required/i);
+      await channel.disconnect();
+    });
+
+    it('returns 400 when q is empty string', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/search?q=', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(400);
+      const body = JSON.parse(res._body);
+      expect(body.error).toMatch(/q required/i);
+      await channel.disconnect();
+    });
+
+    it('returns 400 when q exceeds 500 chars', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const longQ = 'a'.repeat(501);
+      const req = makeReq({ url: `/search?q=${longQ}`, auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(400);
+      await channel.disconnect();
+    });
+
+    it('returns 200 JSON array with both rows in order (AC5: unit stub)', async () => {
+      (searchConversations as ReturnType<typeof vi.fn>).mockReturnValueOnce(
+        SAMPLE_ROWS,
+      );
+
+      const opts = makeOpts();
+      const channel = new HttpChannel(makeConfig(), opts);
+      await channel.connect();
+
+      const req = makeReq({ url: '/search?q=sidecar', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      expect(res._headers['Content-Type']).toContain('application/json');
+      const body = JSON.parse(res._body);
+      expect(Array.isArray(body)).toBe(true);
+      expect(body).toHaveLength(2);
+      // newest-first: row-2 before row-1
+      expect(body[0].id).toBe('row-2');
+      expect(body[1].id).toBe('row-1');
+      // Response fields match spec
+      expect(body[0]).toMatchObject({
+        id: 'row-2',
+        role: 'assistant',
+        content: 'The sidecar handles TLS.',
+        timestamp: '2026-05-21T12:00:00.000Z',
+      });
+      await channel.disconnect();
+    });
+
+    it('passes limit parameter capped at 100', async () => {
+      (searchConversations as ReturnType<typeof vi.fn>).mockReturnValueOnce([]);
+
+      const opts = makeOpts();
+      const channel = new HttpChannel(makeConfig(), opts);
+      await channel.connect();
+
+      const req = makeReq({ url: '/search?q=foo&limit=200', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      expect(searchConversations).toHaveBeenCalledWith(
+        expect.objectContaining({ limit: 100 }),
+      );
+      await channel.disconnect();
+    });
+
+    it('uses default limit of 20 when limit not specified', async () => {
+      (searchConversations as ReturnType<typeof vi.fn>).mockReturnValueOnce([]);
+
+      const opts = makeOpts();
+      const channel = new HttpChannel(makeConfig(), opts);
+      await channel.connect();
+
+      const req = makeReq({ url: '/search?q=foo', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      expect(searchConversations).toHaveBeenCalledWith(
+        expect.objectContaining({ limit: 20 }),
+      );
+      await channel.disconnect();
+    });
+
+    it('scopes query to the authenticated user group folder', async () => {
+      (searchConversations as ReturnType<typeof vi.fn>).mockReturnValueOnce([]);
+
+      const opts = makeOpts();
+      const channel = new HttpChannel(makeConfig(), opts);
+      await channel.connect();
+
+      const req = makeReq({ url: '/search?q=test', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(searchConversations).toHaveBeenCalledWith(
+        expect.objectContaining({ groupFolder: 'alice' }),
+      );
+      await channel.disconnect();
+    });
+
+    it('returns 405 with Allow: GET, HEAD for POST /search', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({
+        method: 'POST',
+        url: '/search',
+        auth: 'alice:secret',
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(405);
+      expect(res._headers['Allow']).toBe('GET, HEAD');
+      await channel.disconnect();
+    });
+
+    it('HEAD /search returns same headers as GET but no body, with Content-Length', async () => {
+      (searchConversations as ReturnType<typeof vi.fn>).mockReturnValueOnce(
+        SAMPLE_ROWS,
+      );
+
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({
+        method: 'HEAD',
+        url: '/search?q=sidecar',
+        auth: 'alice:secret',
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      expect(res._headers['Content-Type']).toContain('application/json');
+      // HEAD must send no body
+      expect(res._body).toBe('');
+      // HEAD must include Content-Length matching the body that GET would return
+      expect(res._headers['Content-Length']).toBeDefined();
+      expect(Number(res._headers['Content-Length'])).toBeGreaterThan(0);
+      await channel.disconnect();
+    });
+
+    it('returns 404 when user group is not registered', async () => {
+      const opts = makeOpts({ registeredGroups: vi.fn(() => ({})) });
+      const channel = new HttpChannel(makeConfig(), opts);
+      await channel.connect();
+
+      const req = makeReq({ url: '/search?q=test', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      // Unregistered group → cannot determine folder → 404
+      expect([404, 400]).toContain(res._status);
       await channel.disconnect();
     });
   });
