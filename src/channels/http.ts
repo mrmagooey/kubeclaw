@@ -759,6 +759,7 @@ export class HttpChannel implements Channel {
     '/healthz': ['GET', 'HEAD'],
     '/readyz': ['GET', 'HEAD'],
     '/version': ['GET', 'HEAD'],
+    '/whoami': ['GET', 'HEAD'],
     '/stream': ['GET'],
     '/message/rate-limit': ['GET', 'HEAD'],
     '/message': ['POST'],
@@ -909,6 +910,48 @@ export class HttpChannel implements Channel {
         return;
       }
       // Other methods fall through to pathMethods 405 handler below
+    }
+
+    // Authenticated identity — requires auth
+    if (url.pathname === '/whoami') {
+      // Method guard first — reject disallowed methods before auth check
+      if (req.method !== 'GET' && req.method !== 'HEAD') {
+        res.writeHead(405, this.addCorsHeaders({
+          'Content-Type': 'text/plain',
+          Allow: 'GET, HEAD',
+        }));
+        res.end('Method Not Allowed');
+        return;
+      }
+
+      // Only after method is allowed, check auth
+      const username = this.authenticate(req);
+      if (!username) {
+        this.sendUnauthorized(res);
+        return;
+      }
+
+      // Build response — exactly 3 fields, no spread
+      const group = `http:${username}`;
+      const registered = this.opts.registeredGroups()[group];
+      const group_folder = registered?.folder ?? '';
+      const payload = {
+        username,
+        group,
+        group_folder,
+      };
+      const body = JSON.stringify(payload);
+      res.writeHead(200, this.addCorsHeaders({
+        'Content-Type': 'application/json',
+        'Content-Length': String(Buffer.byteLength(body)),
+        'Cache-Control': 'no-store',
+      }));
+      if (req.method === 'HEAD') {
+        res.end();
+      } else {
+        res.end(body);
+      }
+      return;
     }
 
     // Serve chat UI without auth (browser will prompt via Basic auth challenge)
@@ -2230,6 +2273,7 @@ export class HttpChannel implements Channel {
       '/healthz': ['GET', 'HEAD'],
       '/readyz': ['GET', 'HEAD'],
       '/version': ['GET', 'HEAD'],
+      '/whoami': ['GET', 'HEAD'],
       '/stream': ['GET'],
       '/message/rate-limit': ['GET', 'HEAD'],
       '/message': ['POST'],

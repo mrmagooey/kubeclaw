@@ -4847,3 +4847,187 @@ describe('detectMediaType', () => {
     });
   });
 
+  // ── GET /whoami — authenticated identity (Story 75) ───────────────────────
+
+  describe('GET /whoami', () => {
+    it('AC1: authenticated GET returns 200 with Content-Type application/json', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/whoami', method: 'GET', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      expect(res._headers['Content-Type']).toBe('application/json');
+      await channel.disconnect();
+    });
+
+    it('AC1: response body has exactly 3 fields: username, group, group_folder', async () => {
+      const opts = makeOpts({
+        registeredGroups: vi.fn(() => ({
+          'http:alice': {
+            name: 'alice',
+            folder: 'groups/http-alice',
+            trigger: '@Andy',
+            added_at: '2024-01-01T00:00:00.000Z',
+          },
+        })),
+      });
+      const channel = new HttpChannel(makeConfig(), opts);
+      await channel.connect();
+
+      const req = makeReq({ url: '/whoami', method: 'GET', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      const body = JSON.parse(res._body) as Record<string, unknown>;
+      expect(body.username).toBe('alice');
+      expect(body.group).toBe('http:alice');
+      expect(body.group_folder).toBe('groups/http-alice');
+      // AC4: EXACTLY 3 fields — no extras
+      expect(Object.keys(body)).toHaveLength(3);
+      await channel.disconnect();
+    });
+
+    it('AC1+AC4: group is http:<username> and group_folder comes from registeredGroups()', async () => {
+      const opts = makeOpts({
+        registeredGroups: vi.fn(() => ({
+          'http:alice': {
+            name: 'alice',
+            folder: 'custom-folder',
+            trigger: '',
+            added_at: '',
+          },
+        })),
+      });
+      const channel = new HttpChannel(makeConfig(), opts);
+      await channel.connect();
+
+      const req = makeReq({ url: '/whoami', method: 'GET', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      const body = JSON.parse(res._body) as Record<string, unknown>;
+      expect(body.group).toBe('http:alice');
+      expect(body.group_folder).toBe('custom-folder');
+      await channel.disconnect();
+    });
+
+    it('AC2: unauthenticated request returns 401', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/whoami', method: 'GET', auth: null });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(401);
+      await channel.disconnect();
+    });
+
+    it('AC3: POST /whoami returns 405 with Allow: GET, HEAD', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/whoami', method: 'POST', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(405);
+      expect(res._headers['Allow']).toBe('GET, HEAD');
+      await channel.disconnect();
+    });
+
+    it('AC3: HEAD /whoami returns 200 with same headers as GET but no body', async () => {
+      const opts = makeOpts({
+        registeredGroups: vi.fn(() => ({
+          'http:alice': {
+            name: 'alice',
+            folder: 'alice-folder',
+            trigger: '',
+            added_at: '',
+          },
+        })),
+      });
+      const channel = new HttpChannel(makeConfig(), opts);
+      await channel.connect();
+
+      const req = makeReq({ url: '/whoami', method: 'HEAD', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      expect(res._headers['Content-Type']).toBe('application/json');
+      // HEAD must not send a body
+      expect(res._body).toBe('');
+      await channel.disconnect();
+    });
+
+    it('AC4: response contains EXACTLY the 3 documented fields, no extras', async () => {
+      const opts = makeOpts();
+      const channel = new HttpChannel(makeConfig(), opts);
+      await channel.connect();
+
+      const req = makeReq({ url: '/whoami', method: 'GET', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      const body = JSON.parse(res._body) as Record<string, unknown>;
+      const keys = Object.keys(body).sort();
+      expect(keys).toEqual(['group', 'group_folder', 'username']);
+      await channel.disconnect();
+    });
+
+    it('AC5: response contains no sensitive material (no token/password/auth-secret/session)', async () => {
+      const opts = makeOpts();
+      const channel = new HttpChannel(makeConfig(), opts);
+      await channel.connect();
+
+      const req = makeReq({ url: '/whoami', method: 'GET', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      const raw = res._body.toLowerCase();
+      // Must not leak any credential-adjacent fields
+      expect(raw).not.toContain('password');
+      expect(raw).not.toContain('token');
+      expect(raw).not.toContain('secret');
+      expect(raw).not.toContain('session');
+      await channel.disconnect();
+    });
+
+    it('AC1: group_folder is empty string when group is not yet registered', async () => {
+      // User authenticated but no registered group yet
+      const opts = makeOpts({
+        registeredGroups: vi.fn(() => ({})),
+      });
+      const channel = new HttpChannel(makeConfig(), opts);
+      await channel.connect();
+
+      const req = makeReq({ url: '/whoami', method: 'GET', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      const body = JSON.parse(res._body) as Record<string, unknown>;
+      expect(body.username).toBe('alice');
+      expect(body.group).toBe('http:alice');
+      expect(body.group_folder).toBe('');
+      await channel.disconnect();
+    });
+
+    it('unauthenticated POST /whoami returns 405 not 401', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/whoami', method: 'POST', auth: null });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(405);
+      expect(res._headers['Allow']).toBe('GET, HEAD');
+      await channel.disconnect();
+    });
+  });
+
