@@ -3546,6 +3546,7 @@ describe('Story 53 — integration: /help after normal message, lastAgentTimesta
 function makeJobsDeps(overrides: Partial<JobsCommandDeps> = {}): JobsCommandDeps {
   return {
     getJobLogs: vi.fn().mockResolvedValue('stdout line\nstderr line'),
+    killJob: vi.fn().mockResolvedValue('Cancelled job `job-abc`'),
     ...overrides,
   };
 }
@@ -3690,6 +3691,79 @@ describe('handleJobsCommand — logs subcommand (Story 59)', () => {
     const result = await handleJobsCommand('grp', '/jobs job-abc logs', deps);
     expect(result).not.toMatch(/no longer available/i);
     expect(result).toContain('No pods found for job');
+  });
+});
+
+// ── /jobs <id> kill unit tests (Story 66) ─────────────────────────────────────
+
+describe('handleJobsCommand — /jobs <id> kill (Story 66)', () => {
+  const GROUP_FOLDER = 'test-group';
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  /**
+   * Build a JobsCommandDeps with a stub killJob implementation.
+   * The stub records calls and returns the configured reply.
+   */
+  function makeKillDeps(
+    killReply: string,
+  ): { deps: JobsCommandDeps; killSpy: ReturnType<typeof vi.fn> } {
+    const killSpy = vi.fn().mockResolvedValue(killReply);
+    const deps: JobsCommandDeps = {
+      getJobLogs: vi.fn(),
+      killJob: killSpy,
+    };
+    return { deps, killSpy };
+  }
+
+  it('AC1: active job → killJob called with correct jobId and returns confirmation', async () => {
+    const { deps, killSpy } = makeKillDeps('Cancelled job `job-abc`');
+    const reply = await handleJobsCommand(GROUP_FOLDER, '/jobs job-abc kill', deps);
+    expect(killSpy).toHaveBeenCalledWith('job-abc', GROUP_FOLDER);
+    expect(reply).toBe('Cancelled job `job-abc`');
+  });
+
+  it('AC2: already-resolved job → returns not-active message with current status', async () => {
+    const { deps } = makeKillDeps('Job `job-xyz` is not active (status: completed)');
+    const reply = await handleJobsCommand(GROUP_FOLDER, '/jobs job-xyz kill', deps);
+    expect(reply).toContain('not active');
+    expect(reply).toContain('completed');
+  });
+
+  it('AC3: job belongs to another group → returns "Job not found"', async () => {
+    const { deps } = makeKillDeps('Job not found');
+    const reply = await handleJobsCommand('other-group', '/jobs job-abc kill', deps);
+    expect(reply).toBe('Job not found');
+  });
+
+  it('AC4: unknown job id → returns "Job not found"', async () => {
+    const { deps } = makeKillDeps('Job not found');
+    const reply = await handleJobsCommand(GROUP_FOLDER, '/jobs unknown-id kill', deps);
+    expect(reply).toBe('Job not found');
+  });
+
+  it('AC5: JOBS_HELP contains /jobs <id> kill', () => {
+    expect(JOBS_HELP).toContain('/jobs <id> kill');
+  });
+
+  it('does not invoke killJob when no deps provided', async () => {
+    vi.spyOn(db, 'getActiveToolJobs').mockReturnValue([]);
+    vi.spyOn(db, 'getRecentToolJobsForGroup').mockReturnValue([]);
+    // no deps — falls through to listing path
+    const reply = await handleJobsCommand(GROUP_FOLDER, '/jobs job-abc kill');
+    expect(reply).toBe('No active jobs.');
+  });
+
+  it('handles killJob IPC error gracefully', async () => {
+    const deps: JobsCommandDeps = {
+      getJobLogs: vi.fn(),
+      killJob: vi.fn().mockRejectedValue(new Error('timeout')),
+    };
+    const reply = await handleJobsCommand(GROUP_FOLDER, '/jobs job-abc kill', deps);
+    expect(reply).toContain('Failed to cancel job');
+    expect(reply).toContain('timeout');
   });
 });
 

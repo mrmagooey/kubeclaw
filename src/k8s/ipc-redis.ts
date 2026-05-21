@@ -1657,7 +1657,94 @@ export async function startTaskRequestWatcher(
             // The channel pod sends groupFolder; we look up the K8s job name,
             // delete the job, and publish a "Cancelled" notice back to the
             // channel's output pub/sub so it appears in the SSE stream.
-            const { resultStream: cancelResultStream } = obj;
+            //
+            // Story 66: if jobId is present, perform targeted cancel with DB ownership check.
+            // Story 49: if no jobId, do group-level cancel (legacy path).
+            const { resultStream: cancelResultStream, jobId: cancelJobId } = obj;
+
+            if (cancelJobId) {
+              // Story 66: targeted cancel by jobId with DB ownership check.
+              const row = getToolJobByIdForGroup(cancelJobId, groupFolder);
+              if (!row) {
+                // Unknown id or belongs to a different group — same wording for both.
+                logger.info(
+                  { groupFolder, cancelJobId },
+                  'job.cancel (by id): not found or cross-group',
+                );
+                if (cancelResultStream)
+                  await redis.xadd(
+                    cancelResultStream,
+                    '*',
+                    'result',
+                    JSON.stringify({ ok: true, status: 'not_found' }),
+                  );
+              } else if (row.status !== 'active') {
+                // Job exists for this group but is already resolved.
+                logger.info(
+                  { groupFolder, cancelJobId, currentStatus: row.status },
+                  'job.cancel (by id): job is not active',
+                );
+                if (cancelResultStream)
+                  await redis.xadd(
+                    cancelResultStream,
+                    '*',
+                    'result',
+                    JSON.stringify({
+                      ok: true,
+                      status: 'not_active',
+                      currentStatus: row.status,
+                    }),
+                  );
+              } else {
+                // Active row found for this group — look up K8s job name and stop it.
+                const jobName = activeAgentJobsByGroup.get(groupFolder);
+                if (!jobName) {
+                  // DB says active but the K8s job name is gone — treat as already stopped.
+                  logger.info(
+                    { groupFolder, cancelJobId },
+                    'job.cancel (by id): active in DB but no K8s job tracked — treating as stopped',
+                  );
+                  if (cancelResultStream)
+                    await redis.xadd(
+                      cancelResultStream,
+                      '*',
+                      'result',
+                      JSON.stringify({ ok: true, status: 'cancelled' }),
+                    );
+                } else {
+                  try {
+                    await jobRunner.stopJob(jobName);
+                    activeAgentJobsByGroup.delete(groupFolder);
+                    logger.info(
+                      { groupFolder, cancelJobId, jobName },
+                      'job.cancel (by id): job stopped',
+                    );
+                    if (cancelResultStream)
+                      await redis.xadd(
+                        cancelResultStream,
+                        '*',
+                        'result',
+                        JSON.stringify({ ok: true, status: 'cancelled', jobName }),
+                      );
+                  } catch (err) {
+                    activeAgentJobsByGroup.delete(groupFolder);
+                    const error = err instanceof Error ? err.message : String(err);
+                    logger.error(
+                      { groupFolder, cancelJobId, jobName, error },
+                      'job.cancel (by id): failed to stop job',
+                    );
+                    if (cancelResultStream)
+                      await redis.xadd(
+                        cancelResultStream,
+                        '*',
+                        'result',
+                        JSON.stringify({ ok: false, error }),
+                      );
+                  }
+                }
+              }
+            } else {
+            // Story 49: legacy /cancel — find active K8s job for the group.
             const jobName = activeAgentJobsByGroup.get(groupFolder);
             if (!jobName) {
               logger.info(
@@ -1735,6 +1822,7 @@ export async function startTaskRequestWatcher(
                   );
               }
             }
+            } // end else (Story 49 path)
           } else if (type === 'job.logs') {
             // Fetch K8s pod logs for a completed tool job.
             // Group ownership is enforced via DB lookup BEFORE calling K8s.

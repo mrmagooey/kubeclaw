@@ -622,6 +622,7 @@ export const HELP_TEXT = [
   'Available slash commands:',
   '  /jobs                    — list active and recent tool jobs',
   '  /jobs <id> logs          — show stdout/stderr from a completed tool-job pod',
+  '  /jobs <id> kill          — abort a specific tool job by id',
   '  /search <query>          — full-text search over conversation history',
   '  /skills                  — manage learned skills (review / accept / reject)',
   '  /secret                  — manage credentials (add / remove / list / catalog)',
@@ -663,6 +664,7 @@ export const JOBS_HELP = [
   'Job commands:',
   '  /jobs                    — list active and recent tool jobs',
   '  /jobs <id> logs          — show stdout/stderr from a completed tool-job pod',
+  '  /jobs <id> kill          — abort a specific tool job by id',
   '  /jobs help               — show this message',
 ].join('\n');
 
@@ -679,12 +681,14 @@ export function truncateLogs(raw: string): string {
 }
 
 /**
- * Dependencies injected into handleJobsCommand for the `logs` subcommand.
+ * Dependencies injected into handleJobsCommand for the `logs` and `kill` subcommands.
  * Separating I/O lets unit tests stub IPC without touching Redis.
  */
 export interface JobsCommandDeps {
   /** Fetch K8s pod logs for the given job name (via orchestrator IPC). */
   getJobLogs: (jobId: string, groupFolder: string) => Promise<string>;
+  /** Cancel a specific tool job by id (via orchestrator IPC). */
+  killJob: (jobId: string, groupFolder: string) => Promise<string>;
 }
 
 /**
@@ -736,6 +740,18 @@ export async function handleJobsCommand(
 
     const truncated = truncateLogs(raw.trimEnd());
     return `Logs for job ${jobId}:\n\`\`\`\n${truncated}\n\`\`\``;
+  }
+
+  // /jobs <id> kill — IPC-mediated targeted job cancellation (Story 66)
+  if (verb && verb !== 'help' && parts[2] === 'kill' && deps) {
+    const jobId = verb;
+    try {
+      return await deps.killJob(jobId, groupFolder);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error({ err, jobId, groupFolder }, '/jobs kill IPC failed');
+      return `Failed to cancel job: ${msg}`;
+    }
   }
 
   // /jobs help
@@ -2258,7 +2274,7 @@ export async function processGroupMessages(chatJid: string): Promise<boolean> {
       continue;
     }
 
-    // /jobs command: list active/recent jobs or fetch pod logs via IPC (Stories 50 + 59).
+    // /jobs command: list active/recent jobs, fetch pod logs, or kill a job via IPC (Stories 50 + 59 + 66).
     if (isJobsCommand(content)) {
       const jobsDeps: JobsCommandDeps = {
         getJobLogs: async (jobId: string, gf: string): Promise<string> => {
@@ -2290,6 +2306,49 @@ export async function processGroupMessages(chatJid: string): Promise<boolean> {
                   const parsed = JSON.parse(obj.result) as { ok: boolean; result?: string; error?: string };
                   if (!parsed.ok) throw new Error(parsed.error ?? 'unknown error');
                   return parsed.result ?? '';
+                }
+              }
+            }
+          }
+          throw new Error('timeout');
+        },
+        killJob: async (jobId: string, gf: string): Promise<string> => {
+          const redis = getRedisClient();
+          const resultStream = `kubeclaw:job-kill-result:${Date.now()}-${randomBytes(4).toString('hex')}`;
+          await redis.xadd(
+            getTaskRequestStream(),
+            '*',
+            'type', 'job.cancel',
+            'jobId', jobId,
+            'groupFolder', gf,
+            'resultStream', resultStream,
+          );
+          const deadline = Date.now() + 10000;
+          let lastId = '0-0';
+          while (Date.now() < deadline) {
+            const remaining = deadline - Date.now();
+            if (remaining <= 0) break;
+            const response = await redis.xread(
+              'COUNT', 1, 'BLOCK', Math.min(remaining, 1000),
+              'STREAMS', resultStream, lastId,
+            );
+            if (!response) continue;
+            for (const [, messages] of response as [string, [string, string[]][]][]) {
+              for (const [, flds] of messages) {
+                const obj: Record<string, string> = {};
+                for (let i = 0; i < flds.length; i += 2) obj[flds[i]] = flds[i + 1];
+                if (obj.result) {
+                  const parsed = JSON.parse(obj.result) as {
+                    ok: boolean;
+                    status?: string;
+                    currentStatus?: string;
+                    error?: string;
+                  };
+                  if (!parsed.ok) throw new Error(parsed.error ?? 'unknown error');
+                  if (parsed.status === 'not_found') return 'Job not found';
+                  if (parsed.status === 'not_active')
+                    return `Job \`${jobId}\` is not active (status: ${parsed.currentStatus ?? 'unknown'})`;
+                  return `Cancelled job \`${jobId}\``;
                 }
               }
             }
