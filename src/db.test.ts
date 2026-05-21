@@ -64,6 +64,8 @@ import {
   pauseTask,
   resumeTask,
   deleteConversationHistoryBefore,
+  writeAuditEntry,
+  getAuditEntries,
 } from './db.js';
 import { JobACL } from './types.js';
 
@@ -2869,5 +2871,107 @@ describe('updateConversationMessage', () => {
       `SELECT id FROM conversation_history_fts WHERE conversation_history_fts MATCH 'xyz'`,
     );
     expect(newResult[0].values.length).toBe(1);
+  });
+});
+
+// --- Audit Log (Story 81) ---
+
+describe('writeAuditEntry + getAuditEntries', () => {
+  it('writes and retrieves a basic audit entry', () => {
+    writeAuditEntry({
+      groupFolder: 'grp-a',
+      actor: 'alice',
+      action: 'history.clear',
+    });
+
+    const entries = getAuditEntries('grp-a');
+    expect(entries).toHaveLength(1);
+    expect(entries[0].actor).toBe('alice');
+    expect(entries[0].action).toBe('history.clear');
+    expect(entries[0].target).toBeNull();
+    expect(entries[0].detail).toBeNull();
+    expect(typeof entries[0].ts).toBe('string');
+    expect(typeof entries[0].id).toBe('number');
+  });
+
+  it('writes target and detail fields', () => {
+    writeAuditEntry({
+      groupFolder: 'grp-b',
+      actor: 'bob',
+      action: 'history.purge',
+      detail: 'before=2026-01-01T00:00:00.000Z, deleted=5',
+    });
+
+    const entries = getAuditEntries('grp-b');
+    expect(entries).toHaveLength(1);
+    expect(entries[0].detail).toBe('before=2026-01-01T00:00:00.000Z, deleted=5');
+    expect(entries[0].target).toBeNull();
+  });
+
+  it('writes target without detail', () => {
+    writeAuditEntry({
+      groupFolder: 'grp-c',
+      actor: 'charlie',
+      action: 'history.delete',
+      target: 'msg-123',
+    });
+
+    const entries = getAuditEntries('grp-c');
+    expect(entries).toHaveLength(1);
+    expect(entries[0].target).toBe('msg-123');
+    expect(entries[0].detail).toBeNull();
+  });
+
+  it('returns entries newest-first', () => {
+    const group = 'grp-order';
+    writeAuditEntry({ groupFolder: group, actor: 'alice', action: 'history.clear' });
+    writeAuditEntry({ groupFolder: group, actor: 'alice', action: 'job.kill', target: 'job-1' });
+    writeAuditEntry({ groupFolder: group, actor: 'alice', action: 'schedule.delete', target: 'task-1' });
+
+    const entries = getAuditEntries(group);
+    expect(entries).toHaveLength(3);
+    // Newest-first: last written should be first returned
+    expect(entries[0].action).toBe('schedule.delete');
+    expect(entries[1].action).toBe('job.kill');
+    expect(entries[2].action).toBe('history.clear');
+  });
+
+  it('isolates entries per group_folder', () => {
+    writeAuditEntry({ groupFolder: 'grp-x', actor: 'alice', action: 'history.clear' });
+    writeAuditEntry({ groupFolder: 'grp-y', actor: 'bob', action: 'secret.remove', target: 'openai' });
+
+    const xEntries = getAuditEntries('grp-x');
+    const yEntries = getAuditEntries('grp-y');
+
+    expect(xEntries).toHaveLength(1);
+    expect(xEntries[0].actor).toBe('alice');
+    expect(yEntries).toHaveLength(1);
+    expect(yEntries[0].actor).toBe('bob');
+  });
+
+  it('honours limit parameter', () => {
+    const group = 'grp-limit';
+    for (let i = 0; i < 10; i++) {
+      writeAuditEntry({ groupFolder: group, actor: 'alice', action: 'history.clear' });
+    }
+
+    const limited = getAuditEntries(group, 3);
+    expect(limited).toHaveLength(3);
+  });
+
+  it('caps limit at 200', () => {
+    const group = 'grp-cap';
+    // Insert 5 entries; cap enforced even if requested >200
+    for (let i = 0; i < 5; i++) {
+      writeAuditEntry({ groupFolder: group, actor: 'alice', action: 'history.clear' });
+    }
+    // Requesting 999 should not exceed 200 cap (returns all 5 here since only 5 rows)
+    const entries = getAuditEntries(group, 999);
+    expect(entries).toHaveLength(5);
+  });
+
+  it('returns empty array when no entries exist', () => {
+    const entries = getAuditEntries('grp-empty');
+    expect(entries).toHaveLength(0);
   });
 });

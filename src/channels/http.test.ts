@@ -13,6 +13,7 @@ vi.mock('../db.js', () => {
     deleteConversationHistoryBefore: vi.fn(() => 0),
     deleteMessageById: vi.fn(() => false),
     deleteTaskForGroup: vi.fn(() => false),
+    getAuditEntries: vi.fn(() => []),
     getConversationHistory: vi.fn(() => []),
     getMessageById: vi.fn(() => null),
     updateConversationMessage: vi.fn(() => false),
@@ -25,6 +26,7 @@ vi.mock('../db.js', () => {
     pauseTask: vi.fn(() => false),
     resumeTask: vi.fn(() => false),
     searchConversations: vi.fn(() => []),
+    writeAuditEntry: vi.fn(),
     db: { exec: dbExec },
   };
 });
@@ -124,6 +126,7 @@ import {
   deleteConversationHistoryBefore,
   deleteMessageById,
   deleteTaskForGroup,
+  getAuditEntries,
   getConversationHistory,
   getMessageById,
   updateConversationMessage,
@@ -136,6 +139,7 @@ import {
   pauseTask,
   resumeTask,
   searchConversations,
+  writeAuditEntry,
 } from '../db.js';
 import {
   listAcceptedSkills,
@@ -6543,6 +6547,388 @@ describe('detectMediaType', () => {
 
       expect(res._status).toBe(413);
       expect(JSON.parse(res._body).error).toBe('Payload too large');
+      await channel.disconnect();
+    });
+  });
+
+  // ── Story 81: GET /audit + audit writes from destructive handlers ─────────
+
+  describe('GET /audit (Story 81)', () => {
+    it('returns 401 for unauthenticated requests', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/audit', method: 'GET', auth: null });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(401);
+      await channel.disconnect();
+    });
+
+    it('returns 405 for POST /audit with Allow: GET, HEAD', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/audit', method: 'POST', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(405);
+      expect(res._headers['Allow']).toContain('GET');
+      await channel.disconnect();
+    });
+
+    it('returns 200 with entries array from getAuditEntries', async () => {
+      const mockEntry = {
+        id: 1,
+        ts: '2026-01-01T00:00:00.000Z',
+        actor: 'alice',
+        action: 'history.clear',
+        target: null,
+        detail: null,
+      };
+      vi.mocked(getAuditEntries).mockReturnValueOnce([mockEntry]);
+
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/audit', method: 'GET', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      const body = JSON.parse(res._body);
+      expect(body).toHaveProperty('entries');
+      expect(body.entries).toHaveLength(1);
+      expect(body.entries[0].action).toBe('history.clear');
+      await channel.disconnect();
+    });
+
+    it('passes limit query param (capped at 200) to getAuditEntries', async () => {
+      vi.mocked(getAuditEntries).mockReturnValueOnce([]);
+
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/audit?limit=10', method: 'GET', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      expect(vi.mocked(getAuditEntries)).toHaveBeenCalledWith('alice', 10);
+      await channel.disconnect();
+    });
+  });
+
+  describe('Audit writes from destructive handlers (Story 81)', () => {
+    it('DELETE /history calls writeAuditEntry with action=history.clear', async () => {
+      vi.mocked(clearConversationHistory).mockImplementation(() => {});
+
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/history', method: 'DELETE', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(204);
+      expect(vi.mocked(writeAuditEntry)).toHaveBeenCalledWith(
+        expect.objectContaining({ action: 'history.clear', actor: 'alice' }),
+      );
+      await channel.disconnect();
+    });
+
+    it('DELETE /history?before= calls writeAuditEntry with action=history.purge', async () => {
+      vi.mocked(deleteConversationHistoryBefore).mockReturnValue(3);
+
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({
+        url: '/history?before=2026-01-01T00:00:00.000Z',
+        method: 'DELETE',
+        auth: 'alice:secret',
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      expect(vi.mocked(writeAuditEntry)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'history.purge',
+          actor: 'alice',
+        }),
+      );
+      // detail should contain the before param and deleted count
+      const call = vi.mocked(writeAuditEntry).mock.lastCall![0];
+      expect(call.detail).toContain('before=2026-01-01T00:00:00.000Z');
+      expect(call.detail).toContain('deleted=3');
+      await channel.disconnect();
+    });
+
+    it('DELETE /history/<id> calls writeAuditEntry with action=history.delete', async () => {
+      vi.mocked(deleteMessageById).mockReturnValue(true);
+
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({
+        url: '/history/msg-abc-123',
+        method: 'DELETE',
+        auth: 'alice:secret',
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(204);
+      expect(vi.mocked(writeAuditEntry)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'history.delete',
+          actor: 'alice',
+          target: 'msg-abc-123',
+        }),
+      );
+      await channel.disconnect();
+    });
+
+    it('DELETE /jobs/<id> calls writeAuditEntry with action=job.kill', async () => {
+      vi.mocked(getToolJobByIdForGroup).mockReturnValue({
+        job_id: 'job-1',
+        group_folder: 'alice',
+        chat_jid: 'http:alice',
+        status: 'active',
+        created_at: '2026-01-01T00:00:00.000Z',
+        resolved_at: null,
+        message_id: null,
+        specialist_name: '',
+      });
+
+      const killJobFn = vi.fn(async () => ({ ok: true as const, status: 'cancelled' }));
+      const opts = makeOpts({ killJobFn });
+      const channel = new HttpChannel(makeConfig(), opts);
+      await channel.connect();
+
+      const req = makeReq({ url: '/jobs/job-1', method: 'DELETE', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      expect(vi.mocked(writeAuditEntry)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'job.kill',
+          actor: 'alice',
+          target: 'job-1',
+        }),
+      );
+      await channel.disconnect();
+    });
+
+    it('DELETE /schedule/<id> calls writeAuditEntry with action=schedule.delete', async () => {
+      vi.mocked(deleteTaskForGroup).mockReturnValue(true);
+
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/schedule/task-1', method: 'DELETE', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(204);
+      expect(vi.mocked(writeAuditEntry)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'schedule.delete',
+          actor: 'alice',
+          target: 'task-1',
+        }),
+      );
+      await channel.disconnect();
+    });
+
+    it('PATCH /schedule/<id> pause calls writeAuditEntry with action=schedule.pause', async () => {
+      vi.mocked(getTaskById).mockReturnValue({
+        id: 'task-1',
+        group_folder: 'alice',
+        chat_jid: 'http:alice',
+        prompt: 'do stuff',
+        schedule_type: 'interval',
+        schedule_value: '60000',
+        status: 'active',
+        next_run: null,
+        last_run: null,
+        last_result: null,
+        created_at: '2026-01-01T00:00:00.000Z',
+        context_mode: 'isolated',
+      });
+      vi.mocked(pauseTask).mockReturnValue(true);
+
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({
+        url: '/schedule/task-1',
+        method: 'PATCH',
+        auth: 'alice:secret',
+        body: JSON.stringify({ paused: true }),
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      expect(vi.mocked(writeAuditEntry)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'schedule.pause',
+          actor: 'alice',
+          target: 'task-1',
+        }),
+      );
+      await channel.disconnect();
+    });
+
+    it('PATCH /schedule/<id> resume calls writeAuditEntry with action=schedule.resume', async () => {
+      vi.mocked(getTaskById).mockReturnValue({
+        id: 'task-1',
+        group_folder: 'alice',
+        chat_jid: 'http:alice',
+        prompt: 'do stuff',
+        schedule_type: 'interval',
+        schedule_value: '60000',
+        status: 'paused',
+        next_run: null,
+        last_run: null,
+        last_result: null,
+        created_at: '2026-01-01T00:00:00.000Z',
+        context_mode: 'isolated',
+      });
+      vi.mocked(resumeTask).mockReturnValue(true);
+
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({
+        url: '/schedule/task-1',
+        method: 'PATCH',
+        auth: 'alice:secret',
+        body: JSON.stringify({ paused: false }),
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      expect(vi.mocked(writeAuditEntry)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'schedule.resume',
+          actor: 'alice',
+          target: 'task-1',
+        }),
+      );
+      await channel.disconnect();
+    });
+
+    it('POST /skills/candidates/<id>/accept calls writeAuditEntry with action=skill.accept', async () => {
+      vi.mocked(listAcceptedSkills).mockReturnValue([]);
+      vi.mocked(listCandidates).mockReturnValue([]);
+      vi.mocked(acceptCandidate).mockImplementation(() => {});
+
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({
+        url: '/skills/candidates/111-abc-my-skill/accept',
+        method: 'POST',
+        auth: 'alice:secret',
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      expect(vi.mocked(writeAuditEntry)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'skill.accept',
+          actor: 'alice',
+          target: '111-abc-my-skill',
+        }),
+      );
+      await channel.disconnect();
+    });
+
+    it('POST /skills/candidates/<id>/reject calls writeAuditEntry with action=skill.reject', async () => {
+      vi.mocked(rejectCandidate).mockImplementation(() => {});
+
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({
+        url: '/skills/candidates/111-abc-my-skill/reject',
+        method: 'POST',
+        auth: 'alice:secret',
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      expect(vi.mocked(writeAuditEntry)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'skill.reject',
+          actor: 'alice',
+          target: '111-abc-my-skill',
+        }),
+      );
+      await channel.disconnect();
+    });
+
+    it('DELETE /secrets/<type> calls writeAuditEntry with action=secret.remove', async () => {
+      const removeSecretFn = vi.fn(async () => 'ok' as const);
+      const opts = makeOpts({ removeSecretFn });
+      const channel = new HttpChannel(makeConfig(), opts);
+      await channel.connect();
+
+      const req = makeReq({ url: '/secrets/openai', method: 'DELETE', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(204);
+      expect(vi.mocked(writeAuditEntry)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'secret.remove',
+          actor: 'alice',
+          target: 'openai',
+        }),
+      );
+      await channel.disconnect();
+    });
+
+    it('POST /secrets calls writeAuditEntry with action=secret.add — NEVER logs secret values', async () => {
+      const addSecretFn = vi.fn(async () => ({ ok: true as const }));
+      const opts = makeOpts({ addSecretFn } as Partial<HttpChannelOpts>);
+      const channel = new HttpChannel(makeConfig(), opts);
+      await channel.connect();
+
+      // SECURITY critical: token value r8_supersecret_value must NEVER appear in the audit row
+      const req = makeReq({
+        url: '/secrets',
+        method: 'POST',
+        auth: 'alice:secret',
+        body: JSON.stringify({ type: 'replicate', fields: { token: 'r8_supersecret_value' } }),
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(201);
+      expect(vi.mocked(writeAuditEntry)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'secret.add',
+          actor: 'alice',
+          target: 'replicate',
+        }),
+      );
+
+      // CRITICAL: secret value must NEVER reach the audit row
+      const auditCall = vi.mocked(writeAuditEntry).mock.lastCall![0];
+      expect(JSON.stringify(auditCall)).not.toContain('r8_supersecret_value');
+      // detail should contain field NAMES only
+      expect(auditCall.detail).toContain('token');
+      expect(auditCall.detail).toContain('fields=');
       await channel.disconnect();
     });
   });

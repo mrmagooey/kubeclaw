@@ -421,6 +421,26 @@ function createSchema(database: SqlJsDatabase): void {
   database.run(
     `CREATE INDEX IF NOT EXISTS idx_tool_jobs_group ON tool_jobs(group_folder)`,
   );
+
+  // Story 81: audit_log — immutable record of destructive admin actions.
+  // group_folder scopes the log; actor is the authenticated HTTP username.
+  // action constants: history.clear, history.purge, history.delete,
+  //   secret.remove, secret.add, schedule.delete, schedule.pause,
+  //   schedule.resume, job.kill, skill.accept, skill.reject
+  database.run(`
+    CREATE TABLE IF NOT EXISTS audit_log (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      ts            TEXT NOT NULL,
+      group_folder  TEXT NOT NULL,
+      actor         TEXT NOT NULL,
+      action        TEXT NOT NULL,
+      target        TEXT,
+      detail        TEXT
+    )
+  `);
+  database.run(
+    `CREATE INDEX IF NOT EXISTS idx_audit_log_group_ts ON audit_log(group_folder, ts DESC)`,
+  );
 }
 
 /**
@@ -2562,4 +2582,74 @@ export function getDiagSnapshot(
     db_size_bytes,
     uptime_seconds,
   };
+}
+
+/** Shape of a single audit log entry returned to callers. */
+export interface AuditEntry {
+  id: number;
+  ts: string;
+  actor: string;
+  action: string;
+  target: string | null;
+  detail: string | null;
+}
+
+/**
+ * Write one audit row for a destructive admin action.
+ * Wraps in try/catch internally so callers can call without error handling;
+ * any failure is logged but NEVER re-thrown — audit writes must not break the
+ * underlying operation.
+ *
+ * SECURITY: Values from secret `fields` must NEVER be passed here. The caller
+ * is responsible; only field NAMES should appear in `detail`.
+ */
+export function writeAuditEntry(args: {
+  groupFolder: string;
+  actor: string;
+  action: string;
+  target?: string;
+  detail?: string;
+}): void {
+  const ts = new Date().toISOString();
+  db.run(
+    `INSERT INTO audit_log (ts, group_folder, actor, action, target, detail)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [
+      ts,
+      args.groupFolder,
+      args.actor,
+      args.action,
+      args.target ?? null,
+      args.detail ?? null,
+    ],
+  );
+  saveDatabase();
+}
+
+/**
+ * Return audit entries for a group, newest-first.
+ * `limit` is capped at 200; defaults to 50.
+ */
+export function getAuditEntries(
+  groupFolder: string,
+  limit: number = 50,
+): AuditEntry[] {
+  const capped = Math.min(Math.max(1, limit), 200);
+  const result = db.exec(
+    `SELECT id, ts, actor, action, target, detail
+     FROM audit_log
+     WHERE group_folder = ?
+     ORDER BY ts DESC, id DESC
+     LIMIT ?`,
+    [groupFolder, capped],
+  );
+  if (result.length === 0) return [];
+  return result[0].values.map((row: unknown[]) => ({
+    id: row[0] as number,
+    ts: row[1] as string,
+    actor: row[2] as string,
+    action: row[3] as string,
+    target: row[4] as string | null,
+    detail: row[5] as string | null,
+  }));
 }

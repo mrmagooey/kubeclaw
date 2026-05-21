@@ -28,6 +28,7 @@ import {
   deleteTaskForGroup,
   getAllConversationHistory,
   getActiveToolJobs,
+  getAuditEntries,
   getConversationHistoryPage,
   getDiagSnapshot,
   getMessageById,
@@ -42,6 +43,7 @@ import {
   resumeTask,
   searchConversations,
   storeMessageDirect,
+  writeAuditEntry,
 } from '../db.js';
 import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
@@ -812,6 +814,7 @@ export class HttpChannel implements Channel {
     '/skills': ['GET', 'HEAD'],
     '/skills/': ['POST'], // prefix — candidates/<id>/accept|reject
     '/diag': ['GET', 'HEAD'],
+    '/audit': ['GET', 'HEAD'],
   };
 
   private async handleRequest(
@@ -1495,6 +1498,17 @@ export class HttpChannel implements Channel {
         }
         try {
           const deleted = deleteConversationHistoryBefore(group.folder, d);
+          // Story 81: audit before responding (after op succeeds)
+          try {
+            writeAuditEntry({
+              groupFolder: group.folder,
+              actor: username,
+              action: 'history.purge',
+              detail: `before=${beforeParam}, deleted=${deleted}`,
+            });
+          } catch (auditErr) {
+            logger.error({ err: auditErr, jid }, 'Audit write failed for history.purge');
+          }
           res.writeHead(200, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
           res.end(JSON.stringify({ deleted }));
         } catch (err) {
@@ -1508,6 +1522,16 @@ export class HttpChannel implements Channel {
       // Story 26 full-clear (no ?before param)
       try {
         clearConversationHistory(group.folder);
+        // Story 81: audit before responding (after op succeeds)
+        try {
+          writeAuditEntry({
+            groupFolder: group.folder,
+            actor: username,
+            action: 'history.clear',
+          });
+        } catch (auditErr) {
+          logger.error({ err: auditErr, jid }, 'Audit write failed for history.clear');
+        }
         res.writeHead(204, this.addCorsHeaders({}));
         res.end();
       } catch (err) {
@@ -1634,6 +1658,17 @@ export class HttpChannel implements Channel {
       // Story 56: DELETE /history/<id>
       const deleted = deleteMessageById(msgId, group.folder);
       if (deleted) {
+        // Story 81: audit before responding (after op succeeds)
+        try {
+          writeAuditEntry({
+            groupFolder: group.folder,
+            actor: username,
+            action: 'history.delete',
+            target: msgId,
+          });
+        } catch (auditErr) {
+          logger.error({ err: auditErr, msgId }, 'Audit write failed for history.delete');
+        }
         res.writeHead(204, this.addCorsHeaders({}));
         res.end();
         return;
@@ -1780,6 +1815,17 @@ export class HttpChannel implements Channel {
           res.writeHead(500, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
           res.end(JSON.stringify({ error: result.error ?? 'kill failed' }));
           return;
+        }
+        // Story 81: audit before responding (after op succeeds)
+        try {
+          writeAuditEntry({
+            groupFolder,
+            actor: username,
+            action: 'job.kill',
+            target: jobId,
+          });
+        } catch (auditErr) {
+          logger.error({ err: auditErr, jobId }, 'Audit write failed for job.kill');
         }
         res.writeHead(200, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
         res.end(JSON.stringify({ status: 'cancelled', job_id: jobId }));
@@ -2112,6 +2158,17 @@ export class HttpChannel implements Channel {
           res.end(JSON.stringify({ error: 'Not found' }));
           return;
         }
+        // Story 81: audit before responding (after op succeeds)
+        try {
+          writeAuditEntry({
+            groupFolder,
+            actor: username,
+            action: 'schedule.delete',
+            target: taskId,
+          });
+        } catch (auditErr) {
+          logger.error({ err: auditErr, taskId }, 'Audit write failed for schedule.delete');
+        }
         res.writeHead(204, this.addCorsHeaders({}));
         res.end();
         return;
@@ -2163,6 +2220,18 @@ export class HttpChannel implements Channel {
           res.writeHead(404, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
           res.end(JSON.stringify({ error: 'Not found' }));
           return;
+        }
+
+        // Story 81: audit before responding (after op succeeds)
+        try {
+          writeAuditEntry({
+            groupFolder,
+            actor: username,
+            action: paused ? 'schedule.pause' : 'schedule.resume',
+            target: taskId,
+          });
+        } catch (auditErr) {
+          logger.error({ err: auditErr, taskId }, 'Audit write failed for schedule.pause/resume');
         }
 
         // Re-fetch to return the current state
@@ -2418,7 +2487,7 @@ export class HttpChannel implements Channel {
         res.end();
         return;
       }
-      void this.handleDeleteSecret(groupFolder, secretType, res);
+      void this.handleDeleteSecret(groupFolder, secretType, username, res);
       return;
     }
 
@@ -2447,7 +2516,7 @@ export class HttpChannel implements Channel {
         return;
       }
       if (req.method === 'POST') {
-        void this.handleAddSecret(groupFolder, req, res);
+        void this.handleAddSecret(groupFolder, username, req, res);
         return;
       }
       void this.handleListSecrets(groupFolder, res);
@@ -2547,6 +2616,17 @@ export class HttpChannel implements Channel {
         } else {
           rejectCandidate(GROUPS_DIR, group.folder, candidateId);
         }
+        // Story 81: audit before responding (after op succeeds)
+        try {
+          writeAuditEntry({
+            groupFolder: group.folder,
+            actor: username,
+            action: action === 'accept' ? 'skill.accept' : 'skill.reject',
+            target: candidateId,
+          });
+        } catch (auditErr) {
+          logger.error({ err: auditErr, candidateId }, `Audit write failed for skill.${action}`);
+        }
         const result = action === 'accept' ? 'accepted' : 'rejected';
         res.writeHead(200, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
         res.end(JSON.stringify({ status: result, slug: candidateId }));
@@ -2636,6 +2716,53 @@ export class HttpChannel implements Channel {
       return;
     }
 
+    // Story 81: GET/HEAD /audit — audit log for destructive admin actions
+    if (url.pathname === '/audit') {
+      if (req.method !== 'GET' && req.method !== 'HEAD') {
+        res.writeHead(405, this.addCorsHeaders({
+          Allow: 'GET, HEAD',
+          'Content-Type': 'text/plain',
+        }));
+        res.end('Method Not Allowed');
+        return;
+      }
+
+      const username = this.authenticate(req);
+      if (!username) {
+        this.sendUnauthorized(res);
+        return;
+      }
+
+      const jid = `http:${username}`;
+      const group = this.opts.registeredGroups()[jid];
+      const groupFolder = group?.folder ?? `http-${username}`;
+
+      // Parse and cap limit (default 50, max 200)
+      const rawLimit = url.searchParams.get('limit');
+      let auditLimit = 50;
+      if (rawLimit !== null) {
+        const parsed = parseInt(rawLimit, 10);
+        if (Number.isFinite(parsed) && parsed >= 1) {
+          auditLimit = Math.min(parsed, 200);
+        }
+      }
+
+      const entries = getAuditEntries(groupFolder, auditLimit);
+      const body = JSON.stringify({ entries });
+
+      res.writeHead(200, this.addCorsHeaders({
+        'Content-Type': 'application/json',
+        'Content-Length': String(Buffer.byteLength(body)),
+        'Cache-Control': 'no-cache',
+      }));
+      if (req.method === 'HEAD') {
+        res.end();
+      } else {
+        res.end(body);
+      }
+      return;
+    }
+
     // Per RFC 9110: known paths reached with an unsupported method → 405 + Allow
     const pathMethods: Record<string, string[]> = {
       '/': ['GET'],
@@ -2658,6 +2785,7 @@ export class HttpChannel implements Channel {
       '/memory': ['GET', 'HEAD', 'PUT', 'PATCH'],
       '/skills': ['GET', 'HEAD'],
       '/diag': ['GET', 'HEAD'],
+      '/audit': ['GET', 'HEAD'],
     };
     const allowed = pathMethods[url.pathname];
     if (allowed && !allowed.includes(req.method ?? '')) {
@@ -2779,6 +2907,7 @@ export class HttpChannel implements Channel {
    */
   private async handleAddSecret(
     groupFolder: string,
+    actor: string,
     req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
@@ -2895,6 +3024,21 @@ export class HttpChannel implements Channel {
       return;
     }
 
+    // Story 81: audit before responding (after op succeeds).
+    // SECURITY: only log field NAMES, NEVER values.
+    try {
+      const fieldNames = Object.keys(fields as Record<string, unknown>);
+      writeAuditEntry({
+        groupFolder,
+        actor,
+        action: 'secret.add',
+        target: secretType,
+        detail: `fields=${fieldNames.join(',')}`,
+      });
+    } catch (auditErr) {
+      logger.error({ err: auditErr, groupFolder, secretType }, 'Audit write failed for secret.add');
+    }
+
     // SECURITY: response contains ONLY status and type — no field values, no echo
     res.writeHead(201, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
     res.end(JSON.stringify({ status: 'ok', type: secretType }));
@@ -2904,6 +3048,7 @@ export class HttpChannel implements Channel {
   private async handleDeleteSecret(
     groupFolder: string,
     secretType: string,
+    actor: string,
     res: ServerResponse,
   ): Promise<void> {
     const fn = this.opts.removeSecretFn;
@@ -2918,6 +3063,17 @@ export class HttpChannel implements Channel {
         res.writeHead(404, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
         res.end(JSON.stringify({ error: 'Not found' }));
         return;
+      }
+      // Story 81: audit before responding (after op succeeds)
+      try {
+        writeAuditEntry({
+          groupFolder,
+          actor,
+          action: 'secret.remove',
+          target: secretType,
+        });
+      } catch (auditErr) {
+        logger.error({ err: auditErr, groupFolder, secretType }, 'Audit write failed for secret.remove');
       }
       res.writeHead(204, this.addCorsHeaders({}));
       res.end();
