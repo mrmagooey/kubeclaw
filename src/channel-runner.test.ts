@@ -50,6 +50,7 @@ vi.mock('./db.js', async (importOriginal) => {
     deleteTaskForGroup: vi.fn().mockReturnValue(true),
     pauseTask: vi.fn().mockReturnValue(true),
     resumeTask: vi.fn().mockReturnValue(true),
+    writeAuditEntry: vi.fn(),
     recordSpecialistUsage: vi
       .fn()
       .mockImplementation(
@@ -4036,5 +4037,262 @@ describe('handleScheduleCommand — next (Story 67)', () => {
 describe('HELP_TEXT includes /schedule next', () => {
   it('mentions /schedule next in the help text', () => {
     expect(HELP_TEXT).toMatch(/\/schedule next/);
+  });
+});
+
+// ── Story 83: Audit log for destructive slash commands ─────────────────────────
+
+describe('Story 83 — handleSecretCommand audit (secret.remove)', () => {
+  beforeEach(() => {
+    vi.mocked(db.writeAuditEntry).mockClear();
+  });
+
+  it('writes audit row action=secret.remove with target and actor BEFORE reply on success', async () => {
+    const ipc = vi.fn(async (): Promise<IpcResponse> => ({ ok: true }));
+
+    const result = await handleSecretCommand(
+      'group-alice',
+      '/secret remove replicate',
+      makeDeps(ipc as any),
+      'alice',
+    );
+
+    expect(db.writeAuditEntry).toHaveBeenCalledTimes(1);
+    expect(db.writeAuditEntry).toHaveBeenCalledWith(
+      expect.objectContaining({
+        groupFolder: 'group-alice',
+        actor: 'alice',
+        action: 'secret.remove',
+        target: 'replicate',
+      }),
+    );
+    expect(result.reply).toMatch(/removed/i);
+  });
+
+  it('does NOT write audit row when remove fails (IPC error)', async () => {
+    const ipc = vi.fn(async (): Promise<IpcResponse> => ({ ok: false, error: 'not found' }));
+
+    await handleSecretCommand(
+      'group-alice',
+      '/secret remove replicate',
+      makeDeps(ipc as any),
+      'alice',
+    );
+
+    expect(db.writeAuditEntry).not.toHaveBeenCalled();
+  });
+
+  it('audit failure does NOT break the slash command (graceful degrade)', async () => {
+    vi.mocked(db.writeAuditEntry).mockImplementation(() => {
+      throw new Error('DB exploded');
+    });
+    const ipc = vi.fn(async (): Promise<IpcResponse> => ({ ok: true }));
+
+    const result = await handleSecretCommand(
+      'group-alice',
+      '/secret remove replicate',
+      makeDeps(ipc as any),
+      'alice',
+    );
+
+    // Reply should still succeed despite audit failure
+    expect(result.reply).toMatch(/removed/i);
+  });
+});
+
+describe('Story 83 — handleSecretCommand audit (secret.add)', () => {
+  beforeEach(() => {
+    vi.mocked(db.writeAuditEntry).mockClear();
+  });
+
+  it('writes audit row action=secret.add with field NAMES only — values never logged', async () => {
+    const ipc = vi.fn(async (): Promise<IpcResponse> => ({ ok: true }));
+    const SECRET_VALUE = 'r8_supersecret_value_1234567890';
+
+    const result = await handleSecretCommand(
+      'group-alice',
+      `/secret add replicate token=${SECRET_VALUE}`,
+      makeDeps(ipc as any),
+      'alice',
+    );
+
+    expect(db.writeAuditEntry).toHaveBeenCalledTimes(1);
+    const call = vi.mocked(db.writeAuditEntry).mock.calls[0][0];
+    expect(call.action).toBe('secret.add');
+    expect(call.target).toBe('replicate');
+    expect(call.actor).toBe('alice');
+    expect(call.groupFolder).toBe('group-alice');
+    // detail contains field NAME 'token' but NEVER the value
+    expect(call.detail).toContain('token');
+    expect(call.detail).not.toContain(SECRET_VALUE);
+    expect(result.reply).toBeTruthy();
+  });
+
+  it('audit detail uses fields= prefix for field names CSV', async () => {
+    const ipc = vi.fn(async (): Promise<IpcResponse> => ({ ok: true }));
+
+    await handleSecretCommand(
+      'group-alice',
+      '/secret add jenkins user=alice_user password=hunter2',
+      makeDeps(ipc as any),
+      'alice',
+    );
+
+    expect(db.writeAuditEntry).toHaveBeenCalledTimes(1);
+    const call = vi.mocked(db.writeAuditEntry).mock.calls[0][0];
+    expect(call.detail).toMatch(/^fields=/);
+    expect(call.detail).toContain('user');
+    expect(call.detail).toContain('password');
+    // Values must NEVER appear in detail
+    expect(call.detail).not.toContain('alice_user');
+    expect(call.detail).not.toContain('hunter2');
+  });
+
+  it('does NOT write audit row when add fails (IPC error)', async () => {
+    const ipc = vi.fn(async (): Promise<IpcResponse> => ({ ok: false, error: 'store failed' }));
+
+    await handleSecretCommand(
+      'group-alice',
+      '/secret add replicate token=r8_abc123',
+      makeDeps(ipc as any),
+      'alice',
+    );
+
+    expect(db.writeAuditEntry).not.toHaveBeenCalled();
+  });
+});
+
+describe('Story 83 — handleScheduleCommand audit (schedule.delete)', () => {
+  beforeEach(() => {
+    vi.mocked(db.writeAuditEntry).mockClear();
+    vi.mocked(db.deleteTaskForGroup).mockReturnValue(true);
+  });
+
+  it('writes audit row action=schedule.delete with target and actor on success', async () => {
+    const reply = await handleScheduleCommand(
+      'group-alice',
+      'http:alice',
+      '/schedule remove task-123',
+      'alice',
+    );
+
+    expect(db.writeAuditEntry).toHaveBeenCalledTimes(1);
+    expect(db.writeAuditEntry).toHaveBeenCalledWith(
+      expect.objectContaining({
+        groupFolder: 'group-alice',
+        actor: 'alice',
+        action: 'schedule.delete',
+        target: 'task-123',
+      }),
+    );
+    expect(reply).toMatch(/removed/i);
+  });
+
+  it('does NOT write audit row when task not found', async () => {
+    vi.mocked(db.deleteTaskForGroup).mockReturnValue(false);
+
+    await handleScheduleCommand(
+      'group-alice',
+      'http:alice',
+      '/schedule remove no-such-task',
+      'alice',
+    );
+
+    expect(db.writeAuditEntry).not.toHaveBeenCalled();
+  });
+
+  it('audit failure does NOT break the slash command (graceful degrade)', async () => {
+    vi.mocked(db.writeAuditEntry).mockImplementation(() => {
+      throw new Error('DB exploded');
+    });
+
+    const reply = await handleScheduleCommand(
+      'group-alice',
+      'http:alice',
+      '/schedule remove task-123',
+      'alice',
+    );
+
+    expect(reply).toMatch(/removed/i);
+  });
+});
+
+describe('Story 83 — handleScheduleCommand audit (schedule.pause)', () => {
+  beforeEach(() => {
+    vi.mocked(db.writeAuditEntry).mockClear();
+    vi.mocked(db.pauseTask).mockReturnValue(true);
+  });
+
+  it('writes audit row action=schedule.pause with target and actor on success', async () => {
+    const reply = await handleScheduleCommand(
+      'group-alice',
+      'http:alice',
+      '/schedule pause task-456',
+      'alice',
+    );
+
+    expect(db.writeAuditEntry).toHaveBeenCalledTimes(1);
+    expect(db.writeAuditEntry).toHaveBeenCalledWith(
+      expect.objectContaining({
+        groupFolder: 'group-alice',
+        actor: 'alice',
+        action: 'schedule.pause',
+        target: 'task-456',
+      }),
+    );
+    expect(reply).toMatch(/paused/i);
+  });
+
+  it('does NOT write audit row when task not found', async () => {
+    vi.mocked(db.pauseTask).mockReturnValue(false);
+
+    await handleScheduleCommand(
+      'group-alice',
+      'http:alice',
+      '/schedule pause no-such-task',
+      'alice',
+    );
+
+    expect(db.writeAuditEntry).not.toHaveBeenCalled();
+  });
+});
+
+describe('Story 83 — handleScheduleCommand audit (schedule.resume)', () => {
+  beforeEach(() => {
+    vi.mocked(db.writeAuditEntry).mockClear();
+    vi.mocked(db.resumeTask).mockReturnValue(true);
+  });
+
+  it('writes audit row action=schedule.resume with target and actor on success', async () => {
+    const reply = await handleScheduleCommand(
+      'group-alice',
+      'http:alice',
+      '/schedule resume task-789',
+      'alice',
+    );
+
+    expect(db.writeAuditEntry).toHaveBeenCalledTimes(1);
+    expect(db.writeAuditEntry).toHaveBeenCalledWith(
+      expect.objectContaining({
+        groupFolder: 'group-alice',
+        actor: 'alice',
+        action: 'schedule.resume',
+        target: 'task-789',
+      }),
+    );
+    expect(reply).toMatch(/resumed/i);
+  });
+
+  it('does NOT write audit row when task not found', async () => {
+    vi.mocked(db.resumeTask).mockReturnValue(false);
+
+    await handleScheduleCommand(
+      'group-alice',
+      'http:alice',
+      '/schedule resume no-such-task',
+      'alice',
+    );
+
+    expect(db.writeAuditEntry).not.toHaveBeenCalled();
   });
 });

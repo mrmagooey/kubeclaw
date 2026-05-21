@@ -66,6 +66,7 @@ import {
   setSession,
   storeChatMetadata,
   storeMessage,
+  writeAuditEntry,
   type TaskRunLogRow,
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
@@ -1108,6 +1109,7 @@ export async function handleSecretCommand(
   group: string,
   message: string,
   deps: SecretCommandDeps,
+  actor: string = 'unknown',
 ): Promise<SecretCommandResult> {
   const parts = message.trim().split(/\s+/);
   if (parts[0] !== '/secret') return { reply: SECRET_HELP };
@@ -1174,6 +1176,18 @@ export async function handleSecretCommand(
       }
       if (!res.ok)
         return { reply: `Failed to remove credential: ${res.error}` };
+
+      // Values are never passed — only the catalog entry type.
+      try {
+        writeAuditEntry({
+          groupFolder: group,
+          actor,
+          action: 'secret.remove',
+          target: catalogId,
+        });
+      } catch (auditErr) {
+        logger.error({ err: auditErr, group, catalogId }, 'Audit write failed for /secret remove');
+      }
 
       const systemEvent = `[SYSTEM] User removed credential for catalog entry '${catalogId}'. Tool-jobs will no longer use credentials for this entry.`;
       const assistantTurn = `Removed — credentials for '${catalogId}' have been cleared for this group.`;
@@ -1267,6 +1281,19 @@ export async function handleSecretCommand(
             };
           }
           return { reply: `Failed to store credential: ${errMsg}` };
+        }
+
+        try {
+          const fieldNames = Object.keys(resolvedFields);
+          writeAuditEntry({
+            groupFolder: group,
+            actor,
+            action: 'secret.add',
+            target: catalogId,
+            detail: `fields=${fieldNames.join(',')}`,
+          });
+        } catch (auditErr) {
+          logger.error({ err: auditErr, group, catalogId }, 'Audit write failed for /secret add');
         }
 
         // Build system event (metadata only — no values)
@@ -1416,6 +1443,7 @@ export async function handleScheduleCommand(
   groupFolder: string,
   chatJid: string,
   message: string,
+  actor: string = 'unknown',
 ): Promise<string> {
   const parts = message.trim().split(/\s+/);
   if (parts[0] !== '/schedule') return SCHEDULE_HELP;
@@ -1506,6 +1534,19 @@ export async function handleScheduleCommand(
       if (!deleted) {
         return `Task '${id}' not found for this group.`;
       }
+
+      // Story 83: audit the removal BEFORE sending the user reply.
+      try {
+        writeAuditEntry({
+          groupFolder,
+          actor,
+          action: 'schedule.delete',
+          target: id,
+        });
+      } catch (auditErr) {
+        logger.error({ err: auditErr, groupFolder, id }, 'Audit write failed for /schedule remove');
+      }
+
       return `Removed task '${id}'.`;
     }
 
@@ -1514,6 +1555,19 @@ export async function handleScheduleCommand(
       if (!id) return 'Usage: /schedule pause <id>';
       const ok = pauseTask(id, groupFolder);
       if (!ok) return 'Task not found.';
+
+      // Story 83: audit the pause BEFORE sending the user reply.
+      try {
+        writeAuditEntry({
+          groupFolder,
+          actor,
+          action: 'schedule.pause',
+          target: id,
+        });
+      } catch (auditErr) {
+        logger.error({ err: auditErr, groupFolder, id }, 'Audit write failed for /schedule pause');
+      }
+
       return `Task "${id}" paused.`;
     }
 
@@ -1522,6 +1576,19 @@ export async function handleScheduleCommand(
       if (!id) return 'Usage: /schedule resume <id>';
       const ok = resumeTask(id, groupFolder);
       if (!ok) return 'Task not found.';
+
+      // Story 83: audit the resume BEFORE sending the user reply.
+      try {
+        writeAuditEntry({
+          groupFolder,
+          actor,
+          action: 'schedule.resume',
+          target: id,
+        });
+      } catch (auditErr) {
+        logger.error({ err: auditErr, groupFolder, id }, 'Audit write failed for /schedule resume');
+      }
+
       return `Task "${id}" resumed.`;
     }
 
@@ -2406,6 +2473,7 @@ export async function processGroupMessages(chatJid: string): Promise<boolean> {
           catalog,
           ipc: secretIpc,
         },
+        msg.sender,
       );
 
       // Persist the system event and assistant turn so subsequent LLM turns see
@@ -2438,7 +2506,7 @@ export async function processGroupMessages(chatJid: string): Promise<boolean> {
     if (isScheduleCommand(content)) {
       let reply: string;
       try {
-        reply = await handleScheduleCommand(group.folder, chatJid, content);
+        reply = await handleScheduleCommand(group.folder, chatJid, content, msg.sender);
       } catch (err) {
         logger.error({ err, chatJid }, '/schedule command failed');
         reply = 'Schedule command failed. Please try again.';
