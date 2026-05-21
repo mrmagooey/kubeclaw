@@ -48,6 +48,8 @@ vi.mock('./db.js', async (importOriginal) => {
     getTaskRunLogs: vi.fn().mockReturnValue([]),
     getTasksForGroup: vi.fn().mockReturnValue([]),
     deleteTaskForGroup: vi.fn().mockReturnValue(true),
+    pauseTask: vi.fn().mockReturnValue(true),
+    resumeTask: vi.fn().mockReturnValue(true),
     recordSpecialistUsage: vi
       .fn()
       .mockImplementation(
@@ -3687,5 +3689,115 @@ describe('handleJobsCommand — logs subcommand (Story 59)', () => {
     const result = await handleJobsCommand('grp', '/jobs job-abc logs', deps);
     expect(result).not.toMatch(/no longer available/i);
     expect(result).toContain('No pods found for job');
+  });
+});
+
+// ── /schedule pause/resume unit tests (Story 62) ─────────────────────────────
+
+describe('handleScheduleCommand — pause (Story 62)', () => {
+  beforeEach(() => {
+    vi.mocked(db.pauseTask).mockReset();
+    vi.mocked(db.resumeTask).mockReset();
+  });
+
+  it('returns confirmation when pauseTask succeeds', async () => {
+    vi.mocked(db.pauseTask).mockReturnValue(true);
+    const reply = await handleScheduleCommand('mygroup', 'jid@g.us', '/schedule pause task-abc');
+    expect(reply).toBe('Task "task-abc" paused.');
+    expect(vi.mocked(db.pauseTask)).toHaveBeenCalledWith('task-abc', 'mygroup');
+  });
+
+  it('returns "Task not found." when pauseTask returns false (unknown id)', async () => {
+    vi.mocked(db.pauseTask).mockReturnValue(false);
+    const reply = await handleScheduleCommand('mygroup', 'jid@g.us', '/schedule pause no-such-id');
+    expect(reply).toBe('Task not found.');
+  });
+
+  it('returns "Task not found." when pauseTask returns false (cross-group)', async () => {
+    vi.mocked(db.pauseTask).mockReturnValue(false);
+    const crossReply = await handleScheduleCommand('attacker', 'jid@g.us', '/schedule pause task-abc');
+    const unknownReply = await handleScheduleCommand('attacker', 'jid@g.us', '/schedule pause totally-unknown');
+    // both cases must return exact same text (no enumeration)
+    expect(crossReply).toBe(unknownReply);
+    expect(crossReply).toBe('Task not found.');
+  });
+
+  it('returns usage hint when pause is called without id', async () => {
+    const reply = await handleScheduleCommand('mygroup', 'jid@g.us', '/schedule pause');
+    expect(reply).toBe('Usage: /schedule pause <id>');
+  });
+});
+
+describe('handleScheduleCommand — resume (Story 62)', () => {
+  beforeEach(() => {
+    vi.mocked(db.pauseTask).mockReset();
+    vi.mocked(db.resumeTask).mockReset();
+  });
+
+  it('returns confirmation when resumeTask succeeds', async () => {
+    vi.mocked(db.resumeTask).mockReturnValue(true);
+    const reply = await handleScheduleCommand('mygroup', 'jid@g.us', '/schedule resume task-abc');
+    expect(reply).toBe('Task "task-abc" resumed.');
+    expect(vi.mocked(db.resumeTask)).toHaveBeenCalledWith('task-abc', 'mygroup');
+  });
+
+  it('returns "Task not found." when resumeTask returns false (unknown id)', async () => {
+    vi.mocked(db.resumeTask).mockReturnValue(false);
+    const reply = await handleScheduleCommand('mygroup', 'jid@g.us', '/schedule resume no-such-id');
+    expect(reply).toBe('Task not found.');
+  });
+
+  it('returns "Task not found." when resumeTask returns false (cross-group)', async () => {
+    vi.mocked(db.resumeTask).mockReturnValue(false);
+    const crossReply = await handleScheduleCommand('attacker', 'jid@g.us', '/schedule resume task-abc');
+    const unknownReply = await handleScheduleCommand('attacker', 'jid@g.us', '/schedule resume totally-unknown');
+    expect(crossReply).toBe(unknownReply);
+    expect(crossReply).toBe('Task not found.');
+  });
+
+  it('returns usage hint when resume is called without id', async () => {
+    const reply = await handleScheduleCommand('mygroup', 'jid@g.us', '/schedule resume');
+    expect(reply).toBe('Usage: /schedule resume <id>');
+  });
+});
+
+describe('handleScheduleCommand — list [paused] prefix (Story 62)', () => {
+  it('shows [paused] prefix for paused tasks, not for active tasks', async () => {
+    const activeTask = {
+      id: 'task-active',
+      group_folder: 'mygroup',
+      chat_jid: 'jid@g.us',
+      prompt: 'active task prompt',
+      schedule_type: 'interval' as const,
+      schedule_value: '60000',
+      status: 'active' as const,
+      next_run: '2026-06-01T00:00:00.000Z',
+      last_run: null,
+      last_result: null,
+      context_mode: 'isolated' as const,
+      created_at: '2026-05-20T00:00:00.000Z',
+    };
+    const pausedTask = {
+      ...activeTask,
+      id: 'task-paused',
+      status: 'paused' as const,
+    };
+    vi.mocked(db.getTasksForGroup).mockReturnValue([activeTask, pausedTask]);
+
+    const reply = await handleScheduleCommand('mygroup', 'jid@g.us', '/schedule list');
+
+    const lines = reply.split('\n');
+    const activeLine = lines.find((l) => l.includes('task-active'));
+    const pausedLine = lines.find((l) => l.includes('task-paused'));
+    expect(activeLine).toBeDefined();
+    expect(activeLine!.startsWith('[paused]')).toBe(false);
+    expect(pausedLine).toBeDefined();
+    expect(pausedLine!.startsWith('[paused]')).toBe(true);
+  });
+
+  it('SCHEDULE_HELP includes /schedule pause and /schedule resume', async () => {
+    const reply = await handleScheduleCommand('mygroup', 'jid@g.us', '/schedule help');
+    expect(reply).toMatch(/pause/i);
+    expect(reply).toMatch(/resume/i);
   });
 });

@@ -973,6 +973,38 @@ export function deleteTaskForGroup(id: string, groupFolder: string): boolean {
   return true;
 }
 
+/**
+ * Pause a scheduled task that belongs to groupFolder.
+ * Returns true if the task was found and updated, false otherwise.
+ * Returns false for both unknown IDs and cross-group IDs (no enumeration).
+ */
+export function pauseTask(id: string, groupFolder: string): boolean {
+  const task = getTaskById(id);
+  if (!task || task.group_folder !== groupFolder) return false;
+  db.run(
+    `UPDATE scheduled_tasks SET status = 'paused' WHERE id = ? AND group_folder = ?`,
+    [id, groupFolder],
+  );
+  saveDatabase();
+  return true;
+}
+
+/**
+ * Resume a paused task that belongs to groupFolder.
+ * Returns true if the task was found and updated, false otherwise.
+ * Returns false for both unknown IDs and cross-group IDs (no enumeration).
+ */
+export function resumeTask(id: string, groupFolder: string): boolean {
+  const task = getTaskById(id);
+  if (!task || task.group_folder !== groupFolder) return false;
+  db.run(
+    `UPDATE scheduled_tasks SET status = 'active' WHERE id = ? AND group_folder = ?`,
+    [id, groupFolder],
+  );
+  saveDatabase();
+  return true;
+}
+
 export function getAllScheduledTasks(): ScheduledTask[] {
   const result = db.exec(
     'SELECT * FROM scheduled_tasks ORDER BY created_at DESC',

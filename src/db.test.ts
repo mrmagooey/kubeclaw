@@ -59,6 +59,8 @@ import {
   recordSpecialistUsage,
   getSpecialistUsage,
   getTaskRunLogs,
+  pauseTask,
+  resumeTask,
 } from './db.js';
 import { JobACL } from './types.js';
 
@@ -2537,5 +2539,90 @@ describe('storeToolJob', () => {
       storeToolJob('dup-job', 'grp');
       storeToolJob('dup-job', 'grp');
     }).not.toThrow();
+  });
+});
+
+// --- pauseTask / resumeTask (Story 62) ---
+
+function makeScheduledTask(id: string, groupFolder: string, status: 'active' | 'paused' = 'active') {
+  createTask({
+    id,
+    group_folder: groupFolder,
+    chat_jid: `${groupFolder}@chat`,
+    prompt: `Test prompt for ${id}`,
+    schedule_type: 'interval',
+    schedule_value: '60000',
+    context_mode: 'isolated',
+    next_run: new Date(Date.now() + 60_000).toISOString(),
+    status,
+    created_at: new Date().toISOString(),
+  });
+}
+
+describe('pauseTask', () => {
+  beforeEach(() => {
+    __resetDbForTest();
+  });
+
+  it('sets status to paused and returns true for an active task', () => {
+    makeScheduledTask('pause-1', 'grp-pause');
+    const result = pauseTask('pause-1', 'grp-pause');
+    expect(result).toBe(true);
+    expect(getTaskById('pause-1')?.status).toBe('paused');
+  });
+
+  it('returns false for an unknown task id', () => {
+    const result = pauseTask('no-such-task', 'grp-pause');
+    expect(result).toBe(false);
+  });
+
+  it('returns false for a cross-group task (no enumeration)', () => {
+    makeScheduledTask('pause-cross', 'grp-owner');
+    const result = pauseTask('pause-cross', 'grp-attacker');
+    expect(result).toBe(false);
+    // task must remain active
+    expect(getTaskById('pause-cross')?.status).toBe('active');
+  });
+
+  it('returns same false for unknown id vs cross-group (identical wording)', () => {
+    makeScheduledTask('pause-secret', 'grp-owner');
+    const crossResult = pauseTask('pause-secret', 'grp-attacker');
+    const unknownResult = pauseTask('totally-unknown', 'grp-attacker');
+    expect(crossResult).toBe(unknownResult);
+    expect(crossResult).toBe(false);
+  });
+});
+
+describe('resumeTask', () => {
+  beforeEach(() => {
+    __resetDbForTest();
+  });
+
+  it('sets status to active and returns true for a paused task', () => {
+    makeScheduledTask('resume-1', 'grp-resume', 'paused');
+    const result = resumeTask('resume-1', 'grp-resume');
+    expect(result).toBe(true);
+    expect(getTaskById('resume-1')?.status).toBe('active');
+  });
+
+  it('returns false for an unknown task id', () => {
+    const result = resumeTask('no-such-task', 'grp-resume');
+    expect(result).toBe(false);
+  });
+
+  it('returns false for a cross-group task (no enumeration)', () => {
+    makeScheduledTask('resume-cross', 'grp-owner', 'paused');
+    const result = resumeTask('resume-cross', 'grp-attacker');
+    expect(result).toBe(false);
+    // task must remain paused
+    expect(getTaskById('resume-cross')?.status).toBe('paused');
+  });
+
+  it('returns same false for unknown id vs cross-group (identical wording)', () => {
+    makeScheduledTask('resume-secret', 'grp-owner', 'paused');
+    const crossResult = resumeTask('resume-secret', 'grp-attacker');
+    const unknownResult = resumeTask('totally-unknown', 'grp-attacker');
+    expect(crossResult).toBe(unknownResult);
+    expect(crossResult).toBe(false);
   });
 });

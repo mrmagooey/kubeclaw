@@ -38,6 +38,8 @@ import {
   appendConversationMessage,
   createTask,
   deleteTaskForGroup,
+  pauseTask,
+  resumeTask,
   getAllChats,
   getAllRegisteredGroups,
   getAllSessions,
@@ -1296,6 +1298,8 @@ const SCHEDULE_HELP = [
   '  /schedule add once <iso-date> <prompt>  — run once at the given time',
   '  /schedule list                          — list tasks for this group',
   '  /schedule remove <id>                   — remove a task by id',
+  '  /schedule pause <id>                    — pause a task (skip until resumed)',
+  '  /schedule resume <id>                   — resume a paused task',
   '  /schedule history <id>                  — recent runs (default 10 rows)',
   '  /schedule history <id> <limit>          — at most <limit> rows (max 100)',
   '  /schedule help                          — show this help',
@@ -1435,16 +1439,17 @@ export async function handleScheduleCommand(
       const tasks = getTasksForGroup(groupFolder);
       if (tasks.length === 0) return 'No scheduled tasks.';
 
-      const lines = tasks.map((t) =>
-        [
-          `id: ${t.id}`,
+      const lines = tasks.map((t) => {
+        const prefix = t.status === 'paused' ? '[paused] ' : '';
+        return [
+          `${prefix}id: ${t.id}`,
           `  type: ${t.schedule_type}`,
           `  value: ${t.schedule_value}`,
           `  status: ${t.status}`,
           `  next_run: ${t.next_run ?? 'n/a'}`,
           `  prompt: ${t.prompt.slice(0, 80)}${t.prompt.length > 80 ? '…' : ''}`,
-        ].join('\n'),
-      );
+        ].join('\n');
+      });
       return `Scheduled tasks (${tasks.length}):\n\n${lines.join('\n\n')}`;
     }
 
@@ -1457,6 +1462,22 @@ export async function handleScheduleCommand(
         return `Task '${id}' not found for this group.`;
       }
       return `Removed task '${id}'.`;
+    }
+
+    case 'pause': {
+      const id = parts[2];
+      if (!id) return 'Usage: /schedule pause <id>';
+      const ok = pauseTask(id, groupFolder);
+      if (!ok) return 'Task not found.';
+      return `Task "${id}" paused.`;
+    }
+
+    case 'resume': {
+      const id = parts[2];
+      if (!id) return 'Usage: /schedule resume <id>';
+      const ok = resumeTask(id, groupFolder);
+      if (!ok) return 'Task not found.';
+      return `Task "${id}" resumed.`;
     }
 
     case 'history': {
