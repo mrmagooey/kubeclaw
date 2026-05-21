@@ -82,6 +82,7 @@ import fs from 'node:fs';
 import {
   HttpChannel,
   HttpChannelOpts,
+  CapabilityEntry,
   buildVersionPayload,
   detectMediaType,
   getAttachmentUsage,
@@ -125,6 +126,7 @@ function makeOpts(overrides?: Partial<HttpChannelOpts>): HttpChannelOpts {
         added_at: '2024-01-01T00:00:00.000Z',
       },
     })),
+    getCapabilities: vi.fn((_groupFolder: string) => []),
     ...overrides,
   };
 }
@@ -3134,6 +3136,141 @@ describe('detectMediaType', () => {
         expect.any(String),
         100,
       );
+      await channel.disconnect();
+    });
+  });
+
+  // ── GET /capabilities — per-group capability list (Story 70) ──────────────
+
+  describe('GET /capabilities', () => {
+    it('returns 401 when unauthenticated', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/capabilities', auth: null });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(401);
+      await channel.disconnect();
+    });
+
+    it('returns 200 with application/json content-type for authenticated GET', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/capabilities', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      expect(res._headers['Content-Type']).toContain('application/json');
+      await channel.disconnect();
+    });
+
+    it('returns empty array when no capabilities provisioned', async () => {
+      const opts = makeOpts({
+        getCapabilities: vi.fn(() => []),
+      });
+      const channel = new HttpChannel(makeConfig(), opts);
+      await channel.connect();
+
+      const req = makeReq({ url: '/capabilities', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      expect(JSON.parse(res._body)).toEqual([]);
+      await channel.disconnect();
+    });
+
+    it('returns JSON array with both provisioned capability entries', async () => {
+      const opts = makeOpts({
+        getCapabilities: vi.fn((_groupFolder: string): CapabilityEntry[] => [
+          {
+            type: 'memory',
+            state: 'running',
+            provisioned_at: '2024-06-01T10:00:00.000Z',
+            scale: 1,
+          },
+          {
+            type: 'rag',
+            state: 'scaled_down',
+            provisioned_at: '2024-06-02T12:00:00.000Z',
+            scale: 0,
+          },
+        ]),
+      });
+      const channel = new HttpChannel(makeConfig(), opts);
+      await channel.connect();
+
+      const req = makeReq({ url: '/capabilities', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      const body = JSON.parse(res._body);
+      expect(body).toHaveLength(2);
+      expect(body[0]).toMatchObject({ type: 'memory', state: 'running', scale: 1 });
+      expect(body[1]).toMatchObject({ type: 'rag', state: 'scaled_down', scale: 0 });
+      await channel.disconnect();
+    });
+
+    it('calls getCapabilities with the authenticated user group folder', async () => {
+      const getCapabilities = vi.fn((_groupFolder: string): CapabilityEntry[] => []);
+      const opts = makeOpts({ getCapabilities });
+      const channel = new HttpChannel(makeConfig(), opts);
+      await channel.connect();
+
+      const req = makeReq({ url: '/capabilities', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      // group folder for 'alice' is 'alice' (from makeOpts registeredGroups)
+      expect(getCapabilities).toHaveBeenCalledWith('alice');
+      await channel.disconnect();
+    });
+
+    it('HEAD /capabilities returns same headers as GET but no body', async () => {
+      const opts = makeOpts({
+        getCapabilities: vi.fn((): CapabilityEntry[] => [
+          {
+            type: 'memory',
+            state: 'running',
+            provisioned_at: '2024-06-01T10:00:00.000Z',
+            scale: 1,
+          },
+        ]),
+      });
+      const channel = new HttpChannel(makeConfig(), opts);
+      await channel.connect();
+
+      const req = makeReq({ method: 'HEAD', url: '/capabilities', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      expect(res._headers['Content-Type']).toContain('application/json');
+      // HEAD must not send a body
+      expect(res._body).toBe('');
+      await channel.disconnect();
+    });
+
+    it('POST /capabilities returns 405 with Allow: GET, HEAD', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({
+        method: 'POST',
+        url: '/capabilities',
+        auth: 'alice:secret',
+        body: '{}',
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(405);
+      expect(res._headers['Allow']).toBe('GET, HEAD');
       await channel.disconnect();
     });
   });

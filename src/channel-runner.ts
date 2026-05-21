@@ -34,6 +34,8 @@ import {
   getAllCapabilities,
 } from './capabilities/db.js';
 import type { GroupMcpEntry } from './capabilities/types.js';
+import type { CapabilityEntry } from './channels/http.js';
+import { listInstances } from './per-group-capabilities/db.js';
 import {
   appendConversationMessage,
   createTask,
@@ -3094,6 +3096,32 @@ async function main(): Promise<void> {
       }
     },
     registeredGroups: () => registeredGroups,
+    // Story 70: supply per-group capability list to the HTTP channel.
+    // Maps _groupCapabilityEntries (GroupMcpEntry, keyed by name) + instance DB
+    // rows (which carry currentReplicas and createdAt) into the stable
+    // CapabilityEntry shape.  Only type/state/provisioned_at/scale are exposed.
+    getCapabilities: (groupFolder: string): CapabilityEntry[] => {
+      const instances = (() => {
+        try {
+          return listInstances(groupFolder);
+        } catch {
+          return [];
+        }
+      })();
+      const instanceByName = new Map(
+        instances.map((r) => [r.capabilityName, r]),
+      );
+      return [..._groupCapabilityEntries.values()].map((entry) => {
+        const inst = instanceByName.get(entry.name);
+        const scale = inst?.currentReplicas ?? 0;
+        const state: CapabilityEntry['state'] =
+          scale > 0 ? 'running' : 'scaled_down';
+        const provisioned_at = inst?.createdAt
+          ? new Date(inst.createdAt * 1000).toISOString()
+          : new Date(0).toISOString();
+        return { type: entry.name, state, provisioned_at, scale };
+      });
+    },
   };
 
   // Notify orchestrator that this channel pod is ready to receive commands.

@@ -39,6 +39,14 @@ import {
 } from '../types.js';
 import { DEFAULT_DIRECT_MODEL } from '../runtime/llm-client.js';
 
+/** Stable capability entry shape exposed by GET /capabilities. */
+export interface CapabilityEntry {
+  type: string;
+  state: 'running' | 'scaled_down';
+  provisioned_at: string;
+  scale: number;
+}
+
 /** Result of a single readiness sub-check. */
 export type CheckResult = 'ok' | 'failed' | 'unreachable';
 
@@ -69,6 +77,12 @@ export interface HttpChannelOpts {
   maxAttachmentCount?: number;
   /** Maximum cumulative attachment bytes per user. 0 = unlimited. */
   maxAttachmentBytes?: number;
+  /**
+   * Return the provisioned per-group capabilities for the given group folder.
+   * Called on every GET /capabilities request. Defaults to returning [] when
+   * omitted (used in tests that don't exercise this path).
+   */
+  getCapabilities?: (groupFolder: string) => CapabilityEntry[];
 }
 
 interface HttpConfig {
@@ -644,6 +658,7 @@ export class HttpChannel implements Channel {
     '/attachments/raw/': ['GET', 'HEAD', 'DELETE'], // prefix — dynamic filenames
     '/export': ['GET', 'HEAD'],
     '/jobs': ['GET', 'HEAD'],
+    '/capabilities': ['GET', 'HEAD'],
   };
 
   private async handleRequest(
@@ -1456,6 +1471,50 @@ export class HttpChannel implements Channel {
       return;
     }
 
+    // Story 70: GET /capabilities — list provisioned per-group capabilities
+    if (url.pathname === '/capabilities') {
+      // Method guard before auth so 405 is returned without leaking auth info
+      if (req.method !== 'GET' && req.method !== 'HEAD') {
+        res.writeHead(405, this.addCorsHeaders({
+          'Content-Type': 'text/plain',
+          Allow: 'GET, HEAD',
+        }));
+        res.end('Method Not Allowed');
+        return;
+      }
+
+      const username = this.authenticate(req);
+      if (!username) {
+        this.sendUnauthorized(res);
+        return;
+      }
+
+      const jid = `http:${username}`;
+      const group = this.opts.registeredGroups()[jid];
+      const groupFolder = group?.folder ?? jid;
+
+      const capabilities = this.opts.getCapabilities
+        ? this.opts.getCapabilities(groupFolder)
+        : [];
+
+      const body = JSON.stringify(capabilities);
+      const headers = this.addCorsHeaders({
+        'Content-Type': 'application/json',
+        'Content-Length': String(Buffer.byteLength(body)),
+        'Cache-Control': 'no-cache',
+      });
+
+      if (req.method === 'HEAD') {
+        res.writeHead(200, headers);
+        res.end();
+        return;
+      }
+
+      res.writeHead(200, headers);
+      res.end(body);
+      return;
+    }
+
     // Per RFC 9110: known paths reached with an unsupported method → 405 + Allow
     const pathMethods: Record<string, string[]> = {
       '/': ['GET'],
@@ -1469,6 +1528,7 @@ export class HttpChannel implements Channel {
       '/attachments/list': ['GET'],
       '/export': ['GET', 'HEAD'],
       '/jobs': ['GET', 'HEAD'],
+      '/capabilities': ['GET', 'HEAD'],
     };
     const allowed = pathMethods[url.pathname];
     if (allowed && !allowed.includes(req.method ?? '')) {
@@ -1736,5 +1796,7 @@ function parseConfig(): HttpConfig | null {
 registerChannel('http', (opts: ChannelOpts) => {
   const config = parseConfig();
   if (!config) return null;
-  return new HttpChannel(config, opts);
+  // Cast to HttpChannelOpts so optional extras (e.g. getCapabilities) passed
+  // in by channel-runner are forwarded to the channel.
+  return new HttpChannel(config, opts as HttpChannelOpts);
 });
