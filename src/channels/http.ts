@@ -20,9 +20,11 @@ import {
   db,
   deleteMessageById,
   getAllConversationHistory,
+  getActiveToolJobs,
   getConversationHistoryPage,
   getMessageById,
   getOutboundMessagesSince,
+  getRecentToolJobsForGroup,
   storeMessageDirect,
 } from '../db.js';
 import { readEnvFile } from '../env.js';
@@ -641,6 +643,7 @@ export class HttpChannel implements Channel {
     '/attachments/list': ['GET'],
     '/attachments/raw/': ['GET', 'HEAD', 'DELETE'], // prefix — dynamic filenames
     '/export': ['GET', 'HEAD'],
+    '/jobs': ['GET', 'HEAD'],
   };
 
   private async handleRequest(
@@ -1378,6 +1381,81 @@ export class HttpChannel implements Channel {
       return;
     }
 
+    // Story 65: GET /jobs — list tool jobs for the authenticated group
+    if (url.pathname === '/jobs') {
+      // Method check before auth so 405 is returned for unsupported methods
+      if (req.method !== 'GET' && req.method !== 'HEAD') {
+        res.writeHead(405, this.addCorsHeaders({
+          'Content-Type': 'text/plain',
+          Allow: 'GET, HEAD',
+        }));
+        res.end('Method Not Allowed');
+        return;
+      }
+
+      const username = this.authenticate(req);
+      if (!username) {
+        this.sendUnauthorized(res);
+        return;
+      }
+
+      // Validate status query param (must be 'active', 'completed', or absent)
+      const statusParam = url.searchParams.get('status');
+      if (statusParam !== null && statusParam !== 'active' && statusParam !== 'completed') {
+        res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+        res.end(JSON.stringify({ error: 'Invalid status parameter. Must be "active" or "completed".' }));
+        return;
+      }
+
+      // Parse and cap limit
+      const limitParam = url.searchParams.get('limit');
+      let limit = 20;
+      if (limitParam !== null) {
+        const parsed = Number(limitParam);
+        if (Number.isFinite(parsed) && parsed >= 1) {
+          limit = Math.min(Math.floor(parsed), 100);
+        }
+      }
+
+      const jid = `http:${username}`;
+      const group = this.opts.registeredGroups()[jid];
+      const groupFolder = group?.folder ?? jid;
+
+      let jobs;
+      if (statusParam === 'active') {
+        // getActiveToolJobs() returns all active jobs across all groups; filter to this group
+        jobs = getActiveToolJobs().filter((j) => j.group_folder === groupFolder);
+      } else {
+        // getRecentToolJobsForGroup returns non-active rows (completed/interrupted/timeout/oomkill)
+        jobs = getRecentToolJobsForGroup(groupFolder, limit);
+      }
+
+      const payload = jobs.map((j) => ({
+        job_id: j.job_id,
+        specialist_name: j.specialist_name,
+        status: j.status,
+        created_at: j.created_at,
+        resolved_at: j.resolved_at,
+      }));
+
+      const body = JSON.stringify(payload);
+      const headers = this.addCorsHeaders({
+        'Content-Type': 'application/json',
+        'Cache-Control': 'no-cache',
+        'Content-Length': String(Buffer.byteLength(body)),
+      });
+
+      if (req.method === 'HEAD') {
+        res.writeHead(200, headers);
+        res.end();
+        return;
+      }
+
+      res.writeHead(200, headers);
+      res.end(body);
+      return;
+    }
+
     // Per RFC 9110: known paths reached with an unsupported method → 405 + Allow
     const pathMethods: Record<string, string[]> = {
       '/': ['GET'],
@@ -1390,6 +1468,7 @@ export class HttpChannel implements Channel {
       '/history': ['GET', 'DELETE'],
       '/attachments/list': ['GET'],
       '/export': ['GET', 'HEAD'],
+      '/jobs': ['GET', 'HEAD'],
     };
     const allowed = pathMethods[url.pathname];
     if (allowed && !allowed.includes(req.method ?? '')) {

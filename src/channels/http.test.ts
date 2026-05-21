@@ -12,6 +12,8 @@ vi.mock('../db.js', () => {
     deleteMessageById: vi.fn(() => false),
     getConversationHistory: vi.fn(() => []),
     getMessageById: vi.fn(() => null),
+    getRecentToolJobsForGroup: vi.fn(() => []),
+    getActiveToolJobs: vi.fn(() => []),
     db: { exec: dbExec },
   };
 });
@@ -90,6 +92,8 @@ import {
   deleteMessageById,
   getConversationHistory,
   getMessageById,
+  getRecentToolJobsForGroup,
+  getActiveToolJobs,
 } from '../db.js';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -2947,6 +2951,190 @@ describe('detectMediaType', () => {
           'toolJobsRetentionDays',
         ]),
       );
+    });
+  });
+
+  // ── GET /jobs — tool job listing (Story 65) ───────────────────────────────
+
+  describe('GET /jobs', () => {
+    const sampleJobs = [
+      {
+        job_id: 'nc-alice-abc123',
+        group_folder: 'alice',
+        chat_jid: 'http:alice',
+        specialist_name: 'search',
+        status: 'completed' as const,
+        created_at: '2024-06-01T10:00:00.000Z',
+        resolved_at: '2024-06-01T10:05:00.000Z',
+        message_id: null,
+      },
+      {
+        job_id: 'nc-alice-def456',
+        group_folder: 'alice',
+        chat_jid: 'http:alice',
+        specialist_name: '',
+        status: 'active' as const,
+        created_at: '2024-06-01T11:00:00.000Z',
+        resolved_at: null,
+        message_id: null,
+      },
+    ];
+
+    beforeEach(() => {
+      vi.mocked(getRecentToolJobsForGroup).mockReset();
+      vi.mocked(getActiveToolJobs).mockReset();
+      vi.mocked(getRecentToolJobsForGroup).mockReturnValue(sampleJobs);
+      vi.mocked(getActiveToolJobs).mockReturnValue([sampleJobs[1]]);
+    });
+
+    // AC1: authenticated GET → 200 JSON array
+    it('returns 200 JSON array for authenticated user', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/jobs', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      expect(res._headers['Content-Type']).toContain('application/json');
+      const parsed = JSON.parse(res._body);
+      expect(Array.isArray(parsed)).toBe(true);
+      await channel.disconnect();
+    });
+
+    // AC5: stub returns 2 rows; assert JSON has both job_id values
+    it('returns both job_id values from stubbed getRecentToolJobsForGroup', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/jobs', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      const parsed = JSON.parse(res._body);
+      expect(parsed).toHaveLength(2);
+      expect(parsed[0].job_id).toBe('nc-alice-abc123');
+      expect(parsed[1].job_id).toBe('nc-alice-def456');
+      await channel.disconnect();
+    });
+
+    // AC2: ?status=active — calls getActiveToolJobs and filters by group
+    it('returns 200 and calls getActiveToolJobs for status=active', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/jobs?status=active', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      expect(getActiveToolJobs).toHaveBeenCalled();
+      await channel.disconnect();
+    });
+
+    // AC2: ?status=completed — calls getRecentToolJobsForGroup
+    it('returns 200 and calls getRecentToolJobsForGroup for status=completed', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/jobs?status=completed', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      expect(getRecentToolJobsForGroup).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.any(Number),
+      );
+      await channel.disconnect();
+    });
+
+    it('returns 400 for invalid status value', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/jobs?status=invalid', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(400);
+      const parsed = JSON.parse(res._body);
+      expect(parsed).toHaveProperty('error');
+      await channel.disconnect();
+    });
+
+    // AC3: unauthenticated → 401
+    it('returns 401 for unauthenticated request', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/jobs', auth: null });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(401);
+      await channel.disconnect();
+    });
+
+    // AC4: POST → 405 with Allow header
+    it('returns 405 for POST /jobs with Allow: GET, HEAD header', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ method: 'POST', url: '/jobs', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(405);
+      expect(res._headers['Allow']).toBe('GET, HEAD');
+      await channel.disconnect();
+    });
+
+    // AC4: HEAD /jobs → same headers as GET, no body
+    it('returns 200 for HEAD /jobs with Content-Length set but no body', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ method: 'HEAD', url: '/jobs', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      expect(res._headers['Content-Type']).toContain('application/json');
+      expect(res._headers['Content-Length']).toBeDefined();
+      expect(res._body).toBe('');
+      await channel.disconnect();
+    });
+
+    it('defaults to limit=20 and calls getRecentToolJobsForGroup', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/jobs', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(getRecentToolJobsForGroup).toHaveBeenCalledWith(
+        expect.any(String),
+        20,
+      );
+      await channel.disconnect();
+    });
+
+    it('caps limit at 100', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/jobs?limit=999', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(getRecentToolJobsForGroup).toHaveBeenCalledWith(
+        expect.any(String),
+        100,
+      );
+      await channel.disconnect();
     });
   });
 
