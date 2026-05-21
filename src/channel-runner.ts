@@ -630,6 +630,7 @@ export const HELP_TEXT = [
   '  /memory set <text>       — replace your group memory entirely',
   '  /schedule add <type> <value> <prompt>  — schedule a task (cron/interval/once)',
   '  /schedule list           — list your scheduled tasks',
+  '  /schedule next [id]      — show next fire time for tasks',
   '  /schedule remove <id>    — remove a scheduled task',
   '  /clear                   — clear conversation context',
   '  /compact                 — compact conversation history',
@@ -1302,6 +1303,8 @@ const SCHEDULE_HELP = [
   '  /schedule resume <id>                   — resume a paused task',
   '  /schedule history <id>                  — recent runs (default 10 rows)',
   '  /schedule history <id> <limit>          — at most <limit> rows (max 100)',
+  '  /schedule next                          — show next fire time for all tasks',
+  '  /schedule next <id>                     — show next fire time for one task',
   '  /schedule help                          — show this help',
 ].join('\n');
 
@@ -1319,6 +1322,29 @@ function formatTaskRunLogRow(row: TaskRunLogRow, index: number): string {
       : truncateScheduleResult(row.result);
   const detailStr = detail ? `  ${detail}` : '';
   return `${index + 1}. ${row.run_at} ${status} ${dur}${detailStr}`;
+}
+
+/**
+ * Format a millisecond delta into a human-readable string.
+ *
+ * Examples:
+ *   0        → 'now'
+ *   negative → 'now'
+ *   30000    → 'in 30s'
+ *   300000   → 'in 5m'
+ *   7200000  → 'in 2h'
+ *   259200000 → 'in 3d'
+ */
+export function formatHumanDelta(ms: number): string {
+  if (ms <= 0) return 'now';
+  const secs = Math.floor(ms / 1000);
+  if (secs < 60) return `in ${secs}s`;
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `in ${mins}m`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `in ${hours}h`;
+  const days = Math.floor(hours / 24);
+  return `in ${days}d`;
 }
 
 export function isScheduleCommand(message: string): boolean {
@@ -1509,6 +1535,42 @@ export async function handleScheduleCommand(
       const header = `Run history for '${taskId}' (${rows.length} row${rows.length === 1 ? '' : 's'}):`;
       const lines = rows.map((row, i) => formatTaskRunLogRow(row, i));
       return [header, ...lines].join('\n');
+    }
+
+    case 'next': {
+      const targetId = parts[2];
+
+      if (targetId) {
+        // Single-task lookup
+        const task = getTaskById(targetId);
+        if (!task || task.group_folder !== groupFolder) return 'Task not found';
+
+        if (!task.next_run) {
+          return `Task \`${targetId}\` has no future run (status: ${task.status})`;
+        }
+
+        const delta = new Date(task.next_run).getTime() - Date.now();
+        const human =
+          task.status === 'paused' ? 'paused' : formatHumanDelta(delta);
+        const prefix = task.status === 'paused' ? '[paused] ' : '';
+        return `${prefix}${targetId}  next: ${task.next_run}  (${human})`;
+      }
+
+      // All-tasks view
+      const tasks = getTasksForGroup(groupFolder);
+      if (tasks.length === 0) return 'No scheduled tasks';
+
+      const lines = tasks.map((t) => {
+        if (!t.next_run) {
+          return `${t.id}  next: n/a  (${t.status})`;
+        }
+        const delta = new Date(t.next_run).getTime() - Date.now();
+        const human =
+          t.status === 'paused' ? 'paused' : formatHumanDelta(delta);
+        const prefix = t.status === 'paused' ? '[paused] ' : '';
+        return `${prefix}${t.id}  next: ${t.next_run}  (${human})`;
+      });
+      return lines.join('\n');
     }
 
     default:

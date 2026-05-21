@@ -152,6 +152,7 @@ import {
   isScheduleCommand,
   parseScheduleAddCommand,
   handleScheduleCommand,
+  formatHumanDelta,
   type SecretCommandDeps,
   type IpcResponse,
   type CapabilityIpcFn,
@@ -3799,5 +3800,167 @@ describe('handleScheduleCommand — list [paused] prefix (Story 62)', () => {
     const reply = await handleScheduleCommand('mygroup', 'jid@g.us', '/schedule help');
     expect(reply).toMatch(/pause/i);
     expect(reply).toMatch(/resume/i);
+  });
+});
+
+// ── Story 67: formatHumanDelta unit tests ────────────────────────────────────
+
+describe('formatHumanDelta', () => {
+  it('returns "now" for 0ms', () => {
+    expect(formatHumanDelta(0)).toBe('now');
+  });
+
+  it('returns "now" for negative delta', () => {
+    expect(formatHumanDelta(-5000)).toBe('now');
+  });
+
+  it('returns "in Xs" for seconds under 60', () => {
+    expect(formatHumanDelta(30000)).toBe('in 30s');
+    expect(formatHumanDelta(1000)).toBe('in 1s');
+    expect(formatHumanDelta(59999)).toBe('in 59s');
+  });
+
+  it('returns "in Xm" for minutes under 60', () => {
+    expect(formatHumanDelta(5 * 60 * 1000)).toBe('in 5m');
+    expect(formatHumanDelta(60 * 1000)).toBe('in 1m');
+    expect(formatHumanDelta(59 * 60 * 1000)).toBe('in 59m');
+  });
+
+  it('returns "in Xh" for hours under 24', () => {
+    expect(formatHumanDelta(2 * 60 * 60 * 1000)).toBe('in 2h');
+    expect(formatHumanDelta(23 * 60 * 60 * 1000)).toBe('in 23h');
+  });
+
+  it('returns "in Xd" for days', () => {
+    expect(formatHumanDelta(3 * 24 * 60 * 60 * 1000)).toBe('in 3d');
+    expect(formatHumanDelta(7 * 24 * 60 * 60 * 1000)).toBe('in 7d');
+  });
+});
+
+// ── Story 67: handleScheduleCommand — next verb (unit tests) ─────────────────
+
+describe('handleScheduleCommand — next (Story 67)', () => {
+  const NOW = new Date('2026-06-01T10:00:00.000Z').getTime();
+
+  const makeTask = (overrides: Partial<{
+    id: string;
+    group_folder: string;
+    next_run: string | null;
+    status: 'active' | 'paused' | 'completed';
+  }>) => ({
+    id: 'task-default',
+    group_folder: 'group-alice',
+    chat_jid: 'http:alice',
+    prompt: 'do thing',
+    schedule_type: 'interval' as const,
+    schedule_value: '60000',
+    context_mode: 'isolated' as const,
+    next_run: '2026-06-01T10:05:00.000Z',
+    last_run: null,
+    last_result: null,
+    status: 'active' as const,
+    created_at: '2026-05-01T00:00:00.000Z',
+    ...overrides,
+  });
+
+  beforeEach(() => {
+    vi.mocked(db.getTasksForGroup).mockReset();
+    vi.mocked(db.getTaskById).mockReset();
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('AC4: returns "No scheduled tasks" when group has no tasks', async () => {
+    vi.mocked(db.getTasksForGroup).mockReturnValue([]);
+
+    const reply = await handleScheduleCommand('group-alice', 'http:alice', '/schedule next');
+
+    expect(reply).toBe('No scheduled tasks');
+  });
+
+  it('AC1: multi-task view — shows id, ISO timestamp, and human delta for each task', async () => {
+    const t1 = makeTask({ id: 'task-aaa', next_run: '2026-06-01T10:05:00.000Z' }); // 5m ahead
+    const t2 = makeTask({ id: 'task-bbb', next_run: '2026-06-01T12:00:00.000Z' }); // 2h ahead
+    vi.mocked(db.getTasksForGroup).mockReturnValue([t1, t2]);
+
+    const reply = await handleScheduleCommand('group-alice', 'http:alice', '/schedule next');
+
+    expect(reply).toContain('task-aaa');
+    expect(reply).toContain('task-bbb');
+    expect(reply).toContain('in 5m');
+    expect(reply).toContain('in 2h');
+    expect(reply).toContain('2026-06-01T10:05:00.000Z');
+    expect(reply).toContain('2026-06-01T12:00:00.000Z');
+  });
+
+  it('AC1: paused tasks are prefixed with [paused] and delta is "paused"', async () => {
+    const t = makeTask({
+      id: 'task-paused',
+      status: 'paused',
+      next_run: '2026-06-01T10:05:00.000Z',
+    });
+    vi.mocked(db.getTasksForGroup).mockReturnValue([t]);
+
+    const reply = await handleScheduleCommand('group-alice', 'http:alice', '/schedule next');
+
+    expect(reply).toContain('[paused]');
+    expect(reply).toContain('task-paused');
+    expect(reply).toContain('paused');
+    // human delta should NOT be "in 5m" for paused
+    expect(reply).not.toContain('in 5m');
+  });
+
+  it('AC2: single-task view with valid id', async () => {
+    const t = makeTask({ id: 'task-xyz', next_run: '2026-06-01T10:05:00.000Z' });
+    vi.mocked(db.getTaskById).mockReturnValue(t);
+
+    const reply = await handleScheduleCommand('group-alice', 'http:alice', '/schedule next task-xyz');
+
+    expect(reply).toContain('task-xyz');
+    expect(reply).toContain('2026-06-01T10:05:00.000Z');
+    expect(reply).toContain('in 5m');
+  });
+
+  it('AC2: once task already completed returns "no future run" message', async () => {
+    const t = makeTask({
+      id: 'task-done',
+      schedule_type: 'once',
+      next_run: null,
+      status: 'completed',
+    });
+    vi.mocked(db.getTaskById).mockReturnValue(t);
+
+    const reply = await handleScheduleCommand('group-alice', 'http:alice', '/schedule next task-done');
+
+    expect(reply).toContain('task-done');
+    expect(reply).toContain('no future run');
+    expect(reply).toContain('completed');
+  });
+
+  it('AC3: unknown id returns "Task not found"', async () => {
+    vi.mocked(db.getTaskById).mockReturnValue(undefined);
+
+    const reply = await handleScheduleCommand('group-alice', 'http:alice', '/schedule next no-such-id');
+
+    expect(reply).toBe('Task not found');
+  });
+
+  it('cross-group: another group task returns "Task not found"', async () => {
+    const t = makeTask({ id: 'task-bob', group_folder: 'group-bob' });
+    vi.mocked(db.getTaskById).mockReturnValue(t);
+
+    const reply = await handleScheduleCommand('group-alice', 'http:alice', '/schedule next task-bob');
+
+    expect(reply).toBe('Task not found');
+  });
+});
+
+describe('HELP_TEXT includes /schedule next', () => {
+  it('mentions /schedule next in the help text', () => {
+    expect(HELP_TEXT).toMatch(/\/schedule next/);
   });
 });
