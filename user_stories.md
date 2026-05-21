@@ -1843,7 +1843,7 @@ status: passing 5/5
 - LLM-dependence: **none**.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-memory-http --create-namespace`, `--set namespace=kubeclaw-e2e-memory-http`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14157`.
 
-status: drafted
+status: passing 5/5
 
 ## Story 75: `GET /whoami` authenticated identity endpoint
 
@@ -1868,7 +1868,7 @@ status: drafted
 - LLM-dependence: **none**.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-whoami --create-namespace`, `--set namespace=kubeclaw-e2e-whoami`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14158`.
 
-status: drafted
+status: passing 5/5
 
 ## Story 76: `POST /secrets` completes the secrets REST CRUD
 
@@ -1893,4 +1893,4 @@ status: drafted
 - LLM-dependence: **none**.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-secrets-write --create-namespace`, `--set namespace=kubeclaw-e2e-secrets-write`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14159`.
 
-status: drafted
+status: passing 5/5
