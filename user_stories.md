@@ -1919,7 +1919,7 @@ status: passing 5/5
 - LLM-dependence: **none**.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-skills-http --create-namespace`, `--set namespace=kubeclaw-e2e-skills-http`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14160`.
 
-status: drafted
+status: passing 5/5
 
 ## Story 78: `DELETE /history?before=<iso>` for time-bounded bulk purge
 
@@ -1944,7 +1944,7 @@ status: drafted
 - LLM-dependence: **none**.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-history-purge --create-namespace`, `--set namespace=kubeclaw-e2e-history-purge`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14161`.
 
-status: drafted
+status: passing 5/5
 
 ## Story 79: `GET /diag` operational snapshot endpoint
 
@@ -1971,4 +1971,4 @@ status: drafted
 - LLM-dependence: **none**.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-diag --create-namespace`, `--set namespace=kubeclaw-e2e-diag`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14162`.
 
-status: drafted
+status: passing 5/5
