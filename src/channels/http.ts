@@ -451,6 +451,67 @@ export class HttpChannel implements Channel {
     return { allowed: false, retryAfterSeconds };
   }
 
+  /**
+   * Read-only inspection of the current rate-limit state for a user.
+   *
+   * Returns:
+   *   - `{ limit: null, remaining: null, resetInSeconds: null }` when
+   *     `perUserMessagesPerMinute === 0` (unlimited)
+   *   - Otherwise:
+   *     `{ limit: N, remaining: <0..N>, resetInSeconds: <0..60> }`
+   *
+   * `resetInSeconds` is the number of seconds until the bucket would be
+   * completely full again (i.e. elapsed time until it reaches `capacity`).
+   * When the bucket is already full, resetInSeconds is 0.
+   *
+   * @param username - the authenticated username (bucket key)
+   * @param nowMs    - current time in milliseconds (injectable for testing)
+   */
+  peekRateLimit(
+    username: string,
+    nowMs: number = Date.now(),
+  ): { limit: null; remaining: null; resetInSeconds: null } | {
+    limit: number;
+    remaining: number;
+    resetInSeconds: number;
+  } {
+    const capacity = this.config.perUserMessagesPerMinute ?? 0;
+    if (capacity === 0) {
+      return { limit: null, remaining: null, resetInSeconds: null };
+    }
+
+    const refillRatePerMs = capacity / 60_000; // tokens per millisecond
+
+    const bucket = this.rateBuckets.get(username);
+    let currentTokens: number;
+    if (!bucket) {
+      // No bucket yet → fresh user, full capacity
+      currentTokens = capacity;
+    } else {
+      // Compute refilled tokens WITHOUT mutating the bucket
+      const elapsed = Math.max(0, nowMs - bucket.lastRefillMs);
+      currentTokens = Math.min(
+        capacity,
+        bucket.tokens + elapsed * refillRatePerMs,
+      );
+    }
+
+    const remaining = Math.floor(currentTokens);
+
+    // How many seconds until a full bucket (capacity tokens)?
+    const tokensNeeded = capacity - currentTokens;
+    const resetInSeconds =
+      tokensNeeded <= 0
+        ? 0
+        : Math.ceil(tokensNeeded / refillRatePerMs / 1000);
+
+    return {
+      limit: capacity,
+      remaining,
+      resetInSeconds: Math.min(resetInSeconds, 60),
+    };
+  }
+
   private get maxAttachmentCount(): number {
     // opts takes precedence (allows test injection); fall back to parsed config
     return this.opts.maxAttachmentCount ?? this.config.maxAttachmentCount ?? 0;
@@ -546,6 +607,7 @@ export class HttpChannel implements Channel {
     '/healthz': ['GET', 'HEAD'],
     '/readyz': ['GET', 'HEAD'],
     '/stream': ['GET'],
+    '/message/rate-limit': ['GET', 'HEAD'],
     '/message': ['POST'],
     '/history': ['GET', 'DELETE'],
     '/attachments/list': ['GET'],
@@ -725,6 +787,33 @@ export class HttpChannel implements Channel {
         }
       }, 30_000);
 
+      return;
+    }
+
+    // Rate-limit status endpoint — must come BEFORE the generic /message check
+    // so the literal path "/message/rate-limit" is not intercepted.
+    if (
+      (req.method === 'GET' || req.method === 'HEAD') &&
+      url.pathname === '/message/rate-limit'
+    ) {
+      const username = this.authenticate(req);
+      if (!username) {
+        this.sendUnauthorized(res);
+        return;
+      }
+
+      const peek = this.peekRateLimit(username);
+      const body = JSON.stringify(peek);
+      res.writeHead(200, this.addCorsHeaders({
+        'Content-Type': 'application/json',
+        'Content-Length': String(Buffer.byteLength(body)),
+        'Cache-Control': 'no-store',
+      }));
+      if (req.method === 'HEAD') {
+        res.end();
+      } else {
+        res.end(body);
+      }
       return;
     }
 
@@ -1211,6 +1300,7 @@ export class HttpChannel implements Channel {
       '/healthz': ['GET', 'HEAD'],
       '/readyz': ['GET', 'HEAD'],
       '/stream': ['GET'],
+      '/message/rate-limit': ['GET', 'HEAD'],
       '/message': ['POST'],
       '/history': ['GET', 'DELETE'],
       '/attachments/list': ['GET'],

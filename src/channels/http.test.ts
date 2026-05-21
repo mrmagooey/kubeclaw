@@ -2058,6 +2058,336 @@ describe('HttpChannel', () => {
       await channel.disconnect();
     });
   });
+
+  // ── peekRateLimit() — read-only unit tests ───────────────────────────────
+  //
+  // These exercise peekRateLimit() directly with an injectable nowMs so no
+  // real time passes and results are deterministic. Key invariant: calling
+  // peekRateLimit any number of times MUST NOT change the bucket state.
+
+  describe('peekRateLimit() — read-only unit tests', () => {
+    it('returns null fields when capacity is 0 (unlimited)', () => {
+      const channel = new HttpChannel(
+        makeConfig({ perUserMessagesPerMinute: 0 }),
+        makeOpts(),
+      );
+      const result = channel.peekRateLimit('alice', 0);
+      expect(result).toEqual({ limit: null, remaining: null, resetInSeconds: null });
+    });
+
+    it('is idempotent — calling 5 times does not change remaining', () => {
+      const capacity = 10;
+      const channel = new HttpChannel(
+        makeConfig({ perUserMessagesPerMinute: capacity }),
+        makeOpts(),
+      );
+      const t0 = 0;
+      // Consume 3 tokens via consumeRateLimit
+      channel.consumeRateLimit('alice', t0);
+      channel.consumeRateLimit('alice', t0);
+      channel.consumeRateLimit('alice', t0);
+
+      // Now peek 5 times at the same instant — remaining must not change
+      const first = channel.peekRateLimit('alice', t0);
+      for (let i = 0; i < 4; i++) {
+        expect(channel.peekRateLimit('alice', t0)).toEqual(first);
+      }
+    });
+
+    it('peekRateLimit does not consume — consumeRateLimit still allowed after 10 peeks', () => {
+      const capacity = 1;
+      const channel = new HttpChannel(
+        makeConfig({ perUserMessagesPerMinute: capacity }),
+        makeOpts(),
+      );
+      const t0 = 0;
+      // Peek 10 times — bucket must remain full
+      for (let i = 0; i < 10; i++) {
+        channel.peekRateLimit('alice', t0);
+      }
+      // One consume must still succeed
+      expect(channel.consumeRateLimit('alice', t0)).toEqual({ allowed: true });
+    });
+
+    it('returns remaining = capacity for a fresh bucket', () => {
+      const capacity = 10;
+      const channel = new HttpChannel(
+        makeConfig({ perUserMessagesPerMinute: capacity }),
+        makeOpts(),
+      );
+      const result = channel.peekRateLimit('alice', 0);
+      expect(result).toMatchObject({ limit: capacity, remaining: capacity });
+    });
+
+    it('remaining decreases after consumeRateLimit calls', () => {
+      const capacity = 10;
+      const channel = new HttpChannel(
+        makeConfig({ perUserMessagesPerMinute: capacity }),
+        makeOpts(),
+      );
+      const t0 = 0;
+      // Consume 3 tokens
+      channel.consumeRateLimit('alice', t0);
+      channel.consumeRateLimit('alice', t0);
+      channel.consumeRateLimit('alice', t0);
+
+      const peek = channel.peekRateLimit('alice', t0);
+      expect(peek).toMatchObject({ limit: capacity, remaining: 7 });
+    });
+
+    it('remaining is 0 when bucket is exhausted', () => {
+      const capacity = 5;
+      const channel = new HttpChannel(
+        makeConfig({ perUserMessagesPerMinute: capacity }),
+        makeOpts(),
+      );
+      const t0 = 0;
+      for (let i = 0; i < capacity; i++) {
+        channel.consumeRateLimit('alice', t0);
+      }
+      const peek = channel.peekRateLimit('alice', t0);
+      expect(peek).toMatchObject({ limit: capacity, remaining: 0 });
+    });
+
+    it('resetInSeconds is 0 when bucket is full', () => {
+      const capacity = 10;
+      const channel = new HttpChannel(
+        makeConfig({ perUserMessagesPerMinute: capacity }),
+        makeOpts(),
+      );
+      const peek = channel.peekRateLimit('alice', 0);
+      expect(peek).toMatchObject({ resetInSeconds: 0 });
+    });
+
+    it('resetInSeconds is ≤ 60 when bucket is partially exhausted', () => {
+      const capacity = 5;
+      const channel = new HttpChannel(
+        makeConfig({ perUserMessagesPerMinute: capacity }),
+        makeOpts(),
+      );
+      const t0 = 0;
+      for (let i = 0; i < capacity; i++) {
+        channel.consumeRateLimit('alice', t0);
+      }
+      const peek = channel.peekRateLimit('alice', t0);
+      if (peek.resetInSeconds !== null) {
+        expect(peek.resetInSeconds).toBeGreaterThan(0);
+        expect(peek.resetInSeconds).toBeLessThanOrEqual(60);
+      }
+    });
+
+    it('buckets are keyed per user — alice and bob have independent views', () => {
+      const capacity = 5;
+      const channel = new HttpChannel(
+        makeConfig({ perUserMessagesPerMinute: capacity }),
+        makeOpts(),
+      );
+      const t0 = 0;
+      // Drain alice
+      for (let i = 0; i < capacity; i++) {
+        channel.consumeRateLimit('alice', t0);
+      }
+      // Alice is exhausted; bob has full bucket
+      const alicePeek = channel.peekRateLimit('alice', t0);
+      const bobPeek = channel.peekRateLimit('bob', t0);
+      expect(alicePeek).toMatchObject({ remaining: 0 });
+      expect(bobPeek).toMatchObject({ remaining: capacity });
+    });
+  });
+
+  // ── GET /message/rate-limit — integration tests ───────────────────────────
+
+  describe('GET /message/rate-limit', () => {
+    it('AC1: returns 200 with JSON { limit, remaining, resetInSeconds } when limit is set', async () => {
+      const channel = new HttpChannel(
+        makeConfig({ perUserMessagesPerMinute: 10 }),
+        makeOpts(),
+      );
+      await channel.connect();
+
+      const req = makeReq({ method: 'GET', url: '/message/rate-limit', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      expect(res._headers['Content-Type']).toContain('application/json');
+      const body = JSON.parse(res._body);
+      expect(body).toMatchObject({
+        limit: 10,
+        remaining: 10,
+        resetInSeconds: 0,
+      });
+      await channel.disconnect();
+    });
+
+    it('AC2: remaining decreases after 3 POST /message calls', async () => {
+      const channel = new HttpChannel(
+        makeConfig({ perUserMessagesPerMinute: 10 }),
+        makeOpts(),
+      );
+      await channel.connect();
+
+      // Consume 3 tokens via the rate limiter directly (deterministic)
+      channel.consumeRateLimit('alice', 0);
+      channel.consumeRateLimit('alice', 0);
+      channel.consumeRateLimit('alice', 0);
+
+      // Peek via the endpoint (uses Date.now() internally, but bucket is at t=0)
+      // We cannot inject nowMs through the HTTP route, so instead inject via
+      // peekRateLimit directly to verify the integration, then test the HTTP
+      // endpoint returns valid JSON with remaining < 10.
+      const peek = channel.peekRateLimit('alice', 0);
+      expect(peek).toMatchObject({ limit: 10, remaining: 7 });
+
+      await channel.disconnect();
+    });
+
+    it('AC2 (HTTP): GET /message/rate-limit after consuming messages returns remaining < limit', async () => {
+      const channel = new HttpChannel(
+        makeConfig({ perUserMessagesPerMinute: 10 }),
+        makeOpts(),
+      );
+      await channel.connect();
+
+      // Send 3 POST /message requests (makeReq auto-sets content-type: application/json)
+      for (let i = 0; i < 3; i++) {
+        const postReq = makeReq({
+          method: 'POST',
+          url: '/message',
+          auth: 'alice:secret',
+          body: '{"text":"hello"}',
+        });
+        const postRes = makeRes();
+        await dispatch(channel, postReq, postRes);
+        expect(postRes._status).toBe(200);
+      }
+
+      // Now GET /message/rate-limit
+      const req = makeReq({ method: 'GET', url: '/message/rate-limit', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      const body = JSON.parse(res._body);
+      expect(body.limit).toBe(10);
+      expect(body.remaining).toBeLessThan(10);
+      expect(body.remaining).toBeGreaterThanOrEqual(0);
+
+      // Verify next POST /message is still allowed (remaining > 0)
+      const postReq4 = makeReq({
+        method: 'POST',
+        url: '/message',
+        auth: 'alice:secret',
+        body: '{"text":"still allowed"}',
+      });
+      const postRes4 = makeRes();
+      await dispatch(channel, postReq4, postRes4);
+      expect(postRes4._status).toBe(200);
+
+      await channel.disconnect();
+    });
+
+    it('AC3: with perUserMessagesPerMinute=0 (unlimited), returns { limit: null, remaining: null, resetInSeconds: null }', async () => {
+      const channel = new HttpChannel(
+        makeConfig({ perUserMessagesPerMinute: 0 }),
+        makeOpts(),
+      );
+      await channel.connect();
+
+      const req = makeReq({ method: 'GET', url: '/message/rate-limit', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      const body = JSON.parse(res._body);
+      expect(body).toEqual({ limit: null, remaining: null, resetInSeconds: null });
+
+      await channel.disconnect();
+    });
+
+    it('AC4: unauthenticated GET /message/rate-limit returns 401', async () => {
+      const channel = new HttpChannel(
+        makeConfig({ perUserMessagesPerMinute: 10 }),
+        makeOpts(),
+      );
+      await channel.connect();
+
+      const req = makeReq({ method: 'GET', url: '/message/rate-limit', auth: null });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(401);
+      expect(res._headers['WWW-Authenticate']).toContain('Basic realm=');
+
+      await channel.disconnect();
+    });
+
+    it('AC5: POST /message/rate-limit returns 405 with Allow: GET, HEAD', async () => {
+      const channel = new HttpChannel(
+        makeConfig({ perUserMessagesPerMinute: 10 }),
+        makeOpts(),
+      );
+      await channel.connect();
+
+      const req = makeReq({ method: 'POST', url: '/message/rate-limit', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(405);
+      expect(res._headers['Allow']).toContain('GET');
+      expect(res._headers['Allow']).toContain('HEAD');
+
+      await channel.disconnect();
+    });
+
+    it('AC5: HEAD /message/rate-limit returns same headers as GET but no body', async () => {
+      const channel = new HttpChannel(
+        makeConfig({ perUserMessagesPerMinute: 10 }),
+        makeOpts(),
+      );
+      await channel.connect();
+
+      const getReq = makeReq({ method: 'GET', url: '/message/rate-limit', auth: 'alice:secret' });
+      const getRes = makeRes();
+      await dispatch(channel, getReq, getRes);
+
+      const headReq = makeReq({ method: 'HEAD', url: '/message/rate-limit', auth: 'alice:secret' });
+      const headRes = makeRes();
+      await dispatch(channel, headReq, headRes);
+
+      expect(headRes._status).toBe(200);
+      // Same Content-Type header
+      expect(headRes._headers['Content-Type']).toBe(getRes._headers['Content-Type']);
+      // HEAD has no body
+      expect(headRes._body).toBe('');
+
+      await channel.disconnect();
+    });
+
+    it('peekRateLimit does not consume — remaining is identical on back-to-back GETs', async () => {
+      const channel = new HttpChannel(
+        makeConfig({ perUserMessagesPerMinute: 10 }),
+        makeOpts(),
+      );
+      await channel.connect();
+
+      const makeRateLimitReq = () =>
+        makeReq({ method: 'GET', url: '/message/rate-limit', auth: 'alice:secret' });
+
+      const res1 = makeRes();
+      await dispatch(channel, makeRateLimitReq(), res1);
+      const body1 = JSON.parse(res1._body);
+
+      const res2 = makeRes();
+      await dispatch(channel, makeRateLimitReq(), res2);
+      const body2 = JSON.parse(res2._body);
+
+      // Remaining must not change between the two reads (no consumption)
+      expect(body2.remaining).toBe(body1.remaining);
+
+      await channel.disconnect();
+    });
+  });
 });
 
 // ── detectMediaType — unit tests ──────────────────────────────────────────────
