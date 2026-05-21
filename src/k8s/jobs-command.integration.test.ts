@@ -65,62 +65,62 @@ describe('/jobs integration — recordToolJob + resolveToolJob + handleJobsComma
   const GROUP = 'int-test-group';
   const OTHER = 'other-group';
 
-  it('returns "No active jobs." when table is empty', () => {
-    const reply = handleJobsCommand(GROUP);
+  it('returns "No active jobs." when table is empty', async () => {
+    const reply = await handleJobsCommand(GROUP);
     expect(reply).toBe('No active jobs.');
   });
 
-  it('shows a running job for the correct group', () => {
+  it('shows a running job for the correct group', async () => {
     insertJob('job-1', GROUP, 'CodeReview');
 
-    const reply = handleJobsCommand(GROUP);
+    const reply = await handleJobsCommand(GROUP);
     expect(reply).toContain('[running]');
     expect(reply).toContain('@CodeReview');
     expect(reply).toMatch(/started \d\d:\d\dZ/);
   });
 
-  it('completed job shows correct status label', () => {
+  it('completed job shows correct status label', async () => {
     insertJob('job-2', GROUP, 'DocWriter');
     resolveToolJob('job-2', 'completed');
 
-    const reply = handleJobsCommand(GROUP);
+    const reply = await handleJobsCommand(GROUP);
     expect(reply).toContain('[completed]');
     expect(reply).toContain('@DocWriter');
     expect(reply).toMatch(/\d\d:\d\dZ → \d\d:\d\dZ/);
   });
 
-  it('timeout status renders correctly', () => {
+  it('timeout status renders correctly', async () => {
     insertJob('job-3', GROUP, 'SlowSpec');
     resolveToolJob('job-3', 'timeout');
 
-    const reply = handleJobsCommand(GROUP);
+    const reply = await handleJobsCommand(GROUP);
     expect(reply).toContain('[timeout]');
     expect(reply).toContain('@SlowSpec');
   });
 
-  it('oomkill status renders correctly', () => {
+  it('oomkill status renders correctly', async () => {
     insertJob('job-4', GROUP, 'HeavySpec');
     resolveToolJob('job-4', 'oomkill');
 
-    const reply = handleJobsCommand(GROUP);
+    const reply = await handleJobsCommand(GROUP);
     expect(reply).toContain('[oomkill]');
     expect(reply).toContain('@HeavySpec');
   });
 
-  it('interrupted status renders correctly', () => {
+  it('interrupted status renders correctly', async () => {
     insertJob('job-5', GROUP, 'CancelledSpec');
     resolveToolJob('job-5', 'interrupted');
 
-    const reply = handleJobsCommand(GROUP);
+    const reply = await handleJobsCommand(GROUP);
     expect(reply).toContain('[interrupted]');
     expect(reply).toContain('@CancelledSpec');
   });
 
-  it('jobs from other groups are never shown', () => {
+  it('jobs from other groups are never shown', async () => {
     insertJob('job-mine', GROUP, 'MySpec');
     insertJob('job-other', OTHER, 'OtherSpec');
 
-    const reply = handleJobsCommand(GROUP);
+    const reply = await handleJobsCommand(GROUP);
     expect(reply).toContain('@MySpec');
     expect(reply).not.toContain('@OtherSpec');
   });
@@ -158,12 +158,12 @@ describe('/jobs integration — recordToolJob + resolveToolJob + handleJobsComma
     expect(active.some((j) => j.job_id === 'g2-job')).toBe(false);
   });
 
-  it('mixed active and completed: reply lists both sections', () => {
+  it('mixed active and completed: reply lists both sections', async () => {
     insertJob('r-job', GROUP, 'RunningSpec');
     insertJob('c-job', GROUP, 'DoneSpec');
     resolveToolJob('c-job', 'completed');
 
-    const reply = handleJobsCommand(GROUP);
+    const reply = await handleJobsCommand(GROUP);
     expect(reply).toContain('[running] @RunningSpec');
     expect(reply).toContain('[completed] @DoneSpec');
   });

@@ -151,6 +151,7 @@ describe('admin-shell TOOLS array', () => {
       'get_sessions',
       'clear_conversation',
       'setup_channel',
+      'remove_channel',
       'get_orchestrator_status',
       'restart_orchestrator',
       'install_capability',
