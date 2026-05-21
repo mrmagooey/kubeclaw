@@ -1972,3 +1972,90 @@ status: passing 5/5
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-diag --create-namespace`, `--set namespace=kubeclaw-e2e-diag`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14162`.
 
 status: passing 5/5
+
+## Story 80: `GET /schedule/<id>/runs` — task run history via REST
+
+**As a** KubeClaw operator
+**I want** `GET /schedule/<id>/runs` to return the run-log history for a single scheduled task as JSON
+**So that** I can answer "did my task run? did it error?" without shelling into the pod
+
+### Acceptance criteria
+
+1. Authenticated `GET /schedule/<id>/runs` → HTTP 200 with `Content-Type: application/json` and body `{ runs: [{ run_at, status, duration_ms, result?, error? }] }` — newest-first, default limit 20.
+2. `?limit=N` honored, cap at 100 (uses `MAX_TASK_RUN_LOGS_LIMIT` or similar — `getTaskRunLogs` already caps).
+3. Unknown id OR cross-group id → 404 (identical wording — same defense-in-depth pattern as Story 60: two-tier ownership via `getTaskById` + JOIN-scoped `getTaskRunLogs`).
+4. Unauthenticated → 401. `POST /schedule/<id>/runs` → 405 `Allow: GET, HEAD`. `HEAD` → same headers as GET, no body.
+5. Unit test: stub `getTaskRunLogs` returning 2 rows (1 success, 1 error); assert response has both with correct `status` tags and that `result`/`error` fields are populated correctly.
+
+### Notes
+
+- Add a new route block in `src/channels/http.ts` that matches `/^\/schedule\/([^/]+)\/runs$/`. Place it logically near the existing `/schedule/<id>` (Story 71) block.
+- Reuse existing `getTaskById` (Story 60 pattern) for ownership pre-check, then `getTaskRunLogs(taskId, groupFolder, limit)` for the actual fetch.
+- Update `CORS_PATH_METHODS['/schedule/']` if needed to cover the `/runs` sub-path with GET/HEAD (the existing `/schedule/<id>` entry from Story 71 covers DELETE/PATCH/HEAD; runs needs GET/HEAD as well — design the CORS table accordingly).
+- Update 405 `pathMethods` table.
+- LLM-dependence: **none**.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-schedule-runs --create-namespace`, `--set namespace=kubeclaw-e2e-schedule-runs`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14163`.
+
+status: drafted
+
+## Story 81: `GET /audit` audit log of destructive admin actions
+
+**As a** KubeClaw operator
+**I want** every destructive admin action recorded in an audit log and queryable via `GET /audit`
+**So that** I can answer "who deleted what, when" — currently the system has zero audit trail
+
+### Acceptance criteria
+
+1. Authenticated `GET /audit?limit=50` returns HTTP 200 with `Content-Type: application/json` and body `{ entries: [{ id, ts, actor, action, target, detail }] }` for the authenticated group, newest-first. Default limit 50, cap 200.
+2. Destructive actions write an audit row BEFORE returning 200/204:
+   - `DELETE /history` (full clear, Story 26) → action `history.clear`.
+   - `DELETE /history?before=<iso>` (Story 78) → action `history.purge`, detail `before=<iso>, deleted=<N>`.
+   - `DELETE /history/<id>` (Story 56) → action `history.delete`, target = id.
+   - `DELETE /secrets/<type>` (Story 73) → action `secret.remove`, target = type.
+   - `POST /secrets` (Story 76) → action `secret.add`, target = type. **NEVER log the values** — only the field NAMES.
+   - `DELETE /schedule/<id>` (Story 71) → action `schedule.delete`, target = id.
+   - `PATCH /schedule/<id>` (Story 71) → action `schedule.pause` or `schedule.resume`, target = id.
+   - `DELETE /jobs/<id>` (Story 69) → action `job.kill`, target = id.
+   - `POST /skills/candidates/<id>/accept` (Story 77) → action `skill.accept`.
+   - `POST /skills/candidates/<id>/reject` (Story 77) → action `skill.reject`.
+3. `actor` is the authenticated username from `this.authenticate(req)`.
+4. Unauthenticated `GET /audit` → 401. `POST /audit` → 405 `Allow: GET, HEAD`.
+5. Unit test: stub each destructive handler's audit-write; assert `writeAuditEntry` is called with the correct `action` and `target` BEFORE the 200/204 response is sent. Also assert that **secret values are NEVER passed to `writeAuditEntry`**.
+
+### Notes
+
+- Add `audit_log` table to `src/db.ts` via additive `CREATE TABLE IF NOT EXISTS audit_log (id INTEGER PRIMARY KEY, ts TEXT NOT NULL, group_folder TEXT NOT NULL, actor TEXT NOT NULL, action TEXT NOT NULL, target TEXT, detail TEXT)`. Add `idx_audit_group_ts` for `(group_folder, ts DESC)`.
+- Add `writeAuditEntry({ groupFolder, actor, action, target?, detail? }): void` and `getAuditEntries(groupFolder: string, limit: number): AuditEntry[]` to `src/db.ts`.
+- In each destructive handler in `src/channels/http.ts`, call `writeAuditEntry` AFTER the destructive op succeeds and BEFORE responding. If the audit write throws, log the error but DO NOT fail the user's request — audit-write failures must not break the destructive op (graceful degrade).
+- For Story 76 `POST /secrets`: pass `target = type` and `detail = "fields=" + Object.keys(fields).join(',')` — names ONLY, no values. The implementation MUST be written to ensure the `value` fields never reach the audit row.
+- Add `/audit` to `CORS_PATH_METHODS` with `['GET', 'HEAD']` and 405 `pathMethods` table.
+- LLM-dependence: **none**.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-audit --create-namespace`, `--set namespace=kubeclaw-e2e-audit`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14164`.
+
+status: drafted
+
+## Story 82: `PATCH /history/<id>` redact or edit a single message
+
+**As a** KubeClaw user who accidentally pasted sensitive content
+**I want** to edit a single conversation-history row via `PATCH /history/<id>`
+**So that** I can redact a leaked secret in place without deleting the message and losing context
+
+### Acceptance criteria
+
+1. Authenticated `PATCH /history/<id>` with body `{ "content": "<new text>" }` updates the row's `content` for an id in the user's group. Returns HTTP 200 with the updated message JSON `{ id, role, content, timestamp/created_at }`.
+2. Missing or non-string `content` → 400 `{ error: "content must be a string" }`. Empty string is permitted (allows full redaction to "").
+3. `PATCH /history/<unknown-id>` and `PATCH /history/<id-from-another-group>` both → 404 (identical wording).
+4. Unauthenticated → 401. `PUT /history/<id>` → 405 with the updated `Allow: GET, HEAD, DELETE, PATCH`. `HEAD /history/<id>` (Story 64) still works as before.
+5. Body size cap: 256 KiB (a single message). Larger → 413.
+
+### Notes
+
+- Add `updateConversationMessage(id: string, content: string, groupFolder: string): boolean` to `src/db.ts`. SQL: `UPDATE conversation_history SET content = ? WHERE id = ? AND group_folder = ?`. Returns true if row updated.
+- Add a PATCH branch to the existing `/history/<id>` route (Story 56 + Story 64). Update method guard from `['GET','HEAD','DELETE']` to `['GET','HEAD','DELETE','PATCH']` and the 405 Allow header accordingly.
+- The FTS index on `conversation_history.content` MUST stay coherent. If main has a FTS5 trigger on `UPDATE OF content`, this is automatic. Verify the trigger exists; if not, the SQL must also update the FTS table.
+- Update `CORS_PATH_METHODS['/history/']` to add `'PATCH'` (currently `['GET','HEAD','DELETE']` from Story 64).
+- Body cap at 256 KiB → 413.
+- LLM-dependence: **none**.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-history-edit --create-namespace`, `--set namespace=kubeclaw-e2e-history-edit`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14165`.
+
+status: drafted
