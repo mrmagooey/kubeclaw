@@ -17,6 +17,8 @@ export function resetReviewCursors(): void {
   reviewCursors.clear();
 }
 
+export const MAX_SKILLS_HISTORY_LIMIT = 100;
+
 const HELP = [
   'Skill commands:',
   '  /skills list',
@@ -28,6 +30,7 @@ const HELP = [
   '  /skills enable <name>',
   '  /skills prune',
   '  /skills prune-confirm <name>',
+  '  /skills history [limit]',
 ].join('\n');
 
 export function handleSkillsCommand(
@@ -147,6 +150,19 @@ export function handleSkillsCommand(
       } catch (err) {
         return `Could not prune: ${(err as Error).message}`;
       }
+    }
+    case 'history': {
+      const parsed = parseInt(arg, 10);
+      const limit = Math.min(
+        Number.isNaN(parsed) || parsed <= 0 ? 10 : parsed,
+        MAX_SKILLS_HISTORY_LIMIT,
+      );
+      const stats = getSkillLoadStats(group, limit);
+      if (stats.length === 0) return 'No skill load history for this group.';
+      return (
+        'Skill load history:\n' +
+        stats.map((s) => `  ${s.load_count}x  ${s.skill_name}`).join('\n')
+      );
     }
     default:
       return `Unknown verb: ${verb}\n\n${HELP}`;

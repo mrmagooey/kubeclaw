@@ -1859,6 +1859,39 @@ describe('recordSkillLoad / getSkillLoadStats / getSkillsLoadedSince', () => {
     recordSkillLoad('g1', 'recent', 6000);
     expect(getSkillsLoadedSince('g1', 4000)).toEqual(['recent']);
   });
+
+  it('getSkillLoadStats with limit returns at most N rows ordered by count desc', () => {
+    recordSkillLoad('g1', 'skill-a', 1000);
+    recordSkillLoad('g1', 'skill-a', 2000);
+    recordSkillLoad('g1', 'skill-a', 3000);
+    recordSkillLoad('g1', 'skill-b', 4000);
+    recordSkillLoad('g1', 'skill-b', 5000);
+    recordSkillLoad('g1', 'skill-c', 6000);
+    const stats = getSkillLoadStats('g1', 2);
+    expect(stats).toHaveLength(2);
+    expect(stats[0].skill_name).toBe('skill-a');
+    expect(stats[0].load_count).toBe(3);
+    expect(stats[1].skill_name).toBe('skill-b');
+    expect(stats[1].load_count).toBe(2);
+  });
+
+  it('getSkillLoadStats without limit returns all rows', () => {
+    recordSkillLoad('g1', 'skill-a', 1000);
+    recordSkillLoad('g1', 'skill-b', 2000);
+    recordSkillLoad('g1', 'skill-c', 3000);
+    const stats = getSkillLoadStats('g1');
+    expect(stats).toHaveLength(3);
+  });
+
+  it('getSkillLoadStats orders by load_count desc then last_loaded desc when no limit', () => {
+    recordSkillLoad('g1', 'rare', 9000);
+    recordSkillLoad('g1', 'common', 1000);
+    recordSkillLoad('g1', 'common', 2000);
+    recordSkillLoad('g1', 'common', 3000);
+    const stats = getSkillLoadStats('g1');
+    expect(stats[0].skill_name).toBe('common');
+    expect(stats[1].skill_name).toBe('rare');
+  });
 });
 
 // --- runSessionKeyBackfill ---

@@ -2,10 +2,14 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { handleSkillsCommand, resetReviewCursors } from './skills-commands.js';
+import {
+  handleSkillsCommand,
+  resetReviewCursors,
+  MAX_SKILLS_HISTORY_LIMIT,
+} from './skills-commands.js';
 import { writeCandidate, acceptCandidate } from './skill-store.js';
 import { SkillFile } from './skill-format.js';
-import { _initTestDatabase } from '../db.js';
+import { _initTestDatabase, recordSkillLoad } from '../db.js';
 
 function mkSkill(name: string): SkillFile {
   return {
@@ -131,5 +135,82 @@ describe('handleSkillsCommand', () => {
     expect(handleSkillsCommand(root, GROUP, JID, '/skills list')).toMatch(
       /no skills/i,
     );
+  });
+
+  describe('/skills history', () => {
+    it('returns empty message when no skill loads recorded', () => {
+      const reply = handleSkillsCommand(root, GROUP, JID, '/skills history');
+      expect(reply).toBe('No skill load history for this group.');
+    });
+
+    it('returns rows with count and name for 2 skills', () => {
+      recordSkillLoad(GROUP, 'skill-alpha', 1000);
+      recordSkillLoad(GROUP, 'skill-alpha', 2000);
+      recordSkillLoad(GROUP, 'skill-beta', 3000);
+      const reply = handleSkillsCommand(root, GROUP, JID, '/skills history');
+      expect(reply).toContain('skill-alpha');
+      expect(reply).toContain('skill-beta');
+      expect(reply).toMatch(/2x\s+skill-alpha/);
+      expect(reply).toMatch(/1x\s+skill-beta/);
+    });
+
+    it('orders by count descending', () => {
+      recordSkillLoad(GROUP, 'low', 1000);
+      recordSkillLoad(GROUP, 'high', 2000);
+      recordSkillLoad(GROUP, 'high', 3000);
+      recordSkillLoad(GROUP, 'high', 4000);
+      const reply = handleSkillsCommand(root, GROUP, JID, '/skills history');
+      const highIdx = reply.indexOf('high');
+      const lowIdx = reply.indexOf('low');
+      expect(highIdx).toBeLessThan(lowIdx);
+    });
+
+    it('respects limit argument', () => {
+      for (let i = 1; i <= 5; i++) {
+        recordSkillLoad(GROUP, `skill-${i}`, i * 1000);
+      }
+      const reply = handleSkillsCommand(root, GROUP, JID, '/skills history 3');
+      const lines = reply.split('\n').filter((l) => l.match(/\d+x\s+/));
+      expect(lines.length).toBe(3);
+    });
+
+    it('defaults to 10 rows for limit 0', () => {
+      for (let i = 1; i <= 12; i++) {
+        recordSkillLoad(GROUP, `skill-${i}`, i * 1000);
+      }
+      const reply = handleSkillsCommand(root, GROUP, JID, '/skills history 0');
+      const lines = reply.split('\n').filter((l) => l.match(/\d+x\s+/));
+      expect(lines.length).toBe(10);
+    });
+
+    it('defaults to 10 rows for non-numeric limit', () => {
+      for (let i = 1; i <= 12; i++) {
+        recordSkillLoad(GROUP, `skill-${i}`, i * 1000);
+      }
+      const reply = handleSkillsCommand(root, GROUP, JID, '/skills history abc');
+      const lines = reply.split('\n').filter((l) => l.match(/\d+x\s+/));
+      expect(lines.length).toBe(10);
+    });
+
+    it('caps at MAX_SKILLS_HISTORY_LIMIT even if larger limit provided', () => {
+      expect(MAX_SKILLS_HISTORY_LIMIT).toBe(100);
+      for (let i = 1; i <= 110; i++) {
+        recordSkillLoad(GROUP, `skill-${i}`, i * 1000);
+      }
+      const reply = handleSkillsCommand(root, GROUP, JID, `/skills history 200`);
+      const lines = reply.split('\n').filter((l) => l.match(/\d+x\s+/));
+      expect(lines.length).toBe(MAX_SKILLS_HISTORY_LIMIT);
+    });
+
+    it('is group-scoped — other group loads do not appear', () => {
+      recordSkillLoad('other-group', 'foreign-skill', 1000);
+      const reply = handleSkillsCommand(root, GROUP, JID, '/skills history');
+      expect(reply).toBe('No skill load history for this group.');
+    });
+
+    it('HELP text includes /skills history', () => {
+      const reply = handleSkillsCommand(root, GROUP, JID, '/skills help');
+      expect(reply).toContain('/skills history');
+    });
   });
 });

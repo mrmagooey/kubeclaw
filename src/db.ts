@@ -2093,13 +2093,21 @@ export function recordSkillLoad(
   saveDatabase();
 }
 
-export function getSkillLoadStats(groupFolder: string): SkillLoadStat[] {
-  const rows = db.exec(
-    `SELECT skill_name, COUNT(*) as load_count, MAX(loaded_at) as last_loaded
-     FROM skill_usage WHERE group_folder = ? GROUP BY skill_name
-     ORDER BY last_loaded DESC`,
-    [groupFolder],
-  );
+export function getSkillLoadStats(
+  groupFolder: string,
+  limit?: number,
+): SkillLoadStat[] {
+  const sql =
+    limit !== undefined
+      ? `SELECT skill_name, COUNT(*) as load_count, MAX(loaded_at) as last_loaded
+         FROM skill_usage WHERE group_folder = ? GROUP BY skill_name
+         ORDER BY load_count DESC, last_loaded DESC LIMIT ?`
+      : `SELECT skill_name, COUNT(*) as load_count, MAX(loaded_at) as last_loaded
+         FROM skill_usage WHERE group_folder = ? GROUP BY skill_name
+         ORDER BY load_count DESC, last_loaded DESC`;
+  const params: (string | number)[] =
+    limit !== undefined ? [groupFolder, limit] : [groupFolder];
+  const rows = db.exec(sql, params);
   if (rows.length === 0) return [];
   return rows[0].values.map((r: unknown[]) => ({
     skill_name: r[0] as string,
