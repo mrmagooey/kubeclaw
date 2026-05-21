@@ -1611,7 +1611,7 @@ status: passing 5/5
 - LLM-dependence: **none**.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-jobs-http --create-namespace`, `--set namespace=kubeclaw-e2e-jobs-http`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14148`.
 
-status: drafted
+status: passing 5/5
 
 ## Story 66: `/jobs <id> kill` aborts a specific tool job by id
 
@@ -1638,7 +1638,7 @@ status: drafted
 - LLM-dependence: **none**.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-jobs-kill --create-namespace`, `--set namespace=kubeclaw-e2e-jobs-kill`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14149`.
 
-status: drafted
+status: passing 5/5
 
 ## Story 67: `/schedule next [id]` peeks the next scheduled fire time
 
@@ -1664,4 +1664,4 @@ status: drafted
 - LLM-dependence: **none**.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-schedule-next --create-namespace`, `--set namespace=kubeclaw-e2e-schedule-next`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14150`.
 
-status: drafted
+status: passing 5/5
