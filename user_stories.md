@@ -1587,3 +1587,81 @@ status: passing 5/5
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-history-id --create-namespace`, `--set namespace=kubeclaw-e2e-history-id`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14147`.
 
 status: passing 5/5
+
+## Story 65: `GET /jobs` HTTP endpoint lists tool jobs as JSON
+
+**As a** KubeClaw user building a UI client or monitoring dashboard
+**I want** a poll-able `GET /jobs` REST endpoint that returns tool-job records as JSON
+**So that** my UI can render a job status panel without consuming an SSE message slot via the `/jobs` slash command
+
+### Acceptance criteria
+
+1. Authenticated `GET /jobs` returns HTTP 200 with `Content-Type: application/json` and a JSON array of `{ job_id, specialist_name, status, created_at, resolved_at }` for the authenticated group, newest-first, default limit 20.
+2. `GET /jobs?status=active` filters to `status='active'`; `?status=completed` returns only resolved rows; invalid `status` value returns HTTP 400 with an error body.
+3. Unauthenticated `GET /jobs` returns HTTP 401.
+4. `POST /jobs` returns HTTP 405 with `Allow: GET, HEAD`. `HEAD /jobs` returns same headers as GET with no body.
+5. Unit test: stub `getRecentToolJobsForGroup` returning 2 rows; assert the response JSON parses and contains both `job_id` values.
+
+### Notes
+
+- Add a `/jobs` route to `src/channels/http.ts`. Parameters: `status` (optional, one of `active|completed`), `limit` (optional, default 20, cap 100).
+- Reuse `getRecentToolJobsForGroup(groupFolder, limit)` and `getActiveToolJobs(groupFolder)` — extend the former with an optional `status` filter param if needed, or branch on the query param at the route level.
+- Update `CORS_PATH_METHODS['/jobs']: ['GET', 'HEAD']` and add to the 405 `pathMethods` table.
+- The response shape must mirror Story 50's `/jobs` slash command rows (same field names).
+- LLM-dependence: **none**.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-jobs-http --create-namespace`, `--set namespace=kubeclaw-e2e-jobs-http`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14148`.
+
+status: drafted
+
+## Story 66: `/jobs <id> kill` aborts a specific tool job by id
+
+**As a** KubeClaw user
+**I want** to cancel a specific tool job by its id with `/jobs <id> kill`
+**So that** I can stop a misbehaving background job without having to wait for it or use `/cancel` (which only targets the current active job)
+
+### Acceptance criteria
+
+1. `/jobs <id> kill` where `<id>` is an active row in `tool_jobs` for the group → publishes `job.cancel` IPC with that `job_id`, returns "Cancelled job `<id>`" reply within 5 s.
+2. `/jobs <id> kill` for an id that is already resolved (not active) → returns "Job `<id>` is not active (status: <current-status>)".
+3. `/jobs <id> kill` for an id belonging to a different group → returns "Job not found" (no cross-group kill).
+4. `/jobs <id> kill` for an unknown id → returns "Job not found" (identical wording to AC3 — no enumeration).
+5. Unit test: stub the DB lookup returning an active row; assert the IPC publish was called with the correct `job_id` and the reply contains the confirmation wording.
+
+### Notes
+
+- Add a `'kill'` subcommand parse to `handleJobsCommand` in `src/channel-runner.ts`. This parallels the existing `'logs'` subcommand from Story 59.
+- Look up the tool-job row via `getToolJobByIdForGroup(jobId, groupFolder)` (added in Story 59).
+- If the row exists and `status === 'active'`, send a `job.cancel` IPC verb (the orchestrator-side handler already exists from Story 49; verify it accepts a `jobId` param vs always the current active job).
+- If `status !== 'active'`, return the "not active" message including the current status.
+- Same "Job not found" wording for unknown-id and cross-group cases.
+- Add `/jobs <id> kill` to JOBS_HELP and HELP_TEXT.
+- LLM-dependence: **none**.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-jobs-kill --create-namespace`, `--set namespace=kubeclaw-e2e-jobs-kill`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14149`.
+
+status: drafted
+
+## Story 67: `/schedule next [id]` peeks the next scheduled fire time
+
+**As a** KubeClaw user with scheduled cron tasks
+**I want** `/schedule next` to show when my scheduled tasks will next fire, focused only on the timestamps
+**So that** I can quickly confirm whether a task is about to run, without parsing the full `/schedule list` output
+
+### Acceptance criteria
+
+1. `/schedule next` with multiple active tasks returns one line per task in format `<id>  next: <ISO timestamp>  (<human delta>)`. Paused tasks are tagged with `[paused]` prefix and the human delta is replaced with `paused`.
+2. `/schedule next <id>` returns the single-task next-fire time. For a `once` task already completed (no future run), returns "Task `<id>` has no future run (status: completed)".
+3. `/schedule next <unknown-id>` returns "Task not found".
+4. `/schedule next` when no tasks exist returns "No scheduled tasks".
+5. Unit test: stub `getTasksForGroup` returning two tasks with different `next_run` timestamps; assert the reply contains both ids and human-delta strings (e.g. "in 5m", "in 2h").
+
+### Notes
+
+- Add a `'next'` case to the existing `switch(verb)` in `handleScheduleCommand` in `src/channel-runner.ts`.
+- Use the existing `getTasksForGroup(groupFolder)` (probably already returns `next_run`). No new DB function needed.
+- Add a `formatHumanDelta(ms)` helper: returns strings like `now`, `in 30s`, `in 5m`, `in 2h`, `in 3d` (round-down).
+- Group ownership: `getTaskById` for single-task case returns "Task not found" for both unknown id and cross-group (existing pattern from Story 60).
+- Add `/schedule next [id]` to SCHEDULE_HELP and HELP_TEXT.
+- LLM-dependence: **none**.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-schedule-next --create-namespace`, `--set namespace=kubeclaw-e2e-schedule-next`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14150`.
+
+status: drafted
