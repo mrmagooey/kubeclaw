@@ -26,6 +26,7 @@ import {
   getOutboundMessagesSince,
   getRecentToolJobsForGroup,
   getTasksForGroup,
+  getToolJobByIdForGroup,
   storeMessageDirect,
 } from '../db.js';
 import { readEnvFile } from '../env.js';
@@ -84,6 +85,14 @@ export interface HttpChannelOpts {
    * omitted (used in tests that don't exercise this path).
    */
   getCapabilities?: (groupFolder: string) => CapabilityEntry[];
+  /**
+   * Override the DELETE /jobs/<id> IPC kill for testing.
+   * Defaults to sending a job.cancel IPC to the orchestrator via Redis.
+   */
+  killJobFn?: (
+    jobId: string,
+    groupFolder: string,
+  ) => Promise<{ ok: boolean; status?: string; currentStatus?: string; error?: string }>;
 }
 
 interface HttpConfig {
@@ -408,6 +417,10 @@ export class HttpChannel implements Channel {
   private processStartMs: number;
   private checkDb: () => CheckResult;
   private checkRedis: () => Promise<CheckResult>;
+  private killJobFn: (
+    jobId: string,
+    groupFolder: string,
+  ) => Promise<{ ok: boolean; status?: string; currentStatus?: string; error?: string }>;
   /** Per-user token buckets for POST /message rate limiting. */
   private rateBuckets: Map<string, Bucket> = new Map();
 
@@ -445,6 +458,51 @@ export class HttpChannel implements Channel {
         } catch {
           return 'unreachable';
         }
+      });
+
+    this.killJobFn =
+      opts.killJobFn ??
+      (async (jobId: string, groupFolder: string) => {
+        // Lazy import so unit tests that mock the module don't pull in ioredis.
+        const { getRedisClient } = await import('../k8s/redis-client.js');
+        const { getTaskRequestStream } = await import('../k8s/redis-client.js');
+        const { randomBytes } = await import('node:crypto');
+        const redis = getRedisClient();
+        const resultStream = `kubeclaw:job-kill-result:${Date.now()}-${randomBytes(4).toString('hex')}`;
+        await redis.xadd(
+          getTaskRequestStream(),
+          '*',
+          'type', 'job.cancel',
+          'jobId', jobId,
+          'groupFolder', groupFolder,
+          'resultStream', resultStream,
+        );
+        const deadline = Date.now() + 5000;
+        let lastId = '0-0';
+        while (Date.now() < deadline) {
+          const remaining = deadline - Date.now();
+          if (remaining <= 0) break;
+          const response = await redis.xread(
+            'COUNT', 1, 'BLOCK', Math.min(remaining, 1000),
+            'STREAMS', resultStream, lastId,
+          );
+          if (!response) continue;
+          for (const [, messages] of response as [string, [string, string[]][]][]) {
+            for (const [, flds] of messages) {
+              const obj: Record<string, string> = {};
+              for (let i = 0; i < flds.length; i += 2) obj[flds[i]] = flds[i + 1];
+              if (obj.result) {
+                return JSON.parse(obj.result) as {
+                  ok: boolean;
+                  status?: string;
+                  currentStatus?: string;
+                  error?: string;
+                };
+              }
+            }
+          }
+        }
+        throw new Error('DELETE /jobs/<id> kill timed out — orchestrator did not respond');
       });
   }
 
@@ -659,6 +717,7 @@ export class HttpChannel implements Channel {
     '/attachments/raw/': ['GET', 'HEAD', 'DELETE'], // prefix — dynamic filenames
     '/export': ['GET', 'HEAD'],
     '/jobs': ['GET', 'HEAD'],
+    '/jobs/': ['GET', 'HEAD', 'DELETE'], // prefix — dynamic ids
     '/schedule': ['GET', 'HEAD'],
     '/capabilities': ['GET', 'HEAD'],
   };
@@ -692,6 +751,9 @@ export class HttpChannel implements Channel {
       }
       if (!allowedMethods && /^\/history\/[^/]+$/.test(url.pathname)) {
         allowedMethods = HttpChannel.CORS_PATH_METHODS['/history/'];
+      }
+      if (!allowedMethods && /^\/jobs\/[^/]+$/.test(url.pathname)) {
+        allowedMethods = HttpChannel.CORS_PATH_METHODS['/jobs/'];
       }
 
       const methodsList = allowedMethods
@@ -1394,6 +1456,102 @@ export class HttpChannel implements Channel {
         // end the response — the client gets a truncated NDJSON body.
         logger.error({ err, jid }, 'GET /export failed mid-stream');
         res.end();
+      }
+      return;
+    }
+
+    // Story 69: GET/HEAD/DELETE /jobs/<id> — single-job detail and cancel
+    const jobsIdMatch = url.pathname.match(/^\/jobs\/([^/]+)$/);
+    if (jobsIdMatch) {
+      const method = req.method ?? '';
+      if (!['GET', 'HEAD', 'DELETE'].includes(method)) {
+        res.writeHead(405, this.addCorsHeaders({
+          'Content-Type': 'text/plain',
+          Allow: 'GET, HEAD, DELETE',
+        }));
+        res.end('Method Not Allowed');
+        return;
+      }
+
+      const username = this.authenticate(req);
+      if (!username) {
+        this.sendUnauthorized(res);
+        return;
+      }
+
+      const jid = `http:${username}`;
+      const group = this.opts.registeredGroups()[jid];
+      const groupFolder = group?.folder ?? jid;
+      const jobId = jobsIdMatch[1];
+
+      // Look up the job scoped to this group
+      const job = getToolJobByIdForGroup(jobId, groupFolder);
+
+      // GET / HEAD — fetch job detail
+      if (method === 'GET' || method === 'HEAD') {
+        if (!job) {
+          res.writeHead(404, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+          if (method === 'GET') {
+            res.end(JSON.stringify({ error: 'Not found' }));
+          } else {
+            res.end();
+          }
+          return;
+        }
+        const payload = {
+          job_id: job.job_id,
+          specialist_name: job.specialist_name,
+          status: job.status,
+          created_at: job.created_at,
+          resolved_at: job.resolved_at,
+        };
+        const body = JSON.stringify(payload);
+        res.writeHead(200, this.addCorsHeaders({
+          'Content-Type': 'application/json',
+          'Content-Length': String(Buffer.byteLength(body)),
+        }));
+        if (method === 'HEAD') {
+          res.end();
+        } else {
+          res.end(body);
+        }
+        return;
+      }
+
+      // DELETE — cancel the job via IPC
+      if (!job) {
+        res.writeHead(404, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+        res.end(JSON.stringify({ error: 'Not found' }));
+        return;
+      }
+      if (job.status !== 'active') {
+        res.writeHead(409, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+        res.end(JSON.stringify({ error: 'not_active', current_status: job.status }));
+        return;
+      }
+      try {
+        const result = await this.killJobFn(jobId, groupFolder);
+        if (!result.ok) {
+          if (result.status === 'not_found') {
+            res.writeHead(404, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+            res.end(JSON.stringify({ error: 'Not found' }));
+            return;
+          }
+          if (result.status === 'not_active') {
+            res.writeHead(409, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+            res.end(JSON.stringify({ error: 'not_active', current_status: result.currentStatus ?? job.status }));
+            return;
+          }
+          res.writeHead(500, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+          res.end(JSON.stringify({ error: result.error ?? 'kill failed' }));
+          return;
+        }
+        res.writeHead(200, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+        res.end(JSON.stringify({ status: 'cancelled', job_id: jobId }));
+      } catch (err) {
+        logger.error({ err, jobId, groupFolder }, 'DELETE /jobs/<id> kill failed');
+        res.writeHead(504, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+        res.end(JSON.stringify({ error: 'IPC timeout — orchestrator did not respond' }));
       }
       return;
     }

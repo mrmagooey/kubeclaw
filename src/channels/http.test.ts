@@ -15,6 +15,7 @@ vi.mock('../db.js', () => {
     getRecentToolJobsForGroup: vi.fn(() => []),
     getActiveToolJobs: vi.fn(() => []),
     getTasksForGroup: vi.fn(() => []),
+    getToolJobByIdForGroup: vi.fn(() => null),
     db: { exec: dbExec },
   };
 });
@@ -97,6 +98,7 @@ import {
   getRecentToolJobsForGroup,
   getActiveToolJobs,
   getTasksForGroup,
+  getToolJobByIdForGroup,
 } from '../db.js';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -3463,6 +3465,243 @@ describe('detectMediaType', () => {
       expect(res._headers['Content-Type']).toContain('application/json');
       expect(res._headers['Content-Length']).toBeDefined();
       expect(res._body).toBe('');
+      await channel.disconnect();
+    });
+  });
+
+  // ── GET /jobs/<id> and DELETE /jobs/<id> (Story 69) ──────────────────────
+
+  describe('GET /jobs/<id>', () => {
+    const sampleJob = {
+      job_id: 'nc-alice-abc123',
+      group_folder: 'alice',
+      chat_jid: 'http:alice',
+      specialist_name: 'search',
+      status: 'completed' as const,
+      created_at: '2024-06-01T10:00:00.000Z',
+      resolved_at: '2024-06-01T10:05:00.000Z',
+      message_id: null,
+    };
+
+    beforeEach(() => {
+      vi.mocked(getToolJobByIdForGroup).mockReset();
+    });
+
+    // AC1: authenticated GET happy path → 200 JSON
+    it('returns 200 JSON with job fields for authenticated user', async () => {
+      vi.mocked(getToolJobByIdForGroup).mockReturnValue(sampleJob);
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/jobs/nc-alice-abc123', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      expect(res._headers['Content-Type']).toContain('application/json');
+      const parsed = JSON.parse(res._body);
+      expect(parsed.job_id).toBe('nc-alice-abc123');
+      expect(parsed.specialist_name).toBe('search');
+      expect(parsed.status).toBe('completed');
+      expect(parsed).toHaveProperty('created_at');
+      expect(parsed).toHaveProperty('resolved_at');
+      await channel.disconnect();
+    });
+
+    // AC2: unknown id → 404 (same wording as cross-group)
+    it('returns 404 for unknown job id', async () => {
+      vi.mocked(getToolJobByIdForGroup).mockReturnValue(null);
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/jobs/no-such-job', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(404);
+      await channel.disconnect();
+    });
+
+    // AC5: HEAD → same headers as GET, no body
+    it('returns 200 for HEAD /jobs/<id> with no body', async () => {
+      vi.mocked(getToolJobByIdForGroup).mockReturnValue(sampleJob);
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ method: 'HEAD', url: '/jobs/nc-alice-abc123', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      expect(res._headers['Content-Type']).toContain('application/json');
+      expect(res._headers['Content-Length']).toBeDefined();
+      expect(res._body).toBe('');
+      await channel.disconnect();
+    });
+
+    // AC5: POST → 405 Allow: GET, HEAD, DELETE
+    it('returns 405 for POST /jobs/<id> with Allow: GET, HEAD, DELETE', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ method: 'POST', url: '/jobs/nc-alice-abc123', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(405);
+      expect(res._headers['Allow']).toBe('GET, HEAD, DELETE');
+      await channel.disconnect();
+    });
+
+    // AC5: unauthenticated → 401
+    it('returns 401 for unauthenticated GET /jobs/<id>', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/jobs/nc-alice-abc123', auth: null });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(401);
+      await channel.disconnect();
+    });
+  });
+
+  describe('DELETE /jobs/<id>', () => {
+    const activeJob = {
+      job_id: 'nc-alice-active01',
+      group_folder: 'alice',
+      chat_jid: 'http:alice',
+      specialist_name: 'search',
+      status: 'active' as const,
+      created_at: '2024-06-01T10:00:00.000Z',
+      resolved_at: null,
+      message_id: null,
+    };
+    const completedJob = {
+      ...activeJob,
+      job_id: 'nc-alice-done01',
+      status: 'completed' as const,
+      resolved_at: '2024-06-01T10:05:00.000Z',
+    };
+
+    beforeEach(() => {
+      vi.mocked(getToolJobByIdForGroup).mockReset();
+    });
+
+    // AC3: DELETE active job → 200 { status: "cancelled", job_id }
+    it('returns 200 cancelled for active job', async () => {
+      vi.mocked(getToolJobByIdForGroup).mockReturnValue(activeJob);
+      const killJobFn = vi.fn(async () => ({ ok: true as const, status: 'cancelled' }));
+      const channel = new HttpChannel(makeConfig(), makeOpts({ killJobFn }));
+      await channel.connect();
+
+      const req = makeReq({ method: 'DELETE', url: '/jobs/nc-alice-active01', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      const parsed = JSON.parse(res._body);
+      expect(parsed.status).toBe('cancelled');
+      expect(parsed.job_id).toBe('nc-alice-active01');
+      expect(killJobFn).toHaveBeenCalledWith('nc-alice-active01', 'alice');
+      await channel.disconnect();
+    });
+
+    // AC4: DELETE resolved job → 409 not_active
+    it('returns 409 for resolved (non-active) job', async () => {
+      vi.mocked(getToolJobByIdForGroup).mockReturnValue(completedJob);
+      const killJobFn = vi.fn();
+      const channel = new HttpChannel(makeConfig(), makeOpts({ killJobFn }));
+      await channel.connect();
+
+      const req = makeReq({ method: 'DELETE', url: '/jobs/nc-alice-done01', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(409);
+      const parsed = JSON.parse(res._body);
+      expect(parsed.error).toBe('not_active');
+      expect(parsed.current_status).toBe('completed');
+      // killJobFn should not be called for non-active jobs
+      expect(killJobFn).not.toHaveBeenCalled();
+      await channel.disconnect();
+    });
+
+    // AC4: DELETE unknown id → 404
+    it('returns 404 for unknown job id', async () => {
+      vi.mocked(getToolJobByIdForGroup).mockReturnValue(null);
+      const killJobFn = vi.fn();
+      const channel = new HttpChannel(makeConfig(), makeOpts({ killJobFn }));
+      await channel.connect();
+
+      const req = makeReq({ method: 'DELETE', url: '/jobs/no-such-job', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(404);
+      expect(killJobFn).not.toHaveBeenCalled();
+      await channel.disconnect();
+    });
+
+    // AC3: IPC returns not_found → 404
+    it('returns 404 when IPC replies not_found', async () => {
+      vi.mocked(getToolJobByIdForGroup).mockReturnValue(activeJob);
+      const killJobFn = vi.fn(async () => ({ ok: false as const, status: 'not_found' }));
+      const channel = new HttpChannel(makeConfig(), makeOpts({ killJobFn }));
+      await channel.connect();
+
+      const req = makeReq({ method: 'DELETE', url: '/jobs/nc-alice-active01', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(404);
+      await channel.disconnect();
+    });
+
+    // AC3: IPC returns not_active → 409
+    it('returns 409 when IPC replies not_active', async () => {
+      vi.mocked(getToolJobByIdForGroup).mockReturnValue(activeJob);
+      const killJobFn = vi.fn(async () => ({ ok: false as const, status: 'not_active', currentStatus: 'interrupted' }));
+      const channel = new HttpChannel(makeConfig(), makeOpts({ killJobFn }));
+      await channel.connect();
+
+      const req = makeReq({ method: 'DELETE', url: '/jobs/nc-alice-active01', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(409);
+      const parsed = JSON.parse(res._body);
+      expect(parsed.error).toBe('not_active');
+      expect(parsed.current_status).toBe('interrupted');
+      await channel.disconnect();
+    });
+
+    // AC5: unauthenticated DELETE → 401
+    it('returns 401 for unauthenticated DELETE /jobs/<id>', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ method: 'DELETE', url: '/jobs/nc-alice-active01', auth: null });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(401);
+      await channel.disconnect();
+    });
+
+    // IPC timeout → 504
+    it('returns 504 when IPC times out', async () => {
+      vi.mocked(getToolJobByIdForGroup).mockReturnValue(activeJob);
+      const killJobFn = vi.fn(async () => { throw new Error('timeout'); });
+      const channel = new HttpChannel(makeConfig(), makeOpts({ killJobFn }));
+      await channel.connect();
+
+      const req = makeReq({ method: 'DELETE', url: '/jobs/nc-alice-active01', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(504);
       await channel.disconnect();
     });
   });
