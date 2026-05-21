@@ -1894,3 +1894,81 @@ status: passing 5/5
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-secrets-write --create-namespace`, `--set namespace=kubeclaw-e2e-secrets-write`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14159`.
 
 status: passing 5/5
+
+## Story 77: `GET /skills` and `POST /skills/candidates/<id>/{accept,reject}` REST surface
+
+**As a** KubeClaw operator or UI client
+**I want** REST endpoints to inspect and manage learned-skill candidates
+**So that** I can drain the candidate queue without sending chat messages
+
+### Acceptance criteria
+
+1. Authenticated `GET /skills` returns HTTP 200 with `Content-Type: application/json` and a JSON body `{ accepted: [...], candidates: [...], archived: [...] }` for the authenticated group. Each entry is `{ slug, title, description?, accepted_at?, archived_at? }` — no raw skill body.
+2. `POST /skills/candidates/<id>/accept` promotes the named candidate to accepted state. Returns HTTP 200 `{ status: "accepted", slug: "<id>" }`. Unknown id → 404 `{ error: "Not found" }` (identical wording for unknown vs cross-group).
+3. `POST /skills/candidates/<id>/reject` archives the candidate. Returns HTTP 200 `{ status: "rejected", slug: "<id>" }`. Unknown/cross-group → 404 (same wording).
+4. Unauthenticated → 401. `POST /skills` (without sub-path) → 405 with `Allow: GET, HEAD`. Wrong method on `/skills/candidates/<id>/accept` → 405 with `Allow: POST`.
+5. Unit: stub `listAcceptedSkills`/`listCandidates`/`listArchived` returning 1 row each; assert response has all three arrays populated with the correct slugs.
+
+### Notes
+
+- Add `/skills` and `/skills/candidates/<id>/{accept,reject}` routes to `src/channels/http.ts`.
+- Reuse existing functions from `src/runtime/skill-store.ts`: `listAcceptedSkills(groupFolder)`, `listCandidates(groupFolder)`, `listArchived(groupFolder)`, `acceptCandidate(groupFolder, slug)`, `rejectCandidate(groupFolder, slug)`.
+- The response listing should be lean — `slug`, `title`, optional `description`, optional timestamps. **Do NOT include the raw skill markdown body** (it could be many KB; clients can fetch individual files via filesystem if they need them).
+- Update `CORS_PATH_METHODS['/skills']: ['GET', 'HEAD']` and `'/skills/'` prefix `['POST']`. Update 405 `pathMethods` table.
+- Path traversal: `<id>` must match a strict slug regex (`/^[a-z0-9][a-z0-9_-]{0,63}$/` or similar — match the existing slug validation in `skill-store.ts`).
+- LLM-dependence: **none**.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-skills-http --create-namespace`, `--set namespace=kubeclaw-e2e-skills-http`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14160`.
+
+status: drafted
+
+## Story 78: `DELETE /history?before=<iso>` for time-bounded bulk purge
+
+**As a** KubeClaw user with a long-running conversation
+**I want** to delete history older than a given timestamp without nuking my whole conversation
+**So that** I can reclaim space and prune stale context while preserving recent messages
+
+### Acceptance criteria
+
+1. Authenticated `DELETE /history?before=<ISO-8601 timestamp>` deletes all `conversation_history` rows in the authenticated group where `created_at < before`. Returns HTTP 200 `{ deleted: <N> }` (count). With no rows matching → `{ deleted: 0 }`.
+2. Missing `before` query param: existing behavior preserved — `DELETE /history` (no params) continues to clear the entire group's history (Story 26).
+3. Unparseable `before` (not valid ISO-8601) → HTTP 400 `{ error: "before must be a valid ISO-8601 timestamp" }`.
+4. `before` in the future is accepted and deletes all rows up to "now-or-before" (in practice all rows).
+5. Unit test: insert 3 rows with timestamps T-100, T-50, T-10; call `DELETE /history?before=<T-30>`; assert deleted=2 and only the T-10 row remains.
+
+### Notes
+
+- Add `deleteConversationHistoryBefore(groupFolder: string, before: Date): number` to `src/db.ts`. SQL: `DELETE FROM conversation_history WHERE group_folder = ? AND created_at < ?`. Return affected row count.
+- The route in `src/channels/http.ts`: check for `?before=` query param first, parse via `new Date(s)` + `Number.isFinite(d.getTime())` validation, branch to the new function; else fall through to existing full-clear handler (Story 26).
+- Cross-group isolation: SQL `WHERE group_folder = ?` is the authoritative scope; the route must use the authenticated user's groupFolder, never a client-supplied one.
+- Update `CORS_PATH_METHODS['/history']` to keep `DELETE` (already present from Story 26). No new path entry needed.
+- LLM-dependence: **none**.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-history-purge --create-namespace`, `--set namespace=kubeclaw-e2e-history-purge`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14161`.
+
+status: drafted
+
+## Story 79: `GET /diag` operational snapshot endpoint
+
+**As a** KubeClaw operator or self-healing runbook
+**I want** `GET /diag` to return a JSON snapshot of pod-health metrics
+**So that** support and automation can read DB row counts, file sizes, and timestamps without grepping logs
+
+### Acceptance criteria
+
+1. Authenticated `GET /diag` returns HTTP 200 with `Content-Type: application/json` and a body containing at minimum: `conversation_history_rows`, `scheduled_tasks_active`, `tool_jobs_recent_24h`, `attachment_count`, `attachment_bytes`, `db_size_bytes`, `uptime_seconds`. All values are numbers; unset/error values are `null` (not omitted).
+2. Numbers are scoped to the authenticated user's group_folder where applicable (history rows, tasks, jobs, attachments). `db_size_bytes` and `uptime_seconds` are pod-global.
+3. Unauthenticated → 401.
+4. `POST /diag` → 405 with `Allow: GET, HEAD`. `HEAD /diag` → same headers as GET, no body.
+5. Response p95 time < 100 ms — all reads are synchronous (`db.exec`, `fs.statSync`); no Redis, no IPC, no async loops.
+
+### Notes
+
+- Add `getDiagSnapshot(groupFolder: string): DiagSnapshot` helper to `src/db.ts` (or inline in the route if simpler). It runs a handful of `SELECT COUNT(*)` queries and reads `fs.statSync` for the DB file size.
+- `uptime_seconds`: `process.uptime()` rounded to integer.
+- `tool_jobs_recent_24h`: `SELECT COUNT(*) FROM tool_jobs WHERE group_folder=? AND datetime(created_at) > datetime('now','-1 days')`.
+- `attachment_count` / `attachment_bytes`: from the attachments table (if it tracks bytes) or `fs.statSync` walk over the attachments dir for the group.
+- Wrap each individual sub-read in a try/catch; on any error, set THAT field to `null` and continue. The endpoint must never 500 due to one missing table/file.
+- Update `CORS_PATH_METHODS['/diag']: ['GET', 'HEAD']` and 405 `pathMethods`.
+- LLM-dependence: **none**.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-diag --create-namespace`, `--set namespace=kubeclaw-e2e-diag`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14162`.
+
+status: drafted
