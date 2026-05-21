@@ -1847,287 +1847,313 @@ export async function processGroupMessages(chatJid: string): Promise<boolean> {
     if (!hasTrigger) return true;
   }
 
-  // Slash command intercepts: /search, /skills and /secret must live here — BEFORE
-  // formatMessages wraps the content in XML, which would break the regex match.
-  const lastMsg = missedMessages[missedMessages.length - 1];
+  // Slash command intercepts: each message in the batch is inspected before
+  // being passed to the LLM. Slash commands are handled in-loop and skipped
+  // from the normalMessages list; non-slash messages accumulate for a single
+  // LLM call at the end.
+  //
+  // This ensures a mixed batch like ["tell me about Rust", "/search rust"] gets
+  // BOTH responses: the /search reply and an LLM turn for the normal message —
+  // rather than only the last message being checked (the old behaviour).
+  //
+  // Must run BEFORE formatMessages wraps content in XML, which would break the
+  // regex matches inside isSearchCommand / isSkillsCommand / isSecretCommand.
 
-  // /help chat command: list available slash commands without invoking the LLM.
-  if (lastMsg && isHelpCommand(lastMsg.content)) {
-    lastAgentTimestamp[chatJid] = lastMsg.timestamp;
-    saveState();
-    await channel.setTyping?.(chatJid, true);
-    try {
-      await channel.sendMessage(chatJid, HELP_TEXT);
-    } finally {
-      await channel.setTyping?.(chatJid, false);
+  const normalMessages: typeof missedMessages = [];
+
+  for (const msg of missedMessages) {
+    const content = msg.content;
+
+    // /help chat command: list available slash commands without invoking the LLM.
+    if (isHelpCommand(content)) {
+      lastAgentTimestamp[chatJid] = msg.timestamp;
+      saveState();
+      await channel.setTyping?.(chatJid, true);
+      try {
+        await channel.sendMessage(chatJid, HELP_TEXT);
+      } finally {
+        await channel.setTyping?.(chatJid, false);
+      }
+      continue;
     }
-    return true;
-  }
 
-  // /search chat command: full-text search over conversation history.
-  if (lastMsg && isSearchCommand(lastMsg.content)) {
-    lastAgentTimestamp[chatJid] = lastMsg.timestamp;
-    saveState();
-    await channel.setTyping?.(chatJid, true);
-    try {
-      const reply = handleSearchCommand(group.folder, lastMsg.content.trim());
-      await channel.sendMessage(chatJid, reply);
-    } catch (err) {
-      logger.error({ err, chatJid }, 'Search command failed');
+    // /search chat command: full-text search over conversation history.
+    if (isSearchCommand(content)) {
+      lastAgentTimestamp[chatJid] = msg.timestamp;
+      saveState();
+      await channel.setTyping?.(chatJid, true);
+      try {
+        const reply = handleSearchCommand(group.folder, content.trim());
+        await channel.sendMessage(chatJid, reply);
+      } catch (err) {
+        logger.error({ err, chatJid }, 'Search command failed');
+        try {
+          await channel.sendMessage(
+            chatJid,
+            'Search failed: invalid query. Try simpler terms.',
+          );
+        } catch (sendErr) {
+          logger.error(
+            { err: sendErr, chatJid },
+            'Failed to send search error reply',
+          );
+        }
+      } finally {
+        await channel.setTyping?.(chatJid, false);
+      }
+      continue;
+    }
+
+    // /clear chat command: wipe conversation history without invoking the LLM.
+    if (/^\/clear(\s|$)/.test(content.trim())) {
+      clearConversationHistory(group.folder);
+      lastAgentTimestamp[chatJid] = msg.timestamp;
+      saveState();
       try {
         await channel.sendMessage(
           chatJid,
-          'Search failed: invalid query. Try simpler terms.',
+          'Conversation history and summaries cleared.',
         );
-      } catch (sendErr) {
-        logger.error(
-          { err: sendErr, chatJid },
-          'Failed to send search error reply',
-        );
+      } catch (err) {
+        logger.error({ err, chatJid }, '/clear reply send failed');
       }
-    } finally {
-      await channel.setTyping?.(chatJid, false);
+      continue;
     }
-    return true;
-  }
 
-  // /clear chat command: wipe conversation history without invoking the LLM.
-  if (lastMsg && /^\/clear(\s|$)/.test(lastMsg.content.trim())) {
-    clearConversationHistory(group.folder);
-    lastAgentTimestamp[chatJid] = lastMsg.timestamp;
-    saveState();
-    try {
-      await channel.sendMessage(
+    // /skills chat command: handle locally without invoking the LLM.
+    if (isSkillsCommand(content)) {
+      const reply = handleSkillsCommand(
+        GROUPS_DIR,
+        group.folder,
         chatJid,
-        'Conversation history and summaries cleared.',
+        content.trim(),
       );
-    } catch (err) {
-      logger.error({ err, chatJid }, '/clear reply send failed');
-    }
-    return true;
-  }
-
-  // /skills chat command: handle locally without invoking the LLM.
-  if (lastMsg && isSkillsCommand(lastMsg.content)) {
-    const reply = handleSkillsCommand(
-      GROUPS_DIR,
-      group.folder,
-      chatJid,
-      lastMsg.content.trim(),
-    );
-    lastAgentTimestamp[chatJid] = lastMsg.timestamp;
-    saveState();
-    await channel.setTyping?.(chatJid, true);
-    try {
-      await channel.sendMessage(chatJid, reply);
-    } finally {
-      await channel.setTyping?.(chatJid, false);
-    }
-    return true;
-  }
-
-  // /compact and /summary chat commands: handle without invoking the LLM
-  // (for /summary and no-op /compact paths). For /compact when summarisation
-  // is needed, pass the channel's LLM client and model. We exclude /clear here
-  // because that verb is already handled by the compression-commands module
-  // itself via handleCompactCommand, so routing it through here is harmless —
-  // but we still want to catch all three verbs via isCompactCommand and let
-  // handleCompactCommand dispatch on the verb internally.
-  if (lastMsg && isCompactCommand(lastMsg.content)) {
-    const { verb } = parseCompactArgs(lastMsg.content.trim());
-    // Only intercept compact and summary here; clear falls through to the
-    // same handleCompactCommand path. We intercept all three so none reach the LLM.
-    lastAgentTimestamp[chatJid] = lastMsg.timestamp;
-    saveState();
-    await channel.setTyping?.(chatJid, true);
-    try {
-      const client = createLLMClient();
-      const reply = await handleCompactCommand(
-        group.folder,
-        lastMsg.content.trim(),
-        client,
-        DEFAULT_DIRECT_MODEL,
-      );
-      await channel.sendMessage(chatJid, reply);
-    } catch (err) {
-      logger.error({ err, chatJid, verb }, 'Compact/summary command failed');
+      lastAgentTimestamp[chatJid] = msg.timestamp;
+      saveState();
+      await channel.setTyping?.(chatJid, true);
       try {
-        await channel.sendMessage(
-          chatJid,
-          `Command failed: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      } catch (sendErr) {
-        logger.error(
-          { err: sendErr, chatJid },
-          'Failed to send compact error reply',
-        );
+        await channel.sendMessage(chatJid, reply);
+      } finally {
+        await channel.setTyping?.(chatJid, false);
       }
-    } finally {
-      await channel.setTyping?.(chatJid, false);
+      continue;
     }
-    return true;
-  }
 
-  // /cancel command: abort the currently running tool job for this group.
-  if (lastMsg && isCancelCommand(lastMsg.content)) {
-    const cancelDeps: CancelCommandDeps = { cancelFn: buildCancelFn() };
-    const reply = await handleCancelCommand(group.folder, chatJid, cancelDeps);
-    lastAgentTimestamp[chatJid] = lastMsg.timestamp;
-    saveState();
-    await channel.setTyping?.(chatJid, true);
-    try {
-      await channel.sendMessage(chatJid, reply);
-    } finally {
-      await channel.setTyping?.(chatJid, false);
-    }
-    return true;
-  }
-
-  // /jobs command: list active and recent tool jobs for this group.
-  if (lastMsg && isJobsCommand(lastMsg.content)) {
-    const reply = handleJobsCommand(group.folder);
-    lastAgentTimestamp[chatJid] = lastMsg.timestamp;
-    saveState();
-    await channel.setTyping?.(chatJid, true);
-    try {
-      await channel.sendMessage(chatJid, reply);
-    } finally {
-      await channel.setTyping?.(chatJid, false);
-    }
-    return true;
-  }
-
-  // /secret command: handle upstream of LLM; raw user line is dropped from
-  // transcript memory and a SYSTEM event is injected in its place.
-  if (lastMsg && isSecretCommand(lastMsg.content)) {
-    // Build a minimal IPC function backed by the real Redis task-request stream
-    // Carry the group folder so the orchestrator's task watcher accepts the
-    // request — without it the watcher silently drops every secret IPC.
-    const secretIpc: SecretCommandDeps['ipc'] = async (type, fields) => {
-      const ipcFn = createSecretIpcFn(type, { groupFolder: group.folder });
-      return ipcFn(fields);
-    };
-
-    // Fetch catalog for validation (best-effort; empty catalog means unknown-id errors)
-    let catalog: readonly CatalogEntry[] = [];
-    try {
-      const catalogRes = await secretIpc('catalog.list', {});
-      if (catalogRes.ok && Array.isArray(catalogRes.result)) {
-        catalog = catalogRes.result as CatalogEntry[];
+    // /compact and /summary chat commands: handle without invoking the LLM
+    // (for /summary and no-op /compact paths). For /compact when summarisation
+    // is needed, pass the channel's LLM client and model. We exclude /clear here
+    // because that verb is already handled by the compression-commands module
+    // itself via handleCompactCommand, so routing it through here is harmless —
+    // but we still want to catch all three verbs via isCompactCommand and let
+    // handleCompactCommand dispatch on the verb internally.
+    if (isCompactCommand(content)) {
+      const { verb } = parseCompactArgs(content.trim());
+      // Only intercept compact and summary here; clear falls through to the
+      // same handleCompactCommand path. We intercept all three so none reach the LLM.
+      lastAgentTimestamp[chatJid] = msg.timestamp;
+      saveState();
+      await channel.setTyping?.(chatJid, true);
+      try {
+        const client = createLLMClient();
+        const reply = await handleCompactCommand(
+          group.folder,
+          content.trim(),
+          client,
+          DEFAULT_DIRECT_MODEL,
+        );
+        await channel.sendMessage(chatJid, reply);
+      } catch (err) {
+        logger.error({ err, chatJid, verb }, 'Compact/summary command failed');
+        try {
+          await channel.sendMessage(
+            chatJid,
+            `Command failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        } catch (sendErr) {
+          logger.error(
+            { err: sendErr, chatJid },
+            'Failed to send compact error reply',
+          );
+        }
+      } finally {
+        await channel.setTyping?.(chatJid, false);
       }
-    } catch {
-      // Catalog unavailable; proceed with empty catalog (will report unknown-id error)
+      continue;
     }
 
-    const result = await handleSecretCommand(
-      group.folder,
-      lastMsg.content.trim(),
-      {
-        catalog,
-        ipc: secretIpc,
-      },
-    );
-
-    // Persist the system event and assistant turn so subsequent LLM turns see
-    // the credential-registration context in conversation history. The raw
-    // /secret line is intentionally NOT stored (already dropped by the
-    // getMessagesSince query never being called for it).
-    if (result.systemEvent) {
-      appendConversationMessage(group.folder, 'user', result.systemEvent);
+    // /cancel command: abort the currently running tool job for this group.
+    if (isCancelCommand(content)) {
+      const cancelDeps: CancelCommandDeps = { cancelFn: buildCancelFn() };
+      const reply = await handleCancelCommand(group.folder, chatJid, cancelDeps);
+      lastAgentTimestamp[chatJid] = msg.timestamp;
+      saveState();
+      await channel.setTyping?.(chatJid, true);
+      try {
+        await channel.sendMessage(chatJid, reply);
+      } finally {
+        await channel.setTyping?.(chatJid, false);
+      }
+      continue;
     }
-    if (result.assistantTurn) {
-      appendConversationMessage(
+
+    // /jobs command: list active and recent tool jobs for this group.
+    if (isJobsCommand(content)) {
+      const reply = handleJobsCommand(group.folder);
+      lastAgentTimestamp[chatJid] = msg.timestamp;
+      saveState();
+      await channel.setTyping?.(chatJid, true);
+      try {
+        await channel.sendMessage(chatJid, reply);
+      } finally {
+        await channel.setTyping?.(chatJid, false);
+      }
+      continue;
+    }
+
+    // /secret command: handle upstream of LLM; raw user line is dropped from
+    // transcript memory and a SYSTEM event is injected in its place.
+    if (isSecretCommand(content)) {
+      // Build a minimal IPC function backed by the real Redis task-request stream
+      // Carry the group folder so the orchestrator's task watcher accepts the
+      // request — without it the watcher silently drops every secret IPC.
+      const secretIpc: SecretCommandDeps['ipc'] = async (type, fields) => {
+        const ipcFn = createSecretIpcFn(type, { groupFolder: group.folder });
+        return ipcFn(fields);
+      };
+
+      // Fetch catalog for validation (best-effort; empty catalog means unknown-id errors)
+      let catalog: readonly CatalogEntry[] = [];
+      try {
+        const catalogRes = await secretIpc('catalog.list', {});
+        if (catalogRes.ok && Array.isArray(catalogRes.result)) {
+          catalog = catalogRes.result as CatalogEntry[];
+        }
+      } catch {
+        // Catalog unavailable; proceed with empty catalog (will report unknown-id error)
+      }
+
+      const result = await handleSecretCommand(
         group.folder,
-        'assistant',
-        result.assistantTurn,
+        content.trim(),
+        {
+          catalog,
+          ipc: secretIpc,
+        },
       );
+
+      // Persist the system event and assistant turn so subsequent LLM turns see
+      // the credential-registration context in conversation history. The raw
+      // /secret line is intentionally NOT stored (already dropped by the
+      // getMessagesSince query never being called for it).
+      if (result.systemEvent) {
+        appendConversationMessage(group.folder, 'user', result.systemEvent);
+      }
+      if (result.assistantTurn) {
+        appendConversationMessage(
+          group.folder,
+          'assistant',
+          result.assistantTurn,
+        );
+      }
+
+      lastAgentTimestamp[chatJid] = msg.timestamp;
+      saveState();
+      await channel.setTyping?.(chatJid, true);
+      try {
+        await channel.sendMessage(chatJid, result.reply);
+      } finally {
+        await channel.setTyping?.(chatJid, false);
+      }
+      continue;
     }
 
-    lastAgentTimestamp[chatJid] = lastMsg.timestamp;
-    saveState();
-    await channel.setTyping?.(chatJid, true);
-    try {
-      await channel.sendMessage(chatJid, result.reply);
-    } finally {
-      await channel.setTyping?.(chatJid, false);
+    // /schedule command: add/list/remove user-managed scheduled tasks. No LLM.
+    if (isScheduleCommand(content)) {
+      let reply: string;
+      try {
+        reply = await handleScheduleCommand(group.folder, chatJid, content);
+      } catch (err) {
+        logger.error({ err, chatJid }, '/schedule command failed');
+        reply = 'Schedule command failed. Please try again.';
+      }
+      lastAgentTimestamp[chatJid] = msg.timestamp;
+      saveState();
+      await channel.setTyping?.(chatJid, true);
+      try {
+        await channel.sendMessage(chatJid, reply);
+      } finally {
+        await channel.setTyping?.(chatJid, false);
+      }
+      continue;
     }
-    return true;
+
+    // /memory command: read/append/set per-group CLAUDE.md. No LLM, no IPC.
+    if (isMemoryCommand(content)) {
+      let reply: string;
+      try {
+        reply = await handleMemoryCommand(group.folder, content);
+      } catch (err) {
+        logger.error({ err, chatJid }, '/memory command failed');
+        reply = 'Memory command failed. Please try again.';
+      }
+      lastAgentTimestamp[chatJid] = msg.timestamp;
+      saveState();
+      await channel.setTyping?.(chatJid, true);
+      try {
+        await channel.sendMessage(chatJid, reply);
+      } finally {
+        await channel.setTyping?.(chatJid, false);
+      }
+      continue;
+    }
+
+    // /specialists command: reads from the channel's in-process catalog, no IPC.
+    if (isSpecialistsCommand(content)) {
+      const reply = handleSpecialistsCommand(
+        content.trim(),
+        specialistCatalog,
+      );
+      lastAgentTimestamp[chatJid] = msg.timestamp;
+      saveState();
+      await channel.setTyping?.(chatJid, true);
+      try {
+        await channel.sendMessage(chatJid, reply);
+      } finally {
+        await channel.setTyping?.(chatJid, false);
+      }
+      continue;
+    }
+
+    // /capabilities command: handle upstream of LLM; group-scoped provisioning.
+    if (isCapabilitiesCommand(content)) {
+      const capIpc = createCapabilityIpcFn();
+      const capResult = await handleCapabilitiesCommand(
+        group.folder,
+        content.trim(),
+        capIpc,
+      );
+      lastAgentTimestamp[chatJid] = msg.timestamp;
+      saveState();
+      await channel.setTyping?.(chatJid, true);
+      try {
+        await channel.sendMessage(chatJid, capResult.reply);
+      } finally {
+        await channel.setTyping?.(chatJid, false);
+      }
+      continue;
+    }
+
+    // Not a slash command — collect for the LLM batch call below.
+    normalMessages.push(msg);
   }
 
-  // /schedule command: add/list/remove user-managed scheduled tasks. No LLM.
-  if (lastMsg && isScheduleCommand(lastMsg.content)) {
-    let reply: string;
-    try {
-      reply = await handleScheduleCommand(group.folder, chatJid, lastMsg.content);
-    } catch (err) {
-      logger.error({ err, chatJid }, '/schedule command failed');
-      reply = 'Schedule command failed. Please try again.';
-    }
-    lastAgentTimestamp[chatJid] = lastMsg.timestamp;
+  // If every message in the batch was a slash command, we're done.
+  // Advance the timestamp to the last message so those messages aren't
+  // reprocessed on the next poll.
+  if (normalMessages.length === 0) {
+    lastAgentTimestamp[chatJid] =
+      missedMessages[missedMessages.length - 1].timestamp;
     saveState();
-    await channel.setTyping?.(chatJid, true);
-    try {
-      await channel.sendMessage(chatJid, reply);
-    } finally {
-      await channel.setTyping?.(chatJid, false);
-    }
-    return true;
-  }
-
-  // /memory command: read/append/set per-group CLAUDE.md. No LLM, no IPC.
-  if (lastMsg && isMemoryCommand(lastMsg.content)) {
-    let reply: string;
-    try {
-      reply = await handleMemoryCommand(group.folder, lastMsg.content);
-    } catch (err) {
-      logger.error({ err, chatJid }, '/memory command failed');
-      reply = 'Memory command failed. Please try again.';
-    }
-    lastAgentTimestamp[chatJid] = lastMsg.timestamp;
-    saveState();
-    await channel.setTyping?.(chatJid, true);
-    try {
-      await channel.sendMessage(chatJid, reply);
-    } finally {
-      await channel.setTyping?.(chatJid, false);
-    }
-    return true;
-  }
-
-  // /specialists command: reads from the channel's in-process catalog, no IPC.
-  if (lastMsg && isSpecialistsCommand(lastMsg.content)) {
-    const reply = handleSpecialistsCommand(
-      lastMsg.content.trim(),
-      specialistCatalog,
-    );
-    lastAgentTimestamp[chatJid] = lastMsg.timestamp;
-    saveState();
-    await channel.setTyping?.(chatJid, true);
-    try {
-      await channel.sendMessage(chatJid, reply);
-    } finally {
-      await channel.setTyping?.(chatJid, false);
-    }
-    return true;
-  }
-
-  // /capabilities command: handle upstream of LLM; group-scoped provisioning.
-  if (lastMsg && isCapabilitiesCommand(lastMsg.content)) {
-    const capIpc = createCapabilityIpcFn();
-    const capResult = await handleCapabilitiesCommand(
-      group.folder,
-      lastMsg.content.trim(),
-      capIpc,
-    );
-
-    lastAgentTimestamp[chatJid] = lastMsg.timestamp;
-    saveState();
-    await channel.setTyping?.(chatJid, true);
-    try {
-      await channel.sendMessage(chatJid, capResult.reply);
-    } finally {
-      await channel.setTyping?.(chatJid, false);
-    }
     return true;
   }
 
@@ -2135,7 +2161,7 @@ export async function processGroupMessages(chatJid: string): Promise<boolean> {
   // before passing them to the LLM. The backstop is independent of the
   // slash-command parser — if the parser already handled the message, we
   // never reach here.
-  const backstopMessages = missedMessages.map((m) =>
+  const backstopMessages = normalMessages.map((m) =>
     m.is_from_me ? m : { ...m, content: applyCredentialBackstop(m.content) },
   );
 
@@ -2230,7 +2256,7 @@ export async function processGroupMessages(chatJid: string): Promise<boolean> {
     missedMessages[missedMessages.length - 1].timestamp;
 
   logger.info(
-    { group: group.name, messageCount: missedMessages.length },
+    { group: group.name, messageCount: normalMessages.length },
     'Processing messages',
   );
 
@@ -2276,7 +2302,7 @@ export async function processGroupMessages(chatJid: string): Promise<boolean> {
         run.overrides,
         // Pass the originating message ID so tool jobs can be correlated back
         // to the user's request if the orchestrator restarts (Story 37 AC2).
-        lastMsg?.id ?? null,
+        normalMessages[normalMessages.length - 1]?.id ?? null,
       );
       if (agentStatus === 'error') {
         status = 'error';

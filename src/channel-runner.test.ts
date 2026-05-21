@@ -2982,3 +2982,273 @@ describe('handleCapabilitiesCommand — help and fallback (Story 54)', () => {
   });
 });
 
+// ── Story 53: mixed-batch (normal + slash) dispatch tests ─────────────────────
+
+describe('Story 53 — mixed-batch: normal message + slash command in same batch', () => {
+  // Unit tests: AC2 and AC4 — dispatch logic + timestamp advancement
+  const chatJid = 'story53@g.us';
+  const group = {
+    name: 'Story53',
+    folder: 'story53-group',
+    trigger: '',
+    added_at: '2026-01-01T00:00:00.000Z',
+    isMain: true,
+    requiresTrigger: false,
+  };
+
+  let sentMessages: string[];
+  let fakeRunner: { runAgent: ReturnType<typeof vi.fn>; writeTasksSnapshot: ReturnType<typeof vi.fn>; writeGroupsSnapshot: ReturnType<typeof vi.fn> };
+  let mockChannel: { sendMessage: ReturnType<typeof vi.fn>; setTyping: ReturnType<typeof vi.fn>; owns: ReturnType<typeof vi.fn> };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    _resetStateForTesting();
+    sentMessages = [];
+
+    fakeRunner = {
+      runAgent: vi.fn().mockResolvedValue({ status: 'success', result: null }),
+      writeTasksSnapshot: vi.fn(),
+      writeGroupsSnapshot: vi.fn(),
+    };
+    mockGetDirectLLMRunner.mockReturnValue(fakeRunner);
+
+    mockChannel = {
+      sendMessage: vi.fn().mockImplementation(async (_jid: string, text: string) => {
+        sentMessages.push(text);
+      }),
+      setTyping: vi.fn().mockResolvedValue(undefined),
+      owns: vi.fn().mockReturnValue(true),
+    };
+    mockFindChannel.mockReturnValue(mockChannel);
+
+    _setRegisteredGroupsForTesting({ [chatJid]: group as any });
+    _pushChannelForTesting(mockChannel as any);
+    _setSpecialistCatalogForTesting(makeCatalog([]));
+  });
+
+  // AC2: normal text followed by /search → both handled
+  it('AC2: normal message followed by /search — search reply sent AND LLM invoked for normal msg', async () => {
+    const t1 = '2026-01-01T00:00:01.000Z';
+    const t2 = '2026-01-01T00:00:02.000Z';
+
+    // Seed DB for /search to have something to find
+    const { _initTestDatabase, appendConversationMessage } = await import('./db.js');
+    await _initTestDatabase();
+    appendConversationMessage('story53-group', 'user', 'tell me about Rust');
+
+    mockGetMessagesSince.mockReturnValueOnce([
+      makeMessage('tell me about Rust', t1),
+      makeMessage('/search rust', t2),
+    ]);
+
+    await processGroupMessages(chatJid);
+
+    // /search reply must have been sent
+    expect(mockChannel.sendMessage).toHaveBeenCalled();
+    const sentTexts = (mockChannel.sendMessage.mock.calls as [string, string][]).map(([, text]) => text);
+    const searchReply = sentTexts.find((t) => /rust/i.test(t));
+    expect(searchReply).toBeTruthy();
+
+    // LLM must have been invoked for the normal message
+    expect(fakeRunner.runAgent).toHaveBeenCalled();
+  });
+
+  // AC4: two slash commands in sequence → both receive replies in order
+  it('AC4: two slash commands back-to-back — both receive replies in order', async () => {
+    const t1 = '2026-01-01T00:00:01.000Z';
+    const t2 = '2026-01-01T00:00:02.000Z';
+
+    // Seed DB for /search
+    const { _initTestDatabase, appendConversationMessage } = await import('./db.js');
+    await _initTestDatabase();
+    appendConversationMessage('story53-group', 'user', 'help me with foo');
+
+    mockGetMessagesSince.mockReturnValueOnce([
+      makeMessage('/skills list', t1),
+      makeMessage('/search foo', t2),
+    ]);
+
+    await processGroupMessages(chatJid);
+
+    // Both slash commands must have produced replies
+    expect(mockChannel.sendMessage).toHaveBeenCalledTimes(2);
+    // No LLM call — only slash commands
+    expect(fakeRunner.runAgent).not.toHaveBeenCalled();
+  });
+
+  // AC5: lastAgentTimestamp advanced to the last message that was responded to
+  it('AC5: lastAgentTimestamp advanced to the last processed message timestamp', async () => {
+    const t1 = '2026-01-01T00:00:01.000Z';
+    const t2 = '2026-01-01T00:00:02.000Z';
+
+    const { _initTestDatabase } = await import('./db.js');
+    await _initTestDatabase();
+
+    mockGetMessagesSince.mockReturnValueOnce([
+      makeMessage('/skills list', t1),
+      makeMessage('/search foo', t2),
+    ]);
+
+    // Capture what lastAgentTimestamp is after the call by observing setRouterState
+    const setRouterStateCalls: Array<[string, string]> = [];
+    vi.mocked(db.setRouterState).mockImplementation((key: string, value: string) => {
+      setRouterStateCalls.push([key, value]);
+    });
+
+    await processGroupMessages(chatJid);
+
+    // The last_agent_timestamp should contain t2 (the timestamp of the last message).
+    // Use the last call (saveState is called once per slash command + once at end).
+    const agentTsCalls = setRouterStateCalls.filter(([key]) => key === 'last_agent_timestamp');
+    expect(agentTsCalls.length).toBeGreaterThan(0);
+    const lastAgentTsCall = agentTsCalls[agentTsCalls.length - 1];
+    const saved = JSON.parse(lastAgentTsCall[1]) as Record<string, string>;
+    expect(saved[chatJid]).toBe(t2);
+  });
+
+  // Edge case: slash command alone — existing behaviour unchanged
+  it('single slash command alone still works (no regression)', async () => {
+    const t1 = '2026-01-01T00:00:01.000Z';
+    const { _initTestDatabase } = await import('./db.js');
+    await _initTestDatabase();
+
+    mockGetMessagesSince.mockReturnValueOnce([
+      makeMessage('/skills list', t1),
+    ]);
+
+    await processGroupMessages(chatJid);
+
+    expect(mockChannel.sendMessage).toHaveBeenCalledOnce();
+    expect(fakeRunner.runAgent).not.toHaveBeenCalled();
+  });
+
+  // Edge case: normal messages only — LLM called once, not N times
+  it('batch of normal messages → exactly one LLM call (no N+1)', async () => {
+    const { _initTestDatabase } = await import('./db.js');
+    await _initTestDatabase();
+
+    mockGetMessagesSince.mockReturnValueOnce([
+      makeMessage('message one', '2026-01-01T00:00:01.000Z'),
+      makeMessage('message two', '2026-01-01T00:00:02.000Z'),
+      makeMessage('message three', '2026-01-01T00:00:03.000Z'),
+    ]);
+
+    await processGroupMessages(chatJid);
+
+    expect(fakeRunner.runAgent).toHaveBeenCalledOnce();
+  });
+
+  // Regression test for Story 53 fix: /help was deleted in the refactor and must now work
+  it('fix(Story53): normal text + /help batch — help reply sent AND LLM invoked for normal msg', async () => {
+    const { _initTestDatabase } = await import('./db.js');
+    await _initTestDatabase();
+
+    const t1 = '2026-01-01T00:00:01.000Z';
+    const t2 = '2026-01-01T00:00:02.000Z';
+
+    mockGetMessagesSince.mockReturnValueOnce([
+      makeMessage('tell me about Rust', t1),
+      makeMessage('/help', t2),
+    ]);
+
+    await processGroupMessages(chatJid);
+
+    // /help reply must have been sent and contain command listing
+    const sentTexts = (mockChannel.sendMessage.mock.calls as [string, string][]).map(([, text]) => text);
+    const helpReply = sentTexts.find((t) => /available slash commands/i.test(t));
+    expect(helpReply).toBeTruthy();
+
+    // LLM must have been invoked for the normal message
+    expect(fakeRunner.runAgent).toHaveBeenCalled();
+  });
+});
+
+// ── Story 53 integration test: AC3 ───────────────────────────────────────────
+
+describe('Story 53 — integration: /help after normal message, lastAgentTimestamp not over-advanced', () => {
+  const chatJid = 'story53-integ@g.us';
+  const GROUP_FOLDER = 'story53-integ-group';
+  const sentMessages: string[] = [];
+
+  afterEach(() => {
+    _testResetState();
+    sentMessages.length = 0;
+    vi.restoreAllMocks();
+    vi.clearAllMocks();
+  });
+
+  it('AC3: /skills reply sent AND lastAgentTimestamp advanced to last message timestamp', async () => {
+    // Use a real in-memory DB so getMessagesSince is bypassed via the mock, and
+    // appendConversationMessage is live.
+    const { _initTestDatabase, appendConversationMessage } = await import('./db.js');
+    await _initTestDatabase();
+
+    const normalTs = '2026-05-01T12:00:00.000Z';
+    const slashTs  = '2026-05-01T12:00:01.000Z';
+
+    // Two rows in conversation_history for the group
+    appendConversationMessage(GROUP_FOLDER, 'user', 'what are the system requirements');
+    appendConversationMessage(GROUP_FOLDER, 'user', '/skills list');
+
+    // getMessagesSince is still mocked; set up both messages
+    mockGetMessagesSince.mockReturnValueOnce([
+      makeMessage('what are the system requirements', normalTs),
+      makeMessage('/skills list', slashTs),
+    ]);
+
+    const fakeChannel2 = {
+      ownsJid: (jid: string) => jid === chatJid,
+      sendMessage: vi.fn().mockImplementation(async (_jid: string, text: string) => {
+        sentMessages.push(text);
+      }),
+      setTyping: vi.fn().mockResolvedValue(undefined),
+    };
+    mockFindChannel.mockReturnValue(fakeChannel2);
+
+    const fakeRunner2 = {
+      runAgent: vi.fn().mockResolvedValue({ status: 'success', result: null }),
+      writeTasksSnapshot: vi.fn(),
+      writeGroupsSnapshot: vi.fn(),
+    };
+    mockGetDirectLLMRunner.mockReturnValue(fakeRunner2);
+
+    _testInjectState(
+      {
+        [chatJid]: {
+          jid: chatJid,
+          name: 'Story53 Integ',
+          folder: GROUP_FOLDER,
+          trigger: '',
+          added_at: new Date().toISOString(),
+          isMain: true,
+          requiresTrigger: false,
+        } as any,
+      },
+      [fakeChannel2 as any],
+    );
+    _setSpecialistCatalogForTesting(makeCatalog([]));
+
+    // Capture setRouterState calls to inspect lastAgentTimestamp
+    const routerStateSaved: Record<string, string> = {};
+    vi.mocked(db.setRouterState).mockImplementation((key: string, value: string) => {
+      routerStateSaved[key] = value;
+    });
+
+    await processGroupMessages(chatJid);
+
+    // /skills reply was sent
+    expect(fakeChannel2.sendMessage).toHaveBeenCalled();
+    const replies = (fakeChannel2.sendMessage.mock.calls as [string, string][]).map(([, text]) => text);
+    expect(replies.some((r) => /skills/i.test(r) || /no skills/i.test(r))).toBe(true);
+
+    // LLM was also invoked for the normal message
+    expect(fakeRunner2.runAgent).toHaveBeenCalled();
+
+    // lastAgentTimestamp was saved and equals slashTs (the LAST message's timestamp).
+    // routerStateSaved is overwritten on each call so it holds the final saveState() value.
+    expect(routerStateSaved['last_agent_timestamp']).toBeTruthy();
+    const saved = JSON.parse(routerStateSaved['last_agent_timestamp']) as Record<string, string>;
+    expect(saved[chatJid]).toBe(slashTs);
+  });
+});
+
