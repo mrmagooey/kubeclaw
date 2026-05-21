@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 
 import {
   _initTestDatabase,
+  __resetDbForTest,
   db,
   createTask,
   deleteTask,
@@ -53,6 +54,8 @@ import {
   resolveToolJob,
   getActiveToolJobs,
   pruneOldToolJobs,
+  getToolJobByIdForGroup,
+  storeToolJob,
   recordSpecialistUsage,
   getSpecialistUsage,
   getTaskRunLogs,
@@ -2484,5 +2487,55 @@ describe('getTaskRunLogs', () => {
     const rows = getTaskRunLogs('trl-4', 'grp-cap', 9999);
     // 9999 is capped to 100; 5 rows exist so 5 are returned
     expect(rows).toHaveLength(5);
+  });
+});
+
+// --- getToolJobByIdForGroup + storeToolJob (Story 59) ---
+
+describe('getToolJobByIdForGroup', () => {
+  beforeEach(() => {
+    __resetDbForTest();
+  });
+
+  it('returns null for an unknown job ID', () => {
+    expect(getToolJobByIdForGroup('no-such-job', 'grp')).toBeNull();
+  });
+
+  it('returns the row when job_id and group_folder match', () => {
+    recordToolJob('job-abc', 'grp-alpha', 'jid@test', null, 'MySpec');
+    const row = getToolJobByIdForGroup('job-abc', 'grp-alpha');
+    expect(row).not.toBeNull();
+    expect(row?.job_id).toBe('job-abc');
+    expect(row?.group_folder).toBe('grp-alpha');
+  });
+
+  it('returns null when group_folder does not match (ownership enforced)', () => {
+    recordToolJob('job-owned', 'group-owner', 'jid@test', null, '');
+    expect(getToolJobByIdForGroup('job-owned', 'group-other')).toBeNull();
+  });
+
+  it('returns null for correct group but unknown job ID', () => {
+    recordToolJob('job-abc', 'grp-alpha', 'jid@test', null, '');
+    expect(getToolJobByIdForGroup('totally-different', 'grp-alpha')).toBeNull();
+  });
+});
+
+describe('storeToolJob', () => {
+  beforeEach(() => {
+    __resetDbForTest();
+  });
+
+  it('inserts a row findable by getToolJobByIdForGroup', () => {
+    storeToolJob('store-job-1', 'grp-store');
+    const row = getToolJobByIdForGroup('store-job-1', 'grp-store');
+    expect(row).not.toBeNull();
+    expect(row?.job_id).toBe('store-job-1');
+  });
+
+  it('is idempotent (INSERT OR IGNORE, no throw on duplicate)', () => {
+    expect(() => {
+      storeToolJob('dup-job', 'grp');
+      storeToolJob('dup-job', 'grp');
+    }).not.toThrow();
   });
 });

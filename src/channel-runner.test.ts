@@ -3004,8 +3004,12 @@ import {
   isJobsCommand,
   handleJobsCommand,
   formatJobTime,
+  truncateLogs,
+  JOBS_HELP,
+  MAX_LOG_LINES,
 } from './channel-runner.js';
 import type { ToolJobRecord } from './db.js';
+import type { JobsCommandDeps } from './channel-runner.js';
 
 describe('isJobsCommand', () => {
   it('returns true for /jobs', () => {
@@ -3046,15 +3050,15 @@ describe('handleJobsCommand — stubbed DB', () => {
     vi.restoreAllMocks();
   });
 
-  it('returns "No active jobs." when both active and recent lists are empty', () => {
+  it('returns "No active jobs." when both active and recent lists are empty', async () => {
     vi.spyOn(db, 'getActiveToolJobs').mockReturnValue([]);
     vi.spyOn(db, 'getRecentToolJobsForGroup').mockReturnValue([]);
 
-    const reply = handleJobsCommand(GROUP_FOLDER);
+    const reply = await handleJobsCommand(GROUP_FOLDER);
     expect(reply).toBe('No active jobs.');
   });
 
-  it('formats two running jobs correctly', () => {
+  it('formats two running jobs correctly', async () => {
     const activeJobs: ToolJobRecord[] = [
       {
         job_id: 'job-1',
@@ -3080,12 +3084,12 @@ describe('handleJobsCommand — stubbed DB', () => {
     vi.spyOn(db, 'getActiveToolJobs').mockReturnValue(activeJobs);
     vi.spyOn(db, 'getRecentToolJobsForGroup').mockReturnValue([]);
 
-    const reply = handleJobsCommand(GROUP_FOLDER);
+    const reply = await handleJobsCommand(GROUP_FOLDER);
     expect(reply).toContain('[running] @CodeReview (started 14:32Z)');
     expect(reply).toContain('[running] @DocWriter (started 14:45Z)');
   });
 
-  it('formats two completed jobs correctly', () => {
+  it('formats two completed jobs correctly', async () => {
     vi.spyOn(db, 'getActiveToolJobs').mockReturnValue([]);
     const recentJobs: ToolJobRecord[] = [
       {
@@ -3111,12 +3115,12 @@ describe('handleJobsCommand — stubbed DB', () => {
     ];
     vi.spyOn(db, 'getRecentToolJobsForGroup').mockReturnValue(recentJobs);
 
-    const reply = handleJobsCommand(GROUP_FOLDER);
+    const reply = await handleJobsCommand(GROUP_FOLDER);
     expect(reply).toContain('[completed] @Analyst (10:00Z → 10:05Z)');
     expect(reply).toContain('[timeout] @Tester (09:00Z → 09:30Z)');
   });
 
-  it('scopes active jobs to the authenticated group only', () => {
+  it('scopes active jobs to the authenticated group only', async () => {
     const allActiveJobs: ToolJobRecord[] = [
       {
         job_id: 'job-mine',
@@ -3142,18 +3146,18 @@ describe('handleJobsCommand — stubbed DB', () => {
     vi.spyOn(db, 'getActiveToolJobs').mockReturnValue(allActiveJobs);
     vi.spyOn(db, 'getRecentToolJobsForGroup').mockReturnValue([]);
 
-    const reply = handleJobsCommand(GROUP_FOLDER);
+    const reply = await handleJobsCommand(GROUP_FOLDER);
     expect(reply).toContain('@MySpec');
     expect(reply).not.toContain('@OtherSpec');
   });
 
-  it('getRecentToolJobsForGroup is called with the correct groupFolder', () => {
+  it('getRecentToolJobsForGroup is called with the correct groupFolder', async () => {
     vi.spyOn(db, 'getActiveToolJobs').mockReturnValue([]);
     const getRecentSpy = vi
       .spyOn(db, 'getRecentToolJobsForGroup')
       .mockReturnValue([]);
 
-    handleJobsCommand(GROUP_FOLDER);
+    await handleJobsCommand(GROUP_FOLDER);
     expect(getRecentSpy).toHaveBeenCalledWith(GROUP_FOLDER, 5);
   });
 });
@@ -3533,3 +3537,155 @@ describe('Story 53 — integration: /help after normal message, lastAgentTimesta
   });
 });
 
+
+// ── /jobs <id> logs unit tests (Story 59) ─────────────────────────────────────
+
+function makeJobsDeps(overrides: Partial<JobsCommandDeps> = {}): JobsCommandDeps {
+  return {
+    getJobLogs: vi.fn().mockResolvedValue('stdout line\nstderr line'),
+    ...overrides,
+  };
+}
+
+describe('truncateLogs', () => {
+  it('returns full string when at the limit', () => {
+    const lines = Array.from({ length: MAX_LOG_LINES }, (_, i) => `line ${i}`);
+    const input = lines.join('\n');
+    expect(truncateLogs(input)).toBe(input);
+  });
+
+  it('keeps the last MAX_LOG_LINES lines when over the limit', () => {
+    const lines = Array.from({ length: MAX_LOG_LINES + 10 }, (_, i) => `line ${i}`);
+    const result = truncateLogs(lines.join('\n'));
+    const resultLines = result.split('\n');
+    expect(resultLines[0]).toMatch(/10 earlier lines omitted/);
+    expect(resultLines[resultLines.length - 1]).toBe(`line ${MAX_LOG_LINES + 9}`);
+  });
+
+  it('shows correct omission count', () => {
+    const lines = Array.from({ length: MAX_LOG_LINES + 5 }, (_, i) => `x${i}`);
+    expect(truncateLogs(lines.join('\n'))).toContain('5 earlier lines omitted');
+  });
+});
+
+describe('JOBS_HELP', () => {
+  it('contains /jobs <id> logs entry', () => {
+    expect(JOBS_HELP).toContain('/jobs <id> logs');
+  });
+
+  it('contains /jobs help entry', () => {
+    expect(JOBS_HELP).toContain('/jobs help');
+  });
+});
+
+describe('handleJobsCommand — help subcommand (Story 59)', () => {
+  it('returns JOBS_HELP for /jobs help', async () => {
+    const result = await handleJobsCommand('grp', '/jobs help', makeJobsDeps());
+    expect(result).toBe(JOBS_HELP);
+  });
+
+  it('returns job listing for /jobs (no subcommand — Story 50 path preserved)', async () => {
+    vi.spyOn(db, 'getActiveToolJobs').mockReturnValue([]);
+    vi.spyOn(db, 'getRecentToolJobsForGroup').mockReturnValue([]);
+    const result = await handleJobsCommand('grp', '/jobs', makeJobsDeps());
+    expect(result).toBe('No active jobs.');
+    vi.restoreAllMocks();
+  });
+});
+
+describe('handleJobsCommand — logs subcommand (Story 59)', () => {
+  it('returns reply containing both stdout and stderr lines', async () => {
+    const deps = makeJobsDeps({
+      getJobLogs: vi.fn().mockResolvedValue('stderr line\nstdout line'),
+    });
+    const result = await handleJobsCommand('grp', '/jobs job-abc logs', deps);
+    expect(result).toContain('stderr line');
+    expect(result).toContain('stdout line');
+    expect(deps.getJobLogs).toHaveBeenCalledWith('job-abc', 'grp');
+  });
+
+  it('returns not-found when getJobLogs throws with "not_found" message', async () => {
+    const deps = makeJobsDeps({
+      getJobLogs: vi.fn().mockRejectedValue(new Error('not_found')),
+    });
+    const result = await handleJobsCommand('grp', '/jobs missing-id logs', deps);
+    expect(result).toMatch(/not found/i);
+    expect(result).toContain('missing-id');
+  });
+
+  it('returns not-found when getJobLogs resolves to "not_found" string', async () => {
+    const deps = makeJobsDeps({
+      getJobLogs: vi.fn().mockResolvedValue('not_found'),
+    });
+    const result = await handleJobsCommand('grp', '/jobs some-id logs', deps);
+    expect(result).toMatch(/not found/i);
+  });
+
+  it('returns "no longer available" for GC sentinel "No pods found for job"', async () => {
+    const deps = makeJobsDeps({
+      getJobLogs: vi.fn().mockResolvedValue('No pods found for job'),
+    });
+    const result = await handleJobsCommand('grp', '/jobs old-id logs', deps);
+    expect(result).toMatch(/no longer available/i);
+  });
+
+  it('returns "no longer available" for GC sentinel "Pod name not found"', async () => {
+    const deps = makeJobsDeps({
+      getJobLogs: vi.fn().mockResolvedValue('Pod name not found'),
+    });
+    const result = await handleJobsCommand('grp', '/jobs old-id logs', deps);
+    expect(result).toMatch(/no longer available/i);
+  });
+
+  it('includes job ID in the success reply header', async () => {
+    const deps = makeJobsDeps({
+      getJobLogs: vi.fn().mockResolvedValue('some output'),
+    });
+    const result = await handleJobsCommand('grp', '/jobs my-job-id logs', deps);
+    expect(result).toContain('my-job-id');
+  });
+
+  it('handles IPC timeout gracefully', async () => {
+    const deps = makeJobsDeps({
+      getJobLogs: vi.fn().mockRejectedValue(new Error('timeout')),
+    });
+    const result = await handleJobsCommand('grp', '/jobs job-abc logs', deps);
+    expect(result).toMatch(/timeout/i);
+  });
+
+  it('truncates very long log output', async () => {
+    const longLog = Array.from(
+      { length: MAX_LOG_LINES + 20 },
+      (_, i) => `line ${i}`,
+    ).join('\n');
+    const deps = makeJobsDeps({
+      getJobLogs: vi.fn().mockResolvedValue(longLog),
+    });
+    const result = await handleJobsCommand('grp', '/jobs job-abc logs', deps);
+    expect(result).toContain('earlier lines omitted');
+    expect(result).toContain(`line ${MAX_LOG_LINES + 19}`);
+  });
+
+  it('preserves log lines containing "not found" as substring (not GC sentinel)', async () => {
+    const deps = makeJobsDeps({
+      getJobLogs: vi.fn().mockResolvedValue(
+        'INFO: File not found in /tmp/data\nstderr: more output',
+      ),
+    });
+    const result = await handleJobsCommand('grp', '/jobs job-abc logs', deps);
+    expect(result).toContain('File not found');
+    expect(result).not.toContain('garbage-collected');
+  });
+
+  it('GC sentinel requires prefix match — substring mid-log is not flagged', async () => {
+    const deps = makeJobsDeps({
+      getJobLogs: vi.fn().mockResolvedValue(
+        'WARN something\nNo pods found for job was expected',
+      ),
+    });
+    // This does NOT start with the sentinel, so it should NOT be flagged
+    const result = await handleJobsCommand('grp', '/jobs job-abc logs', deps);
+    expect(result).not.toMatch(/no longer available/i);
+    expect(result).toContain('No pods found for job');
+  });
+});

@@ -2203,6 +2203,44 @@ export function getRecentToolJobsForGroup(
 }
 
 /**
+ * Look up a single tool job row scoped to a specific group.
+ * Returns null when the job does not exist or belongs to a different group,
+ * enforcing group-level ownership without leaking cross-group job IDs.
+ *
+ * Used by the orchestrator's `job.logs` IPC handler before calling K8s.
+ */
+export function getToolJobByIdForGroup(
+  jobId: string,
+  groupFolder: string,
+): ToolJobRecord | null {
+  const result = db.exec(
+    `SELECT job_id, group_folder, chat_jid, status, created_at, resolved_at, message_id, specialist_name
+     FROM tool_jobs WHERE job_id = ? AND group_folder = ? LIMIT 1`,
+    [jobId, groupFolder],
+  );
+  if (result.length === 0 || result[0].values.length === 0) return null;
+  const row = result[0].values[0] as unknown[];
+  return {
+    job_id: row[0] as string,
+    group_folder: row[1] as string,
+    chat_jid: (row[2] as string | null) ?? '',
+    status: (row[3] as string) as ToolJobRecord['status'],
+    created_at: row[4] as string,
+    resolved_at: row[5] as string | null,
+    message_id: row[6] as string | null,
+    specialist_name: (row[7] as string | null) ?? '',
+  };
+}
+
+/**
+ * Convenience wrapper used in tests and e2e to insert a minimal tool_jobs row.
+ * Delegates to recordToolJob with a synthetic chatJid.
+ */
+export function storeToolJob(jobId: string, groupFolder: string): void {
+  recordToolJob(jobId, groupFolder, groupFolder, null, '');
+}
+
+/**
  * Delete resolved tool_jobs rows older than `retentionDays`.
  *
  * Rules:

@@ -18,6 +18,7 @@ import {
   updateTask,
   recordToolJob,
   resolveToolJob,
+  getToolJobByIdForGroup,
 } from '../db.js';
 import { isValidGroupFolder } from '../group-folder.js';
 import { logger } from '../logger.js';
@@ -1734,6 +1735,28 @@ export async function startTaskRequestWatcher(
                   );
               }
             }
+          } else if (type === 'job.logs') {
+            // Fetch K8s pod logs for a completed tool job.
+            // Group ownership is enforced via DB lookup BEFORE calling K8s.
+            const { jobId, resultStream } = obj;
+            if (!jobId || !groupFolder || !resultStream) continue;
+            let response: string;
+            try {
+              // Ownership check: only reveal logs for jobs belonging to the
+              // requesting group. Returns null for cross-group or missing jobs.
+              const row = getToolJobByIdForGroup(jobId, groupFolder);
+              if (!row) {
+                response = JSON.stringify({ ok: false, error: 'not_found' });
+              } else {
+                const logs = await jobRunner.getJobLogs(jobId);
+                response = JSON.stringify({ ok: true, result: logs });
+              }
+            } catch (err) {
+              const error = err instanceof Error ? err.message : String(err);
+              logger.warn({ jobId, groupFolder, error }, 'job.logs failed');
+              response = JSON.stringify({ ok: false, error });
+            }
+            await redis.xadd(resultStream, '*', 'result', response);
           }
         }
       }

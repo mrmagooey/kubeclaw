@@ -619,6 +619,7 @@ export async function dispatchSkillsCommandIfApplicable(
 export const HELP_TEXT = [
   'Available slash commands:',
   '  /jobs                    — list active and recent tool jobs',
+  '  /jobs <id> logs          — show stdout/stderr from a completed tool-job pod',
   '  /search <query>          — full-text search over conversation history',
   '  /skills                  — manage learned skills (review / accept / reject)',
   '  /secret                  — manage credentials (add / remove / list / catalog)',
@@ -652,15 +653,94 @@ export function isJobsCommand(message: string): boolean {
   return /^\/jobs(\s|$)/.test(message.trim());
 }
 
+/** Max log lines to surface to the user (last N lines). */
+export const MAX_LOG_LINES = 50;
+
+export const JOBS_HELP = [
+  'Job commands:',
+  '  /jobs                    — list active and recent tool jobs',
+  '  /jobs <id> logs          — show stdout/stderr from a completed tool-job pod',
+  '  /jobs help               — show this message',
+].join('\n');
+
+/**
+ * Trim raw log output to the last MAX_LOG_LINES lines.
+ * Keeps the most recent (most actionable) output without flooding the chat.
+ */
+export function truncateLogs(raw: string): string {
+  const lines = raw.split('\n');
+  if (lines.length <= MAX_LOG_LINES) return raw;
+  const kept = lines.slice(-MAX_LOG_LINES);
+  const dropped = lines.length - MAX_LOG_LINES;
+  return `[…${dropped} earlier lines omitted]\n${kept.join('\n')}`;
+}
+
+/**
+ * Dependencies injected into handleJobsCommand for the `logs` subcommand.
+ * Separating I/O lets unit tests stub IPC without touching Redis.
+ */
+export interface JobsCommandDeps {
+  /** Fetch K8s pod logs for the given job name (via orchestrator IPC). */
+  getJobLogs: (jobId: string, groupFolder: string) => Promise<string>;
+}
+
 /**
  * Handle the /jobs slash command.
  *
- * Returns a formatted text reply listing:
- *  - Active running jobs as "[running] @SpecialistName (started HH:MMZ)"
- *  - Recent completed jobs as "[status] @SpecialistName (HH:MMZ → HH:MMZ)"
- *  - "No active jobs." if no running jobs and no recent history.
+ * Subcommands:
+ *  - `/jobs`             — list active and recent tool jobs for this group
+ *  - `/jobs <id> logs`   — fetch pod stdout+stderr via orchestrator IPC
+ *  - `/jobs help`        — show usage
+ *
+ * When called without a message/deps (legacy Story 50 path), returns the
+ * active/recent job listing as a plain synchronous string.
  */
-export function handleJobsCommand(groupFolder: string): string {
+export async function handleJobsCommand(
+  groupFolder: string,
+  message?: string,
+  deps?: JobsCommandDeps,
+): Promise<string> {
+  const parts = (message ?? '').trim().split(/\s+/);
+  // parts[0] === '/jobs' (or '' for legacy call)
+
+  const verb = parts[1];
+
+  // /jobs <id> logs — IPC-mediated log fetch (Story 59)
+  if (verb && verb !== 'help' && parts[2] === 'logs' && deps) {
+    const jobId = verb;
+
+    let raw: string;
+    try {
+      raw = await deps.getJobLogs(jobId, groupFolder);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg === 'not_found') {
+        return `Job not found: ${jobId}`;
+      }
+      return `Failed to retrieve logs: ${msg}`;
+    }
+
+    // Orchestrator signals not-found via the result value
+    if (raw === 'not_found') {
+      return `Job not found: ${jobId}`;
+    }
+
+    // K8s returns these exact strings when the pod or its logs are GC'd
+    const GC_SENTINELS = ['No pods found for job', 'Pod name not found'];
+    if (GC_SENTINELS.some((s) => raw.startsWith(s))) {
+      return `Logs no longer available for job ${jobId} (pod may have been garbage-collected).`;
+    }
+
+    const truncated = truncateLogs(raw.trimEnd());
+    return `Logs for job ${jobId}:\n\`\`\`\n${truncated}\n\`\`\``;
+  }
+
+  // /jobs help
+  if (verb === 'help') {
+    return JOBS_HELP;
+  }
+
+  // /jobs — list active and recent tool jobs (Story 50 default behavior)
   const activeJobs = getActiveToolJobs().filter(
     (j) => j.group_folder === groupFolder,
   );
@@ -2095,9 +2175,52 @@ export async function processGroupMessages(chatJid: string): Promise<boolean> {
       continue;
     }
 
-    // /jobs command: list active and recent tool jobs for this group.
+    // /jobs command: list active/recent jobs or fetch pod logs via IPC (Stories 50 + 59).
     if (isJobsCommand(content)) {
-      const reply = handleJobsCommand(group.folder);
+      const jobsDeps: JobsCommandDeps = {
+        getJobLogs: async (jobId: string, gf: string): Promise<string> => {
+          const redis = getRedisClient();
+          const resultStream = `kubeclaw:job-logs-result:${Date.now()}-${randomBytes(4).toString('hex')}`;
+          await redis.xadd(
+            getTaskRequestStream(),
+            '*',
+            'type', 'job.logs',
+            'jobId', jobId,
+            'groupFolder', gf,
+            'resultStream', resultStream,
+          );
+          const deadline = Date.now() + 10000;
+          let lastId = '0-0';
+          while (Date.now() < deadline) {
+            const remaining = deadline - Date.now();
+            if (remaining <= 0) break;
+            const response = await redis.xread(
+              'COUNT', 1, 'BLOCK', Math.min(remaining, 1000),
+              'STREAMS', resultStream, lastId,
+            );
+            if (!response) continue;
+            for (const [, messages] of response as [string, [string, string[]][]][]) {
+              for (const [, flds] of messages) {
+                const obj: Record<string, string> = {};
+                for (let i = 0; i < flds.length; i += 2) obj[flds[i]] = flds[i + 1];
+                if (obj.result) {
+                  const parsed = JSON.parse(obj.result) as { ok: boolean; result?: string; error?: string };
+                  if (!parsed.ok) throw new Error(parsed.error ?? 'unknown error');
+                  return parsed.result ?? '';
+                }
+              }
+            }
+          }
+          throw new Error('timeout');
+        },
+      };
+      let reply: string;
+      try {
+        reply = await handleJobsCommand(group.folder, content, jobsDeps);
+      } catch (err) {
+        logger.error({ err, chatJid }, '/jobs command failed');
+        reply = 'Failed to retrieve job logs. Please try again.';
+      }
       lastAgentTimestamp[chatJid] = msg.timestamp;
       saveState();
       await channel.setTyping?.(chatJid, true);
