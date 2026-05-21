@@ -11,6 +11,7 @@ vi.mock('../db.js', () => {
     clearConversationHistory: vi.fn(),
     deleteMessageById: vi.fn(() => false),
     getConversationHistory: vi.fn(() => []),
+    getMessageById: vi.fn(() => null),
     db: { exec: dbExec },
   };
 });
@@ -88,6 +89,7 @@ import {
   clearConversationHistory,
   deleteMessageById,
   getConversationHistory,
+  getMessageById,
 } from '../db.js';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -2047,8 +2049,8 @@ describe('HttpChannel', () => {
       await channel.disconnect();
     });
 
-    // AC5: POST /history/<id> → 405 with Allow: DELETE
-    it('returns 405 with Allow: DELETE for POST /history/<id>', async () => {
+    // AC5: POST /history/<id> → 405 with Allow: GET, HEAD, DELETE (updated by Story 64)
+    it('returns 405 with Allow: GET, HEAD, DELETE for POST /history/<id>', async () => {
       const channel = new HttpChannel(makeConfig(), makeOpts());
       await channel.connect();
 
@@ -2057,7 +2059,147 @@ describe('HttpChannel', () => {
       await dispatch(channel, req, res);
 
       expect(res._status).toBe(405);
-      expect(res._headers['Allow']).toBe('DELETE');
+      expect(res._headers['Allow']).toBe('GET, HEAD, DELETE');
+      await channel.disconnect();
+    });
+  });
+
+  // ── GET/HEAD /history/<id> — single message fetch (Story 64) ───────────────
+
+  describe('GET /history/<id>', () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+      serverListeners.clear();
+    });
+
+    // AC1: authenticated GET with matching id → 200 + JSON body
+    it('returns 200 with JSON body when id exists in the user group', async () => {
+      const mockRow = {
+        id: 'msg-abc',
+        role: 'user' as const,
+        content: 'hello',
+        created_at: '2026-01-01T00:00:00.000Z',
+      };
+      (getMessageById as ReturnType<typeof vi.fn>).mockReturnValue(mockRow);
+
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ method: 'GET', url: '/history/msg-abc', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      expect(res._headers['Content-Type']).toContain('application/json');
+      const body = JSON.parse(res._body);
+      expect(body.id).toBe('msg-abc');
+      expect(body.role).toBe('user');
+      expect(body.content).toBe('hello');
+      expect(body.created_at).toBe('2026-01-01T00:00:00.000Z');
+      expect(getMessageById).toHaveBeenCalledWith('msg-abc', 'alice');
+      await channel.disconnect();
+    });
+
+    // AC2: unknown id → 404
+    it('returns 404 when id does not exist', async () => {
+      (getMessageById as ReturnType<typeof vi.fn>).mockReturnValue(null);
+
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ method: 'GET', url: '/history/no-such-id', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(404);
+      const body = JSON.parse(res._body);
+      expect(body.error).toBe('Not found');
+      await channel.disconnect();
+    });
+
+    // AC3: id from another group → same 404 (no enumeration)
+    it('returns 404 for cross-group id (same wording as unknown id)', async () => {
+      // getMessageById returns null for cross-group (no enumeration at db level)
+      (getMessageById as ReturnType<typeof vi.fn>).mockReturnValue(null);
+
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ method: 'GET', url: '/history/other-group-id', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(404);
+      const body = JSON.parse(res._body);
+      expect(body.error).toBe('Not found');
+      await channel.disconnect();
+    });
+
+    // AC4: unauthenticated → 401
+    it('returns 401 when not authenticated', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ method: 'GET', url: '/history/msg-abc', auth: null });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(401);
+      await channel.disconnect();
+    });
+
+    // AC5: HEAD /history/<id> — same headers as GET, no body
+    it('HEAD returns 200 with same headers as GET but empty body for existing id', async () => {
+      const mockRow = {
+        id: 'msg-head',
+        role: 'assistant' as const,
+        content: 'a response',
+        created_at: '2026-01-02T00:00:00.000Z',
+      };
+      (getMessageById as ReturnType<typeof vi.fn>).mockReturnValue(mockRow);
+
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ method: 'HEAD', url: '/history/msg-head', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      expect(res._headers['Content-Type']).toContain('application/json');
+      expect(res._headers['Content-Length']).toBeDefined();
+      // HEAD must send no body
+      expect(res._body).toBe('');
+      await channel.disconnect();
+    });
+
+    // AC5: HEAD returns 404 with no body for missing id
+    it('HEAD returns 404 with no body for missing id', async () => {
+      (getMessageById as ReturnType<typeof vi.fn>).mockReturnValue(null);
+
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ method: 'HEAD', url: '/history/msg-gone', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(404);
+      expect(res._body).toBe('');
+      await channel.disconnect();
+    });
+
+    // AC5: POST /history/<id> → 405 with Allow: GET, HEAD, DELETE
+    it('returns 405 with Allow: GET, HEAD, DELETE for POST /history/<id>', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ method: 'POST', url: '/history/msg-abc', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(405);
+      expect(res._headers['Allow']).toBe('GET, HEAD, DELETE');
       await channel.disconnect();
     });
   });

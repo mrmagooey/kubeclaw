@@ -50,6 +50,7 @@ import {
   searchConversations,
   backfillFts,
   deleteMessageById,
+  getMessageById,
   recordToolJob,
   resolveToolJob,
   getActiveToolJobs,
@@ -2335,6 +2336,38 @@ describe('deleteMessageById', () => {
     const after = getConversationHistory('grp-multi');
     expect(after).toHaveLength(2);
     expect(after.map((m) => m.content)).toEqual(['first', 'third']);
+  });
+});
+
+// --- getMessageById ---
+
+describe('getMessageById', () => {
+  it('returns the row when id exists in the correct group', () => {
+    appendConversationMessage('grp-get', 'user', 'hello world');
+    const history = getConversationHistory('grp-get');
+    expect(history).toHaveLength(1);
+    const id = history[0].id;
+
+    const row = getMessageById(id, 'grp-get');
+    expect(row).not.toBeNull();
+    expect(row!.id).toBe(id);
+    expect(row!.role).toBe('user');
+    expect(row!.content).toBe('hello world');
+    expect(typeof row!.created_at).toBe('string');
+  });
+
+  it('returns null for an id that belongs to a different group (no enumeration)', () => {
+    appendConversationMessage('grp-owner-get', 'assistant', 'secret message');
+    const history = getConversationHistory('grp-owner-get');
+    const id = history[0].id;
+
+    const row = getMessageById(id, 'grp-attacker-get');
+    expect(row).toBeNull();
+  });
+
+  it('returns null for a nonexistent id', () => {
+    const row = getMessageById('nonexistent-id-99999-get', 'grp-any');
+    expect(row).toBeNull();
   });
 });
 

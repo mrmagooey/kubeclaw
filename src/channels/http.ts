@@ -21,6 +21,7 @@ import {
   deleteMessageById,
   getAllConversationHistory,
   getConversationHistoryPage,
+  getMessageById,
   getOutboundMessagesSince,
   storeMessageDirect,
 } from '../db.js';
@@ -636,6 +637,7 @@ export class HttpChannel implements Channel {
     '/message/rate-limit': ['GET', 'HEAD'],
     '/message': ['POST'],
     '/history': ['GET', 'DELETE'],
+    '/history/': ['GET', 'HEAD', 'DELETE'], // prefix — dynamic ids
     '/attachments/list': ['GET'],
     '/attachments/raw/': ['GET', 'HEAD', 'DELETE'], // prefix — dynamic filenames
     '/export': ['GET', 'HEAD'],
@@ -667,6 +669,9 @@ export class HttpChannel implements Channel {
         HttpChannel.CORS_PATH_METHODS[url.pathname];
       if (!allowedMethods && url.pathname.startsWith('/attachments/raw/')) {
         allowedMethods = HttpChannel.CORS_PATH_METHODS['/attachments/raw/'];
+      }
+      if (!allowedMethods && /^\/history\/[^/]+$/.test(url.pathname)) {
+        allowedMethods = HttpChannel.CORS_PATH_METHODS['/history/'];
       }
 
       const methodsList = allowedMethods
@@ -1258,13 +1263,14 @@ export class HttpChannel implements Channel {
       return;
     }
 
-    // Story 56: DELETE /history/<id> — single-message delete
+    // Stories 56 + 64: /history/<id> — single-message GET, HEAD, DELETE
     const historyIdMatch = url.pathname.match(/^\/history\/([^/]+)$/);
     if (historyIdMatch) {
-      if (req.method !== 'DELETE') {
+      const method = req.method ?? '';
+      if (!['GET', 'HEAD', 'DELETE'].includes(method)) {
         res.writeHead(405, this.addCorsHeaders({
           'Content-Type': 'text/plain',
-          Allow: 'DELETE',
+          Allow: 'GET, HEAD, DELETE',
         }));
         res.end('Method Not Allowed');
         return;
@@ -1282,6 +1288,33 @@ export class HttpChannel implements Channel {
         return;
       }
       const msgId = historyIdMatch[1];
+
+      // Story 64: GET /history/<id> — fetch single message
+      if (method === 'GET' || method === 'HEAD') {
+        const row = getMessageById(msgId, group.folder);
+        if (!row) {
+          res.writeHead(404, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+          if (method === 'GET') {
+            res.end(JSON.stringify({ error: 'Not found' }));
+          } else {
+            res.end();
+          }
+          return;
+        }
+        const body = JSON.stringify(row);
+        res.writeHead(200, this.addCorsHeaders({
+          'Content-Type': 'application/json',
+          'Content-Length': String(Buffer.byteLength(body)),
+        }));
+        if (method === 'HEAD') {
+          res.end();
+        } else {
+          res.end(body);
+        }
+        return;
+      }
+
+      // Story 56: DELETE /history/<id>
       const deleted = deleteMessageById(msgId, group.folder);
       if (deleted) {
         res.writeHead(204, this.addCorsHeaders({}));

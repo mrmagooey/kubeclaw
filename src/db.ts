@@ -1610,6 +1610,40 @@ export function deleteMessageById(id: string, groupFolder: string): boolean {
   return true;
 }
 
+export interface ConversationHistoryRow {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  created_at: string;
+}
+
+/**
+ * Fetch a single conversation_history row by id, scoped to groupFolder.
+ * Returns null for both not-found and cross-group cases (no enumeration).
+ */
+export function getMessageById(
+  id: string,
+  groupFolder: string,
+): ConversationHistoryRow | null {
+  const result = db.exec(
+    `SELECT id, role, content, created_at FROM conversation_history WHERE id = ? AND group_folder = ? LIMIT 1`,
+    [id, groupFolder],
+  );
+  if (result.length === 0 || result[0].values.length === 0) return null;
+  const [rowId, role, content, createdAt] = result[0].values[0] as [
+    string,
+    string,
+    string,
+    string,
+  ];
+  return {
+    id: rowId,
+    role: role as 'user' | 'assistant',
+    content,
+    created_at: createdAt,
+  };
+}
+
 // --- Conversation Summary Functions ---
 
 export interface SummaryRecord {

@@ -153,8 +153,8 @@ describe('DELETE /history/<id> — Story 56', () => {
     expect(res.status).toBe(401);
   });
 
-  // AC5: POST /history/<id> → 405 with Allow: DELETE
-  it('AC5: returns 405 with Allow: DELETE for POST /history/<id>', async () => {
+  // AC5: POST /history/<id> → 405 with Allow: GET, HEAD, DELETE (updated by Story 64)
+  it('AC5: returns 405 with Allow: GET, HEAD, DELETE for POST /history/<id>', async () => {
     const res = await fetch(`http://localhost:${HTTP_PORT}/history/some-id`, {
       method: 'POST',
       headers: {
@@ -164,6 +164,6 @@ describe('DELETE /history/<id> — Story 56', () => {
       body: JSON.stringify({}),
     });
     expect(res.status).toBe(405);
-    expect(res.headers.get('allow')).toBe('DELETE');
+    expect(res.headers.get('allow')).toBe('GET, HEAD, DELETE');
   });
 });
