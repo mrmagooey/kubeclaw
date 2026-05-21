@@ -1437,3 +1437,78 @@ status: passing 5/5
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-specialists-history --create-namespace`, `--set namespace=kubeclaw-e2e-specialists-history`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14141`.
 
 status: passing 5/5
+
+## Story 59: `/jobs <id> logs` fetches stdout/stderr from a tool-job pod
+
+**As a** KubeClaw user troubleshooting a failed tool job
+**I want** `/jobs <id> logs` to fetch the pod logs (stdout + stderr) for that job
+**So that** I can debug what the job actually did without `kubectl logs` access
+
+### Acceptance criteria
+
+1. After a tool job completes (success or failure), `/jobs <id> logs` returns a reply containing at least the first/last lines of the pod's combined stdout/stderr output.
+2. `/jobs <unknown-id> logs` returns a reply containing "not found" — no crash.
+3. `/jobs <id-from-another-group> logs` returns a reply containing "not found" — group ownership enforced.
+4. `/jobs <id> logs` for a job whose pod has been garbage-collected returns "logs no longer available" (or similar) rather than crashing.
+5. Unit test: stub `getJobLogs` returning `"stderr line\nstdout line"`; assert `handleJobsCommand('/jobs job-abc logs', deps)` returns reply containing both lines.
+
+### Notes
+
+- The implementation in `src/k8s/job-runner.ts` already has `getJobLogs(jobName)`. Reuse it. The job name to look up should be reconstructed from the `tool_jobs` row's `job_id` plus any namespace prefix.
+- Add a `'logs'` subcommand parse in `handleJobsCommand` in `src/channel-runner.ts`. Wire it to `jobRunner.getJobLogs(jobName)`.
+- Truncate logs to a reasonable size for chat display (e.g. last 50 lines or first 4 KB) so we don't blow up the response.
+- Add `/jobs <id> logs` to JOBS_HELP and HELP_TEXT.
+- LLM-dependence: **none**.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-job-logs --create-namespace`, `--set namespace=kubeclaw-e2e-job-logs`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14142`.
+
+status: drafted
+
+## Story 60: `/schedule history <id>` shows recent run log for a scheduled task
+
+**As a** KubeClaw user with scheduled tasks
+**I want** `/schedule history <id>` to list recent runs of a scheduled task with status, duration, and a truncated result
+**So that** I can tell whether the task is running, failing silently, or producing useful output — data the system already collects but never exposes
+
+### Acceptance criteria
+
+1. After a `/schedule add` task fires once, `/schedule history <id>` returns at least one row with `run_at`, `status`, `duration_ms`, and a truncated `result` (or `error` if status='error').
+2. `/schedule history <unknown-id>` returns "not found" — no crash.
+3. `/schedule history <id-from-another-group>` returns "not found" — group ownership enforced.
+4. `/schedule history <id> 3` (optional limit) returns at most 3 rows, newest-first.
+5. Unit test: stub `getTaskRunLogs` returning 2 rows (1 success, 1 error); assert `handleScheduleCommand('/schedule history task-abc', deps)` returns a reply containing both timestamps and both status tags.
+
+### Notes
+
+- Add `getTaskRunLogs(taskId: string, groupFolder: string, limit: number): TaskRunLogRow[]` to `src/db.ts`. SQL: `SELECT run_at, status, duration_ms, result, error FROM task_run_logs WHERE task_id = ? AND group_folder = ? ORDER BY run_at DESC LIMIT ?`. Group-scoped ownership check.
+- Add a `'history'` case to the `switch(verb)` in `handleScheduleCommand` in `src/channel-runner.ts`.
+- Truncate `result`/`error` to ~120 chars for display.
+- Add `/schedule history <id> [limit]` to SCHEDULE_HELP and HELP_TEXT.
+- LLM-dependence: **none**.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-schedule-history --create-namespace`, `--set namespace=kubeclaw-e2e-schedule-history`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14143`.
+
+status: drafted
+
+## Story 61: `GET /version` reports build version and config summary
+
+**As a** KubeClaw operator or UI client
+**I want** `GET /version` to return the running build version and key configuration values
+**So that** I can programmatically confirm which image is deployed and what runtime knobs are active — without `kubectl exec` or log scraping
+
+### Acceptance criteria
+
+1. Unauthenticated `GET /version` returns HTTP 200 with `Content-Type: application/json`. The body is an object with at least keys `version`, `model`, `rateLimitWindowMs`, `toolJobsRetentionDays`. Unknown/unset values are `null`, not omitted.
+2. `version` is sourced from env var `KUBECLAW_VERSION` (set via Helm). When the env var is absent (dev), the value is `"dev"`.
+3. `model` is the default direct-LLM model id used by the channel runner (read from `process.env.KUBECLAW_DEFAULT_MODEL` or the config constant).
+4. `POST /version` returns HTTP 405 with `Allow: GET, HEAD`. `HEAD /version` returns the same headers as GET, no body.
+5. Integration test: assert response body parses as JSON and has the four required keys.
+
+### Notes
+
+- Add the `/version` route to `src/channels/http.ts`. No auth required (parity with `/healthz`).
+- Add `/version` to `CORS_PATH_METHODS` with `['GET', 'HEAD']`. Add to the 405 `pathMethods` table.
+- Read constants from `src/config.ts` (or wherever rate-limit window, prune retention live).
+- Wire `KUBECLAW_VERSION` env var in `helm/kubeclaw/templates/channel-pods.yaml` and set a Helm value `httpChannel.version` (or pull from `Chart.AppVersion`).
+- LLM-dependence: **none**.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-version --create-namespace`, `--set namespace=kubeclaw-e2e-version`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14144`.
+
+status: drafted
