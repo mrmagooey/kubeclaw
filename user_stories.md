@@ -1741,3 +1741,80 @@ status: passing 5/5
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-capabilities-http --create-namespace`, `--set namespace=kubeclaw-e2e-capabilities-http`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14153`.
 
 status: passing 5/5
+
+## Story 71: `POST /schedule` and `DELETE /schedule/<id>` and `PATCH /schedule/<id>` — write-side REST
+
+**As a** KubeClaw user with a UI client or automation script
+**I want** REST endpoints to add, remove, and pause/resume scheduled tasks
+**So that** programmatic clients can manage schedules without going through chat
+
+### Acceptance criteria
+
+1. Authenticated `POST /schedule` with JSON body `{ "schedule_type": "interval"|"cron"|"once", "schedule_expression": "<expr>", "prompt": "<text>" }` → 201 with `Content-Type: application/json` and body `{ id, status:"active", schedule_type, schedule_expression, prompt, next_run, created_at }`. Invalid body (missing field, bad type) → 400 with error message.
+2. `DELETE /schedule/<id>` for own group's task → 204 (no body). The task is removed from `scheduled_tasks` and will not fire again.
+3. `DELETE /schedule/<unknown-id>` and `DELETE /schedule/<id-from-another-group>` → 404 (identical wording — no enumeration).
+4. `PATCH /schedule/<id>` with body `{ "paused": true }` → 200 `{ id, status:"paused", ... }`. With `{ "paused": false }` → 200 `{ id, status:"active", ... }`. Unknown/cross-group id → 404.
+5. `POST /schedule/<id>` → 405 with `Allow: DELETE, PATCH`. Unauthenticated → 401. `HEAD /schedule/<id>` → 200/404 with same headers as GET (no body).
+
+### Notes
+
+- Extend the existing `/schedule` route (Story 68) with prefix-match `/^\/schedule\/([^/]+)$/` for DELETE/PATCH/HEAD on individual rows.
+- Reuse the channel-side DB writes: `addScheduledTask`, `deleteTaskForGroup`, `pauseTask`, `resumeTask` (Stories 19/60/62) — these are direct DB writes; no IPC needed since `scheduled_tasks` is channel-side SQLite.
+- The `next_run` for new rows comes from the same compute path the slash `/schedule add` uses (see `task-scheduler.ts` or `src/channel-runner.ts` schedule handler).
+- Strictly validate `schedule_type` (interval | cron | once) and the corresponding `schedule_expression` semantics (parse-validate via the same helper the slash command uses). Invalid → 400.
+- Update `CORS_PATH_METHODS['/schedule']: ['GET','HEAD','POST']` and add `'/schedule/'` prefix: `['DELETE','PATCH','HEAD']`. 405 `pathMethods` table.
+- LLM-dependence: **none**.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-schedule-write --create-namespace`, `--set namespace=kubeclaw-e2e-schedule-write`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14154`.
+
+status: drafted
+
+## Story 72: `GET /search?q=` HTTP endpoint for full-text history search
+
+**As a** KubeClaw user building a UI client or automation script
+**I want** `GET /search?q=<text>` to return matching conversation rows as JSON
+**So that** my UI can offer a search box without round-tripping through the `/search` slash command
+
+### Acceptance criteria
+
+1. Authenticated `GET /search?q=<text>` → HTTP 200 with `Content-Type: application/json` and a JSON array of `{ id, role, content, timestamp }` (or `created_at` per existing column name) for matching rows in the authenticated group, newest-first, default limit 20.
+2. `?limit=N` honored, capped at 100. `?q=` (empty) → 400 `{ error: "q required" }`. Missing `q` → 400.
+3. Unauthenticated → 401.
+4. `POST /search` → 405 with `Allow: GET, HEAD`. `HEAD /search?q=X` → same headers as GET, no body.
+5. Unit test: stub the search function returning 2 rows; assert JSON has both ids in newest-first order.
+
+### Notes
+
+- Add `/search` route to `src/channels/http.ts`. Reuse the FTS helper that the `/search` slash command uses (look up in `src/runtime/search-command.ts` or `src/db.ts`).
+- Group scope is mandatory — the SQL helper MUST take a group_folder parameter.
+- Strictly validate `q` is a non-empty string of reasonable length (cap, e.g. 500 chars). If too long → 400.
+- Cap `limit` via Number.isFinite + Math.min.
+- Update `CORS_PATH_METHODS['/search']: ['GET', 'HEAD']` and the 405 `pathMethods` table.
+- LLM-dependence: **none**.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-search-http --create-namespace`, `--set namespace=kubeclaw-e2e-search-http`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14155`.
+
+status: drafted
+
+## Story 73: `GET /secrets` and `DELETE /secrets/<type>` and `GET /secrets/catalog`
+
+**As a** KubeClaw operator
+**I want** REST endpoints to list and revoke group credentials, and to read the credential catalog
+**So that** I can audit and rotate credentials from a script without a chat session
+
+### Acceptance criteria
+
+1. Authenticated `GET /secrets` → HTTP 200 JSON array of `{ type, fields_present: [<fieldName>...] }` for the authenticated group. The actual secret VALUES are NEVER returned — only the type/field names. Empty array when none provisioned.
+2. `DELETE /secrets/<type>` for own group → 204. The orchestrator removes the underlying K8s secret via `secret.remove` IPC. Unknown/cross-group type → 404 (identical wording).
+3. `GET /secrets/catalog` → 200 JSON array describing available secret types (from `catalog.list` IPC), each `{ type, required_fields, optional_fields, description }`. Unauthenticated → 401.
+4. `POST /secrets` → 405 with `Allow: GET, HEAD`. `POST /secrets/<type>` → 405 with `Allow: DELETE, HEAD`. (Creating secrets via REST is OUT OF SCOPE for this story — `/secret set` slash command remains the only set path because it requires multi-field interactive input.)
+5. Unit test: stub the `secret.list` IPC reply returning 2 types; assert the JSON response contains both with `fields_present` correctly populated.
+
+### Notes
+
+- Add `/secrets` and `/secrets/<type>` routes to `src/channels/http.ts`.
+- Reuse IPC verbs from `src/k8s/ipc-redis.ts`: `secret.list`, `secret.remove`, `catalog.list`. The channel side already has helpers in `src/channel-runner.ts` for the slash `/secret` command — port the IPC request/reply pattern (similar to Story 69's `killJobFn` default).
+- **CRITICAL SECURITY**: NEVER expose secret values in the response. Only `type` and `fields_present` (the keys present, not the values). If the IPC reply includes values, scrub them BEFORE returning.
+- Update `CORS_PATH_METHODS`: `/secrets`: `['GET','HEAD']`, `/secrets/`: `['DELETE','HEAD']`, `/secrets/catalog`: `['GET','HEAD']`. 405 `pathMethods`.
+- LLM-dependence: **none**.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-secrets-http --create-namespace`, `--set namespace=kubeclaw-e2e-secrets-http`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14156`.
+
+status: drafted
