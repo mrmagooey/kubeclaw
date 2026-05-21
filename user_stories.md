@@ -1268,7 +1268,7 @@ status: drafted
 - LLM-dependence: **none**.
 - No e2e cluster setup needed — this is a unit/integration coverage story only.
 
-status: drafted
+status: passing 5/5
 
 ## Story 52: `GET /export` downloads full conversation history as NDJSON
 
@@ -1291,7 +1291,7 @@ status: drafted
 - LLM-dependence: **none**.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-export --create-namespace`, `--set namespace=kubeclaw-e2e-export`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14135`.
 
-status: drafted
+status: passing 5/5
 
 ## Story 53: Non-slash messages preceding a slash command are not silently dropped
 
@@ -1314,7 +1314,7 @@ status: drafted
 - LLM-dependence: ACs 2, 3, 4, 5 **none**. AC1 partially.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-msg-batch --create-namespace`, `--set namespace=kubeclaw-e2e-msg-batch`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14136`.
 
-status: drafted
+status: passing 5/5
 
 ## Story 54: `/capabilities tools <type>` lists MCP tools exposed by a provisioned capability
 
@@ -1338,7 +1338,7 @@ status: drafted
 - LLM-dependence: **none**.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-cap-tools --create-namespace`, `--set namespace=kubeclaw-e2e-cap-tools`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14137`.
 
-status: drafted
+status: passing 5/5
 
 ## Story 55: Old tool-job records are pruned after a configurable retention window
 
@@ -1362,4 +1362,4 @@ status: drafted
 - LLM-dependence: **none**.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-job-prune --create-namespace`, `--set namespace=kubeclaw-e2e-job-prune`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14138`.
 
-status: drafted
+status: passing 5/5
