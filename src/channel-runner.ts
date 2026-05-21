@@ -33,6 +33,7 @@ import {
   deleteCapability,
   getAllCapabilities,
 } from './capabilities/db.js';
+import type { GroupMcpEntry } from './capabilities/types.js';
 import {
   appendConversationMessage,
   createTask,
@@ -194,6 +195,11 @@ export async function handleCapabilitiesUpdate(
     const groupTemplates = capabilities.filter(
       (c) => c.kind === 'mcp-group',
     ) as Array<any>;
+    // Update the local group-capability map so /capabilities tools can query it.
+    _groupCapabilityEntries.clear();
+    for (const entry of groupTemplates as GroupMcpEntry[]) {
+      _groupCapabilityEntries.set(entry.name, entry);
+    }
     await getDirectLLMRunner().configureMcp(mcpServers);
     if (groupTemplates.length > 0) {
       await getDirectLLMRunner().configureGroupMcpTemplates(groupTemplates);
@@ -425,6 +431,11 @@ if (!KUBECLAW_CHANNEL) {
 // ── Health server state ───────────────────────────────────────────────────────
 let channelConnected = false;
 let channelReconnecting = false;
+
+// ── Per-group capability entries (populated by handleCapabilitiesUpdate) ──────
+// Keyed by capability name. Populated each time a capabilities_update arrives.
+// Exported for test injection.
+export const _groupCapabilityEntries: Map<string, GroupMcpEntry> = new Map();
 
 /**
  * Build the shutdown handler for the channel runner.
@@ -1506,6 +1517,7 @@ const CAPABILITIES_HELP = [
   '  /capabilities add <type>      — provision a per-group capability',
   '  /capabilities list            — list active capabilities for this group',
   '  /capabilities remove <type>   — remove a per-group capability',
+  '  /capabilities tools <type>    — list MCP tools exposed by a provisioned per-group capability',
   '  /capabilities help',
 ].join('\n');
 
@@ -1667,6 +1679,34 @@ export async function handleCapabilitiesCommand(
       return {
         reply: `Removed — capability '${capabilityType}' has been deleted for this group.`,
       };
+    }
+
+    case 'tools': {
+      const type = parts[2];
+      if (!type) {
+        return { reply: 'Usage: /capabilities tools <type>\n\n' + CAPABILITIES_HELP };
+      }
+      const entry = _groupCapabilityEntries.get(type);
+      if (!entry) {
+        return { reply: `Capability '${type}' is not provisioned for this group.` };
+      }
+      if (entry.state === 'pending-schema') {
+        return { reply: `Capability '${type}' is provisioned but schema not yet available, try again in a few seconds.` };
+      }
+      if (entry.state === 'failed') {
+        return { reply: `Capability '${type}' schema scrape failed: ${entry.error ?? 'unknown error'}.` };
+      }
+      const schemas = entry.toolSchemas;
+      if (!schemas || schemas.length === 0) {
+        return { reply: `Capability '${type}' has no tools registered.` };
+      }
+      const lines = schemas.map((t) => {
+        const desc = t.description
+          ? t.description.slice(0, 80) + (t.description.length > 80 ? '…' : '')
+          : '(no description)';
+        return `  ${t.name} — ${desc}`;
+      });
+      return { reply: `Tools for '${type}':\n${lines.join('\n')}` };
     }
 
     default:

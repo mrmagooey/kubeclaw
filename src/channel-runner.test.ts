@@ -144,6 +144,7 @@ import {
   registerCredentialTools,
   isCapabilitiesCommand,
   handleCapabilitiesCommand,
+  _groupCapabilityEntries,
   isScheduleCommand,
   parseScheduleAddCommand,
   handleScheduleCommand,
@@ -152,6 +153,7 @@ import {
   type CapabilityIpcFn,
   type ScheduleAddCommand,
 } from './channel-runner.js';
+import type { GroupMcpEntry } from './capabilities/types.js';
 import type { CatalogEntry } from './credential-broker/resolver.js';
 import { buildCredentialSystemBlock } from './tools/list-credentials.js';
 import type { CredentialEntry } from './tools/list-credentials.js';
@@ -2872,6 +2874,111 @@ describe('handleJobsCommand — stubbed DB', () => {
 
     handleJobsCommand(GROUP_FOLDER);
     expect(getRecentSpy).toHaveBeenCalledWith(GROUP_FOLDER, 5);
+  });
+});
+
+// ── /capabilities tools command unit tests (Story 54) ────────────────────────
+
+const CAP_GROUP = 'http-http-alice';
+const noOpIpc = vi.fn() as unknown as CapabilityIpcFn;
+
+describe('isCapabilitiesCommand — tools variant', () => {
+  it('returns true for /capabilities tools <type>', () => {
+    expect(isCapabilitiesCommand('/capabilities tools echo')).toBe(true);
+  });
+});
+
+describe('handleCapabilitiesCommand — /capabilities tools', () => {
+  beforeEach(() => {
+    _groupCapabilityEntries.clear();
+  });
+
+  it('AC4: /capabilities tools (no type) → usage help, no crash', async () => {
+    const result = await handleCapabilitiesCommand(CAP_GROUP, '/capabilities tools', noOpIpc);
+    expect(result.reply).toMatch(/Usage:/i);
+    expect(result.reply).toContain('/capabilities tools <type>');
+  });
+
+  it('AC5 (unit): two tool schemas → reply contains both tool names', async () => {
+    const echoEntry: GroupMcpEntry = {
+      name: 'echo',
+      kind: 'mcp-group',
+      state: 'ready',
+      toolSchemas: [
+        { name: 'echo_text', description: 'Echoes the input text back unchanged', inputSchema: {} },
+        { name: 'echo_json', description: 'Echoes a JSON object back', inputSchema: {} },
+      ],
+    };
+    _groupCapabilityEntries.set('echo', echoEntry);
+    const result = await handleCapabilitiesCommand(CAP_GROUP, '/capabilities tools echo', noOpIpc);
+    expect(result.reply).toContain('echo_text');
+    expect(result.reply).toContain('echo_json');
+  });
+
+  it('AC2: not provisioned → reply contains "not provisioned"', async () => {
+    const result = await handleCapabilitiesCommand(
+      CAP_GROUP,
+      '/capabilities tools nonexistent',
+      noOpIpc,
+    );
+    expect(result.reply).toMatch(/not provisioned/i);
+  });
+
+  it('AC3: provisioned but schema pending → reply contains "schema not yet available"', async () => {
+    const pendingEntry: GroupMcpEntry = {
+      name: 'echo',
+      kind: 'mcp-group',
+      state: 'pending-schema',
+    };
+    _groupCapabilityEntries.set('echo', pendingEntry);
+    const result = await handleCapabilitiesCommand(
+      CAP_GROUP,
+      '/capabilities tools echo',
+      noOpIpc,
+    );
+    expect(result.reply).toMatch(/schema not yet available/i);
+  });
+
+  it('truncates long descriptions to 80 characters', async () => {
+    const longDesc = 'A'.repeat(120);
+    const echoEntry: GroupMcpEntry = {
+      name: 'echo',
+      kind: 'mcp-group',
+      state: 'ready',
+      toolSchemas: [
+        { name: 'my_tool', description: longDesc, inputSchema: {} },
+      ],
+    };
+    _groupCapabilityEntries.set('echo', echoEntry);
+    const result = await handleCapabilitiesCommand(
+      CAP_GROUP,
+      '/capabilities tools echo',
+      noOpIpc,
+    );
+    expect(result.reply).toContain('my_tool');
+    expect(result.reply).not.toContain(longDesc);
+    expect(result.reply).toContain('…');
+  });
+});
+
+describe('handleCapabilitiesCommand — help and fallback (Story 54)', () => {
+  beforeEach(() => {
+    _groupCapabilityEntries.clear();
+  });
+
+  it('returns CAPABILITIES_HELP including tools line for /capabilities help', async () => {
+    const result = await handleCapabilitiesCommand(CAP_GROUP, '/capabilities help', noOpIpc);
+    expect(result.reply).toContain('/capabilities tools <type>');
+  });
+
+  it('returns CAPABILITIES_HELP including tools line for /capabilities with no verb', async () => {
+    const result = await handleCapabilitiesCommand(CAP_GROUP, '/capabilities', noOpIpc);
+    expect(result.reply).toContain('/capabilities tools <type>');
+  });
+
+  it('returns unknown subcommand message for unrecognised verb', async () => {
+    const result = await handleCapabilitiesCommand(CAP_GROUP, '/capabilities foo', noOpIpc);
+    expect(result.reply).toMatch(/Unknown subcommand/i);
   });
 });
 
