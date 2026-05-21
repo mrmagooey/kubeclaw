@@ -35,6 +35,7 @@ import {
 } from './capabilities/db.js';
 import type { GroupMcpEntry } from './capabilities/types.js';
 import type { CapabilityEntry } from './channels/http.js';
+import { configureHttpSecretIpc } from './channels/http.js';
 import { listInstances } from './per-group-capabilities/db.js';
 import {
   appendConversationMessage,
@@ -3043,6 +3044,47 @@ async function main(): Promise<void> {
   loadState();
   await loadChannelPlugins('/workspace/plugins');
   registerCredentialTools(getDirectLLMRunner());
+
+  // Wire IPC-backed callbacks into the HTTP channel's /secrets REST endpoints.
+  // Must run before the channel factory is invoked so the module-level fns are set.
+  configureHttpSecretIpc(
+    async (group) => {
+      const ipc = buildCredentialIpcClient();
+      const res = await ipc('secret.list', { group });
+      if (!res.ok) return [];
+      const raw = res.result as Array<{ catalogId: string; registeredAt: string; fields_present?: string[] }>;
+      return (raw ?? []).map((e) => ({
+        type: e.catalogId,
+        fields_present: e.fields_present ?? [],
+      }));
+    },
+    async (group, type) => {
+      // First check if the secret exists for this group
+      const listIpc = buildCredentialIpcClient();
+      const listRes = await listIpc('secret.list', { group });
+      if (!listRes.ok) return 'not_found';
+      const entries = listRes.result as Array<{ catalogId: string }>;
+      const exists = (entries ?? []).some((e) => e.catalogId === type);
+      if (!exists) return 'not_found';
+
+      const ipc = buildCredentialIpcClient();
+      const res = await ipc('secret.remove', { group, catalogId: type });
+      if (!res.ok) return 'not_found';
+      return 'ok';
+    },
+    async () => {
+      const ipc = buildCredentialIpcClient();
+      const res = await ipc('catalog.list', {});
+      if (!res.ok) return [];
+      const catalog = res.result as CatalogEntry[];
+      return (catalog ?? []).map((e) => ({
+        type: e.id,
+        required_fields: e.credentialFields.map((f) => f.name),
+        optional_fields: [],
+        description: e.host ?? '',
+      }));
+    },
+  );
 
   const shutdown = _buildShutdown(channelMetricsServer, queue, channels);
   process.on('SIGTERM', () => shutdown('SIGTERM'));

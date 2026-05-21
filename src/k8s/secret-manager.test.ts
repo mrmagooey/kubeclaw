@@ -145,9 +145,30 @@ catalog:
 
     const list = await mgr.listGroupSecrets('family');
     expect(list).toEqual([
-      { catalogId: 'replicate', registeredAt: '2026-05-16T10:00:00Z' },
+      { catalogId: 'replicate', registeredAt: '2026-05-16T10:00:00Z', fields_present: ['token'] },
     ]);
     expect(JSON.stringify(list)).not.toContain('r8_secret');
+  });
+
+  it('listGroupSecrets: values never leak — only field key names returned', async () => {
+    mockK8s.readSecret.mockResolvedValue({
+      data: {
+        replicate: Buffer.from(
+          JSON.stringify({
+            fields: {
+              token: { value: 'r8_secret_value', placeholder: 'KC_PH_token_abc' },
+            },
+            registeredAt: '2026-05-16T10:00:00Z',
+          }),
+        ).toString('base64'),
+      },
+    });
+
+    const list = await mgr.listGroupSecrets('family');
+    const serialized = JSON.stringify(list);
+    expect(serialized).not.toContain('r8_secret_value');
+    expect(serialized).not.toContain('KC_PH_token_abc');
+    expect(list[0].fields_present).toEqual(['token']);
   });
 
   describe('getGroupPlaceholders', () => {

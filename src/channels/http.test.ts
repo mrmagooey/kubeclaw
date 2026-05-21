@@ -3925,3 +3925,422 @@ describe('detectMediaType', () => {
     });
   });
 
+  // ── GET /secrets — list group secrets ─────────────────────────────────────
+
+  describe('GET /secrets', () => {
+    it('returns 401 when unauthenticated', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/secrets', auth: null });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(401);
+      await channel.disconnect();
+    });
+
+    it('returns 200 JSON array with type and fields_present for two types', async () => {
+      const listSecretsFn = vi.fn().mockResolvedValue([
+        { type: 'replicate', fields_present: ['token'] },
+        { type: 'openai', fields_present: ['api_key', 'org_id'] },
+      ]);
+      const channel = new HttpChannel(
+        makeConfig(),
+        makeOpts({ listSecretsFn }),
+      );
+      await channel.connect();
+
+      const req = makeReq({ url: '/secrets', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      expect(res._headers['Content-Type']).toBe('application/json');
+      const body = JSON.parse(res._body);
+      expect(body).toHaveLength(2);
+      expect(body[0]).toEqual({ type: 'replicate', fields_present: ['token'] });
+      expect(body[1]).toEqual({ type: 'openai', fields_present: ['api_key', 'org_id'] });
+      await channel.disconnect();
+    });
+
+    it('returns empty array when no secrets registered', async () => {
+      const listSecretsFn = vi.fn().mockResolvedValue([]);
+      const channel = new HttpChannel(
+        makeConfig(),
+        makeOpts({ listSecretsFn }),
+      );
+      await channel.connect();
+
+      const req = makeReq({ url: '/secrets', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      const body = JSON.parse(res._body);
+      expect(body).toEqual([]);
+      await channel.disconnect();
+    });
+
+    it('SECURITY: secret values in IPC reply are NEVER returned', async () => {
+      // Even if stub provides extra fields, they must be scrubbed
+      const listSecretsFn = vi.fn().mockResolvedValue([
+        {
+          type: 'replicate',
+          fields_present: ['token'],
+          // These extra fields must be scrubbed:
+          value: 'r8_secret_value',
+          token: 'r8_secret_value',
+          fields: { token: { value: 'r8_secret_value', placeholder: 'KC_PH_token_abc' } },
+        },
+      ]);
+      const channel = new HttpChannel(
+        makeConfig(),
+        makeOpts({ listSecretsFn }),
+      );
+      await channel.connect();
+
+      const req = makeReq({ url: '/secrets', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      const body = JSON.parse(res._body);
+      expect(JSON.stringify(body)).not.toContain('r8_secret_value');
+      expect(JSON.stringify(body)).not.toContain('KC_PH_token_abc');
+      // Only type and fields_present must be present
+      expect(body[0]).toEqual({ type: 'replicate', fields_present: ['token'] });
+      await channel.disconnect();
+    });
+
+    it('listSecretsFn is called with the authenticated user group folder', async () => {
+      const listSecretsFn = vi.fn().mockResolvedValue([]);
+      const channel = new HttpChannel(
+        makeConfig(),
+        makeOpts({ listSecretsFn }),
+      );
+      await channel.connect();
+
+      const req = makeReq({ url: '/secrets', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      // alice's folder is 'alice' per makeOpts()
+      expect(listSecretsFn).toHaveBeenCalledWith('alice');
+      await channel.disconnect();
+    });
+
+    it('returns 503 when listSecretsFn is not configured', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/secrets', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(503);
+      await channel.disconnect();
+    });
+
+    it('HEAD /secrets returns 200 without body', async () => {
+      const listSecretsFn = vi.fn().mockResolvedValue([]);
+      const channel = new HttpChannel(
+        makeConfig(),
+        makeOpts({ listSecretsFn }),
+      );
+      await channel.connect();
+
+      const req = makeReq({ url: '/secrets', method: 'HEAD', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      await channel.disconnect();
+    });
+
+    it('POST /secrets returns 405 with Allow: GET, HEAD', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/secrets', method: 'POST', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(405);
+      expect(res._headers['Allow']).toBe('GET, HEAD');
+      await channel.disconnect();
+    });
+  });
+
+  // ── DELETE /secrets/:type — remove a secret ───────────────────────────────
+
+  describe('DELETE /secrets/:type', () => {
+    it('returns 401 when unauthenticated', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/secrets/replicate', method: 'DELETE', auth: null });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(401);
+      await channel.disconnect();
+    });
+
+    it('returns 204 on successful delete', async () => {
+      const removeSecretFn = vi.fn().mockResolvedValue('ok');
+      const channel = new HttpChannel(
+        makeConfig(),
+        makeOpts({ removeSecretFn }),
+      );
+      await channel.connect();
+
+      const req = makeReq({
+        url: '/secrets/replicate',
+        method: 'DELETE',
+        auth: 'alice:secret',
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(204);
+      await channel.disconnect();
+    });
+
+    it('returns 404 for unknown type', async () => {
+      const removeSecretFn = vi.fn().mockResolvedValue('not_found');
+      const channel = new HttpChannel(
+        makeConfig(),
+        makeOpts({ removeSecretFn }),
+      );
+      await channel.connect();
+
+      const req = makeReq({
+        url: '/secrets/unknown-type',
+        method: 'DELETE',
+        auth: 'alice:secret',
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(404);
+      const body = JSON.parse(res._body);
+      expect(body.error).toBe('Not found');
+      await channel.disconnect();
+    });
+
+    it('returns 404 with identical wording for cross-group type (not_found)', async () => {
+      // Cross-group is treated as not_found — identical response
+      const removeSecretFn = vi.fn().mockResolvedValue('not_found');
+      const channel = new HttpChannel(
+        makeConfig(),
+        makeOpts({ removeSecretFn }),
+      );
+      await channel.connect();
+
+      const req = makeReq({
+        url: '/secrets/other-group-type',
+        method: 'DELETE',
+        auth: 'alice:secret',
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(404);
+      const body = JSON.parse(res._body);
+      expect(body.error).toBe('Not found');
+      await channel.disconnect();
+    });
+
+    it('removeSecretFn is called with the correct group folder and type', async () => {
+      const removeSecretFn = vi.fn().mockResolvedValue('ok');
+      const channel = new HttpChannel(
+        makeConfig(),
+        makeOpts({ removeSecretFn }),
+      );
+      await channel.connect();
+
+      const req = makeReq({
+        url: '/secrets/replicate',
+        method: 'DELETE',
+        auth: 'alice:secret',
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(removeSecretFn).toHaveBeenCalledWith('alice', 'replicate');
+      await channel.disconnect();
+    });
+
+    it('POST /secrets/:type returns 405 with Allow: DELETE, HEAD', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({
+        url: '/secrets/replicate',
+        method: 'POST',
+        auth: 'alice:secret',
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(405);
+      expect(res._headers['Allow']).toBe('DELETE, HEAD');
+      await channel.disconnect();
+    });
+
+    it('HEAD /secrets/:type returns 200 without body', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({
+        url: '/secrets/replicate',
+        method: 'HEAD',
+        auth: 'alice:secret',
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      await channel.disconnect();
+    });
+  });
+
+  // ── GET /secrets/catalog — credential catalog ─────────────────────────────
+
+  describe('GET /secrets/catalog', () => {
+    it('returns 401 when unauthenticated', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/secrets/catalog', auth: null });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(401);
+      await channel.disconnect();
+    });
+
+    it('returns 200 JSON array of catalog entries', async () => {
+      const listCatalogFn = vi.fn().mockResolvedValue([
+        {
+          type: 'replicate',
+          required_fields: ['token'],
+          optional_fields: [],
+          description: 'api.replicate.com',
+        },
+        {
+          type: 'jenkins',
+          required_fields: ['user', 'password'],
+          optional_fields: [],
+          description: 'jenkins.example.com',
+        },
+      ]);
+      const channel = new HttpChannel(
+        makeConfig(),
+        makeOpts({ listCatalogFn }),
+      );
+      await channel.connect();
+
+      const req = makeReq({ url: '/secrets/catalog', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      expect(res._headers['Content-Type']).toBe('application/json');
+      const body = JSON.parse(res._body);
+      expect(body).toHaveLength(2);
+      expect(body[0]).toEqual({
+        type: 'replicate',
+        required_fields: ['token'],
+        optional_fields: [],
+        description: 'api.replicate.com',
+      });
+      await channel.disconnect();
+    });
+
+    it('returns 503 when listCatalogFn is not configured', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/secrets/catalog', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(503);
+      await channel.disconnect();
+    });
+
+    it('HEAD /secrets/catalog returns 200 without body', async () => {
+      const listCatalogFn = vi.fn().mockResolvedValue([]);
+      const channel = new HttpChannel(
+        makeConfig(),
+        makeOpts({ listCatalogFn }),
+      );
+      await channel.connect();
+
+      const req = makeReq({
+        url: '/secrets/catalog',
+        method: 'HEAD',
+        auth: 'alice:secret',
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      await channel.disconnect();
+    });
+
+    it('POST /secrets/catalog returns 405 with Allow: GET, HEAD', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({
+        url: '/secrets/catalog',
+        method: 'POST',
+        auth: 'alice:secret',
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(405);
+      expect(res._headers['Allow']).toBe('GET, HEAD');
+      await channel.disconnect();
+    });
+
+    it('SECURITY: catalog response does not expose secret values', async () => {
+      const listCatalogFn = vi.fn().mockResolvedValue([
+        {
+          type: 'replicate',
+          required_fields: ['token'],
+          optional_fields: [],
+          description: 'api.replicate.com',
+          // These extra fields must be scrubbed
+          secretValues: { token: 'r8_actual_secret' },
+          internalData: 'some_internal',
+        },
+      ]);
+      const channel = new HttpChannel(
+        makeConfig(),
+        makeOpts({ listCatalogFn }),
+      );
+      await channel.connect();
+
+      const req = makeReq({ url: '/secrets/catalog', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      const body = JSON.parse(res._body);
+      expect(JSON.stringify(body)).not.toContain('r8_actual_secret');
+      expect(JSON.stringify(body)).not.toContain('some_internal');
+      expect(body[0]).toEqual({
+        type: 'replicate',
+        required_fields: ['token'],
+        optional_fields: [],
+        description: 'api.replicate.com',
+      });
+      await channel.disconnect();
+    });
+  });
+

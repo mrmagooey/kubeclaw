@@ -62,6 +62,42 @@ export interface ReadyzBody {
   };
 }
 
+/** Shape of one entry from secret.list IPC reply (scrubbed — no values). */
+export interface SecretListEntry {
+  type: string;
+  fields_present: string[];
+}
+
+/** Shape of one catalog entry from catalog.list IPC reply. */
+export interface CatalogListEntry {
+  type: string;
+  required_fields: string[];
+  optional_fields: string[];
+  description: string;
+}
+
+/**
+ * Returns the list of registered secrets for a group.
+ * SECURITY: must never return secret values — only type + field names.
+ */
+export type ListSecretsFn = (
+  group: string,
+) => Promise<SecretListEntry[]>;
+
+/**
+ * Removes a registered secret by type for a group.
+ * Resolves to 'ok' on success, 'not_found' if unknown type.
+ */
+export type RemoveSecretFn = (
+  group: string,
+  type: string,
+) => Promise<'ok' | 'not_found'>;
+
+/**
+ * Returns the credential catalog entries (no secret values).
+ */
+export type ListCatalogFn = () => Promise<CatalogListEntry[]>;
+
 export interface HttpChannelOpts {
   onMessage: OnInboundMessage;
   onChatMetadata: OnChatMetadata;
@@ -94,6 +130,12 @@ export interface HttpChannelOpts {
     jobId: string,
     groupFolder: string,
   ) => Promise<{ ok: boolean; status?: string; currentStatus?: string; error?: string }>;
+  /** Injectable for listing group secrets. Defaults to IPC-backed implementation. */
+  listSecretsFn?: ListSecretsFn;
+  /** Injectable for removing a group secret. Defaults to IPC-backed implementation. */
+  removeSecretFn?: RemoveSecretFn;
+  /** Injectable for listing catalog entries. Defaults to IPC-backed implementation. */
+  listCatalogFn?: ListCatalogFn;
 }
 
 interface HttpConfig {
@@ -722,6 +764,9 @@ export class HttpChannel implements Channel {
     '/schedule': ['GET', 'HEAD'],
     '/capabilities': ['GET', 'HEAD'],
     '/search': ['GET', 'HEAD'],
+    '/secrets': ['GET', 'HEAD'],
+    '/secrets/': ['DELETE', 'HEAD'], // prefix — dynamic types
+    '/secrets/catalog': ['GET', 'HEAD'],
   };
 
   private async handleRequest(
@@ -756,6 +801,9 @@ export class HttpChannel implements Channel {
       }
       if (!allowedMethods && /^\/jobs\/[^/]+$/.test(url.pathname)) {
         allowedMethods = HttpChannel.CORS_PATH_METHODS['/jobs/'];
+      }
+      if (!allowedMethods && /^\/secrets\/[^/]+$/.test(url.pathname) && url.pathname !== '/secrets/catalog') {
+        allowedMethods = HttpChannel.CORS_PATH_METHODS['/secrets/'];
       }
 
       const methodsList = allowedMethods
@@ -1827,6 +1875,88 @@ export class HttpChannel implements Channel {
       return;
     }
 
+    // ── GET /secrets/catalog — credential catalog (no auth values) ───────────
+    if (url.pathname === '/secrets/catalog') {
+      if (req.method !== 'GET' && req.method !== 'HEAD') {
+        res.writeHead(405, this.addCorsHeaders({
+          Allow: 'GET, HEAD',
+          'Content-Type': 'text/plain',
+        }));
+        res.end('Method Not Allowed');
+        return;
+      }
+      const username = this.authenticate(req);
+      if (!username) {
+        this.sendUnauthorized(res);
+        return;
+      }
+      if (req.method === 'HEAD') {
+        res.writeHead(200, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+        res.end();
+        return;
+      }
+      void this.handleGetCatalog(res);
+      return;
+    }
+
+    // ── /secrets/<type> — per-type operations ────────────────────────────────
+    const secretTypeMatch = url.pathname.match(/^\/secrets\/([^/]+)$/);
+    if (secretTypeMatch) {
+      if (req.method !== 'DELETE' && req.method !== 'HEAD') {
+        res.writeHead(405, this.addCorsHeaders({
+          Allow: 'DELETE, HEAD',
+          'Content-Type': 'text/plain',
+        }));
+        res.end('Method Not Allowed');
+        return;
+      }
+      const username = this.authenticate(req);
+      if (!username) {
+        this.sendUnauthorized(res);
+        return;
+      }
+      const secretType = secretTypeMatch[1];
+      const jid = `http:${username}`;
+      const group = this.opts.registeredGroups()[jid];
+      const groupFolder = group?.folder ?? jid;
+
+      if (req.method === 'HEAD') {
+        res.writeHead(200, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+        res.end();
+        return;
+      }
+      void this.handleDeleteSecret(groupFolder, secretType, res);
+      return;
+    }
+
+    // ── GET /secrets — list group secrets (no values exposed) ────────────────
+    if (url.pathname === '/secrets') {
+      if (req.method !== 'GET' && req.method !== 'HEAD') {
+        res.writeHead(405, this.addCorsHeaders({
+          Allow: 'GET, HEAD',
+          'Content-Type': 'text/plain',
+        }));
+        res.end('Method Not Allowed');
+        return;
+      }
+      const username = this.authenticate(req);
+      if (!username) {
+        this.sendUnauthorized(res);
+        return;
+      }
+      const jid = `http:${username}`;
+      const group = this.opts.registeredGroups()[jid];
+      const groupFolder = group?.folder ?? jid;
+
+      if (req.method === 'HEAD') {
+        res.writeHead(200, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+        res.end();
+        return;
+      }
+      void this.handleListSecrets(groupFolder, res);
+      return;
+    }
+
     // Per RFC 9110: known paths reached with an unsupported method → 405 + Allow
     const pathMethods: Record<string, string[]> = {
       '/': ['GET'],
@@ -1843,6 +1973,8 @@ export class HttpChannel implements Channel {
       '/schedule': ['GET', 'HEAD'],
       '/capabilities': ['GET', 'HEAD'],
       '/search': ['GET', 'HEAD'],
+      '/secrets': ['GET', 'HEAD'],
+      '/secrets/catalog': ['GET', 'HEAD'],
     };
     const allowed = pathMethods[url.pathname];
     if (allowed && !allowed.includes(req.method ?? '')) {
@@ -1900,6 +2032,93 @@ export class HttpChannel implements Channel {
 
     logger.info({ jid }, 'HTTP message stored');
     return msgId;
+  }
+
+  /** Handle GET /secrets — list secrets for authenticated user's group. */
+  private async handleListSecrets(
+    groupFolder: string,
+    res: ServerResponse,
+  ): Promise<void> {
+    const fn = this.opts.listSecretsFn;
+    if (!fn) {
+      res.writeHead(503, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+      res.end(JSON.stringify({ error: 'Secret IPC not configured' }));
+      return;
+    }
+    try {
+      const entries = await fn(groupFolder);
+      // SECURITY: scrub any accidental value fields — only type and fields_present
+      const safe = entries.map((e) => ({
+        type: String(e.type),
+        fields_present: Array.isArray(e.fields_present)
+          ? e.fields_present.map(String)
+          : [],
+      }));
+      res.writeHead(200, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+      res.end(JSON.stringify(safe));
+    } catch (err) {
+      logger.error({ err, groupFolder }, 'GET /secrets failed');
+      res.writeHead(500, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+      res.end(JSON.stringify({ error: 'Internal error' }));
+    }
+  }
+
+  /** Handle DELETE /secrets/:type — remove a secret for authenticated user's group. */
+  private async handleDeleteSecret(
+    groupFolder: string,
+    secretType: string,
+    res: ServerResponse,
+  ): Promise<void> {
+    const fn = this.opts.removeSecretFn;
+    if (!fn) {
+      res.writeHead(503, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+      res.end(JSON.stringify({ error: 'Secret IPC not configured' }));
+      return;
+    }
+    try {
+      const result = await fn(groupFolder, secretType);
+      if (result === 'not_found') {
+        res.writeHead(404, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+        res.end(JSON.stringify({ error: 'Not found' }));
+        return;
+      }
+      res.writeHead(204, this.addCorsHeaders({}));
+      res.end();
+    } catch (err) {
+      logger.error({ err, groupFolder, secretType }, 'DELETE /secrets/:type failed');
+      res.writeHead(500, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+      res.end(JSON.stringify({ error: 'Internal error' }));
+    }
+  }
+
+  /** Handle GET /secrets/catalog — return catalog entries (no secret values). */
+  private async handleGetCatalog(res: ServerResponse): Promise<void> {
+    const fn = this.opts.listCatalogFn;
+    if (!fn) {
+      res.writeHead(503, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+      res.end(JSON.stringify({ error: 'Catalog IPC not configured' }));
+      return;
+    }
+    try {
+      const entries = await fn();
+      // SECURITY: scrub to only the documented fields — no spread
+      const safe = entries.map((e) => ({
+        type: String(e.type),
+        required_fields: Array.isArray(e.required_fields)
+          ? e.required_fields.map(String)
+          : [],
+        optional_fields: Array.isArray(e.optional_fields)
+          ? e.optional_fields.map(String)
+          : [],
+        description: String(e.description ?? ''),
+      }));
+      res.writeHead(200, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+      res.end(JSON.stringify(safe));
+    } catch (err) {
+      logger.error({ err }, 'GET /secrets/catalog failed');
+      res.writeHead(500, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+      res.end(JSON.stringify({ error: 'Internal error' }));
+    }
   }
 
   private sendSse(username: string, eventType: string, data: string): void {
@@ -2107,10 +2326,37 @@ function parseConfig(): HttpConfig | null {
   };
 }
 
+// ── Module-level IPC callbacks for /secrets routes ───────────────────────────
+// Set once at startup by channel-runner.ts via configureHttpSecretIpc().
+// Using module-level state (same pattern as registerSecretDeps in ipc-redis.ts)
+// avoids circular imports while keeping the factory function simple.
+let _listSecretsFn: ListSecretsFn | undefined;
+let _removeSecretFn: RemoveSecretFn | undefined;
+let _listCatalogFn: ListCatalogFn | undefined;
+
+/**
+ * Wire up IPC-backed callbacks for the /secrets REST endpoints.
+ * Called once at startup by channel-runner.ts before the channel connects.
+ */
+export function configureHttpSecretIpc(
+  listSecretsFn: ListSecretsFn,
+  removeSecretFn: RemoveSecretFn,
+  listCatalogFn: ListCatalogFn,
+): void {
+  _listSecretsFn = listSecretsFn;
+  _removeSecretFn = removeSecretFn;
+  _listCatalogFn = listCatalogFn;
+}
+
 registerChannel('http', (opts: ChannelOpts) => {
   const config = parseConfig();
   if (!config) return null;
   // Cast to HttpChannelOpts so optional extras (e.g. getCapabilities) passed
   // in by channel-runner are forwarded to the channel.
-  return new HttpChannel(config, opts as HttpChannelOpts);
+  return new HttpChannel(config, {
+    ...(opts as HttpChannelOpts),
+    listSecretsFn: _listSecretsFn,
+    removeSecretFn: _removeSecretFn,
+    listCatalogFn: _listCatalogFn,
+  });
 });

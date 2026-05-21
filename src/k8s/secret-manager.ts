@@ -128,7 +128,7 @@ export class SecretManager {
 
   async listGroupSecrets(
     group: string,
-  ): Promise<Array<{ catalogId: string; registeredAt: string }>> {
+  ): Promise<Array<{ catalogId: string; registeredAt: string; fields_present: string[] }>> {
     let secret: { data?: Record<string, string> };
     try {
       secret = await this.opts.k8s.readSecret(this.secretName(group));
@@ -150,7 +150,9 @@ export class SecretManager {
       const blob: CredentialBlob = JSON.parse(
         Buffer.from(b64, 'base64').toString('utf8'),
       );
-      return { catalogId, registeredAt: blob.registeredAt };
+      // Return field names (keys) only — NEVER return values or placeholders
+      const fields_present = Object.keys(blob.fields);
+      return { catalogId, registeredAt: blob.registeredAt, fields_present };
     });
   }
 
