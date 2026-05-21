@@ -1405,6 +1405,34 @@ export function recordSpecialistUsage(args: {
   saveDatabase();
 }
 
+export interface SpecialistUsageRow {
+  specialistName: string;
+  usedAt: number;
+  durationMs: number | null;
+  status: 'success' | 'error';
+}
+
+export function getSpecialistUsage(
+  groupFolder: string,
+  limit: number,
+): SpecialistUsageRow[] {
+  const result = db.exec(
+    `SELECT specialist_name, used_at, duration_ms, status
+     FROM specialist_usage
+     WHERE group_folder = ?
+     ORDER BY used_at DESC
+     LIMIT ?`,
+    [groupFolder, limit],
+  );
+  if (!result.length || !result[0].values.length) return [];
+  return result[0].values.map((row) => ({
+    specialistName: row[0] as string,
+    usedAt: row[1] as number,
+    durationMs: row[2] as number | null,
+    status: row[3] as 'success' | 'error',
+  }));
+}
+
 export function appendConversationHistory(args: AppendConversationArgs): void {
   const id =
     args.groupFolder +

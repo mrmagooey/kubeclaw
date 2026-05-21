@@ -53,6 +53,8 @@ import {
   resolveToolJob,
   getActiveToolJobs,
   pruneOldToolJobs,
+  recordSpecialistUsage,
+  getSpecialistUsage,
 } from './db.js';
 import { JobACL } from './types.js';
 
@@ -2294,5 +2296,87 @@ describe('deleteMessageById', () => {
     const after = getConversationHistory('grp-multi');
     expect(after).toHaveLength(2);
     expect(after.map((m) => m.content)).toEqual(['first', 'third']);
+  });
+});
+
+// ─── getSpecialistUsage ───────────────────────────────────────────────────────
+
+describe('getSpecialistUsage', () => {
+  it('returns empty array when no rows exist for group', () => {
+    const rows = getSpecialistUsage('group-empty', 10);
+    expect(rows).toEqual([]);
+  });
+
+  it('returns rows newest-first with correct shape', () => {
+    db.run(
+      `INSERT INTO specialist_usage (group_folder, specialist_name, used_at, duration_ms, status) VALUES (?, ?, ?, ?, ?)`,
+      ['g-history', 'alpha', 1000, 100, 'success'],
+    );
+    db.run(
+      `INSERT INTO specialist_usage (group_folder, specialist_name, used_at, duration_ms, status) VALUES (?, ?, ?, ?, ?)`,
+      ['g-history', 'beta', 2000, 200, 'error'],
+    );
+    db.run(
+      `INSERT INTO specialist_usage (group_folder, specialist_name, used_at, duration_ms, status) VALUES (?, ?, ?, ?, ?)`,
+      ['g-history', 'gamma', 3000, 300, 'success'],
+    );
+
+    const rows = getSpecialistUsage('g-history', 10);
+    expect(rows).toHaveLength(3);
+    // newest-first
+    expect(rows[0].specialistName).toBe('gamma');
+    expect(rows[1].specialistName).toBe('beta');
+    expect(rows[2].specialistName).toBe('alpha');
+    expect(rows[0].status).toBe('success');
+    expect(rows[1].status).toBe('error');
+    expect(rows[0].durationMs).toBe(300);
+    expect(rows[0].usedAt).toBe(3000);
+  });
+
+  it('respects the limit parameter', () => {
+    for (let i = 1; i <= 5; i++) {
+      db.run(
+        `INSERT INTO specialist_usage (group_folder, specialist_name, used_at, duration_ms, status) VALUES (?, ?, ?, ?, ?)`,
+        ['g-limit', `spec${i}`, i * 1000, 50, 'success'],
+      );
+    }
+
+    const rows = getSpecialistUsage('g-limit', 3);
+    expect(rows).toHaveLength(3);
+    expect(rows[0].specialistName).toBe('spec5');
+    expect(rows[2].specialistName).toBe('spec3');
+  });
+
+  it('is group-scoped: does not return rows from other groups', () => {
+    db.run(
+      `INSERT INTO specialist_usage (group_folder, specialist_name, used_at, duration_ms, status) VALUES (?, ?, ?, ?, ?)`,
+      ['group-a', 'alpha', 1000, 100, 'success'],
+    );
+    db.run(
+      `INSERT INTO specialist_usage (group_folder, specialist_name, used_at, duration_ms, status) VALUES (?, ?, ?, ?, ?)`,
+      ['group-b', 'beta', 2000, 200, 'success'],
+    );
+
+    const rowsA = getSpecialistUsage('group-a', 10);
+    expect(rowsA).toHaveLength(1);
+    expect(rowsA[0].specialistName).toBe('alpha');
+
+    const rowsB = getSpecialistUsage('group-b', 10);
+    expect(rowsB).toHaveLength(1);
+    expect(rowsB[0].specialistName).toBe('beta');
+  });
+
+  it('recordSpecialistUsage inserts a readable row', () => {
+    recordSpecialistUsage({
+      groupFolder: 'g-record',
+      specialistName: 'echo',
+      durationMs: 42,
+      status: 'success',
+    });
+    const rows = getSpecialistUsage('g-record', 10);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].specialistName).toBe('echo');
+    expect(rows[0].durationMs).toBe(42);
+    expect(rows[0].status).toBe('success');
   });
 });

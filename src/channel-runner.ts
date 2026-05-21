@@ -53,6 +53,7 @@ import {
   initDatabase,
   pruneOldToolJobs,
   recordSpecialistUsage,
+  getSpecialistUsage,
   setRegisteredGroup,
   setRouterState,
   setSession,
@@ -1459,6 +1460,16 @@ export async function handleMemoryCommand(
 
 // ── /specialists command ──────────────────────────────────────────────────────
 
+const MAX_SPECIALISTS_HISTORY_LIMIT = 100;
+const DEFAULT_SPECIALISTS_HISTORY_LIMIT = 10;
+
+const SPECIALISTS_HELP = [
+  'Specialist commands:',
+  '  /specialists list              — list all configured specialists',
+  '  /specialists history [limit]   — list last N specialist invocations (default 10)',
+  '  /specialists help',
+].join('\n');
+
 /**
  * Return true if the message is a `/specialists` slash command.
  */
@@ -1466,44 +1477,78 @@ export function isSpecialistsCommand(message: string): boolean {
   return /^\/specialists(\s|$)/i.test(message.trim());
 }
 
+function formatSpecialistsHistory(rows: ReturnType<typeof getSpecialistUsage>): string {
+  if (rows.length === 0) return 'No specialist history for this group.';
+  return rows
+    .map((r) => {
+      const tag = r.status === 'success' ? '[ok]' : '[error]';
+      const dur = r.durationMs != null ? `${r.durationMs}ms` : '?ms';
+      const d = new Date(r.usedAt);
+      const hh = String(d.getUTCHours()).padStart(2, '0');
+      const mm = String(d.getUTCMinutes()).padStart(2, '0');
+      return `${tag} @${r.specialistName} (${dur}) ${hh}:${mm}Z`;
+    })
+    .join('\n');
+}
+
 /**
- * Handle a `/specialists` command. Reads from the channel's in-process catalog
- * (no IPC round-trip) and returns a formatted plain-text reply.
+ * Handle a `/specialists` command.
  *
  * Sub-commands:
- *   /specialists list — list all specialists (name + truncated description)
- *   anything else     — usage hint
+ *   /specialists list              — list all specialists (name + truncated description)
+ *   /specialists history [limit]   — show last N specialist invocations from DB
+ *   /specialists help              — show help
+ *   anything else                  — usage hint
  */
 export function handleSpecialistsCommand(
+  groupFolder: string,
   message: string,
-  catalog: Pick<SpecialistCatalogLoader, 'getAll'>,
+  deps: {
+    catalog: Pick<SpecialistCatalogLoader, 'getAll'>;
+    getSpecialistUsage: typeof getSpecialistUsage;
+  },
 ): string {
-  const trimmed = message.trim();
-  const subCommand = trimmed
-    .replace(/^\/specialists\s*/i, '')
-    .trim()
-    .toLowerCase();
+  const parts = message.trim().split(/\s+/);
+  const verb = parts[1];
 
-  if (subCommand !== 'list') {
-    return 'Usage: /specialists list';
+  switch (verb) {
+    case 'list': {
+      const specialists = deps.catalog.getAll();
+      if (specialists.length === 0) {
+        return 'No specialists configured';
+      }
+      const lines = specialists.map((s) => {
+        // Iterate code points so we don't split a surrogate pair (and produce a
+        // mojibake U+FFFD) on emoji-containing prompts.
+        const codepoints = [...s.prompt];
+        const desc =
+          codepoints.length > 80
+            ? codepoints.slice(0, 80).join('') + '…'
+            : s.prompt;
+        return `@${s.name} — ${desc}`;
+      });
+      return lines.join('\n');
+    }
+
+    case 'history': {
+      const rawLimit = parts[2];
+      let limit = DEFAULT_SPECIALISTS_HISTORY_LIMIT;
+      if (rawLimit !== undefined) {
+        const parsed = parseInt(rawLimit, 10);
+        if (!Number.isNaN(parsed) && parsed > 0) limit = parsed;
+        limit = Math.min(limit, MAX_SPECIALISTS_HISTORY_LIMIT);
+      }
+      const rows = deps.getSpecialistUsage(groupFolder, limit);
+      return formatSpecialistsHistory(rows);
+    }
+
+    case undefined:
+    case 'help':
+      return SPECIALISTS_HELP;
+
+    default:
+      return `Unknown subcommand: ${verb}\n\n${SPECIALISTS_HELP}`;
   }
-
-  const specialists = catalog.getAll();
-  if (specialists.length === 0) {
-    return 'No specialists configured';
-  }
-
-  const lines = specialists.map((s) => {
-    // Iterate code points so we don't split a surrogate pair (and produce a
-    // mojibake U+FFFD) on emoji-containing prompts.
-    const codepoints = [...s.prompt];
-    const desc =
-      codepoints.length > 80
-        ? codepoints.slice(0, 80).join('') + '…'
-        : s.prompt;
-    return `@${s.name} — ${desc}`;
-  });
-  return lines.join('\n');
 }
 
 // ── /capabilities command ─────────────────────────────────────────────────────
@@ -2110,8 +2155,9 @@ export async function processGroupMessages(chatJid: string): Promise<boolean> {
     // /specialists command: reads from the channel's in-process catalog, no IPC.
     if (isSpecialistsCommand(content)) {
       const reply = handleSpecialistsCommand(
+        group.folder,
         content.trim(),
-        specialistCatalog,
+        { catalog: specialistCatalog, getSpecialistUsage },
       );
       lastAgentTimestamp[chatJid] = msg.timestamp;
       saveState();

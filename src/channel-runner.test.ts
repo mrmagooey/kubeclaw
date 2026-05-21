@@ -1977,18 +1977,24 @@ describe('handleSpecialistsCommand', () => {
   function makeCatalog(specialists: Array<{ name: string; prompt: string }>) {
     return { getAll: () => specialists };
   }
+  function makeDeps(specialists: Array<{ name: string; prompt: string }> = []) {
+    return {
+      catalog: makeCatalog(specialists),
+      getSpecialistUsage: vi.fn().mockReturnValue([]),
+    };
+  }
 
   it('returns "No specialists configured" when catalog is empty', () => {
-    const reply = handleSpecialistsCommand('/specialists list', makeCatalog([]));
+    const reply = handleSpecialistsCommand('g1', '/specialists list', makeDeps([]));
     expect(reply.toLowerCase()).toContain('no specialists configured');
   });
 
   it('lists each specialist as @Name — description', () => {
-    const catalog = makeCatalog([
+    const deps = makeDeps([
       { name: 'Researcher', prompt: 'Find and summarise information.' },
       { name: 'Coder', prompt: 'Write and review code.' },
     ]);
-    const reply = handleSpecialistsCommand('/specialists list', catalog);
+    const reply = handleSpecialistsCommand('g1', '/specialists list', deps);
     expect(reply).toContain('@Researcher');
     expect(reply).toContain('@Coder');
     expect(reply).toContain('Find and summarise information.');
@@ -1997,8 +2003,8 @@ describe('handleSpecialistsCommand', () => {
 
   it('truncates long prompts to 80 chars with ellipsis', () => {
     const longPrompt = 'A'.repeat(100);
-    const catalog = makeCatalog([{ name: 'Big', prompt: longPrompt }]);
-    const reply = handleSpecialistsCommand('/specialists list', catalog);
+    const deps = makeDeps([{ name: 'Big', prompt: longPrompt }]);
+    const reply = handleSpecialistsCommand('g1', '/specialists list', deps);
     // The displayed description should be truncated
     expect(reply).toContain('@Big');
     expect(reply).toContain('A'.repeat(80) + '…');
@@ -2007,27 +2013,166 @@ describe('handleSpecialistsCommand', () => {
 
   it('does not truncate prompts that are exactly 80 chars', () => {
     const prompt = 'B'.repeat(80);
-    const catalog = makeCatalog([{ name: 'Exact', prompt }]);
-    const reply = handleSpecialistsCommand('/specialists list', catalog);
+    const deps = makeDeps([{ name: 'Exact', prompt }]);
+    const reply = handleSpecialistsCommand('g1', '/specialists list', deps);
     expect(reply).toContain('B'.repeat(80));
     expect(reply).not.toContain('…');
   });
 
-  it('returns usage hint for unknown sub-command', () => {
-    const catalog = makeCatalog([{ name: 'A', prompt: 'do stuff' }]);
-    const reply = handleSpecialistsCommand('/specialists foobar', catalog);
-    expect(reply).toContain('Usage: /specialists list');
+  it('returns help for unknown sub-command', () => {
+    const deps = makeDeps([{ name: 'A', prompt: 'do stuff' }]);
+    const reply = handleSpecialistsCommand('g1', '/specialists foobar', deps);
+    expect(reply).toContain('Unknown subcommand: foobar');
   });
 
-  it('returns usage hint for bare /specialists (no sub-command)', () => {
-    const catalog = makeCatalog([{ name: 'A', prompt: 'do stuff' }]);
-    const reply = handleSpecialistsCommand('/specialists', catalog);
-    expect(reply).toContain('Usage: /specialists list');
+  it('returns help for bare /specialists (no sub-command)', () => {
+    const deps = makeDeps([{ name: 'A', prompt: 'do stuff' }]);
+    const reply = handleSpecialistsCommand('g1', '/specialists', deps);
+    expect(reply).toContain('Specialist commands:');
   });
 
-  it('returns usage hint when catalog is empty and unknown sub-command given', () => {
-    const reply = handleSpecialistsCommand('/specialists bad', makeCatalog([]));
-    expect(reply).toContain('Usage: /specialists list');
+  it('returns help when unknown sub-command given', () => {
+    const reply = handleSpecialistsCommand('g1', '/specialists bad', makeDeps([]));
+    expect(reply).toContain('Unknown subcommand: bad');
+  });
+});
+
+// ── /specialists history unit tests ──────────────────────────────────────────
+
+describe('handleSpecialistsCommand — empty history', () => {
+  it('returns no-history message when no rows', () => {
+    const deps = {
+      catalog: { getAll: () => [] },
+      getSpecialistUsage: vi.fn().mockReturnValue([]),
+    };
+    const reply = handleSpecialistsCommand('g1', '/specialists history', deps);
+    expect(reply).toBe('No specialist history for this group.');
+  });
+});
+
+describe('handleSpecialistsCommand — formatting ok/error mix', () => {
+  it('formats rows newest-first with correct tags', () => {
+    const rows = [
+      { specialistName: 'gamma', usedAt: 1716249600000, durationMs: 300, status: 'success' as const },
+      { specialistName: 'beta', usedAt: 1716249500000, durationMs: 200, status: 'error' as const },
+      { specialistName: 'alpha', usedAt: 1716249400000, durationMs: 100, status: 'success' as const },
+    ];
+    const deps = {
+      catalog: { getAll: () => [] },
+      getSpecialistUsage: vi.fn().mockReturnValue(rows),
+    };
+    const reply = handleSpecialistsCommand('g1', '/specialists history', deps);
+
+    // All three names appear
+    expect(reply).toContain('@gamma');
+    expect(reply).toContain('@beta');
+    expect(reply).toContain('@alpha');
+    // Correct status tags
+    const lines = reply.split('\n');
+    expect(lines[0]).toMatch(/^\[ok\]/);
+    expect(lines[1]).toMatch(/^\[error\]/);
+    expect(lines[2]).toMatch(/^\[ok\]/);
+    // Duration in ms
+    expect(lines[0]).toContain('300ms');
+    // Time in HH:MMZ
+    expect(lines[0]).toMatch(/\d{2}:\d{2}Z$/);
+  });
+});
+
+describe('handleSpecialistsCommand — limit parsing', () => {
+  it('defaults to 10 when no limit arg', () => {
+    const deps = {
+      catalog: { getAll: () => [] },
+      getSpecialistUsage: vi.fn().mockReturnValue([]),
+    };
+    handleSpecialistsCommand('g1', '/specialists history', deps);
+    expect(deps.getSpecialistUsage).toHaveBeenCalledWith('g1', 10);
+  });
+
+  it('uses numeric limit arg', () => {
+    const deps = {
+      catalog: { getAll: () => [] },
+      getSpecialistUsage: vi.fn().mockReturnValue([]),
+    };
+    handleSpecialistsCommand('g1', '/specialists history 5', deps);
+    expect(deps.getSpecialistUsage).toHaveBeenCalledWith('g1', 5);
+  });
+
+  it('falls back to 10 for limit=0', () => {
+    const deps = {
+      catalog: { getAll: () => [] },
+      getSpecialistUsage: vi.fn().mockReturnValue([]),
+    };
+    handleSpecialistsCommand('g1', '/specialists history 0', deps);
+    expect(deps.getSpecialistUsage).toHaveBeenCalledWith('g1', 10);
+  });
+
+  it('falls back to 10 for non-numeric limit', () => {
+    const deps = {
+      catalog: { getAll: () => [] },
+      getSpecialistUsage: vi.fn().mockReturnValue([]),
+    };
+    handleSpecialistsCommand('g1', '/specialists history abc', deps);
+    expect(deps.getSpecialistUsage).toHaveBeenCalledWith('g1', 10);
+  });
+
+  it('caps /specialists history limit at MAX_SPECIALISTS_HISTORY_LIMIT', () => {
+    const deps = {
+      catalog: { getAll: () => [] },
+      getSpecialistUsage: vi.fn().mockReturnValue([]),
+    };
+    handleSpecialistsCommand('g1', '/specialists history 99999', deps);
+    expect(deps.getSpecialistUsage).toHaveBeenCalledWith('g1', 100);
+  });
+});
+
+describe('handleSpecialistsCommand — help and unknown verb', () => {
+  it('returns help for no verb', () => {
+    const deps = {
+      catalog: { getAll: () => [] },
+      getSpecialistUsage: vi.fn().mockReturnValue([]),
+    };
+    const reply = handleSpecialistsCommand('g1', '/specialists', deps);
+    expect(reply).toContain('Specialist commands:');
+  });
+
+  it('returns help for /specialists help', () => {
+    const deps = {
+      catalog: { getAll: () => [] },
+      getSpecialistUsage: vi.fn().mockReturnValue([]),
+    };
+    const reply = handleSpecialistsCommand('g1', '/specialists help', deps);
+    expect(reply).toContain('Specialist commands:');
+  });
+
+  it('returns unknown subcommand error for unknown verb', () => {
+    const deps = {
+      catalog: { getAll: () => [] },
+      getSpecialistUsage: vi.fn().mockReturnValue([]),
+    };
+    const reply = handleSpecialistsCommand('g1', '/specialists foobar', deps);
+    expect(reply).toContain('Unknown subcommand: foobar');
+  });
+});
+
+describe('handleSpecialistsCommand — unit test: 3 rows newest-first (Story 58 AC5)', () => {
+  it('returns reply containing all 3 specialist names in newest-first order', () => {
+    const rows = [
+      { specialistName: 'newest', usedAt: 3000, durationMs: 300, status: 'success' as const },
+      { specialistName: 'middle', usedAt: 2000, durationMs: 200, status: 'error' as const },
+      { specialistName: 'oldest', usedAt: 1000, durationMs: 100, status: 'success' as const },
+    ];
+    const deps = {
+      catalog: { getAll: () => [] },
+      getSpecialistUsage: vi.fn().mockReturnValue(rows),
+    };
+    const reply = handleSpecialistsCommand('test-group', '/specialists history', deps);
+
+    const lines = reply.split('\n');
+    expect(lines).toHaveLength(3);
+    expect(lines[0]).toContain('@newest');
+    expect(lines[1]).toContain('@middle');
+    expect(lines[2]).toContain('@oldest');
   });
 });
 
@@ -2192,7 +2337,7 @@ describe('/specialists list dispatch via processGroupMessages', () => {
 
     expect(sendMessageSpy).toHaveBeenCalledOnce();
     const sentText: string = sendMessageSpy.mock.calls[0][1];
-    expect(sentText).toContain('Usage: /specialists list');
+    expect(sentText).toContain('Unknown subcommand: foobar');
     // No stack trace in the reply
     expect(sentText).not.toMatch(/Error:/);
     expect(sentText).not.toMatch(/at \w/);
