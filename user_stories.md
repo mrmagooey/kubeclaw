@@ -1363,3 +1363,77 @@ status: passing 5/5
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-job-prune --create-namespace`, `--set namespace=kubeclaw-e2e-job-prune`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14138`.
 
 status: passing 5/5
+
+## Story 56: `DELETE /history/:id` removes a single conversation message
+
+**As a** KubeClaw user via the HTTP channel
+**I want** to delete one specific message from my conversation history by id
+**So that** I can surgically remove a sensitive or erroneous message without nuking the entire group history
+
+### Acceptance criteria
+
+1. Authenticated `DELETE /history/<id>` with an id that exists in the user's group returns HTTP 204 (No Content); a subsequent `GET /history` does not include that id.
+2. `DELETE /history/<id>` for an id that belongs to a different group's user returns HTTP 403, and the row is NOT deleted.
+3. `DELETE /history/<id>` for a nonexistent id returns HTTP 404.
+4. Unauthenticated `DELETE /history/<id>` returns 401.
+5. `POST /history/<id>` returns 405 with `Allow: DELETE`.
+
+### Notes
+
+- Add a new route handler in `src/channels/http.ts` after the existing `DELETE /history` (full-clear) block. Match path with a regex or prefix check for `/history/<id>`.
+- Add `deleteMessageById(id: number, groupFolder: string): boolean` to `src/db.ts`. The `groupFolder` parameter is REQUIRED — the SQL must be `DELETE FROM conversation_history WHERE id = ? AND group_folder = ?` to prevent cross-group deletes.
+- Return-value contract: `true` if a row was deleted, `false` otherwise — channel uses this to choose between 204 and 404.
+- Update `CORS_PATH_METHODS` for the `/history/` prefix to include `DELETE`. Update the 405 `pathMethods` table.
+- LLM-dependence: **none**.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-history-delete-id --create-namespace`, `--set namespace=kubeclaw-e2e-history-delete-id`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14139`.
+
+status: drafted
+
+## Story 57: `GET /message/rate-limit` exposes remaining quota to clients
+
+**As a** KubeClaw user building a UI client
+**I want** to query my current per-user rate-limit quota without consuming a message slot
+**So that** the UI can show "N messages left this minute" and avoid speculative 429s
+
+### Acceptance criteria
+
+1. Authenticated `GET /message/rate-limit` with `perUserMessagesPerMinute=10` returns HTTP 200 with JSON `{ limit: 10, remaining: <0..10>, resetInSeconds: <0..60> }`. `remaining` reflects the current bucket contents WITHOUT decrementing it.
+2. After consuming 3 messages via `POST /message`, `GET /message/rate-limit` returns `remaining = 7` (and the next `POST /message` is still permitted).
+3. With `perUserMessagesPerMinute=0` (unlimited), the endpoint returns `{ limit: null, remaining: null, resetInSeconds: null }`.
+4. Unauthenticated `GET /message/rate-limit` returns 401.
+5. `POST /message/rate-limit` returns 405 with `Allow: GET, HEAD`. `HEAD /message/rate-limit` returns the same headers as GET with no body.
+
+### Notes
+
+- Add a `peekRateLimit(username): { remaining, resetInSeconds }` method to the rate-limit module (probably `src/rate-limit.ts` or wherever `consumeRateLimit` lives). It must NOT decrement the bucket; just inspect.
+- Add the `/message/rate-limit` route to `src/channels/http.ts` alongside `/message`. Wire to `peekRateLimit`.
+- Add to `CORS_PATH_METHODS` with `['GET', 'HEAD']`. Add to the 405 `pathMethods` table.
+- LLM-dependence: **none**.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-ratelimit-status --create-namespace`, `--set namespace=kubeclaw-e2e-ratelimit-status`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14140`.
+
+status: drafted
+
+## Story 58: `/specialists history` shows recent specialist invocations
+
+**As a** KubeClaw user
+**I want** `/specialists history` to list the last 10 specialist invocations in my group with status, name, duration, and timestamp
+**So that** I can see which specialists ran recently and whether any errored — observability the system already collects but never exposes
+
+### Acceptance criteria
+
+1. After invoking `@echo` twice (one success, one error) in a group, `/specialists history` returns a reply listing both invocations, newest-first, in format `[status] @<name> (<duration>ms) <HH:MM>Z`. Errors are tagged `[error]`, successes `[ok]`.
+2. With no specialist usage in the group, `/specialists history` returns "No specialist history for this group."
+3. Limit is 10 rows by default; older rows are not included.
+4. `/specialists history 5` (optional limit arg) returns at most 5 rows. `/specialists history 0` and `/specialists history abc` fall back to default 10.
+5. Unit test: stub `getSpecialistUsage` returning 3 rows; assert `handleSpecialistsCommand('/specialists history', deps)` returns a reply containing all 3 specialist names in newest-first order.
+
+### Notes
+
+- Add `getSpecialistUsage(groupFolder: string, limit: number): SpecialistUsageRow[]` to `src/db.ts`. SQL: `SELECT specialist_name, used_at, duration_ms, status FROM specialist_usage WHERE group_folder = ? ORDER BY used_at DESC LIMIT ?`. Return rows with fields: `specialistName`, `usedAt`, `durationMs`, `status`.
+- The `specialist_usage` table already exists and is written on every invocation — verify the column names match (or adapt).
+- Add a `'history'` case to the `switch(verb)` in `handleSpecialistsCommand` in `src/channel-runner.ts`. Sort rows newest-first, format as the spec describes.
+- Add `/specialists history [limit]` to SPECIALISTS_HELP and to HELP_TEXT.
+- LLM-dependence: **none**.
+- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-specialists-history --create-namespace`, `--set namespace=kubeclaw-e2e-specialists-history`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14141`.
+
+status: drafted
