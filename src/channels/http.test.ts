@@ -14,6 +14,7 @@ vi.mock('../db.js', () => {
     getMessageById: vi.fn(() => null),
     getRecentToolJobsForGroup: vi.fn(() => []),
     getActiveToolJobs: vi.fn(() => []),
+    getTasksForGroup: vi.fn(() => []),
     db: { exec: dbExec },
   };
 });
@@ -95,6 +96,7 @@ import {
   getMessageById,
   getRecentToolJobsForGroup,
   getActiveToolJobs,
+  getTasksForGroup,
 } from '../db.js';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -3271,6 +3273,196 @@ describe('detectMediaType', () => {
 
       expect(res._status).toBe(405);
       expect(res._headers['Allow']).toBe('GET, HEAD');
+      await channel.disconnect();
+    });
+  });
+
+// ── GET /schedule — scheduled task listing (Story 68) ────────────────────
+
+  describe('GET /schedule', () => {
+    const sampleTasks = [
+      {
+        id: 'task-active-001',
+        group_folder: 'alice',
+        chat_jid: 'http:alice',
+        prompt: 'Send daily digest',
+        schedule_type: 'cron' as const,
+        schedule_value: '0 9 * * *',
+        context_mode: 'isolated' as const,
+        next_run: '2024-06-02T09:00:00.000Z',
+        last_run: null,
+        last_result: null,
+        status: 'active' as const,
+        created_at: '2024-06-01T10:00:00.000Z',
+      },
+      {
+        id: 'task-paused-002',
+        group_folder: 'alice',
+        chat_jid: 'http:alice',
+        prompt: 'Weekly report',
+        schedule_type: 'cron' as const,
+        schedule_value: '0 8 * * 1',
+        context_mode: 'isolated' as const,
+        next_run: null,
+        last_run: null,
+        last_result: null,
+        status: 'paused' as const,
+        created_at: '2024-05-15T08:00:00.000Z',
+      },
+    ];
+
+    beforeEach(() => {
+      vi.mocked(getTasksForGroup).mockReset();
+      vi.mocked(getTasksForGroup).mockReturnValue(sampleTasks);
+    });
+
+    // AC1: authenticated GET → 200 JSON array with required fields
+    it('returns 200 JSON array for authenticated user', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/schedule', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      expect(res._headers['Content-Type']).toContain('application/json');
+      const parsed = JSON.parse(res._body);
+      expect(Array.isArray(parsed)).toBe(true);
+      await channel.disconnect();
+    });
+
+    // AC5: stub returns 2 tasks (1 active, 1 paused); assert JSON has both ids + correct status
+    it('returns both ids and correct status fields from stubbed getTasksForGroup', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/schedule', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      const parsed = JSON.parse(res._body) as Array<{ id: string; status: string }>;
+      expect(parsed).toHaveLength(2);
+      expect(parsed[0].id).toBe('task-active-001');
+      expect(parsed[0].status).toBe('active');
+      expect(parsed[1].id).toBe('task-paused-002');
+      expect(parsed[1].status).toBe('paused');
+      await channel.disconnect();
+    });
+
+    // AC1: response rows have the required shape
+    it('response rows include required fields: id, schedule_type, schedule_expression, prompt, status, next_run, created_at', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/schedule', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      const parsed = JSON.parse(res._body) as Array<Record<string, unknown>>;
+      expect(parsed).toHaveLength(2);
+      const row = parsed[0];
+      expect(row).toHaveProperty('id');
+      expect(row).toHaveProperty('schedule_type');
+      expect(row).toHaveProperty('schedule_expression');
+      expect(row).toHaveProperty('prompt');
+      expect(row).toHaveProperty('status');
+      expect(row).toHaveProperty('next_run');
+      expect(row).toHaveProperty('created_at');
+      // schedule_expression maps from schedule_value
+      expect(row.schedule_expression).toBe('0 9 * * *');
+      await channel.disconnect();
+    });
+
+    // AC2: ?status=active filters to active only
+    it('returns only active tasks for ?status=active', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/schedule?status=active', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      const parsed = JSON.parse(res._body) as Array<{ id: string; status: string }>;
+      expect(parsed).toHaveLength(1);
+      expect(parsed[0].id).toBe('task-active-001');
+      expect(parsed[0].status).toBe('active');
+      await channel.disconnect();
+    });
+
+    // AC2: ?status=paused filters to paused only
+    it('returns only paused tasks for ?status=paused', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/schedule?status=paused', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      const parsed = JSON.parse(res._body) as Array<{ id: string; status: string }>;
+      expect(parsed).toHaveLength(1);
+      expect(parsed[0].id).toBe('task-paused-002');
+      expect(parsed[0].status).toBe('paused');
+      await channel.disconnect();
+    });
+
+    // AC2: invalid status → 400
+    it('returns 400 for invalid status value', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/schedule?status=invalid', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(400);
+      const parsed = JSON.parse(res._body);
+      expect(parsed).toHaveProperty('error');
+      await channel.disconnect();
+    });
+
+    // AC3: unauthenticated → 401
+    it('returns 401 for unauthenticated request', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ url: '/schedule', auth: null });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(401);
+      await channel.disconnect();
+    });
+
+    // AC4: POST → 405 with Allow: GET, HEAD
+    it('returns 405 for POST /schedule with Allow: GET, HEAD header', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ method: 'POST', url: '/schedule', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(405);
+      expect(res._headers['Allow']).toBe('GET, HEAD');
+      await channel.disconnect();
+    });
+
+    // AC4: HEAD /schedule → same headers as GET, no body
+    it('returns 200 for HEAD /schedule with Content-Length set but no body', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({ method: 'HEAD', url: '/schedule', auth: 'alice:secret' });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      expect(res._headers['Content-Type']).toContain('application/json');
+      expect(res._headers['Content-Length']).toBeDefined();
+      expect(res._body).toBe('');
       await channel.disconnect();
     });
   });

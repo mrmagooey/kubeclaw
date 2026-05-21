@@ -25,6 +25,7 @@ import {
   getMessageById,
   getOutboundMessagesSince,
   getRecentToolJobsForGroup,
+  getTasksForGroup,
   storeMessageDirect,
 } from '../db.js';
 import { readEnvFile } from '../env.js';
@@ -658,6 +659,7 @@ export class HttpChannel implements Channel {
     '/attachments/raw/': ['GET', 'HEAD', 'DELETE'], // prefix — dynamic filenames
     '/export': ['GET', 'HEAD'],
     '/jobs': ['GET', 'HEAD'],
+    '/schedule': ['GET', 'HEAD'],
     '/capabilities': ['GET', 'HEAD'],
   };
 
@@ -1471,6 +1473,71 @@ export class HttpChannel implements Channel {
       return;
     }
 
+    // Story 68: GET /schedule — list scheduled tasks for the authenticated group
+    if (url.pathname === '/schedule') {
+      // Method check before auth so 405 is returned for unsupported methods
+      if (req.method !== 'GET' && req.method !== 'HEAD') {
+        res.writeHead(405, this.addCorsHeaders({
+          'Content-Type': 'text/plain',
+          Allow: 'GET, HEAD',
+        }));
+        res.end('Method Not Allowed');
+        return;
+      }
+
+      const username = this.authenticate(req);
+      if (!username) {
+        this.sendUnauthorized(res);
+        return;
+      }
+
+      // Validate status query param (must be 'active', 'paused', or absent)
+      const statusParam = url.searchParams.get('status');
+      if (statusParam !== null && statusParam !== 'active' && statusParam !== 'paused') {
+        res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+        res.end(JSON.stringify({ error: 'Invalid status parameter. Must be "active" or "paused".' }));
+        return;
+      }
+
+      const jid = `http:${username}`;
+      const group = this.opts.registeredGroups()[jid];
+      const groupFolder = group?.folder ?? jid;
+
+      let tasks = getTasksForGroup(groupFolder);
+
+      // Filter by status if provided
+      if (statusParam !== null) {
+        tasks = tasks.filter((t) => t.status === statusParam);
+      }
+
+      const payload = tasks.map((t) => ({
+        id: t.id,
+        schedule_type: t.schedule_type,
+        schedule_expression: t.schedule_value,
+        prompt: t.prompt,
+        status: t.status,
+        next_run: t.next_run,
+        created_at: t.created_at,
+      }));
+
+      const body = JSON.stringify(payload);
+      const headers = this.addCorsHeaders({
+        'Content-Type': 'application/json',
+        'Cache-Control': 'no-cache',
+        'Content-Length': String(Buffer.byteLength(body)),
+      });
+
+      if (req.method === 'HEAD') {
+        res.writeHead(200, headers);
+        res.end();
+        return;
+      }
+
+      res.writeHead(200, headers);
+      res.end(body);
+      return;
+    }
+
     // Story 70: GET /capabilities — list provisioned per-group capabilities
     if (url.pathname === '/capabilities') {
       // Method guard before auth so 405 is returned without leaking auth info
@@ -1528,6 +1595,7 @@ export class HttpChannel implements Channel {
       '/attachments/list': ['GET'],
       '/export': ['GET', 'HEAD'],
       '/jobs': ['GET', 'HEAD'],
+      '/schedule': ['GET', 'HEAD'],
       '/capabilities': ['GET', 'HEAD'],
     };
     const allowed = pathMethods[url.pathname];
