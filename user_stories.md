@@ -2085,7 +2085,7 @@ status: passing 5/5
 - LLM-dependence: **none**.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-audit-slash --create-namespace`, `--set namespace=kubeclaw-e2e-audit-slash`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14166`.
 
-status: drafted
+status: passing 5/5
 
 ## Story 84: `edited_at` timestamp on edited conversation messages
 
@@ -2113,4 +2113,4 @@ status: drafted
 - LLM-dependence: **none**.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-history-edited-at --create-namespace`, `--set namespace=kubeclaw-e2e-history-edited-at`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14167`.
 
-status: drafted
+status: passing 5/5
