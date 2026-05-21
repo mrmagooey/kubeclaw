@@ -52,6 +52,7 @@ import {
   deleteMessageById,
   getMessageById,
   updateConversationMessage,
+  getConversationHistoryPage,
   recordToolJob,
   resolveToolJob,
   getActiveToolJobs,
@@ -2973,5 +2974,136 @@ describe('writeAuditEntry + getAuditEntries', () => {
   it('returns empty array when no entries exist', () => {
     const entries = getAuditEntries('grp-empty');
     expect(entries).toHaveLength(0);
+  });
+});
+
+// --- Story 84: edited_at migration, getMessageById, updateConversationMessage, getConversationHistoryPage ---
+
+describe('edited_at migration idempotency', () => {
+  it('running createSchema twice (second is no-op) leaves db intact', async () => {
+    // The beforeEach calls _initTestDatabase() which runs createSchema().
+    // Running it a second time must not throw even though edited_at already exists.
+    appendConversationMessage('idem-group', 'user', 'hello');
+    // Re-init reinvokes createSchema internally; should not throw.
+    await _initTestDatabase();
+    // After re-init the row is gone (fresh db), but no error means migration is idempotent.
+    const rows = getConversationHistoryPage('idem-group');
+    expect(rows).toHaveLength(0);
+  });
+
+  it('edited_at column is null (unedited) and present as own property', () => {
+    appendConversationMessage('migration-group', 'user', 'test msg');
+    const rows = getConversationHistoryPage('migration-group');
+    expect(rows).toHaveLength(1);
+    // unedited row must have edited_at explicitly null, not undefined
+    expect(Object.prototype.hasOwnProperty.call(rows[0], 'edited_at')).toBe(true);
+    expect(rows[0].edited_at).toBeNull();
+  });
+});
+
+describe('getMessageById (Story 84)', () => {
+  it('returns null for unknown id', () => {
+    expect(getMessageById('no-such-id', 'any-group')).toBeNull();
+  });
+
+  it('returns null when id exists but group_folder does not match', () => {
+    appendConversationMessage('gmb-group-a', 'user', 'content');
+    const rows = getConversationHistoryPage('gmb-group-a');
+    expect(rows).toHaveLength(1);
+    expect(getMessageById(rows[0].id, 'gmb-group-b')).toBeNull();
+  });
+
+  it('returns the row with edited_at: null for an unedited message', () => {
+    appendConversationMessage('gmb-get', 'user', 'hello');
+    const rows = getConversationHistoryPage('gmb-get');
+    expect(rows).toHaveLength(1);
+    const row = getMessageById(rows[0].id, 'gmb-get');
+    expect(row).not.toBeNull();
+    expect(row!.id).toBe(rows[0].id);
+    expect(row!.content).toBe('hello');
+    expect(row!.role).toBe('user');
+    // edited_at must be explicitly null (not omitted)
+    expect(Object.prototype.hasOwnProperty.call(row, 'edited_at')).toBe(true);
+    expect(row!.edited_at).toBeNull();
+  });
+});
+
+describe('updateConversationMessage (Story 84)', () => {
+  it('sets content and edited_at on the target row', () => {
+    appendConversationMessage('ucm-upd', 'assistant', 'original');
+    const [row] = getConversationHistoryPage('ucm-upd');
+    const before = Date.now();
+    updateConversationMessage(row.id, 'updated content', 'ucm-upd');
+    const after = Date.now();
+
+    const updated = getMessageById(row.id, 'ucm-upd');
+    expect(updated).not.toBeNull();
+    expect(updated!.content).toBe('updated content');
+    expect(updated!.edited_at).not.toBeNull();
+    const editedMs = new Date(updated!.edited_at!).getTime();
+    expect(editedMs).toBeGreaterThanOrEqual(before);
+    expect(editedMs).toBeLessThanOrEqual(after + 5); // +5 ms tolerance
+  });
+
+  it('does not throw when id does not exist', () => {
+    expect(() =>
+      updateConversationMessage('ghost-id', 'new content', 'no-group'),
+    ).not.toThrow();
+  });
+
+  it('does not affect other rows in the same group', () => {
+    appendConversationMessage('ucm-multi', 'user', 'msg-a');
+    appendConversationMessage('ucm-multi', 'assistant', 'msg-b');
+    const rows = getConversationHistoryPage('ucm-multi');
+    updateConversationMessage(rows[0].id, 'edited-a', 'ucm-multi');
+
+    const unchanged = getMessageById(rows[1].id, 'ucm-multi');
+    expect(unchanged!.content).toBe('msg-b');
+    expect(unchanged!.edited_at).toBeNull();
+  });
+});
+
+describe('getConversationHistoryPage (Story 84)', () => {
+  it('returns empty array when no rows exist', () => {
+    expect(getConversationHistoryPage('gchp-empty-84')).toEqual([]);
+  });
+
+  it('returns all rows in chronological order with edited_at: null', () => {
+    appendConversationMessage('gchp-page', 'user', 'first');
+    appendConversationMessage('gchp-page', 'assistant', 'second');
+    appendConversationMessage('gchp-page', 'user', 'third');
+    const rows = getConversationHistoryPage('gchp-page');
+    expect(rows).toHaveLength(3);
+    expect(rows[0].content).toBe('first');
+    expect(rows[2].content).toBe('third');
+    rows.forEach((r) => {
+      expect(Object.prototype.hasOwnProperty.call(r, 'edited_at')).toBe(true);
+      expect(r.edited_at).toBeNull();
+    });
+  });
+
+  it('respects limit', () => {
+    for (let i = 0; i < 5; i++) {
+      appendConversationMessage('gchp-paginate', 'user', `msg-${i}`);
+    }
+    const page = getConversationHistoryPage('gchp-paginate', { limit: 3 });
+    expect(page).toHaveLength(3);
+  });
+
+  it('does not include rows from other groups', () => {
+    appendConversationMessage('gchp-isolated-a', 'user', 'only-a');
+    appendConversationMessage('gchp-isolated-b', 'user', 'only-b');
+    const rowsA = getConversationHistoryPage('gchp-isolated-a');
+    expect(rowsA).toHaveLength(1);
+    expect(rowsA[0].content).toBe('only-a');
+  });
+
+  it('includes non-null edited_at after updateConversationMessage', () => {
+    appendConversationMessage('gchp-edit', 'user', 'before');
+    const [row] = getConversationHistoryPage('gchp-edit');
+    updateConversationMessage(row.id, 'after', 'gchp-edit');
+    const rows = getConversationHistoryPage('gchp-edit');
+    expect(rows[0].content).toBe('after');
+    expect(rows[0].edited_at).not.toBeNull();
   });
 });

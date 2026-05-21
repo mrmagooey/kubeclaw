@@ -221,6 +221,16 @@ function createSchema(database: SqlJsDatabase): void {
   } catch {
     /* column already exists */
   }
+
+  // Story 84: additive migration for edited_at — safe to run repeatedly.
+  try {
+    database.run(
+      `ALTER TABLE conversation_history ADD COLUMN edited_at TEXT`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
   database.run(
     `CREATE INDEX IF NOT EXISTS idx_conv_session_key ON conversation_history (session_key, created_at)`,
   );
@@ -1670,11 +1680,18 @@ export function deleteMessageById(id: string, groupFolder: string): boolean {
   return true;
 }
 
+/**
+ * A single row from conversation_history, including the optional edited_at
+ * timestamp added by Story 84. `edited_at` is explicitly `null` for unedited
+ * rows — it is never omitted from the returned object.
+ */
 export interface ConversationHistoryRow {
   id: string;
   role: 'user' | 'assistant';
   content: string;
   created_at: string;
+  /** ISO-8601 timestamp of last edit, or null for unedited rows. */
+  edited_at: string | null;
 }
 
 /**
@@ -1686,21 +1703,23 @@ export function getMessageById(
   groupFolder: string,
 ): ConversationHistoryRow | null {
   const result = db.exec(
-    `SELECT id, role, content, created_at FROM conversation_history WHERE id = ? AND group_folder = ? LIMIT 1`,
+    `SELECT id, role, content, created_at, edited_at FROM conversation_history WHERE id = ? AND group_folder = ? LIMIT 1`,
     [id, groupFolder],
   );
   if (result.length === 0 || result[0].values.length === 0) return null;
-  const [rowId, role, content, createdAt] = result[0].values[0] as [
+  const [rowId, role, content, createdAt, editedAt] = result[0].values[0] as [
     string,
     string,
     string,
     string,
+    string | null,
   ];
   return {
     id: rowId,
     role: role as 'user' | 'assistant',
     content,
     created_at: createdAt,
+    edited_at: editedAt ?? null,
   };
 }
 
@@ -1727,9 +1746,10 @@ export function updateConversationMessage(
       : 0;
   if (count === 0) return false;
 
+  const editedAt = new Date().toISOString();
   db.run(
-    `UPDATE conversation_history SET content = ? WHERE id = ? AND group_folder = ?`,
-    [content, id, groupFolder],
+    `UPDATE conversation_history SET content = ?, edited_at = ? WHERE id = ? AND group_folder = ?`,
+    [content, editedAt, id, groupFolder],
   );
   saveDatabase();
   return true;
@@ -2079,6 +2099,8 @@ export interface ConversationHistoryPageRow {
   role: 'user' | 'assistant';
   content: string;
   created_at: string;
+  /** ISO-8601 timestamp of last edit, or null for unedited rows. Story 84. */
+  edited_at: string | null;
 }
 
 /**
@@ -2112,7 +2134,7 @@ export function getConversationHistoryPage(
       const cursorCreatedAt = cursorResult[0].values[0][0] as string;
 
       const result = db.exec(
-        `SELECT id, role, content, created_at
+        `SELECT id, role, content, created_at, edited_at
          FROM conversation_history
          WHERE group_folder = ? AND (
            created_at < ? OR (created_at = ? AND id < ?)
@@ -2127,6 +2149,7 @@ export function getConversationHistoryPage(
         role: row[1] as 'user' | 'assistant',
         content: row[2] as string,
         created_at: row[3] as string,
+        edited_at: (row[4] as string | null) ?? null,
       }));
       // Return in chronological order (oldest first).
       rows.reverse();
@@ -2135,7 +2158,7 @@ export function getConversationHistoryPage(
 
     // No cursor: return `limit` most-recent rows in chronological order.
     const result = db.exec(
-      `SELECT id, role, content, created_at
+      `SELECT id, role, content, created_at, edited_at
        FROM conversation_history
        WHERE group_folder = ?
        ORDER BY created_at DESC, id DESC
@@ -2148,6 +2171,7 @@ export function getConversationHistoryPage(
       role: row[1] as 'user' | 'assistant',
       content: row[2] as string,
       created_at: row[3] as string,
+      edited_at: (row[4] as string | null) ?? null,
     }));
     rows.reverse();
     return rows;

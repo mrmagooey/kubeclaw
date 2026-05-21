@@ -15,6 +15,7 @@ vi.mock('../db.js', () => {
     deleteTaskForGroup: vi.fn(() => false),
     getAuditEntries: vi.fn(() => []),
     getConversationHistory: vi.fn(() => []),
+    getConversationHistoryPage: vi.fn(() => []),
     getMessageById: vi.fn(() => null),
     updateConversationMessage: vi.fn(() => false),
     getRecentToolJobsForGroup: vi.fn(() => []),
@@ -128,6 +129,7 @@ import {
   deleteTaskForGroup,
   getAuditEntries,
   getConversationHistory,
+  getConversationHistoryPage,
   getMessageById,
   updateConversationMessage,
   getRecentToolJobsForGroup,
@@ -141,6 +143,7 @@ import {
   searchConversations,
   writeAuditEntry,
 } from '../db.js';
+import type { ConversationHistoryRow } from '../db.js';
 import {
   listAcceptedSkills,
   listCandidates,
@@ -6932,3 +6935,199 @@ describe('detectMediaType', () => {
       await channel.disconnect();
     });
   });
+
+// ── Story 84: edited_at field on history routes ────────────────────────────
+
+function makeHistoryRow84(overrides?: Partial<ConversationHistoryRow>): ConversationHistoryRow {
+  return {
+    id: 'msg-1',
+    role: 'user',
+    content: 'hello',
+    created_at: '2026-01-01T00:00:00.000Z',
+    edited_at: null,
+    ...overrides,
+  };
+}
+
+describe('GET /history — edited_at (Story 84)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('returns paginated history with edited_at per row', async () => {
+    const rows = [
+      { id: 'msg-1', role: 'user' as const, content: 'first', created_at: '2026-01-01T00:00:00.000Z', edited_at: null },
+      { id: 'msg-2', role: 'user' as const, content: 'second', created_at: '2026-01-02T00:00:00.000Z', edited_at: '2026-01-02T00:00:00.000Z' },
+    ];
+    (getConversationHistoryPage as ReturnType<typeof vi.fn>).mockReturnValue(rows);
+
+    const channel = new HttpChannel(makeConfig(), makeOpts());
+    await channel.connect();
+    const req = makeReq({ url: '/history', auth: 'alice:secret' });
+    const res = makeRes();
+    await dispatch(channel, req, res);
+
+    expect(res._status).toBe(200);
+    const body = JSON.parse(res._body) as { messages: typeof rows };
+    expect(body.messages).toHaveLength(2);
+    expect(body.messages[0].edited_at).toBeNull();
+    expect(body.messages[1].edited_at).toBe('2026-01-02T00:00:00.000Z');
+    // Confirm null is serialised explicitly (not stripped)
+    expect(res._body).toContain('"edited_at":null');
+    await channel.disconnect();
+  });
+
+  it('returns 401 without auth', async () => {
+    const channel = new HttpChannel(makeConfig(), makeOpts());
+    await channel.connect();
+    const req = makeReq({ url: '/history', auth: null });
+    const res = makeRes();
+    await dispatch(channel, req, res);
+    expect(res._status).toBe(401);
+    await channel.disconnect();
+  });
+
+  it('returns 405 for non-GET method on /history', async () => {
+    const channel = new HttpChannel(makeConfig(), makeOpts());
+    await channel.connect();
+    const req = makeReq({ method: 'POST', url: '/history', auth: 'alice:secret', body: '{}' });
+    const res = makeRes();
+    await dispatch(channel, req, res);
+    expect(res._status).toBe(405);
+    await channel.disconnect();
+  });
+});
+
+describe('GET /history/:id — edited_at (Story 84)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('returns 200 with edited_at: null for unedited message', async () => {
+    const row = makeHistoryRow84({ edited_at: null });
+    (getMessageById as ReturnType<typeof vi.fn>).mockReturnValue(row);
+
+    const channel = new HttpChannel(makeConfig(), makeOpts());
+    await channel.connect();
+    const req = makeReq({ url: '/history/msg-1', auth: 'alice:secret' });
+    const res = makeRes();
+    await dispatch(channel, req, res);
+
+    expect(res._status).toBe(200);
+    const body = JSON.parse(res._body) as ConversationHistoryRow;
+    expect(body.edited_at).toBeNull();
+    // null must be explicit in JSON — not stripped
+    expect(res._body).toContain('"edited_at":null');
+    await channel.disconnect();
+  });
+
+  it('returns 404 when message not found', async () => {
+    (getMessageById as ReturnType<typeof vi.fn>).mockReturnValue(null);
+
+    const channel = new HttpChannel(makeConfig(), makeOpts());
+    await channel.connect();
+    const req = makeReq({ url: '/history/no-such-id', auth: 'alice:secret' });
+    const res = makeRes();
+    await dispatch(channel, req, res);
+
+    expect(res._status).toBe(404);
+    await channel.disconnect();
+  });
+});
+
+describe('PATCH /history/:id — edited_at (Story 84)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('returns 200 with edited_at set after successful PATCH', async () => {
+    const updated = makeHistoryRow84({ edited_at: '2026-05-21T10:00:00.000Z', content: 'edited' });
+    // The PATCH handler calls updateConversationMessage then getMessageById once.
+    (getMessageById as ReturnType<typeof vi.fn>).mockReturnValue(updated);
+    (updateConversationMessage as ReturnType<typeof vi.fn>).mockReturnValue(true);
+
+    const channel = new HttpChannel(makeConfig(), makeOpts());
+    await channel.connect();
+    const req = makeReq({
+      method: 'PATCH',
+      url: '/history/msg-1',
+      auth: 'alice:secret',
+      body: '{"content":"edited"}',
+    });
+    const res = makeRes();
+    await dispatch(channel, req, res);
+
+    expect(res._status).toBe(200);
+    expect(updateConversationMessage).toHaveBeenCalledWith('msg-1', 'edited', 'alice');
+    const body = JSON.parse(res._body) as ConversationHistoryRow;
+    expect(body.edited_at).toBe('2026-05-21T10:00:00.000Z');
+    expect(body.content).toBe('edited');
+    // edited_at must be a non-null ISO string in the JSON
+    expect(res._body).toContain('"edited_at":"2026-05-21T10:00:00.000Z"');
+    await channel.disconnect();
+  });
+
+  it('returns 400 when content is missing', async () => {
+    (getMessageById as ReturnType<typeof vi.fn>).mockReturnValue(makeHistoryRow84());
+
+    const channel = new HttpChannel(makeConfig(), makeOpts());
+    await channel.connect();
+    const req = makeReq({
+      method: 'PATCH',
+      url: '/history/msg-1',
+      auth: 'alice:secret',
+      body: '{}',
+    });
+    const res = makeRes();
+    await dispatch(channel, req, res);
+
+    expect(res._status).toBe(400);
+    await channel.disconnect();
+  });
+
+  it('returns 404 when message not found on PATCH', async () => {
+    // updateConversationMessage returns false → row not found
+    (updateConversationMessage as ReturnType<typeof vi.fn>).mockReturnValue(false);
+
+    const channel = new HttpChannel(makeConfig(), makeOpts());
+    await channel.connect();
+    const req = makeReq({
+      method: 'PATCH',
+      url: '/history/no-such',
+      auth: 'alice:secret',
+      body: '{"content":"new"}',
+    });
+    const res = makeRes();
+    await dispatch(channel, req, res);
+
+    expect(res._status).toBe(404);
+    await channel.disconnect();
+  });
+
+  it('returns 401 without auth on PATCH', async () => {
+    const channel = new HttpChannel(makeConfig(), makeOpts());
+    await channel.connect();
+    const req = makeReq({
+      method: 'PATCH',
+      url: '/history/msg-1',
+      auth: null,
+      body: '{"content":"x"}',
+    });
+    const res = makeRes();
+    await dispatch(channel, req, res);
+    expect(res._status).toBe(401);
+    await channel.disconnect();
+  });
+
+  it('returns 405 for unsupported method on /history/:id', async () => {
+    const channel = new HttpChannel(makeConfig(), makeOpts());
+    await channel.connect();
+    // PUT is not a permitted method on /history/:id (GET, HEAD, DELETE, PATCH are allowed)
+    const req = makeReq({ method: 'PUT', url: '/history/msg-1', auth: 'alice:secret' });
+    const res = makeRes();
+    await dispatch(channel, req, res);
+
+    expect(res._status).toBe(405);
+    await channel.disconnect();
+  });
+});
