@@ -2394,3 +2394,141 @@ export function pruneOldToolJobs(retentionDays: number): number {
 
   return deleted;
 }
+
+// --- Diagnostic Snapshot ---
+
+export interface DiagSnapshot {
+  conversation_history_rows: number | null;
+  scheduled_tasks_active: number | null;
+  tool_jobs_recent_24h: number | null;
+  attachment_count: number | null;
+  attachment_bytes: number | null;
+  db_size_bytes: number | null;
+  uptime_seconds: number;
+}
+
+/**
+ * Collect a synchronous diagnostic snapshot scoped to `groupFolder`.
+ *
+ * Each sub-read is wrapped in its own try/catch. A failing read sets that
+ * field to null and continues — the endpoint must NEVER 500 due to one
+ * missing table or file.
+ *
+ * @param groupFolder  The authenticated user's group folder (e.g. 'http-alice').
+ * @param storeDir     Path to the SQLite store directory (typically STORE_DIR).
+ *                     Injected here so tests can override it without touching
+ *                     the real filesystem.
+ * @param groupsDir    Path to the groups root directory (typically GROUPS_DIR).
+ *                     Injected here for testability.
+ */
+export function getDiagSnapshot(
+  groupFolder: string,
+  storeDir: string,
+  groupsDir?: string,
+): DiagSnapshot {
+  // 1. conversation_history_rows — group-scoped
+  let conversation_history_rows: number | null = null;
+  try {
+    const r = db.exec(
+      `SELECT COUNT(*) FROM conversation_history WHERE group_folder = ?`,
+      [groupFolder],
+    );
+    conversation_history_rows = r.length > 0
+      ? (r[0].values[0][0] as number)
+      : 0;
+  } catch {
+    /* table missing or other error → null */
+  }
+
+  // 2. scheduled_tasks_active — group-scoped, status='active' only
+  let scheduled_tasks_active: number | null = null;
+  try {
+    const r = db.exec(
+      `SELECT COUNT(*) FROM scheduled_tasks WHERE group_folder = ? AND status = 'active'`,
+      [groupFolder],
+    );
+    scheduled_tasks_active = r.length > 0
+      ? (r[0].values[0][0] as number)
+      : 0;
+  } catch {
+    /* table missing → null */
+  }
+
+  // 3. tool_jobs_recent_24h — group-scoped, last 24 h
+  let tool_jobs_recent_24h: number | null = null;
+  try {
+    const r = db.exec(
+      `SELECT COUNT(*) FROM tool_jobs WHERE group_folder = ? AND datetime(created_at) > datetime('now','-1 days')`,
+      [groupFolder],
+    );
+    tool_jobs_recent_24h = r.length > 0
+      ? (r[0].values[0][0] as number)
+      : 0;
+  } catch {
+    /* table missing → null */
+  }
+
+  // 4 & 5. attachment_count / attachment_bytes — fs.statSync walk of raw dir
+  let attachment_count: number | null = null;
+  let attachment_bytes: number | null = null;
+
+  try {
+    // Use injected groupsDir if provided, otherwise derive from GROUPS_DIR config.
+    const resolvedGroupsDir = groupsDir ?? path.join(path.dirname(storeDir), 'groups');
+    const attachDir = path.join(resolvedGroupsDir, groupFolder, 'attachments', 'raw');
+    const entries = fs.readdirSync(attachDir);
+    let count = 0;
+    let bytes = 0;
+    for (const entry of entries) {
+      try {
+        const stat = fs.statSync(path.join(attachDir, entry));
+        if (stat.isFile()) {
+          count++;
+          bytes += stat.size;
+        }
+      } catch {
+        /* skip unreadable entry */
+      }
+    }
+    attachment_count = count;
+    attachment_bytes = bytes;
+  } catch {
+    /* dir missing or not readable → null */
+  }
+
+  // 6. db_size_bytes — pod-global, stat the SQLite file
+  let db_size_bytes: number | null = null;
+  try {
+    // Channel pods use messages-<channel>.db; orchestrator uses messages.db.
+    // We try the channel-specific name first, then fall back.
+    const channelName = process.env.KUBECLAW_CHANNEL;
+    const dbFile = channelName
+      ? path.join(storeDir, `messages-${channelName}.db`)
+      : path.join(storeDir, 'messages.db');
+
+    // Try channel-specific first, fall back to generic
+    if (channelName && fs.existsSync(dbFile)) {
+      db_size_bytes = fs.statSync(dbFile).size;
+    } else {
+      const fallback = path.join(storeDir, 'messages.db');
+      if (fs.existsSync(fallback)) {
+        db_size_bytes = fs.statSync(fallback).size;
+      }
+    }
+  } catch {
+    /* file missing → null */
+  }
+
+  // 7. uptime_seconds — pod-global
+  const uptime_seconds = Math.floor(process.uptime());
+
+  return {
+    conversation_history_rows,
+    scheduled_tasks_active,
+    tool_jobs_recent_24h,
+    attachment_count,
+    attachment_bytes,
+    db_size_bytes,
+    uptime_seconds,
+  };
+}

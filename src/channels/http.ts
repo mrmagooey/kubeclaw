@@ -14,6 +14,7 @@ import {
   ASSISTANT_NAME,
   GROUPS_DIR,
   RATE_LIMIT_WINDOW_MS,
+  STORE_DIR,
   TIMEZONE,
   TOOL_JOBS_RETENTION_DAYS,
 } from '../config.js';
@@ -28,6 +29,7 @@ import {
   getAllConversationHistory,
   getActiveToolJobs,
   getConversationHistoryPage,
+  getDiagSnapshot,
   getMessageById,
   getOutboundMessagesSince,
   getRecentToolJobsForGroup,
@@ -807,6 +809,7 @@ export class HttpChannel implements Channel {
     '/memory': ['GET', 'HEAD', 'PUT', 'PATCH'],
     '/skills': ['GET', 'HEAD'],
     '/skills/': ['POST'], // prefix — candidates/<id>/accept|reject
+    '/diag': ['GET', 'HEAD'],
   };
 
   private async handleRequest(
@@ -2472,6 +2475,47 @@ export class HttpChannel implements Channel {
       return;
     }
 
+    // ── GET/HEAD /diag — operational snapshot (auth required) ────────────────
+    if (url.pathname === '/diag') {
+      if (req.method !== 'GET' && req.method !== 'HEAD') {
+        res.writeHead(405, this.addCorsHeaders({
+          Allow: 'GET, HEAD',
+          'Content-Type': 'text/plain',
+        }));
+        res.end('Method Not Allowed');
+        return;
+      }
+
+      const username = this.authenticate(req);
+      if (!username) {
+        this.sendUnauthorized(res);
+        return;
+      }
+
+      // Derive the group folder for the authenticated user.
+      // JID is http:<username>; folder is derived by the channel runner on
+      // registration (jidToFolder), but for the diag endpoint we look up the
+      // registered group so we use the correct folder even when the JID mapping
+      // is non-trivial.
+      const jid = `http:${username}`;
+      const group = this.opts.registeredGroups()[jid];
+      const groupFolder = group?.folder ?? `http-${username}`;
+
+      const snap = getDiagSnapshot(groupFolder, STORE_DIR, GROUPS_DIR);
+      const body = JSON.stringify(snap);
+
+      res.writeHead(200, this.addCorsHeaders({
+        'Content-Type': 'application/json',
+        'Content-Length': String(Buffer.byteLength(body)),
+      }));
+      if (req.method === 'GET') {
+        res.end(body);
+      } else {
+        res.end(); // HEAD: headers only
+      }
+      return;
+    }
+
     // Per RFC 9110: known paths reached with an unsupported method → 405 + Allow
     const pathMethods: Record<string, string[]> = {
       '/': ['GET'],
@@ -2493,6 +2537,7 @@ export class HttpChannel implements Channel {
       '/secrets/catalog': ['GET', 'HEAD'],
       '/memory': ['GET', 'HEAD', 'PUT', 'PATCH'],
       '/skills': ['GET', 'HEAD'],
+      '/diag': ['GET', 'HEAD'],
     };
     const allowed = pathMethods[url.pathname];
     if (allowed && !allowed.includes(req.method ?? '')) {
