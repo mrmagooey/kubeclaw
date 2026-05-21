@@ -1590,6 +1590,46 @@ export function clearConversationHistory(groupFolder: string): void {
   saveDatabase();
 }
 
+/**
+ * Story 78: Delete conversation history rows older than `before` for a given
+ * group folder.  Returns the number of rows deleted.
+ *
+ * `created_at` is stored as ISO-8601 TEXT, so lexicographic comparison is
+ * equivalent to chronological comparison.
+ *
+ * SQL uses `group_folder = ?` for cross-group isolation.
+ */
+export function deleteConversationHistoryBefore(
+  groupFolder: string,
+  before: Date,
+): number {
+  const beforeIso = before.toISOString();
+  // Count matching rows first (sql.js does not expose affected-row count).
+  const countResult = db.exec(
+    `SELECT COUNT(*) FROM conversation_history WHERE group_folder = ? AND created_at < ?`,
+    [groupFolder, beforeIso],
+  );
+  const count =
+    countResult.length > 0
+      ? (countResult[0].values[0][0] as number)
+      : 0;
+  if (count === 0) return 0;
+
+  db.run('BEGIN');
+  try {
+    db.run(
+      `DELETE FROM conversation_history WHERE group_folder = ? AND created_at < ?`,
+      [groupFolder, beforeIso],
+    );
+    db.run('COMMIT');
+  } catch (err) {
+    db.run('ROLLBACK');
+    throw err;
+  }
+  saveDatabase();
+  return count;
+}
+
 export function deleteMessageById(id: string, groupFolder: string): boolean {
   // Count rows before — sql.js does not expose getChanges() / affected rows.
   const before = db.exec(

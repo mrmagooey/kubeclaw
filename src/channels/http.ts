@@ -21,6 +21,7 @@ import {
   appendConversationMessage,
   clearConversationHistory,
   createTask,
+  deleteConversationHistoryBefore,
   db,
   deleteMessageById,
   deleteTaskForGroup,
@@ -1454,6 +1455,33 @@ export class HttpChannel implements Channel {
         res.end(JSON.stringify({ error: 'Group not found' }));
         return;
       }
+
+      const beforeParam = url.searchParams.get('before');
+      if (beforeParam !== null) {
+        // Story 78: time-bounded purge
+        const d = new Date(beforeParam);
+        if (!Number.isFinite(d.getTime())) {
+          res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+          res.end(
+            JSON.stringify({
+              error: 'before must be a valid ISO-8601 timestamp',
+            }),
+          );
+          return;
+        }
+        try {
+          const deleted = deleteConversationHistoryBefore(group.folder, d);
+          res.writeHead(200, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+          res.end(JSON.stringify({ deleted }));
+        } catch (err) {
+          logger.error({ err, jid }, 'DELETE /history?before= failed');
+          res.writeHead(500, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+          res.end(JSON.stringify({ error: 'Internal server error' }));
+        }
+        return;
+      }
+
+      // Story 26 full-clear (no ?before param)
       try {
         clearConversationHistory(group.folder);
         res.writeHead(204, this.addCorsHeaders({}));

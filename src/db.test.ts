@@ -62,6 +62,7 @@ import {
   getTaskRunLogs,
   pauseTask,
   resumeTask,
+  deleteConversationHistoryBefore,
 } from './db.js';
 import { JobACL } from './types.js';
 
@@ -2690,5 +2691,117 @@ describe('resumeTask', () => {
     const unknownResult = resumeTask('totally-unknown', 'grp-attacker');
     expect(crossResult).toBe(unknownResult);
     expect(crossResult).toBe(false);
+  });
+});
+
+// --- deleteConversationHistoryBefore (Story 78) ---
+
+describe('deleteConversationHistoryBefore', () => {
+  it('AC5: deletes rows older than threshold, keeps newer row', () => {
+    const now = Date.now();
+    const T_minus_100 = new Date(now - 100_000).toISOString();
+    const T_minus_50 = new Date(now - 50_000).toISOString();
+    const T_minus_10 = new Date(now - 10_000).toISOString();
+    const T_minus_30 = new Date(now - 30_000);
+
+    // Insert 3 rows at T-100, T-50, T-10
+    db.run(
+      `INSERT INTO conversation_history (id, group_folder, session_key, role, content, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      ['row-t100', 'test-group', 'test-group', 'user', 'old 1', T_minus_100],
+    );
+    db.run(
+      `INSERT INTO conversation_history (id, group_folder, session_key, role, content, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      ['row-t50', 'test-group', 'test-group', 'user', 'old 2', T_minus_50],
+    );
+    db.run(
+      `INSERT INTO conversation_history (id, group_folder, session_key, role, content, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      ['row-t10', 'test-group', 'test-group', 'user', 'recent', T_minus_10],
+    );
+
+    // DELETE /history?before=T-30 -> expect deleted=2, T-10 row remains
+    const deleted = deleteConversationHistoryBefore('test-group', T_minus_30);
+
+    expect(deleted).toBe(2);
+
+    const remaining = db.exec(
+      `SELECT id FROM conversation_history WHERE group_folder = 'test-group'`,
+    );
+    expect(remaining.length).toBe(1);
+    expect(remaining[0].values.length).toBe(1);
+    expect(remaining[0].values[0][0]).toBe('row-t10');
+  });
+
+  it('returns 0 when no rows match', () => {
+    const past = new Date(Date.now() - 999_000_000); // far in the past
+    const count = deleteConversationHistoryBefore('empty-group', past);
+    expect(count).toBe(0);
+  });
+
+  it('cross-group isolation: only deletes from the specified group', () => {
+    const now = Date.now();
+    const oldTs = new Date(now - 60_000).toISOString();
+    const cutoff = new Date(now - 10_000);
+
+    db.run(
+      `INSERT INTO conversation_history (id, group_folder, session_key, role, content, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      ['row-target', 'target-group', 'target-group', 'user', 'to delete', oldTs],
+    );
+    db.run(
+      `INSERT INTO conversation_history (id, group_folder, session_key, role, content, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      ['row-other', 'other-group', 'other-group', 'user', 'keep me', oldTs],
+    );
+
+    const deleted = deleteConversationHistoryBefore('target-group', cutoff);
+
+    expect(deleted).toBe(1);
+
+    const otherRows = db.exec(
+      `SELECT id FROM conversation_history WHERE group_folder = 'other-group'`,
+    );
+    expect(otherRows.length).toBe(1);
+    expect(otherRows[0].values.length).toBe(1);
+    expect(otherRows[0].values[0][0]).toBe('row-other');
+  });
+
+  it('before in future deletes all rows for the group', () => {
+    const now = Date.now();
+    db.run(
+      `INSERT INTO conversation_history (id, group_folder, session_key, role, content, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        'row-a',
+        'future-group',
+        'future-group',
+        'user',
+        'msg a',
+        new Date(now - 5_000).toISOString(),
+      ],
+    );
+    db.run(
+      `INSERT INTO conversation_history (id, group_folder, session_key, role, content, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        'row-b',
+        'future-group',
+        'future-group',
+        'assistant',
+        'msg b',
+        new Date(now - 1_000).toISOString(),
+      ],
+    );
+
+    const futureDate = new Date(now + 86_400_000); // tomorrow
+    const deleted = deleteConversationHistoryBefore('future-group', futureDate);
+
+    expect(deleted).toBe(2);
+    const remaining = db.exec(
+      `SELECT id FROM conversation_history WHERE group_folder = 'future-group'`,
+    );
+    expect(remaining.length).toBe(0);
   });
 });

@@ -10,6 +10,7 @@ vi.mock('../db.js', () => {
     appendConversationMessage: vi.fn(),
     clearConversationHistory: vi.fn(),
     createTask: vi.fn(),
+    deleteConversationHistoryBefore: vi.fn(() => 0),
     deleteMessageById: vi.fn(() => false),
     deleteTaskForGroup: vi.fn(() => false),
     getConversationHistory: vi.fn(() => []),
@@ -109,6 +110,7 @@ import {
   appendConversationMessage,
   clearConversationHistory,
   createTask,
+  deleteConversationHistoryBefore,
   deleteMessageById,
   deleteTaskForGroup,
   getConversationHistory,
@@ -2004,6 +2006,151 @@ describe('HttpChannel', () => {
       expect(res._status).toBe(200);
       expect(res._headers['Access-Control-Allow-Origin']).toBe('*');
       closeHandlers.forEach((h) => h());
+      await channel.disconnect();
+    });
+  });
+
+  // ── DELETE /history — full-clear and time-bounded purge (Story 26 + 78) ────
+
+  describe('DELETE /history', () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+      (deleteConversationHistoryBefore as ReturnType<typeof vi.fn>).mockReturnValue(0);
+    });
+
+    it('AC2: no ?before → full-clear returns 204', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({
+        method: 'DELETE',
+        url: '/history',
+        auth: 'alice:secret',
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(204);
+      expect(clearConversationHistory).toHaveBeenCalledWith('alice');
+      expect(deleteConversationHistoryBefore).not.toHaveBeenCalled();
+      await channel.disconnect();
+    });
+
+    it('AC1: ?before=<valid ISO> calls deleteConversationHistoryBefore and returns 200 {deleted:N}', async () => {
+      (deleteConversationHistoryBefore as ReturnType<typeof vi.fn>).mockReturnValue(3);
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const iso = '2025-01-01T00:00:00.000Z';
+      const req = makeReq({
+        method: 'DELETE',
+        url: `/history?before=${encodeURIComponent(iso)}`,
+        auth: 'alice:secret',
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      const body = JSON.parse(res._body);
+      expect(body.deleted).toBe(3);
+      expect(deleteConversationHistoryBefore).toHaveBeenCalledWith(
+        'alice',
+        expect.any(Date),
+      );
+      expect(clearConversationHistory).not.toHaveBeenCalled();
+      await channel.disconnect();
+    });
+
+    it('AC1: no rows match returns 200 {deleted:0}', async () => {
+      (deleteConversationHistoryBefore as ReturnType<typeof vi.fn>).mockReturnValue(0);
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const iso = '2020-01-01T00:00:00.000Z';
+      const req = makeReq({
+        method: 'DELETE',
+        url: `/history?before=${encodeURIComponent(iso)}`,
+        auth: 'alice:secret',
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      const body = JSON.parse(res._body);
+      expect(body.deleted).toBe(0);
+      await channel.disconnect();
+    });
+
+    it('AC3: unparseable before → 400 with error message', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({
+        method: 'DELETE',
+        url: '/history?before=not-a-date',
+        auth: 'alice:secret',
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(400);
+      const body = JSON.parse(res._body);
+      expect(body.error).toContain('ISO-8601');
+      await channel.disconnect();
+    });
+
+    it('AC4: before in future is accepted (deletes all)', async () => {
+      (deleteConversationHistoryBefore as ReturnType<typeof vi.fn>).mockReturnValue(5);
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const futureIso = new Date(Date.now() + 86_400_000).toISOString();
+      const req = makeReq({
+        method: 'DELETE',
+        url: `/history?before=${encodeURIComponent(futureIso)}`,
+        auth: 'alice:secret',
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      const body = JSON.parse(res._body);
+      expect(body.deleted).toBe(5);
+      await channel.disconnect();
+    });
+
+    it('returns 401 for unauthenticated request', async () => {
+      const channel = new HttpChannel(makeConfig(), makeOpts());
+      await channel.connect();
+
+      const req = makeReq({
+        method: 'DELETE',
+        url: '/history?before=2025-01-01T00:00:00.000Z',
+        auth: null,
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(401);
+      await channel.disconnect();
+    });
+
+    it('returns 404 when group not registered', async () => {
+      const channel = new HttpChannel(
+        makeConfig(),
+        makeOpts({ registeredGroups: vi.fn(() => ({})) }),
+      );
+      await channel.connect();
+
+      const req = makeReq({
+        method: 'DELETE',
+        url: '/history?before=2025-01-01T00:00:00.000Z',
+        auth: 'alice:secret',
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(404);
       await channel.disconnect();
     });
   });
