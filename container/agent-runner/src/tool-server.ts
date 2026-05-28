@@ -24,6 +24,10 @@ const MAX_TOOL_OUTPUT_BYTES = parseInt(
   process.env.KUBECLAW_MAX_TOOL_OUTPUT_BYTES || '50000',
   10,
 );
+const MAX_TOOL_OUTPUT_BYTES_SEARCH = parseInt(
+  process.env.KUBECLAW_MAX_TOOL_OUTPUT_BYTES_SEARCH || '5000',
+  10,
+);
 
 const TOOLCALLS_STREAM = `kubeclaw:toolcalls:${agentJobId}:${category}`;
 const TOOLRESULTS_STREAM = `kubeclaw:toolresults:${agentJobId}:${category}`;
@@ -136,7 +140,7 @@ async function toolWebSearch(input: { query: string }): Promise<string> {
     .slice(0, 10)
     .map(([, url, title]) => `${title}: ${url}`)
     .join('\n');
-  return results || html.slice(0, MAX_TOOL_OUTPUT_BYTES);
+  return results || html.slice(0, MAX_TOOL_OUTPUT_BYTES_SEARCH);
 }
 
 async function toolAgentBrowser(input: { command: string }): Promise<string> {
