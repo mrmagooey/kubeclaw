@@ -392,6 +392,7 @@ async function executeToolViaK8s(
   args: Record<string, unknown>,
   spawnedCategories: Set<string>,
   group?: RegisteredGroup,
+  maxToolOutputBytes?: number,
 ): Promise<string> {
   const isCustomTool = !TOOL_CATEGORY[toolName];
   const category = TOOL_CATEGORY[toolName] ?? toolName;
@@ -471,6 +472,7 @@ async function executeToolViaK8s(
         groupFolder,
         category: category as 'browser' | 'execution',
         timeout: TOOL_TIMEOUT_MS,
+        maxToolOutputBytes,
       });
       logger.debug(
         { toolJobId, category },
@@ -1133,7 +1135,8 @@ export class DirectLLMRunner implements MessageRunner {
     let toolRounds = 0;
 
     try {
-      while (toolRounds <= MAX_TOOL_ROUNDS) {
+      const effectiveMaxRounds = overrides.maxToolRounds ?? MAX_TOOL_ROUNDS;
+      while (toolRounds <= effectiveMaxRounds) {
         const llmStart = Date.now();
         let llmSuccess = true;
         let response: OpenAI.ChatCompletion;
@@ -1331,6 +1334,7 @@ export class DirectLLMRunner implements MessageRunner {
                 args,
                 spawnedCategories,
                 group,
+                overrides.maxToolOutputBytes,
               );
             }
           } catch (err) {
