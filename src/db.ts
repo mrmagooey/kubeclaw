@@ -2677,3 +2677,25 @@ export function getAuditEntries(
     detail: row[5] as string | null,
   }));
 }
+
+// ---- Group profile (Plan 2 stub) -------------------------------------------
+// TODO: Replace with full implementation when Plan 2 (group-profile) is merged.
+
+export interface GroupProfile {
+  groupFolder: string;
+  timezone?: string | null;
+  location?: string | null;
+  cuisineLikes?: string | null;
+  cuisineDislikes?: string | null;
+  dietaryRestrictions?: string | null;
+  budgetTier?: string | null;
+  updatedAt?: string | null;
+}
+
+/**
+ * Stub: returns null until Plan 2 (group-profile) is merged.
+ * Plan 2 will replace this with a real SQLite query.
+ */
+export function getGroupProfile(_groupFolder: string): GroupProfile | null {
+  return null;
+}

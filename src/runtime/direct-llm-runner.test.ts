@@ -678,6 +678,16 @@ describe('DirectLLMRunner', () => {
     // Bad JSON args should be handled gracefully (empty args)
     expect(result.status).toBe('success');
   });
+
+  it('registerLocalTool makes read_user_profile available via getLocalToolNames', async () => {
+    const { DirectLLMRunner } = await import('./direct-llm-runner.js');
+    const { READ_USER_PROFILE_TOOL } = await import('./tools/read-user-profile.js');
+    const runner = new DirectLLMRunner();
+
+    runner.registerLocalTool('read_user_profile', READ_USER_PROFILE_TOOL);
+
+    expect(runner.getLocalToolNames()).toContain('read_user_profile');
+  });
 });
 
 describe('loadSystemPrompt — skill composition', () => {
