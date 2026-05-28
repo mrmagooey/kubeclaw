@@ -24,6 +24,8 @@ const {
   mockEditSpecialist,
   mockRemoveSpecialist,
   mockListSpecialistOverrides,
+  mockPatchNamespacedConfigMap,
+  mockCreateNamespacedConfigMap,
 } = vi.hoisted(() => ({
   mockGetAllRegisteredGroups: vi.fn().mockReturnValue({}),
   mockSetRegisteredGroup: vi.fn(),
@@ -46,6 +48,8 @@ const {
   mockEditSpecialist: vi.fn().mockReturnValue({ ok: true }),
   mockRemoveSpecialist: vi.fn().mockReturnValue({ ok: true }),
   mockListSpecialistOverrides: vi.fn().mockReturnValue([]),
+  mockPatchNamespacedConfigMap: vi.fn().mockResolvedValue(undefined),
+  mockCreateNamespacedConfigMap: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('./db.js', () => ({
@@ -95,6 +99,8 @@ vi.mock('@kubernetes/client-node', () => {
       mockReadNamespacedPersistentVolumeClaim,
     createNamespacedPersistentVolumeClaim:
       mockCreateNamespacedPersistentVolumeClaim,
+    patchNamespacedConfigMap: mockPatchNamespacedConfigMap,
+    createNamespacedConfigMap: mockCreateNamespacedConfigMap,
   };
   const mockAppsV1 = {
     readNamespacedDeployment: mockReadNamespacedDeployment,
@@ -131,6 +137,17 @@ vi.mock('./runtime/llm-client.js', () => ({
 
 vi.mock('./logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn() },
+}));
+
+const { mockReconcilerApply } = vi.hoisted(() => ({
+  mockReconcilerApply: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock('./specialists/reconciler.js', () => ({
+  SpecialistReconciler: class {
+    apply = mockReconcilerApply;
+  },
+  loadBaselineFromDisk: vi.fn().mockReturnValue([]),
 }));
 
 // ── Import after mocks ─────────────────────────────────────────────────────
@@ -702,6 +719,123 @@ describe('executeTool', () => {
       expect(result).toContain('Provider: claude');
       expect(result).toContain('Name: Helper');
       expect(result).toContain('Memory:');
+    });
+  });
+
+  // ── register_specialist with reconciler (Task 2) ──────────────────────────
+
+  describe('register_specialist with reconciler', () => {
+    it('passes reconcile fn to registerSpecialist', async () => {
+      mockRegisterSpecialist.mockReturnValue({ ok: true });
+      await executeTool('register_specialist', {
+        name: 'Wired',
+        prompt: 'test prompt',
+      });
+      // registerSpecialist must be called with a second argument (the reconcile fn)
+      expect(mockRegisterSpecialist).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'Wired' }),
+        expect.any(Function),
+      );
+    });
+  });
+
+  // ── register_specialist reconcile wiring (Task 3) ─────────────────────────
+
+  describe('register_specialist reconcile wiring', () => {
+    it('calls patchNamespacedConfigMap after successful register', async () => {
+      mockRegisterSpecialist.mockReturnValue({ ok: true });
+      mockPatchNamespacedConfigMap.mockResolvedValue(undefined);
+      await executeTool('register_specialist', {
+        name: 'Wired',
+        prompt: 'prompt text',
+      });
+      expect(mockRegisterSpecialist).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'Wired' }),
+        expect.any(Function),
+      );
+      // Invoke the reconcile fn that was passed to registerSpecialist.
+      const reconcileFn = mockRegisterSpecialist.mock.calls[0][1] as () => Promise<void>;
+      await reconcileFn();
+      expect(mockPatchNamespacedConfigMap).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'kubeclaw-specialists' }),
+      );
+    });
+
+    it('returns live-catalog success string', async () => {
+      mockRegisterSpecialist.mockReturnValue({ ok: true });
+      const result = await executeTool('register_specialist', {
+        name: 'Wired',
+        prompt: 'prompt text',
+      });
+      expect(result).toContain('Changes are live');
+      expect(result).not.toContain('next orchestrator restart');
+    });
+
+    it('404 falls back to createNamespacedConfigMap', async () => {
+      mockRegisterSpecialist.mockReturnValue({ ok: true });
+      const notFound = Object.assign(new Error('not found'), {
+        response: { statusCode: 404 },
+      });
+      mockPatchNamespacedConfigMap.mockRejectedValue(notFound);
+      mockCreateNamespacedConfigMap.mockResolvedValue(undefined);
+      await executeTool('register_specialist', {
+        name: 'New',
+        prompt: 'p',
+      });
+      const reconcileFn = mockRegisterSpecialist.mock.calls[0][1] as () => Promise<void>;
+      await reconcileFn();
+      expect(mockCreateNamespacedConfigMap).toHaveBeenCalled();
+    });
+
+    it('non-404 configMapApply error is swallowed (non-fatal)', async () => {
+      // specialist-registry.ts:31-34 already .catch()es the reconcile fn —
+      // a k8s error must not surface as an executeTool rejection.
+      mockRegisterSpecialist.mockReturnValue({ ok: true });
+      mockPatchNamespacedConfigMap.mockRejectedValue(new Error('k8s 500'));
+      const result = await executeTool('register_specialist', {
+        name: 'Fail',
+        prompt: 'p',
+      });
+      expect(result).toContain('Changes are live');
+    });
+  });
+
+  describe('edit_specialist reconcile wiring', () => {
+    it('passes reconcile fn to editSpecialist', async () => {
+      mockEditSpecialist.mockReturnValue({ ok: true });
+      await executeTool('edit_specialist', { name: 'R', prompt: 'new' });
+      expect(mockEditSpecialist).toHaveBeenCalledWith(
+        { name: 'R', patch: expect.objectContaining({ prompt: 'new' }) },
+        expect.any(Function),
+      );
+    });
+
+    it('returns live-catalog success string', async () => {
+      mockEditSpecialist.mockReturnValue({ ok: true });
+      const result = await executeTool('edit_specialist', {
+        name: 'R',
+        prompt: 'new',
+      });
+      expect(result).toContain('Changes are live');
+      expect(result).not.toContain('next orchestrator restart');
+    });
+  });
+
+  describe('remove_specialist reconcile wiring', () => {
+    it('passes reconcile fn to removeSpecialist', async () => {
+      mockRemoveSpecialist.mockReturnValue({ ok: true });
+      await executeTool('remove_specialist', { name: 'R' });
+      expect(mockRemoveSpecialist).toHaveBeenCalledWith(
+        { name: 'R' },
+        expect.any(Function),
+      );
+    });
+
+    it('returns live-catalog success string', async () => {
+      mockRemoveSpecialist.mockReturnValue({ ok: true });
+      const result = await executeTool('remove_specialist', { name: 'R' });
+      expect(result).toContain('Changes are live');
+      expect(result).not.toContain('next orchestrator restart');
     });
   });
 });

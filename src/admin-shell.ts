@@ -39,6 +39,10 @@ import {
   removeSpecialist,
   listSpecialistOverrides,
 } from './skills/orchestrator/specialist-registry.js';
+import {
+  SpecialistReconciler,
+  loadBaselineFromDisk,
+} from './specialists/reconciler.js';
 import { RealPerGroupK8sClient } from './per-group-capabilities/k8s-client.js';
 import {
   setGroupCredential,
@@ -54,6 +58,34 @@ const appsV1 = kc.makeApiClient(k8s.AppsV1Api);
 const perGroupK8s = new RealPerGroupK8sClient(kc);
 const NAMESPACE = process.env.KUBECLAW_NAMESPACE || 'kubeclaw';
 const ORCHESTRATOR_DEPLOYMENT = 'kubeclaw-orchestrator';
+
+const specialistReconciler = new SpecialistReconciler({
+  baselineLoader: loadBaselineFromDisk,
+  configMapApply: async (rendered: string) => {
+    const data: Record<string, string> = { 'specialists.json': rendered };
+    const body = {
+      apiVersion: 'v1',
+      kind: 'ConfigMap',
+      metadata: { name: 'kubeclaw-specialists', namespace: NAMESPACE },
+      data,
+    };
+    try {
+      await coreV1.patchNamespacedConfigMap({
+        name: 'kubeclaw-specialists',
+        namespace: NAMESPACE,
+        body,
+      });
+    } catch (err: unknown) {
+      const status = (err as { response?: { statusCode?: number } })
+        ?.response?.statusCode;
+      if (status === 404) {
+        await coreV1.createNamespacedConfigMap({ namespace: NAMESPACE, body });
+      } else {
+        throw err;
+      }
+    }
+  },
+});
 
 // Guard moved to main() so this module can be imported without side effects.
 
