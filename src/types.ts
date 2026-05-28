@@ -265,3 +265,22 @@ export interface JobACL {
   expiresAt: string; // ISO timestamp
   status: 'active' | 'revoked';
 }
+
+export interface GroupProfile {
+  /** The group_folder primary key — matches the `group_folder` column. */
+  groupFolder: string;
+  /** IANA timezone name, e.g. "America/New_York". Overrides global TIMEZONE when set. */
+  timezone?: string;
+  /** Free-text location, e.g. "Melbourne, Australia". */
+  location?: string;
+  /** Cuisine styles the user enjoys, e.g. "Japanese, Mexican". */
+  cuisineLikes?: string;
+  /** Cuisine styles the user dislikes or wants to avoid. */
+  cuisineDislikes?: string;
+  /** Dietary restrictions, e.g. "vegetarian, no nuts". */
+  dietaryRestrictions?: string;
+  /** Budget tier for recommendations: "budget" | "mid-range" | "splurge". */
+  budgetTier?: string;
+  /** ISO-8601 timestamp of last upsert. */
+  updatedAt: string;
+}

@@ -69,6 +69,23 @@ import {
   getAuditEntries,
 } from './db.js';
 import { JobACL } from './types.js';
+import type { GroupProfile } from './types.js';
+
+describe('GroupProfile type shape', () => {
+  it('has the expected fields', () => {
+    const p: GroupProfile = {
+      groupFolder: 'test-group',
+      updatedAt: new Date().toISOString(),
+    };
+    expect(p.groupFolder).toBe('test-group');
+    expect(p.timezone).toBeUndefined();
+    expect(p.location).toBeUndefined();
+    expect(p.cuisineLikes).toBeUndefined();
+    expect(p.cuisineDislikes).toBeUndefined();
+    expect(p.dietaryRestrictions).toBeUndefined();
+    expect(p.budgetTier).toBeUndefined();
+  });
+});
 
 beforeEach(async () => {
   await _initTestDatabase();
