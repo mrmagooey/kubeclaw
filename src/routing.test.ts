@@ -36,6 +36,7 @@ import {
   routeOutbound,
   findChannel,
 } from './router.js';
+import { formatCurrentTime } from './timezone.js';
 import { Channel, NewMessage } from './types.js';
 
 beforeEach(async () => {
@@ -237,6 +238,39 @@ describe('escapeXml', () => {
 
   it('returns unchanged string without special chars', () => {
     expect(escapeXml('hello world')).toBe('hello world');
+  });
+});
+
+// --- formatCurrentTime ---
+
+describe('formatCurrentTime', () => {
+  it('returns an ISO-8601 string with UTC offset for UTC timezone', () => {
+    const now = new Date('2024-01-01T12:00:00.000Z');
+    const result = formatCurrentTime('UTC', now);
+    expect(result).toBe('2024-01-01T12:00:00+00:00');
+  });
+
+  it('returns the correct local offset for a positive-offset timezone', () => {
+    // Australia/Sydney in summer (AEDT) is UTC+11
+    const now = new Date('2024-01-01T01:00:00.000Z'); // 12:00 AEDT
+    const result = formatCurrentTime('Australia/Sydney', now);
+    expect(result).toBe('2024-01-01T12:00:00+11:00');
+  });
+
+  it('returns the correct local offset for a negative-offset timezone', () => {
+    // America/New_York in winter (EST) is UTC-5
+    const now = new Date('2024-01-01T17:00:00.000Z'); // 12:00 EST
+    const result = formatCurrentTime('America/New_York', now);
+    expect(result).toBe('2024-01-01T12:00:00-05:00');
+  });
+
+  it('defaults now to approximately the current time when omitted', () => {
+    const before = Date.now();
+    const result = formatCurrentTime('UTC');
+    const after = Date.now();
+    const parsed = new Date(result).getTime();
+    expect(parsed).toBeGreaterThanOrEqual(before - 1000);
+    expect(parsed).toBeLessThanOrEqual(after + 1000);
   });
 });
 
