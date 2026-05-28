@@ -53,9 +53,13 @@ import {
 } from '../k8s/redis-client.js';
 import { loadSkills } from './skill-loader.js';
 import { proposeSkill, DupCheckFn } from './tools/propose-skill.js';
+import { makeSetReminderTool } from './tools/set-reminder.js';
 
 const DEFAULT_SYSTEM_PROMPT =
-  'You are a helpful assistant. Be concise and direct in your responses.';
+  'You are a helpful assistant. Be concise and direct in your responses. ' +
+  'When a user asks to be reminded about something, use `set_reminder` (preferred) or ' +
+  '`schedule_task` with `schedule_type: "once"` and a resolved absolute ISO 8601 datetime; ' +
+  'never pass relative phrases like "in 3 days" as the schedule_value.';
 
 const MAX_TOOL_ROUNDS = 10;
 const TOOL_TIMEOUT_MS = 60_000; // 60 s per tool call
@@ -182,7 +186,11 @@ const TOOLS: OpenAI.ChatCompletionFunctionTool[] = [
     function: {
       name: 'schedule_task',
       description:
-        'Schedule a recurring or one-time task. The task will run automatically and send results to the current chat.',
+        'Schedule a recurring or one-time task. The task will run automatically and send results ' +
+        'to the current chat. For one-time reminders, prefer `set_reminder` instead. ' +
+        'When scheduling a `once` task, `schedule_value` MUST be an absolute ISO 8601 datetime ' +
+        'string (e.g. "2026-06-01T09:00:00Z"). Resolve any relative expression like "in 3 days" ' +
+        'to a concrete datetime before calling this tool.',
       parameters: {
         type: 'object',
         properties: {
@@ -199,7 +207,9 @@ const TOOLS: OpenAI.ChatCompletionFunctionTool[] = [
           schedule_value: {
             type: 'string',
             description:
-              'Cron expression (e.g. "0 9 * * 1-5"), interval in milliseconds (e.g. "300000" for 5min), or ISO datetime for once',
+              'Cron expression (e.g. "0 9 * * 1-5"), interval in milliseconds (e.g. "300000" for 5 min), ' +
+              'or absolute ISO 8601 datetime for once (e.g. "2026-06-01T09:00:00Z"). ' +
+              'For `once` tasks, this MUST be an absolute datetime — never a relative phrase like "in 3 days".',
           },
         },
         required: ['prompt', 'schedule_type', 'schedule_value'],
@@ -915,6 +925,10 @@ export class DirectLLMRunner implements MessageRunner {
 
   constructor(client?: OpenAI) {
     this.client = client ?? createLLMClient();
+    this.registerLocalTool(
+      'set_reminder',
+      makeSetReminderTool(scheduleTaskDirect),
+    );
   }
 
   /** Wire in channel-tier Prometheus metrics (called from channel-runner.ts). */

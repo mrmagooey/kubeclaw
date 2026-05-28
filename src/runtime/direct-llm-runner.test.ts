@@ -731,3 +731,64 @@ describe('TOOLS — propose_skill registration', () => {
     expect(names).toContain('propose_skill');
   });
 });
+
+describe('DirectLLMRunner tool registration', () => {
+  it('registers set_reminder as a local tool by default', async () => {
+    const { DirectLLMRunner } = await import('./direct-llm-runner.js');
+    const runner = new DirectLLMRunner();
+    expect(runner.getLocalToolNames()).toContain('set_reminder');
+  });
+});
+
+describe('tool definitions — schedule_task and DEFAULT_SYSTEM_PROMPT', () => {
+  it('schedule_task description warns against relative schedule_value', async () => {
+    // Import the TOOLS array via the __testing__ export or by inspecting
+    // the effective tools that reach the LLM call.
+    // We use a mockCreate spy that captures the tools argument.
+    const captured: unknown[] = [];
+    mockCreate.mockImplementationOnce(async (req: { tools?: unknown[] }) => {
+      if (req.tools) captured.push(...req.tools);
+      return {
+        choices: [{ message: { role: 'assistant', content: 'ok', tool_calls: undefined }, finish_reason: 'stop' }],
+      };
+    });
+
+    const { DirectLLMRunner } = await import('./direct-llm-runner.js');
+    const runner = new DirectLLMRunner();
+    await runner.runAgent(
+      { name: 'g1', folder: 'g1', trigger: '', added_at: new Date().toISOString() },
+      { prompt: 'hello', groupFolder: 'g1', chatJid: 'u@t', isMain: false, assistantName: 'Bot' },
+    );
+
+    const schedTool = (captured as Array<{ function: { name: string; description: string; parameters: { properties: { schedule_value: { description: string } } } } }>)
+      .find((t) => t.function.name === 'schedule_task');
+    expect(schedTool).toBeDefined();
+    // Description must mention ISO 8601 and warn against relative phrases
+    expect(schedTool!.function.description).toMatch(/ISO 8601/i);
+    expect(schedTool!.function.parameters.properties.schedule_value.description).toMatch(
+      /absolute.*ISO|ISO.*absolute/i,
+    );
+  });
+
+  it('DEFAULT_SYSTEM_PROMPT mentions set_reminder for reminders', async () => {
+    const captured: string[] = [];
+    mockCreate.mockImplementationOnce(async (req: { messages: Array<{ role: string; content: string }> }) => {
+      const sys = req.messages.find((m) => m.role === 'system');
+      if (sys) captured.push(sys.content);
+      return {
+        choices: [{ message: { role: 'assistant', content: 'ok', tool_calls: undefined }, finish_reason: 'stop' }],
+      };
+    });
+
+    const { DirectLLMRunner } = await import('./direct-llm-runner.js');
+    const runner = new DirectLLMRunner();
+    await runner.runAgent(
+      { name: 'g1', folder: 'g1', trigger: '', added_at: new Date().toISOString() },
+      { prompt: 'hello', groupFolder: 'g1', chatJid: 'u@t', isMain: false, assistantName: 'Bot' },
+    );
+
+    expect(captured.length).toBeGreaterThan(0);
+    expect(captured[0]).toMatch(/set_reminder/);
+    expect(captured[0]).toMatch(/remind/i);
+  });
+});
