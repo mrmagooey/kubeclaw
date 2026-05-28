@@ -57,6 +57,37 @@ import { proposeSkill, DupCheckFn } from './tools/propose-skill.js';
 const DEFAULT_SYSTEM_PROMPT =
   'You are a helpful assistant. Be concise and direct in your responses.';
 
+const RECOMMENDATION_CONTRACT = `
+
+## Recommendation guidelines
+
+When the user asks for a recommendation (restaurants, films, activities, products, or any
+"best X near me / for me" request), follow this contract:
+
+1. **Profile** — call \`read_user_profile\` first. Use the returned fields (location,
+   cuisine_likes, cuisine_dislikes, dietary_restrictions, budget_tier) to tailor results.
+   If the profile is empty (\`{}\`), ask a single clarifying question about location before
+   proceeding.
+
+2. **Search** — call \`places_search\` (or \`web_search\` if \`places_search\` is unavailable)
+   with a query that incorporates the user's location and any constraints already known.
+
+3. **Refinement** — if the user adds a constraint ("cheaper", "closer", "vegetarian"),
+   re-invoke \`places_search\` with the updated query rather than answering from memory.
+   Conversation history already contains the prior results; you do not need to repeat them.
+
+4. **Present results** — return a short ranked list (3–5 items) with:
+   - **Name** and address / area
+   - One-line reason why it fits this user
+   - Source citation (URL or "via places_search")
+
+Do not give a recommendation without calling at least one search tool — hallucinated
+restaurant names cause real harm.
+`;
+
+/** Opt-out sentinel: if present in CLAUDE.md the recommendation contract is suppressed. */
+const RECOMMENDATION_CONTRACT_OPT_OUT = '<!-- no-recommendation-contract -->';
+
 const MAX_TOOL_ROUNDS = 10;
 const TOOL_TIMEOUT_MS = 60_000; // 60 s per tool call
 const TOOL_JOB_TIMEOUT_MS = 300_000; // 5 min for full tool jobs
@@ -871,6 +902,13 @@ function loadSystemPrompt(
   } catch {
     // file missing — use default
   }
+
+  // Append recommendation contract unless the prompt explicitly opts out.
+  const hasOptOut = base.includes(RECOMMENDATION_CONTRACT_OPT_OUT);
+  if (!hasOptOut) {
+    base = base + RECOMMENDATION_CONTRACT;
+  }
+
   try {
     const { promptSuffix } = loadSkills(groupsDir, groupFolder);
     return promptSuffix ? base + promptSuffix : base;

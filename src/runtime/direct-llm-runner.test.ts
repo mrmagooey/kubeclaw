@@ -714,13 +714,58 @@ describe('loadSystemPrompt — skill composition', () => {
     expect(out).toContain('ALPHA BODY');
   });
 
-  it('falls back to base prompt when skill-loader throws', async () => {
+  it('falls back to base prompt (with contract) when skill-loader throws', async () => {
     mockLoadSkills.mockImplementation(() => {
       throw new Error('skill-loader exploded');
     });
     const { __testing__ } = await import('./direct-llm-runner.js');
     const out = __testing__.loadSystemPromptForTest('g1', tmpGroupsDir);
-    expect(out).toBe('BASE PROMPT');
+    expect(out).toContain('BASE PROMPT');
+    expect(out).toContain('## Recommendation guidelines');
+    expect(out).not.toContain('Learned skills');
+  });
+});
+
+describe('loadSystemPrompt — RECOMMENDATION_CONTRACT injection', () => {
+  let tmpGroupsDir: string;
+
+  beforeEach(() => {
+    tmpGroupsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'runner-rec-'));
+    fs.mkdirSync(path.join(tmpGroupsDir, 'g1'), { recursive: true });
+    fs.writeFileSync(path.join(tmpGroupsDir, 'g1', 'CLAUDE.md'), 'BASE PROMPT');
+    mockLoadSkills.mockReturnValue({ promptSuffix: '', loadedSkills: [] });
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpGroupsDir, { recursive: true, force: true });
+  });
+
+  it('appends RECOMMENDATION_CONTRACT when CLAUDE.md does not contain opt-out marker', async () => {
+    // CLAUDE.md written in beforeEach as 'BASE PROMPT' — no opt-out marker
+    const { __testing__ } = await import('./direct-llm-runner.js');
+    const out = __testing__.loadSystemPromptForTest('g1', tmpGroupsDir);
+    expect(out).toContain('## Recommendation guidelines');
+    expect(out).toContain('read_user_profile');
+    expect(out).toContain('places_search');
+  });
+
+  it('does NOT append RECOMMENDATION_CONTRACT when CLAUDE.md contains opt-out marker', async () => {
+    fs.writeFileSync(
+      path.join(tmpGroupsDir, 'g1', 'CLAUDE.md'),
+      'CUSTOM PROMPT\n<!-- no-recommendation-contract -->',
+    );
+    const { __testing__ } = await import('./direct-llm-runner.js');
+    const out = __testing__.loadSystemPromptForTest('g1', tmpGroupsDir);
+    expect(out).not.toContain('## Recommendation guidelines');
+    expect(out).toContain('CUSTOM PROMPT');
+  });
+
+  it('appends RECOMMENDATION_CONTRACT when CLAUDE.md is absent (default system prompt)', async () => {
+    // Use a group folder that has no CLAUDE.md
+    fs.mkdirSync(path.join(tmpGroupsDir, 'g2'), { recursive: true });
+    const { __testing__ } = await import('./direct-llm-runner.js');
+    const out = __testing__.loadSystemPromptForTest('g2', tmpGroupsDir);
+    expect(out).toContain('## Recommendation guidelines');
   });
 });
 
