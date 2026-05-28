@@ -431,7 +431,26 @@ describe('DirectLLMRunner compression integration', () => {
 });
 
 describe('DirectLLMRunner — maxToolOutputBytes pod env injection', () => {
-  it('sets KUBECLAW_MAX_TOOL_OUTPUT_BYTES on ToolPodJobSpec when maxToolOutputBytes is provided', async () => {
+  let getRedisClientMock: ReturnType<typeof vi.mocked<() => unknown>>;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    const { getRedisClient } = await import('../k8s/redis-client.js');
+    getRedisClientMock = vi.mocked(getRedisClient) as any;
+  });
+
+  afterEach(async () => {
+    // Restore the default getRedisClient mock behaviour so no state leaks to
+    // other tests even if the test body throws.
+    const { getRedisClient } = await import('../k8s/redis-client.js');
+    vi.mocked(getRedisClient).mockReturnValue({
+      xadd: vi.fn().mockResolvedValue('1-0'),
+      xread: vi.fn().mockResolvedValue(null),
+      quit: vi.fn().mockResolvedValue(undefined),
+    } as any);
+  });
+
+  it('sets maxToolOutputBytes on ToolPodJobSpec in standalone mode', async () => {
     // Import the (mocked) jobRunner so we can inspect calls.
     const { jobRunner } = await import('../k8s/job-runner.js');
     const createToolPodJobMock = vi.mocked(jobRunner.createToolPodJob);
@@ -465,8 +484,7 @@ describe('DirectLLMRunner — maxToolOutputBytes pod env injection', () => {
       chat: { completions: { create: mockCreate } },
     } as any);
 
-    // Override getRedisClient for this test to return a singleton that resolves tool calls.
-    const { getRedisClient } = await import('../k8s/redis-client.js');
+    // Override getRedisClient to return a singleton that resolves tool calls.
     let capturedRequestId: string | undefined;
     const sharedRedis = {
       xadd: vi.fn().mockImplementation((...args: unknown[]) => {
@@ -486,7 +504,7 @@ describe('DirectLLMRunner — maxToolOutputBytes pod env injection', () => {
       }),
       quit: vi.fn().mockResolvedValue(undefined),
     };
-    vi.mocked(getRedisClient).mockReturnValue(sharedRedis as any);
+    getRedisClientMock.mockReturnValue(sharedRedis as any);
 
     const { DirectLLMRunner } = await import('./direct-llm-runner.js');
     const runner = new DirectLLMRunner();
@@ -503,12 +521,93 @@ describe('DirectLLMRunner — maxToolOutputBytes pod env injection', () => {
     expect(createToolPodJobMock).toHaveBeenCalledWith(
       expect.objectContaining({ maxToolOutputBytes: 12345 }),
     );
+  });
 
-    // Restore the default getRedisClient mock behavior.
-    vi.mocked(getRedisClient).mockReturnValue({
-      xadd: vi.fn().mockResolvedValue('1-0'),
-      xread: vi.fn().mockResolvedValue(null),
-      quit: vi.fn().mockResolvedValue(undefined),
-    } as any);
+  it('includes maxToolOutputBytes in Redis spawn fields in channel mode', async () => {
+    // Switch to channel mode for this test.
+    const configMod = await import('../config.js');
+    const originalMode = (configMod as any).KUBECLAW_MODE;
+    // Patch the module-level export (vi.mock sets up the module factory so we
+    // can mutate the mock object's exported values directly).
+    (configMod as any).KUBECLAW_MODE = 'channel';
+
+    try {
+      const mockCreate = vi.fn()
+        .mockResolvedValueOnce({
+          choices: [
+            {
+              message: {
+                role: 'assistant',
+                content: null,
+                tool_calls: [
+                  {
+                    id: 'c2',
+                    type: 'function',
+                    function: { name: 'web_fetch', arguments: '{"url":"http://example.com"}' },
+                  },
+                ],
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          choices: [{ message: { role: 'assistant', content: 'done', tool_calls: [] } }],
+        });
+
+      const { createLLMClient } = await import('./llm-client.js');
+      vi.mocked(createLLMClient).mockReturnValueOnce({
+        chat: { completions: { create: mockCreate } },
+      } as any);
+
+      // Capture all xadd calls to the spawn-tool-pod stream.
+      const capturedSpawnFields: string[][] = [];
+      let capturedRequestId: string | undefined;
+      const sharedRedis = {
+        xadd: vi.fn().mockImplementation((...args: unknown[]) => {
+          const streamKey = args[0] as string;
+          const fields = args.slice(2) as string[];
+          if (streamKey === 'spawn-tool-pod') {
+            capturedSpawnFields.push(fields);
+          }
+          // Also capture the tool requestId so xread can echo back a result.
+          const idx = fields.indexOf('requestId');
+          if (idx >= 0) capturedRequestId = fields[idx + 1];
+          return Promise.resolve('1-0');
+        }),
+        xread: vi.fn().mockImplementation(async () => {
+          if (!capturedRequestId) return null;
+          return [
+            [
+              'stream',
+              [['1-0', ['requestId', capturedRequestId, 'result', '"fetched content"']]],
+            ],
+          ];
+        }),
+        quit: vi.fn().mockResolvedValue(undefined),
+      };
+      getRedisClientMock.mockReturnValue(sharedRedis as any);
+
+      const { DirectLLMRunner } = await import('./direct-llm-runner.js');
+      const runner = new DirectLLMRunner();
+      const groupFolder = `budget-channel-${Date.now()}`;
+
+      await runner.runAgent(
+        { name: groupFolder, folder: groupFolder, trigger: '', added_at: new Date().toISOString() },
+        { prompt: 'fetch it', groupFolder, chatJid: 'e2e@e2e', isMain: false, assistantName: 'Bot' },
+        undefined,
+        undefined,
+        { maxToolOutputBytes: 9999 },
+      );
+
+      // There must be exactly one spawn call to the spawn-tool-pod stream.
+      expect(capturedSpawnFields.length).toBeGreaterThan(0);
+      const spawnFields = capturedSpawnFields[0];
+      // Fields are [key, value, key, value, ...] pairs.
+      const idx = spawnFields.indexOf('maxToolOutputBytes');
+      expect(idx).toBeGreaterThanOrEqual(0);
+      expect(spawnFields[idx + 1]).toBe('9999');
+    } finally {
+      (configMod as any).KUBECLAW_MODE = originalMode;
+    }
   });
 });
