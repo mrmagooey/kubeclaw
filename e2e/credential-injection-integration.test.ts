@@ -73,3 +73,29 @@ describe('secret-scrub invariant: no user-supplied secrets in rendered YAML', ()
     });
   }
 });
+
+// ─── 3. Brave Search catalog entry ───────────────────────────────────────────
+
+describe('brave-search catalog entry renders correctly', () => {
+  const BRAVE_CATALOG_ARGS =
+    `--set 'credentialInjection.catalog[0].id=brave-search'` +
+    ` --set 'credentialInjection.catalog[0].host=api.search.brave.com'` +
+    ` --set 'credentialInjection.catalog[0].upstreamPort=443'` +
+    ` --set 'credentialInjection.catalog[0].credentialFields[0].name=api_key'` +
+    ` --set 'credentialInjection.catalog[0].credentialFields[0].envVar=BRAVE_API_KEY'` +
+    ` --set 'credentialInjection.catalog[0].allowOperatorFallback=true'` +
+    ` --set 'credentialInjection.catalog[0].allowedPositions[0]=header'`;
+
+  it('renders the broker ConfigMap with brave-search host', () => {
+    const out = helmTemplate(`--set credentialInjection.mode=sidecar ${BRAVE_CATALOG_ARGS}`);
+    expect(out).toContain('api.search.brave.com');
+    expect(out).toContain('BRAVE_API_KEY');
+  });
+
+  it('brave-search entry parses with allowedPositions: header', () => {
+    const out = helmTemplate(`--set credentialInjection.mode=sidecar ${BRAVE_CATALOG_ARGS}`);
+    expect(out).toContain('allowedPositions');
+    // The rendered ConfigMap must not embed any real key
+    expect(out).not.toMatch(/BSA[A-Za-z0-9]{25,}/);
+  });
+});

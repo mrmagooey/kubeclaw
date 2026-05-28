@@ -412,7 +412,15 @@ credentialInjection:
   # Each entry declares the destination host, what credential fields it needs, and which
   # env vars on tool-job pods will carry the placeholders. The broker substitutes the real
   # credential value at egress.
-  catalog: []
+  catalog:
+    - id: brave-search
+      host: api.search.brave.com
+      upstreamPort: 443
+      credentialFields:
+        - { name: api_key, envVar: BRAVE_API_KEY }
+      allowOperatorFallback: true
+      allowedPositions: [header]
+      apiKeyShape: { prefix: "BSA", minLength: 30 }
   #   - id: replicate
   #     host: api.replicate.com
   #     upstreamPort: 443
