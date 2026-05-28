@@ -47,7 +47,7 @@ describe('set_reminder tool', () => {
       { reminder_text: 'take vitamins', when_iso: 'in 3 days' },
       fakeInput,
     );
-    expect(result).toMatch(/invalid.*datetime/i);
+    expect(result).toMatch(/when_iso must be an absolute ISO 8601/i);
     expect(mockScheduleTaskDirect).not.toHaveBeenCalled();
   });
 
@@ -57,7 +57,27 @@ describe('set_reminder tool', () => {
       { reminder_text: 'call dentist', when_iso: '' },
       fakeInput,
     );
-    expect(result).toMatch(/invalid.*datetime/i);
+    expect(result).toMatch(/when_iso must be an absolute ISO 8601/i);
+    expect(mockScheduleTaskDirect).not.toHaveBeenCalled();
+  });
+
+  it('rejects a natural-language date string like "June 1, 2026"', async () => {
+    const tool = makeSetReminderTool(mockScheduleTaskDirect);
+    const result = await tool.handler(
+      { reminder_text: 'take vitamins', when_iso: 'June 1, 2026' },
+      fakeInput,
+    );
+    expect(result).toMatch(/when_iso must be an absolute ISO 8601/i);
+    expect(mockScheduleTaskDirect).not.toHaveBeenCalled();
+  });
+
+  it('rejects a year-only string like "12345"', async () => {
+    const tool = makeSetReminderTool(mockScheduleTaskDirect);
+    const result = await tool.handler(
+      { reminder_text: 'take vitamins', when_iso: '12345' },
+      fakeInput,
+    );
+    expect(result).toMatch(/when_iso must be an absolute ISO 8601/i);
     expect(mockScheduleTaskDirect).not.toHaveBeenCalled();
   });
 
@@ -81,7 +101,7 @@ describe('set_reminder tool', () => {
     expect((args as Record<string, unknown>).schedule_value).toBe(isoTime);
   });
 
-  it('returns a confirmation that includes a human-readable time', async () => {
+  it('returns a confirmation that includes a human-readable time with UTC timezone', async () => {
     const tool = makeSetReminderTool(mockScheduleTaskDirect);
     const isoTime = new Date(Date.now() + 60 * 60 * 1000).toISOString();
     const result = await tool.handler(
@@ -90,7 +110,9 @@ describe('set_reminder tool', () => {
     );
     // Confirmation should include the reminder_text and a recognisable date string
     expect(result).toMatch(/take vitamins/);
-    // toLocaleString() contains digits — check for a year like 202x or 203x
-    expect(result).toMatch(/20[23]\d/);
+    // toLocaleString() with UTC timezone — check for a year in 2000-2099 range
+    expect(result).toMatch(/20\d{2}/);
+    // Must include explicit UTC timezone label
+    expect(result).toMatch(/UTC/);
   });
 });

@@ -34,6 +34,7 @@ import {
   Task,
   AvailableGroup,
   RunAgentOverrides,
+  LocalTool,
 } from './types.js';
 export type { RunAgentOverrides };
 import { createLLMClient, DEFAULT_DIRECT_MODEL } from './llm-client.js';
@@ -890,14 +891,6 @@ function loadSystemPrompt(
   }
 }
 
-/** A locally-intercepted tool: definition for the LLM + async handler. */
-export interface LocalTool {
-  def: OpenAI.ChatCompletionTool;
-  handler: (
-    args: Record<string, unknown>,
-    input: ContainerInput,
-  ) => Promise<string>;
-}
 
 /** Derive a stable provider label from the configured base URL. */
 function resolveProviderLabel(): string {

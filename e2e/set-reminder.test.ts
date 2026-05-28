@@ -108,7 +108,7 @@ describe('set_reminder — e2e', () => {
 
     // AC3: final reply from LLM echoes reminder text and human-readable time
     expect(output.result).toMatch(/call the dentist/);
-    expect(output.result).toMatch(/20[23]\d/); // year in toLocaleString()
+    expect(output.result).toMatch(/20\d{2}/); // year in toLocaleString()
   });
 
   it('returns an error tool result (not a crash) when LLM passes a relative when_iso', async () => {
@@ -175,6 +175,6 @@ describe('set_reminder — e2e', () => {
 
     // Tool result must be an error string, not an exception
     expect(capturedToolResult).toBeDefined();
-    expect(capturedToolResult).toMatch(/invalid.*datetime/i);
+    expect(capturedToolResult).toMatch(/when_iso must be an absolute ISO 8601/i);
   });
 });

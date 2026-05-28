@@ -6,8 +6,7 @@
  * The handler validates it, builds a verbatim-delivery prompt, and
  * forwards to scheduleTaskDirect via the Redis IPC path.
  */
-import type OpenAI from 'openai';
-import type { ContainerInput } from '../types.js';
+import type { ContainerInput, LocalTool } from '../types.js';
 
 /** Minimal signature of scheduleTaskDirect used by this tool. */
 export type ScheduleTaskFn = (
@@ -16,14 +15,6 @@ export type ScheduleTaskFn = (
   isMain: boolean,
   args: Record<string, unknown>,
 ) => Promise<string>;
-
-export interface LocalTool {
-  def: OpenAI.ChatCompletionTool;
-  handler: (
-    args: Record<string, unknown>,
-    input: ContainerInput,
-  ) => Promise<string>;
-}
 
 /**
  * Factory — accepts `scheduleTaskFn` so unit tests can inject a stub
@@ -69,14 +60,14 @@ export function makeSetReminderTool(
       const reminderText = String(args.reminder_text ?? '');
       const whenIso = String(args.when_iso ?? '');
 
-      // Validate: must parse to a real Date
+      // Validate: must be an absolute ISO 8601 datetime string
+      const ISO_8601_REGEX = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d{2})?$/;
+      if (!whenIso || !ISO_8601_REGEX.test(whenIso)) {
+        return JSON.stringify({ error: "when_iso must be an absolute ISO 8601 datetime (e.g. 2026-06-01T09:00:00Z)" });
+      }
       const dt = new Date(whenIso);
-      if (!whenIso || isNaN(dt.getTime())) {
-        return (
-          `Invalid datetime: "${whenIso}". ` +
-          'Please provide an absolute ISO 8601 datetime string (e.g. "2026-06-01T09:00:00Z"). ' +
-          'Resolve relative expressions like "in 3 days" to a concrete datetime first.'
-        );
+      if (isNaN(dt.getTime())) {
+        return JSON.stringify({ error: `Invalid datetime: "${whenIso}". Please provide an absolute ISO 8601 datetime string (e.g. "2026-06-01T09:00:00Z").` });
       }
 
       const prompt =
@@ -93,7 +84,7 @@ export function makeSetReminderTool(
         },
       );
 
-      const humanTime = dt.toLocaleString();
+      const humanTime = dt.toLocaleString('en-US', { timeZone: 'UTC', timeZoneName: 'short' });
       return `Reminder set for ${humanTime}: "${reminderText}". ${scheduleResult}`;
     },
   };

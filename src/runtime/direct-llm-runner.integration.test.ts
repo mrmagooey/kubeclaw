@@ -564,6 +564,6 @@ describe('set_reminder tool — DirectLLMRunner integration', () => {
     const secondCallMessages = (stubCreate.mock.calls[1][0] as { messages: Array<{ role: string; content?: string }> }).messages;
     const toolResultMsg = secondCallMessages.find((m) => m.role === 'tool');
     expect(toolResultMsg).toBeDefined();
-    expect(toolResultMsg!.content).toMatch(/invalid.*datetime/i);
+    expect(toolResultMsg!.content).toMatch(/when_iso must be an absolute ISO 8601/i);
   });
 });
