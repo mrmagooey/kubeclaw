@@ -990,15 +990,19 @@ describe('global specialist catalog e2e', () => {
     async () => {
       helmUpgrade([
         '--set-json',
-        'specialists=[{"name":"Researcher","prompt":"You are a web-research specialist. When given a topic or question:\\n1. Search for relevant, current information using available search tools.\\n2. Fetch and read promising sources to gather details.\\n3. Synthesise findings into a concise, structured summary with:\\n   - A one-paragraph executive summary.\\n   - Key facts as a bulleted list.\\n   - Source URLs cited inline.\\nStay factual; note when information is uncertain or conflicting.\\n","triggers":["researcher"],"llmProvider":"openrouter","memory":{"isolated":false},"tools":["web_search","web_fetch"]}]',
+        'specialists=[{"name":"Researcher","prompt":"You are a web-research specialist. When given a topic or question:\\n1. Search for relevant, current information using available search tools.\\n2. Fetch and read promising sources to gather details.\\n3. Synthesise findings into a concise, structured summary with:\\n   - A one-paragraph executive summary.\\n   - Key facts as a bulleted list.\\n   - Source URLs cited inline.\\nStay factual; note when information is uncertain or conflicting.\\n","triggers":["researcher"],"memory":{"isolated":false},"tools":["web_search","web_fetch"]}]',
       ]);
 
       // Bounce the orchestrator so it re-reconciles with the new baseline CM.
-      kcCluster([
+      const rollout = kcCluster([
         'rollout', 'restart',
         'deployment/kubeclaw-orchestrator',
         '-n', NAMESPACE,
       ], { timeout: 30_000 });
+      expect(
+        rollout.ok,
+        `rollout restart failed: ${rollout.stderr}`,
+      ).toBe(true);
       await waitForOrchestrator(120_000);
 
       await waitForChannelPod();
