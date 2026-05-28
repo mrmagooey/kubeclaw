@@ -451,6 +451,22 @@ function createSchema(database: SqlJsDatabase): void {
   database.run(
     `CREATE INDEX IF NOT EXISTS idx_audit_log_group_ts ON audit_log(group_folder, ts DESC)`,
   );
+
+  // Story N: group_profiles — per-group user preferences injected into system prompt.
+  // group_folder is the primary key (matches the channel pod's groups/<folder> directory).
+  // All preference columns are nullable; missing rows mean "no profile set".
+  database.run(`
+    CREATE TABLE IF NOT EXISTS group_profiles (
+      group_folder          TEXT PRIMARY KEY,
+      timezone              TEXT,
+      location              TEXT,
+      cuisine_likes         TEXT,
+      cuisine_dislikes      TEXT,
+      dietary_restrictions  TEXT,
+      budget_tier           TEXT,
+      updated_at            TEXT NOT NULL
+    )
+  `);
 }
 
 /**

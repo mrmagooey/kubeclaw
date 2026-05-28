@@ -91,6 +91,30 @@ beforeEach(async () => {
   await _initTestDatabase();
 });
 
+describe('group_profiles schema', () => {
+  it('creates the group_profiles table', () => {
+    const result = db.exec(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name='group_profiles'`,
+    );
+    expect(result.length).toBeGreaterThan(0);
+    expect(result[0].values[0][0]).toBe('group_profiles');
+  });
+
+  it('has the expected columns', () => {
+    const result = db.exec(`PRAGMA table_info(group_profiles)`);
+    expect(result.length).toBeGreaterThan(0);
+    const colNames = result[0].values.map((r) => r[1] as string);
+    expect(colNames).toContain('group_folder');
+    expect(colNames).toContain('timezone');
+    expect(colNames).toContain('location');
+    expect(colNames).toContain('cuisine_likes');
+    expect(colNames).toContain('cuisine_dislikes');
+    expect(colNames).toContain('dietary_restrictions');
+    expect(colNames).toContain('budget_tier');
+    expect(colNames).toContain('updated_at');
+  });
+});
+
 // Helper to store a message using the normalized NewMessage interface
 function store(overrides: {
   id: string;
