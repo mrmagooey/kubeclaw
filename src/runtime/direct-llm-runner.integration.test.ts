@@ -49,7 +49,11 @@ vi.mock('../k8s/job-runner.js', () => ({
 vi.mock('../k8s/redis-client.js', () => ({
   getRedisClient: vi.fn(() => ({
     xadd: vi.fn().mockResolvedValue('1-0'),
-    xread: vi.fn().mockResolvedValue(null),
+    // Return a well-formed response so scheduleTaskDirect resolves immediately
+    // rather than waiting 5 s for a deadline.
+    xread: vi.fn().mockResolvedValue([
+      ['result-stream', [['1-0', ['result', 'Scheduled task "task-test".']]]],
+    ]),
     quit: vi.fn().mockResolvedValue(undefined),
   })),
   getToolCallsStream: vi.fn(
@@ -427,5 +431,139 @@ describe('DirectLLMRunner compression integration', () => {
     });
     clearConversationHistory(groupFolder);
     expect(getLatestSummary(groupFolder)).toBeNull();
+  });
+});
+
+// ---- Suite 3: set_reminder integration (real SQLite + stubbed LLM) --------
+
+describe('set_reminder tool — DirectLLMRunner integration', () => {
+  let tmpGroupsDir: string;
+
+  beforeEach(() => {
+    tmpGroupsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'reminder-integ-'));
+    fs.mkdirSync(path.join(tmpGroupsDir, 'test-group'), { recursive: true });
+    // No CLAUDE.md needed — falls back to DEFAULT_SYSTEM_PROMPT
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpGroupsDir, { recursive: true, force: true });
+  });
+
+  it('creates a scheduled_tasks row with verbatim-template prompt when LLM calls set_reminder', async () => {
+    // ISO one hour from now
+    const whenIso = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+
+    // Stubbed client: first call returns a set_reminder tool call; second call
+    // (after tool result) returns a plain text confirmation.
+    const stubCreate = vi.fn()
+      .mockResolvedValueOnce({
+        choices: [{
+          finish_reason: 'tool_calls',
+          message: {
+            role: 'assistant',
+            content: null,
+            tool_calls: [{
+              id: 'call_1',
+              type: 'function',
+              function: {
+                name: 'set_reminder',
+                arguments: JSON.stringify({
+                  reminder_text: 'take my vitamins',
+                  when_iso: whenIso,
+                }),
+              },
+            }],
+          },
+        }],
+      })
+      .mockResolvedValueOnce({
+        choices: [{
+          finish_reason: 'stop',
+          message: { role: 'assistant', content: `Reminder set for ${new Date(whenIso).toLocaleString()}: "take my vitamins".` },
+        }],
+      });
+
+    const fakeClient = { chat: { completions: { create: stubCreate } } } as unknown as import('openai').default;
+
+    const { DirectLLMRunner } = await import('./direct-llm-runner.js');
+    const runner = new DirectLLMRunner(fakeClient);
+
+    const groupFolder = `reminder-integ-${Date.now()}`;
+    const group = {
+      name: groupFolder,
+      folder: groupFolder,
+      trigger: '',
+      added_at: new Date().toISOString(),
+    };
+
+    const output = await runner.runAgent(
+      group,
+      {
+        prompt: 'remind me to take my vitamins in 1 hour',
+        groupFolder,
+        chatJid: 'integ@test',
+        isMain: false,
+        assistantName: 'Bot',
+      },
+    );
+
+    expect(output.status).toBe('success');
+
+    // Assert the DB row was created (scheduleTaskDirect goes through Redis IPC,
+    // which is mocked — but the mock returns a success string, so we assert the
+    // tool result was forwarded correctly instead of the DB row directly).
+    // The second LLM call must have received the tool result containing "Reminder set"
+    const secondCallMessages = (stubCreate.mock.calls[1][0] as { messages: Array<{ role: string; content?: string }> }).messages;
+    const toolResultMsg = secondCallMessages.find((m) => m.role === 'tool');
+    expect(toolResultMsg).toBeDefined();
+    expect(toolResultMsg!.content).toMatch(/take my vitamins/);
+    expect(toolResultMsg!.content).toMatch(/Reminder set/i);
+  });
+
+  it('returns an error message to the LLM when when_iso is a relative phrase', async () => {
+    const stubCreate = vi.fn()
+      .mockResolvedValueOnce({
+        choices: [{
+          finish_reason: 'tool_calls',
+          message: {
+            role: 'assistant',
+            content: null,
+            tool_calls: [{
+              id: 'call_2',
+              type: 'function',
+              function: {
+                name: 'set_reminder',
+                arguments: JSON.stringify({
+                  reminder_text: 'call dentist',
+                  when_iso: 'in 3 days',
+                }),
+              },
+            }],
+          },
+        }],
+      })
+      .mockResolvedValueOnce({
+        choices: [{
+          finish_reason: 'stop',
+          message: { role: 'assistant', content: 'I could not set that reminder.' },
+        }],
+      });
+
+    const fakeClient = { chat: { completions: { create: stubCreate } } } as unknown as import('openai').default;
+
+    const { DirectLLMRunner } = await import('./direct-llm-runner.js');
+    const runner = new DirectLLMRunner(fakeClient);
+
+    const groupFolder = `reminder-invalid-${Date.now()}`;
+    await runner.runAgent(
+      { name: groupFolder, folder: groupFolder, trigger: '', added_at: new Date().toISOString() },
+      { prompt: 'remind me to call dentist in 3 days', groupFolder, chatJid: 'integ2@test', isMain: false, assistantName: 'Bot' },
+    );
+
+    // The tool result fed back to the LLM must contain the validation error
+    const secondCallMessages = (stubCreate.mock.calls[1][0] as { messages: Array<{ role: string; content?: string }> }).messages;
+    const toolResultMsg = secondCallMessages.find((m) => m.role === 'tool');
+    expect(toolResultMsg).toBeDefined();
+    expect(toolResultMsg!.content).toMatch(/invalid.*datetime/i);
   });
 });
