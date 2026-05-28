@@ -57,7 +57,7 @@ register_specialist({
 })
 ```
 
-> **Caveat:** The `register_specialist` IPC tool is wired end-to-end through the `specialist_overrides` SQLite table and the reconciler, but the underlying K8s ConfigMap apply helper is currently deferred. Until that is shipped, `register_specialist` persists the override in SQLite and the reconciler will include it on the next reconcile cycle (triggered by orchestrator restart or the next Helm upgrade). Admin-shell overrides **always win** over the Helm baseline (see _Merge precedence_ below).
+Admin-shell overrides take effect immediately: each mutation patches the `kubeclaw-specialists` ConfigMap and channel pods pick up the updated catalog via kubelet volume propagation within ~30s. Admin-shell overrides **always win** over the Helm baseline (see _Merge precedence_ below).
 
 ---
 
