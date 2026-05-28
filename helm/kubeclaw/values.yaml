@@ -412,7 +412,20 @@ credentialInjection:
   # Each entry declares the destination host, what credential fields it needs, and which
   # env vars on tool-job pods will carry the placeholders. The broker substitutes the real
   # credential value at egress.
-  catalog: []
+  catalog:
+    - id: google-places
+      host: places.googleapis.com
+      upstreamPort: 443
+      credentialFields:
+        - { name: api_key, envVar: GOOGLE_PLACES_API_KEY }
+      baseUrlEnvs:
+        # http:// scheme is intentional — istio egress needs it so the sidecar
+        # can intercept. The broker upgrades the upstream connection to HTTPS
+        # internally.
+        GOOGLE_PLACES_BASE_URL: "http://places.googleapis.com"
+      allowOperatorFallback: false
+      allowedPositions: [header]
+      apiKeyShape: { prefix: "AIza", minLength: 39 }
   #   - id: replicate
   #     host: api.replicate.com
   #     upstreamPort: 443
