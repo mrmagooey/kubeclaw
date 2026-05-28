@@ -86,7 +86,7 @@ export function shouldCompress(
 
 // ---- Tool definitions ----
 
-const TOOLS: OpenAI.ChatCompletionFunctionTool[] = [
+export const TOOLS: OpenAI.ChatCompletionFunctionTool[] = [
   {
     type: 'function',
     function: {
@@ -107,7 +107,10 @@ const TOOLS: OpenAI.ChatCompletionFunctionTool[] = [
     function: {
       name: 'web_search',
       description:
-        'Search the web for a query. Use when the user asks to look something up or find current information.',
+        'Search the web for a query. Returns a JSON array of up to 10 results, each with ' +
+        'fields: title (string), url (string), snippet (string — the most relevant excerpt), ' +
+        'published (ISO date string, optional), source (hostname, optional). ' +
+        'Use when the user asks to look something up or find current information.',
       parameters: {
         type: 'object',
         properties: {
