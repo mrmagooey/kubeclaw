@@ -758,6 +758,22 @@ describe('registerCredentialTools — list_credentials in agent tool list', () =
   });
 });
 
+describe('registerPlacesSearchTool', () => {
+  it('registers places_search local tool with the runner', async () => {
+    const registered: string[] = [];
+    const mockRunner = {
+      registerLocalTool: (name: string, _tool: unknown) => {
+        registered.push(name);
+      },
+    };
+
+    const { registerPlacesSearchTool } = await import('./channel-runner.js');
+    registerPlacesSearchTool(mockRunner as any);
+
+    expect(registered).toContain('places_search');
+  });
+});
+
 // ── Per-turn system-prompt block ──────────────────────────────────────────────
 
 describe('per-turn credential system-prompt block', () => {

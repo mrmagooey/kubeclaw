@@ -125,6 +125,10 @@ import {
   LIST_CREDENTIALS_TOOL_DEF,
   type IpcClient,
 } from './tools/list-credentials.js';
+import {
+  PLACES_SEARCH_TOOL_DEF,
+  placesSearchHandler,
+} from './runtime/places-search.js';
 import { Registry } from 'prom-client';
 import { createChannelMetrics } from './metrics/channel.js';
 import { createMetricsServer } from './metrics/registry.js';
@@ -3061,6 +3065,22 @@ export function registerCredentialTools(
   logger.debug('Registered list_credentials local tool');
 }
 
+/**
+ * Register the channel-resident places_search tool with the DirectLLMRunner
+ * singleton. Called once at startup before the first runAgent() invocation.
+ *
+ * The tool is intercepted locally — no K8s tool pod is spawned.
+ */
+export function registerPlacesSearchTool(
+  runner: ReturnType<typeof getDirectLLMRunner>,
+): void {
+  runner.registerLocalTool('places_search', {
+    def: PLACES_SEARCH_TOOL_DEF,
+    handler: placesSearchHandler,
+  });
+  logger.debug('Registered places_search local tool');
+}
+
 // ── Test-only exports ────────────────────────────────────────────────────────
 // These are prefixed with _ and must not be called in production code.
 
@@ -3112,6 +3132,7 @@ async function main(): Promise<void> {
   loadState();
   await loadChannelPlugins('/workspace/plugins');
   registerCredentialTools(getDirectLLMRunner());
+  registerPlacesSearchTool(getDirectLLMRunner());
 
   // Wire IPC-backed callbacks into the HTTP channel's /secrets REST endpoints.
   // Must run before the channel factory is invoked so the module-level fns are set.
