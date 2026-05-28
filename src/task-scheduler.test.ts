@@ -6,7 +6,13 @@ vi.mock('./runtime/index.js', () => ({
   getRunnerForGroup: vi.fn(),
 }));
 
-import { _initTestDatabase, createTask, getTaskById } from './db.js';
+import {
+  _initTestDatabase,
+  createTask,
+  getDueTasks,
+  getTaskById,
+  updateTaskAfterRun,
+} from './db.js';
 import {
   _resetSchedulerLoopForTests,
   computeNextRun,
@@ -371,5 +377,65 @@ describe('task scheduler', () => {
     });
 
     await vi.advanceTimersByTimeAsync(10);
+  });
+
+  describe('once-task missed-fire DB semantics', () => {
+    it('overdue once-task appears in getDueTasks', async () => {
+      createTask({
+        id: 'once-overdue',
+        group_folder: 'test',
+        chat_jid: 'test@g.us',
+        prompt: 'hello',
+        schedule_type: 'once',
+        schedule_value: '',
+        context_mode: 'isolated',
+        next_run: new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString(), // 48 h ago
+        status: 'active',
+        created_at: new Date().toISOString(),
+      });
+
+      const due = getDueTasks();
+      expect(due.map((t) => t.id)).toContain('once-overdue');
+    });
+
+    it('updateTaskAfterRun with null nextRun sets status to completed', async () => {
+      createTask({
+        id: 'once-complete',
+        group_folder: 'test',
+        chat_jid: 'test@g.us',
+        prompt: 'hello',
+        schedule_type: 'once',
+        schedule_value: '',
+        context_mode: 'isolated',
+        next_run: new Date(Date.now() - 1000).toISOString(),
+        status: 'active',
+        created_at: new Date().toISOString(),
+      });
+
+      updateTaskAfterRun('once-complete', null, 'Completed');
+
+      const task = getTaskById('once-complete');
+      expect(task?.status).toBe('completed');
+    });
+
+    it('completed once-task does not reappear in getDueTasks', async () => {
+      createTask({
+        id: 'once-no-refire',
+        group_folder: 'test',
+        chat_jid: 'test@g.us',
+        prompt: 'hello',
+        schedule_type: 'once',
+        schedule_value: '',
+        context_mode: 'isolated',
+        next_run: new Date(Date.now() - 1000).toISOString(),
+        status: 'active',
+        created_at: new Date().toISOString(),
+      });
+
+      updateTaskAfterRun('once-no-refire', null, 'Completed');
+
+      const due = getDueTasks();
+      expect(due.map((t) => t.id)).not.toContain('once-no-refire');
+    });
   });
 });
