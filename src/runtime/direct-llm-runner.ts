@@ -881,17 +881,19 @@ function loadSystemPrompt(
     logger.warn({ err, groupFolder }, 'skill-loader failed; using base prompt');
   }
 
-  // Append per-group profile section when a profile row exists.
+  // Append per-group profile section when a profile row exists and has content.
   const profile = getGroupProfile(groupFolder);
   if (profile) {
-    const lines: string[] = ['\n\n## Your profile'];
-    if (profile.timezone) lines.push(`- **Timezone:** ${profile.timezone}`);
-    if (profile.location) lines.push(`- **Location:** ${profile.location}`);
-    if (profile.cuisineLikes) lines.push(`- **Cuisine likes:** ${profile.cuisineLikes}`);
-    if (profile.cuisineDislikes) lines.push(`- **Cuisine dislikes:** ${profile.cuisineDislikes}`);
-    if (profile.dietaryRestrictions) lines.push(`- **Dietary restrictions:** ${profile.dietaryRestrictions}`);
-    if (profile.budgetTier) lines.push(`- **Budget tier:** ${profile.budgetTier}`);
-    prompt += lines.join('\n');
+    const bullets: string[] = [];
+    if (profile.timezone) bullets.push(`- **Timezone:** ${profile.timezone}`);
+    if (profile.location) bullets.push(`- **Location:** ${profile.location}`);
+    if (profile.cuisineLikes) bullets.push(`- **Cuisine likes:** ${profile.cuisineLikes}`);
+    if (profile.cuisineDislikes) bullets.push(`- **Cuisine dislikes:** ${profile.cuisineDislikes}`);
+    if (profile.dietaryRestrictions) bullets.push(`- **Dietary restrictions:** ${profile.dietaryRestrictions}`);
+    if (profile.budgetTier) bullets.push(`- **Budget tier:** ${profile.budgetTier}`);
+    if (bullets.length > 0) {
+      prompt += `\n\n## Your profile\n${bullets.join('\n')}`;
+    }
   }
 
   return prompt;

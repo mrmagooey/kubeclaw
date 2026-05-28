@@ -407,6 +407,8 @@ describe('computeNextRun timezone override', () => {
     // sanity check just assert they are both valid ISO strings (format check).
     expect(nextNY).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
     expect(nextTok).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
+    // NY and Tokyo differ by ~14 hours — their next-9am instants must differ.
+    expect(nextNY).not.toBe(nextTok);
   });
 
   it('falls back to global TIMEZONE when tzOverride is undefined', () => {

@@ -3077,6 +3077,7 @@ const UPDATE_PROFILE_TOOL_DEF = {
       'Omit fields that are not being changed.',
     parameters: {
       type: 'object',
+      additionalProperties: false,
       properties: {
         timezone: {
           type: 'string',
@@ -3123,13 +3124,12 @@ export function registerProfileTool(
         const now = new Date().toISOString();
         upsertGroupProfile({
           groupFolder: input.groupFolder,
-          timezone: (args.timezone as string | undefined) ?? undefined,
-          location: (args.location as string | undefined) ?? undefined,
-          cuisineLikes: (args.cuisine_likes as string | undefined) ?? undefined,
-          cuisineDislikes: (args.cuisine_dislikes as string | undefined) ?? undefined,
-          dietaryRestrictions:
-            (args.dietary_restrictions as string | undefined) ?? undefined,
-          budgetTier: (args.budget_tier as string | undefined) ?? undefined,
+          timezone: args.timezone as string | undefined,
+          location: args.location as string | undefined,
+          cuisineLikes: args.cuisine_likes as string | undefined,
+          cuisineDislikes: args.cuisine_dislikes as string | undefined,
+          dietaryRestrictions: args.dietary_restrictions as string | undefined,
+          budgetTier: args.budget_tier as string | undefined,
           updatedAt: now,
         });
         return 'Profile updated.';

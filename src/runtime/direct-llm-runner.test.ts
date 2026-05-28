@@ -788,6 +788,16 @@ describe('loadSystemPrompt profile injection', () => {
     expect(result).not.toContain('undefined');
   });
 
+  it('omits the profile header when all optional fields are undefined', async () => {
+    mockGetGroupProfile.mockReturnValue({
+      groupFolder: 'empty-group',
+      updatedAt: '2026-05-28T10:00:00.000Z',
+    });
+    const { _loadSystemPromptForTest } = await import('./direct-llm-runner.js');
+    const result = _loadSystemPromptForTest('empty-group', tmpDir);
+    expect(result).not.toContain('## Your profile');
+  });
+
   it('profile section appears after the skills suffix', async () => {
     // Create a fake CLAUDE.md so the skills path can run
     const groupDir = path.join(tmpDir, 'test-group');
