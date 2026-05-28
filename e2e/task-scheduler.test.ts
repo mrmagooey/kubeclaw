@@ -14,6 +14,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { randomUUID } from 'crypto';
 import {
   createTask,
+  getDueTasks,
   getTaskById,
   _initTestDatabase,
 } from '../src/db.js';
@@ -136,11 +137,18 @@ describe('Task Scheduler', () => {
 
     const task = await waitForTaskUpdate(taskId);
 
-    // With no registered groups, the task hits the "group not found" error path.
-    // The scheduler sets last_result to record the error but preserves the active status.
+    // Task must have recorded the "group not found" error
     expect(task.last_result).toBeTruthy();
     expect(task.last_result).toMatch(/Group not found/i);
-    console.log(`✅ Once-type task processed, last_result: "${task.last_result}"`);
+
+    // Once-task must be completed — not re-firable
+    expect(task.status).toBe('completed');
+
+    // getDueTasks must not include this task any more
+    const due = getDueTasks();
+    expect(due.map((t) => t.id)).not.toContain(taskId);
+
+    console.log(`✅ Once-type task completed and absent from getDueTasks. last_result: "${task.last_result}"`);
   }, 10_000);
 
   it('skips a paused task even if next_run is in the past', async () => {
