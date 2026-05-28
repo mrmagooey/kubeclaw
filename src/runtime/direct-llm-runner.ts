@@ -449,6 +449,9 @@ async function executeToolViaK8s(
         if (customSpec.acpMode)
           spawnFields.push('toolAcpMode', customSpec.acpMode);
       }
+      if (maxToolOutputBytes !== undefined) {
+        spawnFields.push('maxToolOutputBytes', String(maxToolOutputBytes));
+      }
       await redis.xadd(getSpawnToolPodStream(), '*', ...spawnFields);
       logger.debug(
         { toolJobId, category },

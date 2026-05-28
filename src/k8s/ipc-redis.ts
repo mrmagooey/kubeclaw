@@ -879,6 +879,9 @@ export async function startToolPodSpawnWatcher(): Promise<void> {
 
           const { groupsPvc, sessionsPvc } = channelPvcNames(channel ?? '');
           const timeoutMs = Number(timeout) || 60_000;
+          const maxToolOutputBytes = obj.maxToolOutputBytes
+            ? Number(obj.maxToolOutputBytes)
+            : undefined;
 
           let parsedCommand: string[] | undefined;
           if (toolCommand) {
@@ -929,6 +932,7 @@ export async function startToolPodSpawnWatcher(): Promise<void> {
                 timeout: timeoutMs,
                 groupsPvc,
                 sessionsPvc,
+                ...(maxToolOutputBytes !== undefined ? { maxToolOutputBytes } : {}),
               });
               logger.debug(
                 { agentJobId, category },
