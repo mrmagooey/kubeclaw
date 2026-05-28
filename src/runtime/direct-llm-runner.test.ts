@@ -816,3 +816,192 @@ describe('TOOLS — places_search registration', () => {
     expect(__testing__.toolServerNameForTest('places_search')).toBe('placesSearch');
   });
 });
+
+describe('recommendation pattern — integration', () => {
+  const baseGroup = {
+    name: 'test-group',
+    folder: 'test-group',
+    trigger: '',
+    added_at: new Date().toISOString(),
+  };
+
+  const baseInput = {
+    groupFolder: 'test-group',
+    chatJid: 'user@test',
+    isMain: true,
+    prompt: 'Hello!',
+    sessionId: undefined,
+    assistantName: 'TestBot',
+    secrets: undefined,
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockRedisInstance.xread.mockResolvedValue(null);
+  });
+
+  it('read_user_profile local tool is dispatched in-process (no K8s job spawned)', async () => {
+    // Turn 1: LLM requests read_user_profile, then answers
+    mockCreate
+      .mockResolvedValueOnce({
+        choices: [
+          {
+            message: {
+              role: 'assistant',
+              content: null,
+              tool_calls: [
+                {
+                  id: 'call-rup-1',
+                  type: 'function',
+                  function: { name: 'read_user_profile', arguments: '{}' },
+                },
+              ],
+            },
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        choices: [
+          {
+            message: {
+              role: 'assistant',
+              content: 'Here are my top Italian picks for you.',
+              tool_calls: [],
+            },
+          },
+        ],
+      });
+
+    const { DirectLLMRunner } = await import('./direct-llm-runner.js');
+    const { READ_USER_PROFILE_TOOL } = await import(
+      './tools/read-user-profile.js'
+    );
+    const { jobRunner } = await import('../k8s/job-runner.js');
+
+    const runner = new DirectLLMRunner();
+    runner.registerLocalTool('read_user_profile', READ_USER_PROFILE_TOOL);
+
+    const result = await runner.runAgent(baseGroup, baseInput);
+
+    expect(result.status).toBe('success');
+    expect(result.result).toBe('Here are my top Italian picks for you.');
+    // read_user_profile must NOT spawn a K8s job
+    expect(jobRunner.runToolJob).not.toHaveBeenCalled();
+    // Two LLM calls: tool-request turn + final answer turn
+    expect(mockCreate).toHaveBeenCalledTimes(2);
+  });
+
+  it('places_search tool call routes via K8s browser pod (TOOL_CATEGORY=browser)', async () => {
+    // Turn 1: LLM requests places_search
+    mockCreate
+      .mockResolvedValueOnce({
+        choices: [
+          {
+            message: {
+              role: 'assistant',
+              content: null,
+              tool_calls: [
+                {
+                  id: 'call-ps-1',
+                  type: 'function',
+                  function: {
+                    name: 'places_search',
+                    arguments: JSON.stringify({ query: 'Italian restaurants', location: 'Brooklyn, NY' }),
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        choices: [
+          {
+            message: {
+              role: 'assistant',
+              content: 'Top 3 Italian spots in Brooklyn.',
+              tool_calls: [],
+            },
+          },
+        ],
+      });
+
+    // Simulate browser pod returning search results
+    let capturedRequestId: string | undefined;
+    mockRedisInstance.xadd.mockImplementation((...args: unknown[]) => {
+      const fields = args.slice(2) as string[];
+      const idx = fields.indexOf('requestId');
+      if (idx >= 0) capturedRequestId = fields[idx + 1];
+      return Promise.resolve('1-0');
+    });
+    mockRedisInstance.xread.mockImplementation(async () => {
+      if (!capturedRequestId) return null;
+      return [
+        [
+          'stream',
+          [
+            [
+              '1-0',
+              [
+                'requestId',
+                capturedRequestId,
+                'result',
+                JSON.stringify([
+                  { name: 'Lucali', address: '575 Henry St', rating: 4.8, price: '$$' },
+                ]),
+              ],
+            ],
+          ],
+        ],
+      ];
+    });
+
+    const { DirectLLMRunner } = await import('./direct-llm-runner.js');
+    const { jobRunner } = await import('../k8s/job-runner.js');
+
+    const runner = new DirectLLMRunner();
+    const result = await runner.runAgent(baseGroup, baseInput);
+
+    expect(result.status).toBe('success');
+    // places_search must have triggered a browser pod spawn (standalone mode uses createToolPodJob)
+    expect(jobRunner.createToolPodJob).toHaveBeenCalled();
+    // The tool job call should reference the browser category
+    const podJobCall = (jobRunner.createToolPodJob as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(podJobCall.category).toBe('browser');
+  });
+
+  it('second runAgent call on same groupFolder receives recommendation contract in system prompt', async () => {
+    // Both turns return plain text — we only care about what was passed to the LLM
+    mockCreate
+      .mockResolvedValue({
+        choices: [
+          { message: { role: 'assistant', content: 'ok', tool_calls: [] } },
+        ],
+      });
+
+    // Stub getConversationHistory to return a prior recommendation exchange
+    const { getConversationHistory } = await import('../db.js');
+    (getConversationHistory as ReturnType<typeof vi.fn>).mockReturnValue([
+      { role: 'user', content: 'good Italian restaurants near me' },
+      { role: 'assistant', content: 'Top 3 Italian spots: Lucali...' },
+    ]);
+
+    const { DirectLLMRunner } = await import('./direct-llm-runner.js');
+    const runner = new DirectLLMRunner();
+
+    await runner.runAgent(baseGroup, {
+      ...baseInput,
+      prompt: 'cheaper options please',
+    });
+
+    const firstCall = mockCreate.mock.calls[0][0];
+    // System prompt must include the recommendation contract
+    const systemMsg = firstCall.messages.find((m: any) => m.role === 'system');
+    expect(systemMsg).toBeDefined();
+    expect(systemMsg.content).toContain('## Recommendation guidelines');
+    expect(systemMsg.content).toContain('read_user_profile');
+    // History must include the prior exchange
+    const userMsgs = firstCall.messages.filter((m: any) => m.role === 'user');
+    expect(userMsgs.some((m: any) => m.content?.includes('cheaper options'))).toBe(true);
+  });
+});
