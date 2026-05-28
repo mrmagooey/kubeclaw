@@ -1617,6 +1617,13 @@ export class JobRunner {
         { name: 'IDLE_TIMEOUT', value: String(spec.timeout) },
       ];
 
+    if (spec.maxToolOutputBytes !== undefined) {
+      envVars.push({
+        name: 'KUBECLAW_MAX_TOOL_OUTPUT_BYTES',
+        value: String(spec.maxToolOutputBytes),
+      });
+    }
+
     const volumeMounts: Array<{
       name: string;
       mountPath: string;

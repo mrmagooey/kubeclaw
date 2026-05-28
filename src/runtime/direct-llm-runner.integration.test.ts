@@ -429,3 +429,86 @@ describe('DirectLLMRunner compression integration', () => {
     expect(getLatestSummary(groupFolder)).toBeNull();
   });
 });
+
+describe('DirectLLMRunner — maxToolOutputBytes pod env injection', () => {
+  it('sets KUBECLAW_MAX_TOOL_OUTPUT_BYTES on ToolPodJobSpec when maxToolOutputBytes is provided', async () => {
+    // Import the (mocked) jobRunner so we can inspect calls.
+    const { jobRunner } = await import('../k8s/job-runner.js');
+    const createToolPodJobMock = vi.mocked(jobRunner.createToolPodJob);
+    createToolPodJobMock.mockClear();
+
+    // Configure the mock LLM to return exactly one tool call, then a text response.
+    const mockCreate = vi.fn()
+      .mockResolvedValueOnce({
+        choices: [
+          {
+            message: {
+              role: 'assistant',
+              content: null,
+              tool_calls: [
+                {
+                  id: 'c1',
+                  type: 'function',
+                  function: { name: 'web_fetch', arguments: '{"url":"http://example.com"}' },
+                },
+              ],
+            },
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        choices: [{ message: { role: 'assistant', content: 'done', tool_calls: [] } }],
+      });
+
+    const { createLLMClient } = await import('./llm-client.js');
+    vi.mocked(createLLMClient).mockReturnValueOnce({
+      chat: { completions: { create: mockCreate } },
+    } as any);
+
+    // Override getRedisClient for this test to return a singleton that resolves tool calls.
+    const { getRedisClient } = await import('../k8s/redis-client.js');
+    let capturedRequestId: string | undefined;
+    const sharedRedis = {
+      xadd: vi.fn().mockImplementation((...args: unknown[]) => {
+        const fields = args.slice(2) as string[];
+        const idx = fields.indexOf('requestId');
+        if (idx >= 0) capturedRequestId = fields[idx + 1];
+        return Promise.resolve('1-0');
+      }),
+      xread: vi.fn().mockImplementation(async () => {
+        if (!capturedRequestId) return null;
+        return [
+          [
+            'stream',
+            [['1-0', ['requestId', capturedRequestId, 'result', '"fetched content"']]],
+          ],
+        ];
+      }),
+      quit: vi.fn().mockResolvedValue(undefined),
+    };
+    vi.mocked(getRedisClient).mockReturnValue(sharedRedis as any);
+
+    const { DirectLLMRunner } = await import('./direct-llm-runner.js');
+    const runner = new DirectLLMRunner();
+    const groupFolder = `budget-pod-${Date.now()}`;
+
+    await runner.runAgent(
+      { name: groupFolder, folder: groupFolder, trigger: '', added_at: new Date().toISOString() },
+      { prompt: 'fetch it', groupFolder, chatJid: 'e2e@e2e', isMain: false, assistantName: 'Bot' },
+      undefined,
+      undefined,
+      { maxToolOutputBytes: 12345 },
+    );
+
+    expect(createToolPodJobMock).toHaveBeenCalledWith(
+      expect.objectContaining({ maxToolOutputBytes: 12345 }),
+    );
+
+    // Restore the default getRedisClient mock behavior.
+    vi.mocked(getRedisClient).mockReturnValue({
+      xadd: vi.fn().mockResolvedValue('1-0'),
+      xread: vi.fn().mockResolvedValue(null),
+      quit: vi.fn().mockResolvedValue(undefined),
+    } as any);
+  });
+});
