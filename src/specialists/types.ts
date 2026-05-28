@@ -6,6 +6,8 @@ export interface GlobalSpecialist {
   memory?: { isolated?: boolean };
   claudemd?: string;
   tools?: string[];
+  maxToolRounds?: number;
+  maxToolOutputBytes?: number;
 }
 
 export interface CatalogWire {
@@ -25,6 +27,8 @@ const ALLOWED_KEYS = new Set([
   'memory',
   'claudemd',
   'tools',
+  'maxToolRounds',
+  'maxToolOutputBytes',
 ]);
 const ALLOWED_MEMORY_KEYS = new Set(['isolated']);
 
@@ -78,6 +82,28 @@ export function validateSpecialist(s: unknown): ValidationResult {
     (!Array.isArray(obj.tools) || obj.tools.some((t) => typeof t !== 'string'))
   ) {
     return { ok: false, error: 'tools must be string[]' };
+  }
+  if (
+    obj.maxToolRounds !== undefined &&
+    (typeof obj.maxToolRounds !== 'number' ||
+      !Number.isInteger(obj.maxToolRounds) ||
+      obj.maxToolRounds < 1)
+  ) {
+    return {
+      ok: false,
+      error: 'maxToolRounds must be a positive integer',
+    };
+  }
+  if (
+    obj.maxToolOutputBytes !== undefined &&
+    (typeof obj.maxToolOutputBytes !== 'number' ||
+      !Number.isInteger(obj.maxToolOutputBytes) ||
+      obj.maxToolOutputBytes < 1)
+  ) {
+    return {
+      ok: false,
+      error: 'maxToolOutputBytes must be a positive integer',
+    };
   }
   return { ok: true };
 }
