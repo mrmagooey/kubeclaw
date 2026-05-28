@@ -5,6 +5,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { formatMessages } from '../router.js';
 
 // ---- Shared mock state (hoisted so vi.mock factories can reference it) ----
 
@@ -695,7 +696,13 @@ describe('DirectLLMRunner', () => {
 
     const { DirectLLMRunner } = await import('./direct-llm-runner.js');
     const runner = new DirectLLMRunner();
-    await runner.runAgent(baseGroup, { ...baseInput, prompt: 'what time is it?' });
+    // Pre-format the prompt via formatMessages, matching how production
+    // (channel-runner.ts) prepares input.prompt before calling runAgent.
+    const formattedPrompt = formatMessages(
+      [{ id: '1', chat_jid: 'user@test', sender: 'user', sender_name: 'user', content: 'what time is it?', timestamp: new Date().toISOString() }],
+      'UTC',
+    );
+    await runner.runAgent(baseGroup, { ...baseInput, prompt: formattedPrompt });
 
     // The messages array passed to the LLM should contain current_time=
     const callArgs = mockCreate.mock.calls[0][0];
