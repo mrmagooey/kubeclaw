@@ -436,7 +436,25 @@ credentialInjection:
 
 # Global specialist catalog. Empty by default — every channel sees no specialists
 # until you register some here or via the admin shell. See docs/SPECIALISTS.md.
-specialists: []
+specialists:
+  - name: Researcher
+    prompt: |
+      You are a web-research specialist. When given a topic or question:
+      1. Search for relevant, current information using available search tools.
+      2. Fetch and read promising sources to gather details.
+      3. Synthesise findings into a concise, structured summary with:
+         - A one-paragraph executive summary.
+         - Key facts as a bulleted list.
+         - Source URLs cited inline.
+      Stay factual; note when information is uncertain or conflicting.
+    triggers:
+      - researcher
+    llmProvider: openrouter
+    memory:
+      isolated: false
+    tools:
+      - web_search
+      - web_fetch
 # Example:
 # specialists:
 #   - name: CodeReview
