@@ -20,6 +20,10 @@ const idleTimeout = parseInt(process.env.IDLE_TIMEOUT || '1800000', 10);
 const toolMode = process.env.KUBECLAW_TOOL_MODE as 'http-bridge' | 'file-bridge' | 'acp-bridge' | undefined;
 const toolPort = parseInt(process.env.KUBECLAW_TOOL_PORT || '8080', 10);
 const SHARED_DIR = process.env.KUBECLAW_SHARED_DIR || '/shared';
+const MAX_TOOL_OUTPUT_BYTES = parseInt(
+  process.env.KUBECLAW_MAX_TOOL_OUTPUT_BYTES || '50000',
+  10,
+);
 
 const TOOLCALLS_STREAM = `kubeclaw:toolcalls:${agentJobId}:${category}`;
 const TOOLRESULTS_STREAM = `kubeclaw:toolresults:${agentJobId}:${category}`;
@@ -119,7 +123,7 @@ async function toolWebFetch(input: { url: string; prompt?: string }): Promise<st
   const res = await fetch(input.url, { headers: { 'User-Agent': 'Mozilla/5.0 KubeClaw/1.0' } });
   const text = await res.text();
   // Trim to avoid huge responses
-  return text.slice(0, 50000);
+  return text.slice(0, MAX_TOOL_OUTPUT_BYTES);
 }
 
 async function toolWebSearch(input: { query: string }): Promise<string> {
@@ -132,7 +136,7 @@ async function toolWebSearch(input: { query: string }): Promise<string> {
     .slice(0, 10)
     .map(([, url, title]) => `${title}: ${url}`)
     .join('\n');
-  return results || html.slice(0, 5000);
+  return results || html.slice(0, MAX_TOOL_OUTPUT_BYTES);
 }
 
 async function toolAgentBrowser(input: { command: string }): Promise<string> {
