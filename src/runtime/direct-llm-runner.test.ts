@@ -63,6 +63,7 @@ vi.mock('../db.js', () => ({
   getLatestSummary: vi.fn().mockReturnValue(null),
   insertSummary: vi.fn().mockReturnValue('test-summary-id'),
   deleteMessagesByIds: vi.fn().mockReturnValue(0),
+  getGroupProfile: vi.fn().mockReturnValue(null),
 }));
 
 vi.mock('./compression/token-estimate.js', () => ({

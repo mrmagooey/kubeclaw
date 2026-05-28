@@ -21,6 +21,7 @@ import {
   getLatestSummary,
   insertSummary,
   deleteMessagesByIds,
+  getGroupProfile,
 } from '../db.js';
 import { estimateMessagesTokens } from './compression/token-estimate.js';
 import { summarize } from './compression/summarizer.js';
@@ -871,13 +872,40 @@ function loadSystemPrompt(
   } catch {
     // file missing — use default
   }
+
+  let prompt = base;
   try {
     const { promptSuffix } = loadSkills(groupsDir, groupFolder);
-    return promptSuffix ? base + promptSuffix : base;
+    if (promptSuffix) prompt = base + promptSuffix;
   } catch (err) {
     logger.warn({ err, groupFolder }, 'skill-loader failed; using base prompt');
-    return base;
   }
+
+  // Append per-group profile section when a profile row exists.
+  const profile = getGroupProfile(groupFolder);
+  if (profile) {
+    const lines: string[] = ['\n\n## Your profile'];
+    if (profile.timezone) lines.push(`- **Timezone:** ${profile.timezone}`);
+    if (profile.location) lines.push(`- **Location:** ${profile.location}`);
+    if (profile.cuisineLikes) lines.push(`- **Cuisine likes:** ${profile.cuisineLikes}`);
+    if (profile.cuisineDislikes) lines.push(`- **Cuisine dislikes:** ${profile.cuisineDislikes}`);
+    if (profile.dietaryRestrictions) lines.push(`- **Dietary restrictions:** ${profile.dietaryRestrictions}`);
+    if (profile.budgetTier) lines.push(`- **Budget tier:** ${profile.budgetTier}`);
+    prompt += lines.join('\n');
+  }
+
+  return prompt;
+}
+
+/**
+ * @internal Test-only: exposes loadSystemPrompt with an explicit groupsDir so
+ * unit tests can point it at a temp directory without needing the real FS layout.
+ */
+export function _loadSystemPromptForTest(
+  groupFolder: string,
+  groupsDir: string,
+): string {
+  return loadSystemPrompt(groupFolder, groupsDir);
 }
 
 /** A locally-intercepted tool: definition for the LLM + async handler. */
