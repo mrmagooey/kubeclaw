@@ -85,7 +85,18 @@ Do not give a recommendation without calling at least one search tool — halluc
 restaurant names cause real harm.
 `;
 
-/** Opt-out sentinel: if present in CLAUDE.md the recommendation contract is suppressed. */
+/**
+ * Opt-out sentinel for the recommendation contract.
+ *
+ * If a group's CLAUDE.md contains the exact string
+ *   <!-- no-recommendation-contract -->
+ * as its FIRST line, the RECOMMENDATION_CONTRACT block above will NOT be
+ * appended to the system prompt for that group.  This lets individual groups
+ * (e.g. developer/admin groups) suppress the recommendation flow entirely.
+ *
+ * To opt out, open the group's CLAUDE.md file and add the sentinel as the
+ * very first line before any other content.
+ */
 const RECOMMENDATION_CONTRACT_OPT_OUT = '<!-- no-recommendation-contract -->';
 
 const MAX_TOOL_ROUNDS = 10;

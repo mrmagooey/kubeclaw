@@ -15,17 +15,18 @@ export async function readUserProfileHandler(
   _args: Record<string, unknown>,
   input: ContainerInput,
 ): Promise<string> {
+  let profile: ReturnType<typeof getGroupProfile>;
   try {
-    const profile = getGroupProfile(input.groupFolder);
-    if (!profile) return '{}';
-    return JSON.stringify(profile);
+    profile = getGroupProfile(input.groupFolder);
   } catch (err) {
-    logger.warn(
+    logger.error(
       { err, groupFolder: input.groupFolder },
-      'read_user_profile: getGroupProfile failed; returning {}',
+      'read_user_profile: getGroupProfile threw; profile unavailable',
     );
-    return '{}';
+    return '{"error":"profile_unavailable"}';
   }
+  if (!profile) return '{}';
+  return JSON.stringify(profile);
 }
 
 export const READ_USER_PROFILE_TOOL: LocalTool = {

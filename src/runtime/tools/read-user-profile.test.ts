@@ -73,12 +73,13 @@ describe('readUserProfileHandler', () => {
     expect(mockGetGroupProfile).toHaveBeenCalledWith('unknown-group');
   });
 
-  it('returns "{}" when getGroupProfile throws (defensive degradation)', async () => {
+  it('returns {"error":"profile_unavailable"} and logs error when getGroupProfile throws', async () => {
     mockGetGroupProfile.mockImplementation(() => {
       throw new Error('db not ready');
     });
 
     const { readUserProfileHandler } = await import('./read-user-profile.js');
+    const { logger } = await import('../../logger.js');
     const result = await readUserProfileHandler(
       {},
       {
@@ -90,6 +91,10 @@ describe('readUserProfileHandler', () => {
       },
     );
 
-    expect(result).toBe('{}');
+    expect(result).toBe('{"error":"profile_unavailable"}');
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ groupFolder: 'error-group' }),
+      expect.stringContaining('getGroupProfile threw'),
+    );
   });
 });

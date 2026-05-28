@@ -56,3 +56,18 @@ NEVER use markdown. Only use WhatsApp/Telegram formatting:
 - ```triple backticks``` for code
 
 No ## headings. No [links](url). No **double stars**.
+
+## Recommendation Contract
+
+By default, KubeClaw injects a recommendation contract into the system prompt
+that instructs the assistant to call `read_user_profile` and a search tool
+before making recommendations (restaurants, films, activities, etc.).
+
+To opt out for this group — for example, because this group handles only
+administrative tasks and the recommendation flow is unwanted — add the
+following as the **first line** of this CLAUDE.md file (before all other
+content):
+
+```
+<!-- no-recommendation-contract -->
+```
