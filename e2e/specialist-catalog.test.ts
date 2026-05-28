@@ -972,4 +972,71 @@ describe('global specialist catalog e2e', () => {
     },
     300_000,
   );
+
+  /**
+   * Test 6: Helm baseline Researcher specialist dispatches on @researcher mention.
+   *
+   * Install kubeclaw with the full Researcher stanza from values.yaml.
+   * Send '@researcher what is the boiling point of water?' and assert that:
+   *   1. The SSE stream contains a reply prefixed with [@Researcher].
+   *   2. The reply body references boiling, water, or temperature (loose match
+   *      to tolerate small-model variation).
+   *
+   * memory.isolated is false — the Researcher shares the group session, which
+   * is the intended production behaviour for iterative refinement.
+   */
+  it.skipIf(shouldSkip)(
+    'Helm baseline Researcher specialist replies on @researcher mention',
+    async () => {
+      helmUpgrade([
+        '--set-json',
+        'specialists=[{"name":"Researcher","prompt":"You are a web-research specialist. When given a topic or question:\\n1. Search for relevant, current information using available search tools.\\n2. Fetch and read promising sources to gather details.\\n3. Synthesise findings into a concise, structured summary with:\\n   - A one-paragraph executive summary.\\n   - Key facts as a bulleted list.\\n   - Source URLs cited inline.\\nStay factual; note when information is uncertain or conflicting.\\n","triggers":["researcher"],"llmProvider":"openrouter","memory":{"isolated":false},"tools":["web_search","web_fetch"]}]',
+      ]);
+
+      // Bounce the orchestrator so it re-reconciles with the new baseline CM.
+      kcCluster([
+        'rollout', 'restart',
+        'deployment/kubeclaw-orchestrator',
+        '-n', NAMESPACE,
+      ], { timeout: 30_000 });
+      await waitForOrchestrator(120_000);
+
+      await waitForChannelPod();
+      await startPortForward();
+
+      // Allow ConfigMap propagation into the channel pod volume mount.
+      await sleep(60_000);
+
+      const lines = await sendAndCollect(
+        '@researcher what is the boiling point of water?',
+        (ls) => ls.some((l) => l.includes('[@Researcher]')),
+        90_000,
+      );
+
+      const reply = lines.find((l) => l.includes('[@Researcher]'));
+      expect(
+        reply,
+        `no [@Researcher] reply in SSE lines: ${JSON.stringify(lines)}`,
+      ).toBeDefined();
+      expect(reply).toMatch(/\[@Researcher\]/);
+
+      // Loose content check: the reply should mention something about boiling,
+      // water, or temperature. Small models may phrase this many ways.
+      const replyLower = reply!.toLowerCase();
+      const mentionsBoiling =
+        replyLower.includes('boil') ||
+        replyLower.includes('100') ||
+        replyLower.includes('212') ||
+        replyLower.includes('water') ||
+        replyLower.includes('celsius') ||
+        replyLower.includes('fahrenheit') ||
+        replyLower.includes('temperature');
+      expect(
+        mentionsBoiling,
+        `Expected reply to reference boiling point context, got: ${reply}`,
+      ).toBe(true);
+    },
+    // 60s propagation + 120s orchestrator restart + 90s LLM + margin
+    330_000,
+  );
 });
