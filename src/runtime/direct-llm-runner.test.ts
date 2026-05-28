@@ -87,6 +87,7 @@ vi.mock('../config.js', () => ({
   SCHEDULER_POLL_INTERVAL: 60000,
   MOUNT_ALLOWLIST_PATH: '/tmp/mount-allowlist.json',
   SENDER_ALLOWLIST_PATH: '/tmp/sender-allowlist.json',
+  TIMEZONE: 'UTC',
 }));
 
 vi.mock('../logger.js', () => ({
@@ -677,6 +678,61 @@ describe('DirectLLMRunner', () => {
 
     // Bad JSON args should be handled gracefully (empty args)
     expect(result.status).toBe('success');
+  });
+
+  it('runAgent passes current_time in the user turn sent to the LLM', async () => {
+    mockCreate.mockResolvedValueOnce({
+      choices: [
+        {
+          message: {
+            role: 'assistant',
+            content: 'The current time is in the context.',
+            tool_calls: [],
+          },
+        },
+      ],
+    });
+
+    const { DirectLLMRunner } = await import('./direct-llm-runner.js');
+    const runner = new DirectLLMRunner();
+    await runner.runAgent(baseGroup, { ...baseInput, prompt: 'what time is it?' });
+
+    // The messages array passed to the LLM should contain current_time=
+    const callArgs = mockCreate.mock.calls[0][0];
+    const userMessages: { role: string; content: string }[] = callArgs.messages.filter(
+      (m: { role: string; content: string }) => m.role === 'user',
+    );
+    expect(userMessages.length).toBeGreaterThan(0);
+    const userContent = userMessages[userMessages.length - 1].content;
+    expect(userContent).toContain('current_time=');
+  });
+
+  it('runAgent does not persist current_time in conversation_history rows', async () => {
+    mockCreate.mockResolvedValueOnce({
+      choices: [
+        {
+          message: {
+            role: 'assistant',
+            content: 'Stored response.',
+            tool_calls: [],
+          },
+        },
+      ],
+    });
+
+    const { DirectLLMRunner } = await import('./direct-llm-runner.js');
+    const { appendConversationMessage } = await import('../db.js');
+    const runner = new DirectLLMRunner();
+    await runner.runAgent(baseGroup, { ...baseInput, prompt: 'remember nothing' });
+
+    // Every call to appendConversationMessage must NOT contain current_time
+    const calls = (appendConversationMessage as ReturnType<typeof vi.fn>).mock.calls;
+    expect(calls.length).toBeGreaterThan(0);
+    for (const call of calls) {
+      // appendConversationMessage(groupFolder, role, content)
+      const content = call[2] as string;
+      expect(content).not.toContain('current_time=');
+    }
   });
 });
 

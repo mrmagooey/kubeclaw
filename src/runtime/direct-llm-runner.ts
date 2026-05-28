@@ -13,7 +13,8 @@ import fs from 'fs';
 import path from 'path';
 import OpenAI from 'openai';
 
-import { GROUPS_DIR, KUBECLAW_CHANNEL, KUBECLAW_MODE } from '../config.js';
+import { GROUPS_DIR, KUBECLAW_CHANNEL, KUBECLAW_MODE, TIMEZONE } from '../config.js';
+import { formatCurrentTime } from '../timezone.js';
 import {
   getConversationHistory,
   appendConversationMessage,
@@ -1087,13 +1088,19 @@ export class DirectLLMRunner implements MessageRunner {
       ? rawHistory.slice(Math.max(0, rawHistory.length - keepWindow))
       : rawHistory;
 
+    // Prepend a context header with the current wall-clock time so the LLM
+    // always sees an explicit, fresh timestamp. The raw prompt (without this
+    // header) is what gets persisted in conversation history.
+    const contextHeader = `<context timezone="${TIMEZONE}" current_time="${formatCurrentTime(TIMEZONE)}" />\n`;
+    const userContentForLlm = `${contextHeader}${input.prompt}`;
+
     const messages: OpenAI.ChatCompletionMessageParam[] = [
       { role: 'system', content: systemPrompt },
       ...(activeSummaryMarker
         ? [{ role: 'system' as const, content: activeSummaryMarker }]
         : []),
       ...history.map(({ role, content }) => ({ role, content })),
-      { role: 'user', content: input.prompt },
+      { role: 'user', content: userContentForLlm },
     ];
 
     const toolJobId = `direct-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
