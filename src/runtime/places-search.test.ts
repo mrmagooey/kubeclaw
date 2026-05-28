@@ -4,6 +4,7 @@
  * All external fetch calls are stubbed. No K8s, no Redis, no real HTTP.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { resolveIncludedTypes } from './places-search.js';
 
 // ---- module-under-test (imported after env setup) ----
 
@@ -298,6 +299,174 @@ describe('placesSearchHandler', () => {
     );
 
     expect(result).toMatch(/invalid location/i);
+  });
+
+  // ── Fix 1: includedTypes keyword mapping ─────────────────────────────────────
+
+  it('resolveIncludedTypes maps "Italian" to italian_restaurant', () => {
+    expect(resolveIncludedTypes('Italian restaurant')).toEqual(['italian_restaurant']);
+  });
+
+  it('resolveIncludedTypes maps "thai" to thai_restaurant', () => {
+    expect(resolveIncludedTypes('thai food near me')).toEqual(['thai_restaurant']);
+  });
+
+  it('resolveIncludedTypes falls back to default types for unmatched query', () => {
+    expect(resolveIncludedTypes('somewhere to eat')).toEqual(['restaurant', 'cafe']);
+  });
+
+  it('resolveIncludedTypes returns empty-string-safe default for blank query', () => {
+    expect(resolveIncludedTypes('')).toEqual(['restaurant', 'cafe']);
+  });
+
+  it('sends includedTypes in request body instead of textQuery', async () => {
+    process.env.CREDENTIAL_INJECTION_MODE = 'off';
+    process.env.GOOGLE_PLACES_API_KEY = 'AIzaTestKeyAbcdefghijklmnopqrstuvwxyz01';
+    process.env.GOOGLE_PLACES_BASE_URL = 'https://places.googleapis.com';
+
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => makePlacesResponse(),
+    });
+    vi.stubGlobal('fetch', mockFetch);
+
+    const { placesSearchHandler } = await import('./places-search.js');
+    await placesSearchHandler(
+      { query: 'Italian restaurant', location: '37.7749,-122.4194' },
+      { prompt: '', groupFolder: 'test', chatJid: 'x@x', isMain: false, assistantName: 'Bot' },
+    );
+
+    const [, init] = mockFetch.mock.calls[0];
+    const body = JSON.parse(init.body as string);
+    expect(body.includedTypes).toEqual(['italian_restaurant']);
+    expect(body.textQuery).toBeUndefined();
+  });
+
+  // ── Fix 2: missing location → null coordinates ───────────────────────────────
+
+  it('emits null lat/lng when location is absent from place response', async () => {
+    process.env.CREDENTIAL_INJECTION_MODE = 'off';
+    process.env.GOOGLE_PLACES_API_KEY = 'AIzaTestKeyAbcdefghijklmnopqrstuvwxyz01';
+    process.env.GOOGLE_PLACES_BASE_URL = 'https://places.googleapis.com';
+
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        places: [
+          {
+            displayName: { text: 'Mystery Spot' },
+            formattedAddress: '1 Unknown St',
+            // location field intentionally absent
+            rating: 3.5,
+            types: ['restaurant'],
+          },
+        ],
+      }),
+    });
+    vi.stubGlobal('fetch', mockFetch);
+
+    const { placesSearchHandler } = await import('./places-search.js');
+    const raw = await placesSearchHandler(
+      { query: 'food', location: '37.7749,-122.4194' },
+      { prompt: '', groupFolder: 'test', chatJid: 'x@x', isMain: false, assistantName: 'Bot' },
+    );
+
+    const result = JSON.parse(raw);
+    expect(result[0].lat).toBeNull();
+    expect(result[0].lng).toBeNull();
+  });
+
+  // ── Fix 3: price_range float index guard ─────────────────────────────────────
+
+  it('handles float price_range values by flooring them', async () => {
+    process.env.CREDENTIAL_INJECTION_MODE = 'off';
+    process.env.GOOGLE_PLACES_API_KEY = 'AIzaTestKeyAbcdefghijklmnopqrstuvwxyz01';
+    process.env.GOOGLE_PLACES_BASE_URL = 'https://places.googleapis.com';
+
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => makePlacesResponse(),
+    });
+    vi.stubGlobal('fetch', mockFetch);
+
+    const { placesSearchHandler } = await import('./places-search.js');
+    await placesSearchHandler(
+      { query: 'food', location: '37.7749,-122.4194', price_range: [2.9] },
+      { prompt: '', groupFolder: 'test', chatJid: 'x@x', isMain: false, assistantName: 'Bot' },
+    );
+
+    const [, init] = mockFetch.mock.calls[0];
+    const body = JSON.parse(init.body as string);
+    // 2.9 floored → 2 → PRICE_LEVEL_MODERATE
+    expect(body.priceLevels).toEqual(['PRICE_LEVEL_MODERATE']);
+  });
+
+  // ── Fix 4: radius_meters override ────────────────────────────────────────────
+
+  it('uses radius_meters when provided', async () => {
+    process.env.CREDENTIAL_INJECTION_MODE = 'off';
+    process.env.GOOGLE_PLACES_API_KEY = 'AIzaTestKeyAbcdefghijklmnopqrstuvwxyz01';
+    process.env.GOOGLE_PLACES_BASE_URL = 'https://places.googleapis.com';
+
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => makePlacesResponse(),
+    });
+    vi.stubGlobal('fetch', mockFetch);
+
+    const { placesSearchHandler } = await import('./places-search.js');
+    await placesSearchHandler(
+      { query: 'food', location: '37.7749,-122.4194', radius_meters: 5000 },
+      { prompt: '', groupFolder: 'test', chatJid: 'x@x', isMain: false, assistantName: 'Bot' },
+    );
+
+    const [, init] = mockFetch.mock.calls[0];
+    const body = JSON.parse(init.body as string);
+    expect(body.locationRestriction.circle.radius).toBe(5000);
+  });
+
+  it('caps radius_meters at 50000', async () => {
+    process.env.CREDENTIAL_INJECTION_MODE = 'off';
+    process.env.GOOGLE_PLACES_API_KEY = 'AIzaTestKeyAbcdefghijklmnopqrstuvwxyz01';
+    process.env.GOOGLE_PLACES_BASE_URL = 'https://places.googleapis.com';
+
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => makePlacesResponse(),
+    });
+    vi.stubGlobal('fetch', mockFetch);
+
+    const { placesSearchHandler } = await import('./places-search.js');
+    await placesSearchHandler(
+      { query: 'food', location: '37.7749,-122.4194', radius_meters: 999999 },
+      { prompt: '', groupFolder: 'test', chatJid: 'x@x', isMain: false, assistantName: 'Bot' },
+    );
+
+    const [, init] = mockFetch.mock.calls[0];
+    const body = JSON.parse(init.body as string);
+    expect(body.locationRestriction.circle.radius).toBe(50000);
+  });
+
+  it('uses default radius 1500 when radius_meters not provided', async () => {
+    process.env.CREDENTIAL_INJECTION_MODE = 'off';
+    process.env.GOOGLE_PLACES_API_KEY = 'AIzaTestKeyAbcdefghijklmnopqrstuvwxyz01';
+    process.env.GOOGLE_PLACES_BASE_URL = 'https://places.googleapis.com';
+
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => makePlacesResponse(),
+    });
+    vi.stubGlobal('fetch', mockFetch);
+
+    const { placesSearchHandler } = await import('./places-search.js');
+    await placesSearchHandler(
+      { query: 'food', location: '37.7749,-122.4194' },
+      { prompt: '', groupFolder: 'test', chatJid: 'x@x', isMain: false, assistantName: 'Bot' },
+    );
+
+    const [, init] = mockFetch.mock.calls[0];
+    const body = JSON.parse(init.body as string);
+    expect(body.locationRestriction.circle.radius).toBe(1500);
   });
 
   // ── result schema ────────────────────────────────────────────────────────────
