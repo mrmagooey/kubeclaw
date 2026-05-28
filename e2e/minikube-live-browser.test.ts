@@ -346,9 +346,9 @@ describe('Minikube-live: browser/web tool pod spawned via LLM directive', () => 
     180_000,
   );
 
-  // ── 2. web_search: LLM → tool pod → DuckDuckGo ───────────────────────────
+  // ── 2. web_search: LLM → tool pod → Brave Search API ─────────────────────
   it(
-    'web_search via channel → tool pod → DuckDuckGo',
+    'web_search via channel → tool pod → Brave Search API returns structured results',
     async () => {
       expect(provisioned, 'globalSetup port-forward not live').toBe(true);
 
@@ -381,8 +381,7 @@ describe('Minikube-live: browser/web tool pod spawned via LLM directive', () => 
         ).not.toBeNull();
 
         // Poll the pod's logs for the expected execution marker.
-        // The exact string produced by tool-server.ts:357 is:
-        //   Executing tool=webSearch requestId=...
+        // tool-server.ts:357: `log(\`Executing tool=${tool} requestId=${requestId}\`)`
         const logFound = await waitForPodLog(
           podName!,
           'Executing tool=webSearch',
@@ -393,21 +392,53 @@ describe('Minikube-live: browser/web tool pod spawned via LLM directive', () => 
           `Pod ${podName} logs did not contain "Executing tool=webSearch" within 90 s`,
         ).toBe(true);
       } finally {
-        // Informational: did the SSE stream deliver content?
+        // Informational + structural: did the SSE stream deliver structured data?
         let sseDelivered = false;
         let sseHasRelatedContent = false;
+        let structuredSnippetFound = false;
         try {
           await sse.waitFor((l) => l.length > 0, 60_000);
           sseDelivered = sse.lines.length > 0;
           sseHasRelatedContent = sse.lines.some((l) =>
             /kubernetes|networking|container|pod|cluster/i.test(l),
           );
+
+          // Structural assertion: try to find a tool-result SSE line that carries
+          // the JSON array from the new Brave Search backend.  Look for any data
+          // line that JSON-parses to an array with at least one object containing
+          // a non-empty `snippet` field.
+          for (const line of sse.lines) {
+            try {
+              const payload = JSON.parse(line) as unknown;
+              // The tool result may be nested inside a wrapper object or be the
+              // array directly — handle both shapes.
+              const candidates: unknown[] = Array.isArray(payload)
+                ? [payload]
+                : (typeof payload === 'object' && payload !== null)
+                  ? Object.values(payload as Record<string, unknown>)
+                  : [];
+              for (const candidate of candidates) {
+                if (Array.isArray(candidate) && candidate.length > 0) {
+                  const first = candidate[0] as Record<string, unknown>;
+                  if (typeof first['snippet'] === 'string' && first['snippet'].length > 0) {
+                    structuredSnippetFound = true;
+                    break;
+                  }
+                }
+              }
+            } catch {
+              // Not JSON — skip
+            }
+            if (structuredSnippetFound) break;
+          }
         } catch {
           // LLM did not produce SSE output within the budget — expected for small models
         }
+
         console.log(
           `web_search observability: SSE delivered=${sseDelivered}, ` +
           `SSE contains related terms=${sseHasRelatedContent}, ` +
+          `structured snippet in SSE=${structuredSnippetFound}, ` +
           `tool pod name=${podName ?? 'none'}`,
         );
         if (!sseDelivered) {
@@ -415,6 +446,19 @@ describe('Minikube-live: browser/web tool pod spawned via LLM directive', () => 
             'web_search: SSE stream delivered no data within 60 s. ' +
             'Small model may not have responded yet — this is informational only.',
           );
+        }
+        // Structural assertion: if the SSE stream did deliver data, at least one
+        // line must contain a `snippet` field from the Brave Search response.
+        // This assertion is skipped (soft-fail with warn) when the LLM produces
+        // no SSE output within the budget, because the tool result may not have
+        // been relayed yet.
+        if (sseDelivered) {
+          expect(
+            structuredSnippetFound,
+            'SSE stream delivered data but no line contained a Brave Search structured result ' +
+            'with a non-empty `snippet` field. The old DuckDuckGo plain-text path would also ' +
+            'fail here — verify the Brave API key is injected and the broker mapping is active.',
+          ).toBe(true);
         }
         sse.dispose();
       }
