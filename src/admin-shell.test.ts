@@ -139,17 +139,6 @@ vi.mock('./logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn() },
 }));
 
-const { mockReconcilerApply } = vi.hoisted(() => ({
-  mockReconcilerApply: vi.fn().mockResolvedValue(undefined),
-}));
-
-vi.mock('./specialists/reconciler.js', () => ({
-  SpecialistReconciler: class {
-    apply = mockReconcilerApply;
-  },
-  loadBaselineFromDisk: vi.fn().mockReturnValue([]),
-}));
-
 // ── Import after mocks ─────────────────────────────────────────────────────
 
 const { executeTool, TOOLS } = await import('./admin-shell.js');
@@ -589,9 +578,10 @@ describe('executeTool', () => {
           triggers: ['Researcher', 'Analysis'],
           llmProvider: 'claude',
         }),
+        expect.any(Function),
       );
       expect(result).toContain('Research');
-      expect(result).toContain('next orchestrator restart');
+      expect(result).toContain('Changes are live');
     });
 
     it('returns error when registerSpecialist fails validation', async () => {
@@ -632,12 +622,15 @@ describe('executeTool', () => {
         name: 'Research',
         prompt: 'Updated prompt.',
       });
-      expect(mockEditSpecialist).toHaveBeenCalledWith({
-        name: 'Research',
-        patch: expect.objectContaining({ prompt: 'Updated prompt.' }),
-      });
+      expect(mockEditSpecialist).toHaveBeenCalledWith(
+        {
+          name: 'Research',
+          patch: expect.objectContaining({ prompt: 'Updated prompt.' }),
+        },
+        expect.any(Function),
+      );
       expect(result).toContain('Research');
-      expect(result).toContain('next orchestrator restart');
+      expect(result).toContain('Changes are live');
     });
 
     it('returns error when specialist does not exist', async () => {
@@ -668,9 +661,12 @@ describe('executeTool', () => {
       const result = await executeTool('remove_specialist', {
         name: 'Research',
       });
-      expect(mockRemoveSpecialist).toHaveBeenCalledWith({ name: 'Research' });
+      expect(mockRemoveSpecialist).toHaveBeenCalledWith(
+        { name: 'Research' },
+        expect.any(Function),
+      );
       expect(result).toContain('Research');
-      expect(result).toContain('next orchestrator restart');
+      expect(result).toContain('Changes are live');
     });
 
     it('returns error when specialist does not exist', async () => {
