@@ -122,17 +122,59 @@ async function toolWebFetch(input: { url: string; prompt?: string }): Promise<st
   return text.slice(0, 50000);
 }
 
-async function toolWebSearch(input: { query: string }): Promise<string> {
-  // Use DuckDuckGo HTML endpoint
-  const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(input.query)}`;
-  const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 KubeClaw/1.0' } });
-  const html = await res.text();
-  // Extract result titles and snippets
-  const results = [...html.matchAll(/<a class="result__a"[^>]*href="([^"]*)"[^>]*>([^<]*)<\/a>/g)]
-    .slice(0, 10)
-    .map(([, url, title]) => `${title}: ${url}`)
-    .join('\n');
-  return results || html.slice(0, 5000);
+export interface BraveSearchResult {
+  title: string;
+  url: string;
+  snippet: string;
+  published?: string;
+  source?: string;
+}
+
+export async function toolWebSearch(input: { query: string }): Promise<string> {
+  const apiUrl =
+    `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(input.query)}&count=10`;
+
+  // In sidecar/istio mode the workload's HTTPS_PROXY routes through Envoy and
+  // the broker stamps X-Subscription-Token via ext_authz — do NOT set the
+  // header manually.  In mode=off read BRAVE_API_KEY directly.
+  const key = process.env.BRAVE_API_KEY;
+  const shouldSetHeader =
+    !!key &&
+    !key.startsWith('KC_PH_') &&
+    key !== 'injected-by-broker';
+
+  const headers: Record<string, string> = {
+    'Accept': 'application/json',
+    'Accept-Encoding': 'gzip',
+  };
+  if (shouldSetHeader) {
+    headers['X-Subscription-Token'] = key!;
+  }
+
+  const res = await fetch(apiUrl, { headers });
+  if (!res.ok) {
+    throw new Error(
+      `Brave Search API returned ${res.status}: ${await res.text()}`,
+    );
+  }
+
+  const data = await res.json() as { web?: { results?: Array<{
+    title?: string;
+    url?: string;
+    description?: string;
+    age?: string;
+    meta_url?: { hostname?: string };
+  }> } };
+
+  const results: BraveSearchResult[] = (data.web?.results ?? []).map((r) => ({
+    title: r.title ?? '',
+    url: r.url ?? '',
+    snippet: r.description ?? '',
+    published: r.age,
+    source: r.meta_url?.hostname,
+  }));
+
+  return JSON.stringify(results);
 }
 
 async function toolAgentBrowser(input: { command: string }): Promise<string> {
