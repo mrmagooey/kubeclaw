@@ -1177,6 +1177,69 @@ describe('processGroupMessages dispatch', () => {
     expect([...captured.toolFilter]).toEqual(['mcp:fetch']);
   });
 
+  it('passes maxToolRounds and maxToolOutputBytes from specialist to runAgent overrides', async () => {
+    _setSpecialistCatalogForTesting(
+      makeCatalog([
+        {
+          name: 'Budget',
+          prompt: 'p',
+          maxToolRounds: 3,
+          maxToolOutputBytes: 20000,
+        },
+      ]),
+    );
+    mockGetMessagesSince.mockReturnValue([makeMessage('@Budget question')]);
+
+    let captured: any;
+    fakeRunner.runAgent = vi
+      .fn()
+      .mockImplementation(
+        async (
+          _g: any,
+          _input: any,
+          _spec: any,
+          _onOutput: any,
+          overrides: any,
+        ) => {
+          captured = overrides;
+          return { status: 'success', result: null };
+        },
+      );
+
+    await processGroupMessages(chatJid);
+
+    expect(captured.maxToolRounds).toBe(3);
+    expect(captured.maxToolOutputBytes).toBe(20000);
+  });
+
+  it('omits maxToolRounds and maxToolOutputBytes when not set on specialist', async () => {
+    _setSpecialistCatalogForTesting(
+      makeCatalog([{ name: 'Plain', prompt: 'p' }]),
+    );
+    mockGetMessagesSince.mockReturnValue([makeMessage('@Plain question')]);
+
+    let captured: any;
+    fakeRunner.runAgent = vi
+      .fn()
+      .mockImplementation(
+        async (
+          _g: any,
+          _input: any,
+          _spec: any,
+          _onOutput: any,
+          overrides: any,
+        ) => {
+          captured = overrides;
+          return { status: 'success', result: null };
+        },
+      );
+
+    await processGroupMessages(chatJid);
+
+    expect(captured.maxToolRounds).toBeUndefined();
+    expect(captured.maxToolOutputBytes).toBeUndefined();
+  });
+
   it('prefixes replies with [@Name] when a specialist is mentioned', async () => {
     _setSpecialistCatalogForTesting(makeCatalog([{ name: 'A', prompt: 'p' }]));
     mockGetMessagesSince.mockReturnValue([makeMessage('@A hi')]);
