@@ -115,9 +115,10 @@ async function runTask(
       result: null,
       error: errorMsg,
     });
-    // Update last_result so callers can detect that the task was processed,
-    // but preserve the current status (don't mark as completed).
-    updateTask(task.id, { last_result: `Error: ${errorMsg}` });
+    // Use updateTaskAfterRun so once-tasks are marked completed and recurring
+    // tasks have their next_run advanced — preventing unbounded retry churn.
+    const nextRun = computeNextRun(task);
+    updateTaskAfterRun(task.id, nextRun, `Error: ${errorMsg}`);
     return;
   }
 

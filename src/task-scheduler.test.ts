@@ -296,7 +296,7 @@ describe('task scheduler', () => {
     await vi.advanceTimersByTimeAsync(10);
 
     const task = getTaskById('task-no-group');
-    expect(task?.status).toBe('active');
+    expect(task?.status).toBe('completed');
   });
 
   it('computeNextRun returns null for unknown schedule type', () => {
@@ -377,6 +377,54 @@ describe('task scheduler', () => {
     });
 
     await vi.advanceTimersByTimeAsync(10);
+  });
+
+  it('once-task fires exactly once even when group is not registered', async () => {
+    createTask({
+      id: 'once-exactly-once',
+      group_folder: 'missing-group',
+      chat_jid: 'test@g.us',
+      prompt: 'hello',
+      schedule_type: 'once',
+      schedule_value: '',
+      context_mode: 'isolated',
+      next_run: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(), // 24 h ago
+      status: 'active',
+      created_at: new Date().toISOString(),
+    });
+
+    const enqueueTask = vi.fn(
+      (_groupJid: string, _taskId: string, fn: () => Promise<void>) => {
+        void fn();
+      },
+    );
+
+    process.env.SCHEDULER_POLL_INTERVAL = '50';
+
+    startSchedulerLoop({
+      registeredGroups: () => ({}), // group deliberately missing
+      getSessions: () => ({}),
+      queue: { enqueueTask } as any,
+      onProcess: () => {},
+      sendMessage: async () => {},
+    });
+
+    // First poll cycle: task fires
+    await vi.advanceTimersByTimeAsync(60);
+
+    // Second poll cycle: task must NOT fire again
+    await vi.advanceTimersByTimeAsync(60);
+
+    // Exactly one enqueue across both cycles
+    expect(enqueueTask).toHaveBeenCalledTimes(1);
+
+    // Status must be 'completed', not 'active'
+    const task = getTaskById('once-exactly-once');
+    expect(task?.status).toBe('completed');
+
+    // getDueTasks must return nothing for this task
+    const due = getDueTasks();
+    expect(due.map((t) => t.id)).not.toContain('once-exactly-once');
   });
 
   describe('once-task missed-fire DB semantics', () => {
