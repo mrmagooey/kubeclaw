@@ -776,3 +776,33 @@ describe('TOOLS — propose_skill registration', () => {
     expect(names).toContain('propose_skill');
   });
 });
+
+describe('TOOLS — places_search registration', () => {
+  it('includes places_search in the built-in tool list', async () => {
+    const { __testing__ } = await import('./direct-llm-runner.js');
+    const names = __testing__.toolsForTest().map((t: any) => t.function.name);
+    expect(names).toContain('places_search');
+  });
+
+  it('places_search tool definition has required query and location parameters', async () => {
+    const { __testing__ } = await import('./direct-llm-runner.js');
+    const tool = __testing__.toolsForTest().find(
+      (t: any) => t.function.name === 'places_search',
+    );
+    expect(tool).toBeDefined();
+    const props = tool!.function.parameters.properties as Record<string, unknown>;
+    expect(props).toHaveProperty('query');
+    expect(props).toHaveProperty('location');
+    expect(tool!.function.parameters.required).toContain('query');
+  });
+
+  it('places_search is mapped to browser category in TOOL_CATEGORY', async () => {
+    const { __testing__ } = await import('./direct-llm-runner.js');
+    expect(__testing__.toolCategoryForTest('places_search')).toBe('browser');
+  });
+
+  it('places_search is mapped to placesSearch in TOOL_SERVER_NAME', async () => {
+    const { __testing__ } = await import('./direct-llm-runner.js');
+    expect(__testing__.toolServerNameForTest('places_search')).toBe('placesSearch');
+  });
+});

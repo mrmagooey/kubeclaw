@@ -385,6 +385,37 @@ const TOOLS: OpenAI.ChatCompletionFunctionTool[] = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'places_search',
+      description:
+        'Search for local places (restaurants, cafés, shops, attractions) near a given location. ' +
+        'Returns a ranked list of results with name, address, rating, price tier, and a brief description. ' +
+        'Use when the user asks for recommendations for a place to eat, visit, or shop.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: {
+            type: 'string',
+            description:
+              'What to search for, e.g. "Italian restaurants", "coffee shops", "bookstores"',
+          },
+          location: {
+            type: 'string',
+            description:
+              'Where to search, e.g. "Melbourne CBD, Australia", "Brooklyn, NY". ' +
+              'Omit to use the profile location if available.',
+          },
+          max_results: {
+            type: 'number',
+            description: 'Maximum number of results to return (default 5, max 10)',
+          },
+        },
+        required: ['query'],
+      },
+    },
+  },
 ];
 
 /**
@@ -404,6 +435,7 @@ const TOOL_SERVER_NAME: Record<string, string> = {
   web_search: 'webSearch',
   browser: 'agentBrowser',
   bash: 'bash',
+  places_search: 'placesSearch',
 };
 
 // Map LLM tool name → tool pod category
@@ -412,6 +444,7 @@ const TOOL_CATEGORY: Record<string, 'browser' | 'execution'> = {
   web_search: 'browser',
   browser: 'browser',
   bash: 'execution',
+  places_search: 'browser',
 };
 
 // ---- K8s tool pod dispatch ----
@@ -1480,4 +1513,6 @@ export const __testing__ = {
   loadSystemPromptForTest: (group: string, groupsDir: string) =>
     loadSystemPrompt(group, groupsDir),
   toolsForTest: () => TOOLS,
+  toolCategoryForTest: (name: string) => TOOL_CATEGORY[name],
+  toolServerNameForTest: (name: string) => TOOL_SERVER_NAME[name],
 };
