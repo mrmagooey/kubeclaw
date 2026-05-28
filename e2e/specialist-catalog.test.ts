@@ -972,4 +972,84 @@ describe('global specialist catalog e2e', () => {
     },
     300_000,
   );
+
+  /**
+   * Test 6: Immediate ConfigMap apply — no orchestrator restart required.
+   *
+   * Install with empty specialists. Inject a 'Ping' specialist directly into
+   * SQLite (bypassing the admin-shell LLM), then call the reconciler's
+   * configMapApply path by invoking the admin-shell IPC exec endpoint to call
+   * register_specialist via kubectl exec — this is the real end-to-end path.
+   *
+   * We then wait ≤65s for kubelet propagation WITHOUT restarting the
+   * orchestrator. Sending @Ping must produce a reply — proving that the
+   * ConfigMap patch alone was sufficient.
+   *
+   * NOTE: kubectl exec is used here to call register_specialist synchronously
+   * inside the already-running orchestrator process, exercising the
+   * configMapApply closure wired in admin-shell.ts. We use the
+   * admin-shell executeTool node API directly rather than driving the
+   * admin-shell LLM layer to avoid model-availability dependencies.
+   */
+  it.skipIf(shouldSkip)(
+    'register_specialist immediately patches ConfigMap — no orchestrator restart required',
+    async () => {
+      helmUpgrade(['--set-json', 'specialists=[]']);
+      await waitForOrchestrator();
+      await waitForChannelPod();
+      await startPortForward();
+
+      // Invoke register_specialist inside the running orchestrator via kubectl exec.
+      // This exercises the real configMapApply closure, not SQLite injection + restart.
+      const registerScript = `
+        (async () => {
+          const { executeTool } = await import('/app/dist/admin-shell.js');
+          const result = await executeTool('register_specialist', {
+            name: 'Ping',
+            prompt: 'Respond with exactly the word: pong',
+          });
+          console.log(result);
+        })().catch((e) => { console.error('register-error:', e.message); process.exit(1); });
+      `;
+
+      const registerResult = sqliteQueryInOrchestrator(registerScript);
+      expect(
+        registerResult,
+        `register_specialist failed: ${registerResult}`,
+      ).toContain('Changes are live');
+
+      // Verify the ConfigMap was written by the reconciler — do NOT restart.
+      const cmCheck = kcCluster([
+        'get', 'configmap', 'kubeclaw-specialists',
+        '-n', NAMESPACE,
+        '-o', 'jsonpath={.data.specialists\\.json}',
+      ], { timeout: 15_000 });
+      expect(cmCheck.ok, `configmap get failed: ${cmCheck.stderr}`).toBe(true);
+      const cm = JSON.parse(cmCheck.stdout) as {
+        specialists?: Array<{ name: string }>;
+      };
+      expect(
+        cm.specialists?.some((s) => s.name === 'Ping'),
+        `Ping not in ConfigMap: ${cmCheck.stdout}`,
+      ).toBe(true);
+
+      // Wait up to 65s for kubelet to propagate the ConfigMap update.
+      await sleep(65_000);
+
+      const lines = await sendAndCollect(
+        '@Ping test',
+        (ls) => ls.some((l) => l.includes('[@Ping]')),
+        90_000,
+      );
+
+      const pingReply = lines.find((l) => l.includes('[@Ping]'));
+      expect(
+        pingReply,
+        `no [@Ping] reply in lines: ${JSON.stringify(lines)}`,
+      ).toBeDefined();
+      expect(pingReply?.toLowerCase()).toContain('pong');
+    },
+    // 65s propagation + 120s readiness + 90s LLM + margin
+    330_000,
+  );
 });
