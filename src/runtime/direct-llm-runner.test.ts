@@ -732,3 +732,76 @@ describe('TOOLS — propose_skill registration', () => {
     expect(names).toContain('propose_skill');
   });
 });
+
+describe('loadSystemPrompt profile injection', () => {
+  let tmpDir: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let mockGetGroupProfile: any;
+
+  beforeEach(async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kubeclaw-profile-test-'));
+    const db = await import('../db.js');
+    mockGetGroupProfile = vi.mocked(db.getGroupProfile);
+    mockGetGroupProfile.mockReturnValue(null);
+  });
+
+  it('returns base prompt with no profile when getGroupProfile returns null', async () => {
+    mockGetGroupProfile.mockReturnValue(null);
+    const { _loadSystemPromptForTest } = await import('./direct-llm-runner.js');
+    const result = _loadSystemPromptForTest('some-group', tmpDir);
+    expect(result).not.toContain('## Your profile');
+  });
+
+  it('appends a profile section when getGroupProfile returns a full profile', async () => {
+    mockGetGroupProfile.mockReturnValue({
+      groupFolder: 'test-group',
+      timezone: 'America/New_York',
+      location: 'Brooklyn, NY',
+      cuisineLikes: 'Japanese, Thai',
+      cuisineDislikes: 'Liver',
+      dietaryRestrictions: 'no shellfish',
+      budgetTier: 'mid-range',
+      updatedAt: '2026-05-28T10:00:00.000Z',
+    });
+    const { _loadSystemPromptForTest } = await import('./direct-llm-runner.js');
+    const result = _loadSystemPromptForTest('test-group', tmpDir);
+    expect(result).toContain('## Your profile');
+    expect(result).toContain('America/New_York');
+    expect(result).toContain('Brooklyn, NY');
+    expect(result).toContain('Japanese, Thai');
+    expect(result).toContain('Liver');
+    expect(result).toContain('no shellfish');
+    expect(result).toContain('mid-range');
+  });
+
+  it('omits profile fields that are undefined', async () => {
+    mockGetGroupProfile.mockReturnValue({
+      groupFolder: 'sparse-group',
+      timezone: 'UTC',
+      updatedAt: '2026-05-28T10:00:00.000Z',
+    });
+    const { _loadSystemPromptForTest } = await import('./direct-llm-runner.js');
+    const result = _loadSystemPromptForTest('sparse-group', tmpDir);
+    expect(result).toContain('## Your profile');
+    expect(result).toContain('UTC');
+    // Fields not set should not appear as "undefined" literally
+    expect(result).not.toContain('undefined');
+  });
+
+  it('profile section appears after the skills suffix', async () => {
+    // Create a fake CLAUDE.md so the skills path can run
+    const groupDir = path.join(tmpDir, 'test-group');
+    fs.mkdirSync(groupDir, { recursive: true });
+    fs.writeFileSync(path.join(groupDir, 'CLAUDE.md'), 'Custom base prompt.');
+    mockGetGroupProfile.mockReturnValue({
+      groupFolder: 'test-group',
+      timezone: 'Europe/London',
+      updatedAt: '2026-05-28T10:00:00.000Z',
+    });
+    const { _loadSystemPromptForTest } = await import('./direct-llm-runner.js');
+    const result = _loadSystemPromptForTest('test-group', tmpDir);
+    const profileIdx = result.indexOf('## Your profile');
+    const baseIdx = result.indexOf('Custom base prompt.');
+    expect(profileIdx).toBeGreaterThan(baseIdx);
+  });
+});
