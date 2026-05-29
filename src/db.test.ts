@@ -67,11 +67,116 @@ import {
   deleteConversationHistoryBefore,
   writeAuditEntry,
   getAuditEntries,
+  getGroupProfile,
+  upsertGroupProfile,
 } from './db.js';
 import { JobACL } from './types.js';
+import type { GroupProfile } from './types.js';
+
+describe('GroupProfile type shape', () => {
+  it('has the expected fields', () => {
+    const p: GroupProfile = {
+      groupFolder: 'test-group',
+      updatedAt: new Date().toISOString(),
+    };
+    expect(p.groupFolder).toBe('test-group');
+    expect(p.timezone).toBeUndefined();
+    expect(p.location).toBeUndefined();
+    expect(p.cuisineLikes).toBeUndefined();
+    expect(p.cuisineDislikes).toBeUndefined();
+    expect(p.dietaryRestrictions).toBeUndefined();
+    expect(p.budgetTier).toBeUndefined();
+  });
+});
 
 beforeEach(async () => {
   await _initTestDatabase();
+});
+
+describe('group_profiles schema', () => {
+  it('creates the group_profiles table', () => {
+    const result = db.exec(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name='group_profiles'`,
+    );
+    expect(result.length).toBeGreaterThan(0);
+    expect(result[0].values[0][0]).toBe('group_profiles');
+  });
+
+  it('has the expected columns', () => {
+    const result = db.exec(`PRAGMA table_info(group_profiles)`);
+    expect(result.length).toBeGreaterThan(0);
+    const colNames = result[0].values.map((r) => r[1] as string);
+    expect(colNames).toContain('group_folder');
+    expect(colNames).toContain('timezone');
+    expect(colNames).toContain('location');
+    expect(colNames).toContain('cuisine_likes');
+    expect(colNames).toContain('cuisine_dislikes');
+    expect(colNames).toContain('dietary_restrictions');
+    expect(colNames).toContain('budget_tier');
+    expect(colNames).toContain('updated_at');
+  });
+});
+
+describe('getGroupProfile / upsertGroupProfile', () => {
+  it('returns null for a group with no profile row', () => {
+    const result = getGroupProfile('no-such-group');
+    expect(result).toBeNull();
+  });
+
+  it('round-trips all fields', () => {
+    upsertGroupProfile({
+      groupFolder: 'test-group',
+      timezone: 'America/New_York',
+      location: 'Brooklyn, NY',
+      cuisineLikes: 'Japanese, Thai',
+      cuisineDislikes: 'Liver',
+      dietaryRestrictions: 'no shellfish',
+      budgetTier: 'mid-range',
+      updatedAt: '2026-05-28T10:00:00.000Z',
+    });
+    const p = getGroupProfile('test-group');
+    expect(p).not.toBeNull();
+    expect(p!.groupFolder).toBe('test-group');
+    expect(p!.timezone).toBe('America/New_York');
+    expect(p!.location).toBe('Brooklyn, NY');
+    expect(p!.cuisineLikes).toBe('Japanese, Thai');
+    expect(p!.cuisineDislikes).toBe('Liver');
+    expect(p!.dietaryRestrictions).toBe('no shellfish');
+    expect(p!.budgetTier).toBe('mid-range');
+    expect(p!.updatedAt).toBe('2026-05-28T10:00:00.000Z');
+  });
+
+  it('partial upsert preserves existing fields not supplied', () => {
+    upsertGroupProfile({
+      groupFolder: 'partial-group',
+      timezone: 'Australia/Melbourne',
+      location: 'Melbourne, AU',
+      updatedAt: '2026-05-28T10:00:00.000Z',
+    });
+    // Second call sets only budgetTier; timezone/location must be preserved
+    upsertGroupProfile({
+      groupFolder: 'partial-group',
+      budgetTier: 'splurge',
+      updatedAt: '2026-05-28T11:00:00.000Z',
+    });
+    const p = getGroupProfile('partial-group');
+    expect(p!.timezone).toBe('Australia/Melbourne');
+    expect(p!.location).toBe('Melbourne, AU');
+    expect(p!.budgetTier).toBe('splurge');
+    expect(p!.updatedAt).toBe('2026-05-28T11:00:00.000Z');
+  });
+
+  it('upsert with all-undefined optional fields creates a minimal row', () => {
+    upsertGroupProfile({
+      groupFolder: 'minimal-group',
+      updatedAt: '2026-05-28T09:00:00.000Z',
+    });
+    const p = getGroupProfile('minimal-group');
+    expect(p).not.toBeNull();
+    expect(p!.groupFolder).toBe('minimal-group');
+    expect(p!.timezone).toBeUndefined();
+    expect(p!.location).toBeUndefined();
+  });
 });
 
 // Helper to store a message using the normalized NewMessage interface

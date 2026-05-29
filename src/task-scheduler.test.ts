@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ScheduledTask } from './types.js';
 
 vi.mock('./runtime/index.js', () => ({
   getToolJobRunner: vi.fn(),
@@ -371,5 +372,59 @@ describe('task scheduler', () => {
     });
 
     await vi.advanceTimersByTimeAsync(10);
+  });
+});
+
+function makeTask(overrides: Partial<ScheduledTask> = {}): ScheduledTask {
+  return {
+    id: 'test-task-1',
+    group_folder: 'test-group',
+    chat_jid: 'test@chat',
+    prompt: 'hello',
+    schedule_type: 'cron',
+    schedule_value: '0 9 * * *',
+    context_mode: 'isolated',
+    next_run: null,
+    last_run: null,
+    last_result: null,
+    status: 'active',
+    created_at: new Date().toISOString(),
+    ...overrides,
+  };
+}
+
+describe('computeNextRun timezone override', () => {
+  it('uses tzOverride when supplied instead of global TIMEZONE', () => {
+    const task = makeTask({ schedule_value: '0 9 * * *' });
+    // Run for two different timezones; the next-run ISO strings must differ.
+    const nextNY = computeNextRun(task, 'America/New_York');
+    const nextTok = computeNextRun(task, 'Asia/Tokyo');
+    // Both must be valid ISO timestamps
+    expect(() => new Date(nextNY!)).not.toThrow();
+    expect(() => new Date(nextTok!)).not.toThrow();
+    // They can be equal only if by coincidence — for a 9am cron fired outside
+    // business hours they will differ by the UTC offset gap, so for a broad
+    // sanity check just assert they are both valid ISO strings (format check).
+    expect(nextNY).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
+    expect(nextTok).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
+    // NY and Tokyo differ by ~14 hours — their next-9am instants must differ.
+    expect(nextNY).not.toBe(nextTok);
+  });
+
+  it('falls back to global TIMEZONE when tzOverride is undefined', () => {
+    const task = makeTask({ schedule_value: '0 9 * * *' });
+    const next = computeNextRun(task, undefined);
+    expect(next).not.toBeNull();
+    expect(next).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+
+  it('interval tasks ignore tzOverride', () => {
+    const task = makeTask({
+      schedule_type: 'interval',
+      schedule_value: '60000',
+      next_run: new Date(Date.now() - 1000).toISOString(),
+    });
+    const next = computeNextRun(task, 'America/Los_Angeles');
+    expect(next).not.toBeNull();
   });
 });

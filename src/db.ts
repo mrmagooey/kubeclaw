@@ -19,6 +19,7 @@ import {
   ScheduledTask,
   TaskRunLog,
   JobACL,
+  GroupProfile,
 } from './types.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -451,6 +452,22 @@ function createSchema(database: SqlJsDatabase): void {
   database.run(
     `CREATE INDEX IF NOT EXISTS idx_audit_log_group_ts ON audit_log(group_folder, ts DESC)`,
   );
+
+  // Story N: group_profiles — per-group user preferences injected into system prompt.
+  // group_folder is the primary key (matches the channel pod's groups/<folder> directory).
+  // All preference columns are nullable; missing rows mean "no profile set".
+  database.run(`
+    CREATE TABLE IF NOT EXISTS group_profiles (
+      group_folder          TEXT PRIMARY KEY,
+      timezone              TEXT,
+      location              TEXT,
+      cuisine_likes         TEXT,
+      cuisine_dislikes      TEXT,
+      dietary_restrictions  TEXT,
+      budget_tier           TEXT,
+      updated_at            TEXT NOT NULL
+    )
+  `);
 }
 
 /**
@@ -2676,4 +2693,87 @@ export function getAuditEntries(
     target: row[4] as string | null,
     detail: row[5] as string | null,
   }));
+}
+
+// ---------------------------------------------------------------------------
+// group_profiles — per-group user preferences
+// ---------------------------------------------------------------------------
+
+/**
+ * Return the stored profile for the given group, or null if no row exists.
+ */
+export function getGroupProfile(groupFolder: string): GroupProfile | null {
+  const stmt = db.prepare(
+    `SELECT group_folder, timezone, location, cuisine_likes, cuisine_dislikes,
+            dietary_restrictions, budget_tier, updated_at
+     FROM group_profiles WHERE group_folder = ?`,
+  );
+  stmt.bind([groupFolder]);
+  if (!stmt.step()) {
+    stmt.free();
+    return null;
+  }
+  const row = stmt.getAsObject() as {
+    group_folder: string;
+    timezone: string | null;
+    location: string | null;
+    cuisine_likes: string | null;
+    cuisine_dislikes: string | null;
+    dietary_restrictions: string | null;
+    budget_tier: string | null;
+    updated_at: string;
+  };
+  stmt.free();
+  return {
+    groupFolder: row.group_folder,
+    timezone: row.timezone ?? undefined,
+    location: row.location ?? undefined,
+    cuisineLikes: row.cuisine_likes ?? undefined,
+    cuisineDislikes: row.cuisine_dislikes ?? undefined,
+    dietaryRestrictions: row.dietary_restrictions ?? undefined,
+    budgetTier: row.budget_tier ?? undefined,
+    updatedAt: row.updated_at,
+  };
+}
+
+/**
+ * Insert or partially-update a group profile.
+ *
+ * Uses `COALESCE(?, col)` semantics so that `undefined` / null arguments
+ * leave existing column values untouched. The `updated_at` column is always
+ * overwritten with the supplied value.
+ *
+ * On first write (no existing row) all supplied fields are set; omitted
+ * optional fields remain NULL in the database.
+ */
+export function upsertGroupProfile(p: GroupProfile): void {
+  // Map undefined → null so sql.js can bind the value correctly.
+  const tz = p.timezone ?? null;
+  const loc = p.location ?? null;
+  const cl = p.cuisineLikes ?? null;
+  const cd = p.cuisineDislikes ?? null;
+  const dr = p.dietaryRestrictions ?? null;
+  const bt = p.budgetTier ?? null;
+
+  db.run(
+    `INSERT INTO group_profiles
+       (group_folder, timezone, location, cuisine_likes, cuisine_dislikes,
+        dietary_restrictions, budget_tier, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(group_folder) DO UPDATE SET
+       timezone             = COALESCE(?, timezone),
+       location             = COALESCE(?, location),
+       cuisine_likes        = COALESCE(?, cuisine_likes),
+       cuisine_dislikes     = COALESCE(?, cuisine_dislikes),
+       dietary_restrictions = COALESCE(?, dietary_restrictions),
+       budget_tier          = COALESCE(?, budget_tier),
+       updated_at           = ?`,
+    [
+      // INSERT values (8 columns)
+      p.groupFolder, tz, loc, cl, cd, dr, bt, p.updatedAt,
+      // UPDATE COALESCE values (6 nullable columns) + updated_at
+      tz, loc, cl, cd, dr, bt, p.updatedAt,
+    ],
+  );
+  saveDatabase();
 }

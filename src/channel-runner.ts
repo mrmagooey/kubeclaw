@@ -67,6 +67,7 @@ import {
   storeChatMetadata,
   storeMessage,
   writeAuditEntry,
+  upsertGroupProfile,
   type TaskRunLogRow,
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
@@ -3061,6 +3062,85 @@ export function registerCredentialTools(
   logger.debug('Registered list_credentials local tool');
 }
 
+/**
+ * Update-profile tool definition.
+ * All fields are optional — the LLM only needs to supply what changed.
+ */
+const UPDATE_PROFILE_TOOL_DEF = {
+  type: 'function' as const,
+  function: {
+    name: 'update_profile',
+    description:
+      'Persist user preferences (timezone, location, cuisine likes/dislikes, ' +
+      'dietary restrictions, budget tier) so they are remembered across conversations. ' +
+      'Call whenever the user states, corrects, or confirms a preference. ' +
+      'Omit fields that are not being changed.',
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        timezone: {
+          type: 'string',
+          description: 'IANA timezone, e.g. "America/New_York"',
+        },
+        location: {
+          type: 'string',
+          description: 'Free-text location, e.g. "Melbourne, Australia"',
+        },
+        cuisine_likes: {
+          type: 'string',
+          description: 'Cuisine styles the user enjoys',
+        },
+        cuisine_dislikes: {
+          type: 'string',
+          description: 'Cuisine styles the user dislikes',
+        },
+        dietary_restrictions: {
+          type: 'string',
+          description: 'Dietary restrictions, e.g. "vegetarian, no nuts"',
+        },
+        budget_tier: {
+          type: 'string',
+          enum: ['budget', 'mid-range', 'splurge'],
+          description: 'Budget tier for recommendations',
+        },
+      },
+    },
+  },
+};
+
+/**
+ * Register the `update_profile` local tool on the given runner.
+ * The handler upserts the supplied fields into the group_profiles table.
+ * Called once per channel-runner startup (same pattern as registerCredentialTools).
+ */
+export function registerProfileTool(
+  runner: ReturnType<typeof getDirectLLMRunner>,
+): void {
+  runner.registerLocalTool('update_profile', {
+    def: UPDATE_PROFILE_TOOL_DEF,
+    handler: async (args, input) => {
+      try {
+        const now = new Date().toISOString();
+        upsertGroupProfile({
+          groupFolder: input.groupFolder,
+          timezone: args.timezone as string | undefined,
+          location: args.location as string | undefined,
+          cuisineLikes: args.cuisine_likes as string | undefined,
+          cuisineDislikes: args.cuisine_dislikes as string | undefined,
+          dietaryRestrictions: args.dietary_restrictions as string | undefined,
+          budgetTier: args.budget_tier as string | undefined,
+          updatedAt: now,
+        });
+        return 'Profile updated.';
+      } catch (err) {
+        return `update_profile error: ${err instanceof Error ? err.message : String(err)}`;
+      }
+    },
+  });
+  logger.debug('Registered update_profile local tool');
+}
+
 // ── Test-only exports ────────────────────────────────────────────────────────
 // These are prefixed with _ and must not be called in production code.
 
@@ -3112,6 +3192,7 @@ async function main(): Promise<void> {
   loadState();
   await loadChannelPlugins('/workspace/plugins');
   registerCredentialTools(getDirectLLMRunner());
+  registerProfileTool(getDirectLLMRunner());
 
   // Wire IPC-backed callbacks into the HTTP channel's /secrets REST endpoints.
   // Must run before the channel factory is invoked so the module-level fns are set.

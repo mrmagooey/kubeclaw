@@ -6,6 +6,7 @@ import { ContainerOutput, getRunnerForGroup } from './runtime/index.js';
 import {
   getAllTasks,
   getDueTasks,
+  getGroupProfile,
   getTaskById,
   logTaskRun,
   updateTask,
@@ -21,17 +22,23 @@ import { RegisteredGroup, ScheduledTask } from './types.js';
  * task's scheduled time rather than Date.now() to prevent cumulative
  * drift on interval-based tasks.
  *
+ * @param task - The task to compute for.
+ * @param tzOverride - Optional IANA timezone that takes precedence over the
+ *   global TIMEZONE constant (used when a group has a profile timezone set).
+ *
  * Co-authored-by: @community-pr-601
  */
-export function computeNextRun(task: ScheduledTask): string | null {
+export function computeNextRun(
+  task: ScheduledTask,
+  tzOverride?: string,
+): string | null {
   if (task.schedule_type === 'once') return null;
 
+  const tz = tzOverride ?? TIMEZONE;
   const now = Date.now();
 
   if (task.schedule_type === 'cron') {
-    const interval = CronExpressionParser.parse(task.schedule_value, {
-      tz: TIMEZONE,
-    });
+    const interval = CronExpressionParser.parse(task.schedule_value, { tz });
     return interval.next().toISOString();
   }
 
@@ -210,7 +217,8 @@ async function runTask(
     error,
   });
 
-  const nextRun = computeNextRun(task);
+  const profile = getGroupProfile(task.group_folder);
+  const nextRun = computeNextRun(task, profile?.timezone);
   const resultSummary = error
     ? `Error: ${error}`
     : result

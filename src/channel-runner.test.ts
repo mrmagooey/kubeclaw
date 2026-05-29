@@ -147,6 +147,7 @@ import {
   applyCredentialBackstop,
   buildCatalogBackstopPatterns,
   registerCredentialTools,
+  registerProfileTool,
   isCapabilitiesCommand,
   handleCapabilitiesCommand,
   _groupCapabilityEntries,
@@ -4294,5 +4295,27 @@ describe('Story 83 — handleScheduleCommand audit (schedule.resume)', () => {
     );
 
     expect(db.writeAuditEntry).not.toHaveBeenCalled();
+  });
+});
+
+describe('update_profile local tool registration', () => {
+  it('registers update_profile on the DirectLLMRunner', async () => {
+    // Arrange: mock runner that records registered tool names
+    const registeredTools: string[] = [];
+    const mockRunner = {
+      configureMcp: vi.fn(),
+      configureGroupMcpTemplates: vi.fn(),
+      registerLocalTool: vi.fn((name: string) => { registeredTools.push(name); }),
+      setChannelMetrics: vi.fn(),
+      writeTasksSnapshot: vi.fn(),
+      writeGroupsSnapshot: vi.fn(),
+      runAgent: vi.fn().mockResolvedValue({ status: 'success' }),
+    };
+
+    // Act: call registerProfileTool with the mock runner
+    registerProfileTool(mockRunner as unknown as ReturnType<typeof import('./runtime/index.js').getDirectLLMRunner>);
+
+    // Assert
+    expect(registeredTools).toContain('update_profile');
   });
 });
