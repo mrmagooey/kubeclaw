@@ -159,12 +159,13 @@ describe('loadSystemPrompt — real skill-loader integration', () => {
     expect(out).toContain('ALPHA BODY');
   });
 
-  it('returns only base prompt when skills dir is empty', async () => {
+  it('returns only base prompt (with contract) when skills dir is empty', async () => {
     // Remove the skill file
     fs.rmSync(path.join(tmpGroupsDir, 'g1', 'skills', 'alpha.md'));
     const mod = await import('./direct-llm-runner.js');
     const out = mod.__testing__.loadSystemPromptForTest('g1', tmpGroupsDir);
-    expect(out).toBe('BASE PROMPT');
+    expect(out).toContain('BASE PROMPT');
+    expect(out).toContain('## Recommendation guidelines');
     expect(out).not.toContain('Learned skills');
   });
 

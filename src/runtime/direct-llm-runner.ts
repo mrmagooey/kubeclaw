@@ -63,6 +63,48 @@ const DEFAULT_SYSTEM_PROMPT =
   '`schedule_task` with `schedule_type: "once"` and a resolved absolute ISO 8601 datetime; ' +
   'never pass relative phrases like "in 3 days" as the schedule_value.';
 
+const RECOMMENDATION_CONTRACT = `
+
+## Recommendation guidelines
+
+When the user asks for a recommendation (restaurants, films, activities, products, or any
+"best X near me / for me" request), follow this contract:
+
+1. **Profile** — call \`read_user_profile\` first. Use the returned fields (location,
+   cuisine_likes, cuisine_dislikes, dietary_restrictions, budget_tier) to tailor results.
+   If the profile is empty (\`{}\`), ask a single clarifying question about location before
+   proceeding.
+
+2. **Search** — call \`places_search\` (or \`web_search\` if \`places_search\` is unavailable)
+   with a query that incorporates the user's location and any constraints already known.
+
+3. **Refinement** — if the user adds a constraint ("cheaper", "closer", "vegetarian"),
+   re-invoke \`places_search\` with the updated query rather than answering from memory.
+   Conversation history already contains the prior results; you do not need to repeat them.
+
+4. **Present results** — return a short ranked list (3–5 items) with:
+   - **Name** and address / area
+   - One-line reason why it fits this user
+   - Source citation (URL or "via places_search")
+
+Do not give a recommendation without calling at least one search tool — hallucinated
+restaurant names cause real harm.
+`;
+
+/**
+ * Opt-out sentinel for the recommendation contract.
+ *
+ * If a group's CLAUDE.md contains the exact string
+ *   <!-- no-recommendation-contract -->
+ * as its FIRST line, the RECOMMENDATION_CONTRACT block above will NOT be
+ * appended to the system prompt for that group.  This lets individual groups
+ * (e.g. developer/admin groups) suppress the recommendation flow entirely.
+ *
+ * To opt out, open the group's CLAUDE.md file and add the sentinel as the
+ * very first line before any other content.
+ */
+const RECOMMENDATION_CONTRACT_OPT_OUT = '<!-- no-recommendation-contract -->';
+
 const MAX_TOOL_ROUNDS = 10;
 const TOOL_TIMEOUT_MS = 60_000; // 60 s per tool call
 const TOOL_JOB_TIMEOUT_MS = 300_000; // 5 min for full tool jobs
@@ -369,6 +411,37 @@ export const TOOLS: OpenAI.ChatCompletionFunctionTool[] = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'places_search',
+      description:
+        'Search for local places (restaurants, cafés, shops, attractions) near a given location. ' +
+        'Returns a ranked list of results with name, address, rating, price tier, and a brief description. ' +
+        'Use when the user asks for recommendations for a place to eat, visit, or shop.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: {
+            type: 'string',
+            description:
+              'What to search for, e.g. "Italian restaurants", "coffee shops", "bookstores"',
+          },
+          location: {
+            type: 'string',
+            description:
+              'Where to search, e.g. "Melbourne CBD, Australia", "Brooklyn, NY". ' +
+              'Omit to use the profile location if available.',
+          },
+          max_results: {
+            type: 'number',
+            description: 'Maximum number of results to return (default 5, max 10)',
+          },
+        },
+        required: ['query'],
+      },
+    },
+  },
 ];
 
 /**
@@ -388,6 +461,7 @@ const TOOL_SERVER_NAME: Record<string, string> = {
   web_search: 'webSearch',
   browser: 'agentBrowser',
   bash: 'bash',
+  places_search: 'placesSearch',
 };
 
 // Map LLM tool name → tool pod category
@@ -396,6 +470,7 @@ const TOOL_CATEGORY: Record<string, 'browser' | 'execution'> = {
   web_search: 'browser',
   browser: 'browser',
   bash: 'execution',
+  places_search: 'browser',
 };
 
 // ---- K8s tool pod dispatch ----
@@ -890,6 +965,12 @@ function loadSystemPrompt(
     if (content.trim()) base = content.trim();
   } catch {
     // file missing — use default
+  }
+
+  // Append recommendation contract unless the prompt explicitly opts out.
+  const hasOptOut = base.includes(RECOMMENDATION_CONTRACT_OPT_OUT);
+  if (!hasOptOut) {
+    base = base + RECOMMENDATION_CONTRACT;
   }
 
   let prompt = base;
@@ -1513,4 +1594,6 @@ export const __testing__ = {
   loadSystemPromptForTest: (group: string, groupsDir: string) =>
     loadSystemPrompt(group, groupsDir),
   toolsForTest: () => TOOLS,
+  toolCategoryForTest: (name: string) => TOOL_CATEGORY[name],
+  toolServerNameForTest: (name: string) => TOOL_SERVER_NAME[name],
 };

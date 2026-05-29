@@ -1086,3 +1086,252 @@ describe('tool definitions — schedule_task and DEFAULT_SYSTEM_PROMPT', () => {
     expect(captured[0]).toMatch(/remind/i);
   });
 });
+
+describe('loadSystemPrompt — RECOMMENDATION_CONTRACT injection', () => {
+  let tmpGroupsDir: string;
+
+  beforeEach(() => {
+    tmpGroupsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'runner-rec-'));
+    fs.mkdirSync(path.join(tmpGroupsDir, 'g1'), { recursive: true });
+    fs.writeFileSync(path.join(tmpGroupsDir, 'g1', 'CLAUDE.md'), 'BASE PROMPT');
+    mockLoadSkills.mockReturnValue({ promptSuffix: '', loadedSkills: [] });
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpGroupsDir, { recursive: true, force: true });
+  });
+
+  it('appends RECOMMENDATION_CONTRACT when CLAUDE.md does not contain opt-out marker', async () => {
+    const { __testing__ } = await import('./direct-llm-runner.js');
+    const out = __testing__.loadSystemPromptForTest('g1', tmpGroupsDir);
+    expect(out).toContain('## Recommendation guidelines');
+    expect(out).toContain('read_user_profile');
+    expect(out).toContain('places_search');
+  });
+
+  it('does NOT append RECOMMENDATION_CONTRACT when CLAUDE.md contains opt-out marker', async () => {
+    fs.writeFileSync(
+      path.join(tmpGroupsDir, 'g1', 'CLAUDE.md'),
+      'CUSTOM PROMPT\n<!-- no-recommendation-contract -->',
+    );
+    const { __testing__ } = await import('./direct-llm-runner.js');
+    const out = __testing__.loadSystemPromptForTest('g1', tmpGroupsDir);
+    expect(out).not.toContain('## Recommendation guidelines');
+    expect(out).toContain('CUSTOM PROMPT');
+  });
+
+  it('appends RECOMMENDATION_CONTRACT when CLAUDE.md is absent (default system prompt)', async () => {
+    fs.mkdirSync(path.join(tmpGroupsDir, 'g2'), { recursive: true });
+    const { __testing__ } = await import('./direct-llm-runner.js');
+    const out = __testing__.loadSystemPromptForTest('g2', tmpGroupsDir);
+    expect(out).toContain('## Recommendation guidelines');
+  });
+});
+
+describe('TOOLS — places_search registration', () => {
+  it('includes places_search in the built-in tool list', async () => {
+    const { __testing__ } = await import('./direct-llm-runner.js');
+    const names = __testing__.toolsForTest().map((t: any) => t.function.name);
+    expect(names).toContain('places_search');
+  });
+
+  it('places_search tool definition has required query and location parameters', async () => {
+    const { __testing__ } = await import('./direct-llm-runner.js');
+    const tool = __testing__.toolsForTest().find(
+      (t: any) => t.function.name === 'places_search',
+    );
+    expect(tool).toBeDefined();
+    const props = tool!.function.parameters.properties as Record<string, unknown>;
+    expect(props).toHaveProperty('query');
+    expect(props).toHaveProperty('location');
+    expect(tool!.function.parameters.required).toContain('query');
+  });
+
+  it('places_search is mapped to browser category in TOOL_CATEGORY', async () => {
+    const { __testing__ } = await import('./direct-llm-runner.js');
+    expect(__testing__.toolCategoryForTest('places_search')).toBe('browser');
+  });
+
+  it('places_search is mapped to placesSearch in TOOL_SERVER_NAME', async () => {
+    const { __testing__ } = await import('./direct-llm-runner.js');
+    expect(__testing__.toolServerNameForTest('places_search')).toBe('placesSearch');
+  });
+});
+
+describe('recommendation pattern — integration', () => {
+  const baseGroup = {
+    name: 'test-group',
+    folder: 'test-group',
+    trigger: '',
+    added_at: new Date().toISOString(),
+  };
+
+  const baseInput = {
+    groupFolder: 'test-group',
+    chatJid: 'user@test',
+    isMain: true,
+    prompt: 'Hello!',
+    sessionId: undefined,
+    assistantName: 'TestBot',
+    secrets: undefined,
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockRedisInstance.xread.mockResolvedValue(null);
+  });
+
+  it('read_user_profile local tool is dispatched in-process (no K8s job spawned)', async () => {
+    mockCreate
+      .mockResolvedValueOnce({
+        choices: [
+          {
+            message: {
+              role: 'assistant',
+              content: null,
+              tool_calls: [
+                {
+                  id: 'call-rup-1',
+                  type: 'function',
+                  function: { name: 'read_user_profile', arguments: '{}' },
+                },
+              ],
+            },
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        choices: [
+          {
+            message: {
+              role: 'assistant',
+              content: 'Here are my top Italian picks for you.',
+              tool_calls: [],
+            },
+          },
+        ],
+      });
+
+    const { DirectLLMRunner } = await import('./direct-llm-runner.js');
+    const { READ_USER_PROFILE_TOOL } = await import(
+      './tools/read-user-profile.js'
+    );
+    const { jobRunner } = await import('../k8s/job-runner.js');
+
+    const runner = new DirectLLMRunner();
+    runner.registerLocalTool('read_user_profile', READ_USER_PROFILE_TOOL);
+
+    const result = await runner.runAgent(baseGroup, baseInput);
+
+    expect(result.status).toBe('success');
+    expect(result.result).toBe('Here are my top Italian picks for you.');
+    expect(jobRunner.runToolJob).not.toHaveBeenCalled();
+    expect(mockCreate).toHaveBeenCalledTimes(2);
+  });
+
+  it('places_search tool call routes via K8s browser pod (TOOL_CATEGORY=browser)', async () => {
+    mockCreate
+      .mockResolvedValueOnce({
+        choices: [
+          {
+            message: {
+              role: 'assistant',
+              content: null,
+              tool_calls: [
+                {
+                  id: 'call-ps-1',
+                  type: 'function',
+                  function: {
+                    name: 'places_search',
+                    arguments: JSON.stringify({ query: 'Italian restaurants', location: 'Brooklyn, NY' }),
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        choices: [
+          {
+            message: {
+              role: 'assistant',
+              content: 'Top 3 Italian spots in Brooklyn.',
+              tool_calls: [],
+            },
+          },
+        ],
+      });
+
+    let capturedRequestId: string | undefined;
+    mockRedisInstance.xadd.mockImplementation((...args: unknown[]) => {
+      const fields = args.slice(2) as string[];
+      const idx = fields.indexOf('requestId');
+      if (idx >= 0) capturedRequestId = fields[idx + 1];
+      return Promise.resolve('1-0');
+    });
+    mockRedisInstance.xread.mockImplementation(async () => {
+      if (!capturedRequestId) return null;
+      return [
+        [
+          'stream',
+          [
+            [
+              '1-0',
+              [
+                'requestId',
+                capturedRequestId,
+                'result',
+                JSON.stringify([
+                  { name: 'Lucali', address: '575 Henry St', rating: 4.8, price: '$$' },
+                ]),
+              ],
+            ],
+          ],
+        ],
+      ];
+    });
+
+    const { DirectLLMRunner } = await import('./direct-llm-runner.js');
+    const { jobRunner } = await import('../k8s/job-runner.js');
+
+    const runner = new DirectLLMRunner();
+    const result = await runner.runAgent(baseGroup, baseInput);
+
+    expect(result.status).toBe('success');
+    expect(jobRunner.createToolPodJob).toHaveBeenCalled();
+    const podJobCall = (jobRunner.createToolPodJob as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(podJobCall.category).toBe('browser');
+  });
+
+  it('second runAgent call on same groupFolder receives recommendation contract in system prompt', async () => {
+    mockCreate
+      .mockResolvedValue({
+        choices: [
+          { message: { role: 'assistant', content: 'ok', tool_calls: [] } },
+        ],
+      });
+
+    const { getConversationHistory } = await import('../db.js');
+    (getConversationHistory as ReturnType<typeof vi.fn>).mockReturnValue([
+      { role: 'user', content: 'good Italian restaurants near me' },
+      { role: 'assistant', content: 'Top 3 Italian spots: Lucali...' },
+    ]);
+
+    const { DirectLLMRunner } = await import('./direct-llm-runner.js');
+    const runner = new DirectLLMRunner();
+
+    await runner.runAgent(baseGroup, {
+      ...baseInput,
+      prompt: 'cheaper options please',
+    });
+
+    const firstCall = mockCreate.mock.calls[0][0];
+    const systemMsg = firstCall.messages.find((m: any) => m.role === 'system');
+    expect(systemMsg).toBeDefined();
+    expect(systemMsg.content).toContain('## Recommendation guidelines');
+    expect(systemMsg.content).toContain('read_user_profile');
+    const userMsgs = firstCall.messages.filter((m: any) => m.role === 'user');
+    expect(userMsgs.some((m: any) => m.content?.includes('cheaper options'))).toBe(true);
+  });
+});

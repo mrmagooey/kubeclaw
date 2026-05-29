@@ -133,6 +133,7 @@ import {
 import { Registry } from 'prom-client';
 import { createChannelMetrics } from './metrics/channel.js';
 import { createMetricsServer } from './metrics/registry.js';
+import { READ_USER_PROFILE_TOOL } from './runtime/tools/read-user-profile.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -3216,6 +3217,7 @@ async function main(): Promise<void> {
   registerCredentialTools(getDirectLLMRunner());
   registerProfileTool(getDirectLLMRunner());
   registerPlacesSearchTool(getDirectLLMRunner());
+  getDirectLLMRunner().registerLocalTool('read_user_profile', READ_USER_PROFILE_TOOL);
 
   // Wire IPC-backed callbacks into the HTTP channel's /secrets REST endpoints.
   // Must run before the channel factory is invoked so the module-level fns are set.
