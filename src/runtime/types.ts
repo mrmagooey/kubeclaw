@@ -10,6 +10,7 @@
  * The MessageRunner interface is the shared contract across all tiers.
  */
 
+import type OpenAI from 'openai';
 import { RegisteredGroup, McpServerStatus } from '../types.js';
 import { RawAttachment } from '../k8s/types.js';
 import type { GroupMcpEntry } from '../capabilities/types.js';
@@ -149,3 +150,12 @@ export interface MessageRunner {
  * Backwards-compatible alias. Prefer MessageRunner for new code.
  */
 export type AgentRunner = MessageRunner;
+
+/** A locally-intercepted tool: definition for the LLM + async handler. */
+export interface LocalTool {
+  def: OpenAI.ChatCompletionTool;
+  handler: (
+    args: Record<string, unknown>,
+    input: ContainerInput,
+  ) => Promise<string>;
+}
