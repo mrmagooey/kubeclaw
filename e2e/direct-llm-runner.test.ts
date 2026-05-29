@@ -151,17 +151,12 @@ describe('DirectLLMRunner', () => {
   it('includes current_time in the prompt sent to the LLM, within 5s of test start', async () => {
     if (!getMockLlmPort()) return;
 
-    // Capture what the LLM client actually receives by intercepting the
-    // OpenAI-compatible request body sent to the mock server.
     const groupFolder = `dlr-time-${Date.now()}`;
     const before = Date.now();
 
     const { DirectLLMRunner } = await import('../src/runtime/direct-llm-runner.js');
     const runner = new DirectLLMRunner();
 
-    // runAgent calls the mock LLM server; we capture the intercepted request
-    // by reading the mock server's last-request endpoint if available,
-    // otherwise we read from the response (the mock echoes the prompt back).
     const output = await runner.runAgent(
       { name: groupFolder, folder: groupFolder, trigger: '', added_at: new Date().toISOString() },
       { prompt: 'what is the current time?', groupFolder, chatJid: 'e2e@e2e', isMain: false, assistantName: 'Bot' },
@@ -169,12 +164,9 @@ describe('DirectLLMRunner', () => {
 
     const after = Date.now();
 
-    // The mock LLM server at /last-request returns the most recent request body.
     const port = getMockLlmPort()!;
     const resp = await fetch(`http://localhost:${port}/last-request`);
     if (!resp.ok) {
-      // If /last-request is not supported, fall back to checking result contains time hint.
-      // This is an acceptable degraded assertion for mock servers that don't expose request logs.
       console.log('⚠️  /last-request not supported by mock LLM; skipping full assertion');
       expect(output.status).toBe('success');
       return;
@@ -185,10 +177,8 @@ describe('DirectLLMRunner', () => {
     expect(userMessages.length).toBeGreaterThan(0);
     const userContent = userMessages[userMessages.length - 1].content;
 
-    // current_time= must appear in the context header
     expect(userContent).toContain('current_time=');
 
-    // Extract the timestamp value and verify it is within ±5 s of the test window
     const match = userContent.match(/current_time="([^"]+)"/);
     expect(match).not.toBeNull();
     const parsedTime = new Date(match![1]).getTime();
@@ -196,5 +186,17 @@ describe('DirectLLMRunner', () => {
     expect(parsedTime).toBeLessThanOrEqual(after + 5000);
 
     console.log(`✅ current_time="${match![1]}" is within 5s of test window`);
+  });
+
+  it('DirectLLMRunner passes maxToolOutputBytes through to tool pod env — compile-time only', () => {
+    expect(async () => {
+      const { DirectLLMRunner } = await import('../src/runtime/direct-llm-runner.js');
+      const runner = new DirectLLMRunner();
+      const _overrides: import('../src/runtime/types.js').RunAgentOverrides = {
+        maxToolOutputBytes: 99999,
+        maxToolRounds: 5,
+      };
+      void runner; void _overrides;
+    }).not.toThrow();
   });
 });

@@ -927,3 +927,101 @@ describe('loadSystemPrompt profile injection', () => {
     expect(profileIdx).toBeGreaterThan(baseIdx);
   });
 });
+
+describe('DirectLLMRunner — tool-round budget', () => {
+  const baseGroup = {
+    name: 'budget-group',
+    folder: 'budget-group',
+    trigger: '',
+    added_at: new Date().toISOString(),
+  };
+  const baseInput = {
+    groupFolder: 'budget-group',
+    chatJid: 'user@test',
+    isMain: true,
+    prompt: 'Loop forever',
+    sessionId: undefined,
+    assistantName: 'TestBot',
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // Make xread return a fake tool result immediately so tool rounds complete fast.
+    let capturedRequestId: string | undefined;
+    mockRedisInstance.xadd.mockImplementation((...args: unknown[]) => {
+      const fields = args.slice(2) as string[];
+      const idx = fields.indexOf('requestId');
+      if (idx >= 0) capturedRequestId = fields[idx + 1];
+      return Promise.resolve('1-0');
+    });
+    mockRedisInstance.xread.mockImplementation(async () => {
+      if (!capturedRequestId) return null;
+      return [
+        [
+          'stream',
+          [['1-0', ['requestId', capturedRequestId, 'result', '"fetched"']]],
+        ],
+      ];
+    });
+  });
+
+  it('stops after overrides.maxToolRounds rounds when set below default', async () => {
+    // LLM always returns a tool call — should be capped at maxToolRounds=2
+    mockCreate.mockImplementation(async () => ({
+      choices: [
+        {
+          message: {
+            role: 'assistant',
+            content: null,
+            tool_calls: [
+              {
+                id: 'call-1',
+                type: 'function',
+                function: { name: 'web_fetch', arguments: '{"url":"http://x.com"}' },
+              },
+            ],
+          },
+        },
+      ],
+    }));
+
+    const { DirectLLMRunner } = await import('./direct-llm-runner.js');
+    const runner = new DirectLLMRunner();
+    await runner.runAgent(baseGroup, baseInput, undefined, undefined, {
+      maxToolRounds: 2,
+    });
+
+    // Each round makes one LLM call, plus a final call after the loop exits.
+    // With maxToolRounds=2 the loop runs at most 2 rounds → ≤3 LLM calls total.
+    expect(mockCreate.mock.calls.length).toBeLessThanOrEqual(3);
+  });
+
+  it('uses default MAX_TOOL_ROUNDS (10) when override is absent', async () => {
+    // LLM always returns a tool call — should be capped at default 10
+    mockCreate.mockImplementation(async () => ({
+      choices: [
+        {
+          message: {
+            role: 'assistant',
+            content: null,
+            tool_calls: [
+              {
+                id: 'call-1',
+                type: 'function',
+                function: { name: 'web_fetch', arguments: '{"url":"http://x.com"}' },
+              },
+            ],
+          },
+        },
+      ],
+    }));
+
+    const { DirectLLMRunner } = await import('./direct-llm-runner.js');
+    const runner = new DirectLLMRunner();
+    await runner.runAgent(baseGroup, baseInput);
+
+    // Default is 10 rounds → at most 11 LLM calls
+    expect(mockCreate.mock.calls.length).toBeLessThanOrEqual(11);
+    expect(mockCreate.mock.calls.length).toBeGreaterThan(3);
+  });
+});

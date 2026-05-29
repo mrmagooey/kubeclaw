@@ -2676,6 +2676,8 @@ export async function processGroupMessages(chatJid: string): Promise<boolean> {
               toolFilter:
                 s.tools && s.tools.length > 0 ? new Set(s.tools) : undefined,
               systemPromptOverride,
+              maxToolRounds: s.maxToolRounds,
+              maxToolOutputBytes: s.maxToolOutputBytes,
             },
           };
         })

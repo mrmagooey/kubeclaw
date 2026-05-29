@@ -74,6 +74,17 @@ export interface RunAgentOverrides {
    * "prior conversation turn" when asked.
    */
   systemPromptOverride?: string;
+  /**
+   * Override the default MAX_TOOL_ROUNDS (10) for this single runAgent() call.
+   * Must be a positive integer. Fallback: MAX_TOOL_ROUNDS constant (10).
+   */
+  maxToolRounds?: number;
+  /**
+   * Override the default tool output truncation limit (50 000 bytes) for this
+   * single runAgent() call. Propagated to the tool-server pod via the
+   * KUBECLAW_MAX_TOOL_OUTPUT_BYTES env var. Fallback: 50000.
+   */
+  maxToolOutputBytes?: number;
 }
 
 /**

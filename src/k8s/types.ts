@@ -215,6 +215,8 @@ export interface ToolPodJobSpec {
   provider?: string; // inherit parent agent's provider for image selection
   groupsPvc?: string; // defaults to 'kubeclaw-groups'
   sessionsPvc?: string; // defaults to 'kubeclaw-sessions'
+  /** When set, inject as KUBECLAW_MAX_TOOL_OUTPUT_BYTES in the tool pod. */
+  maxToolOutputBytes?: number;
 }
 
 export interface SidecarToolPodJobSpec {
