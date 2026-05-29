@@ -4,6 +4,7 @@ import {
   renderCatalog,
   SpecialistReconciler,
 } from './reconciler.js';
+import { parseSpecialists } from './types.js';
 import { _initTestDatabase, __resetDbForTest } from '../db.js';
 import { registerSpecialist } from '../skills/orchestrator/specialist-registry.js';
 
@@ -130,5 +131,50 @@ describe('SpecialistReconciler.apply', () => {
       (s: { name: string }) => s.name === 'Override',
     );
     expect(override.prompt).toBe('override-prompt');
+  });
+
+  it('renders Researcher baseline entry with all fields via ConfigMap apply', async () => {
+    const researcherBaseline = [
+      {
+        name: 'Researcher',
+        prompt:
+          'You are a web-research specialist. When given a topic or question:\n' +
+          '1. Search for relevant, current information using available search tools.\n' +
+          '2. Fetch and read promising sources to gather details.\n' +
+          '3. Synthesise findings into a concise, structured summary with:\n' +
+          '   - A one-paragraph executive summary.\n' +
+          '   - Key facts as a bulleted list.\n' +
+          '   - Source URLs cited inline.\n' +
+          'Stay factual; note when information is uncertain or conflicting.\n',
+        triggers: ['researcher'],
+        llmProvider: 'openrouter',
+        memory: { isolated: false },
+        tools: ['web_search', 'web_fetch'],
+      },
+    ];
+
+    const apply = vi.fn().mockResolvedValue(undefined);
+    const r = new SpecialistReconciler({
+      baselineLoader: () => researcherBaseline,
+      configMapApply: apply,
+    });
+    await r.apply();
+
+    expect(apply).toHaveBeenCalledOnce();
+    const rendered: string = apply.mock.calls[0][0];
+
+    // Round-trip: parseSpecialists must accept the rendered JSON.
+    const parseResult = parseSpecialists(rendered);
+    expect(parseResult.ok).toBe(true);
+    if (!parseResult.ok) return; // type narrowing
+
+    // The entry must survive the merge/render round-trip intact.
+    const researcher = parseResult.specialists.find((s) => s.name === 'Researcher');
+    expect(researcher, 'Researcher entry missing from rendered catalog').toBeDefined();
+    expect(researcher!.triggers).toEqual(['researcher']);
+    expect(researcher!.llmProvider).toBe('openrouter');
+    expect(researcher!.memory?.isolated).toBe(false);
+    expect(researcher!.tools).toEqual(['web_search', 'web_fetch']);
+    expect(researcher!.prompt).toContain('web-research specialist');
   });
 });

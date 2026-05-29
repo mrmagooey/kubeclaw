@@ -101,3 +101,59 @@ describe('parseSpecialists', () => {
     expect(r.ok).toBe(false);
   });
 });
+
+describe('Researcher baseline specialist', () => {
+  it('validateSpecialist accepts the full Researcher stanza', () => {
+    const researcher = {
+      name: 'Researcher',
+      prompt:
+        'You are a web-research specialist. When given a topic or question:\n' +
+        '1. Search for relevant, current information using available search tools.\n' +
+        '2. Fetch and read promising sources to gather details.\n' +
+        '3. Synthesise findings into a concise, structured summary with:\n' +
+        '   - A one-paragraph executive summary.\n' +
+        '   - Key facts as a bulleted list.\n' +
+        '   - Source URLs cited inline.\n' +
+        'Stay factual; note when information is uncertain or conflicting.\n',
+      triggers: ['researcher'],
+      llmProvider: 'openrouter',
+      memory: { isolated: false },
+      tools: ['web_search', 'web_fetch'],
+    };
+    expect(validateSpecialist(researcher)).toEqual({ ok: true });
+  });
+
+  it('parseSpecialists accepts wire format containing the Researcher stanza', () => {
+    const wire = JSON.stringify({
+      version: 1,
+      generation: 0,
+      specialists: [
+        {
+          name: 'Researcher',
+          prompt:
+            'You are a web-research specialist. When given a topic or question:\n' +
+            '1. Search for relevant, current information using available search tools.\n' +
+            '2. Fetch and read promising sources to gather details.\n' +
+            '3. Synthesise findings into a concise, structured summary with:\n' +
+            '   - A one-paragraph executive summary.\n' +
+            '   - Key facts as a bulleted list.\n' +
+            '   - Source URLs cited inline.\n' +
+            'Stay factual; note when information is uncertain or conflicting.\n',
+          triggers: ['researcher'],
+          llmProvider: 'openrouter',
+          memory: { isolated: false },
+          tools: ['web_search', 'web_fetch'],
+        },
+      ],
+    });
+    const result = parseSpecialists(wire);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.specialists).toHaveLength(1);
+      expect(result.specialists[0].name).toBe('Researcher');
+      expect(result.specialists[0].memory?.isolated).toBe(false);
+      expect(result.specialists[0].tools).toEqual(['web_search', 'web_fetch']);
+      expect(result.specialists[0].triggers).toEqual(['researcher']);
+    }
+  });
+});
