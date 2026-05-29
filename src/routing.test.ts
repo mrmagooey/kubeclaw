@@ -36,6 +36,7 @@ import {
   routeOutbound,
   findChannel,
 } from './router.js';
+import { formatCurrentTime } from './timezone.js';
 import { Channel, NewMessage } from './types.js';
 
 beforeEach(async () => {
@@ -240,9 +241,44 @@ describe('escapeXml', () => {
   });
 });
 
+// --- formatCurrentTime ---
+
+describe('formatCurrentTime', () => {
+  it('returns an ISO-8601 string with UTC offset for UTC timezone', () => {
+    const now = new Date('2024-01-01T12:00:00.000Z');
+    const result = formatCurrentTime('UTC', now);
+    expect(result).toBe('2024-01-01T12:00:00+00:00');
+  });
+
+  it('returns the correct local offset for a positive-offset timezone', () => {
+    // Australia/Sydney in summer (AEDT) is UTC+11
+    const now = new Date('2024-01-01T01:00:00.000Z'); // 12:00 AEDT
+    const result = formatCurrentTime('Australia/Sydney', now);
+    expect(result).toBe('2024-01-01T12:00:00+11:00');
+  });
+
+  it('returns the correct local offset for a negative-offset timezone', () => {
+    // America/New_York in winter (EST) is UTC-5
+    const now = new Date('2024-01-01T17:00:00.000Z'); // 12:00 EST
+    const result = formatCurrentTime('America/New_York', now);
+    expect(result).toBe('2024-01-01T12:00:00-05:00');
+  });
+
+  it('defaults now to approximately the current time when omitted', () => {
+    const before = Date.now();
+    const result = formatCurrentTime('UTC');
+    const after = Date.now();
+    const parsed = new Date(result).getTime();
+    expect(parsed).toBeGreaterThanOrEqual(before - 1000);
+    expect(parsed).toBeLessThanOrEqual(after + 1000);
+  });
+});
+
 // --- formatMessages ---
 
 describe('formatMessages', () => {
+  const pinnedNow = new Date('2024-01-01T12:00:00.000Z');
+
   it('formats single message correctly', () => {
     const messages: NewMessage[] = [
       {
@@ -255,10 +291,11 @@ describe('formatMessages', () => {
       },
     ];
 
-    const result = formatMessages(messages, 'UTC');
+    const result = formatMessages(messages, 'UTC', pinnedNow);
     expect(result).toContain('<message sender="Alice"');
     expect(result).toContain('>Hello there</message>');
-    expect(result).toContain('<context timezone="UTC" />');
+    expect(result).toContain('timezone="UTC"');
+    expect(result).toContain('current_time="2024-01-01T12:00:00+00:00"');
   });
 
   it('formats multiple messages', () => {
@@ -281,11 +318,12 @@ describe('formatMessages', () => {
       },
     ];
 
-    const result = formatMessages(messages, 'America/New_York');
+    const result = formatMessages(messages, 'America/New_York', pinnedNow);
     expect(result).toContain('sender="Alice"');
     expect(result).toContain('sender="Bob"');
     expect(result).toContain('<messages>');
     expect(result).toContain('</messages>');
+    expect(result).toContain('current_time=');
   });
 
   it('escapes special characters in sender and content', () => {
@@ -300,16 +338,46 @@ describe('formatMessages', () => {
       },
     ];
 
-    const result = formatMessages(messages, 'UTC');
+    const result = formatMessages(messages, 'UTC', pinnedNow);
     expect(result).toContain('sender="Alice &amp; Bob"');
     expect(result).toContain('&lt;world&gt; &amp; &quot;test&quot;');
   });
 
   it('handles empty messages array', () => {
-    const result = formatMessages([], 'UTC');
+    const result = formatMessages([], 'UTC', pinnedNow);
     expect(result).toContain('<messages>');
     expect(result).toContain('</messages>');
     expect(result).not.toContain('<message ');
+  });
+
+  it('places current_time on the <context> tag, not inside <messages>', () => {
+    const messages: NewMessage[] = [
+      {
+        id: '1',
+        chat_jid: 'chat@g.us',
+        sender: 'alice',
+        sender_name: 'Alice',
+        content: 'hi',
+        timestamp: '2024-01-01T12:00:00.000Z',
+      },
+    ];
+
+    const result = formatMessages(messages, 'UTC', pinnedNow);
+    // current_time must appear before <messages>
+    const contextPos = result.indexOf('current_time=');
+    const messagesPos = result.indexOf('<messages>');
+    expect(contextPos).toBeGreaterThanOrEqual(0);
+    expect(contextPos).toBeLessThan(messagesPos);
+  });
+
+  it('current_time attribute is not a self-closing tag inside the body', () => {
+    const result = formatMessages([], 'UTC', pinnedNow);
+    // The entire output must start with the <context ... /> header line
+    expect(result.trimStart()).toMatch(/^<context /);
+    // The <context> tag itself must contain both timezone and current_time
+    const contextLine = result.split('\n')[0];
+    expect(contextLine).toContain('timezone="UTC"');
+    expect(contextLine).toContain('current_time="2024-01-01T12:00:00+00:00"');
   });
 });
 

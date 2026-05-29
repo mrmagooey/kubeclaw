@@ -880,6 +880,26 @@ function loadSystemPrompt(
   }
 }
 
+/**
+ * Strip the `<context ... />` XML header that formatMessages() prepends to
+ * every formatted prompt before the string is persisted to conversation
+ * history or RAG storage. The header carries ephemeral metadata
+ * (current_time, timezone) that should influence the LLM for the current
+ * turn only — storing it would pollute history with stale timestamps.
+ *
+ * The header has the form (single line, self-closing):
+ *   <context timezone="..." current_time="..." />
+ *
+ * If no such header is present the original string is returned unchanged,
+ * so callers that already pass plain text (e.g. scheduled tasks, tests) are
+ * unaffected.
+ *
+ * Exported for unit testing only.
+ */
+export function stripContextHeader(prompt: string): string {
+  return prompt.replace(/^<context [^/]*\/>\n?/, '');
+}
+
 /** A locally-intercepted tool: definition for the LLM + async handler. */
 export interface LocalTool {
   def: OpenAI.ChatCompletionTool;
@@ -1363,13 +1383,17 @@ export class DirectLLMRunner implements MessageRunner {
         }
       }
 
+      // Strip the ephemeral <context current_time="…" /> header before
+      // persisting — timestamps belong in the LLM turn, not in stored history.
+      const persistedUserContent = stripContextHeader(input.prompt);
+
       if (useHistory) {
         if (overrides.sessionKey) {
           appendConversationHistory({
             groupFolder: group.folder,
             sessionKey: overrides.sessionKey,
             role: 'user',
-            content: input.prompt,
+            content: persistedUserContent,
           });
           appendConversationHistory({
             groupFolder: group.folder,
@@ -1378,7 +1402,7 @@ export class DirectLLMRunner implements MessageRunner {
             content: fullResponse,
           });
         } else {
-          appendConversationMessage(input.groupFolder, 'user', input.prompt);
+          appendConversationMessage(input.groupFolder, 'user', persistedUserContent);
           appendConversationMessage(
             input.groupFolder,
             'assistant',
@@ -1390,7 +1414,7 @@ export class DirectLLMRunner implements MessageRunner {
       if (fullResponse) {
         void getRagProvider().indexConversationTurn(
           input.groupFolder,
-          input.prompt,
+          persistedUserContent,
           fullResponse,
         );
       } else {

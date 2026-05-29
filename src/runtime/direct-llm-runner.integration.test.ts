@@ -76,6 +76,7 @@ vi.mock('../config.js', () => ({
   SCHEDULER_POLL_INTERVAL: 60000,
   MOUNT_ALLOWLIST_PATH: '/tmp/mount-allowlist.json',
   SENDER_ALLOWLIST_PATH: '/tmp/sender-allowlist.json',
+  TIMEZONE: 'UTC',
 }));
 
 vi.mock('../logger.js', () => ({

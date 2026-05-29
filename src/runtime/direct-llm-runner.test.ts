@@ -5,6 +5,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { formatMessages } from '../router.js';
 
 // ---- Shared mock state (hoisted so vi.mock factories can reference it) ----
 
@@ -87,6 +88,7 @@ vi.mock('../config.js', () => ({
   SCHEDULER_POLL_INTERVAL: 60000,
   MOUNT_ALLOWLIST_PATH: '/tmp/mount-allowlist.json',
   SENDER_ALLOWLIST_PATH: '/tmp/sender-allowlist.json',
+  TIMEZONE: 'UTC',
 }));
 
 vi.mock('../logger.js', () => ({
@@ -677,6 +679,116 @@ describe('DirectLLMRunner', () => {
 
     // Bad JSON args should be handled gracefully (empty args)
     expect(result.status).toBe('success');
+  });
+
+  it('runAgent passes current_time in the user turn sent to the LLM', async () => {
+    mockCreate.mockResolvedValueOnce({
+      choices: [
+        {
+          message: {
+            role: 'assistant',
+            content: 'The current time is in the context.',
+            tool_calls: [],
+          },
+        },
+      ],
+    });
+
+    const { DirectLLMRunner } = await import('./direct-llm-runner.js');
+    const runner = new DirectLLMRunner();
+    // Pre-format the prompt via formatMessages, matching how production
+    // (channel-runner.ts) prepares input.prompt before calling runAgent.
+    const formattedPrompt = formatMessages(
+      [{ id: '1', chat_jid: 'user@test', sender: 'user', sender_name: 'user', content: 'what time is it?', timestamp: new Date().toISOString() }],
+      'UTC',
+    );
+    await runner.runAgent(baseGroup, { ...baseInput, prompt: formattedPrompt });
+
+    // The messages array passed to the LLM should contain current_time=
+    const callArgs = mockCreate.mock.calls[0][0];
+    const userMessages: { role: string; content: string }[] = callArgs.messages.filter(
+      (m: { role: string; content: string }) => m.role === 'user',
+    );
+    expect(userMessages.length).toBeGreaterThan(0);
+    const userContent = userMessages[userMessages.length - 1].content;
+    expect(userContent).toContain('current_time=');
+  });
+
+  it('runAgent does not persist current_time in conversation_history rows', async () => {
+    // This test mirrors the production dispatch path: channel-runner.ts calls
+    // formatMessages(messages, TIMEZONE) which emits a `<context current_time="…" />`
+    // header, then passes that string as input.prompt to runAgent.
+    // The invariant: that header must NOT be written into conversation_history.
+    mockCreate.mockResolvedValueOnce({
+      choices: [
+        {
+          message: {
+            role: 'assistant',
+            content: 'Stored response.',
+            tool_calls: [],
+          },
+        },
+      ],
+    });
+
+    const { DirectLLMRunner } = await import('./direct-llm-runner.js');
+    const { appendConversationMessage } = await import('../db.js');
+    const runner = new DirectLLMRunner();
+
+    // Build a realistic production-style prompt via formatMessages so that
+    // the input.prompt actually contains current_time= (non-trivial assertion).
+    const formattedPrompt = formatMessages(
+      [{
+        id: '1',
+        chat_jid: 'user@test',
+        sender: 'user',
+        sender_name: 'user',
+        content: 'what is the time?',
+        timestamp: new Date().toISOString(),
+      }],
+      'UTC',
+    );
+    // Sanity-check: the formatted prompt genuinely contains current_time= before we pass it.
+    expect(formattedPrompt).toContain('current_time=');
+
+    await runner.runAgent(baseGroup, { ...baseInput, prompt: formattedPrompt });
+
+    // Every call to appendConversationMessage must NOT contain current_time
+    const calls = (appendConversationMessage as ReturnType<typeof vi.fn>).mock.calls;
+    expect(calls.length).toBeGreaterThan(0);
+    for (const call of calls) {
+      // appendConversationMessage(groupFolder, role, content)
+      const content = call[2] as string;
+      expect(content).not.toContain('current_time=');
+    }
+  });
+});
+
+describe('stripContextHeader', () => {
+  it('removes the <context … /> header produced by formatMessages', async () => {
+    const { stripContextHeader } = await import('./direct-llm-runner.js');
+    const prompt = formatMessages(
+      [{
+        id: '1',
+        chat_jid: 'x@test',
+        sender: 'user',
+        sender_name: 'user',
+        content: 'hello',
+        timestamp: new Date().toISOString(),
+      }],
+      'UTC',
+    );
+    expect(prompt).toContain('current_time=');
+    const stripped = stripContextHeader(prompt);
+    expect(stripped).not.toContain('current_time=');
+    expect(stripped).not.toContain('<context');
+    expect(stripped).toContain('hello');
+  });
+
+  it('leaves plain text unchanged', async () => {
+    const { stripContextHeader } = await import('./direct-llm-runner.js');
+    const plain = 'just a plain message';
+    expect(stripContextHeader(plain)).toBe(plain);
   });
 });
 
