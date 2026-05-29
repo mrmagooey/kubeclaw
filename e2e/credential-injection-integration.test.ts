@@ -99,3 +99,37 @@ describe('brave-search catalog entry renders correctly', () => {
     expect(out).not.toMatch(/BSA[A-Za-z0-9]{25,}/);
   });
 });
+
+// ─── google-places catalog entry ──────────────────────────────────────────────
+
+describe('google-places catalog entry renders correctly', () => {
+  const PLACES_CATALOG_ARGS =
+    `--set 'credentialInjection.catalog[0].id=google-places'` +
+    ` --set 'credentialInjection.catalog[0].host=places.googleapis.com'` +
+    ` --set 'credentialInjection.catalog[0].upstreamPort=443'` +
+    ` --set 'credentialInjection.catalog[0].credentialFields[0].name=api_key'` +
+    ` --set 'credentialInjection.catalog[0].credentialFields[0].envVar=GOOGLE_PLACES_API_KEY'` +
+    ` --set 'credentialInjection.catalog[0].allowOperatorFallback=false'` +
+    ` --set 'credentialInjection.catalog[0].allowedPositions[0]=header'`;
+
+  it('renders the broker ConfigMap with google-places host', () => {
+    const out = helmTemplate(`--set credentialInjection.mode=sidecar ${PLACES_CATALOG_ARGS}`);
+    expect(out).toContain('places.googleapis.com');
+    expect(out).toContain('GOOGLE_PLACES_API_KEY');
+  });
+
+  it('google-places entry does not leak real API key values', () => {
+    const out = helmTemplate(`--set credentialInjection.mode=sidecar ${PLACES_CATALOG_ARGS}`);
+    // Chart must not embed real Google API key shapes
+    expect(out).not.toMatch(/AIza[A-Za-z0-9_\-]{35,}/);
+  });
+
+  it('renders GOOGLE_PLACES_BASE_URL baseUrlEnv when provided', () => {
+    const withBaseUrl =
+      PLACES_CATALOG_ARGS +
+      ` --set 'credentialInjection.catalog[0].baseUrlEnvs.GOOGLE_PLACES_BASE_URL=http://places.googleapis.com'`;
+    const out = helmTemplate(`--set credentialInjection.mode=sidecar ${withBaseUrl}`);
+    expect(out).toContain('GOOGLE_PLACES_BASE_URL');
+    expect(out).toContain('http://places.googleapis.com');
+  });
+});

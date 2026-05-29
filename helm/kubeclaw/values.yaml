@@ -421,6 +421,19 @@ credentialInjection:
       allowOperatorFallback: true
       allowedPositions: [header]
       apiKeyShape: { prefix: "BSA", minLength: 30 }
+    - id: google-places
+      host: places.googleapis.com
+      upstreamPort: 443
+      credentialFields:
+        - { name: api_key, envVar: GOOGLE_PLACES_API_KEY }
+      baseUrlEnvs:
+        # http:// scheme is intentional — istio egress needs it so the sidecar
+        # can intercept. The broker upgrades the upstream connection to HTTPS
+        # internally.
+        GOOGLE_PLACES_BASE_URL: "http://places.googleapis.com"
+      allowOperatorFallback: false
+      allowedPositions: [header]
+      apiKeyShape: { prefix: "AIza", minLength: 39 }
   #   - id: replicate
   #     host: api.replicate.com
   #     upstreamPort: 443
