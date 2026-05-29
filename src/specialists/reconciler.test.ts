@@ -177,4 +177,43 @@ describe('SpecialistReconciler.apply', () => {
     expect(researcher!.tools).toEqual(['web_search', 'web_fetch']);
     expect(researcher!.prompt).toContain('web-research specialist');
   });
+
+  it('serializes concurrent apply calls — second snapshot taken after first configMapApply resolves', async () => {
+    // Without the mutex the two calls interleave: both read SQLite before
+    // either configMapApply resolves, so the second rendered payload only
+    // contains specialist A. With the mutex the second call starts _after_
+    // the first finishes, so its SQLite snapshot includes both A and B.
+
+    const resolveFns: Array<() => void> = [];
+    const apply = vi.fn().mockImplementation(
+      () => new Promise<void>((resolve) => resolveFns.push(resolve)),
+    );
+    const r = new SpecialistReconciler({
+      baselineLoader: () => [],
+      configMapApply: apply,
+    });
+
+    // Register A in SQLite, start first apply (does not resolve yet).
+    registerSpecialist({ name: 'A', prompt: 'a' });
+    const p1 = r.apply();
+    // Yield to let p1's _applyOnce run and call configMapApply (pushing its resolve).
+    await Promise.resolve();
+
+    // Register B AFTER p1 has started but BEFORE it resolves, then start p2.
+    registerSpecialist({ name: 'B', prompt: 'b' });
+    const p2 = r.apply();
+
+    // Drain both queued apply calls.
+    resolveFns[0]!();
+    await p1;
+    resolveFns[1]!();
+    await p2;
+
+    // Second configMapApply call must include BOTH A and B.
+    const secondPayload = JSON.parse(apply.mock.calls[1][0]);
+    const names = secondPayload.specialists.map(
+      (s: { name: string }) => s.name,
+    ).sort();
+    expect(names).toEqual(['A', 'B']);
+  });
 });

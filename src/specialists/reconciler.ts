@@ -45,10 +45,19 @@ export interface ReconcilerDeps {
 
 export class SpecialistReconciler {
   private generation = 0;
+  private applyChain: Promise<void> = Promise.resolve();
 
   constructor(private readonly deps: ReconcilerDeps) {}
 
   async apply(): Promise<void> {
+    // Chain _applyOnce after the previous apply; swallow errors on the chain
+    // so a failure does not permanently poison subsequent applies.
+    const next = this.applyChain.then(() => this._applyOnce());
+    this.applyChain = next.catch(() => {});
+    return next;
+  }
+
+  private async _applyOnce(): Promise<void> {
     const baseline = this.deps.baselineLoader();
     const overrides = listSpecialistOverrides();
     const merged = mergeCatalog(baseline, overrides);

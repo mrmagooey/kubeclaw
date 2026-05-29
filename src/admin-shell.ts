@@ -39,6 +39,10 @@ import {
   removeSpecialist,
   listSpecialistOverrides,
 } from './skills/orchestrator/specialist-registry.js';
+import {
+  SpecialistReconciler,
+  loadBaselineFromDisk,
+} from './specialists/reconciler.js';
 import { RealPerGroupK8sClient } from './per-group-capabilities/k8s-client.js';
 import {
   setGroupCredential,
@@ -54,6 +58,34 @@ const appsV1 = kc.makeApiClient(k8s.AppsV1Api);
 const perGroupK8s = new RealPerGroupK8sClient(kc);
 const NAMESPACE = process.env.KUBECLAW_NAMESPACE || 'kubeclaw';
 const ORCHESTRATOR_DEPLOYMENT = 'kubeclaw-orchestrator';
+
+const specialistReconciler = new SpecialistReconciler({
+  baselineLoader: loadBaselineFromDisk,
+  configMapApply: async (rendered: string) => {
+    const data: Record<string, string> = { 'specialists.json': rendered };
+    const body = {
+      apiVersion: 'v1',
+      kind: 'ConfigMap',
+      metadata: { name: 'kubeclaw-specialists', namespace: NAMESPACE },
+      data,
+    };
+    try {
+      await coreV1.patchNamespacedConfigMap({
+        name: 'kubeclaw-specialists',
+        namespace: NAMESPACE,
+        body,
+      });
+    } catch (err: unknown) {
+      const status = (err as { response?: { statusCode?: number } })
+        ?.response?.statusCode;
+      if (status === 404) {
+        await coreV1.createNamespacedConfigMap({ namespace: NAMESPACE, body });
+      } else {
+        throw err;
+      }
+    }
+  },
+});
 
 // Guard moved to main() so this module can be imported without side effects.
 
@@ -342,7 +374,7 @@ export const TOOLS: OpenAI.ChatCompletionTool[] = [
     function: {
       name: 'register_specialist',
       description:
-        "Register a new global specialist agent in the specialist_overrides SQLite table. The specialist will be included in the merged catalog on the next reconcile cycle. Note: changes propagate to channel pods only on next orchestrator restart until the reconciler's K8s apply helper is wired.",
+        'Register a new global specialist agent in the specialist_overrides SQLite table. The specialist will be included in the merged catalog immediately and channel pods will see the update within ~30s.',
       parameters: {
         type: 'object',
         required: ['name', 'prompt'],
@@ -394,7 +426,7 @@ export const TOOLS: OpenAI.ChatCompletionTool[] = [
     function: {
       name: 'edit_specialist',
       description:
-        "Update fields on an existing specialist override. Only provided fields are changed; omitted fields keep their current values. Note: changes propagate to channel pods only on next orchestrator restart until the reconciler's K8s apply helper is wired.",
+        'Update fields on an existing specialist override. Only provided fields are changed; omitted fields keep their current values. Changes propagate to channel pods within ~30s.',
       parameters: {
         type: 'object',
         required: ['name'],
@@ -425,7 +457,7 @@ export const TOOLS: OpenAI.ChatCompletionTool[] = [
     function: {
       name: 'remove_specialist',
       description:
-        "Remove a specialist override from the SQLite table. The specialist will be excluded from the merged catalog on the next reconcile cycle. Note: changes propagate to channel pods only on next orchestrator restart until the reconciler's K8s apply helper is wired.",
+        'Remove a specialist override from the SQLite table. The specialist will be excluded from the merged catalog immediately and channel pods will see the update within ~30s.',
       parameters: {
         type: 'object',
         required: ['name'],
@@ -729,9 +761,9 @@ function handleRegisterSpecialist(input: ToolInput): string {
     ...(input.claudemd !== undefined && { claudemd: input.claudemd as string }),
     ...(input.tools !== undefined && { tools: input.tools as string[] }),
   };
-  const result = registerSpecialist(spec);
+  const result = registerSpecialist(spec, specialistReconciler.apply.bind(specialistReconciler));
   if (!result.ok) return `Error: ${result.error}`;
-  return `Registered specialist "${spec.name}". Changes will appear in the merged catalog on next orchestrator restart.`;
+  return `Registered specialist "${spec.name}". Changes are live; channel pods will see the updated catalog within ~30s.`;
 }
 
 function handleEditSpecialist(input: ToolInput): string {
@@ -744,17 +776,17 @@ function handleEditSpecialist(input: ToolInput): string {
   if (input.memory !== undefined) patch.memory = input.memory;
   if (input.claudemd !== undefined) patch.claudemd = input.claudemd;
   if (input.tools !== undefined) patch.tools = input.tools;
-  const result = editSpecialist({ name, patch });
+  const result = editSpecialist({ name, patch }, specialistReconciler.apply.bind(specialistReconciler));
   if (!result.ok) return `Error: ${result.error}`;
-  return `Updated specialist "${name}". Changes will appear in the merged catalog on next orchestrator restart.`;
+  return `Updated specialist "${name}". Changes are live; channel pods will see the updated catalog within ~30s.`;
 }
 
 function handleRemoveSpecialist(input: ToolInput): string {
   const name = input.name as string;
   if (!name) return 'Error: name is required.';
-  const result = removeSpecialist({ name });
+  const result = removeSpecialist({ name }, specialistReconciler.apply.bind(specialistReconciler));
   if (!result.ok) return `Error: ${result.error}`;
-  return `Removed specialist override "${name}". Changes will appear in the merged catalog on next orchestrator restart.`;
+  return `Removed specialist override "${name}". Changes are live; channel pods will see the updated catalog within ~30s.`;
 }
 
 function handleListSpecialists(): string {
