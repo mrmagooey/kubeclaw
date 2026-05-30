@@ -470,6 +470,12 @@ async function helmInstall(): Promise<void> {
     '--set', 'channels.oauth-webchat.envVars[7].name=OAUTH_WEBCHAT_SESSION_TTL_DAYS',
     '--set', 'channels.oauth-webchat.envVars[7].key=session-ttl-days',
     '--set', 'channels.oauth-webchat.envVars[7].optional=true',
+    // Register the Researcher specialist so @Researcher mentions are dispatched
+    // to the specialist runner. The default chart values.yaml has specialists:[]
+    // (empty); we inject it here so the minikube-live suite gets the specialist
+    // without requiring changes to the chart defaults.
+    // Used by e2e/minikube-live-researcher.test.ts.
+    '--set-json', 'specialists=[{"name":"Researcher","prompt":"You are a web-research specialist. When given a topic or question:\\n1. Search for relevant, current information using available search tools.\\n2. Fetch and read promising sources to gather details.\\n3. Synthesise findings into a concise, structured summary with:\\n   - A one-paragraph executive summary.\\n   - Key facts as a bulleted list.\\n   - Source URLs cited inline.\\nStay factual; note when information is uncertain or conflicting.\\n","triggers":["researcher"],"llmProvider":"openrouter","tools":["web_search","web_fetch"]}]',
   ];
   const install = run('helm', setArgs, { timeout: 240_000, allowFail: true });
   if (!install.ok) {
