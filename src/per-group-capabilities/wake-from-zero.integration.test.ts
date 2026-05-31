@@ -15,7 +15,15 @@
  *   AC5 – a different group's deployment remains at replicas=0.
  */
 
-import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
+import {
+  describe,
+  it,
+  expect,
+  vi,
+  beforeAll,
+  beforeEach,
+  afterEach,
+} from 'vitest';
 import { _initTestDatabase, __resetDbForTest } from '../db.js';
 import { FakePerGroupK8sClient } from './k8s-client.js';
 import {
@@ -126,16 +134,30 @@ describe('wake-from-zero: per-group capability wakes on first use (Story 39)', (
       apiVersion: 'apps/v1',
       kind: 'Deployment',
       metadata: { name: ALICE_DEP, namespace: NAMESPACE },
-      spec: { replicas: 0, selector: { matchLabels: {} }, template: { metadata: {}, spec: { containers: [] } } },
+      spec: {
+        replicas: 0,
+        selector: { matchLabels: {} },
+        template: { metadata: {}, spec: { containers: [] } },
+      },
     });
 
-    setDiscoveryDeps({ perGroupK8sClient: client, namespace: NAMESPACE, discoveryTimeoutMs: 1000 });
+    setDiscoveryDeps({
+      perGroupK8sClient: client,
+      namespace: NAMESPACE,
+      discoveryTimeoutMs: 1000,
+    });
     setTimeout(() => client.markReady(NAMESPACE, ALICE_DEP), 20);
 
-    await __handleRequestForTest({ requestId: 'wake-ac1', capability: 'echo', group: ALICE_GROUP });
+    await __handleRequestForTest({
+      requestId: 'wake-ac1',
+      capability: 'echo',
+      group: ALICE_GROUP,
+    });
 
     expect(mockSet).toHaveBeenCalledOnce();
-    const result = JSON.parse(mockSet.mock.calls[0][1] as string) as CapabilityDiscoveryEntry[];
+    const result = JSON.parse(
+      mockSet.mock.calls[0][1] as string,
+    ) as CapabilityDiscoveryEntry[];
     expect(result).toHaveLength(1);
     const entry = result[0];
     expect(entry.state).toBe('ready');
@@ -150,19 +172,38 @@ describe('wake-from-zero: per-group capability wakes on first use (Story 39)', (
       apiVersion: 'apps/v1',
       kind: 'Deployment',
       metadata: { name: ALICE_DEP, namespace: NAMESPACE },
-      spec: { replicas: 0, selector: { matchLabels: {} }, template: { metadata: {}, spec: { containers: [] } } },
+      spec: {
+        replicas: 0,
+        selector: { matchLabels: {} },
+        template: { metadata: {}, spec: { containers: [] } },
+      },
     });
 
-    setDiscoveryDeps({ perGroupK8sClient: client, namespace: NAMESPACE, discoveryTimeoutMs: 1000 });
+    setDiscoveryDeps({
+      perGroupK8sClient: client,
+      namespace: NAMESPACE,
+      discoveryTimeoutMs: 1000,
+    });
     setTimeout(() => client.markReady(NAMESPACE, ALICE_DEP), 20);
 
-    await __handleRequestForTest({ requestId: 'wake-ac2', capability: 'echo', group: ALICE_GROUP });
+    await __handleRequestForTest({
+      requestId: 'wake-ac2',
+      capability: 'echo',
+      group: ALICE_GROUP,
+    });
 
-    const scaleUpCall = vi.mocked(logger.info).mock.calls.find(
-      (c) => c[1] === 'per_group_capability_scale_up',
-    );
-    expect(scaleUpCall, 'expected per_group_capability_scale_up log entry').toBeTruthy();
-    const logData = scaleUpCall![0] as { group: string; capability: string; coldStartMs: number };
+    const scaleUpCall = vi
+      .mocked(logger.info)
+      .mock.calls.find((c) => c[1] === 'per_group_capability_scale_up');
+    expect(
+      scaleUpCall,
+      'expected per_group_capability_scale_up log entry',
+    ).toBeTruthy();
+    const logData = scaleUpCall![0] as {
+      group: string;
+      capability: string;
+      coldStartMs: number;
+    };
     expect(logData.group).toBe(ALICE_GROUP);
     expect(logData.capability).toBe('echo');
     expect(logData.coldStartMs).toBeGreaterThanOrEqual(0);
@@ -175,10 +216,18 @@ describe('wake-from-zero: per-group capability wakes on first use (Story 39)', (
       apiVersion: 'apps/v1',
       kind: 'Deployment',
       metadata: { name: ALICE_DEP, namespace: NAMESPACE },
-      spec: { replicas: 0, selector: { matchLabels: {} }, template: { metadata: {}, spec: { containers: [] } } },
+      spec: {
+        replicas: 0,
+        selector: { matchLabels: {} },
+        template: { metadata: {}, spec: { containers: [] } },
+      },
     });
 
-    setDiscoveryDeps({ perGroupK8sClient: client, namespace: NAMESPACE, discoveryTimeoutMs: 1000 });
+    setDiscoveryDeps({
+      perGroupK8sClient: client,
+      namespace: NAMESPACE,
+      discoveryTimeoutMs: 1000,
+    });
     // Mark ready slightly later than requests are issued.
     setTimeout(() => client.markReady(NAMESPACE, ALICE_DEP), 30);
 
@@ -207,7 +256,9 @@ describe('wake-from-zero: per-group capability wakes on first use (Story 39)', (
       if (
         (call[0] as string).startsWith('kubeclaw:discovery:response:wake-ac3-')
       ) {
-        const entries = JSON.parse(call[1] as string) as CapabilityDiscoveryEntry[];
+        const entries = JSON.parse(
+          call[1] as string,
+        ) as CapabilityDiscoveryEntry[];
         expect(entries[0].state).toBe('ready');
       }
     }
@@ -220,14 +271,26 @@ describe('wake-from-zero: per-group capability wakes on first use (Story 39)', (
       apiVersion: 'apps/v1',
       kind: 'Deployment',
       metadata: { name: ALICE_DEP, namespace: NAMESPACE },
-      spec: { replicas: 0, selector: { matchLabels: {} }, template: { metadata: {}, spec: { containers: [] } } },
+      spec: {
+        replicas: 0,
+        selector: { matchLabels: {} },
+        template: { metadata: {}, spec: { containers: [] } },
+      },
     });
 
-    setDiscoveryDeps({ perGroupK8sClient: client, namespace: NAMESPACE, discoveryTimeoutMs: 1000 });
+    setDiscoveryDeps({
+      perGroupK8sClient: client,
+      namespace: NAMESPACE,
+      discoveryTimeoutMs: 1000,
+    });
     setTimeout(() => client.markReady(NAMESPACE, ALICE_DEP), 20);
 
     const beforeTs = Math.floor(Date.now() / 1000);
-    await __handleRequestForTest({ requestId: 'wake-ac4', capability: 'echo', group: ALICE_GROUP });
+    await __handleRequestForTest({
+      requestId: 'wake-ac4',
+      capability: 'echo',
+      group: ALICE_GROUP,
+    });
 
     const inst = getInstance(ALICE_GROUP, 'echo');
     expect(inst?.currentReplicas).toBe(1);
@@ -245,20 +308,36 @@ describe('wake-from-zero: per-group capability wakes on first use (Story 39)', (
       apiVersion: 'apps/v1',
       kind: 'Deployment',
       metadata: { name: ALICE_DEP, namespace: NAMESPACE },
-      spec: { replicas: 0, selector: { matchLabels: {} }, template: { metadata: {}, spec: { containers: [] } } },
+      spec: {
+        replicas: 0,
+        selector: { matchLabels: {} },
+        template: { metadata: {}, spec: { containers: [] } },
+      },
     });
     await client.applyDeployment({
       apiVersion: 'apps/v1',
       kind: 'Deployment',
       metadata: { name: BOB_DEP, namespace: NAMESPACE },
-      spec: { replicas: 0, selector: { matchLabels: {} }, template: { metadata: {}, spec: { containers: [] } } },
+      spec: {
+        replicas: 0,
+        selector: { matchLabels: {} },
+        template: { metadata: {}, spec: { containers: [] } },
+      },
     });
 
-    setDiscoveryDeps({ perGroupK8sClient: client, namespace: NAMESPACE, discoveryTimeoutMs: 1000 });
+    setDiscoveryDeps({
+      perGroupK8sClient: client,
+      namespace: NAMESPACE,
+      discoveryTimeoutMs: 1000,
+    });
     setTimeout(() => client.markReady(NAMESPACE, ALICE_DEP), 20);
 
     // Only alice sends a request.
-    await __handleRequestForTest({ requestId: 'wake-ac5', capability: 'echo', group: ALICE_GROUP });
+    await __handleRequestForTest({
+      requestId: 'wake-ac5',
+      capability: 'echo',
+      group: ALICE_GROUP,
+    });
 
     // Alice's deployment woke up.
     const aliceDep = await client.readDeployment(NAMESPACE, ALICE_DEP);
@@ -279,17 +358,31 @@ describe('wake-from-zero: per-group capability wakes on first use (Story 39)', (
       apiVersion: 'apps/v1',
       kind: 'Deployment',
       metadata: { name: ALICE_DEP, namespace: NAMESPACE },
-      spec: { replicas: 1, selector: { matchLabels: {} }, template: { metadata: {}, spec: { containers: [] } } },
+      spec: {
+        replicas: 1,
+        selector: { matchLabels: {} },
+        template: { metadata: {}, spec: { containers: [] } },
+      },
     });
     // Already ready.
     client.markReady(NAMESPACE, ALICE_DEP);
     const patchSpy = vi.spyOn(client, 'patchDeploymentReplicas');
 
-    setDiscoveryDeps({ perGroupK8sClient: client, namespace: NAMESPACE, discoveryTimeoutMs: 1000 });
+    setDiscoveryDeps({
+      perGroupK8sClient: client,
+      namespace: NAMESPACE,
+      discoveryTimeoutMs: 1000,
+    });
 
-    await __handleRequestForTest({ requestId: 'wake-noop', capability: 'echo', group: ALICE_GROUP });
+    await __handleRequestForTest({
+      requestId: 'wake-noop',
+      capability: 'echo',
+      group: ALICE_GROUP,
+    });
 
-    const result = JSON.parse(mockSet.mock.calls[0][1] as string) as CapabilityDiscoveryEntry[];
+    const result = JSON.parse(
+      mockSet.mock.calls[0][1] as string,
+    ) as CapabilityDiscoveryEntry[];
     expect(result[0].state).toBe('ready');
     // No patch was issued since it was already at replicas=1.
     expect(patchSpy).not.toHaveBeenCalled();

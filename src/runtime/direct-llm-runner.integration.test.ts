@@ -51,9 +51,11 @@ vi.mock('../k8s/redis-client.js', () => ({
     xadd: vi.fn().mockResolvedValue('1-0'),
     // Return a well-formed response so scheduleTaskDirect resolves immediately
     // rather than waiting 5 s for a deadline.
-    xread: vi.fn().mockResolvedValue([
-      ['result-stream', [['1-0', ['result', 'Scheduled task "task-test".']]]],
-    ]),
+    xread: vi
+      .fn()
+      .mockResolvedValue([
+        ['result-stream', [['1-0', ['result', 'Scheduled task "task-test".']]]],
+      ]),
     quit: vi.fn().mockResolvedValue(undefined),
   })),
   getToolCallsStream: vi.fn(
@@ -100,13 +102,11 @@ vi.mock('./llm-client.js', () => ({
 }));
 
 vi.mock('./tools/propose-skill.js', () => ({
-  proposeSkill: vi
-    .fn()
-    .mockResolvedValue({
-      kind: 'staged',
-      candidateId: 'c1',
-      preview: 'preview',
-    }),
+  proposeSkill: vi.fn().mockResolvedValue({
+    kind: 'staged',
+    candidateId: 'c1',
+    preview: 'preview',
+  }),
 }));
 
 vi.mock('../rag/provider.js', () => ({
@@ -454,9 +454,14 @@ describe('DirectLLMRunner — maxToolOutputBytes pod env injection', () => {
     const { getRedisClient } = await import('../k8s/redis-client.js');
     vi.mocked(getRedisClient).mockReturnValue({
       xadd: vi.fn().mockResolvedValue('1-0'),
-      xread: vi.fn().mockResolvedValue([
-        ['result-stream', [['1-0', ['result', 'Scheduled task "task-test".']]]],
-      ]),
+      xread: vi
+        .fn()
+        .mockResolvedValue([
+          [
+            'result-stream',
+            [['1-0', ['result', 'Scheduled task "task-test".']]],
+          ],
+        ]),
       quit: vi.fn().mockResolvedValue(undefined),
     } as any);
   });
@@ -468,7 +473,8 @@ describe('DirectLLMRunner — maxToolOutputBytes pod env injection', () => {
     createToolPodJobMock.mockClear();
 
     // Configure the mock LLM to return exactly one tool call, then a text response.
-    const mockCreate = vi.fn()
+    const mockCreate = vi
+      .fn()
       .mockResolvedValueOnce({
         choices: [
           {
@@ -479,7 +485,10 @@ describe('DirectLLMRunner — maxToolOutputBytes pod env injection', () => {
                 {
                   id: 'c1',
                   type: 'function',
-                  function: { name: 'web_fetch', arguments: '{"url":"http://example.com"}' },
+                  function: {
+                    name: 'web_fetch',
+                    arguments: '{"url":"http://example.com"}',
+                  },
                 },
               ],
             },
@@ -487,7 +496,9 @@ describe('DirectLLMRunner — maxToolOutputBytes pod env injection', () => {
         ],
       })
       .mockResolvedValueOnce({
-        choices: [{ message: { role: 'assistant', content: 'done', tool_calls: [] } }],
+        choices: [
+          { message: { role: 'assistant', content: 'done', tool_calls: [] } },
+        ],
       });
 
     const { createLLMClient } = await import('./llm-client.js');
@@ -509,7 +520,12 @@ describe('DirectLLMRunner — maxToolOutputBytes pod env injection', () => {
         return [
           [
             'stream',
-            [['1-0', ['requestId', capturedRequestId, 'result', '"fetched content"']]],
+            [
+              [
+                '1-0',
+                ['requestId', capturedRequestId, 'result', '"fetched content"'],
+              ],
+            ],
           ],
         ];
       }),
@@ -522,8 +538,19 @@ describe('DirectLLMRunner — maxToolOutputBytes pod env injection', () => {
     const groupFolder = `budget-pod-${Date.now()}`;
 
     await runner.runAgent(
-      { name: groupFolder, folder: groupFolder, trigger: '', added_at: new Date().toISOString() },
-      { prompt: 'fetch it', groupFolder, chatJid: 'e2e@e2e', isMain: false, assistantName: 'Bot' },
+      {
+        name: groupFolder,
+        folder: groupFolder,
+        trigger: '',
+        added_at: new Date().toISOString(),
+      },
+      {
+        prompt: 'fetch it',
+        groupFolder,
+        chatJid: 'e2e@e2e',
+        isMain: false,
+        assistantName: 'Bot',
+      },
       undefined,
       undefined,
       { maxToolOutputBytes: 12345 },
@@ -543,7 +570,8 @@ describe('DirectLLMRunner — maxToolOutputBytes pod env injection', () => {
     (configMod as any).KUBECLAW_MODE = 'channel';
 
     try {
-      const mockCreate = vi.fn()
+      const mockCreate = vi
+        .fn()
         .mockResolvedValueOnce({
           choices: [
             {
@@ -554,7 +582,10 @@ describe('DirectLLMRunner — maxToolOutputBytes pod env injection', () => {
                   {
                     id: 'c2',
                     type: 'function',
-                    function: { name: 'web_fetch', arguments: '{"url":"http://example.com"}' },
+                    function: {
+                      name: 'web_fetch',
+                      arguments: '{"url":"http://example.com"}',
+                    },
                   },
                 ],
               },
@@ -562,7 +593,9 @@ describe('DirectLLMRunner — maxToolOutputBytes pod env injection', () => {
           ],
         })
         .mockResolvedValueOnce({
-          choices: [{ message: { role: 'assistant', content: 'done', tool_calls: [] } }],
+          choices: [
+            { message: { role: 'assistant', content: 'done', tool_calls: [] } },
+          ],
         });
 
       const { createLLMClient } = await import('./llm-client.js');
@@ -590,7 +623,17 @@ describe('DirectLLMRunner — maxToolOutputBytes pod env injection', () => {
           return [
             [
               'stream',
-              [['1-0', ['requestId', capturedRequestId, 'result', '"fetched content"']]],
+              [
+                [
+                  '1-0',
+                  [
+                    'requestId',
+                    capturedRequestId,
+                    'result',
+                    '"fetched content"',
+                  ],
+                ],
+              ],
             ],
           ];
         }),
@@ -603,8 +646,19 @@ describe('DirectLLMRunner — maxToolOutputBytes pod env injection', () => {
       const groupFolder = `budget-channel-${Date.now()}`;
 
       await runner.runAgent(
-        { name: groupFolder, folder: groupFolder, trigger: '', added_at: new Date().toISOString() },
-        { prompt: 'fetch it', groupFolder, chatJid: 'e2e@e2e', isMain: false, assistantName: 'Bot' },
+        {
+          name: groupFolder,
+          folder: groupFolder,
+          trigger: '',
+          added_at: new Date().toISOString(),
+        },
+        {
+          prompt: 'fetch it',
+          groupFolder,
+          chatJid: 'e2e@e2e',
+          isMain: false,
+          assistantName: 'Bot',
+        },
         undefined,
         undefined,
         { maxToolOutputBytes: 9999 },
@@ -644,35 +698,47 @@ describe('set_reminder tool — DirectLLMRunner integration', () => {
 
     // Stubbed client: first call returns a set_reminder tool call; second call
     // (after tool result) returns a plain text confirmation.
-    const stubCreate = vi.fn()
+    const stubCreate = vi
+      .fn()
       .mockResolvedValueOnce({
-        choices: [{
-          finish_reason: 'tool_calls',
-          message: {
-            role: 'assistant',
-            content: null,
-            tool_calls: [{
-              id: 'call_1',
-              type: 'function',
-              function: {
-                name: 'set_reminder',
-                arguments: JSON.stringify({
-                  reminder_text: 'take my vitamins',
-                  when_iso: whenIso,
-                }),
-              },
-            }],
+        choices: [
+          {
+            finish_reason: 'tool_calls',
+            message: {
+              role: 'assistant',
+              content: null,
+              tool_calls: [
+                {
+                  id: 'call_1',
+                  type: 'function',
+                  function: {
+                    name: 'set_reminder',
+                    arguments: JSON.stringify({
+                      reminder_text: 'take my vitamins',
+                      when_iso: whenIso,
+                    }),
+                  },
+                },
+              ],
+            },
           },
-        }],
+        ],
       })
       .mockResolvedValueOnce({
-        choices: [{
-          finish_reason: 'stop',
-          message: { role: 'assistant', content: `Reminder set for ${new Date(whenIso).toLocaleString()}: "take my vitamins".` },
-        }],
+        choices: [
+          {
+            finish_reason: 'stop',
+            message: {
+              role: 'assistant',
+              content: `Reminder set for ${new Date(whenIso).toLocaleString()}: "take my vitamins".`,
+            },
+          },
+        ],
       });
 
-    const fakeClient = { chat: { completions: { create: stubCreate } } } as unknown as import('openai').default;
+    const fakeClient = {
+      chat: { completions: { create: stubCreate } },
+    } as unknown as import('openai').default;
 
     const { DirectLLMRunner } = await import('./direct-llm-runner.js');
     const runner = new DirectLLMRunner(fakeClient);
@@ -685,16 +751,13 @@ describe('set_reminder tool — DirectLLMRunner integration', () => {
       added_at: new Date().toISOString(),
     };
 
-    const output = await runner.runAgent(
-      group,
-      {
-        prompt: 'remind me to take my vitamins in 1 hour',
-        groupFolder,
-        chatJid: 'integ@test',
-        isMain: false,
-        assistantName: 'Bot',
-      },
-    );
+    const output = await runner.runAgent(group, {
+      prompt: 'remind me to take my vitamins in 1 hour',
+      groupFolder,
+      chatJid: 'integ@test',
+      isMain: false,
+      assistantName: 'Bot',
+    });
 
     expect(output.status).toBe('success');
 
@@ -702,7 +765,11 @@ describe('set_reminder tool — DirectLLMRunner integration', () => {
     // which is mocked — but the mock returns a success string, so we assert the
     // tool result was forwarded correctly instead of the DB row directly).
     // The second LLM call must have received the tool result containing "Reminder set"
-    const secondCallMessages = (stubCreate.mock.calls[1][0] as { messages: Array<{ role: string; content?: string }> }).messages;
+    const secondCallMessages = (
+      stubCreate.mock.calls[1][0] as {
+        messages: Array<{ role: string; content?: string }>;
+      }
+    ).messages;
     const toolResultMsg = secondCallMessages.find((m) => m.role === 'tool');
     expect(toolResultMsg).toBeDefined();
     expect(toolResultMsg!.content).toMatch(/take my vitamins/);
@@ -710,49 +777,78 @@ describe('set_reminder tool — DirectLLMRunner integration', () => {
   });
 
   it('returns an error message to the LLM when when_iso is a relative phrase', async () => {
-    const stubCreate = vi.fn()
+    const stubCreate = vi
+      .fn()
       .mockResolvedValueOnce({
-        choices: [{
-          finish_reason: 'tool_calls',
-          message: {
-            role: 'assistant',
-            content: null,
-            tool_calls: [{
-              id: 'call_2',
-              type: 'function',
-              function: {
-                name: 'set_reminder',
-                arguments: JSON.stringify({
-                  reminder_text: 'call dentist',
-                  when_iso: 'in 3 days',
-                }),
-              },
-            }],
+        choices: [
+          {
+            finish_reason: 'tool_calls',
+            message: {
+              role: 'assistant',
+              content: null,
+              tool_calls: [
+                {
+                  id: 'call_2',
+                  type: 'function',
+                  function: {
+                    name: 'set_reminder',
+                    arguments: JSON.stringify({
+                      reminder_text: 'call dentist',
+                      when_iso: 'in 3 days',
+                    }),
+                  },
+                },
+              ],
+            },
           },
-        }],
+        ],
       })
       .mockResolvedValueOnce({
-        choices: [{
-          finish_reason: 'stop',
-          message: { role: 'assistant', content: 'I could not set that reminder.' },
-        }],
+        choices: [
+          {
+            finish_reason: 'stop',
+            message: {
+              role: 'assistant',
+              content: 'I could not set that reminder.',
+            },
+          },
+        ],
       });
 
-    const fakeClient = { chat: { completions: { create: stubCreate } } } as unknown as import('openai').default;
+    const fakeClient = {
+      chat: { completions: { create: stubCreate } },
+    } as unknown as import('openai').default;
 
     const { DirectLLMRunner } = await import('./direct-llm-runner.js');
     const runner = new DirectLLMRunner(fakeClient);
 
     const groupFolder = `reminder-invalid-${Date.now()}`;
     await runner.runAgent(
-      { name: groupFolder, folder: groupFolder, trigger: '', added_at: new Date().toISOString() },
-      { prompt: 'remind me to call dentist in 3 days', groupFolder, chatJid: 'integ2@test', isMain: false, assistantName: 'Bot' },
+      {
+        name: groupFolder,
+        folder: groupFolder,
+        trigger: '',
+        added_at: new Date().toISOString(),
+      },
+      {
+        prompt: 'remind me to call dentist in 3 days',
+        groupFolder,
+        chatJid: 'integ2@test',
+        isMain: false,
+        assistantName: 'Bot',
+      },
     );
 
     // The tool result fed back to the LLM must contain the validation error
-    const secondCallMessages = (stubCreate.mock.calls[1][0] as { messages: Array<{ role: string; content?: string }> }).messages;
+    const secondCallMessages = (
+      stubCreate.mock.calls[1][0] as {
+        messages: Array<{ role: string; content?: string }>;
+      }
+    ).messages;
     const toolResultMsg = secondCallMessages.find((m) => m.role === 'tool');
     expect(toolResultMsg).toBeDefined();
-    expect(toolResultMsg!.content).toMatch(/when_iso must be an absolute ISO 8601/i);
+    expect(toolResultMsg!.content).toMatch(
+      /when_iso must be an absolute ISO 8601/i,
+    );
   });
 });

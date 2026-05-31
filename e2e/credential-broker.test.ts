@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execSync } from 'child_process';
+import { acquireClusterLock } from './lib/per-test-cluster.js';
 
 const NS = 'kubeclaw-e2e-broker';
 const RELEASE = 'ke2e-broker';
@@ -38,6 +39,14 @@ function buildBrokerImage(): string {
 }
 
 describe('credential-broker e2e', () => {
+  let releaseClusterLock: (() => void) | null = null;
+
+  beforeAll(async () => {
+    // Acquire the global cluster lock so only one helm-installing e2e test
+    // touches the shared minikube cluster at a time.
+    releaseClusterLock = await acquireClusterLock();
+  }, 30 * 60 * 1000);
+
   beforeAll(() => {
     // Wait for the namespace to be fully gone if it's still terminating from a
     // previous run, then create it fresh.
@@ -88,6 +97,7 @@ describe('credential-broker e2e', () => {
   afterAll(() => {
     execSync(`helm uninstall ${RELEASE} -n ${NS} 2>/dev/null || true`);
     execSync(`kubectl delete ns ${NS} --wait=false 2>/dev/null || true`);
+    if (releaseClusterLock) releaseClusterLock();
   }, 60_000);
 
   it('broker pod is Ready', () => {

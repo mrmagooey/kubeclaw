@@ -396,7 +396,9 @@ describe('makeReloadCallback — unit', () => {
 
     const callback = makeReloadCallback({
       configPath: configFile,
-      setResolver: (r) => { resolver = r; },
+      setResolver: (r) => {
+        resolver = r;
+      },
       groupSource,
       operatorSecretReader: vi.fn().mockResolvedValue(null),
       metrics,
@@ -408,8 +410,12 @@ describe('makeReloadCallback — unit', () => {
 
     expect(resolver).not.toBe(initialResolver);
     // New resolver should have 2 mappings — verify by checking find() works for both
-    expect(resolver.find({ destination: 'api.anthropic.com', identity: 'sa/tool' })).toBeDefined();
-    expect(resolver.find({ destination: 'api.openai.com', identity: 'sa/tool' })).toBeDefined();
+    expect(
+      resolver.find({ destination: 'api.anthropic.com', identity: 'sa/tool' }),
+    ).toBeDefined();
+    expect(
+      resolver.find({ destination: 'api.openai.com', identity: 'sa/tool' }),
+    ).toBeDefined();
   });
 
   it('increments credential_broker_config_reloads_total{result=success} on success', async () => {
@@ -422,7 +428,9 @@ describe('makeReloadCallback — unit', () => {
 
     const callback = makeReloadCallback({
       configPath: configFile,
-      setResolver: (r) => { resolver = r; },
+      setResolver: (r) => {
+        resolver = r;
+      },
       groupSource,
       operatorSecretReader: vi.fn().mockResolvedValue(null),
       metrics,
@@ -432,7 +440,9 @@ describe('makeReloadCallback — unit', () => {
     callback();
 
     const text = await registry.metrics();
-    expect(text).toMatch(/credential_broker_config_reloads_total\{[^}]*result="success"[^}]*\} 1/);
+    expect(text).toMatch(
+      /credential_broker_config_reloads_total\{[^}]*result="success"[^}]*\} 1/,
+    );
   });
 
   it('does NOT touch the resolver when config file is missing', () => {
@@ -446,7 +456,9 @@ describe('makeReloadCallback — unit', () => {
 
     const callback = makeReloadCallback({
       configPath: path.join(tmpDir, 'does-not-exist.yaml'),
-      setResolver: (r) => { resolver = r; },
+      setResolver: (r) => {
+        resolver = r;
+      },
       groupSource,
       operatorSecretReader: vi.fn().mockResolvedValue(null),
       metrics,
@@ -470,7 +482,9 @@ describe('makeReloadCallback — unit', () => {
 
     const callback = makeReloadCallback({
       configPath: configFile,
-      setResolver: (r) => { resolver = r; },
+      setResolver: (r) => {
+        resolver = r;
+      },
       groupSource,
       operatorSecretReader: vi.fn().mockResolvedValue(null),
       metrics,
@@ -479,7 +493,9 @@ describe('makeReloadCallback — unit', () => {
     callback();
 
     const text = await registry.metrics();
-    expect(text).toMatch(/credential_broker_config_reloads_total\{[^}]*result="failure"[^}]*\} 1/);
+    expect(text).toMatch(
+      /credential_broker_config_reloads_total\{[^}]*result="failure"[^}]*\} 1/,
+    );
   });
 
   it('does NOT replace the resolver when the new config is invalid', () => {
@@ -495,7 +511,9 @@ describe('makeReloadCallback — unit', () => {
 
     const callback = makeReloadCallback({
       configPath: configFile,
-      setResolver: (r) => { resolver = r; },
+      setResolver: (r) => {
+        resolver = r;
+      },
       groupSource,
       operatorSecretReader: vi.fn().mockResolvedValue(null),
       metrics,
@@ -516,7 +534,9 @@ describe('makeReloadCallback — unit', () => {
 
     const callback = makeReloadCallback({
       configPath: configFile,
-      setResolver: (r) => { resolver = r; },
+      setResolver: (r) => {
+        resolver = r;
+      },
       groupSource,
       operatorSecretReader: vi.fn().mockResolvedValue(null),
       metrics,
@@ -527,13 +547,17 @@ describe('makeReloadCallback — unit', () => {
     callback();
 
     const text = await registry.metrics();
-    expect(text).toMatch(/credential_broker_config_reloads_total\{[^}]*result="success"[^}]*\} 2/);
+    expect(text).toMatch(
+      /credential_broker_config_reloads_total\{[^}]*result="success"[^}]*\} 2/,
+    );
   });
 
   it('the metric starts at 0 before any reload fires', async () => {
     const text = await registry.metrics();
     // Counter starts at 0 — the metric should either be absent or show 0
-    const match = text.match(/credential_broker_config_reloads_total\{[^}]*result="success"[^}]*\} (\d+)/);
+    const match = text.match(
+      /credential_broker_config_reloads_total\{[^}]*result="success"[^}]*\} (\d+)/,
+    );
     if (match) {
       expect(Number(match[1])).toBe(0);
     }
@@ -555,13 +579,15 @@ describe('makeReloadCallback — integration', () => {
   const yamlWith = (ids: string[]) =>
     [
       'mappings:',
-      ...ids.map((id) => [
-        `  - id: ${id}`,
-        `    destinations: ["api.${id}.com"]`,
-        `    identities: ["*"]`,
-        `    credentialRef: { kind: Secret, name: kubeclaw-secrets, key: ${id}-api-key }`,
-        `    headerScheme: bearer`,
-      ].join('\n')),
+      ...ids.map((id) =>
+        [
+          `  - id: ${id}`,
+          `    destinations: ["api.${id}.com"]`,
+          `    identities: ["*"]`,
+          `    credentialRef: { kind: Secret, name: kubeclaw-secrets, key: ${id}-api-key }`,
+          `    headerScheme: bearer`,
+        ].join('\n'),
+      ),
       'catalog: []',
       '',
     ].join('\n');
@@ -579,7 +605,10 @@ describe('makeReloadCallback — integration', () => {
   it('adding a host mapping becomes live after callback fires', () => {
     const registry = new Registry();
     const metrics = createMetrics(registry);
-    const groupSource = new K8sSecretSource({ readSecret: vi.fn(), cacheTtlMs: 0 });
+    const groupSource = new K8sSecretSource({
+      readSecret: vi.fn(),
+      cacheTtlMs: 0,
+    });
 
     let resolver = new Resolver({
       mappings: loadConfigOrThrow(configFile).mappings,
@@ -589,11 +618,15 @@ describe('makeReloadCallback — integration', () => {
     });
 
     // Initially only anthropic is mapped
-    expect(resolver.find({ destination: 'api.openai.com', identity: 'sa/tool' })).toBeUndefined();
+    expect(
+      resolver.find({ destination: 'api.openai.com', identity: 'sa/tool' }),
+    ).toBeUndefined();
 
     const callback = makeReloadCallback({
       configPath: configFile,
-      setResolver: (r) => { resolver = r; },
+      setResolver: (r) => {
+        resolver = r;
+      },
       groupSource,
       operatorSecretReader: vi.fn().mockResolvedValue(null),
       metrics,
@@ -603,14 +636,21 @@ describe('makeReloadCallback — integration', () => {
     fs.writeFileSync(configFile, yamlWith(['anthropic', 'openai']));
     callback();
 
-    expect(resolver.find({ destination: 'api.openai.com', identity: 'sa/tool' })).toBeDefined();
-    expect(resolver.find({ destination: 'api.anthropic.com', identity: 'sa/tool' })).toBeDefined();
+    expect(
+      resolver.find({ destination: 'api.openai.com', identity: 'sa/tool' }),
+    ).toBeDefined();
+    expect(
+      resolver.find({ destination: 'api.anthropic.com', identity: 'sa/tool' }),
+    ).toBeDefined();
   });
 
   it('removing a host mapping causes that destination to 403 after callback fires', async () => {
     const registry = new Registry();
     const metrics = createMetrics(registry);
-    const groupSource = new K8sSecretSource({ readSecret: vi.fn(), cacheTtlMs: 0 });
+    const groupSource = new K8sSecretSource({
+      readSecret: vi.fn(),
+      cacheTtlMs: 0,
+    });
 
     let resolver = new Resolver({
       mappings: loadConfigOrThrow(configFile).mappings,
@@ -620,11 +660,15 @@ describe('makeReloadCallback — integration', () => {
     });
 
     // Verify anthropic works before removal
-    expect(resolver.find({ destination: 'api.anthropic.com', identity: 'sa/tool' })).toBeDefined();
+    expect(
+      resolver.find({ destination: 'api.anthropic.com', identity: 'sa/tool' }),
+    ).toBeDefined();
 
     const callback = makeReloadCallback({
       configPath: configFile,
-      setResolver: (r) => { resolver = r; },
+      setResolver: (r) => {
+        resolver = r;
+      },
       groupSource,
       operatorSecretReader: vi.fn().mockResolvedValue(null),
       metrics,
@@ -634,13 +678,18 @@ describe('makeReloadCallback — integration', () => {
     fs.writeFileSync(configFile, yamlWith([]));
     callback();
 
-    expect(resolver.find({ destination: 'api.anthropic.com', identity: 'sa/tool' })).toBeUndefined();
+    expect(
+      resolver.find({ destination: 'api.anthropic.com', identity: 'sa/tool' }),
+    ).toBeUndefined();
   });
 
   it('metric increments on successful reload from real file write', async () => {
     const registry = new Registry();
     const metrics = createMetrics(registry);
-    const groupSource = new K8sSecretSource({ readSecret: vi.fn(), cacheTtlMs: 0 });
+    const groupSource = new K8sSecretSource({
+      readSecret: vi.fn(),
+      cacheTtlMs: 0,
+    });
 
     let resolver = new Resolver({
       mappings: loadConfigOrThrow(configFile).mappings,
@@ -651,7 +700,9 @@ describe('makeReloadCallback — integration', () => {
 
     const callback = makeReloadCallback({
       configPath: configFile,
-      setResolver: (r) => { resolver = r; },
+      setResolver: (r) => {
+        resolver = r;
+      },
       groupSource,
       operatorSecretReader: vi.fn().mockResolvedValue(null),
       metrics,
@@ -661,13 +712,18 @@ describe('makeReloadCallback — integration', () => {
     callback();
 
     const text = await registry.metrics();
-    expect(text).toMatch(/credential_broker_config_reloads_total\{[^}]*result="success"[^}]*\} 1/);
+    expect(text).toMatch(
+      /credential_broker_config_reloads_total\{[^}]*result="success"[^}]*\} 1/,
+    );
   });
 
   it('multiple sequential config patches all take effect', () => {
     const registry = new Registry();
     const metrics = createMetrics(registry);
-    const groupSource = new K8sSecretSource({ readSecret: vi.fn(), cacheTtlMs: 0 });
+    const groupSource = new K8sSecretSource({
+      readSecret: vi.fn(),
+      cacheTtlMs: 0,
+    });
 
     let resolver = new Resolver({
       mappings: loadConfigOrThrow(configFile).mappings,
@@ -678,7 +734,9 @@ describe('makeReloadCallback — integration', () => {
 
     const callback = makeReloadCallback({
       configPath: configFile,
-      setResolver: (r) => { resolver = r; },
+      setResolver: (r) => {
+        resolver = r;
+      },
       groupSource,
       operatorSecretReader: vi.fn().mockResolvedValue(null),
       metrics,
@@ -687,12 +745,18 @@ describe('makeReloadCallback — integration', () => {
     // Patch 1: add openai
     fs.writeFileSync(configFile, yamlWith(['anthropic', 'openai']));
     callback();
-    expect(resolver.find({ destination: 'api.openai.com', identity: 'sa/tool' })).toBeDefined();
+    expect(
+      resolver.find({ destination: 'api.openai.com', identity: 'sa/tool' }),
+    ).toBeDefined();
 
     // Patch 2: remove openai, add voyage
     fs.writeFileSync(configFile, yamlWith(['anthropic', 'voyage']));
     callback();
-    expect(resolver.find({ destination: 'api.openai.com', identity: 'sa/tool' })).toBeUndefined();
-    expect(resolver.find({ destination: 'api.voyage.com', identity: 'sa/tool' })).toBeDefined();
+    expect(
+      resolver.find({ destination: 'api.openai.com', identity: 'sa/tool' }),
+    ).toBeUndefined();
+    expect(
+      resolver.find({ destination: 'api.voyage.com', identity: 'sa/tool' }),
+    ).toBeDefined();
   });
 });

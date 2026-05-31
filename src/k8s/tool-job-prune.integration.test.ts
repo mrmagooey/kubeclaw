@@ -89,7 +89,10 @@ describe('pruneOldToolJobs — integration', () => {
     recordToolJob('recent-job', 'grp2', 'jid@test');
     resolveToolJob('recent-job', 'completed');
     // resolved_at = 2 hours ago — within 1 day retention
-    backDateResolvedAt('recent-job', new Date(Date.now() - 2 * 3600_000).toISOString());
+    backDateResolvedAt(
+      'recent-job',
+      new Date(Date.now() - 2 * 3600_000).toISOString(),
+    );
 
     const deleted = pruneOldToolJobs(1);
 
@@ -116,9 +119,7 @@ describe('pruneOldToolJobs — integration', () => {
 
     expect(deleted).toBe(1); // only ga-old
 
-    const remaining = db.exec(
-      `SELECT job_id FROM tool_jobs ORDER BY job_id`,
-    );
+    const remaining = db.exec(`SELECT job_id FROM tool_jobs ORDER BY job_id`);
     const ids = remaining[0].values.map((r) => r[0] as string);
     expect(ids).toContain('gb-new');
     expect(ids).toContain('gc-active');

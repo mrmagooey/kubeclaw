@@ -21,30 +21,31 @@ import type { JobInput } from './types.js';
 
 // ── Mocks ───────────────────────────────────────────────────────────────────
 
-const { mockBatchApi, mockCoreApi, mockLogger, mockResolveToolJob } = vi.hoisted(() => {
-  const mockBatchApi = {
-    createNamespacedJob: vi.fn(),
-    readNamespacedJob: vi.fn(),
-    deleteNamespacedJob: vi.fn(),
-  };
-  const mockCoreApi = {
-    listNamespacedPod: vi.fn(),
-    readNamespacedPodLog: vi.fn(),
-    createNamespacedPersistentVolumeClaim: vi.fn(),
-    createNamespacedService: vi.fn(),
-    replaceNamespacedService: vi.fn(),
-    deleteNamespacedService: vi.fn(),
-    deleteNamespacedPersistentVolumeClaim: vi.fn(),
-  };
-  const mockLogger = {
-    debug: vi.fn(),
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-  };
-  const mockResolveToolJob = vi.fn();
-  return { mockBatchApi, mockCoreApi, mockLogger, mockResolveToolJob };
-});
+const { mockBatchApi, mockCoreApi, mockLogger, mockResolveToolJob } =
+  vi.hoisted(() => {
+    const mockBatchApi = {
+      createNamespacedJob: vi.fn(),
+      readNamespacedJob: vi.fn(),
+      deleteNamespacedJob: vi.fn(),
+    };
+    const mockCoreApi = {
+      listNamespacedPod: vi.fn(),
+      readNamespacedPodLog: vi.fn(),
+      createNamespacedPersistentVolumeClaim: vi.fn(),
+      createNamespacedService: vi.fn(),
+      replaceNamespacedService: vi.fn(),
+      deleteNamespacedService: vi.fn(),
+      deleteNamespacedPersistentVolumeClaim: vi.fn(),
+    };
+    const mockLogger = {
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    };
+    const mockResolveToolJob = vi.fn();
+    return { mockBatchApi, mockCoreApi, mockLogger, mockResolveToolJob };
+  });
 
 vi.mock('../config.js', () => ({
   CONTAINER_IMAGE: 'kubeclaw-agent:latest',
@@ -79,7 +80,9 @@ vi.mock('../logger.js', () => ({ logger: mockLogger }));
 vi.mock('./redis-client.js', () => {
   const { EventEmitter } = require('events');
   const mockSubscriber = new EventEmitter() as any;
-  mockSubscriber.subscribe = vi.fn((_ch: string, cb: (err: Error | null) => void) => cb(null));
+  mockSubscriber.subscribe = vi.fn(
+    (_ch: string, cb: (err: Error | null) => void) => cb(null),
+  );
   mockSubscriber.unsubscribe = vi.fn();
   mockSubscriber.off = vi.fn();
   mockSubscriber.quit = vi.fn().mockResolvedValue('OK');
@@ -318,7 +321,9 @@ describe('JobRunner.isOOMKilled', () => {
   });
 
   it('returns true when state.terminated.reason is OOMKilled', async () => {
-    mockCoreApi.listNamespacedPod.mockResolvedValue(makeOOMKilledPodListStatePath());
+    mockCoreApi.listNamespacedPod.mockResolvedValue(
+      makeOOMKilledPodListStatePath(),
+    );
     await expect(jobRunner.isOOMKilled('nc-test-abc123')).resolves.toBe(true);
   });
 
@@ -357,7 +362,9 @@ describe('JobRunner.waitForJobCompletion — OOMKill detection', () => {
   });
 
   it('throws OOMKilledError when job fails with BackoffLimitExceeded + pod was OOMKilled', async () => {
-    mockBatchApi.readNamespacedJob.mockResolvedValue(makeBackoffLimitExceededStatus());
+    mockBatchApi.readNamespacedJob.mockResolvedValue(
+      makeBackoffLimitExceededStatus(),
+    );
     mockCoreApi.listNamespacedPod.mockResolvedValue(makeOOMKilledPodList());
 
     await expect(
@@ -366,7 +373,9 @@ describe('JobRunner.waitForJobCompletion — OOMKill detection', () => {
   });
 
   it('throws a plain Error (not OOMKilledError) when pod was NOT OOMKilled', async () => {
-    mockBatchApi.readNamespacedJob.mockResolvedValue(makeBackoffLimitExceededStatus());
+    mockBatchApi.readNamespacedJob.mockResolvedValue(
+      makeBackoffLimitExceededStatus(),
+    );
     mockCoreApi.listNamespacedPod.mockResolvedValue(makeNonOOMPodList());
 
     await expect(
@@ -375,7 +384,9 @@ describe('JobRunner.waitForJobCompletion — OOMKill detection', () => {
 
     let caughtErr: unknown;
     try {
-      mockBatchApi.readNamespacedJob.mockResolvedValue(makeBackoffLimitExceededStatus());
+      mockBatchApi.readNamespacedJob.mockResolvedValue(
+        makeBackoffLimitExceededStatus(),
+      );
       mockCoreApi.listNamespacedPod.mockResolvedValue(makeNonOOMPodList());
       await jobRunner.waitForJobCompletion('nc-test-abc123');
     } catch (e) {
@@ -385,7 +396,9 @@ describe('JobRunner.waitForJobCompletion — OOMKill detection', () => {
   });
 
   it('DeadlineExceeded path is NOT affected — does NOT throw OOMKilledError', async () => {
-    mockBatchApi.readNamespacedJob.mockResolvedValue(makeDeadlineExceededJobStatus());
+    mockBatchApi.readNamespacedJob.mockResolvedValue(
+      makeDeadlineExceededJobStatus(),
+    );
     // Even if for some reason OOMKill pods existed, DeadlineExceeded short-circuits first
     mockCoreApi.listNamespacedPod.mockResolvedValue(makeOOMKilledPodList());
 
@@ -432,7 +445,9 @@ describe('JobRunner.runToolJob — OOMKill (Story 46)', () => {
     mockBatchApi.createNamespacedJob.mockResolvedValue({
       metadata: { name: 'nc-test-group-abc123' },
     });
-    mockBatchApi.readNamespacedJob.mockResolvedValue(makeBackoffLimitExceededStatus());
+    mockBatchApi.readNamespacedJob.mockResolvedValue(
+      makeBackoffLimitExceededStatus(),
+    );
     mockCoreApi.listNamespacedPod.mockResolvedValue(makeOOMKilledPodList());
   });
 
@@ -446,15 +461,17 @@ describe('JobRunner.runToolJob — OOMKill (Story 46)', () => {
   });
 
   it('does NOT throw — the group is not wedged (AC4)', async () => {
-    await expect(jobRunner.runToolJob(testGroup, testInput)).resolves.toBeDefined();
+    await expect(
+      jobRunner.runToolJob(testGroup, testInput),
+    ).resolves.toBeDefined();
   });
 
   it('publishes an OOM notice via oomKillPublisher', async () => {
     await jobRunner.runToolJob(testGroup, testInput);
 
     expect(oomKillPublishSpy).toHaveBeenCalledOnce();
-    const [groupFolder, chatJid, text, noticeId] =
-      oomKillPublishSpy.mock.calls[0] as [string, string, string, string];
+    const [groupFolder, chatJid, text, noticeId] = oomKillPublishSpy.mock
+      .calls[0] as [string, string, string, string];
     expect(groupFolder).toBe('test-group');
     expect(chatJid).toBe('test@g.us');
     expect(text.toLowerCase()).toContain('out of memory');

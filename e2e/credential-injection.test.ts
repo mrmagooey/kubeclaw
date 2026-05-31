@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { acquireClusterLock } from './lib/per-test-cluster.js';
 import { execSync, spawn, spawnSync } from 'child_process';
 import { mkdtempSync, writeFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
@@ -77,6 +78,18 @@ function createDummyCASecret() {
     rmSync(tmp, { recursive: true, force: true });
   }
 }
+
+// File-level lock so both describe blocks in this file (sidecar-mode and
+// audit-only mode) hold the global cluster lock for the whole run — they
+// share the same namespace and would race each other otherwise.
+let _releaseFileClusterLock: (() => void) | null = null;
+beforeAll(async () => {
+  _releaseFileClusterLock = await acquireClusterLock();
+}, 30 * 60 * 1000);
+
+afterAll(() => {
+  if (_releaseFileClusterLock) _releaseFileClusterLock();
+});
 
 describe('credential-injection sidecar mode (e2e)', () => {
   beforeAll(() => {

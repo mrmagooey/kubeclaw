@@ -70,7 +70,8 @@ async function getFreePort(): Promise<number> {
     const srv = net.createServer();
     srv.listen(0, '127.0.0.1', () => {
       const addr = srv.address();
-      if (!addr || typeof addr === 'string') return reject(new Error('no addr'));
+      if (!addr || typeof addr === 'string')
+        return reject(new Error('no addr'));
       const port = addr.port;
       srv.close(() => resolve(port));
     });
@@ -166,8 +167,19 @@ describe('HTTP channel — GIF and WebP attachment round-trip (integration)', ()
     // Minimal valid GIF89a header (first 6 bytes define format; the magic check
     // only requires the first 3: 47 49 46).
     const gifBytes = Buffer.from([
-      0x47, 0x49, 0x46, 0x38, 0x39, 0x61, // GIF89a
-      0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, // minimal header continuation
+      0x47,
+      0x49,
+      0x46,
+      0x38,
+      0x39,
+      0x61, // GIF89a
+      0x01,
+      0x00,
+      0x01,
+      0x00,
+      0x00,
+      0x00,
+      0x00, // minimal header continuation
     ]);
 
     const boundary = 'gif-boundary-it';
@@ -189,12 +201,18 @@ describe('HTTP channel — GIF and WebP attachment round-trip (integration)', ()
       },
       body,
     });
-    expect(postRes.status, `POST /message should return 200, got ${postRes.status}`).toBe(200);
+    expect(
+      postRes.status,
+      `POST /message should return 200, got ${postRes.status}`,
+    ).toBe(200);
 
     // Find the written file
     const attachDir = path.join(groupsDir, 'http:alice', 'attachments', 'raw');
     const files = fs.readdirSync(attachDir).filter((f) => f.endsWith('.gif'));
-    expect(files.length, 'Expected at least one .gif file written').toBeGreaterThan(0);
+    expect(
+      files.length,
+      'Expected at least one .gif file written',
+    ).toBeGreaterThan(0);
 
     const filename = files[0];
 
@@ -204,7 +222,10 @@ describe('HTTP channel — GIF and WebP attachment round-trip (integration)', ()
       headers: { Authorization: basicAuth('alice', 'secret') },
     });
 
-    expect(getRes.status, `GET /attachments/raw/${filename} should return 200`).toBe(200);
+    expect(
+      getRes.status,
+      `GET /attachments/raw/${filename} should return 200`,
+    ).toBe(200);
     expect(getRes.headers.get('content-type')).toBe('image/gif');
     expect(getRes.body).toEqual(gifBytes);
   });
@@ -214,9 +235,18 @@ describe('HTTP channel — GIF and WebP attachment round-trip (integration)', ()
   it('AC2: POST a WebP returns 200; GET /attachments/raw/<file> returns image/webp with identical bytes', async () => {
     // Minimal RIFF????WEBP payload (12 bytes mandatory + minimal VP8 data).
     const webpBytes = Buffer.from([
-      0x52, 0x49, 0x46, 0x46, // RIFF
-      0x04, 0x00, 0x00, 0x00, // file size (8 bytes follow)
-      0x57, 0x45, 0x42, 0x50, // WEBP
+      0x52,
+      0x49,
+      0x46,
+      0x46, // RIFF
+      0x04,
+      0x00,
+      0x00,
+      0x00, // file size (8 bytes follow)
+      0x57,
+      0x45,
+      0x42,
+      0x50, // WEBP
     ]);
 
     const boundary = 'webp-boundary-it';
@@ -238,12 +268,18 @@ describe('HTTP channel — GIF and WebP attachment round-trip (integration)', ()
       },
       body,
     });
-    expect(postRes.status, `POST /message should return 200, got ${postRes.status}`).toBe(200);
+    expect(
+      postRes.status,
+      `POST /message should return 200, got ${postRes.status}`,
+    ).toBe(200);
 
     // Find the written file
     const attachDir = path.join(groupsDir, 'http:alice', 'attachments', 'raw');
     const files = fs.readdirSync(attachDir).filter((f) => f.endsWith('.webp'));
-    expect(files.length, 'Expected at least one .webp file written').toBeGreaterThan(0);
+    expect(
+      files.length,
+      'Expected at least one .webp file written',
+    ).toBeGreaterThan(0);
 
     const filename = files[0];
 
@@ -253,7 +289,10 @@ describe('HTTP channel — GIF and WebP attachment round-trip (integration)', ()
       headers: { Authorization: basicAuth('alice', 'secret') },
     });
 
-    expect(getRes.status, `GET /attachments/raw/${filename} should return 200`).toBe(200);
+    expect(
+      getRes.status,
+      `GET /attachments/raw/${filename} should return 200`,
+    ).toBe(200);
     expect(getRes.headers.get('content-type')).toBe('image/webp');
     expect(getRes.body).toEqual(webpBytes);
   });
@@ -263,10 +302,22 @@ describe('HTTP channel — GIF and WebP attachment round-trip (integration)', ()
   it('AC5: POST a RIFF container that is not WebP (WAV: bytes 8-11 = WAVE) returns 415', async () => {
     // WAV file: RIFF at [0-3], size at [4-7], "WAVE" at [8-11].
     const wavBytes = Buffer.from([
-      0x52, 0x49, 0x46, 0x46, // RIFF
-      0x24, 0x00, 0x00, 0x00, // file size
-      0x57, 0x41, 0x56, 0x45, // WAVE  ← not WEBP
-      0x66, 0x6d, 0x74, 0x20, // "fmt " chunk
+      0x52,
+      0x49,
+      0x46,
+      0x46, // RIFF
+      0x24,
+      0x00,
+      0x00,
+      0x00, // file size
+      0x57,
+      0x41,
+      0x56,
+      0x45, // WAVE  ← not WEBP
+      0x66,
+      0x6d,
+      0x74,
+      0x20, // "fmt " chunk
     ]);
 
     const boundary = 'wav-boundary-it';
@@ -286,7 +337,10 @@ describe('HTTP channel — GIF and WebP attachment round-trip (integration)', ()
       },
       body,
     });
-    expect(postRes.status, 'RIFF-but-not-WebP should be rejected with 415').toBe(415);
+    expect(
+      postRes.status,
+      'RIFF-but-not-WebP should be rejected with 415',
+    ).toBe(415);
   });
 
   // ── GET /attachments/raw — auth check ─────────────────────────────────────

@@ -25,6 +25,10 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { EventSource } from 'eventsource';
+import {
+  setupTestCluster,
+  type ClusterHandle,
+} from './lib/per-test-cluster.js';
 
 const NAMESPACE = 'kubeclaw-e2e-orch-restart';
 const HTTP_PORT = 14121;
@@ -140,35 +144,20 @@ function waitForSseMessage(
 // ── Suite ──────────────────────────────────────────────────────────────────
 
 describe('Story 37: orchestrator restart with in-flight tool job', () => {
+  let cluster: ClusterHandle | null = null;
   let clusterReachable = false;
 
   beforeAll(async () => {
-    // Verify the HTTP channel is reachable before running any tests.
-    for (let i = 0; i < 10; i++) {
-      try {
-        const res = await fetch(`${HTTP_URL}/healthz`, {
-          signal: AbortSignal.timeout(2_000),
-        });
-        if (res.ok) {
-          clusterReachable = true;
-          break;
-        }
-      } catch {
-        /* retry */
-      }
-      await new Promise((r) => setTimeout(r, 1_000));
-    }
-
-    if (!clusterReachable) {
-      console.warn(
-        `HTTP channel at ${HTTP_URL} not reachable — cluster may not be provisioned.`,
-      );
-    }
-
-    // Register the alpine specialist so we can trigger a long-running tool job.
-    // The specialist is declared via --set-json in the Helm values for this
-    // namespace; this step confirms it is visible before the test runs.
-  }, 60_000);
+    cluster = await setupTestCluster({
+      namespace: NAMESPACE,
+      httpChannel: {
+        localPort: HTTP_PORT,
+        users: `${TEST_USER}:${TEST_PASS}`,
+      },
+      quiet: true,
+    });
+    clusterReachable = true;
+  }, 600_000);
 
   afterAll(async () => {
     // Best-effort cleanup: delete any orphaned tool-job pods that the test may
@@ -179,7 +168,8 @@ describe('Story 37: orchestrator restart with in-flight tool job', () => {
       '-l', 'app=kubeclaw-agent',
       '--ignore-not-found',
     ]);
-  });
+    if (cluster) await cluster.teardown();
+  }, 120_000);
 
   // ── AC1 + AC2 + AC3 + AC4 ─────────────────────────────────────────────────
   it(

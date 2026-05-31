@@ -145,7 +145,11 @@ catalog:
 
     const list = await mgr.listGroupSecrets('family');
     expect(list).toEqual([
-      { catalogId: 'replicate', registeredAt: '2026-05-16T10:00:00Z', fields_present: ['token'] },
+      {
+        catalogId: 'replicate',
+        registeredAt: '2026-05-16T10:00:00Z',
+        fields_present: ['token'],
+      },
     ]);
     expect(JSON.stringify(list)).not.toContain('r8_secret');
   });
@@ -156,7 +160,10 @@ catalog:
         replicate: Buffer.from(
           JSON.stringify({
             fields: {
-              token: { value: 'r8_secret_value', placeholder: 'KC_PH_token_abc' },
+              token: {
+                value: 'r8_secret_value',
+                placeholder: 'KC_PH_token_abc',
+              },
             },
             registeredAt: '2026-05-16T10:00:00Z',
           }),

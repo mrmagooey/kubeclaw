@@ -282,7 +282,11 @@ describe('HttpChannel /diag endpoint', () => {
     const channel = new HttpChannel(makeConfig(), makeOpts());
     await channel.connect();
 
-    const req = makeReq({ method: 'GET', url: '/diag', auth: 'alice:wrongpassword' });
+    const req = makeReq({
+      method: 'GET',
+      url: '/diag',
+      auth: 'alice:wrongpassword',
+    });
     const res = makeRes();
     await dispatch(channel, req, res);
 
@@ -311,7 +315,11 @@ describe('HttpChannel /diag endpoint', () => {
     const channel = new HttpChannel(makeConfig(), makeOpts());
     await channel.connect();
 
-    const req = makeReq({ method: 'DELETE', url: '/diag', auth: 'alice:secret' });
+    const req = makeReq({
+      method: 'DELETE',
+      url: '/diag',
+      auth: 'alice:secret',
+    });
     const res = makeRes();
     await dispatch(channel, req, res);
 

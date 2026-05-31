@@ -39,15 +39,24 @@ vi.mock('redis', () => {
 import { toolWebSearch } from '../container/agent-runner/src/tool-server.js';
 
 // Brave Search API shape: web.results[]
-function makeBraveResponse(overrides: Partial<{
-  results: Array<{ title: string; url: string; description: string; age?: string; meta_url?: { hostname: string } }>;
-  statusCode: number;
-}> = {}): { statusCode: number; body: object } {
+function makeBraveResponse(
+  overrides: Partial<{
+    results: Array<{
+      title: string;
+      url: string;
+      description: string;
+      age?: string;
+      meta_url?: { hostname: string };
+    }>;
+    statusCode: number;
+  }> = {},
+): { statusCode: number; body: object } {
   const results = overrides.results ?? [
     {
       title: 'Kubernetes Networking',
       url: 'https://kubernetes.io/docs/concepts/cluster-administration/networking/',
-      description: 'Kubernetes assumes that pods can communicate with other pods.',
+      description:
+        'Kubernetes assumes that pods can communicate with other pods.',
       age: '2024-01-01T00:00:00Z',
       meta_url: { hostname: 'kubernetes.io' },
     },
@@ -83,14 +92,22 @@ describe('toolWebSearch — Brave Search backend', () => {
     } as Response);
 
     const raw = await toolWebSearch({ query: 'kubernetes networking' });
-    const results = JSON.parse(raw) as Array<{ title: string; url: string; snippet: string; published?: string; source?: string }>;
+    const results = JSON.parse(raw) as Array<{
+      title: string;
+      url: string;
+      snippet: string;
+      published?: string;
+      source?: string;
+    }>;
 
     expect(Array.isArray(results)).toBe(true);
     expect(results.length).toBeGreaterThanOrEqual(1);
     expect(results[0]).toHaveProperty('snippet');
     expect(results[0]).toHaveProperty('title');
     expect(results[0]).toHaveProperty('url');
-    expect(results[0].snippet).toBe('Kubernetes assumes that pods can communicate with other pods.');
+    expect(results[0].snippet).toBe(
+      'Kubernetes assumes that pods can communicate with other pods.',
+    );
   });
 
   // ── (b) Non-200 response throws a descriptive error ──────────────────────
@@ -151,7 +168,9 @@ describe('toolWebSearch — Brave Search backend', () => {
 
     const [, initArg] = fetchMock.mock.calls[0] as [string, RequestInit];
     const headers = initArg?.headers as Record<string, string> | undefined;
-    expect(headers?.['X-Subscription-Token']).toBe('BSArealkey1234567890abcdefghijklmno');
+    expect(headers?.['X-Subscription-Token']).toBe(
+      'BSArealkey1234567890abcdefghijklmno',
+    );
   });
 
   // ── (e) Empty results: returns empty JSON array ───────────────────────────

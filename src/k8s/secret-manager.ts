@@ -128,7 +128,9 @@ export class SecretManager {
 
   async listGroupSecrets(
     group: string,
-  ): Promise<Array<{ catalogId: string; registeredAt: string; fields_present: string[] }>> {
+  ): Promise<
+    Array<{ catalogId: string; registeredAt: string; fields_present: string[] }>
+  > {
     let secret: { data?: Record<string, string> };
     try {
       secret = await this.opts.k8s.readSecret(this.secretName(group));

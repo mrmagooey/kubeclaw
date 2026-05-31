@@ -62,7 +62,8 @@ async function getFreePort(): Promise<number> {
     const srv = net.createServer();
     srv.listen(0, '127.0.0.1', () => {
       const addr = srv.address();
-      if (!addr || typeof addr === 'string') return reject(new Error('no addr'));
+      if (!addr || typeof addr === 'string')
+        return reject(new Error('no addr'));
       const port = addr.port;
       srv.close(() => resolve(port));
     });
@@ -106,7 +107,12 @@ describe('HTTP channel — GET /export (Story 52) integration', () => {
     };
 
     channel = new HttpChannel(
-      { port, users: { alice: 'secret' }, perUserMessagesPerMinute: 0, corsOrigin: '*' },
+      {
+        port,
+        users: { alice: 'secret' },
+        perUserMessagesPerMinute: 0,
+        corsOrigin: '*',
+      },
       {
         onMessage: vi.fn(),
         onChatMetadata: vi.fn(),
@@ -133,7 +139,9 @@ describe('HTTP channel — GET /export (Story 52) integration', () => {
       headers: { Authorization: basicAuth('alice', 'secret') },
     });
     const cd = res.headers.get('content-disposition') ?? '';
-    expect(cd).toMatch(/^attachment; filename="kubeclaw-export-alice-\d{4}-\d{2}-\d{2}\.ndjson"$/);
+    expect(cd).toMatch(
+      /^attachment; filename="kubeclaw-export-alice-\d{4}-\d{2}-\d{2}\.ndjson"$/,
+    );
   });
 
   it('AC2: body contains all 3 rows as NDJSON lines, oldest-first', async () => {
@@ -149,7 +157,12 @@ describe('HTTP channel — GET /export (Story 52) integration', () => {
 
     // All rows have the required keys
     for (const row of rows) {
-      expect(Object.keys(row).sort()).toEqual(['content', 'role', 'sender', 'timestamp']);
+      expect(Object.keys(row).sort()).toEqual([
+        'content',
+        'role',
+        'sender',
+        'timestamp',
+      ]);
     }
 
     // Oldest-first ordering
@@ -177,7 +190,9 @@ describe('HTTP channel — GET /export (Story 52) integration', () => {
     });
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toBe('application/x-ndjson');
-    expect(res.headers.get('content-disposition')).toMatch(/^attachment; filename="kubeclaw-export-/);
+    expect(res.headers.get('content-disposition')).toMatch(
+      /^attachment; filename="kubeclaw-export-/,
+    );
     expect(res.text).toBe('');
   });
 

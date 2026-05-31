@@ -26,6 +26,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execSync, spawnSync, spawn } from 'child_process';
 import http from 'http';
 import type { ChildProcess } from 'child_process';
+import { acquireClusterLock } from './lib/per-test-cluster.js';
 
 const NS = 'kubeclaw-e2e-cbreload';
 const RELEASE = 'ke2e-cbreload';
@@ -347,6 +348,11 @@ describe.skipIf(!hasKubectl)(
   { timeout: 10 * 60 * 1000 },
   () => {
     let installed = false;
+    let releaseClusterLock: (() => void) | null = null;
+
+    beforeAll(async () => {
+      releaseClusterLock = await acquireClusterLock();
+    }, 30 * 60 * 1000);
 
     beforeAll(async () => {
       // Namespace cleanup from any previous run
@@ -407,6 +413,7 @@ describe.skipIf(!hasKubectl)(
       execSync(`kubectl delete ns ${NS} --wait=false 2>/dev/null || true`, {
         stdio: 'pipe',
       });
+      if (releaseClusterLock) releaseClusterLock();
     }, 120_000);
 
     // ── AC4 baseline: broker pod is Running before any patch ────────────────────

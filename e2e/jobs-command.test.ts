@@ -63,83 +63,83 @@ describe('/jobs command e2e', () => {
   const GROUP = `e2e-jobs-${Date.now()}`;
   const OTHER = `e2e-other-${Date.now()}`;
 
-  it('returns "No active jobs." when no jobs exist for the group', () => {
-    const reply = handleJobsCommand(GROUP);
+  it('returns "No active jobs." when no jobs exist for the group', async () => {
+    const reply = await handleJobsCommand(GROUP);
     expect(reply).toBe('No active jobs.');
   });
 
-  it('shows a running job after recordToolJob', () => {
+  it('shows a running job after recordToolJob', async () => {
     insertJob(`${GROUP}-run-1`, GROUP, 'Researcher');
 
-    const reply = handleJobsCommand(GROUP);
+    const reply = await handleJobsCommand(GROUP);
     expect(reply).toContain('[running]');
     expect(reply).toContain('@Researcher');
     expect(reply).toMatch(/started \d\d:\d\dZ/);
   });
 
-  it('shows completed job after resolveToolJob with status=completed', () => {
+  it('shows completed job after resolveToolJob with status=completed', async () => {
     insertJob(`${GROUP}-done-1`, GROUP, 'Analyst');
     resolveToolJob(`${GROUP}-done-1`, 'completed');
 
-    const reply = handleJobsCommand(GROUP);
+    const reply = await handleJobsCommand(GROUP);
     expect(reply).toContain('[completed]');
     expect(reply).toContain('@Analyst');
     expect(reply).toMatch(/\d\d:\d\dZ → \d\d:\d\dZ/);
   });
 
-  it('shows timeout status correctly', () => {
+  it('shows timeout status correctly', async () => {
     insertJob(`${GROUP}-to-1`, GROUP, 'TimedOutSpec');
     resolveToolJob(`${GROUP}-to-1`, 'timeout');
 
-    const reply = handleJobsCommand(GROUP);
+    const reply = await handleJobsCommand(GROUP);
     expect(reply).toContain('[timeout]');
     expect(reply).toContain('@TimedOutSpec');
   });
 
-  it('shows oomkill status correctly', () => {
+  it('shows oomkill status correctly', async () => {
     insertJob(`${GROUP}-oom-1`, GROUP, 'OomSpec');
     resolveToolJob(`${GROUP}-oom-1`, 'oomkill');
 
-    const reply = handleJobsCommand(GROUP);
+    const reply = await handleJobsCommand(GROUP);
     expect(reply).toContain('[oomkill]');
     expect(reply).toContain('@OomSpec');
   });
 
-  it('shows interrupted status correctly', () => {
+  it('shows interrupted status correctly', async () => {
     insertJob(`${GROUP}-int-1`, GROUP, 'CancelSpec');
     resolveToolJob(`${GROUP}-int-1`, 'interrupted');
 
-    const reply = handleJobsCommand(GROUP);
+    const reply = await handleJobsCommand(GROUP);
     expect(reply).toContain('[interrupted]');
     expect(reply).toContain('@CancelSpec');
   });
 
-  it('jobs from other groups never appear in reply', () => {
+  it('jobs from other groups never appear in reply', async () => {
     insertJob(`${OTHER}-job-1`, OTHER, 'StrangerSpec');
 
-    const reply = handleJobsCommand(GROUP);
+    const reply = await handleJobsCommand(GROUP);
     expect(reply).not.toContain('@StrangerSpec');
   });
 
-  it('reply is scoped: querying OTHER group does not show GROUP jobs', () => {
+  it('reply is scoped: querying OTHER group does not show GROUP jobs', async () => {
     insertJob(`${GROUP}-scope-1`, GROUP, 'GroupOnlySpec');
 
-    const otherReply = handleJobsCommand(OTHER);
+    const otherReply = await handleJobsCommand(OTHER);
     expect(otherReply).not.toContain('@GroupOnlySpec');
   });
 
-  it('combined: active and completed jobs both appear in reply', () => {
+  it('combined: active and completed jobs both appear in reply', async () => {
     const ts = Date.now();
     insertJob(`${GROUP}-comb-run-${ts}`, GROUP, 'ActiveSpec');
     insertJob(`${GROUP}-comb-done-${ts}`, GROUP, 'FinishedSpec');
     resolveToolJob(`${GROUP}-comb-done-${ts}`, 'completed');
 
-    const reply = handleJobsCommand(GROUP);
+    const reply = await handleJobsCommand(GROUP);
     expect(reply).toContain('[running] @ActiveSpec');
     expect(reply).toContain('[completed] @FinishedSpec');
   });
 
-  it('recent jobs capped at 5 (last-5 completed shown)', () => {
+  it('recent jobs capped at 5 (last-5 completed shown)', async () => {
     const ts = Date.now();
     // Insert 7 completed jobs
     for (let i = 1; i <= 7; i++) {
@@ -147,7 +147,7 @@ describe('/jobs command e2e', () => {
       resolveToolJob(`${GROUP}-cap-${ts}-${i}`, 'completed');
     }
 
-    const reply = handleJobsCommand(GROUP);
+    const reply = await handleJobsCommand(GROUP);
     // The 7th is newest — it must appear; the 1st is oldest — may be cut off
     expect(reply).toContain('@CapSpec7');
     expect(reply).toContain('@CapSpec3');

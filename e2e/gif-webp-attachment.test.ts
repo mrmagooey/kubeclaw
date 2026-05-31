@@ -24,16 +24,22 @@
  * Run them with: KUBECLAW_LIVE=1 npm run test:e2e -- gif-webp-attachment
  */
 
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import {
-  KUBECLAW_LIVE_HTTP_LOCAL_PORT,
-  KUBECLAW_LIVE_USER,
-  KUBECLAW_LIVE_PASS,
-} from './minikube-live-setup.js';
+  setupTestCluster,
+  type ClusterHandle,
+} from './lib/per-test-cluster.js';
 
-const NAMESPACE = 'kubeclaw-live';
-const HTTP_URL = `http://127.0.0.1:${KUBECLAW_LIVE_HTTP_LOCAL_PORT}`;
+// Self-contained namespace + port-forward — no longer piggybacks on the
+// minikube-live suite. Credentials kept identical to the live suite's
+// `alice`/`livepass` for compatibility with existing assertions and
+// log-greps.
+const NAMESPACE = 'kubeclaw-e2e-gifwebp';
+const HTTP_PORT = 14140;
+const HTTP_URL = `http://127.0.0.1:${HTTP_PORT}`;
+const KUBECLAW_LIVE_USER = 'alice';
+const KUBECLAW_LIVE_PASS = 'livepass';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -84,32 +90,21 @@ function buildMultipart(
 
 // ── Suite ──────────────────────────────────────────────────────────────────────
 
-describe('Minikube-live: GIF and WebP attachment round-trip (Story 42)', () => {
+describe('GIF and WebP attachment round-trip (Story 42)', () => {
+  let cluster: ClusterHandle | null = null;
   let provisioned = false;
   let channelPodName = '';
 
   beforeAll(async () => {
-    // Verify port-forward is live.
-    for (let i = 0; i < 10; i++) {
-      try {
-        const res = await fetch(`${HTTP_URL}/`, {
-          signal: AbortSignal.timeout(2000),
-        });
-        if (res.status > 0) {
-          provisioned = true;
-          break;
-        }
-      } catch {
-        /* retry */
-      }
-      await new Promise((r) => setTimeout(r, 1000));
-    }
-    if (!provisioned) {
-      console.warn(
-        `Port-forward to ${HTTP_URL} not reachable after retries — skipping.`,
-      );
-      return;
-    }
+    cluster = await setupTestCluster({
+      namespace: NAMESPACE,
+      httpChannel: {
+        localPort: HTTP_PORT,
+        users: `${KUBECLAW_LIVE_USER}:${KUBECLAW_LIVE_PASS}`,
+      },
+      quiet: true,
+    });
+    provisioned = true;
 
     // Resolve channel pod name once.
     const podsR = kubectl([
@@ -135,7 +130,11 @@ describe('Minikube-live: GIF and WebP attachment round-trip (Story 42)', () => {
     }
     // Give the channel a moment to register the group.
     await new Promise((r) => setTimeout(r, 2000));
-  }, 30_000);
+  }, 600_000);
+
+  afterAll(async () => {
+    if (cluster) await cluster.teardown();
+  }, 120_000);
 
   // ── AC1 — GIF round-trip ──────────────────────────────────────────────────
 

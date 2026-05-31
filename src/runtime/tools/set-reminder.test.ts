@@ -9,7 +9,8 @@ const mockScheduleTaskDirect = vi.hoisted(() => vi.fn());
 
 vi.mock('../direct-llm-runner.js', async (importOriginal) => {
   // We only need the scheduleTaskDirect export; pull everything else through.
-  const original = await importOriginal<typeof import('../direct-llm-runner.js')>();
+  const original =
+    await importOriginal<typeof import('../direct-llm-runner.js')>();
   return { ...original, scheduleTaskDirect: mockScheduleTaskDirect };
 });
 

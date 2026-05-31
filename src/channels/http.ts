@@ -102,9 +102,7 @@ export interface CatalogListEntry {
  * Returns the list of registered secrets for a group.
  * SECURITY: must never return secret values — only type + field names.
  */
-export type ListSecretsFn = (
-  group: string,
-) => Promise<SecretListEntry[]>;
+export type ListSecretsFn = (group: string) => Promise<SecretListEntry[]>;
 
 /**
  * Removes a registered secret by type for a group.
@@ -162,7 +160,12 @@ export interface HttpChannelOpts {
   killJobFn?: (
     jobId: string,
     groupFolder: string,
-  ) => Promise<{ ok: boolean; status?: string; currentStatus?: string; error?: string }>;
+  ) => Promise<{
+    ok: boolean;
+    status?: string;
+    currentStatus?: string;
+    error?: string;
+  }>;
   /** Injectable for listing group secrets. Defaults to IPC-backed implementation. */
   listSecretsFn?: ListSecretsFn;
   /** Injectable for removing a group secret. Defaults to IPC-backed implementation. */
@@ -504,7 +507,12 @@ export class HttpChannel implements Channel {
   private killJobFn: (
     jobId: string,
     groupFolder: string,
-  ) => Promise<{ ok: boolean; status?: string; currentStatus?: string; error?: string }>;
+  ) => Promise<{
+    ok: boolean;
+    status?: string;
+    currentStatus?: string;
+    error?: string;
+  }>;
   /** Per-user token buckets for POST /message rate limiting. */
   private rateBuckets: Map<string, Bucket> = new Map();
 
@@ -556,10 +564,14 @@ export class HttpChannel implements Channel {
         await redis.xadd(
           getTaskRequestStream(),
           '*',
-          'type', 'job.cancel',
-          'jobId', jobId,
-          'groupFolder', groupFolder,
-          'resultStream', resultStream,
+          'type',
+          'job.cancel',
+          'jobId',
+          jobId,
+          'groupFolder',
+          groupFolder,
+          'resultStream',
+          resultStream,
         );
         const deadline = Date.now() + 5000;
         let lastId = '0-0';
@@ -567,14 +579,23 @@ export class HttpChannel implements Channel {
           const remaining = deadline - Date.now();
           if (remaining <= 0) break;
           const response = await redis.xread(
-            'COUNT', 1, 'BLOCK', Math.min(remaining, 1000),
-            'STREAMS', resultStream, lastId,
+            'COUNT',
+            1,
+            'BLOCK',
+            Math.min(remaining, 1000),
+            'STREAMS',
+            resultStream,
+            lastId,
           );
           if (!response) continue;
-          for (const [, messages] of response as [string, [string, string[]][]][]) {
+          for (const [, messages] of response as [
+            string,
+            [string, string[]][],
+          ][]) {
             for (const [, flds] of messages) {
               const obj: Record<string, string> = {};
-              for (let i = 0; i < flds.length; i += 2) obj[flds[i]] = flds[i + 1];
+              for (let i = 0; i < flds.length; i += 2)
+                obj[flds[i]] = flds[i + 1];
               if (obj.result) {
                 return JSON.parse(obj.result) as {
                   ok: boolean;
@@ -586,7 +607,9 @@ export class HttpChannel implements Channel {
             }
           }
         }
-        throw new Error('DELETE /jobs/<id> kill timed out — orchestrator did not respond');
+        throw new Error(
+          'DELETE /jobs/<id> kill timed out — orchestrator did not respond',
+        );
       });
   }
 
@@ -655,11 +678,13 @@ export class HttpChannel implements Channel {
   peekRateLimit(
     username: string,
     nowMs: number = Date.now(),
-  ): { limit: null; remaining: null; resetInSeconds: null } | {
-    limit: number;
-    remaining: number;
-    resetInSeconds: number;
-  } {
+  ):
+    | { limit: null; remaining: null; resetInSeconds: null }
+    | {
+        limit: number;
+        remaining: number;
+        resetInSeconds: number;
+      } {
     const capacity = this.config.perUserMessagesPerMinute ?? 0;
     if (capacity === 0) {
       return { limit: null, remaining: null, resetInSeconds: null };
@@ -686,9 +711,7 @@ export class HttpChannel implements Channel {
     // How many seconds until a full bucket (capacity tokens)?
     const tokensNeeded = capacity - currentTokens;
     const resetInSeconds =
-      tokensNeeded <= 0
-        ? 0
-        : Math.ceil(tokensNeeded / refillRatePerMs / 1000);
+      tokensNeeded <= 0 ? 0 : Math.ceil(tokensNeeded / refillRatePerMs / 1000);
 
     return {
       limit: capacity,
@@ -770,7 +793,9 @@ export class HttpChannel implements Channel {
    * Called for every non-OPTIONS response so browsers accept actual responses
    * after a successful preflight.
    */
-  private addCorsHeaders(headers: Record<string, string>): Record<string, string> {
+  private addCorsHeaders(
+    headers: Record<string, string>,
+  ): Record<string, string> {
     return {
       ...headers,
       // Default to "*" if not configured (matches the helm default + the
@@ -825,10 +850,12 @@ export class HttpChannel implements Channel {
     // before URL normalisation can resolve them away.
     const rawUrl = req.url ?? '/';
     if (rawUrl.includes('..')) {
-      res.writeHead(400, {
-        'Content-Type': 'text/plain',
-        'Access-Control-Allow-Origin': this.config.corsOrigin,
-      });
+      res.writeHead(
+        400,
+        this.addCorsHeaders({
+          'Content-Type': 'text/plain',
+        }),
+      );
       res.end('Bad Request');
       return;
     }
@@ -856,10 +883,17 @@ export class HttpChannel implements Channel {
       if (!allowedMethods && /^\/schedule\/[^/]+$/.test(url.pathname)) {
         allowedMethods = HttpChannel.CORS_PATH_METHODS['/schedule/'];
       }
-      if (!allowedMethods && /^\/secrets\/[^/]+$/.test(url.pathname) && url.pathname !== '/secrets/catalog') {
+      if (
+        !allowedMethods &&
+        /^\/secrets\/[^/]+$/.test(url.pathname) &&
+        url.pathname !== '/secrets/catalog'
+      ) {
         allowedMethods = HttpChannel.CORS_PATH_METHODS['/secrets/'];
       }
-      if (!allowedMethods && /^\/skills\/candidates\/[^/]+\/(accept|reject)$/.test(url.pathname)) {
+      if (
+        !allowedMethods &&
+        /^\/skills\/candidates\/[^/]+\/(accept|reject)$/.test(url.pathname)
+      ) {
         allowedMethods = HttpChannel.CORS_PATH_METHODS['/skills/'];
       }
 
@@ -882,22 +916,28 @@ export class HttpChannel implements Channel {
       if (req.method === 'GET') {
         const uptime_ms = Date.now() - this.processStartMs;
         const body = JSON.stringify({ status: 'ok', uptime_ms });
-        res.writeHead(200, this.addCorsHeaders({
-          'Content-Type': 'application/json',
-          'Content-Length': String(Buffer.byteLength(body)),
-          'Cache-Control': 'no-store',
-        }));
+        res.writeHead(
+          200,
+          this.addCorsHeaders({
+            'Content-Type': 'application/json',
+            'Content-Length': String(Buffer.byteLength(body)),
+            'Cache-Control': 'no-store',
+          }),
+        );
         res.end(body);
         return;
       }
       if (req.method === 'HEAD') {
         const uptime_ms = Date.now() - this.processStartMs;
         const body = JSON.stringify({ status: 'ok', uptime_ms });
-        res.writeHead(200, this.addCorsHeaders({
-          'Content-Type': 'application/json',
-          'Content-Length': String(Buffer.byteLength(body)),
-          'Cache-Control': 'no-store',
-        }));
+        res.writeHead(
+          200,
+          this.addCorsHeaders({
+            'Content-Type': 'application/json',
+            'Content-Length': String(Buffer.byteLength(body)),
+            'Cache-Control': 'no-store',
+          }),
+        );
         res.end();
         return;
       }
@@ -916,11 +956,14 @@ export class HttpChannel implements Channel {
           checks: { db: dbResult, redis: redisResult },
         };
         const body = JSON.stringify(responseBody);
-        res.writeHead(statusCode, this.addCorsHeaders({
-          'Content-Type': 'application/json',
-          'Content-Length': String(Buffer.byteLength(body)),
-          'Cache-Control': 'no-store',
-        }));
+        res.writeHead(
+          statusCode,
+          this.addCorsHeaders({
+            'Content-Type': 'application/json',
+            'Content-Length': String(Buffer.byteLength(body)),
+            'Cache-Control': 'no-store',
+          }),
+        );
         if (req.method === 'HEAD') {
           res.end();
         } else {
@@ -935,21 +978,27 @@ export class HttpChannel implements Channel {
     if (url.pathname === '/version') {
       if (req.method === 'GET') {
         const body = JSON.stringify(buildVersionPayload());
-        res.writeHead(200, this.addCorsHeaders({
-          'Content-Type': 'application/json',
-          'Content-Length': String(Buffer.byteLength(body)),
-          'Cache-Control': 'no-store',
-        }));
+        res.writeHead(
+          200,
+          this.addCorsHeaders({
+            'Content-Type': 'application/json',
+            'Content-Length': String(Buffer.byteLength(body)),
+            'Cache-Control': 'no-store',
+          }),
+        );
         res.end(body);
         return;
       }
       if (req.method === 'HEAD') {
         const body = JSON.stringify(buildVersionPayload());
-        res.writeHead(200, this.addCorsHeaders({
-          'Content-Type': 'application/json',
-          'Content-Length': String(Buffer.byteLength(body)),
-          'Cache-Control': 'no-store',
-        }));
+        res.writeHead(
+          200,
+          this.addCorsHeaders({
+            'Content-Type': 'application/json',
+            'Content-Length': String(Buffer.byteLength(body)),
+            'Cache-Control': 'no-store',
+          }),
+        );
         res.end();
         return;
       }
@@ -960,10 +1009,13 @@ export class HttpChannel implements Channel {
     if (url.pathname === '/whoami') {
       // Method guard first — reject disallowed methods before auth check
       if (req.method !== 'GET' && req.method !== 'HEAD') {
-        res.writeHead(405, this.addCorsHeaders({
-          'Content-Type': 'text/plain',
-          Allow: 'GET, HEAD',
-        }));
+        res.writeHead(
+          405,
+          this.addCorsHeaders({
+            'Content-Type': 'text/plain',
+            Allow: 'GET, HEAD',
+          }),
+        );
         res.end('Method Not Allowed');
         return;
       }
@@ -985,11 +1037,14 @@ export class HttpChannel implements Channel {
         group_folder,
       };
       const body = JSON.stringify(payload);
-      res.writeHead(200, this.addCorsHeaders({
-        'Content-Type': 'application/json',
-        'Content-Length': String(Buffer.byteLength(body)),
-        'Cache-Control': 'no-store',
-      }));
+      res.writeHead(
+        200,
+        this.addCorsHeaders({
+          'Content-Type': 'application/json',
+          'Content-Length': String(Buffer.byteLength(body)),
+          'Cache-Control': 'no-store',
+        }),
+      );
       if (req.method === 'HEAD') {
         res.end();
       } else {
@@ -1005,10 +1060,13 @@ export class HttpChannel implements Channel {
         this.sendUnauthorized(res);
         return;
       }
-      res.writeHead(200, this.addCorsHeaders({
-        'Content-Type': 'text/html; charset=utf-8',
-        'Cache-Control': 'no-cache',
-      }));
+      res.writeHead(
+        200,
+        this.addCorsHeaders({
+          'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': 'no-cache',
+        }),
+      );
       res.end(CHAT_HTML);
       return;
     }
@@ -1021,12 +1079,15 @@ export class HttpChannel implements Channel {
         return;
       }
 
-      res.writeHead(200, this.addCorsHeaders({
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        Connection: 'keep-alive',
-        'X-Accel-Buffering': 'no', // disable nginx buffering
-      }));
+      res.writeHead(
+        200,
+        this.addCorsHeaders({
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+          'X-Accel-Buffering': 'no', // disable nginx buffering
+        }),
+      );
       res.write(':ok\n\n'); // initial heartbeat
 
       // Last-Event-ID catch-up (Story 20 AC2/AC4)
@@ -1091,11 +1152,14 @@ export class HttpChannel implements Channel {
 
       const peek = this.peekRateLimit(username);
       const body = JSON.stringify(peek);
-      res.writeHead(200, this.addCorsHeaders({
-        'Content-Type': 'application/json',
-        'Content-Length': String(Buffer.byteLength(body)),
-        'Cache-Control': 'no-store',
-      }));
+      res.writeHead(
+        200,
+        this.addCorsHeaders({
+          'Content-Type': 'application/json',
+          'Content-Length': String(Buffer.byteLength(body)),
+          'Cache-Control': 'no-store',
+        }),
+      );
       if (req.method === 'HEAD') {
         res.end();
       } else {
@@ -1116,10 +1180,13 @@ export class HttpChannel implements Channel {
       // do not consume resources (AC4: no DB row increment on 429 path).
       const rl = this.consumeRateLimit(username);
       if (!rl.allowed) {
-        res.writeHead(429, this.addCorsHeaders({
-          'Content-Type': 'text/plain',
-          'Retry-After': String(rl.retryAfterSeconds),
-        }));
+        res.writeHead(
+          429,
+          this.addCorsHeaders({
+            'Content-Type': 'text/plain',
+            'Retry-After': String(rl.retryAfterSeconds),
+          }),
+        );
         res.end('Too Many Requests');
         return;
       }
@@ -1130,7 +1197,10 @@ export class HttpChannel implements Channel {
         !contentType.startsWith('application/json') &&
         !contentType.startsWith('multipart/form-data')
       ) {
-        res.writeHead(415, this.addCorsHeaders({ 'Content-Type': 'text/plain' }));
+        res.writeHead(
+          415,
+          this.addCorsHeaders({ 'Content-Type': 'text/plain' }),
+        );
         res.end('Unsupported Media Type');
         return;
       }
@@ -1141,7 +1211,10 @@ export class HttpChannel implements Channel {
       req.on('data', (chunk: Buffer) => {
         totalSize += chunk.length;
         if (totalSize > MAX_MULTIPART_SIZE) {
-          res.writeHead(413, this.addCorsHeaders({ 'Content-Type': 'text/plain' }));
+          res.writeHead(
+            413,
+            this.addCorsHeaders({ 'Content-Type': 'text/plain' }),
+          );
           res.end('Payload too large');
           req.destroy();
           return;
@@ -1152,110 +1225,149 @@ export class HttpChannel implements Channel {
       req.on('end', () => {
         void (async () => {
           try {
-        const body = Buffer.concat(chunks);
+            const body = Buffer.concat(chunks);
 
-        if (contentType.startsWith('multipart/form-data')) {
-          const boundaryMatch = contentType.match(/boundary=([^\s;]+)/);
-          if (!boundaryMatch) {
-            res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'text/plain' }));
-            res.end('Missing boundary');
-            return;
-          }
-          const boundary = boundaryMatch[1];
-          const parts = parseMultipart(body, boundary);
+            if (contentType.startsWith('multipart/form-data')) {
+              const boundaryMatch = contentType.match(/boundary=([^\s;]+)/);
+              if (!boundaryMatch) {
+                res.writeHead(
+                  400,
+                  this.addCorsHeaders({ 'Content-Type': 'text/plain' }),
+                );
+                res.end('Missing boundary');
+                return;
+              }
+              const boundary = boundaryMatch[1];
+              const parts = parseMultipart(body, boundary);
 
-          const textPart = parts.find((p) => p.name === 'text');
-          const imagePart = parts.find((p) => p.name === 'image');
+              const textPart = parts.find((p) => p.name === 'text');
+              const imagePart = parts.find((p) => p.name === 'image');
 
-          if (!imagePart) {
-            res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'text/plain' }));
-            res.end('Missing image');
-            return;
-          }
+              if (!imagePart) {
+                res.writeHead(
+                  400,
+                  this.addCorsHeaders({ 'Content-Type': 'text/plain' }),
+                );
+                res.end('Missing image');
+                return;
+              }
 
-          const mime = detectMediaType(imagePart.data);
-          if (!mime) {
-            res.writeHead(415, this.addCorsHeaders({ 'Content-Type': 'text/plain' }));
-            res.end('Unsupported image format');
-            return;
-          }
+              const mime = detectMediaType(imagePart.data);
+              if (!mime) {
+                res.writeHead(
+                  415,
+                  this.addCorsHeaders({ 'Content-Type': 'text/plain' }),
+                );
+                res.end('Unsupported image format');
+                return;
+              }
 
-          const jid = `http:${username}`;
-          // Trigger auto-registration (same as the text path via handleInbound)
-          // before checking for the group, so a first-ever image POST from an
-          // unregistered user is not silently dropped.
-          this.opts.onChatMetadata(
-            jid,
-            new Date().toISOString(),
-            username,
-            'http',
-            false,
-          );
-          const group = this.opts.registeredGroups()[jid];
-          if (!group) {
-            logger.debug({ jid }, 'HTTP image from unregistered user');
-            res.writeHead(200, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
-            res.end(JSON.stringify({ id: null }));
-            return;
-          }
+              const jid = `http:${username}`;
+              // Trigger auto-registration (same as the text path via handleInbound)
+              // before checking for the group, so a first-ever image POST from an
+              // unregistered user is not silently dropped.
+              this.opts.onChatMetadata(
+                jid,
+                new Date().toISOString(),
+                username,
+                'http',
+                false,
+              );
+              const group = this.opts.registeredGroups()[jid];
+              if (!group) {
+                logger.debug({ jid }, 'HTTP image from unregistered user');
+                res.writeHead(
+                  200,
+                  this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+                );
+                res.end(JSON.stringify({ id: null }));
+                return;
+              }
 
-          const ext = mime.split('/')[1].replace('jpeg', 'jpg');
-          const filename = `img-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.${ext}`;
-          const attachDir = path.join(GROUPS_DIR, jid, 'attachments', 'raw');
+              const ext = mime.split('/')[1].replace('jpeg', 'jpg');
+              const filename = `img-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.${ext}`;
+              const attachDir = path.join(
+                GROUPS_DIR,
+                jid,
+                'attachments',
+                'raw',
+              );
 
-          // ── Per-user attachment quota check ───────────────────────────────
-          // Re-read the live directory so quota reflects recent DELETEs.
-          const usage = await getAttachmentUsage(attachDir);
-          if (this.maxAttachmentCount > 0 && usage.count >= this.maxAttachmentCount) {
-            res.writeHead(413, { 'Content-Type': 'text/plain' });
-            res.end(`Attachment limit reached (max ${this.maxAttachmentCount})`);
-            return;
-          }
-          if (this.maxAttachmentBytes > 0 && usage.bytes + imagePart.data.length > this.maxAttachmentBytes) {
-            res.writeHead(413, { 'Content-Type': 'text/plain' });
-            res.end('Attachment storage limit reached');
-            return;
-          }
-          // ─────────────────────────────────────────────────────────────────
+              // ── Per-user attachment quota check ───────────────────────────────
+              // Re-read the live directory so quota reflects recent DELETEs.
+              const usage = await getAttachmentUsage(attachDir);
+              if (
+                this.maxAttachmentCount > 0 &&
+                usage.count >= this.maxAttachmentCount
+              ) {
+                res.writeHead(413, { 'Content-Type': 'text/plain' });
+                res.end(
+                  `Attachment limit reached (max ${this.maxAttachmentCount})`,
+                );
+                return;
+              }
+              if (
+                this.maxAttachmentBytes > 0 &&
+                usage.bytes + imagePart.data.length > this.maxAttachmentBytes
+              ) {
+                res.writeHead(413, { 'Content-Type': 'text/plain' });
+                res.end('Attachment storage limit reached');
+                return;
+              }
+              // ─────────────────────────────────────────────────────────────────
 
-          fs.mkdirSync(attachDir, { recursive: true });
-          fs.writeFileSync(path.join(attachDir, filename), imagePart.data);
+              fs.mkdirSync(attachDir, { recursive: true });
+              fs.writeFileSync(path.join(attachDir, filename), imagePart.data);
 
-          const caption = textPart?.data.toString('utf8').trim() ?? '';
-          const marker = caption
-            ? `[ImageAttachment: attachments/raw/${filename} caption="${caption}"]`
-            : `[ImageAttachment: attachments/raw/${filename}]`;
-          // Write the attachment marker directly to conversation_history so the
-          // row is visible immediately (before the LLM pipeline processes the
-          // message from the messages table).
-          appendConversationMessage(group.folder, 'user', marker);
-          const attachMsgId = this.handleInbound(username, marker);
+              const caption = textPart?.data.toString('utf8').trim() ?? '';
+              const marker = caption
+                ? `[ImageAttachment: attachments/raw/${filename} caption="${caption}"]`
+                : `[ImageAttachment: attachments/raw/${filename}]`;
+              // Write the attachment marker directly to conversation_history so the
+              // row is visible immediately (before the LLM pipeline processes the
+              // message from the messages table).
+              appendConversationMessage(group.folder, 'user', marker);
+              const attachMsgId = this.handleInbound(username, marker);
 
-          res.writeHead(200, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
-          res.end(JSON.stringify({ id: attachMsgId, attachment: filename }));
-          return;
-        }
+              res.writeHead(
+                200,
+                this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+              );
+              res.end(
+                JSON.stringify({ id: attachMsgId, attachment: filename }),
+              );
+              return;
+            }
 
-        // JSON text message
-        try {
-          const { text } = JSON.parse(body.toString('utf8')) as {
-            text?: string;
-          };
-          if (!text?.trim()) {
-            res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'text/plain' }));
-            res.end('Missing text');
-            return;
-          }
-          // Return the message ID so clients can correlate tool-job
-          // interruption notices back to this request (Story 25 establishes
-          // the field; Story 37 propagates it to orphan-job notices).
-          const msgId = this.handleInbound(username, text.trim());
-          res.writeHead(200, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
-          res.end(JSON.stringify({ id: msgId }));
-        } catch {
-          res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'text/plain' }));
-          res.end('Invalid JSON');
-        }
+            // JSON text message
+            try {
+              const { text } = JSON.parse(body.toString('utf8')) as {
+                text?: string;
+              };
+              if (!text?.trim()) {
+                res.writeHead(
+                  400,
+                  this.addCorsHeaders({ 'Content-Type': 'text/plain' }),
+                );
+                res.end('Missing text');
+                return;
+              }
+              // Return the message ID so clients can correlate tool-job
+              // interruption notices back to this request (Story 25 establishes
+              // the field; Story 37 propagates it to orphan-job notices).
+              const msgId = this.handleInbound(username, text.trim());
+              res.writeHead(
+                200,
+                this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+              );
+              res.end(JSON.stringify({ id: msgId }));
+            } catch {
+              res.writeHead(
+                400,
+                this.addCorsHeaders({ 'Content-Type': 'text/plain' }),
+              );
+              res.end('Invalid JSON');
+            }
           } catch (err) {
             // Unhandled error in the multipart or JSON path — e.g. quota
             // helper throwing EACCES on a malconfigured PVC. Without this
@@ -1307,12 +1419,18 @@ export class HttpChannel implements Channel {
           entries = [];
         } else {
           logger.error({ err, attachDir }, 'GET /attachments/list failed');
-          res.writeHead(500, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+          res.writeHead(
+            500,
+            this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+          );
           res.end(JSON.stringify({ error: 'Internal server error' }));
           return;
         }
       }
-      res.writeHead(200, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+      res.writeHead(
+        200,
+        this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+      );
       res.end(JSON.stringify(entries));
       return;
     }
@@ -1338,7 +1456,10 @@ export class HttpChannel implements Channel {
         filename.includes('\\') ||
         filename.includes('..')
       ) {
-        res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'text/plain' }));
+        res.writeHead(
+          400,
+          this.addCorsHeaders({ 'Content-Type': 'text/plain' }),
+        );
         res.end('Bad Request');
         return;
       }
@@ -1352,11 +1473,17 @@ export class HttpChannel implements Channel {
         fileData = fs.readFileSync(filePath);
       } catch (err: any) {
         if (err?.code === 'ENOENT') {
-          res.writeHead(404, this.addCorsHeaders({ 'Content-Type': 'text/plain' }));
+          res.writeHead(
+            404,
+            this.addCorsHeaders({ 'Content-Type': 'text/plain' }),
+          );
           res.end('Not Found');
         } else {
           logger.error({ err, filePath }, 'GET /attachments/raw failed');
-          res.writeHead(500, this.addCorsHeaders({ 'Content-Type': 'text/plain' }));
+          res.writeHead(
+            500,
+            this.addCorsHeaders({ 'Content-Type': 'text/plain' }),
+          );
           res.end('Internal Server Error');
         }
         return;
@@ -1374,11 +1501,14 @@ export class HttpChannel implements Channel {
       const contentType =
         extMime[ext] ?? detectMediaType(fileData) ?? 'application/octet-stream';
 
-      res.writeHead(200, this.addCorsHeaders({
-        'Content-Type': contentType,
-        'Content-Length': String(fileData.length),
-        'Cache-Control': 'private, max-age=3600',
-      }));
+      res.writeHead(
+        200,
+        this.addCorsHeaders({
+          'Content-Type': contentType,
+          'Content-Length': String(fileData.length),
+          'Cache-Control': 'private, max-age=3600',
+        }),
+      );
       if (req.method === 'HEAD') {
         res.end();
       } else {
@@ -1408,7 +1538,10 @@ export class HttpChannel implements Channel {
         filename.includes('\\') ||
         filename.includes('..')
       ) {
-        res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'text/plain' }));
+        res.writeHead(
+          400,
+          this.addCorsHeaders({ 'Content-Type': 'text/plain' }),
+        );
         res.end('Bad Request');
         return;
       }
@@ -1422,11 +1555,17 @@ export class HttpChannel implements Channel {
           res.writeHead(204, this.addCorsHeaders({}));
           res.end();
         } else if (err.code === 'ENOENT') {
-          res.writeHead(404, this.addCorsHeaders({ 'Content-Type': 'text/plain' }));
+          res.writeHead(
+            404,
+            this.addCorsHeaders({ 'Content-Type': 'text/plain' }),
+          );
           res.end('Not Found');
         } else {
           logger.error({ err, filePath }, 'DELETE /attachments/raw failed');
-          res.writeHead(500, this.addCorsHeaders({ 'Content-Type': 'text/plain' }));
+          res.writeHead(
+            500,
+            this.addCorsHeaders({ 'Content-Type': 'text/plain' }),
+          );
           res.end('Internal Server Error');
         }
       });
@@ -1444,7 +1583,10 @@ export class HttpChannel implements Channel {
       const jid = `http:${username}`;
       const group = this.opts.registeredGroups()[jid];
       if (!group) {
-        res.writeHead(404, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+        res.writeHead(
+          404,
+          this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+        );
         res.end(JSON.stringify({ error: 'Group not found' }));
         return;
       }
@@ -1459,11 +1601,17 @@ export class HttpChannel implements Channel {
           before: before ?? undefined,
         });
 
-        res.writeHead(200, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+        res.writeHead(
+          200,
+          this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+        );
         res.end(JSON.stringify({ messages }));
       } catch (err) {
         logger.error({ err, jid }, 'GET /history failed');
-        res.writeHead(500, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+        res.writeHead(
+          500,
+          this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+        );
         res.end(JSON.stringify({ error: 'Internal server error' }));
       }
       return;
@@ -1478,7 +1626,10 @@ export class HttpChannel implements Channel {
       const jid = `http:${username}`;
       const group = this.opts.registeredGroups()[jid];
       if (!group) {
-        res.writeHead(404, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+        res.writeHead(
+          404,
+          this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+        );
         res.end(JSON.stringify({ error: 'Group not found' }));
         return;
       }
@@ -1488,7 +1639,10 @@ export class HttpChannel implements Channel {
         // Story 78: time-bounded purge
         const d = new Date(beforeParam);
         if (!Number.isFinite(d.getTime())) {
-          res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+          res.writeHead(
+            400,
+            this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+          );
           res.end(
             JSON.stringify({
               error: 'before must be a valid ISO-8601 timestamp',
@@ -1507,13 +1661,22 @@ export class HttpChannel implements Channel {
               detail: `before=${beforeParam}, deleted=${deleted}`,
             });
           } catch (auditErr) {
-            logger.error({ err: auditErr, jid }, 'Audit write failed for history.purge');
+            logger.error(
+              { err: auditErr, jid },
+              'Audit write failed for history.purge',
+            );
           }
-          res.writeHead(200, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+          res.writeHead(
+            200,
+            this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+          );
           res.end(JSON.stringify({ deleted }));
         } catch (err) {
           logger.error({ err, jid }, 'DELETE /history?before= failed');
-          res.writeHead(500, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+          res.writeHead(
+            500,
+            this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+          );
           res.end(JSON.stringify({ error: 'Internal server error' }));
         }
         return;
@@ -1530,13 +1693,19 @@ export class HttpChannel implements Channel {
             action: 'history.clear',
           });
         } catch (auditErr) {
-          logger.error({ err: auditErr, jid }, 'Audit write failed for history.clear');
+          logger.error(
+            { err: auditErr, jid },
+            'Audit write failed for history.clear',
+          );
         }
         res.writeHead(204, this.addCorsHeaders({}));
         res.end();
       } catch (err) {
         logger.error({ err, jid }, 'DELETE /history failed');
-        res.writeHead(500, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+        res.writeHead(
+          500,
+          this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+        );
         res.end(JSON.stringify({ error: 'Internal server error' }));
       }
       return;
@@ -1547,10 +1716,13 @@ export class HttpChannel implements Channel {
     if (historyIdMatch) {
       const method = req.method ?? '';
       if (!['GET', 'HEAD', 'DELETE', 'PATCH'].includes(method)) {
-        res.writeHead(405, this.addCorsHeaders({
-          'Content-Type': 'text/plain',
-          Allow: 'GET, HEAD, DELETE, PATCH',
-        }));
+        res.writeHead(
+          405,
+          this.addCorsHeaders({
+            'Content-Type': 'text/plain',
+            Allow: 'GET, HEAD, DELETE, PATCH',
+          }),
+        );
         res.end('Method Not Allowed');
         return;
       }
@@ -1562,7 +1734,10 @@ export class HttpChannel implements Channel {
       const jid = `http:${username}`;
       const group = this.opts.registeredGroups()[jid];
       if (!group) {
-        res.writeHead(404, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+        res.writeHead(
+          404,
+          this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+        );
         res.end(JSON.stringify({ error: 'Group not found' }));
         return;
       }
@@ -1580,7 +1755,10 @@ export class HttpChannel implements Channel {
           totalSize += chunk.length;
           if (totalSize > MAX_PATCH_BODY) {
             tooLarge = true;
-            res.writeHead(413, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+            res.writeHead(
+              413,
+              this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+            );
             res.end(JSON.stringify({ error: 'Payload too large' }));
             req.resume();
             return;
@@ -1594,7 +1772,10 @@ export class HttpChannel implements Channel {
           try {
             parsed = JSON.parse(Buffer.concat(chunks).toString('utf8'));
           } catch {
-            res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+            res.writeHead(
+              400,
+              this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+            );
             res.end(JSON.stringify({ error: 'Invalid JSON' }));
             return;
           }
@@ -1603,28 +1784,44 @@ export class HttpChannel implements Channel {
             parsed === null ||
             typeof (parsed as Record<string, unknown>).content !== 'string'
           ) {
-            res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+            res.writeHead(
+              400,
+              this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+            );
             res.end(JSON.stringify({ error: 'content must be a string' }));
             return;
           }
           const newContent = (parsed as { content: string }).content;
-          const updated = updateConversationMessage(msgId, newContent, group.folder);
+          const updated = updateConversationMessage(
+            msgId,
+            newContent,
+            group.folder,
+          );
           if (!updated) {
-            res.writeHead(404, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+            res.writeHead(
+              404,
+              this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+            );
             res.end(JSON.stringify({ error: 'Not found' }));
             return;
           }
           const row = getMessageById(msgId, group.folder);
           if (!row) {
-            res.writeHead(404, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+            res.writeHead(
+              404,
+              this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+            );
             res.end(JSON.stringify({ error: 'Not found' }));
             return;
           }
           const body = JSON.stringify(row);
-          res.writeHead(200, this.addCorsHeaders({
-            'Content-Type': 'application/json',
-            'Content-Length': String(Buffer.byteLength(body)),
-          }));
+          res.writeHead(
+            200,
+            this.addCorsHeaders({
+              'Content-Type': 'application/json',
+              'Content-Length': String(Buffer.byteLength(body)),
+            }),
+          );
           res.end(body);
         });
         return;
@@ -1634,7 +1831,10 @@ export class HttpChannel implements Channel {
       if (method === 'GET' || method === 'HEAD') {
         const row = getMessageById(msgId, group.folder);
         if (!row) {
-          res.writeHead(404, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+          res.writeHead(
+            404,
+            this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+          );
           if (method === 'GET') {
             res.end(JSON.stringify({ error: 'Not found' }));
           } else {
@@ -1643,10 +1843,13 @@ export class HttpChannel implements Channel {
           return;
         }
         const body = JSON.stringify(row);
-        res.writeHead(200, this.addCorsHeaders({
-          'Content-Type': 'application/json',
-          'Content-Length': String(Buffer.byteLength(body)),
-        }));
+        res.writeHead(
+          200,
+          this.addCorsHeaders({
+            'Content-Type': 'application/json',
+            'Content-Length': String(Buffer.byteLength(body)),
+          }),
+        );
         if (method === 'HEAD') {
           res.end();
         } else {
@@ -1667,7 +1870,10 @@ export class HttpChannel implements Channel {
             target: msgId,
           });
         } catch (auditErr) {
-          logger.error({ err: auditErr, msgId }, 'Audit write failed for history.delete');
+          logger.error(
+            { err: auditErr, msgId },
+            'Audit write failed for history.delete',
+          );
         }
         res.writeHead(204, this.addCorsHeaders({}));
         res.end();
@@ -1679,10 +1885,16 @@ export class HttpChannel implements Channel {
         [msgId],
       );
       if (unscopedRows.length > 0 && unscopedRows[0].values.length > 0) {
-        res.writeHead(403, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+        res.writeHead(
+          403,
+          this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+        );
         res.end(JSON.stringify({ error: 'Forbidden' }));
       } else {
-        res.writeHead(404, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+        res.writeHead(
+          404,
+          this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+        );
         res.end(JSON.stringify({ error: 'Not found' }));
       }
       return;
@@ -1701,16 +1913,22 @@ export class HttpChannel implements Channel {
       const jid = `http:${username}`;
       const group = this.opts.registeredGroups()[jid];
       if (!group) {
-        res.writeHead(404, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+        res.writeHead(
+          404,
+          this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+        );
         res.end(JSON.stringify({ error: 'Group not found' }));
         return;
       }
       const date = new Date().toISOString().slice(0, 10);
       const filename = `kubeclaw-export-${group.folder}-${date}.ndjson`;
-      res.writeHead(200, this.addCorsHeaders({
-        'Content-Type': 'application/x-ndjson',
-        'Content-Disposition': `attachment; filename="${filename}"`,
-      }));
+      res.writeHead(
+        200,
+        this.addCorsHeaders({
+          'Content-Type': 'application/x-ndjson',
+          'Content-Disposition': `attachment; filename="${filename}"`,
+        }),
+      );
       if (req.method === 'HEAD') {
         res.end();
         return;
@@ -1735,10 +1953,13 @@ export class HttpChannel implements Channel {
     if (jobsIdMatch) {
       const method = req.method ?? '';
       if (!['GET', 'HEAD', 'DELETE'].includes(method)) {
-        res.writeHead(405, this.addCorsHeaders({
-          'Content-Type': 'text/plain',
-          Allow: 'GET, HEAD, DELETE',
-        }));
+        res.writeHead(
+          405,
+          this.addCorsHeaders({
+            'Content-Type': 'text/plain',
+            Allow: 'GET, HEAD, DELETE',
+          }),
+        );
         res.end('Method Not Allowed');
         return;
       }
@@ -1760,7 +1981,10 @@ export class HttpChannel implements Channel {
       // GET / HEAD — fetch job detail
       if (method === 'GET' || method === 'HEAD') {
         if (!job) {
-          res.writeHead(404, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+          res.writeHead(
+            404,
+            this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+          );
           if (method === 'GET') {
             res.end(JSON.stringify({ error: 'Not found' }));
           } else {
@@ -1776,10 +2000,13 @@ export class HttpChannel implements Channel {
           resolved_at: job.resolved_at,
         };
         const body = JSON.stringify(payload);
-        res.writeHead(200, this.addCorsHeaders({
-          'Content-Type': 'application/json',
-          'Content-Length': String(Buffer.byteLength(body)),
-        }));
+        res.writeHead(
+          200,
+          this.addCorsHeaders({
+            'Content-Type': 'application/json',
+            'Content-Length': String(Buffer.byteLength(body)),
+          }),
+        );
         if (method === 'HEAD') {
           res.end();
         } else {
@@ -1790,29 +2017,51 @@ export class HttpChannel implements Channel {
 
       // DELETE — cancel the job via IPC
       if (!job) {
-        res.writeHead(404, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+        res.writeHead(
+          404,
+          this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+        );
         res.end(JSON.stringify({ error: 'Not found' }));
         return;
       }
       if (job.status !== 'active') {
-        res.writeHead(409, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
-        res.end(JSON.stringify({ error: 'not_active', current_status: job.status }));
+        res.writeHead(
+          409,
+          this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+        );
+        res.end(
+          JSON.stringify({ error: 'not_active', current_status: job.status }),
+        );
         return;
       }
       try {
         const result = await this.killJobFn(jobId, groupFolder);
         if (!result.ok) {
           if (result.status === 'not_found') {
-            res.writeHead(404, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+            res.writeHead(
+              404,
+              this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+            );
             res.end(JSON.stringify({ error: 'Not found' }));
             return;
           }
           if (result.status === 'not_active') {
-            res.writeHead(409, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
-            res.end(JSON.stringify({ error: 'not_active', current_status: result.currentStatus ?? job.status }));
+            res.writeHead(
+              409,
+              this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+            );
+            res.end(
+              JSON.stringify({
+                error: 'not_active',
+                current_status: result.currentStatus ?? job.status,
+              }),
+            );
             return;
           }
-          res.writeHead(500, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+          res.writeHead(
+            500,
+            this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+          );
           res.end(JSON.stringify({ error: result.error ?? 'kill failed' }));
           return;
         }
@@ -1825,14 +2074,30 @@ export class HttpChannel implements Channel {
             target: jobId,
           });
         } catch (auditErr) {
-          logger.error({ err: auditErr, jobId }, 'Audit write failed for job.kill');
+          logger.error(
+            { err: auditErr, jobId },
+            'Audit write failed for job.kill',
+          );
         }
-        res.writeHead(200, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+        res.writeHead(
+          200,
+          this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+        );
         res.end(JSON.stringify({ status: 'cancelled', job_id: jobId }));
       } catch (err) {
-        logger.error({ err, jobId, groupFolder }, 'DELETE /jobs/<id> kill failed');
-        res.writeHead(504, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
-        res.end(JSON.stringify({ error: 'IPC timeout — orchestrator did not respond' }));
+        logger.error(
+          { err, jobId, groupFolder },
+          'DELETE /jobs/<id> kill failed',
+        );
+        res.writeHead(
+          504,
+          this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+        );
+        res.end(
+          JSON.stringify({
+            error: 'IPC timeout — orchestrator did not respond',
+          }),
+        );
       }
       return;
     }
@@ -1841,10 +2106,13 @@ export class HttpChannel implements Channel {
     if (url.pathname === '/jobs') {
       // Method check before auth so 405 is returned for unsupported methods
       if (req.method !== 'GET' && req.method !== 'HEAD') {
-        res.writeHead(405, this.addCorsHeaders({
-          'Content-Type': 'text/plain',
-          Allow: 'GET, HEAD',
-        }));
+        res.writeHead(
+          405,
+          this.addCorsHeaders({
+            'Content-Type': 'text/plain',
+            Allow: 'GET, HEAD',
+          }),
+        );
         res.end('Method Not Allowed');
         return;
       }
@@ -1857,9 +2125,20 @@ export class HttpChannel implements Channel {
 
       // Validate status query param (must be 'active', 'completed', or absent)
       const statusParam = url.searchParams.get('status');
-      if (statusParam !== null && statusParam !== 'active' && statusParam !== 'completed') {
-        res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
-        res.end(JSON.stringify({ error: 'Invalid status parameter. Must be "active" or "completed".' }));
+      if (
+        statusParam !== null &&
+        statusParam !== 'active' &&
+        statusParam !== 'completed'
+      ) {
+        res.writeHead(
+          400,
+          this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+        );
+        res.end(
+          JSON.stringify({
+            error: 'Invalid status parameter. Must be "active" or "completed".',
+          }),
+        );
         return;
       }
 
@@ -1880,7 +2159,9 @@ export class HttpChannel implements Channel {
       let jobs;
       if (statusParam === 'active') {
         // getActiveToolJobs() returns all active jobs across all groups; filter to this group
-        jobs = getActiveToolJobs().filter((j) => j.group_folder === groupFolder);
+        jobs = getActiveToolJobs().filter(
+          (j) => j.group_folder === groupFolder,
+        );
       } else {
         // getRecentToolJobsForGroup returns non-active rows (completed/interrupted/timeout/oomkill)
         jobs = getRecentToolJobsForGroup(groupFolder, limit);
@@ -1915,11 +2196,18 @@ export class HttpChannel implements Channel {
     // Stories 68 + 71: /schedule — list and create scheduled tasks
     if (url.pathname === '/schedule') {
       // Method check before auth so 405 is returned for unsupported methods
-      if (req.method !== 'GET' && req.method !== 'HEAD' && req.method !== 'POST') {
-        res.writeHead(405, this.addCorsHeaders({
-          'Content-Type': 'text/plain',
-          Allow: 'GET, HEAD, POST',
-        }));
+      if (
+        req.method !== 'GET' &&
+        req.method !== 'HEAD' &&
+        req.method !== 'POST'
+      ) {
+        res.writeHead(
+          405,
+          this.addCorsHeaders({
+            'Content-Type': 'text/plain',
+            Allow: 'GET, HEAD, POST',
+          }),
+        );
         res.end('Method Not Allowed');
         return;
       }
@@ -1945,7 +2233,10 @@ export class HttpChannel implements Channel {
         try {
           parsed = JSON.parse(rawBody);
         } catch {
-          res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+          res.writeHead(
+            400,
+            this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+          );
           res.end(JSON.stringify({ error: 'Invalid JSON body' }));
           return;
         }
@@ -1955,7 +2246,10 @@ export class HttpChannel implements Channel {
           parsed === null ||
           Array.isArray(parsed)
         ) {
-          res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+          res.writeHead(
+            400,
+            this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+          );
           res.end(JSON.stringify({ error: 'Body must be a JSON object' }));
           return;
         }
@@ -1969,13 +2263,24 @@ export class HttpChannel implements Channel {
           typeof schedule_expression !== 'string' ||
           typeof prompt !== 'string'
         ) {
-          res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
-          res.end(JSON.stringify({ error: 'schedule_type, schedule_expression, and prompt are required strings' }));
+          res.writeHead(
+            400,
+            this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+          );
+          res.end(
+            JSON.stringify({
+              error:
+                'schedule_type, schedule_expression, and prompt are required strings',
+            }),
+          );
           return;
         }
 
         if (!prompt.trim()) {
-          res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+          res.writeHead(
+            400,
+            this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+          );
           res.end(JSON.stringify({ error: 'prompt must not be empty' }));
           return;
         }
@@ -1986,8 +2291,15 @@ export class HttpChannel implements Channel {
           schedule_type !== 'cron' &&
           schedule_type !== 'once'
         ) {
-          res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
-          res.end(JSON.stringify({ error: 'schedule_type must be "interval", "cron", or "once"' }));
+          res.writeHead(
+            400,
+            this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+          );
+          res.end(
+            JSON.stringify({
+              error: 'schedule_type must be "interval", "cron", or "once"',
+            }),
+          );
           return;
         }
 
@@ -1997,16 +2309,32 @@ export class HttpChannel implements Channel {
           // Must be a valid ISO date
           const d = new Date(schedule_expression);
           if (isNaN(d.getTime())) {
-            res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
-            res.end(JSON.stringify({ error: 'schedule_expression must be a valid ISO date for schedule_type "once"' }));
+            res.writeHead(
+              400,
+              this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+            );
+            res.end(
+              JSON.stringify({
+                error:
+                  'schedule_expression must be a valid ISO date for schedule_type "once"',
+              }),
+            );
             return;
           }
           next_run = schedule_expression;
         } else if (schedule_type === 'interval') {
           const ms = parseInt(schedule_expression, 10);
           if (!ms || ms <= 0 || String(ms) !== schedule_expression.trim()) {
-            res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
-            res.end(JSON.stringify({ error: 'schedule_expression must be a positive integer (milliseconds) for schedule_type "interval"' }));
+            res.writeHead(
+              400,
+              this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+            );
+            res.end(
+              JSON.stringify({
+                error:
+                  'schedule_expression must be a positive integer (milliseconds) for schedule_type "interval"',
+              }),
+            );
             return;
           }
           next_run = new Date(Date.now() + ms).toISOString();
@@ -2019,8 +2347,15 @@ export class HttpChannel implements Channel {
               .next()
               .toISOString();
           } catch {
-            res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
-            res.end(JSON.stringify({ error: `Invalid cron expression: '${schedule_expression}'` }));
+            res.writeHead(
+              400,
+              this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+            );
+            res.end(
+              JSON.stringify({
+                error: `Invalid cron expression: '${schedule_expression}'`,
+              }),
+            );
             return;
           }
         }
@@ -2028,10 +2363,7 @@ export class HttpChannel implements Channel {
         // Generate a UUID-style id
         const id = randomBytes(16)
           .toString('hex')
-          .replace(
-            /(.{8})(.{4})(.{4})(.{4})(.{12})/,
-            '$1-$2-$3-$4-$5',
-          );
+          .replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
 
         const created_at = new Date().toISOString();
         createTask({
@@ -2057,10 +2389,13 @@ export class HttpChannel implements Channel {
           created_at,
         });
 
-        res.writeHead(201, this.addCorsHeaders({
-          'Content-Type': 'application/json',
-          'Content-Length': String(Buffer.byteLength(responseBody)),
-        }));
+        res.writeHead(
+          201,
+          this.addCorsHeaders({
+            'Content-Type': 'application/json',
+            'Content-Length': String(Buffer.byteLength(responseBody)),
+          }),
+        );
         res.end(responseBody);
         return;
       }
@@ -2068,9 +2403,20 @@ export class HttpChannel implements Channel {
       // GET / HEAD — list scheduled tasks for the authenticated group
       // Validate status query param (must be 'active', 'paused', or absent)
       const statusParam = url.searchParams.get('status');
-      if (statusParam !== null && statusParam !== 'active' && statusParam !== 'paused') {
-        res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
-        res.end(JSON.stringify({ error: 'Invalid status parameter. Must be "active" or "paused".' }));
+      if (
+        statusParam !== null &&
+        statusParam !== 'active' &&
+        statusParam !== 'paused'
+      ) {
+        res.writeHead(
+          400,
+          this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+        );
+        res.end(
+          JSON.stringify({
+            error: 'Invalid status parameter. Must be "active" or "paused".',
+          }),
+        );
         return;
       }
 
@@ -2120,10 +2466,13 @@ export class HttpChannel implements Channel {
         req.method !== 'PATCH' &&
         req.method !== 'HEAD'
       ) {
-        res.writeHead(405, this.addCorsHeaders({
-          'Content-Type': 'text/plain',
-          Allow: 'DELETE, PATCH, HEAD',
-        }));
+        res.writeHead(
+          405,
+          this.addCorsHeaders({
+            'Content-Type': 'text/plain',
+            Allow: 'DELETE, PATCH, HEAD',
+          }),
+        );
         res.end('Method Not Allowed');
         return;
       }
@@ -2142,11 +2491,17 @@ export class HttpChannel implements Channel {
         // HEAD mirrors GET existence check — 200 if owned, 404 if not
         const task = getTaskById(taskId);
         if (!task || task.group_folder !== groupFolder) {
-          res.writeHead(404, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+          res.writeHead(
+            404,
+            this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+          );
           res.end();
           return;
         }
-        res.writeHead(200, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+        res.writeHead(
+          200,
+          this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+        );
         res.end();
         return;
       }
@@ -2154,7 +2509,10 @@ export class HttpChannel implements Channel {
       if (req.method === 'DELETE') {
         const deleted = deleteTaskForGroup(taskId, groupFolder);
         if (!deleted) {
-          res.writeHead(404, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+          res.writeHead(
+            404,
+            this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+          );
           res.end(JSON.stringify({ error: 'Not found' }));
           return;
         }
@@ -2167,7 +2525,10 @@ export class HttpChannel implements Channel {
             target: taskId,
           });
         } catch (auditErr) {
-          logger.error({ err: auditErr, taskId }, 'Audit write failed for schedule.delete');
+          logger.error(
+            { err: auditErr, taskId },
+            'Audit write failed for schedule.delete',
+          );
         }
         res.writeHead(204, this.addCorsHeaders({}));
         res.end();
@@ -2185,7 +2546,10 @@ export class HttpChannel implements Channel {
         try {
           patchBody = JSON.parse(rawBody);
         } catch {
-          res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+          res.writeHead(
+            400,
+            this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+          );
           res.end(JSON.stringify({ error: 'Invalid JSON body' }));
           return;
         }
@@ -2196,7 +2560,10 @@ export class HttpChannel implements Channel {
           Array.isArray(patchBody) ||
           typeof (patchBody as Record<string, unknown>).paused !== 'boolean'
         ) {
-          res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+          res.writeHead(
+            400,
+            this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+          );
           res.end(JSON.stringify({ error: '{ paused: boolean } required' }));
           return;
         }
@@ -2206,7 +2573,10 @@ export class HttpChannel implements Channel {
         // Verify the task exists and belongs to this group
         const task = getTaskById(taskId);
         if (!task || task.group_folder !== groupFolder) {
-          res.writeHead(404, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+          res.writeHead(
+            404,
+            this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+          );
           res.end(JSON.stringify({ error: 'Not found' }));
           return;
         }
@@ -2217,7 +2587,10 @@ export class HttpChannel implements Channel {
 
         if (!ok) {
           // Task disappeared between the existence check and the update — treat as 404
-          res.writeHead(404, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+          res.writeHead(
+            404,
+            this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+          );
           res.end(JSON.stringify({ error: 'Not found' }));
           return;
         }
@@ -2231,7 +2604,10 @@ export class HttpChannel implements Channel {
             target: taskId,
           });
         } catch (auditErr) {
-          logger.error({ err: auditErr, taskId }, 'Audit write failed for schedule.pause/resume');
+          logger.error(
+            { err: auditErr, taskId },
+            'Audit write failed for schedule.pause/resume',
+          );
         }
 
         // Re-fetch to return the current state
@@ -2246,10 +2622,13 @@ export class HttpChannel implements Channel {
           created_at: updated.created_at,
         });
 
-        res.writeHead(200, this.addCorsHeaders({
-          'Content-Type': 'application/json',
-          'Content-Length': String(Buffer.byteLength(respBody)),
-        }));
+        res.writeHead(
+          200,
+          this.addCorsHeaders({
+            'Content-Type': 'application/json',
+            'Content-Length': String(Buffer.byteLength(respBody)),
+          }),
+        );
         res.end(respBody);
         return;
       }
@@ -2262,10 +2641,13 @@ export class HttpChannel implements Channel {
 
       // Method guard before auth so 405 is returned without leaking auth info
       if (req.method !== 'GET' && req.method !== 'HEAD') {
-        res.writeHead(405, this.addCorsHeaders({
-          'Content-Type': 'text/plain',
-          Allow: 'GET, HEAD',
-        }));
+        res.writeHead(
+          405,
+          this.addCorsHeaders({
+            'Content-Type': 'text/plain',
+            Allow: 'GET, HEAD',
+          }),
+        );
         res.end('Method Not Allowed');
         return;
       }
@@ -2283,7 +2665,10 @@ export class HttpChannel implements Channel {
       // Ownership pre-check: task must exist and belong to this group
       const task = getTaskById(taskId);
       if (!task || task.group_folder !== groupFolder) {
-        res.writeHead(404, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+        res.writeHead(
+          404,
+          this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+        );
         res.end(JSON.stringify({ error: 'Not found' }));
         return;
       }
@@ -2291,15 +2676,21 @@ export class HttpChannel implements Channel {
       // Parse optional ?limit=N (default 20, cap 100)
       const rawLimit = url.searchParams.get('limit');
       const parsedLimit = rawLimit !== null ? parseInt(rawLimit, 10) : 20;
-      const limit = Number.isNaN(parsedLimit) || parsedLimit < 1 ? 20 : Math.min(parsedLimit, 100);
+      const limit =
+        Number.isNaN(parsedLimit) || parsedLimit < 1
+          ? 20
+          : Math.min(parsedLimit, 100);
 
       const runs = getTaskRunLogs(taskId, groupFolder, limit);
       const respBody = JSON.stringify({ runs });
 
-      res.writeHead(200, this.addCorsHeaders({
-        'Content-Type': 'application/json',
-        'Content-Length': String(Buffer.byteLength(respBody)),
-      }));
+      res.writeHead(
+        200,
+        this.addCorsHeaders({
+          'Content-Type': 'application/json',
+          'Content-Length': String(Buffer.byteLength(respBody)),
+        }),
+      );
       if (req.method === 'HEAD') {
         res.end();
       } else {
@@ -2312,10 +2703,13 @@ export class HttpChannel implements Channel {
     if (url.pathname === '/capabilities') {
       // Method guard before auth so 405 is returned without leaking auth info
       if (req.method !== 'GET' && req.method !== 'HEAD') {
-        res.writeHead(405, this.addCorsHeaders({
-          'Content-Type': 'text/plain',
-          Allow: 'GET, HEAD',
-        }));
+        res.writeHead(
+          405,
+          this.addCorsHeaders({
+            'Content-Type': 'text/plain',
+            Allow: 'GET, HEAD',
+          }),
+        );
         res.end('Method Not Allowed');
         return;
       }
@@ -2356,10 +2750,13 @@ export class HttpChannel implements Channel {
     if (url.pathname === '/search') {
       // 405 for methods other than GET and HEAD (before auth)
       if (req.method !== 'GET' && req.method !== 'HEAD') {
-        res.writeHead(405, this.addCorsHeaders({
-          'Content-Type': 'application/json',
-          Allow: 'GET, HEAD',
-        }));
+        res.writeHead(
+          405,
+          this.addCorsHeaders({
+            'Content-Type': 'application/json',
+            Allow: 'GET, HEAD',
+          }),
+        );
         res.end(JSON.stringify({ error: 'Method Not Allowed' }));
         return;
       }
@@ -2373,12 +2770,18 @@ export class HttpChannel implements Channel {
       // Validate q parameter
       const q = url.searchParams.get('q');
       if (q === null || q.trim() === '') {
-        res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+        res.writeHead(
+          400,
+          this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+        );
         res.end(JSON.stringify({ error: 'q required' }));
         return;
       }
       if (q.length > 500) {
-        res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+        res.writeHead(
+          400,
+          this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+        );
         res.end(JSON.stringify({ error: 'q must be 500 characters or fewer' }));
         return;
       }
@@ -2387,7 +2790,10 @@ export class HttpChannel implements Channel {
       const jid = `http:${username}`;
       const group = this.opts.registeredGroups()[jid];
       if (!group) {
-        res.writeHead(404, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+        res.writeHead(
+          404,
+          this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+        );
         res.end(JSON.stringify({ error: 'Group not found' }));
         return;
       }
@@ -2399,9 +2805,10 @@ export class HttpChannel implements Channel {
       let limit = DEFAULT_LIMIT;
       if (rawLimit !== null) {
         const parsed = Number(rawLimit);
-        limit = Number.isFinite(parsed) && parsed > 0
-          ? Math.min(Math.floor(parsed), MAX_LIMIT)
-          : DEFAULT_LIMIT;
+        limit =
+          Number.isFinite(parsed) && parsed > 0
+            ? Math.min(Math.floor(parsed), MAX_LIMIT)
+            : DEFAULT_LIMIT;
       }
 
       const results = searchConversations({
@@ -2440,10 +2847,13 @@ export class HttpChannel implements Channel {
     // ── GET /secrets/catalog — credential catalog (no auth values) ───────────
     if (url.pathname === '/secrets/catalog') {
       if (req.method !== 'GET' && req.method !== 'HEAD') {
-        res.writeHead(405, this.addCorsHeaders({
-          Allow: 'GET, HEAD',
-          'Content-Type': 'text/plain',
-        }));
+        res.writeHead(
+          405,
+          this.addCorsHeaders({
+            Allow: 'GET, HEAD',
+            'Content-Type': 'text/plain',
+          }),
+        );
         res.end('Method Not Allowed');
         return;
       }
@@ -2453,7 +2863,10 @@ export class HttpChannel implements Channel {
         return;
       }
       if (req.method === 'HEAD') {
-        res.writeHead(200, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+        res.writeHead(
+          200,
+          this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+        );
         res.end();
         return;
       }
@@ -2465,10 +2878,13 @@ export class HttpChannel implements Channel {
     const secretTypeMatch = url.pathname.match(/^\/secrets\/([^/]+)$/);
     if (secretTypeMatch) {
       if (req.method !== 'DELETE' && req.method !== 'HEAD') {
-        res.writeHead(405, this.addCorsHeaders({
-          Allow: 'DELETE, HEAD',
-          'Content-Type': 'text/plain',
-        }));
+        res.writeHead(
+          405,
+          this.addCorsHeaders({
+            Allow: 'DELETE, HEAD',
+            'Content-Type': 'text/plain',
+          }),
+        );
         res.end('Method Not Allowed');
         return;
       }
@@ -2483,7 +2899,10 @@ export class HttpChannel implements Channel {
       const groupFolder = group?.folder ?? jid;
 
       if (req.method === 'HEAD') {
-        res.writeHead(200, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+        res.writeHead(
+          200,
+          this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+        );
         res.end();
         return;
       }
@@ -2493,11 +2912,18 @@ export class HttpChannel implements Channel {
 
     // ── GET/POST /secrets — list group secrets or provision a credential ────────
     if (url.pathname === '/secrets') {
-      if (req.method !== 'GET' && req.method !== 'HEAD' && req.method !== 'POST') {
-        res.writeHead(405, this.addCorsHeaders({
-          Allow: 'GET, HEAD, POST',
-          'Content-Type': 'text/plain',
-        }));
+      if (
+        req.method !== 'GET' &&
+        req.method !== 'HEAD' &&
+        req.method !== 'POST'
+      ) {
+        res.writeHead(
+          405,
+          this.addCorsHeaders({
+            Allow: 'GET, HEAD, POST',
+            'Content-Type': 'text/plain',
+          }),
+        );
         res.end('Method Not Allowed');
         return;
       }
@@ -2511,7 +2937,10 @@ export class HttpChannel implements Channel {
       const groupFolder = group?.folder ?? jid;
 
       if (req.method === 'HEAD') {
-        res.writeHead(200, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+        res.writeHead(
+          200,
+          this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+        );
         res.end();
         return;
       }
@@ -2527,10 +2956,13 @@ export class HttpChannel implements Channel {
     // Method guard FIRST — 405 before auth so unsupported methods don't leak info
     if (url.pathname === '/skills') {
       if (req.method !== 'GET' && req.method !== 'HEAD') {
-        res.writeHead(405, this.addCorsHeaders({
-          Allow: 'GET, HEAD',
-          'Content-Type': 'text/plain',
-        }));
+        res.writeHead(
+          405,
+          this.addCorsHeaders({
+            Allow: 'GET, HEAD',
+            'Content-Type': 'text/plain',
+          }),
+        );
         res.end('Method Not Allowed');
         return;
       }
@@ -2542,16 +2974,21 @@ export class HttpChannel implements Channel {
       const jid = `http:${username}`;
       const group = this.opts.registeredGroups()[jid];
       if (!group) {
-        res.writeHead(404, this.addCorsHeaders({ 'Content-Type': 'text/plain' }));
+        res.writeHead(
+          404,
+          this.addCorsHeaders({ 'Content-Type': 'text/plain' }),
+        );
         res.end('Not found');
         return;
       }
 
-      const accepted = listAcceptedSkills(GROUPS_DIR, group.folder).map((s) => ({
-        slug: s.frontmatter.name,
-        title: s.frontmatter.name,
-        description: s.frontmatter.description,
-      }));
+      const accepted = listAcceptedSkills(GROUPS_DIR, group.folder).map(
+        (s) => ({
+          slug: s.frontmatter.name,
+          title: s.frontmatter.name,
+          description: s.frontmatter.description,
+        }),
+      );
       const candidates = listCandidates(GROUPS_DIR, group.folder).map((c) => ({
         slug: c.id,
         title: c.skill.frontmatter.name,
@@ -2564,7 +3001,10 @@ export class HttpChannel implements Channel {
       }));
 
       const payload = JSON.stringify({ accepted, candidates, archived });
-      res.writeHead(200, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+      res.writeHead(
+        200,
+        this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+      );
       if (req.method === 'HEAD') {
         res.end();
       } else {
@@ -2580,10 +3020,13 @@ export class HttpChannel implements Channel {
     if (candidateActionMatch) {
       // Method guard FIRST — 405 before auth so unsupported methods don't leak info
       if (req.method !== 'POST') {
-        res.writeHead(405, this.addCorsHeaders({
-          Allow: 'POST',
-          'Content-Type': 'text/plain',
-        }));
+        res.writeHead(
+          405,
+          this.addCorsHeaders({
+            Allow: 'POST',
+            'Content-Type': 'text/plain',
+          }),
+        );
         res.end('Method Not Allowed');
         return;
       }
@@ -2597,7 +3040,10 @@ export class HttpChannel implements Channel {
 
       // Validate candidate ID to prevent path traversal
       if (!CANDIDATE_ID_RE.test(candidateId)) {
-        res.writeHead(404, this.addCorsHeaders({ 'Content-Type': 'text/plain' }));
+        res.writeHead(
+          404,
+          this.addCorsHeaders({ 'Content-Type': 'text/plain' }),
+        );
         res.end('Not found');
         return;
       }
@@ -2605,7 +3051,10 @@ export class HttpChannel implements Channel {
       const jid = `http:${username}`;
       const group = this.opts.registeredGroups()[jid];
       if (!group) {
-        res.writeHead(404, this.addCorsHeaders({ 'Content-Type': 'text/plain' }));
+        res.writeHead(
+          404,
+          this.addCorsHeaders({ 'Content-Type': 'text/plain' }),
+        );
         res.end('Not found');
         return;
       }
@@ -2625,13 +3074,22 @@ export class HttpChannel implements Channel {
             target: candidateId,
           });
         } catch (auditErr) {
-          logger.error({ err: auditErr, candidateId }, `Audit write failed for skill.${action}`);
+          logger.error(
+            { err: auditErr, candidateId },
+            `Audit write failed for skill.${action}`,
+          );
         }
         const result = action === 'accept' ? 'accepted' : 'rejected';
-        res.writeHead(200, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+        res.writeHead(
+          200,
+          this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+        );
         res.end(JSON.stringify({ status: result, slug: candidateId }));
       } catch {
-        res.writeHead(404, this.addCorsHeaders({ 'Content-Type': 'text/plain' }));
+        res.writeHead(
+          404,
+          this.addCorsHeaders({ 'Content-Type': 'text/plain' }),
+        );
         res.end('Not found');
       }
       return;
@@ -2643,10 +3101,13 @@ export class HttpChannel implements Channel {
       const method = req.method ?? '';
 
       if (!['GET', 'HEAD', 'PUT', 'PATCH'].includes(method)) {
-        res.writeHead(405, this.addCorsHeaders({
-          'Content-Type': 'text/plain',
-          Allow: 'GET, HEAD, PUT, PATCH',
-        }));
+        res.writeHead(
+          405,
+          this.addCorsHeaders({
+            'Content-Type': 'text/plain',
+            Allow: 'GET, HEAD, PUT, PATCH',
+          }),
+        );
         res.end('Method Not Allowed');
         return;
       }
@@ -2660,7 +3121,10 @@ export class HttpChannel implements Channel {
       const jid = `http:${username}`;
       const group = this.opts.registeredGroups()[jid];
       if (!group) {
-        res.writeHead(404, this.addCorsHeaders({ 'Content-Type': 'text/plain' }));
+        res.writeHead(
+          404,
+          this.addCorsHeaders({ 'Content-Type': 'text/plain' }),
+        );
         res.end('Not found');
         return;
       }
@@ -2678,10 +3142,13 @@ export class HttpChannel implements Channel {
     // ── GET/HEAD /diag — operational snapshot (auth required) ────────────────
     if (url.pathname === '/diag') {
       if (req.method !== 'GET' && req.method !== 'HEAD') {
-        res.writeHead(405, this.addCorsHeaders({
-          Allow: 'GET, HEAD',
-          'Content-Type': 'text/plain',
-        }));
+        res.writeHead(
+          405,
+          this.addCorsHeaders({
+            Allow: 'GET, HEAD',
+            'Content-Type': 'text/plain',
+          }),
+        );
         res.end('Method Not Allowed');
         return;
       }
@@ -2704,10 +3171,13 @@ export class HttpChannel implements Channel {
       const snap = getDiagSnapshot(groupFolder, STORE_DIR, GROUPS_DIR);
       const body = JSON.stringify(snap);
 
-      res.writeHead(200, this.addCorsHeaders({
-        'Content-Type': 'application/json',
-        'Content-Length': String(Buffer.byteLength(body)),
-      }));
+      res.writeHead(
+        200,
+        this.addCorsHeaders({
+          'Content-Type': 'application/json',
+          'Content-Length': String(Buffer.byteLength(body)),
+        }),
+      );
       if (req.method === 'GET') {
         res.end(body);
       } else {
@@ -2719,10 +3189,13 @@ export class HttpChannel implements Channel {
     // Story 81: GET/HEAD /audit — audit log for destructive admin actions
     if (url.pathname === '/audit') {
       if (req.method !== 'GET' && req.method !== 'HEAD') {
-        res.writeHead(405, this.addCorsHeaders({
-          Allow: 'GET, HEAD',
-          'Content-Type': 'text/plain',
-        }));
+        res.writeHead(
+          405,
+          this.addCorsHeaders({
+            Allow: 'GET, HEAD',
+            'Content-Type': 'text/plain',
+          }),
+        );
         res.end('Method Not Allowed');
         return;
       }
@@ -2750,11 +3223,14 @@ export class HttpChannel implements Channel {
       const entries = getAuditEntries(groupFolder, auditLimit);
       const body = JSON.stringify({ entries });
 
-      res.writeHead(200, this.addCorsHeaders({
-        'Content-Type': 'application/json',
-        'Content-Length': String(Buffer.byteLength(body)),
-        'Cache-Control': 'no-cache',
-      }));
+      res.writeHead(
+        200,
+        this.addCorsHeaders({
+          'Content-Type': 'application/json',
+          'Content-Length': String(Buffer.byteLength(body)),
+          'Cache-Control': 'no-cache',
+        }),
+      );
       if (req.method === 'HEAD') {
         res.end();
       } else {
@@ -2789,20 +3265,26 @@ export class HttpChannel implements Channel {
     };
     const allowed = pathMethods[url.pathname];
     if (allowed && !allowed.includes(req.method ?? '')) {
-      res.writeHead(405, this.addCorsHeaders({
-        'Content-Type': 'text/plain',
-        Allow: allowed.join(', '),
-      }));
+      res.writeHead(
+        405,
+        this.addCorsHeaders({
+          'Content-Type': 'text/plain',
+          Allow: allowed.join(', '),
+        }),
+      );
       res.end('Method Not Allowed');
       return;
     }
     if (url.pathname.startsWith('/attachments/raw/')) {
       const allowedRaw = ['GET', 'HEAD', 'DELETE'];
       if (!allowedRaw.includes(req.method ?? '')) {
-        res.writeHead(405, this.addCorsHeaders({
-          'Content-Type': 'text/plain',
-          Allow: allowedRaw.join(', '),
-        }));
+        res.writeHead(
+          405,
+          this.addCorsHeaders({
+            'Content-Type': 'text/plain',
+            Allow: allowedRaw.join(', '),
+          }),
+        );
         res.end('Method Not Allowed');
         return;
       }
@@ -2810,10 +3292,13 @@ export class HttpChannel implements Channel {
     if (/^\/schedule\/[^/]+\/runs$/.test(url.pathname)) {
       const allowedScheduleRuns = ['GET', 'HEAD'];
       if (!allowedScheduleRuns.includes(req.method ?? '')) {
-        res.writeHead(405, this.addCorsHeaders({
-          'Content-Type': 'text/plain',
-          Allow: allowedScheduleRuns.join(', '),
-        }));
+        res.writeHead(
+          405,
+          this.addCorsHeaders({
+            'Content-Type': 'text/plain',
+            Allow: allowedScheduleRuns.join(', '),
+          }),
+        );
         res.end('Method Not Allowed');
         return;
       }
@@ -2821,10 +3306,13 @@ export class HttpChannel implements Channel {
     if (/^\/schedule\/[^/]+$/.test(url.pathname)) {
       const allowedScheduleId = ['DELETE', 'PATCH', 'HEAD'];
       if (!allowedScheduleId.includes(req.method ?? '')) {
-        res.writeHead(405, this.addCorsHeaders({
-          'Content-Type': 'text/plain',
-          Allow: allowedScheduleId.join(', '),
-        }));
+        res.writeHead(
+          405,
+          this.addCorsHeaders({
+            'Content-Type': 'text/plain',
+            Allow: allowedScheduleId.join(', '),
+          }),
+        );
         res.end('Method Not Allowed');
         return;
       }
@@ -2874,7 +3362,10 @@ export class HttpChannel implements Channel {
   ): Promise<void> {
     const fn = this.opts.listSecretsFn;
     if (!fn) {
-      res.writeHead(503, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+      res.writeHead(
+        503,
+        this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+      );
       res.end(JSON.stringify({ error: 'Secret IPC not configured' }));
       return;
     }
@@ -2887,11 +3378,17 @@ export class HttpChannel implements Channel {
           ? e.fields_present.map(String)
           : [],
       }));
-      res.writeHead(200, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+      res.writeHead(
+        200,
+        this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+      );
       res.end(JSON.stringify(safe));
     } catch (err) {
       logger.error({ err, groupFolder }, 'GET /secrets failed');
-      res.writeHead(500, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+      res.writeHead(
+        500,
+        this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+      );
       res.end(JSON.stringify({ error: 'Internal error' }));
     }
   }
@@ -2913,7 +3410,10 @@ export class HttpChannel implements Channel {
   ): Promise<void> {
     const fn = this.opts.addSecretFn;
     if (!fn) {
-      res.writeHead(503, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+      res.writeHead(
+        503,
+        this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+      );
       res.end(JSON.stringify({ error: 'Secret IPC not configured' }));
       return;
     }
@@ -2931,7 +3431,10 @@ export class HttpChannel implements Channel {
           oversized = true;
           // Write 413 before draining/destroying so the client receives it
           if (!res.writableEnded) {
-            res.writeHead(413, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+            res.writeHead(
+              413,
+              this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+            );
             res.end(JSON.stringify({ error: 'Request body too large' }));
           }
           // Drain remaining data without buffering it
@@ -2952,21 +3455,32 @@ export class HttpChannel implements Channel {
     try {
       body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
     } catch {
-      res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+      res.writeHead(
+        400,
+        this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+      );
       res.end(JSON.stringify({ error: 'Invalid JSON body' }));
       return;
     }
 
     // Validate shape: { type: string, fields: object }
     if (typeof body !== 'object' || body === null || Array.isArray(body)) {
-      res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
-      res.end(JSON.stringify({ error: '{"type":"<id>","fields":{...}} required' }));
+      res.writeHead(
+        400,
+        this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+      );
+      res.end(
+        JSON.stringify({ error: '{"type":"<id>","fields":{...}} required' }),
+      );
       return;
     }
     const raw = body as Record<string, unknown>;
 
     if (typeof raw.type !== 'string' || raw.type.trim() === '') {
-      res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+      res.writeHead(
+        400,
+        this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+      );
       res.end(JSON.stringify({ error: '"type" must be a non-empty string' }));
       return;
     }
@@ -2976,7 +3490,10 @@ export class HttpChannel implements Channel {
       raw.fields === null ||
       Array.isArray(raw.fields)
     ) {
-      res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+      res.writeHead(
+        400,
+        this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+      );
       res.end(JSON.stringify({ error: '"fields" must be a non-null object' }));
       return;
     }
@@ -2987,7 +3504,10 @@ export class HttpChannel implements Channel {
     // Validate all field values are strings
     for (const [k, v] of Object.entries(fields)) {
       if (typeof v !== 'string') {
-        res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+        res.writeHead(
+          400,
+          this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+        );
         res.end(JSON.stringify({ error: `field "${k}" must be a string` }));
         return;
       }
@@ -3005,7 +3525,10 @@ export class HttpChannel implements Channel {
     } catch (err) {
       logger.error({ err, groupFolder, secretType }, 'POST /secrets IPC error');
       // SECURITY: never echo err message that might contain field values
-      res.writeHead(502, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+      res.writeHead(
+        502,
+        this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+      );
       res.end(JSON.stringify({ error: 'IPC error' }));
       return;
     }
@@ -3013,13 +3536,22 @@ export class HttpChannel implements Channel {
     if (!result.ok) {
       const errMsg = result.error ?? 'unknown';
       if (errMsg === 'timeout') {
-        res.writeHead(504, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+        res.writeHead(
+          504,
+          this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+        );
         res.end(JSON.stringify({ error: 'IPC timeout' }));
         return;
       }
       // SECURITY: sanitize error — redact tokens ≥20 chars that might be secret values
-      const sanitized = errMsg.replace(/\b[A-Za-z0-9_\-]{20,}\b/g, '[redacted]');
-      res.writeHead(502, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+      const sanitized = errMsg.replace(
+        /\b[A-Za-z0-9_\-]{20,}\b/g,
+        '[redacted]',
+      );
+      res.writeHead(
+        502,
+        this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+      );
       res.end(JSON.stringify({ error: sanitized }));
       return;
     }
@@ -3036,11 +3568,17 @@ export class HttpChannel implements Channel {
         detail: `fields=${fieldNames.join(',')}`,
       });
     } catch (auditErr) {
-      logger.error({ err: auditErr, groupFolder, secretType }, 'Audit write failed for secret.add');
+      logger.error(
+        { err: auditErr, groupFolder, secretType },
+        'Audit write failed for secret.add',
+      );
     }
 
     // SECURITY: response contains ONLY status and type — no field values, no echo
-    res.writeHead(201, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+    res.writeHead(
+      201,
+      this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+    );
     res.end(JSON.stringify({ status: 'ok', type: secretType }));
   }
 
@@ -3053,14 +3591,20 @@ export class HttpChannel implements Channel {
   ): Promise<void> {
     const fn = this.opts.removeSecretFn;
     if (!fn) {
-      res.writeHead(503, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+      res.writeHead(
+        503,
+        this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+      );
       res.end(JSON.stringify({ error: 'Secret IPC not configured' }));
       return;
     }
     try {
       const result = await fn(groupFolder, secretType);
       if (result === 'not_found') {
-        res.writeHead(404, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+        res.writeHead(
+          404,
+          this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+        );
         res.end(JSON.stringify({ error: 'Not found' }));
         return;
       }
@@ -3073,13 +3617,22 @@ export class HttpChannel implements Channel {
           target: secretType,
         });
       } catch (auditErr) {
-        logger.error({ err: auditErr, groupFolder, secretType }, 'Audit write failed for secret.remove');
+        logger.error(
+          { err: auditErr, groupFolder, secretType },
+          'Audit write failed for secret.remove',
+        );
       }
       res.writeHead(204, this.addCorsHeaders({}));
       res.end();
     } catch (err) {
-      logger.error({ err, groupFolder, secretType }, 'DELETE /secrets/:type failed');
-      res.writeHead(500, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+      logger.error(
+        { err, groupFolder, secretType },
+        'DELETE /secrets/:type failed',
+      );
+      res.writeHead(
+        500,
+        this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+      );
       res.end(JSON.stringify({ error: 'Internal error' }));
     }
   }
@@ -3088,7 +3641,10 @@ export class HttpChannel implements Channel {
   private async handleGetCatalog(res: ServerResponse): Promise<void> {
     const fn = this.opts.listCatalogFn;
     if (!fn) {
-      res.writeHead(503, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+      res.writeHead(
+        503,
+        this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+      );
       res.end(JSON.stringify({ error: 'Catalog IPC not configured' }));
       return;
     }
@@ -3105,11 +3661,17 @@ export class HttpChannel implements Channel {
           : [],
         description: String(e.description ?? ''),
       }));
-      res.writeHead(200, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+      res.writeHead(
+        200,
+        this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+      );
       res.end(JSON.stringify(safe));
     } catch (err) {
       logger.error({ err }, 'GET /secrets/catalog failed');
-      res.writeHead(500, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+      res.writeHead(
+        500,
+        this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+      );
       res.end(JSON.stringify({ error: 'Internal error' }));
     }
   }
@@ -3127,7 +3689,10 @@ export class HttpChannel implements Channel {
     } catch (err: unknown) {
       if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
         logger.error({ err, groupFolder }, 'GET /memory read error');
-        res.writeHead(500, this.addCorsHeaders({ 'Content-Type': 'text/plain' }));
+        res.writeHead(
+          500,
+          this.addCorsHeaders({ 'Content-Type': 'text/plain' }),
+        );
         res.end('Internal Server Error');
         return;
       }
@@ -3135,17 +3700,23 @@ export class HttpChannel implements Channel {
     }
     const body = JSON.stringify({ content });
     if (method === 'HEAD') {
-      res.writeHead(200, this.addCorsHeaders({
-        'Content-Type': 'application/json',
-        'Content-Length': String(Buffer.byteLength(body)),
-      }));
+      res.writeHead(
+        200,
+        this.addCorsHeaders({
+          'Content-Type': 'application/json',
+          'Content-Length': String(Buffer.byteLength(body)),
+        }),
+      );
       res.end();
       return;
     }
-    res.writeHead(200, this.addCorsHeaders({
-      'Content-Type': 'application/json',
-      'Content-Length': String(Buffer.byteLength(body)),
-    }));
+    res.writeHead(
+      200,
+      this.addCorsHeaders({
+        'Content-Type': 'application/json',
+        'Content-Length': String(Buffer.byteLength(body)),
+      }),
+    );
     res.end(body);
   }
 
@@ -3165,7 +3736,10 @@ export class HttpChannel implements Channel {
       if (totalSize > MAX_MEMORY_BODY_SIZE) {
         if (!oversized) {
           oversized = true;
-          res.writeHead(413, this.addCorsHeaders({ 'Content-Type': 'text/plain' }));
+          res.writeHead(
+            413,
+            this.addCorsHeaders({ 'Content-Type': 'text/plain' }),
+          );
           res.end('Payload Too Large');
           req.resume(); // drain without buffering
         }
@@ -3183,7 +3757,10 @@ export class HttpChannel implements Channel {
           try {
             parsed = JSON.parse(bodyStr);
           } catch {
-            res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'text/plain' }));
+            res.writeHead(
+              400,
+              this.addCorsHeaders({ 'Content-Type': 'text/plain' }),
+            );
             res.end('Bad Request: invalid JSON');
             return;
           }
@@ -3193,11 +3770,16 @@ export class HttpChannel implements Channel {
           if (method === 'PUT') {
             const obj = parsed as Record<string, unknown>;
             if (typeof obj?.content !== 'string') {
-              res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'text/plain' }));
+              res.writeHead(
+                400,
+                this.addCorsHeaders({ 'Content-Type': 'text/plain' }),
+              );
               res.end('Bad Request: content must be a string');
               return;
             }
-            await fsPromises.mkdir(path.dirname(memoryPath), { recursive: true });
+            await fsPromises.mkdir(path.dirname(memoryPath), {
+              recursive: true,
+            });
             // Atomic write: temp file then rename
             const tmpPath = path.join(
               path.dirname(memoryPath),
@@ -3213,11 +3795,16 @@ export class HttpChannel implements Channel {
           if (method === 'PATCH') {
             const obj = parsed as Record<string, unknown>;
             if (typeof obj?.append !== 'string') {
-              res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'text/plain' }));
+              res.writeHead(
+                400,
+                this.addCorsHeaders({ 'Content-Type': 'text/plain' }),
+              );
               res.end('Bad Request: append must be a string');
               return;
             }
-            await fsPromises.mkdir(path.dirname(memoryPath), { recursive: true });
+            await fsPromises.mkdir(path.dirname(memoryPath), {
+              recursive: true,
+            });
             let existing = '';
             try {
               existing = await fsPromises.readFile(memoryPath, 'utf8');
@@ -3240,7 +3827,10 @@ export class HttpChannel implements Channel {
         } catch (err) {
           logger.error({ err, groupFolder }, '/memory write error');
           if (!res.writableEnded) {
-            res.writeHead(500, this.addCorsHeaders({ 'Content-Type': 'text/plain' }));
+            res.writeHead(
+              500,
+              this.addCorsHeaders({ 'Content-Type': 'text/plain' }),
+            );
             res.end('Internal Server Error');
           }
         }

@@ -782,17 +782,17 @@ export async function handleJobsCommand(
   const lines: string[] = [];
 
   for (const job of activeJobs) {
-    const nameDisplay = job.specialist_name
-      ? ` @${job.specialist_name}` : '';
-    lines.push(`[running]${nameDisplay} (started ${formatJobTime(job.created_at)})`);
+    const nameDisplay = job.specialist_name ? ` @${job.specialist_name}` : '';
+    lines.push(
+      `[running]${nameDisplay} (started ${formatJobTime(job.created_at)})`,
+    );
   }
 
   for (const job of recentJobs) {
     const resolvedDisplay = job.resolved_at
       ? formatJobTime(job.resolved_at)
       : '?';
-    const nameDisplay = job.specialist_name
-      ? ` @${job.specialist_name}` : '';
+    const nameDisplay = job.specialist_name ? ` @${job.specialist_name}` : '';
     lines.push(
       `[${job.status}]${nameDisplay} (${formatJobTime(job.created_at)} → ${resolvedDisplay})`,
     );
@@ -1052,8 +1052,11 @@ export function buildCancelFn(): CancelCommandDeps['cancelFn'] {
               status?: string;
               error?: string;
             };
-            if (!parsed.ok) return `Cancel failed: ${parsed.error ?? 'unknown error'}`;
-            return parsed.status === 'no_active_job' ? 'No active job' : 'Cancelled';
+            if (!parsed.ok)
+              return `Cancel failed: ${parsed.error ?? 'unknown error'}`;
+            return parsed.status === 'no_active_job'
+              ? 'No active job'
+              : 'Cancelled';
           }
         }
       }
@@ -1192,7 +1195,10 @@ export async function handleSecretCommand(
           target: catalogId,
         });
       } catch (auditErr) {
-        logger.error({ err: auditErr, group, catalogId }, 'Audit write failed for /secret remove');
+        logger.error(
+          { err: auditErr, group, catalogId },
+          'Audit write failed for /secret remove',
+        );
       }
 
       const systemEvent = `[SYSTEM] User removed credential for catalog entry '${catalogId}'. Tool-jobs will no longer use credentials for this entry.`;
@@ -1299,7 +1305,10 @@ export async function handleSecretCommand(
             detail: `fields=${fieldNames.join(',')}`,
           });
         } catch (auditErr) {
-          logger.error({ err: auditErr, group, catalogId }, 'Audit write failed for /secret add');
+          logger.error(
+            { err: auditErr, group, catalogId },
+            'Audit write failed for /secret add',
+          );
         }
 
         // Build system event (metadata only — no values)
@@ -1340,7 +1349,6 @@ export async function handleSecretCommand(
 }
 
 // ── /schedule command ──────────────────────────────────────────────────────
-
 
 const MAX_SCHEDULE_HISTORY_LIMIT = 100;
 
@@ -1496,7 +1504,9 @@ export async function handleScheduleCommand(
         }
       }
 
-      const id = randomBytes(16).toString('hex').replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
+      const id = randomBytes(16)
+        .toString('hex')
+        .replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
 
       createTask({
         id,
@@ -1550,7 +1560,10 @@ export async function handleScheduleCommand(
           target: id,
         });
       } catch (auditErr) {
-        logger.error({ err: auditErr, groupFolder, id }, 'Audit write failed for /schedule remove');
+        logger.error(
+          { err: auditErr, groupFolder, id },
+          'Audit write failed for /schedule remove',
+        );
       }
 
       return `Removed task '${id}'.`;
@@ -1571,7 +1584,10 @@ export async function handleScheduleCommand(
           target: id,
         });
       } catch (auditErr) {
-        logger.error({ err: auditErr, groupFolder, id }, 'Audit write failed for /schedule pause');
+        logger.error(
+          { err: auditErr, groupFolder, id },
+          'Audit write failed for /schedule pause',
+        );
       }
 
       return `Task "${id}" paused.`;
@@ -1592,7 +1608,10 @@ export async function handleScheduleCommand(
           target: id,
         });
       } catch (auditErr) {
-        logger.error({ err: auditErr, groupFolder, id }, 'Audit write failed for /schedule resume');
+        logger.error(
+          { err: auditErr, groupFolder, id },
+          'Audit write failed for /schedule resume',
+        );
       }
 
       return `Task "${id}" resumed.`;
@@ -1607,7 +1626,8 @@ export async function handleScheduleCommand(
       if (!task) return `Task '${taskId}' not found.`;
 
       // Group ownership check — task_id exists but belongs to another group
-      if (task.group_folder !== groupFolder) return `Task '${taskId}' not found.`;
+      if (task.group_folder !== groupFolder)
+        return `Task '${taskId}' not found.`;
 
       const rawLimit = parts[3];
       let limit = 10;
@@ -1786,7 +1806,9 @@ export function isSpecialistsCommand(message: string): boolean {
   return /^\/specialists(\s|$)/i.test(message.trim());
 }
 
-function formatSpecialistsHistory(rows: ReturnType<typeof getSpecialistUsage>): string {
+function formatSpecialistsHistory(
+  rows: ReturnType<typeof getSpecialistUsage>,
+): string {
   if (rows.length === 0) return 'No specialist history for this group.';
   return rows
     .map((r) => {
@@ -2038,17 +2060,25 @@ export async function handleCapabilitiesCommand(
     case 'tools': {
       const type = parts[2];
       if (!type) {
-        return { reply: 'Usage: /capabilities tools <type>\n\n' + CAPABILITIES_HELP };
+        return {
+          reply: 'Usage: /capabilities tools <type>\n\n' + CAPABILITIES_HELP,
+        };
       }
       const entry = _groupCapabilityEntries.get(type);
       if (!entry) {
-        return { reply: `Capability '${type}' is not provisioned for this group.` };
+        return {
+          reply: `Capability '${type}' is not provisioned for this group.`,
+        };
       }
       if (entry.state === 'pending-schema') {
-        return { reply: `Capability '${type}' is provisioned but schema not yet available, try again in a few seconds.` };
+        return {
+          reply: `Capability '${type}' is provisioned but schema not yet available, try again in a few seconds.`,
+        };
       }
       if (entry.state === 'failed') {
-        return { reply: `Capability '${type}' schema scrape failed: ${entry.error ?? 'unknown error'}.` };
+        return {
+          reply: `Capability '${type}' schema scrape failed: ${entry.error ?? 'unknown error'}.`,
+        };
       }
       const schemas = entry.toolSchemas;
       if (!schemas || schemas.length === 0) {
@@ -2338,7 +2368,11 @@ export async function processGroupMessages(chatJid: string): Promise<boolean> {
     // /cancel command: abort the currently running tool job for this group.
     if (isCancelCommand(content)) {
       const cancelDeps: CancelCommandDeps = { cancelFn: buildCancelFn() };
-      const reply = await handleCancelCommand(group.folder, chatJid, cancelDeps);
+      const reply = await handleCancelCommand(
+        group.folder,
+        chatJid,
+        cancelDeps,
+      );
       lastAgentTimestamp[chatJid] = msg.timestamp;
       saveState();
       await channel.setTyping?.(chatJid, true);
@@ -2359,10 +2393,14 @@ export async function processGroupMessages(chatJid: string): Promise<boolean> {
           await redis.xadd(
             getTaskRequestStream(),
             '*',
-            'type', 'job.logs',
-            'jobId', jobId,
-            'groupFolder', gf,
-            'resultStream', resultStream,
+            'type',
+            'job.logs',
+            'jobId',
+            jobId,
+            'groupFolder',
+            gf,
+            'resultStream',
+            resultStream,
           );
           const deadline = Date.now() + 10000;
           let lastId = '0-0';
@@ -2370,17 +2408,31 @@ export async function processGroupMessages(chatJid: string): Promise<boolean> {
             const remaining = deadline - Date.now();
             if (remaining <= 0) break;
             const response = await redis.xread(
-              'COUNT', 1, 'BLOCK', Math.min(remaining, 1000),
-              'STREAMS', resultStream, lastId,
+              'COUNT',
+              1,
+              'BLOCK',
+              Math.min(remaining, 1000),
+              'STREAMS',
+              resultStream,
+              lastId,
             );
             if (!response) continue;
-            for (const [, messages] of response as [string, [string, string[]][]][]) {
+            for (const [, messages] of response as [
+              string,
+              [string, string[]][],
+            ][]) {
               for (const [, flds] of messages) {
                 const obj: Record<string, string> = {};
-                for (let i = 0; i < flds.length; i += 2) obj[flds[i]] = flds[i + 1];
+                for (let i = 0; i < flds.length; i += 2)
+                  obj[flds[i]] = flds[i + 1];
                 if (obj.result) {
-                  const parsed = JSON.parse(obj.result) as { ok: boolean; result?: string; error?: string };
-                  if (!parsed.ok) throw new Error(parsed.error ?? 'unknown error');
+                  const parsed = JSON.parse(obj.result) as {
+                    ok: boolean;
+                    result?: string;
+                    error?: string;
+                  };
+                  if (!parsed.ok)
+                    throw new Error(parsed.error ?? 'unknown error');
                   return parsed.result ?? '';
                 }
               }
@@ -2394,10 +2446,14 @@ export async function processGroupMessages(chatJid: string): Promise<boolean> {
           await redis.xadd(
             getTaskRequestStream(),
             '*',
-            'type', 'job.cancel',
-            'jobId', jobId,
-            'groupFolder', gf,
-            'resultStream', resultStream,
+            'type',
+            'job.cancel',
+            'jobId',
+            jobId,
+            'groupFolder',
+            gf,
+            'resultStream',
+            resultStream,
           );
           const deadline = Date.now() + 10000;
           let lastId = '0-0';
@@ -2405,14 +2461,23 @@ export async function processGroupMessages(chatJid: string): Promise<boolean> {
             const remaining = deadline - Date.now();
             if (remaining <= 0) break;
             const response = await redis.xread(
-              'COUNT', 1, 'BLOCK', Math.min(remaining, 1000),
-              'STREAMS', resultStream, lastId,
+              'COUNT',
+              1,
+              'BLOCK',
+              Math.min(remaining, 1000),
+              'STREAMS',
+              resultStream,
+              lastId,
             );
             if (!response) continue;
-            for (const [, messages] of response as [string, [string, string[]][]][]) {
+            for (const [, messages] of response as [
+              string,
+              [string, string[]][],
+            ][]) {
               for (const [, flds] of messages) {
                 const obj: Record<string, string> = {};
-                for (let i = 0; i < flds.length; i += 2) obj[flds[i]] = flds[i + 1];
+                for (let i = 0; i < flds.length; i += 2)
+                  obj[flds[i]] = flds[i + 1];
                 if (obj.result) {
                   const parsed = JSON.parse(obj.result) as {
                     ok: boolean;
@@ -2420,7 +2485,8 @@ export async function processGroupMessages(chatJid: string): Promise<boolean> {
                     currentStatus?: string;
                     error?: string;
                   };
-                  if (!parsed.ok) throw new Error(parsed.error ?? 'unknown error');
+                  if (!parsed.ok)
+                    throw new Error(parsed.error ?? 'unknown error');
                   if (parsed.status === 'not_found') return 'Job not found';
                   if (parsed.status === 'not_active')
                     return `Job \`${jobId}\` is not active (status: ${parsed.currentStatus ?? 'unknown'})`;
@@ -2512,7 +2578,12 @@ export async function processGroupMessages(chatJid: string): Promise<boolean> {
     if (isScheduleCommand(content)) {
       let reply: string;
       try {
-        reply = await handleScheduleCommand(group.folder, chatJid, content, msg.sender);
+        reply = await handleScheduleCommand(
+          group.folder,
+          chatJid,
+          content,
+          msg.sender,
+        );
       } catch (err) {
         logger.error({ err, chatJid }, '/schedule command failed');
         reply = 'Schedule command failed. Please try again.';
@@ -2550,11 +2621,10 @@ export async function processGroupMessages(chatJid: string): Promise<boolean> {
 
     // /specialists command: reads from the channel's in-process catalog, no IPC.
     if (isSpecialistsCommand(content)) {
-      const reply = handleSpecialistsCommand(
-        group.folder,
-        content.trim(),
-        { catalog: specialistCatalog, getSpecialistUsage },
-      );
+      const reply = handleSpecialistsCommand(group.folder, content.trim(), {
+        catalog: specialistCatalog,
+        getSpecialistUsage,
+      });
       lastAgentTimestamp[chatJid] = msg.timestamp;
       saveState();
       await channel.setTyping?.(chatJid, true);
@@ -2804,6 +2874,14 @@ export async function processGroupMessages(chatJid: string): Promise<boolean> {
       saveState();
       return true;
     }
+    // No output, no per-specialist error to surface → roll back the cursor
+    // so the message is re-processed on the next tick. The caller learns
+    // via the `false` return that the batch did not complete successfully.
+    if (failedSpecialists.length === 0) {
+      lastAgentTimestamp[chatJid] = previousCursor;
+      saveState();
+      return false;
+    }
     // No output reached the user yet. Send a visible error for each failed
     // specialist so the user knows to retry rather than stare at silence.
     for (const [idx, specName] of failedSpecialists.entries()) {
@@ -3009,10 +3087,11 @@ export const TOOL_JOBS_PRUNE_INTERVAL_MS = Number(
  * scheduling anything.
  */
 export function startToolJobPruneInterval(): void {
-  if (!Number.isFinite(TOOL_JOBS_RETENTION_DAYS) || TOOL_JOBS_RETENTION_DAYS <= 0) {
-    logger.info(
-      'tool-job prune disabled (TOOL_JOBS_RETENTION_DAYS=0)',
-    );
+  if (
+    !Number.isFinite(TOOL_JOBS_RETENTION_DAYS) ||
+    TOOL_JOBS_RETENTION_DAYS <= 0
+  ) {
+    logger.info('tool-job prune disabled (TOOL_JOBS_RETENTION_DAYS=0)');
     return;
   }
   setInterval(() => {
@@ -3217,7 +3296,10 @@ async function main(): Promise<void> {
   registerCredentialTools(getDirectLLMRunner());
   registerProfileTool(getDirectLLMRunner());
   registerPlacesSearchTool(getDirectLLMRunner());
-  getDirectLLMRunner().registerLocalTool('read_user_profile', READ_USER_PROFILE_TOOL);
+  getDirectLLMRunner().registerLocalTool(
+    'read_user_profile',
+    READ_USER_PROFILE_TOOL,
+  );
 
   // Wire IPC-backed callbacks into the HTTP channel's /secrets REST endpoints.
   // Must run before the channel factory is invoked so the module-level fns are set.
@@ -3226,7 +3308,11 @@ async function main(): Promise<void> {
       const ipc = buildCredentialIpcClient();
       const res = await ipc('secret.list', { group });
       if (!res.ok) return [];
-      const raw = res.result as Array<{ catalogId: string; registeredAt: string; fields_present?: string[] }>;
+      const raw = res.result as Array<{
+        catalogId: string;
+        registeredAt: string;
+        fields_present?: string[];
+      }>;
       return (raw ?? []).map((e) => ({
         type: e.catalogId,
         fields_present: e.fields_present ?? [],
@@ -3260,8 +3346,16 @@ async function main(): Promise<void> {
     },
     async (group, type, fields) => {
       const ipc = buildCredentialIpcClient();
-      const res = await ipc('secret.add', { group, catalogId: type, fields: JSON.stringify(fields) });
-      if (!res.ok) return { ok: false as const, error: (res as { ok: false; error: string }).error };
+      const res = await ipc('secret.add', {
+        group,
+        catalogId: type,
+        fields: JSON.stringify(fields),
+      });
+      if (!res.ok)
+        return {
+          ok: false as const,
+          error: (res as { ok: false; error: string }).error,
+        };
       return { ok: true as const };
     },
   );

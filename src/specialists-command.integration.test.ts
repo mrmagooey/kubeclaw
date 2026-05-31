@@ -48,7 +48,9 @@ function handleSpecialistsCommand(
     // emoji-containing prompts.
     const codepoints = [...s.prompt];
     const desc =
-      codepoints.length > 80 ? codepoints.slice(0, 80).join('') + '…' : s.prompt;
+      codepoints.length > 80
+        ? codepoints.slice(0, 80).join('') + '…'
+        : s.prompt;
     return `@${s.name} — ${desc}`;
   });
   return lines.join('\n');

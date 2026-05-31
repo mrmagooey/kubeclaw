@@ -22,7 +22,10 @@ export function formatLocalTime(utcIso: string, timezone: string): string {
  * The optional `now` parameter exists solely for deterministic testing;
  * callers should omit it in production.
  */
-export function formatCurrentTime(timezone: string, now: Date = new Date()): string {
+export function formatCurrentTime(
+  timezone: string,
+  now: Date = new Date(),
+): string {
   // Extract the numeric offset in minutes from the Intl API.
   // We use a known-stable trick: format parts include a 'timeZoneName'
   // of style 'shortOffset' (e.g. "GMT+10" or "GMT-5").
@@ -39,7 +42,8 @@ export function formatCurrentTime(timezone: string, now: Date = new Date()): str
   });
 
   const parts = formatter.formatToParts(now);
-  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '00';
+  const get = (type: string) =>
+    parts.find((p) => p.type === type)?.value ?? '00';
 
   const year = get('year');
   const month = get('month');

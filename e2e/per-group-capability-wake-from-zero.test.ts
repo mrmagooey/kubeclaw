@@ -16,6 +16,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { acquireClusterLock } from './lib/per-test-cluster.js';
 import { execSync } from 'child_process';
 import { randomUUID } from 'crypto';
 import { Redis } from 'ioredis';
@@ -54,7 +55,9 @@ const echoSpec = {
   name: 'echo',
   image: ECHO_IMAGE,
   scope: 'group' as const,
-  scaleDownAfterIdleSeconds: 10,
+  // Test scales deployment to zero manually; this value doesn't drive the test,
+  // but the validator enforces a minimum of 60s (see validateScopeFields).
+  scaleDownAfterIdleSeconds: 60,
   volumeFromGroupPvc: false,
   credentialsFrom: 'none' as const,
   resources: {
@@ -75,7 +78,13 @@ describe.skipIf(!K8S_AVAILABLE)('Story 39 — per-group capability wake from zer
   let k8sClient: RealPerGroupK8sClient;
   let redis: Redis;
 
+  let releaseClusterLock: (() => void) | null = null;
+
   beforeAll(async () => {
+    // Serialise with other helm-installing e2e tests so we don't race them
+    // for shared minikube docker/image state.
+    releaseClusterLock = await acquireClusterLock();
+
     // Ensure namespace exists.
     try {
       sh(
@@ -85,11 +94,20 @@ describe.skipIf(!K8S_AVAILABLE)('Story 39 — per-group capability wake from zer
       console.warn('namespace setup warning:', err);
     }
 
-    // Load echo image into kind cluster (best-effort; skip if not using kind).
+    // Build the echo image into minikube's docker daemon so the in-cluster
+    // capability pod can pull it locally. Idempotent — docker build is a no-op
+    // on cache hits. Falls back to `kind load` for legacy kind environments.
     try {
-      sh(`kind load docker-image ${ECHO_IMAGE} --name kubeclaw-e2e-istio 2>&1 || true`);
+      sh(
+        'eval $(minikube docker-env) && ' +
+          `docker build -t ${ECHO_IMAGE} -f container/echo-mcp/Dockerfile container/echo-mcp`,
+      );
     } catch {
-      // Not using kind — assume image already present.
+      try {
+        sh(`kind load docker-image ${ECHO_IMAGE} --name kubeclaw-e2e-istio 2>&1 || true`);
+      } catch {
+        // Not using kind either — assume image already present.
+      }
     }
 
     await _initTestDatabase();
@@ -102,7 +120,7 @@ describe.skipIf(!K8S_AVAILABLE)('Story 39 — per-group capability wake from zer
     } catch (err) {
       console.warn(`Redis at ${REDIS_URL} not reachable — some assertions may be skipped.`);
     }
-  }, 300_000);
+  }, 600_000);
 
   beforeEach(() => {
     __resetDbForTest();
@@ -121,6 +139,12 @@ describe.skipIf(!K8S_AVAILABLE)('Story 39 — per-group capability wake from zer
       }
     }
     try { await redis.quit(); } catch { /* ignore */ }
+    // Delete the namespace and release the cluster lock so the next test
+    // can claim it.
+    try {
+      sh(`kubectl delete namespace ${NAMESPACE} --ignore-not-found --wait=false`);
+    } catch { /* ignore */ }
+    if (releaseClusterLock) releaseClusterLock();
   });
 
   it('AC1 – request to scaled-to-zero capability resolves within 60 s (state=ready)', async () => {

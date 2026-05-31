@@ -8,7 +8,7 @@
 import { getGroupProfile } from '../../db.js';
 import { logger } from '../../logger.js';
 import type { ContainerInput } from '../types.js';
-import type { LocalTool } from '../direct-llm-runner.js';
+import type { LocalTool } from '../types.js';
 import OpenAI from 'openai';
 
 export async function readUserProfileHandler(

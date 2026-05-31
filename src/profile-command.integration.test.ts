@@ -83,15 +83,24 @@ describe('registerProfileTool integration', () => {
     const groupFolder = 'integration-test-group';
 
     // Capture the registered handler
-    let capturedHandler: ((args: Record<string, unknown>, input: { groupFolder: string }) => Promise<string>) | null = null;
+    let capturedHandler:
+      | ((
+          args: Record<string, unknown>,
+          input: { groupFolder: string },
+        ) => Promise<string>)
+      | null = null;
     const mockRunner = {
-      registerLocalTool: vi.fn((_name: string, tool: { handler: typeof capturedHandler }) => {
-        capturedHandler = tool.handler;
-      }),
+      registerLocalTool: vi.fn(
+        (_name: string, tool: { handler: typeof capturedHandler }) => {
+          capturedHandler = tool.handler;
+        },
+      ),
     };
 
     registerProfileTool(
-      mockRunner as unknown as ReturnType<typeof import('./runtime/index.js').getDirectLLMRunner>,
+      mockRunner as unknown as ReturnType<
+        typeof import('./runtime/index.js').getDirectLLMRunner
+      >,
     );
 
     expect(capturedHandler).not.toBeNull();
@@ -129,14 +138,23 @@ describe('registerProfileTool integration', () => {
       updatedAt: '2026-05-28T08:00:00.000Z',
     });
 
-    let capturedHandler: ((args: Record<string, unknown>, input: { groupFolder: string }) => Promise<string>) | null = null;
+    let capturedHandler:
+      | ((
+          args: Record<string, unknown>,
+          input: { groupFolder: string },
+        ) => Promise<string>)
+      | null = null;
     const mockRunner = {
-      registerLocalTool: vi.fn((_name: string, tool: { handler: typeof capturedHandler }) => {
-        capturedHandler = tool.handler;
-      }),
+      registerLocalTool: vi.fn(
+        (_name: string, tool: { handler: typeof capturedHandler }) => {
+          capturedHandler = tool.handler;
+        },
+      ),
     };
     registerProfileTool(
-      mockRunner as unknown as ReturnType<typeof import('./runtime/index.js').getDirectLLMRunner>,
+      mockRunner as unknown as ReturnType<
+        typeof import('./runtime/index.js').getDirectLLMRunner
+      >,
     );
 
     // Only update budgetTier

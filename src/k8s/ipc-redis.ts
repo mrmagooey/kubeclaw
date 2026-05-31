@@ -932,7 +932,9 @@ export async function startToolPodSpawnWatcher(): Promise<void> {
                 timeout: timeoutMs,
                 groupsPvc,
                 sessionsPvc,
-                ...(maxToolOutputBytes !== undefined ? { maxToolOutputBytes } : {}),
+                ...(maxToolOutputBytes !== undefined
+                  ? { maxToolOutputBytes }
+                  : {}),
               });
               logger.debug(
                 { agentJobId, category },
@@ -1664,7 +1666,8 @@ export async function startTaskRequestWatcher(
             //
             // Story 66: if jobId is present, perform targeted cancel with DB ownership check.
             // Story 49: if no jobId, do group-level cancel (legacy path).
-            const { resultStream: cancelResultStream, jobId: cancelJobId } = obj;
+            const { resultStream: cancelResultStream, jobId: cancelJobId } =
+              obj;
 
             if (cancelJobId) {
               // Story 66: targeted cancel by jobId with DB ownership check.
@@ -1728,11 +1731,16 @@ export async function startTaskRequestWatcher(
                         cancelResultStream,
                         '*',
                         'result',
-                        JSON.stringify({ ok: true, status: 'cancelled', jobName }),
+                        JSON.stringify({
+                          ok: true,
+                          status: 'cancelled',
+                          jobName,
+                        }),
                       );
                   } catch (err) {
                     activeAgentJobsByGroup.delete(groupFolder);
-                    const error = err instanceof Error ? err.message : String(err);
+                    const error =
+                      err instanceof Error ? err.message : String(err);
                     logger.error(
                       { groupFolder, cancelJobId, jobName, error },
                       'job.cancel (by id): failed to stop job',
@@ -1748,84 +1756,88 @@ export async function startTaskRequestWatcher(
                 }
               }
             } else {
-            // Story 49: legacy /cancel — find active K8s job for the group.
-            const jobName = activeAgentJobsByGroup.get(groupFolder);
-            if (!jobName) {
-              logger.info(
-                { groupFolder },
-                'job.cancel: no active job for group',
-              );
-              if (cancelResultStream)
-                await redis.xadd(
-                  cancelResultStream,
-                  '*',
-                  'result',
-                  JSON.stringify({ ok: true, status: 'no_active_job' }),
-                );
-            } else {
-              try {
-                await jobRunner.stopJob(jobName);
-                // Clear the map entry immediately on success so a subsequent
-                // /cancel returns "no active job" rather than failing on a
-                // stale entry. (stopJob already silently swallows NotFound.)
-                activeAgentJobsByGroup.delete(groupFolder);
+              // Story 49: legacy /cancel — find active K8s job for the group.
+              const jobName = activeAgentJobsByGroup.get(groupFolder);
+              if (!jobName) {
                 logger.info(
-                  { groupFolder, jobName },
-                  'job.cancel: job stopped',
+                  { groupFolder },
+                  'job.cancel: no active job for group',
                 );
-
-                // Publish a "Cancelled" notice to the channel's output channel
-                // using the same envelope as regular bot messages so the channel
-                // pod's storeBotMessage callback persists it to conversation_history
-                // with is_bot_message=1 and streams it to the SSE client.
-                // Publish failure is non-fatal: the job IS stopped; SSE delivery
-                // is best-effort.
-                const noticeId = `cancel-${Date.now()}-${groupFolder}`;
-                const outputChannel = getOutputChannel(groupFolder);
+                if (cancelResultStream)
+                  await redis.xadd(
+                    cancelResultStream,
+                    '*',
+                    'result',
+                    JSON.stringify({ ok: true, status: 'no_active_job' }),
+                  );
+              } else {
                 try {
-                  await getRedisClient().publish(
-                    outputChannel,
-                    JSON.stringify({
-                      type: 'message',
-                      chatJid: obj.chatJid ?? groupFolder,
-                      text: 'Cancelled',
-                      persist: true,
-                      noticeId,
-                    }),
+                  await jobRunner.stopJob(jobName);
+                  // Clear the map entry immediately on success so a subsequent
+                  // /cancel returns "no active job" rather than failing on a
+                  // stale entry. (stopJob already silently swallows NotFound.)
+                  activeAgentJobsByGroup.delete(groupFolder);
+                  logger.info(
+                    { groupFolder, jobName },
+                    'job.cancel: job stopped',
                   );
-                } catch (pubErr) {
-                  logger.warn(
-                    { groupFolder, jobName, err: pubErr },
-                    'job.cancel: notice publish failed (job was stopped successfully)',
-                  );
-                }
 
-                if (cancelResultStream)
-                  await redis.xadd(
-                    cancelResultStream,
-                    '*',
-                    'result',
-                    JSON.stringify({ ok: true, status: 'cancelled', jobName }),
+                  // Publish a "Cancelled" notice to the channel's output channel
+                  // using the same envelope as regular bot messages so the channel
+                  // pod's storeBotMessage callback persists it to conversation_history
+                  // with is_bot_message=1 and streams it to the SSE client.
+                  // Publish failure is non-fatal: the job IS stopped; SSE delivery
+                  // is best-effort.
+                  const noticeId = `cancel-${Date.now()}-${groupFolder}`;
+                  const outputChannel = getOutputChannel(groupFolder);
+                  try {
+                    await getRedisClient().publish(
+                      outputChannel,
+                      JSON.stringify({
+                        type: 'message',
+                        chatJid: obj.chatJid ?? groupFolder,
+                        text: 'Cancelled',
+                        persist: true,
+                        noticeId,
+                      }),
+                    );
+                  } catch (pubErr) {
+                    logger.warn(
+                      { groupFolder, jobName, err: pubErr },
+                      'job.cancel: notice publish failed (job was stopped successfully)',
+                    );
+                  }
+
+                  if (cancelResultStream)
+                    await redis.xadd(
+                      cancelResultStream,
+                      '*',
+                      'result',
+                      JSON.stringify({
+                        ok: true,
+                        status: 'cancelled',
+                        jobName,
+                      }),
+                    );
+                } catch (err) {
+                  // stopJob threw — clear the map entry anyway so a retried
+                  // /cancel doesn't try to stop a job that might already be gone.
+                  activeAgentJobsByGroup.delete(groupFolder);
+                  const error =
+                    err instanceof Error ? err.message : String(err);
+                  logger.error(
+                    { groupFolder, jobName, error },
+                    'job.cancel: failed to stop job',
                   );
-              } catch (err) {
-                // stopJob threw — clear the map entry anyway so a retried
-                // /cancel doesn't try to stop a job that might already be gone.
-                activeAgentJobsByGroup.delete(groupFolder);
-                const error =
-                  err instanceof Error ? err.message : String(err);
-                logger.error(
-                  { groupFolder, jobName, error },
-                  'job.cancel: failed to stop job',
-                );
-                if (cancelResultStream)
-                  await redis.xadd(
-                    cancelResultStream,
-                    '*',
-                    'result',
-                    JSON.stringify({ ok: false, error }),
-                  );
+                  if (cancelResultStream)
+                    await redis.xadd(
+                      cancelResultStream,
+                      '*',
+                      'result',
+                      JSON.stringify({ ok: false, error }),
+                    );
+                }
               }
-            }
             } // end else (Story 49 path)
           } else if (type === 'job.logs') {
             // Fetch K8s pod logs for a completed tool job.

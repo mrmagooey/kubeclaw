@@ -105,7 +105,11 @@ describe('/capabilities tools — integration (handleCapabilitiesUpdate wiring)'
 
     await handleCapabilitiesUpdate(update);
 
-    const result = await handleCapabilitiesCommand(TEST_GROUP, '/capabilities tools echo', noOpIpc);
+    const result = await handleCapabilitiesCommand(
+      TEST_GROUP,
+      '/capabilities tools echo',
+      noOpIpc,
+    );
 
     expect(result.reply).toContain('echo_text');
     expect(result.reply).toContain('echo_json');
@@ -123,7 +127,11 @@ describe('/capabilities tools — integration (handleCapabilitiesUpdate wiring)'
 
     await handleCapabilitiesUpdate(update);
 
-    const result = await handleCapabilitiesCommand(TEST_GROUP, '/capabilities tools echo', noOpIpc);
+    const result = await handleCapabilitiesCommand(
+      TEST_GROUP,
+      '/capabilities tools echo',
+      noOpIpc,
+    );
 
     expect(result.reply).toMatch(/schema not yet available/i);
   });
@@ -136,7 +144,9 @@ describe('/capabilities tools — integration (handleCapabilitiesUpdate wiring)'
           name: 'echo',
           kind: 'mcp-group',
           state: 'ready',
-          toolSchemas: [{ name: 'echo_text', description: 'Echoes text', inputSchema: {} }],
+          toolSchemas: [
+            { name: 'echo_text', description: 'Echoes text', inputSchema: {} },
+          ],
         },
       ]),
     );
@@ -145,7 +155,11 @@ describe('/capabilities tools — integration (handleCapabilitiesUpdate wiring)'
     // Then push an update with no mcp-group entries.
     await handleCapabilitiesUpdate(buildUpdate([]));
 
-    const result = await handleCapabilitiesCommand(TEST_GROUP, '/capabilities tools echo', noOpIpc);
+    const result = await handleCapabilitiesCommand(
+      TEST_GROUP,
+      '/capabilities tools echo',
+      noOpIpc,
+    );
     expect(result.reply).toMatch(/not provisioned/i);
   });
 
@@ -156,12 +170,18 @@ describe('/capabilities tools — integration (handleCapabilitiesUpdate wiring)'
         name: 'echo',
         kind: 'mcp-group',
         state: 'ready',
-        toolSchemas: [{ name: 'my_tool', description: longDesc, inputSchema: {} }],
+        toolSchemas: [
+          { name: 'my_tool', description: longDesc, inputSchema: {} },
+        ],
       },
     ]);
     await handleCapabilitiesUpdate(update);
 
-    const result = await handleCapabilitiesCommand(TEST_GROUP, '/capabilities tools echo', noOpIpc);
+    const result = await handleCapabilitiesCommand(
+      TEST_GROUP,
+      '/capabilities tools echo',
+      noOpIpc,
+    );
     expect(result.reply).toContain('my_tool');
     expect(result.reply).not.toContain(longDesc);
     expect(result.reply).toContain('…');

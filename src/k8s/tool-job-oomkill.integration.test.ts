@@ -74,7 +74,9 @@ vi.mock('../config.js', () => ({
 vi.mock('./redis-client.js', () => {
   const { EventEmitter } = require('events');
   const mockSubscriber = new EventEmitter() as any;
-  mockSubscriber.subscribe = vi.fn((_ch: string, cb: (err: Error | null) => void) => cb(null));
+  mockSubscriber.subscribe = vi.fn(
+    (_ch: string, cb: (err: Error | null) => void) => cb(null),
+  );
   mockSubscriber.unsubscribe = vi.fn();
   mockSubscriber.off = vi.fn();
   mockSubscriber.quit = vi.fn().mockResolvedValue('OK');
@@ -254,7 +256,9 @@ describe('tool-job OOMKill — integration', () => {
     mockBatchApi.createNamespacedJob.mockResolvedValue({
       metadata: { name: jobId },
     });
-    mockBatchApi.readNamespacedJob.mockResolvedValue(BACKOFF_LIMIT_EXCEEDED_STATUS);
+    mockBatchApi.readNamespacedJob.mockResolvedValue(
+      BACKOFF_LIMIT_EXCEEDED_STATUS,
+    );
     mockCoreApi.listNamespacedPod.mockResolvedValue(OOM_KILLED_POD_LIST);
 
     recordToolJob(jobId, GROUP_FOLDER, CHAT_JID);
@@ -275,7 +279,9 @@ describe('tool-job OOMKill — integration', () => {
     mockBatchApi.createNamespacedJob.mockResolvedValue({
       metadata: { name: jobId },
     });
-    mockBatchApi.readNamespacedJob.mockResolvedValue(BACKOFF_LIMIT_EXCEEDED_STATUS);
+    mockBatchApi.readNamespacedJob.mockResolvedValue(
+      BACKOFF_LIMIT_EXCEEDED_STATUS,
+    );
     mockCoreApi.listNamespacedPod.mockResolvedValue(OOM_KILLED_POD_LIST);
 
     recordToolJob(jobId, GROUP_FOLDER, CHAT_JID);
@@ -300,7 +306,9 @@ describe('tool-job OOMKill — integration', () => {
     mockBatchApi.createNamespacedJob.mockResolvedValue({
       metadata: { name: jobId },
     });
-    mockBatchApi.readNamespacedJob.mockResolvedValue(BACKOFF_LIMIT_EXCEEDED_STATUS);
+    mockBatchApi.readNamespacedJob.mockResolvedValue(
+      BACKOFF_LIMIT_EXCEEDED_STATUS,
+    );
     mockCoreApi.listNamespacedPod.mockResolvedValue(OOM_KILLED_POD_LIST);
 
     recordToolJob(jobId, GROUP_FOLDER, CHAT_JID);
@@ -322,7 +330,9 @@ describe('tool-job OOMKill — integration', () => {
     mockBatchApi.createNamespacedJob.mockResolvedValue({
       metadata: { name: jobId },
     });
-    mockBatchApi.readNamespacedJob.mockResolvedValue(BACKOFF_LIMIT_EXCEEDED_STATUS);
+    mockBatchApi.readNamespacedJob.mockResolvedValue(
+      BACKOFF_LIMIT_EXCEEDED_STATUS,
+    );
     mockCoreApi.listNamespacedPod.mockResolvedValue(OOM_KILLED_POD_LIST);
 
     recordToolJob(jobId, GROUP_FOLDER, CHAT_JID);
@@ -346,7 +356,9 @@ describe('tool-job OOMKill — integration', () => {
     mockBatchApi.createNamespacedJob.mockResolvedValue({
       metadata: { name: jobId },
     });
-    mockBatchApi.readNamespacedJob.mockResolvedValue(BACKOFF_LIMIT_EXCEEDED_STATUS);
+    mockBatchApi.readNamespacedJob.mockResolvedValue(
+      BACKOFF_LIMIT_EXCEEDED_STATUS,
+    );
     mockCoreApi.listNamespacedPod.mockResolvedValue(OOM_KILLED_POD_LIST);
 
     recordToolJob(jobId, GROUP_FOLDER, CHAT_JID);
@@ -364,7 +376,9 @@ describe('tool-job OOMKill — integration', () => {
     mockBatchApi.createNamespacedJob.mockResolvedValue({
       metadata: { name: jobId },
     });
-    mockBatchApi.readNamespacedJob.mockResolvedValue(BACKOFF_LIMIT_EXCEEDED_STATUS);
+    mockBatchApi.readNamespacedJob.mockResolvedValue(
+      BACKOFF_LIMIT_EXCEEDED_STATUS,
+    );
     mockCoreApi.listNamespacedPod.mockResolvedValue(OOM_KILLED_POD_LIST);
 
     recordToolJob(jobId, GROUP_FOLDER, CHAT_JID);
@@ -385,7 +399,9 @@ describe('tool-job OOMKill — integration', () => {
     mockBatchApi.createNamespacedJob.mockResolvedValue({
       metadata: { name: jobId },
     });
-    mockBatchApi.readNamespacedJob.mockResolvedValue(BACKOFF_LIMIT_EXCEEDED_STATUS);
+    mockBatchApi.readNamespacedJob.mockResolvedValue(
+      BACKOFF_LIMIT_EXCEEDED_STATUS,
+    );
     mockCoreApi.listNamespacedPod.mockResolvedValue(OOM_KILLED_POD_LIST);
 
     recordToolJob(jobId, GROUP_FOLDER, CHAT_JID);
@@ -404,11 +420,16 @@ describe('tool-job OOMKill — integration', () => {
     mockBatchApi.createNamespacedJob.mockResolvedValueOnce({
       metadata: { name: jobId1 },
     });
-    mockBatchApi.readNamespacedJob.mockResolvedValueOnce(BACKOFF_LIMIT_EXCEEDED_STATUS);
+    mockBatchApi.readNamespacedJob.mockResolvedValueOnce(
+      BACKOFF_LIMIT_EXCEEDED_STATUS,
+    );
     mockCoreApi.listNamespacedPod.mockResolvedValueOnce(OOM_KILLED_POD_LIST);
 
     recordToolJob(jobId1, GROUP_FOLDER, CHAT_JID);
-    const result1 = await runner.runToolJob(testGroup, { ...testInput, jobId: jobId1 });
+    const result1 = await runner.runToolJob(testGroup, {
+      ...testInput,
+      jobId: jobId1,
+    });
     expect(result1.status).toBe('oomkill');
 
     // Second job: succeeds normally
@@ -416,10 +437,15 @@ describe('tool-job OOMKill — integration', () => {
     mockBatchApi.createNamespacedJob.mockResolvedValueOnce({
       metadata: { name: jobId2 },
     });
-    mockBatchApi.readNamespacedJob.mockResolvedValueOnce({ status: { succeeded: 1 } });
+    mockBatchApi.readNamespacedJob.mockResolvedValueOnce({
+      status: { succeeded: 1 },
+    });
 
     recordToolJob(jobId2, GROUP_FOLDER, CHAT_JID);
-    const result2 = await runner.runToolJob(testGroup, { ...testInput, jobId: jobId2 });
+    const result2 = await runner.runToolJob(testGroup, {
+      ...testInput,
+      jobId: jobId2,
+    });
     expect(result2.status).toBe('success');
   });
 });

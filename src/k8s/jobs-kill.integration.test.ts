@@ -28,7 +28,14 @@ const {
   const mockStopJob = vi.fn().mockResolvedValue(undefined);
   const mockSubscriberOn = vi.fn();
   const mockSubscribe = vi.fn();
-  return { mockXadd, mockXread, mockPublish, mockStopJob, mockSubscriberOn, mockSubscribe };
+  return {
+    mockXadd,
+    mockXread,
+    mockPublish,
+    mockStopJob,
+    mockSubscriberOn,
+    mockSubscribe,
+  };
 });
 
 // ── Module mocks ──────────────────────────────────────────────────────────────
@@ -47,11 +54,17 @@ vi.mock('../k8s/redis-client.js', () => ({
     quit: vi.fn(),
   }),
   getTaskRequestStream: vi.fn().mockReturnValue('kubeclaw:task-requests'),
-  getOutputChannel: vi.fn().mockImplementation((g: string) => `kubeclaw:messages:${g}`),
-  getToolJobResultStream: vi.fn().mockImplementation((id: string) => `kubeclaw:agent-job-result:${id}`),
+  getOutputChannel: vi
+    .fn()
+    .mockImplementation((g: string) => `kubeclaw:messages:${g}`),
+  getToolJobResultStream: vi
+    .fn()
+    .mockImplementation((id: string) => `kubeclaw:agent-job-result:${id}`),
   getSpawnToolJobStream: vi.fn().mockReturnValue('kubeclaw:spawn-agent-job'),
   getSpawnToolPodStream: vi.fn().mockReturnValue('kubeclaw:spawn-tool-pod'),
-  getInputStream: vi.fn().mockImplementation((id: string) => `kubeclaw:input:${id}`),
+  getInputStream: vi
+    .fn()
+    .mockImplementation((id: string) => `kubeclaw:input:${id}`),
   createStreamWatcherClient: vi.fn().mockReturnValue({
     xread: mockXread,
     xrevrange: vi.fn().mockResolvedValue([]),
@@ -156,12 +169,16 @@ async function runWatcherWithMessages(
 
   mockXread
     .mockResolvedValueOnce([['kubeclaw:task-requests', messages]])
-    .mockImplementation(() => new Promise((r) => setTimeout(() => r(null), 500)));
+    .mockImplementation(
+      () => new Promise((r) => setTimeout(() => r(null), 500)),
+    );
 
   const watcherPromise = startTaskRequestWatcher();
   await new Promise((r) => setTimeout(r, 80));
   await stopIpcWatcher();
-  await watcherPromise.catch(() => {/* loop exits once stopped */});
+  await watcherPromise.catch(() => {
+    /* loop exits once stopped */
+  });
 }
 
 function buildKillFields(
@@ -170,10 +187,14 @@ function buildKillFields(
   resultStream: string,
 ): string[] {
   return [
-    'type', 'job.cancel',
-    'jobId', jobId,
-    'groupFolder', groupFolder,
-    'resultStream', resultStream,
+    'type',
+    'job.cancel',
+    'jobId',
+    jobId,
+    'groupFolder',
+    groupFolder,
+    'resultStream',
+    resultStream,
   ];
 }
 
@@ -183,10 +204,14 @@ function buildCancelFields(
   chatJid = 'chat@g.us',
 ): string[] {
   return [
-    'type', 'job.cancel',
-    'groupFolder', groupFolder,
-    'chatJid', chatJid,
-    'resultStream', resultStream,
+    'type',
+    'job.cancel',
+    'groupFolder',
+    groupFolder,
+    'chatJid',
+    chatJid,
+    'resultStream',
+    resultStream,
   ];
 }
 
@@ -217,7 +242,9 @@ afterEach(async () => {
 
 describe('job.cancel with jobId (Story 66): active job, correct group', () => {
   it('AC1: stopJob called with K8s job name and result stream receives cancelled', async () => {
-    vi.mocked(db.getToolJobByIdForGroup).mockReturnValue(fakeActiveRow(JOB_ID, GROUP));
+    vi.mocked(db.getToolJobByIdForGroup).mockReturnValue(
+      fakeActiveRow(JOB_ID, GROUP),
+    );
     _testSetActiveAgentJob(GROUP, K8S_JOB_NAME);
 
     await runWatcherWithMessages([
@@ -252,7 +279,9 @@ describe('job.cancel with jobId (Story 66): not-found cases', () => {
 
 describe('job.cancel with jobId (Story 66): already-resolved job', () => {
   it('AC2: completed job → not_active with currentStatus', async () => {
-    vi.mocked(db.getToolJobByIdForGroup).mockReturnValue(fakeCompletedRow(JOB_ID, GROUP));
+    vi.mocked(db.getToolJobByIdForGroup).mockReturnValue(
+      fakeCompletedRow(JOB_ID, GROUP),
+    );
 
     await runWatcherWithMessages([
       ['1-0', buildKillFields(GROUP, JOB_ID, RESULT_STREAM)],

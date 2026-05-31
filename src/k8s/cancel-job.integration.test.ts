@@ -28,7 +28,14 @@ const {
   const mockStopJob = vi.fn().mockResolvedValue(undefined);
   const mockSubscriberOn = vi.fn();
   const mockSubscribe = vi.fn();
-  return { mockXadd, mockXread, mockPublish, mockStopJob, mockSubscriberOn, mockSubscribe };
+  return {
+    mockXadd,
+    mockXread,
+    mockPublish,
+    mockStopJob,
+    mockSubscriberOn,
+    mockSubscribe,
+  };
 });
 
 // ── Module mocks ──────────────────────────────────────────────────────────────
@@ -47,11 +54,17 @@ vi.mock('../k8s/redis-client.js', () => ({
     quit: vi.fn(),
   }),
   getTaskRequestStream: vi.fn().mockReturnValue('kubeclaw:task-requests'),
-  getOutputChannel: vi.fn().mockImplementation((g: string) => `kubeclaw:messages:${g}`),
-  getToolJobResultStream: vi.fn().mockImplementation((id: string) => `kubeclaw:agent-job-result:${id}`),
+  getOutputChannel: vi
+    .fn()
+    .mockImplementation((g: string) => `kubeclaw:messages:${g}`),
+  getToolJobResultStream: vi
+    .fn()
+    .mockImplementation((id: string) => `kubeclaw:agent-job-result:${id}`),
   getSpawnToolJobStream: vi.fn().mockReturnValue('kubeclaw:spawn-agent-job'),
   getSpawnToolPodStream: vi.fn().mockReturnValue('kubeclaw:spawn-tool-pod'),
-  getInputStream: vi.fn().mockImplementation((id: string) => `kubeclaw:input:${id}`),
+  getInputStream: vi
+    .fn()
+    .mockImplementation((id: string) => `kubeclaw:input:${id}`),
   createStreamWatcherClient: vi.fn().mockReturnValue({
     xread: mockXread,
     xrevrange: vi.fn().mockResolvedValue([]),
@@ -125,10 +138,14 @@ function buildCancelFields(
   chatJid = 'chat@g.us',
 ): string[] {
   return [
-    'type', 'job.cancel',
-    'groupFolder', groupFolder,
-    'chatJid', chatJid,
-    'resultStream', resultStream,
+    'type',
+    'job.cancel',
+    'groupFolder',
+    groupFolder,
+    'chatJid',
+    chatJid,
+    'resultStream',
+    resultStream,
   ];
 }
 
@@ -148,13 +165,17 @@ async function runWatcherWithMessages(
   // outer condition, causing the loop to exit naturally on the next iteration.
   mockXread
     .mockResolvedValueOnce([['kubeclaw:task-requests', messages]])
-    .mockImplementation(() => new Promise((r) => setTimeout(() => r(null), 500)));
+    .mockImplementation(
+      () => new Promise((r) => setTimeout(() => r(null), 500)),
+    );
 
   const watcherPromise = startTaskRequestWatcher();
   // Give the async loop a moment to process the queued message
   await new Promise((r) => setTimeout(r, 50));
   await stopIpcWatcher();
-  await watcherPromise.catch(() => {/* loop exits normally once stopped */});
+  await watcherPromise.catch(() => {
+    /* loop exits normally once stopped */
+  });
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

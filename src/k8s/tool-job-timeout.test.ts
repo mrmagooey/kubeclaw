@@ -69,7 +69,9 @@ vi.mock('../logger.js', () => ({ logger: mockLogger }));
 vi.mock('./redis-client.js', () => {
   const { EventEmitter } = require('events');
   const mockSubscriber = new EventEmitter() as any;
-  mockSubscriber.subscribe = vi.fn((_ch: string, cb: (err: Error | null) => void) => cb(null));
+  mockSubscriber.subscribe = vi.fn(
+    (_ch: string, cb: (err: Error | null) => void) => cb(null),
+  );
   mockSubscriber.unsubscribe = vi.fn();
   mockSubscriber.off = vi.fn();
   mockSubscriber.quit = vi.fn().mockResolvedValue('OK');
@@ -107,7 +109,11 @@ vi.mock('@kubernetes/client-node', () => ({
   loadAllYaml: vi.fn(() => []),
 }));
 
-import { JobRunner, DeadlineExceededError, formatTimeoutNotice } from './job-runner.js';
+import {
+  JobRunner,
+  DeadlineExceededError,
+  formatTimeoutNotice,
+} from './job-runner.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -222,7 +228,9 @@ describe('JobRunner.waitForJobCompletion', () => {
   });
 
   it('throws DeadlineExceededError when status.failed>0 and reason=DeadlineExceeded', async () => {
-    mockBatchApi.readNamespacedJob.mockResolvedValue(makeDeadlineExceededJobStatus());
+    mockBatchApi.readNamespacedJob.mockResolvedValue(
+      makeDeadlineExceededJobStatus(),
+    );
 
     await expect(
       jobRunner.waitForJobCompletion('nc-test-abc123'),
@@ -230,7 +238,9 @@ describe('JobRunner.waitForJobCompletion', () => {
   });
 
   it('throws DeadlineExceededError from condition-only path (no failed count)', async () => {
-    mockBatchApi.readNamespacedJob.mockResolvedValue(makeDeadlineExceededConditionOnly());
+    mockBatchApi.readNamespacedJob.mockResolvedValue(
+      makeDeadlineExceededConditionOnly(),
+    );
 
     await expect(
       jobRunner.waitForJobCompletion('nc-test-abc123'),
@@ -242,7 +252,12 @@ describe('JobRunner.waitForJobCompletion', () => {
       status: {
         failed: 1,
         conditions: [
-          { type: 'Failed', status: 'True', reason: 'BackoffLimitExceeded', message: 'Backoff' },
+          {
+            type: 'Failed',
+            status: 'True',
+            reason: 'BackoffLimitExceeded',
+            message: 'Backoff',
+          },
         ],
       },
     });
@@ -294,7 +309,9 @@ describe('JobRunner.runToolJob — DeadlineExceeded (Story 43)', () => {
     mockBatchApi.createNamespacedJob.mockResolvedValue({
       metadata: { name: 'nc-test-group-abc123' },
     });
-    mockBatchApi.readNamespacedJob.mockResolvedValue(makeDeadlineExceededJobStatus());
+    mockBatchApi.readNamespacedJob.mockResolvedValue(
+      makeDeadlineExceededJobStatus(),
+    );
   });
 
   afterEach(() => {
@@ -307,14 +324,21 @@ describe('JobRunner.runToolJob — DeadlineExceeded (Story 43)', () => {
   });
 
   it('does NOT throw — the group is not wedged (AC4)', async () => {
-    await expect(jobRunner.runToolJob(testGroup, testInput)).resolves.toBeDefined();
+    await expect(
+      jobRunner.runToolJob(testGroup, testInput),
+    ).resolves.toBeDefined();
   });
 
   it('publishes a timeout notice via timeoutPublisher', async () => {
     await jobRunner.runToolJob(testGroup, testInput);
 
     expect(publishSpy).toHaveBeenCalledOnce();
-    const [groupFolder, chatJid, text, noticeId] = publishSpy.mock.calls[0] as [string, string, string, string];
+    const [groupFolder, chatJid, text, noticeId] = publishSpy.mock.calls[0] as [
+      string,
+      string,
+      string,
+      string,
+    ];
     expect(groupFolder).toBe('test-group');
     expect(chatJid).toBe('test@g.us');
     expect(text.toLowerCase()).toContain('timed out');
@@ -330,7 +354,10 @@ describe('JobRunner.runToolJob — DeadlineExceeded (Story 43)', () => {
 
   it('calls resolveToolJob with "timeout" (AC DB update)', async () => {
     await jobRunner.runToolJob(testGroup, testInput);
-    expect(mockResolveToolJob).toHaveBeenCalledWith(expect.any(String), 'timeout');
+    expect(mockResolveToolJob).toHaveBeenCalledWith(
+      expect.any(String),
+      'timeout',
+    );
   });
 
   it('logs event: tool_job_timeout with groupFolder and jobName (AC2)', async () => {

@@ -72,10 +72,7 @@ vi.mock('./runtime/index.js', () => ({
   shutdownAllRunners: vi.fn(),
 }));
 import { _initTestDatabase, __resetDbForTest } from './db.js';
-import {
-  handleScheduleCommand,
-  isScheduleCommand,
-} from './channel-runner.js';
+import { handleScheduleCommand, isScheduleCommand } from './channel-runner.js';
 
 // Initialise once; share across all tests (reset per-test below).
 beforeAll(async () => {

@@ -43,7 +43,8 @@ describe('placesSearchHandler', () => {
 
   it('sets X-Goog-Api-Key header when mode=off and key is real', async () => {
     process.env.CREDENTIAL_INJECTION_MODE = 'off';
-    process.env.GOOGLE_PLACES_API_KEY = 'AIzaTestKeyAbcdefghijklmnopqrstuvwxyz01';
+    process.env.GOOGLE_PLACES_API_KEY =
+      'AIzaTestKeyAbcdefghijklmnopqrstuvwxyz01';
     process.env.GOOGLE_PLACES_BASE_URL = 'https://places.googleapis.com';
 
     const mockFetch = vi.fn().mockResolvedValue({
@@ -55,12 +56,20 @@ describe('placesSearchHandler', () => {
     const { placesSearchHandler } = await import('./places-search.js');
     await placesSearchHandler(
       { query: 'Italian', location: '37.7749,-122.4194' },
-      { prompt: '', groupFolder: 'test', chatJid: 'x@x', isMain: false, assistantName: 'Bot' },
+      {
+        prompt: '',
+        groupFolder: 'test',
+        chatJid: 'x@x',
+        isMain: false,
+        assistantName: 'Bot',
+      },
     );
 
     expect(mockFetch).toHaveBeenCalledOnce();
     const [, init] = mockFetch.mock.calls[0];
-    expect(init.headers['X-Goog-Api-Key']).toBe('AIzaTestKeyAbcdefghijklmnopqrstuvwxyz01');
+    expect(init.headers['X-Goog-Api-Key']).toBe(
+      'AIzaTestKeyAbcdefghijklmnopqrstuvwxyz01',
+    );
   });
 
   // ── mode: off, placeholder key — must NOT set header ────────────────────────
@@ -79,7 +88,13 @@ describe('placesSearchHandler', () => {
     const { placesSearchHandler } = await import('./places-search.js');
     await placesSearchHandler(
       { query: 'Italian', location: '37.7749,-122.4194' },
-      { prompt: '', groupFolder: 'test', chatJid: 'x@x', isMain: false, assistantName: 'Bot' },
+      {
+        prompt: '',
+        groupFolder: 'test',
+        chatJid: 'x@x',
+        isMain: false,
+        assistantName: 'Bot',
+      },
     );
 
     const [, init] = mockFetch.mock.calls[0];
@@ -100,7 +115,13 @@ describe('placesSearchHandler', () => {
     const { placesSearchHandler } = await import('./places-search.js');
     await placesSearchHandler(
       { query: 'Italian', location: '37.7749,-122.4194' },
-      { prompt: '', groupFolder: 'test', chatJid: 'x@x', isMain: false, assistantName: 'Bot' },
+      {
+        prompt: '',
+        groupFolder: 'test',
+        chatJid: 'x@x',
+        isMain: false,
+        assistantName: 'Bot',
+      },
     );
 
     const [, init] = mockFetch.mock.calls[0];
@@ -111,7 +132,8 @@ describe('placesSearchHandler', () => {
 
   it('sets X-Goog-FieldMask header on every call', async () => {
     process.env.CREDENTIAL_INJECTION_MODE = 'off';
-    process.env.GOOGLE_PLACES_API_KEY = 'AIzaTestKeyAbcdefghijklmnopqrstuvwxyz01';
+    process.env.GOOGLE_PLACES_API_KEY =
+      'AIzaTestKeyAbcdefghijklmnopqrstuvwxyz01';
     process.env.GOOGLE_PLACES_BASE_URL = 'https://places.googleapis.com';
 
     const mockFetch = vi.fn().mockResolvedValue({
@@ -123,7 +145,13 @@ describe('placesSearchHandler', () => {
     const { placesSearchHandler } = await import('./places-search.js');
     await placesSearchHandler(
       { query: 'pizza', location: '37.7749,-122.4194' },
-      { prompt: '', groupFolder: 'test', chatJid: 'x@x', isMain: false, assistantName: 'Bot' },
+      {
+        prompt: '',
+        groupFolder: 'test',
+        chatJid: 'x@x',
+        isMain: false,
+        assistantName: 'Bot',
+      },
     );
 
     const [, init] = mockFetch.mock.calls[0];
@@ -134,7 +162,8 @@ describe('placesSearchHandler', () => {
 
   it('builds correct locationRestriction from lat,lng string', async () => {
     process.env.CREDENTIAL_INJECTION_MODE = 'off';
-    process.env.GOOGLE_PLACES_API_KEY = 'AIzaTestKeyAbcdefghijklmnopqrstuvwxyz01';
+    process.env.GOOGLE_PLACES_API_KEY =
+      'AIzaTestKeyAbcdefghijklmnopqrstuvwxyz01';
     process.env.GOOGLE_PLACES_BASE_URL = 'https://places.googleapis.com';
 
     const mockFetch = vi.fn().mockResolvedValue({
@@ -146,7 +175,13 @@ describe('placesSearchHandler', () => {
     const { placesSearchHandler } = await import('./places-search.js');
     await placesSearchHandler(
       { query: 'sushi', location: '51.5074,-0.1278' },
-      { prompt: '', groupFolder: 'test', chatJid: 'x@x', isMain: false, assistantName: 'Bot' },
+      {
+        prompt: '',
+        groupFolder: 'test',
+        chatJid: 'x@x',
+        isMain: false,
+        assistantName: 'Bot',
+      },
     );
 
     const [, init] = mockFetch.mock.calls[0];
@@ -157,7 +192,8 @@ describe('placesSearchHandler', () => {
 
   it('forwards open_now=true as a body field', async () => {
     process.env.CREDENTIAL_INJECTION_MODE = 'off';
-    process.env.GOOGLE_PLACES_API_KEY = 'AIzaTestKeyAbcdefghijklmnopqrstuvwxyz01';
+    process.env.GOOGLE_PLACES_API_KEY =
+      'AIzaTestKeyAbcdefghijklmnopqrstuvwxyz01';
     process.env.GOOGLE_PLACES_BASE_URL = 'https://places.googleapis.com';
 
     const mockFetch = vi.fn().mockResolvedValue({
@@ -169,7 +205,13 @@ describe('placesSearchHandler', () => {
     const { placesSearchHandler } = await import('./places-search.js');
     await placesSearchHandler(
       { query: 'tacos', location: '37.7749,-122.4194', open_now: true },
-      { prompt: '', groupFolder: 'test', chatJid: 'x@x', isMain: false, assistantName: 'Bot' },
+      {
+        prompt: '',
+        groupFolder: 'test',
+        chatJid: 'x@x',
+        isMain: false,
+        assistantName: 'Bot',
+      },
     );
 
     const [, init] = mockFetch.mock.calls[0];
@@ -188,35 +230,48 @@ describe('placesSearchHandler', () => {
     ['PRICE_LEVEL_UNSPECIFIED', null],
     ['UNKNOWN_VALUE', null],
     [undefined, null],
-  ])('maps priceLevel "%s" to price_tier %s', async (priceLevel, expectedTier) => {
-    process.env.CREDENTIAL_INJECTION_MODE = 'off';
-    process.env.GOOGLE_PLACES_API_KEY = 'AIzaTestKeyAbcdefghijklmnopqrstuvwxyz01';
-    process.env.GOOGLE_PLACES_BASE_URL = 'https://places.googleapis.com';
+  ])(
+    'maps priceLevel "%s" to price_tier %s',
+    async (priceLevel, expectedTier) => {
+      process.env.CREDENTIAL_INJECTION_MODE = 'off';
+      process.env.GOOGLE_PLACES_API_KEY =
+        'AIzaTestKeyAbcdefghijklmnopqrstuvwxyz01';
+      process.env.GOOGLE_PLACES_BASE_URL = 'https://places.googleapis.com';
 
-    const mockFetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () =>
-        makePlacesResponse(
-          priceLevel !== undefined ? { priceLevel } : { priceLevel: undefined },
-        ),
-    });
-    vi.stubGlobal('fetch', mockFetch);
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () =>
+          makePlacesResponse(
+            priceLevel !== undefined
+              ? { priceLevel }
+              : { priceLevel: undefined },
+          ),
+      });
+      vi.stubGlobal('fetch', mockFetch);
 
-    const { placesSearchHandler } = await import('./places-search.js');
-    const raw = await placesSearchHandler(
-      { query: 'food', location: '37.7749,-122.4194' },
-      { prompt: '', groupFolder: 'test', chatJid: 'x@x', isMain: false, assistantName: 'Bot' },
-    );
+      const { placesSearchHandler } = await import('./places-search.js');
+      const raw = await placesSearchHandler(
+        { query: 'food', location: '37.7749,-122.4194' },
+        {
+          prompt: '',
+          groupFolder: 'test',
+          chatJid: 'x@x',
+          isMain: false,
+          assistantName: 'Bot',
+        },
+      );
 
-    const result = JSON.parse(raw);
-    expect(result[0]?.price_tier).toBe(expectedTier);
-  });
+      const result = JSON.parse(raw);
+      expect(result[0]?.price_tier).toBe(expectedTier);
+    },
+  );
 
   // ── cuisines extraction ──────────────────────────────────────────────────────
 
   it('extracts cuisine label from food types[]', async () => {
     process.env.CREDENTIAL_INJECTION_MODE = 'off';
-    process.env.GOOGLE_PLACES_API_KEY = 'AIzaTestKeyAbcdefghijklmnopqrstuvwxyz01';
+    process.env.GOOGLE_PLACES_API_KEY =
+      'AIzaTestKeyAbcdefghijklmnopqrstuvwxyz01';
     process.env.GOOGLE_PLACES_BASE_URL = 'https://places.googleapis.com';
 
     const mockFetch = vi.fn().mockResolvedValue({
@@ -231,7 +286,13 @@ describe('placesSearchHandler', () => {
     const { placesSearchHandler } = await import('./places-search.js');
     const raw = await placesSearchHandler(
       { query: 'sushi', location: '37.7749,-122.4194' },
-      { prompt: '', groupFolder: 'test', chatJid: 'x@x', isMain: false, assistantName: 'Bot' },
+      {
+        prompt: '',
+        groupFolder: 'test',
+        chatJid: 'x@x',
+        isMain: false,
+        assistantName: 'Bot',
+      },
     );
 
     const result = JSON.parse(raw);
@@ -240,7 +301,8 @@ describe('placesSearchHandler', () => {
 
   it('returns empty cuisines array when types[] contains no food types', async () => {
     process.env.CREDENTIAL_INJECTION_MODE = 'off';
-    process.env.GOOGLE_PLACES_API_KEY = 'AIzaTestKeyAbcdefghijklmnopqrstuvwxyz01';
+    process.env.GOOGLE_PLACES_API_KEY =
+      'AIzaTestKeyAbcdefghijklmnopqrstuvwxyz01';
     process.env.GOOGLE_PLACES_BASE_URL = 'https://places.googleapis.com';
 
     const mockFetch = vi.fn().mockResolvedValue({
@@ -255,7 +317,13 @@ describe('placesSearchHandler', () => {
     const { placesSearchHandler } = await import('./places-search.js');
     const raw = await placesSearchHandler(
       { query: 'places', location: '37.7749,-122.4194' },
-      { prompt: '', groupFolder: 'test', chatJid: 'x@x', isMain: false, assistantName: 'Bot' },
+      {
+        prompt: '',
+        groupFolder: 'test',
+        chatJid: 'x@x',
+        isMain: false,
+        assistantName: 'Bot',
+      },
     );
 
     const result = JSON.parse(raw);
@@ -266,7 +334,8 @@ describe('placesSearchHandler', () => {
 
   it('returns an error string on non-ok HTTP response', async () => {
     process.env.CREDENTIAL_INJECTION_MODE = 'off';
-    process.env.GOOGLE_PLACES_API_KEY = 'AIzaTestKeyAbcdefghijklmnopqrstuvwxyz01';
+    process.env.GOOGLE_PLACES_API_KEY =
+      'AIzaTestKeyAbcdefghijklmnopqrstuvwxyz01';
     process.env.GOOGLE_PLACES_BASE_URL = 'https://places.googleapis.com';
 
     const mockFetch = vi.fn().mockResolvedValue({
@@ -279,7 +348,13 @@ describe('placesSearchHandler', () => {
     const { placesSearchHandler } = await import('./places-search.js');
     const result = await placesSearchHandler(
       { query: 'food', location: '37.7749,-122.4194' },
-      { prompt: '', groupFolder: 'test', chatJid: 'x@x', isMain: false, assistantName: 'Bot' },
+      {
+        prompt: '',
+        groupFolder: 'test',
+        chatJid: 'x@x',
+        isMain: false,
+        assistantName: 'Bot',
+      },
     );
 
     expect(result).toContain('403');
@@ -287,7 +362,8 @@ describe('placesSearchHandler', () => {
 
   it('returns an error string when location string is malformed', async () => {
     process.env.CREDENTIAL_INJECTION_MODE = 'off';
-    process.env.GOOGLE_PLACES_API_KEY = 'AIzaTestKeyAbcdefghijklmnopqrstuvwxyz01';
+    process.env.GOOGLE_PLACES_API_KEY =
+      'AIzaTestKeyAbcdefghijklmnopqrstuvwxyz01';
     process.env.GOOGLE_PLACES_BASE_URL = 'https://places.googleapis.com';
 
     vi.stubGlobal('fetch', vi.fn());
@@ -295,7 +371,13 @@ describe('placesSearchHandler', () => {
     const { placesSearchHandler } = await import('./places-search.js');
     const result = await placesSearchHandler(
       { query: 'food', location: 'not-valid' },
-      { prompt: '', groupFolder: 'test', chatJid: 'x@x', isMain: false, assistantName: 'Bot' },
+      {
+        prompt: '',
+        groupFolder: 'test',
+        chatJid: 'x@x',
+        isMain: false,
+        assistantName: 'Bot',
+      },
     );
 
     expect(result).toMatch(/invalid location/i);
@@ -304,15 +386,22 @@ describe('placesSearchHandler', () => {
   // ── Fix 1: includedTypes keyword mapping ─────────────────────────────────────
 
   it('resolveIncludedTypes maps "Italian" to italian_restaurant', () => {
-    expect(resolveIncludedTypes('Italian restaurant')).toEqual(['italian_restaurant']);
+    expect(resolveIncludedTypes('Italian restaurant')).toEqual([
+      'italian_restaurant',
+    ]);
   });
 
   it('resolveIncludedTypes maps "thai" to thai_restaurant', () => {
-    expect(resolveIncludedTypes('thai food near me')).toEqual(['thai_restaurant']);
+    expect(resolveIncludedTypes('thai food near me')).toEqual([
+      'thai_restaurant',
+    ]);
   });
 
   it('resolveIncludedTypes falls back to default types for unmatched query', () => {
-    expect(resolveIncludedTypes('somewhere to eat')).toEqual(['restaurant', 'cafe']);
+    expect(resolveIncludedTypes('somewhere to eat')).toEqual([
+      'restaurant',
+      'cafe',
+    ]);
   });
 
   it('resolveIncludedTypes returns empty-string-safe default for blank query', () => {
@@ -321,7 +410,8 @@ describe('placesSearchHandler', () => {
 
   it('sends includedTypes in request body instead of textQuery', async () => {
     process.env.CREDENTIAL_INJECTION_MODE = 'off';
-    process.env.GOOGLE_PLACES_API_KEY = 'AIzaTestKeyAbcdefghijklmnopqrstuvwxyz01';
+    process.env.GOOGLE_PLACES_API_KEY =
+      'AIzaTestKeyAbcdefghijklmnopqrstuvwxyz01';
     process.env.GOOGLE_PLACES_BASE_URL = 'https://places.googleapis.com';
 
     const mockFetch = vi.fn().mockResolvedValue({
@@ -333,7 +423,13 @@ describe('placesSearchHandler', () => {
     const { placesSearchHandler } = await import('./places-search.js');
     await placesSearchHandler(
       { query: 'Italian restaurant', location: '37.7749,-122.4194' },
-      { prompt: '', groupFolder: 'test', chatJid: 'x@x', isMain: false, assistantName: 'Bot' },
+      {
+        prompt: '',
+        groupFolder: 'test',
+        chatJid: 'x@x',
+        isMain: false,
+        assistantName: 'Bot',
+      },
     );
 
     const [, init] = mockFetch.mock.calls[0];
@@ -346,7 +442,8 @@ describe('placesSearchHandler', () => {
 
   it('emits null lat/lng when location is absent from place response', async () => {
     process.env.CREDENTIAL_INJECTION_MODE = 'off';
-    process.env.GOOGLE_PLACES_API_KEY = 'AIzaTestKeyAbcdefghijklmnopqrstuvwxyz01';
+    process.env.GOOGLE_PLACES_API_KEY =
+      'AIzaTestKeyAbcdefghijklmnopqrstuvwxyz01';
     process.env.GOOGLE_PLACES_BASE_URL = 'https://places.googleapis.com';
 
     const mockFetch = vi.fn().mockResolvedValue({
@@ -368,7 +465,13 @@ describe('placesSearchHandler', () => {
     const { placesSearchHandler } = await import('./places-search.js');
     const raw = await placesSearchHandler(
       { query: 'food', location: '37.7749,-122.4194' },
-      { prompt: '', groupFolder: 'test', chatJid: 'x@x', isMain: false, assistantName: 'Bot' },
+      {
+        prompt: '',
+        groupFolder: 'test',
+        chatJid: 'x@x',
+        isMain: false,
+        assistantName: 'Bot',
+      },
     );
 
     const result = JSON.parse(raw);
@@ -380,7 +483,8 @@ describe('placesSearchHandler', () => {
 
   it('handles float price_range values by flooring them', async () => {
     process.env.CREDENTIAL_INJECTION_MODE = 'off';
-    process.env.GOOGLE_PLACES_API_KEY = 'AIzaTestKeyAbcdefghijklmnopqrstuvwxyz01';
+    process.env.GOOGLE_PLACES_API_KEY =
+      'AIzaTestKeyAbcdefghijklmnopqrstuvwxyz01';
     process.env.GOOGLE_PLACES_BASE_URL = 'https://places.googleapis.com';
 
     const mockFetch = vi.fn().mockResolvedValue({
@@ -392,7 +496,13 @@ describe('placesSearchHandler', () => {
     const { placesSearchHandler } = await import('./places-search.js');
     await placesSearchHandler(
       { query: 'food', location: '37.7749,-122.4194', price_range: [2.9] },
-      { prompt: '', groupFolder: 'test', chatJid: 'x@x', isMain: false, assistantName: 'Bot' },
+      {
+        prompt: '',
+        groupFolder: 'test',
+        chatJid: 'x@x',
+        isMain: false,
+        assistantName: 'Bot',
+      },
     );
 
     const [, init] = mockFetch.mock.calls[0];
@@ -405,7 +515,8 @@ describe('placesSearchHandler', () => {
 
   it('uses radius_meters when provided', async () => {
     process.env.CREDENTIAL_INJECTION_MODE = 'off';
-    process.env.GOOGLE_PLACES_API_KEY = 'AIzaTestKeyAbcdefghijklmnopqrstuvwxyz01';
+    process.env.GOOGLE_PLACES_API_KEY =
+      'AIzaTestKeyAbcdefghijklmnopqrstuvwxyz01';
     process.env.GOOGLE_PLACES_BASE_URL = 'https://places.googleapis.com';
 
     const mockFetch = vi.fn().mockResolvedValue({
@@ -417,7 +528,13 @@ describe('placesSearchHandler', () => {
     const { placesSearchHandler } = await import('./places-search.js');
     await placesSearchHandler(
       { query: 'food', location: '37.7749,-122.4194', radius_meters: 5000 },
-      { prompt: '', groupFolder: 'test', chatJid: 'x@x', isMain: false, assistantName: 'Bot' },
+      {
+        prompt: '',
+        groupFolder: 'test',
+        chatJid: 'x@x',
+        isMain: false,
+        assistantName: 'Bot',
+      },
     );
 
     const [, init] = mockFetch.mock.calls[0];
@@ -427,7 +544,8 @@ describe('placesSearchHandler', () => {
 
   it('caps radius_meters at 50000', async () => {
     process.env.CREDENTIAL_INJECTION_MODE = 'off';
-    process.env.GOOGLE_PLACES_API_KEY = 'AIzaTestKeyAbcdefghijklmnopqrstuvwxyz01';
+    process.env.GOOGLE_PLACES_API_KEY =
+      'AIzaTestKeyAbcdefghijklmnopqrstuvwxyz01';
     process.env.GOOGLE_PLACES_BASE_URL = 'https://places.googleapis.com';
 
     const mockFetch = vi.fn().mockResolvedValue({
@@ -439,7 +557,13 @@ describe('placesSearchHandler', () => {
     const { placesSearchHandler } = await import('./places-search.js');
     await placesSearchHandler(
       { query: 'food', location: '37.7749,-122.4194', radius_meters: 999999 },
-      { prompt: '', groupFolder: 'test', chatJid: 'x@x', isMain: false, assistantName: 'Bot' },
+      {
+        prompt: '',
+        groupFolder: 'test',
+        chatJid: 'x@x',
+        isMain: false,
+        assistantName: 'Bot',
+      },
     );
 
     const [, init] = mockFetch.mock.calls[0];
@@ -449,7 +573,8 @@ describe('placesSearchHandler', () => {
 
   it('uses default radius 1500 when radius_meters not provided', async () => {
     process.env.CREDENTIAL_INJECTION_MODE = 'off';
-    process.env.GOOGLE_PLACES_API_KEY = 'AIzaTestKeyAbcdefghijklmnopqrstuvwxyz01';
+    process.env.GOOGLE_PLACES_API_KEY =
+      'AIzaTestKeyAbcdefghijklmnopqrstuvwxyz01';
     process.env.GOOGLE_PLACES_BASE_URL = 'https://places.googleapis.com';
 
     const mockFetch = vi.fn().mockResolvedValue({
@@ -461,7 +586,13 @@ describe('placesSearchHandler', () => {
     const { placesSearchHandler } = await import('./places-search.js');
     await placesSearchHandler(
       { query: 'food', location: '37.7749,-122.4194' },
-      { prompt: '', groupFolder: 'test', chatJid: 'x@x', isMain: false, assistantName: 'Bot' },
+      {
+        prompt: '',
+        groupFolder: 'test',
+        chatJid: 'x@x',
+        isMain: false,
+        assistantName: 'Bot',
+      },
     );
 
     const [, init] = mockFetch.mock.calls[0];
@@ -473,7 +604,8 @@ describe('placesSearchHandler', () => {
 
   it('returns JSON array with expected fields on success', async () => {
     process.env.CREDENTIAL_INJECTION_MODE = 'off';
-    process.env.GOOGLE_PLACES_API_KEY = 'AIzaTestKeyAbcdefghijklmnopqrstuvwxyz01';
+    process.env.GOOGLE_PLACES_API_KEY =
+      'AIzaTestKeyAbcdefghijklmnopqrstuvwxyz01';
     process.env.GOOGLE_PLACES_BASE_URL = 'https://places.googleapis.com';
 
     const mockFetch = vi.fn().mockResolvedValue({
@@ -485,7 +617,13 @@ describe('placesSearchHandler', () => {
     const { placesSearchHandler } = await import('./places-search.js');
     const raw = await placesSearchHandler(
       { query: 'Italian', location: '37.7749,-122.4194' },
-      { prompt: '', groupFolder: 'test', chatJid: 'x@x', isMain: false, assistantName: 'Bot' },
+      {
+        prompt: '',
+        groupFolder: 'test',
+        chatJid: 'x@x',
+        isMain: false,
+        assistantName: 'Bot',
+      },
     );
 
     const result = JSON.parse(raw);

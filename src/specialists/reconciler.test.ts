@@ -169,8 +169,13 @@ describe('SpecialistReconciler.apply', () => {
     if (!parseResult.ok) return; // type narrowing
 
     // The entry must survive the merge/render round-trip intact.
-    const researcher = parseResult.specialists.find((s) => s.name === 'Researcher');
-    expect(researcher, 'Researcher entry missing from rendered catalog').toBeDefined();
+    const researcher = parseResult.specialists.find(
+      (s) => s.name === 'Researcher',
+    );
+    expect(
+      researcher,
+      'Researcher entry missing from rendered catalog',
+    ).toBeDefined();
     expect(researcher!.triggers).toEqual(['researcher']);
     expect(researcher!.llmProvider).toBe('openrouter');
     expect(researcher!.memory?.isolated).toBe(false);
@@ -185,9 +190,11 @@ describe('SpecialistReconciler.apply', () => {
     // the first finishes, so its SQLite snapshot includes both A and B.
 
     const resolveFns: Array<() => void> = [];
-    const apply = vi.fn().mockImplementation(
-      () => new Promise<void>((resolve) => resolveFns.push(resolve)),
-    );
+    const apply = vi
+      .fn()
+      .mockImplementation(
+        () => new Promise<void>((resolve) => resolveFns.push(resolve)),
+      );
     const r = new SpecialistReconciler({
       baselineLoader: () => [],
       configMapApply: apply,
@@ -211,9 +218,9 @@ describe('SpecialistReconciler.apply', () => {
 
     // Second configMapApply call must include BOTH A and B.
     const secondPayload = JSON.parse(apply.mock.calls[1][0]);
-    const names = secondPayload.specialists.map(
-      (s: { name: string }) => s.name,
-    ).sort();
+    const names = secondPayload.specialists
+      .map((s: { name: string }) => s.name)
+      .sort();
     expect(names).toEqual(['A', 'B']);
   });
 });

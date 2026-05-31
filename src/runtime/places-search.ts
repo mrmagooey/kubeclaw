@@ -228,7 +228,13 @@ export async function placesSearchHandler(
 
   if (priceRange && priceRange.length > 0) {
     // Google Places v1 accepts priceLevels as an array of enum strings
-    const priceLevelEnums = ['PRICE_LEVEL_FREE', 'PRICE_LEVEL_INEXPENSIVE', 'PRICE_LEVEL_MODERATE', 'PRICE_LEVEL_EXPENSIVE', 'PRICE_LEVEL_VERY_EXPENSIVE'];
+    const priceLevelEnums = [
+      'PRICE_LEVEL_FREE',
+      'PRICE_LEVEL_INEXPENSIVE',
+      'PRICE_LEVEL_MODERATE',
+      'PRICE_LEVEL_EXPENSIVE',
+      'PRICE_LEVEL_VERY_EXPENSIVE',
+    ];
     const priceLevels: string[] = [];
     for (const v of priceRange) {
       const idx = Math.floor(Number(v));
@@ -273,14 +279,18 @@ export async function placesSearchHandler(
     return `places_search error: HTTP ${response.status} — ${text}`;
   }
 
-  const data = await response.json();
+  const data = (await response.json()) as { places?: unknown[] };
   const places: unknown[] = data.places ?? [];
 
   const results: PlacesResult[] = places.map((p: unknown) => {
     const place = p as Record<string, unknown>;
     const displayName = place.displayName as { text?: string } | undefined;
-    const location = place.location as { latitude?: number; longitude?: number } | undefined;
-    const openingHours = place.regularOpeningHours as { openNow?: boolean } | undefined;
+    const location = place.location as
+      | { latitude?: number; longitude?: number }
+      | undefined;
+    const openingHours = place.regularOpeningHours as
+      | { openNow?: boolean }
+      | undefined;
     const types = Array.isArray(place.types) ? (place.types as string[]) : [];
 
     return {
@@ -311,11 +321,13 @@ export const PLACES_SEARCH_TOOL_DEF = {
       properties: {
         query: {
           type: 'string',
-          description: 'What to search for, e.g. "Italian restaurant", "coffee shop"',
+          description:
+            'What to search for, e.g. "Italian restaurant", "coffee shop"',
         },
         location: {
           type: 'string',
-          description: 'Centre of the search area as "latitude,longitude", e.g. "37.7749,-122.4194"',
+          description:
+            'Centre of the search area as "latitude,longitude", e.g. "37.7749,-122.4194"',
         },
         open_now: {
           type: 'boolean',
@@ -331,8 +343,7 @@ export const PLACES_SEARCH_TOOL_DEF = {
           type: 'number',
           minimum: 1,
           maximum: 50000,
-          description:
-            'Search radius in metres (default 1500, max 50000)',
+          description: 'Search radius in metres (default 1500, max 50000)',
         },
       },
       required: ['query', 'location'],

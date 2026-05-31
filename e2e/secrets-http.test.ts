@@ -195,13 +195,15 @@ describe('Story 73: /secrets REST endpoints', () => {
       expect(res.status).toBe(200);
     });
 
-    it('POST /secrets returns 405 with Allow: GET, HEAD', async () => {
+    // POST /secrets is now supported (provision-credential endpoint),
+    // so the unsupported-method assertion uses PUT instead.
+    it('PUT /secrets returns 405 with Allow: GET, HEAD, POST', async () => {
       const res = await fetch(`http://localhost:${HTTP_PORT}/secrets`, {
-        method: 'POST',
+        method: 'PUT',
         headers: { Authorization: basicAuth(TEST_USER, TEST_PASS) },
       });
       expect(res.status).toBe(405);
-      expect(res.headers.get('Allow')).toBe('GET, HEAD');
+      expect(res.headers.get('Allow')).toBe('GET, HEAD, POST');
     });
   });
 

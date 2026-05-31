@@ -11,7 +11,15 @@
  * AC4: After deleting alice's file, next upload succeeds (live directory re-read)
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
+import {
+  describe,
+  it,
+  expect,
+  beforeAll,
+  afterAll,
+  beforeEach,
+  vi,
+} from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -33,7 +41,9 @@ let tmpGroupsDir = '';
 vi.mock('../config.js', () => ({
   ASSISTANT_NAME: 'Andy',
   TRIGGER_PATTERN: /^@Andy\b/i,
-  get GROUPS_DIR() { return tmpGroupsDir; },
+  get GROUPS_DIR() {
+    return tmpGroupsDir;
+  },
 }));
 
 // ── Imports after mocks ──────────────────────────────────────────────────────
@@ -90,8 +100,12 @@ describe('HttpChannel — attachment quota integration', () => {
   let aliceAttachDir: string;
   let bobAttachDir: string;
 
-  function aliceDir() { return aliceAttachDir; }
-  function bobDir() { return bobAttachDir; }
+  function aliceDir() {
+    return aliceAttachDir;
+  }
+  function bobDir() {
+    return bobAttachDir;
+  }
 
   function clearDir(dir: string): void {
     if (fs.existsSync(dir)) {
@@ -101,7 +115,11 @@ describe('HttpChannel — attachment quota integration', () => {
     }
   }
 
-  function writeFiles(dir: string, count: number, sizeEach: number = 100): string[] {
+  function writeFiles(
+    dir: string,
+    count: number,
+    sizeEach: number = 100,
+  ): string[] {
     const paths: string[] = [];
     fs.mkdirSync(dir, { recursive: true });
     for (let i = 0; i < count; i++) {
@@ -114,19 +132,26 @@ describe('HttpChannel — attachment quota integration', () => {
 
   beforeAll(async () => {
     // Create isolated tmpdir used as GROUPS_DIR for this suite.
-    tmpGroupsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kubeclaw-http-integ-'));
+    tmpGroupsDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'kubeclaw-http-integ-'),
+    );
 
     aliceAttachDir = path.join(tmpGroupsDir, ALICE_JID, 'attachments', 'raw');
-    bobAttachDir   = path.join(tmpGroupsDir, BOB_JID,   'attachments', 'raw');
+    bobAttachDir = path.join(tmpGroupsDir, BOB_JID, 'attachments', 'raw');
     fs.mkdirSync(aliceAttachDir, { recursive: true });
-    fs.mkdirSync(bobAttachDir,   { recursive: true });
+    fs.mkdirSync(bobAttachDir, { recursive: true });
 
     const opts: HttpChannelOpts = {
       onMessage: vi.fn(),
       onChatMetadata: vi.fn(),
       registeredGroups: () => ({
-        [ALICE_JID]: { name: ALICE, folder: ALICE_JID, trigger: '', added_at: '' },
-        [BOB_JID]:   { name: BOB,   folder: BOB_JID,   trigger: '', added_at: '' },
+        [ALICE_JID]: {
+          name: ALICE,
+          folder: ALICE_JID,
+          trigger: '',
+          added_at: '',
+        },
+        [BOB_JID]: { name: BOB, folder: BOB_JID, trigger: '', added_at: '' },
       }),
       // Count limit: 3 per user; byte limit: 50 KB per user
       maxAttachmentCount: 3,
@@ -151,13 +176,23 @@ describe('HttpChannel — attachment quota integration', () => {
       await channel.disconnect();
       channel = null;
     }
-    try { fs.rmSync(tmpGroupsDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    try {
+      fs.rmSync(tmpGroupsDir, { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
   }, 10_000);
 
   // Clean each user's directory before each test so tests are independent.
-  beforeEach(() => { clearDir(aliceDir()); clearDir(bobDir()); });
+  beforeEach(() => {
+    clearDir(aliceDir());
+    clearDir(bobDir());
+  });
 
-  async function post(auth: string, formData: ReturnType<typeof buildImageFormData>) {
+  async function post(
+    auth: string,
+    formData: ReturnType<typeof buildImageFormData>,
+  ) {
     return fetch(`http://localhost:${PORT}/message`, {
       method: 'POST',
       headers: { Authorization: auth, 'Content-Type': formData.contentType },
@@ -211,7 +246,7 @@ describe('HttpChannel — attachment quota integration', () => {
 
   // ── AC4: quota re-reads live directory ────────────────────────────────────
 
-  it('AC4: after deleting one of alice\'s files she can upload again', async () => {
+  it("AC4: after deleting one of alice's files she can upload again", async () => {
     // Fill alice to 3 (at the limit)
     const filePaths = writeFiles(aliceDir(), 3);
 

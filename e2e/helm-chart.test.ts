@@ -880,10 +880,15 @@ describe('helm template — mode=istio', () => {
     const out = render();
     expect(out).toContain('envoy.filters.http.lua');
     expect(out).toContain('x-kubeclaw-substitutions');
-    // Lua filter must appear after ext_authz (INSERT_AFTER) in the same EnvoyFilter
-    const luaIdx = out.indexOf('envoy.filters.http.lua');
+    // The substitution Lua filter (commented `envoy-substitution-filter.lua`)
+    // must appear after ext_authz (INSERT_AFTER). We anchor on its unique
+    // inline marker rather than the bare filter name, because the chart now
+    // also renders a `set-forwarded-authority` Lua filter that runs *before*
+    // ext_authz — using indexOf('envoy.filters.http.lua') would pick that up
+    // and the order check would fail spuriously.
+    const subLuaIdx = out.indexOf('envoy-substitution-filter.lua');
     const authzIdx = out.indexOf('envoy.filters.http.ext_authz');
-    expect(luaIdx).toBeGreaterThan(authzIdx);
+    expect(subLuaIdx).toBeGreaterThan(authzIdx);
   });
 
   it('renders 5 ServiceEntry resources with one additionalDestination', () => {
@@ -894,7 +899,10 @@ describe('helm template — mode=istio', () => {
     expect(count).toBe(5);
   });
 
-  it('renders Namespace with istio-injection=enabled label', () => {
+  // The chart no longer renders the kubeclaw Namespace resource (removed in
+  // 52c5dd9 — credential-injection-istio e2e suite). Operators are expected
+  // to label the namespace themselves; NOTES.txt documents the requirement.
+  it.skip('renders Namespace with istio-injection=enabled label (chart no longer owns the namespace)', () => {
     const out = render();
     expect(out).toMatch(/istio-injection:\s*enabled/);
   });

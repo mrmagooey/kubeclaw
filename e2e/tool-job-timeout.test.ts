@@ -33,6 +33,10 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import {
+  setupTestCluster,
+  type ClusterHandle,
+} from './lib/per-test-cluster.js';
 import { spawnSync } from 'node:child_process';
 import { EventSource } from 'eventsource';
 
@@ -131,24 +135,24 @@ async function fetchMetrics(): Promise<string> {
 
 // ── Fixtures ───────────────────────────────────────────────────────────────
 
-let portForwardProc: ReturnType<typeof spawnSync> | undefined;
 const authHeaders = { Authorization: basicAuth(TEST_USER, TEST_PASS) };
 
-beforeAll(async () => {
-  // Ensure the port-forward is active (the CI setup script may have started it;
-  // if not, start it here — best-effort, tests will skip if unreachable).
-  const ping = await fetch(`${HTTP_URL}/healthz`).catch(() => null);
-  if (!ping || !ping.ok) {
-    console.warn(
-      `[tool-job-timeout e2e] HTTP channel unreachable at ${HTTP_URL} — ` +
-        `ensure port-forward is running for namespace ${NAMESPACE}`,
-    );
-  }
-}, 10_000);
+let cluster: ClusterHandle | null = null;
 
-afterAll(() => {
-  portForwardProc = undefined; // nothing to clean up if CI manages it
-});
+beforeAll(async () => {
+  cluster = await setupTestCluster({
+    namespace: NAMESPACE,
+    httpChannel: {
+      localPort: HTTP_PORT,
+      users: `${TEST_USER}:${TEST_PASS}`,
+    },
+    quiet: true,
+  });
+}, 600_000);
+
+afterAll(async () => {
+  if (cluster) await cluster.teardown();
+}, 120_000);
 
 // ── Tests ──────────────────────────────────────────────────────────────────
 

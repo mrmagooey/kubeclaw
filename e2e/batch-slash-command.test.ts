@@ -22,6 +22,10 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawnSync } from 'node:child_process';
+import {
+  setupTestCluster,
+  type ClusterHandle,
+} from './lib/per-test-cluster.js';
 
 const NAMESPACE = 'kubeclaw-e2e-msg-batch';
 const HTTP_PORT = 14136;
@@ -105,19 +109,22 @@ async function openSseStream(
 }
 
 describe('Story 53 — Batch slash-command: mixed normal + slash in one batch', () => {
-  // Pre-flight: check that the HTTP channel is reachable
-  beforeAll(async () => {
-    const res = await fetch(`${HTTP_URL}/healthz`).catch(() => null);
-    if (!res || !res.ok) {
-      console.warn(
-        `[Story53 E2E] HTTP channel not reachable at ${HTTP_URL} — is kubeclaw-e2e-msg-batch deployed?`,
-      );
-    }
-  });
+  let cluster: ClusterHandle | null = null;
 
-  afterAll(() => {
-    // Nothing to teardown; HTTP channel manages its own state
-  });
+  beforeAll(async () => {
+    cluster = await setupTestCluster({
+      namespace: NAMESPACE,
+      httpChannel: {
+        localPort: HTTP_PORT,
+        users: `${TEST_USER}:${TEST_PASS}`,
+      },
+      quiet: true,
+    });
+  }, 600_000);
+
+  afterAll(async () => {
+    if (cluster) await cluster.teardown();
+  }, 120_000);
 
   /**
    * AC1 (partial): send a normal message then a /search command in quick

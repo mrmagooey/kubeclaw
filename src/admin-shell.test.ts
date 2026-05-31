@@ -750,7 +750,8 @@ describe('executeTool', () => {
         expect.any(Function),
       );
       // Invoke the reconcile fn that was passed to registerSpecialist.
-      const reconcileFn = mockRegisterSpecialist.mock.calls[0][1] as () => Promise<void>;
+      const reconcileFn = mockRegisterSpecialist.mock
+        .calls[0][1] as () => Promise<void>;
       await reconcileFn();
       expect(mockPatchNamespacedConfigMap).toHaveBeenCalledWith(
         expect.objectContaining({ name: 'kubeclaw-specialists' }),
@@ -778,7 +779,8 @@ describe('executeTool', () => {
         name: 'New',
         prompt: 'p',
       });
-      const reconcileFn = mockRegisterSpecialist.mock.calls[0][1] as () => Promise<void>;
+      const reconcileFn = mockRegisterSpecialist.mock
+        .calls[0][1] as () => Promise<void>;
       await reconcileFn();
       expect(mockCreateNamespacedConfigMap).toHaveBeenCalled();
     });

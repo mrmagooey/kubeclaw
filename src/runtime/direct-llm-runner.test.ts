@@ -700,16 +700,26 @@ describe('DirectLLMRunner', () => {
     // Pre-format the prompt via formatMessages, matching how production
     // (channel-runner.ts) prepares input.prompt before calling runAgent.
     const formattedPrompt = formatMessages(
-      [{ id: '1', chat_jid: 'user@test', sender: 'user', sender_name: 'user', content: 'what time is it?', timestamp: new Date().toISOString() }],
+      [
+        {
+          id: '1',
+          chat_jid: 'user@test',
+          sender: 'user',
+          sender_name: 'user',
+          content: 'what time is it?',
+          timestamp: new Date().toISOString(),
+        },
+      ],
       'UTC',
     );
     await runner.runAgent(baseGroup, { ...baseInput, prompt: formattedPrompt });
 
     // The messages array passed to the LLM should contain current_time=
     const callArgs = mockCreate.mock.calls[0][0];
-    const userMessages: { role: string; content: string }[] = callArgs.messages.filter(
-      (m: { role: string; content: string }) => m.role === 'user',
-    );
+    const userMessages: { role: string; content: string }[] =
+      callArgs.messages.filter(
+        (m: { role: string; content: string }) => m.role === 'user',
+      );
     expect(userMessages.length).toBeGreaterThan(0);
     const userContent = userMessages[userMessages.length - 1].content;
     expect(userContent).toContain('current_time=');
@@ -739,14 +749,16 @@ describe('DirectLLMRunner', () => {
     // Build a realistic production-style prompt via formatMessages so that
     // the input.prompt actually contains current_time= (non-trivial assertion).
     const formattedPrompt = formatMessages(
-      [{
-        id: '1',
-        chat_jid: 'user@test',
-        sender: 'user',
-        sender_name: 'user',
-        content: 'what is the time?',
-        timestamp: new Date().toISOString(),
-      }],
+      [
+        {
+          id: '1',
+          chat_jid: 'user@test',
+          sender: 'user',
+          sender_name: 'user',
+          content: 'what is the time?',
+          timestamp: new Date().toISOString(),
+        },
+      ],
       'UTC',
     );
     // Sanity-check: the formatted prompt genuinely contains current_time= before we pass it.
@@ -755,7 +767,8 @@ describe('DirectLLMRunner', () => {
     await runner.runAgent(baseGroup, { ...baseInput, prompt: formattedPrompt });
 
     // Every call to appendConversationMessage must NOT contain current_time
-    const calls = (appendConversationMessage as ReturnType<typeof vi.fn>).mock.calls;
+    const calls = (appendConversationMessage as ReturnType<typeof vi.fn>).mock
+      .calls;
     expect(calls.length).toBeGreaterThan(0);
     for (const call of calls) {
       // appendConversationMessage(groupFolder, role, content)
@@ -769,14 +782,16 @@ describe('stripContextHeader', () => {
   it('removes the <context … /> header produced by formatMessages', async () => {
     const { stripContextHeader } = await import('./direct-llm-runner.js');
     const prompt = formatMessages(
-      [{
-        id: '1',
-        chat_jid: 'x@test',
-        sender: 'user',
-        sender_name: 'user',
-        content: 'hello',
-        timestamp: new Date().toISOString(),
-      }],
+      [
+        {
+          id: '1',
+          chat_jid: 'x@test',
+          sender: 'user',
+          sender_name: 'user',
+          content: 'hello',
+          timestamp: new Date().toISOString(),
+        },
+      ],
       'UTC',
     );
     expect(prompt).toContain('current_time=');
@@ -983,7 +998,10 @@ describe('DirectLLMRunner — tool-round budget', () => {
               {
                 id: 'call-1',
                 type: 'function',
-                function: { name: 'web_fetch', arguments: '{"url":"http://x.com"}' },
+                function: {
+                  name: 'web_fetch',
+                  arguments: '{"url":"http://x.com"}',
+                },
               },
             ],
           },
@@ -1014,7 +1032,10 @@ describe('DirectLLMRunner — tool-round budget', () => {
               {
                 id: 'call-1',
                 type: 'function',
-                function: { name: 'web_fetch', arguments: '{"url":"http://x.com"}' },
+                function: {
+                  name: 'web_fetch',
+                  arguments: '{"url":"http://x.com"}',
+                },
               },
             ],
           },
@@ -1049,42 +1070,93 @@ describe('tool definitions — schedule_task and DEFAULT_SYSTEM_PROMPT', () => {
     mockCreate.mockImplementationOnce(async (req: { tools?: unknown[] }) => {
       if (req.tools) captured.push(...req.tools);
       return {
-        choices: [{ message: { role: 'assistant', content: 'ok', tool_calls: undefined }, finish_reason: 'stop' }],
+        choices: [
+          {
+            message: {
+              role: 'assistant',
+              content: 'ok',
+              tool_calls: undefined,
+            },
+            finish_reason: 'stop',
+          },
+        ],
       };
     });
 
     const { DirectLLMRunner } = await import('./direct-llm-runner.js');
     const runner = new DirectLLMRunner();
     await runner.runAgent(
-      { name: 'g1', folder: 'g1', trigger: '', added_at: new Date().toISOString() },
-      { prompt: 'hello', groupFolder: 'g1', chatJid: 'u@t', isMain: false, assistantName: 'Bot' },
+      {
+        name: 'g1',
+        folder: 'g1',
+        trigger: '',
+        added_at: new Date().toISOString(),
+      },
+      {
+        prompt: 'hello',
+        groupFolder: 'g1',
+        chatJid: 'u@t',
+        isMain: false,
+        assistantName: 'Bot',
+      },
     );
 
-    const schedTool = (captured as Array<{ function: { name: string; description: string; parameters: { properties: { schedule_value: { description: string } } } } }>)
-      .find((t) => t.function.name === 'schedule_task');
+    const schedTool = (
+      captured as Array<{
+        function: {
+          name: string;
+          description: string;
+          parameters: {
+            properties: { schedule_value: { description: string } };
+          };
+        };
+      }>
+    ).find((t) => t.function.name === 'schedule_task');
     expect(schedTool).toBeDefined();
     // Description must mention ISO 8601 and warn against relative phrases
     expect(schedTool!.function.description).toMatch(/ISO 8601/i);
-    expect(schedTool!.function.parameters.properties.schedule_value.description).toMatch(
-      /absolute.*ISO|ISO.*absolute/i,
-    );
+    expect(
+      schedTool!.function.parameters.properties.schedule_value.description,
+    ).toMatch(/absolute.*ISO|ISO.*absolute/i);
   });
 
   it('DEFAULT_SYSTEM_PROMPT mentions set_reminder for reminders', async () => {
     const captured: string[] = [];
-    mockCreate.mockImplementationOnce(async (req: { messages: Array<{ role: string; content: string }> }) => {
-      const sys = req.messages.find((m) => m.role === 'system');
-      if (sys) captured.push(sys.content);
-      return {
-        choices: [{ message: { role: 'assistant', content: 'ok', tool_calls: undefined }, finish_reason: 'stop' }],
-      };
-    });
+    mockCreate.mockImplementationOnce(
+      async (req: { messages: Array<{ role: string; content: string }> }) => {
+        const sys = req.messages.find((m) => m.role === 'system');
+        if (sys) captured.push(sys.content);
+        return {
+          choices: [
+            {
+              message: {
+                role: 'assistant',
+                content: 'ok',
+                tool_calls: undefined,
+              },
+              finish_reason: 'stop',
+            },
+          ],
+        };
+      },
+    );
 
     const { DirectLLMRunner } = await import('./direct-llm-runner.js');
     const runner = new DirectLLMRunner();
     await runner.runAgent(
-      { name: 'g1', folder: 'g1', trigger: '', added_at: new Date().toISOString() },
-      { prompt: 'hello', groupFolder: 'g1', chatJid: 'u@t', isMain: false, assistantName: 'Bot' },
+      {
+        name: 'g1',
+        folder: 'g1',
+        trigger: '',
+        added_at: new Date().toISOString(),
+      },
+      {
+        prompt: 'hello',
+        groupFolder: 'g1',
+        chatJid: 'u@t',
+        isMain: false,
+        assistantName: 'Bot',
+      },
     );
 
     expect(captured.length).toBeGreaterThan(0);
@@ -1143,11 +1215,14 @@ describe('TOOLS — places_search registration', () => {
 
   it('places_search tool definition has required query and location parameters', async () => {
     const { __testing__ } = await import('./direct-llm-runner.js');
-    const tool = __testing__.toolsForTest().find(
-      (t: any) => t.function.name === 'places_search',
-    );
+    const tool = __testing__
+      .toolsForTest()
+      .find((t: any) => t.function.name === 'places_search');
     expect(tool).toBeDefined();
-    const props = tool!.function.parameters.properties as Record<string, unknown>;
+    const props = tool!.function.parameters.properties as Record<
+      string,
+      unknown
+    >;
     expect(props).toHaveProperty('query');
     expect(props).toHaveProperty('location');
     expect(tool!.function.parameters.required).toContain('query');
@@ -1160,7 +1235,9 @@ describe('TOOLS — places_search registration', () => {
 
   it('places_search is mapped to placesSearch in TOOL_SERVER_NAME', async () => {
     const { __testing__ } = await import('./direct-llm-runner.js');
-    expect(__testing__.toolServerNameForTest('places_search')).toBe('placesSearch');
+    expect(__testing__.toolServerNameForTest('places_search')).toBe(
+      'placesSearch',
+    );
   });
 });
 
@@ -1219,9 +1296,8 @@ describe('recommendation pattern — integration', () => {
       });
 
     const { DirectLLMRunner } = await import('./direct-llm-runner.js');
-    const { READ_USER_PROFILE_TOOL } = await import(
-      './tools/read-user-profile.js'
-    );
+    const { READ_USER_PROFILE_TOOL } =
+      await import('./tools/read-user-profile.js');
     const { jobRunner } = await import('../k8s/job-runner.js');
 
     const runner = new DirectLLMRunner();
@@ -1249,7 +1325,10 @@ describe('recommendation pattern — integration', () => {
                   type: 'function',
                   function: {
                     name: 'places_search',
-                    arguments: JSON.stringify({ query: 'Italian restaurants', location: 'Brooklyn, NY' }),
+                    arguments: JSON.stringify({
+                      query: 'Italian restaurants',
+                      location: 'Brooklyn, NY',
+                    }),
                   },
                 },
               ],
@@ -1289,7 +1368,12 @@ describe('recommendation pattern — integration', () => {
                 capturedRequestId,
                 'result',
                 JSON.stringify([
-                  { name: 'Lucali', address: '575 Henry St', rating: 4.8, price: '$$' },
+                  {
+                    name: 'Lucali',
+                    address: '575 Henry St',
+                    rating: 4.8,
+                    price: '$$',
+                  },
                 ]),
               ],
             ],
@@ -1306,17 +1390,17 @@ describe('recommendation pattern — integration', () => {
 
     expect(result.status).toBe('success');
     expect(jobRunner.createToolPodJob).toHaveBeenCalled();
-    const podJobCall = (jobRunner.createToolPodJob as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    const podJobCall = (jobRunner.createToolPodJob as ReturnType<typeof vi.fn>)
+      .mock.calls[0][0];
     expect(podJobCall.category).toBe('browser');
   });
 
   it('second runAgent call on same groupFolder receives recommendation contract in system prompt', async () => {
-    mockCreate
-      .mockResolvedValue({
-        choices: [
-          { message: { role: 'assistant', content: 'ok', tool_calls: [] } },
-        ],
-      });
+    mockCreate.mockResolvedValue({
+      choices: [
+        { message: { role: 'assistant', content: 'ok', tool_calls: [] } },
+      ],
+    });
 
     const { getConversationHistory } = await import('../db.js');
     (getConversationHistory as ReturnType<typeof vi.fn>).mockReturnValue([
@@ -1338,6 +1422,8 @@ describe('recommendation pattern — integration', () => {
     expect(systemMsg.content).toContain('## Recommendation guidelines');
     expect(systemMsg.content).toContain('read_user_profile');
     const userMsgs = firstCall.messages.filter((m: any) => m.role === 'user');
-    expect(userMsgs.some((m: any) => m.content?.includes('cheaper options'))).toBe(true);
+    expect(
+      userMsgs.some((m: any) => m.content?.includes('cheaper options')),
+    ).toBe(true);
   });
 });

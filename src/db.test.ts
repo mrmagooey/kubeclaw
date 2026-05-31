@@ -2316,8 +2316,14 @@ describe('pruneOldToolJobs', () => {
 
   it('deletes 2 old resolved rows and leaves 1 recent row intact', () => {
     // 2 days ago — older than retention=1
-    insertResolved('job-old-1', new Date(Date.now() - 2 * 86400_000).toISOString());
-    insertResolved('job-old-2', new Date(Date.now() - 3 * 86400_000).toISOString());
+    insertResolved(
+      'job-old-1',
+      new Date(Date.now() - 2 * 86400_000).toISOString(),
+    );
+    insertResolved(
+      'job-old-2',
+      new Date(Date.now() - 3 * 86400_000).toISOString(),
+    );
     // 1 hour ago — within retention=1
     insertResolved('job-recent', new Date(Date.now() - 3600_000).toISOString());
 
@@ -2348,7 +2354,10 @@ describe('pruneOldToolJobs', () => {
 
   it('returns 0 when retentionDays=0 (disabled) without deleting anything', () => {
     insertResolved('job-a', new Date(Date.now() - 5 * 86400_000).toISOString());
-    insertResolved('job-b', new Date(Date.now() - 10 * 86400_000).toISOString());
+    insertResolved(
+      'job-b',
+      new Date(Date.now() - 10 * 86400_000).toISOString(),
+    );
 
     const deleted = pruneOldToolJobs(0);
 
@@ -2391,7 +2400,10 @@ describe('pruneOldToolJobs', () => {
   });
 
   it('returns 0 and is a no-op when retentionDays is undefined', () => {
-    insertResolved('job-b', new Date(Date.now() - 10 * 86400_000).toISOString());
+    insertResolved(
+      'job-b',
+      new Date(Date.now() - 10 * 86400_000).toISOString(),
+    );
 
     const deleted = pruneOldToolJobs(undefined as unknown as number);
 
@@ -2720,7 +2732,11 @@ describe('storeToolJob', () => {
 
 // --- pauseTask / resumeTask (Story 62) ---
 
-function makeScheduledTask(id: string, groupFolder: string, status: 'active' | 'paused' = 'active') {
+function makeScheduledTask(
+  id: string,
+  groupFolder: string,
+  status: 'active' | 'paused' = 'active',
+) {
   createTask({
     id,
     group_folder: groupFolder,
@@ -2857,7 +2873,14 @@ describe('deleteConversationHistoryBefore', () => {
     db.run(
       `INSERT INTO conversation_history (id, group_folder, session_key, role, content, created_at)
        VALUES (?, ?, ?, ?, ?, ?)`,
-      ['row-target', 'target-group', 'target-group', 'user', 'to delete', oldTs],
+      [
+        'row-target',
+        'target-group',
+        'target-group',
+        'user',
+        'to delete',
+        oldTs,
+      ],
     );
     db.run(
       `INSERT INTO conversation_history (id, group_folder, session_key, role, content, created_at)
@@ -2923,7 +2946,11 @@ describe('updateConversationMessage', () => {
     appendConversationMessage('upd-group', 'user', 'original content');
     const history = getConversationHistory('upd-group');
     const id = history[0].id;
-    const result = updateConversationMessage(id, 'updated content', 'upd-group');
+    const result = updateConversationMessage(
+      id,
+      'updated content',
+      'upd-group',
+    );
     expect(result).toBe(true);
     const row = getMessageById(id, 'upd-group');
     expect(row!.content).toBe('updated content');
@@ -3010,7 +3037,9 @@ describe('writeAuditEntry + getAuditEntries', () => {
 
     const entries = getAuditEntries('grp-b');
     expect(entries).toHaveLength(1);
-    expect(entries[0].detail).toBe('before=2026-01-01T00:00:00.000Z, deleted=5');
+    expect(entries[0].detail).toBe(
+      'before=2026-01-01T00:00:00.000Z, deleted=5',
+    );
     expect(entries[0].target).toBeNull();
   });
 
@@ -3030,9 +3059,23 @@ describe('writeAuditEntry + getAuditEntries', () => {
 
   it('returns entries newest-first', () => {
     const group = 'grp-order';
-    writeAuditEntry({ groupFolder: group, actor: 'alice', action: 'history.clear' });
-    writeAuditEntry({ groupFolder: group, actor: 'alice', action: 'job.kill', target: 'job-1' });
-    writeAuditEntry({ groupFolder: group, actor: 'alice', action: 'schedule.delete', target: 'task-1' });
+    writeAuditEntry({
+      groupFolder: group,
+      actor: 'alice',
+      action: 'history.clear',
+    });
+    writeAuditEntry({
+      groupFolder: group,
+      actor: 'alice',
+      action: 'job.kill',
+      target: 'job-1',
+    });
+    writeAuditEntry({
+      groupFolder: group,
+      actor: 'alice',
+      action: 'schedule.delete',
+      target: 'task-1',
+    });
 
     const entries = getAuditEntries(group);
     expect(entries).toHaveLength(3);
@@ -3043,8 +3086,17 @@ describe('writeAuditEntry + getAuditEntries', () => {
   });
 
   it('isolates entries per group_folder', () => {
-    writeAuditEntry({ groupFolder: 'grp-x', actor: 'alice', action: 'history.clear' });
-    writeAuditEntry({ groupFolder: 'grp-y', actor: 'bob', action: 'secret.remove', target: 'openai' });
+    writeAuditEntry({
+      groupFolder: 'grp-x',
+      actor: 'alice',
+      action: 'history.clear',
+    });
+    writeAuditEntry({
+      groupFolder: 'grp-y',
+      actor: 'bob',
+      action: 'secret.remove',
+      target: 'openai',
+    });
 
     const xEntries = getAuditEntries('grp-x');
     const yEntries = getAuditEntries('grp-y');
@@ -3058,7 +3110,11 @@ describe('writeAuditEntry + getAuditEntries', () => {
   it('honours limit parameter', () => {
     const group = 'grp-limit';
     for (let i = 0; i < 10; i++) {
-      writeAuditEntry({ groupFolder: group, actor: 'alice', action: 'history.clear' });
+      writeAuditEntry({
+        groupFolder: group,
+        actor: 'alice',
+        action: 'history.clear',
+      });
     }
 
     const limited = getAuditEntries(group, 3);
@@ -3069,7 +3125,11 @@ describe('writeAuditEntry + getAuditEntries', () => {
     const group = 'grp-cap';
     // Insert 5 entries; cap enforced even if requested >200
     for (let i = 0; i < 5; i++) {
-      writeAuditEntry({ groupFolder: group, actor: 'alice', action: 'history.clear' });
+      writeAuditEntry({
+        groupFolder: group,
+        actor: 'alice',
+        action: 'history.clear',
+      });
     }
     // Requesting 999 should not exceed 200 cap (returns all 5 here since only 5 rows)
     const entries = getAuditEntries(group, 999);
@@ -3101,7 +3161,9 @@ describe('edited_at migration idempotency', () => {
     const rows = getConversationHistoryPage('migration-group');
     expect(rows).toHaveLength(1);
     // unedited row must have edited_at explicitly null, not undefined
-    expect(Object.prototype.hasOwnProperty.call(rows[0], 'edited_at')).toBe(true);
+    expect(Object.prototype.hasOwnProperty.call(rows[0], 'edited_at')).toBe(
+      true,
+    );
     expect(rows[0].edited_at).toBeNull();
   });
 });

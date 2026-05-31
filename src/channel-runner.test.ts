@@ -1,4 +1,12 @@
-import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vitest';
+import {
+  describe,
+  it,
+  expect,
+  vi,
+  beforeEach,
+  afterEach,
+  afterAll,
+} from 'vitest';
 
 // channel-runner.ts has a module-level `if (!KUBECLAW_CHANNEL) process.exit(1)`
 // guard. Hoist the env stub above the import so the guard passes.
@@ -1355,10 +1363,14 @@ describe('processGroupMessages dispatch', () => {
   // ── Story 41: specialist failure sends user-visible error reply ───────────────
 
   it('sends error message to user when specialist throws and no output was sent (AC1+AC5)', async () => {
-    _setSpecialistCatalogForTesting(makeCatalog([{ name: 'Coder', prompt: 'p' }]));
+    _setSpecialistCatalogForTesting(
+      makeCatalog([{ name: 'Coder', prompt: 'p' }]),
+    );
     mockGetMessagesSince.mockReturnValue([makeMessage('@Coder please help')]);
 
-    fakeRunner.runAgent = vi.fn().mockRejectedValue(new Error('connection refused'));
+    fakeRunner.runAgent = vi
+      .fn()
+      .mockRejectedValue(new Error('connection refused'));
 
     const result = await processGroupMessages(chatJid);
 
@@ -1366,28 +1378,40 @@ describe('processGroupMessages dispatch', () => {
     expect(result).toBe(true);
     // AC1: sendMessage must have been called with text matching /error/i + specialist name
     expect(mockChannel.sendMessage).toHaveBeenCalledOnce();
-    const [, sentText] = mockChannel.sendMessage.mock.calls[0] as [string, string];
+    const [, sentText] = mockChannel.sendMessage.mock.calls[0] as [
+      string,
+      string,
+    ];
     expect(sentText).toMatch(/error/i);
     expect(sentText).toContain('Coder');
   });
 
   it('error message text matches [@SpecialistName] Error: specialist run failed format', async () => {
-    _setSpecialistCatalogForTesting(makeCatalog([{ name: 'Researcher', prompt: 'p' }]));
-    mockGetMessagesSince.mockReturnValue([makeMessage('@Researcher look this up')]);
+    _setSpecialistCatalogForTesting(
+      makeCatalog([{ name: 'Researcher', prompt: 'p' }]),
+    );
+    mockGetMessagesSince.mockReturnValue([
+      makeMessage('@Researcher look this up'),
+    ]);
 
     fakeRunner.runAgent = vi.fn().mockRejectedValue(new Error('timeout'));
 
     await processGroupMessages(chatJid);
 
-    const [, sentText] = mockChannel.sendMessage.mock.calls[0] as [string, string];
+    const [, sentText] = mockChannel.sendMessage.mock.calls[0] as [
+      string,
+      string,
+    ];
     expect(sentText).toBe('[@Researcher] Error: specialist run failed');
   });
 
   it('sends one error message per failed specialist when multiple specialists fail (AC1)', async () => {
-    _setSpecialistCatalogForTesting(makeCatalog([
-      { name: 'A', prompt: 'pa' },
-      { name: 'B', prompt: 'pb' },
-    ]));
+    _setSpecialistCatalogForTesting(
+      makeCatalog([
+        { name: 'A', prompt: 'pa' },
+        { name: 'B', prompt: 'pb' },
+      ]),
+    );
     mockGetMessagesSince.mockReturnValue([makeMessage('@A @B help')]);
 
     fakeRunner.runAgent = vi.fn().mockRejectedValue(new Error('network down'));
@@ -1395,23 +1419,30 @@ describe('processGroupMessages dispatch', () => {
     await processGroupMessages(chatJid);
 
     expect(mockChannel.sendMessage).toHaveBeenCalledTimes(2);
-    const texts = mockChannel.sendMessage.mock.calls.map((c: [string, string]) => c[1]);
+    const texts = mockChannel.sendMessage.mock.calls.map(
+      (c: [string, string]) => c[1],
+    );
     expect(texts).toContain('[@A] Error: specialist run failed');
     expect(texts).toContain('[@B] Error: specialist run failed');
   });
 
   it('stores error reply in db with is_bot_message=true (AC2)', async () => {
-    _setSpecialistCatalogForTesting(makeCatalog([{ name: 'Planner', prompt: 'p' }]));
+    _setSpecialistCatalogForTesting(
+      makeCatalog([{ name: 'Planner', prompt: 'p' }]),
+    );
     mockGetMessagesSince.mockReturnValue([makeMessage('@Planner make a plan')]);
 
     fakeRunner.runAgent = vi.fn().mockRejectedValue(new Error('pod crash'));
 
     await processGroupMessages(chatJid);
 
-    const storeMessageMock = (db as any).storeMessage as ReturnType<typeof vi.fn>;
+    const storeMessageMock = (db as any).storeMessage as ReturnType<
+      typeof vi.fn
+    >;
     expect(storeMessageMock).toHaveBeenCalled();
-    const stored = storeMessageMock.mock.calls.find((c: any[]) =>
-      typeof c[0]?.content === 'string' && c[0].content.includes('Planner'),
+    const stored = storeMessageMock.mock.calls.find(
+      (c: any[]) =>
+        typeof c[0]?.content === 'string' && c[0].content.includes('Planner'),
     );
     expect(stored).toBeDefined();
     expect(stored![0].is_bot_message).toBe(true);
@@ -1419,16 +1450,26 @@ describe('processGroupMessages dispatch', () => {
   });
 
   it('does NOT send error message when partial output was already sent to user (AC3)', async () => {
-    _setSpecialistCatalogForTesting(makeCatalog([{ name: 'Writer', prompt: 'p' }]));
-    mockGetMessagesSince.mockReturnValue([makeMessage('@Writer write something')]);
+    _setSpecialistCatalogForTesting(
+      makeCatalog([{ name: 'Writer', prompt: 'p' }]),
+    );
+    mockGetMessagesSince.mockReturnValue([
+      makeMessage('@Writer write something'),
+    ]);
 
-    fakeRunner.runAgent = vi.fn().mockImplementation(async (
-      _g: any, _input: any, _spec: any, onOutput: any,
-    ) => {
-      // Emit a partial result first, then throw
-      if (onOutput) await onOutput({ status: 'success', result: 'partial output here' });
-      throw new Error('then failed');
-    });
+    fakeRunner.runAgent = vi
+      .fn()
+      .mockImplementation(
+        async (_g: any, _input: any, _spec: any, onOutput: any) => {
+          // Emit a partial result first, then throw
+          if (onOutput)
+            await onOutput({
+              status: 'success',
+              result: 'partial output here',
+            });
+          throw new Error('then failed');
+        },
+      );
 
     const result = await processGroupMessages(chatJid);
 
@@ -1436,13 +1477,18 @@ describe('processGroupMessages dispatch', () => {
     expect(result).toBe(true);
     // Only the partial output message was sent, not an extra error message
     expect(mockChannel.sendMessage).toHaveBeenCalledOnce();
-    const [, sentText] = mockChannel.sendMessage.mock.calls[0] as [string, string];
+    const [, sentText] = mockChannel.sendMessage.mock.calls[0] as [
+      string,
+      string,
+    ];
     expect(sentText).toContain('partial output here');
     expect(sentText).not.toMatch(/error/i);
   });
 
   it('after error reply the group is not wedged — next processGroupMessages call succeeds (AC4)', async () => {
-    _setSpecialistCatalogForTesting(makeCatalog([{ name: 'Helper', prompt: 'p' }]));
+    _setSpecialistCatalogForTesting(
+      makeCatalog([{ name: 'Helper', prompt: 'p' }]),
+    );
     mockGetMessagesSince.mockReturnValue([makeMessage('@Helper fail')]);
 
     fakeRunner.runAgent = vi.fn().mockRejectedValue(new Error('first fail'));
@@ -1454,31 +1500,44 @@ describe('processGroupMessages dispatch', () => {
     // Reset for a clean second call
     mockChannel.sendMessage.mockClear();
     mockGetMessagesSince.mockReturnValue([makeMessage('@Helper now succeed')]);
-    fakeRunner.runAgent = vi.fn().mockImplementation(async (_g: any, _input: any, _spec: any, onOutput: any) => {
-      if (onOutput) await onOutput({ status: 'success', result: 'all good' });
-      return { status: 'success', result: null };
-    });
+    fakeRunner.runAgent = vi
+      .fn()
+      .mockImplementation(
+        async (_g: any, _input: any, _spec: any, onOutput: any) => {
+          if (onOutput)
+            await onOutput({ status: 'success', result: 'all good' });
+          return { status: 'success', result: null };
+        },
+      );
 
     // Second call — should process normally
     const secondResult = await processGroupMessages(chatJid);
     expect(secondResult).toBe(true);
-    const texts = mockChannel.sendMessage.mock.calls.map((c: [string, string]) => c[1]);
+    const texts = mockChannel.sendMessage.mock.calls.map(
+      (c: [string, string]) => c[1],
+    );
     expect(texts.some((t) => t.includes('all good'))).toBe(true);
 
     // Restore fakeRunner.runAgent to a safe non-emitting default so subsequent
     // describe blocks (which share the mockGetDirectLLMRunner reference) are not
     // contaminated by this test's emitting implementation.
-    fakeRunner.runAgent = vi.fn().mockResolvedValue({ status: 'success', result: null });
+    fakeRunner.runAgent = vi
+      .fn()
+      .mockResolvedValue({ status: 'success', result: null });
     mockGetMessagesSince.mockReturnValue([]);
   });
 
   // ── Story 51: agentStatus='error' non-throw path ──────────────────────────
 
   it('Story 51 — AC1: sends [@Specialist] error message when runAgent resolves { status: error }', async () => {
-    _setSpecialistCatalogForTesting(makeCatalog([{ name: 'Alpha', prompt: 'p' }]));
+    _setSpecialistCatalogForTesting(
+      makeCatalog([{ name: 'Alpha', prompt: 'p' }]),
+    );
     mockGetMessagesSince.mockReturnValue([makeMessage('@Alpha hi')]);
 
-    fakeRunner.runAgent = vi.fn().mockResolvedValue({ status: 'error', result: null });
+    fakeRunner.runAgent = vi
+      .fn()
+      .mockResolvedValue({ status: 'error', result: null });
 
     await processGroupMessages(chatJid);
 
@@ -1488,34 +1547,41 @@ describe('processGroupMessages dispatch', () => {
   });
 
   it('Story 51 — AC2: does NOT send error message when partial output was already sent', async () => {
-    _setSpecialistCatalogForTesting(makeCatalog([{ name: 'Alpha', prompt: 'p' }]));
+    _setSpecialistCatalogForTesting(
+      makeCatalog([{ name: 'Alpha', prompt: 'p' }]),
+    );
     mockGetMessagesSince.mockReturnValue([makeMessage('@Alpha hi')]);
 
     // Runner calls onOutput with some text first (sets outputSentToUser = true),
     // then resolves with { status: 'error' }.
-    fakeRunner.runAgent = vi.fn().mockImplementation(async (
-      _g: any,
-      _input: any,
-      _spec: any,
-      onOutput: any,
-    ) => {
-      if (onOutput) await onOutput({ status: 'success', result: 'partial text' });
-      return { status: 'error', result: null };
-    });
+    fakeRunner.runAgent = vi
+      .fn()
+      .mockImplementation(
+        async (_g: any, _input: any, _spec: any, onOutput: any) => {
+          if (onOutput)
+            await onOutput({ status: 'success', result: 'partial text' });
+          return { status: 'error', result: null };
+        },
+      );
 
     await processGroupMessages(chatJid);
 
     // Only the partial-output message should have been sent — no error message.
-    const calls = (mockChannel.sendMessage as ReturnType<typeof vi.fn>).mock.calls;
+    const calls = (mockChannel.sendMessage as ReturnType<typeof vi.fn>).mock
+      .calls;
     expect(calls).toHaveLength(1);
     expect(calls[0][1]).toBe('[@Alpha] partial text');
   });
 
   it('Story 51 — AC3: processGroupMessages returns true when runAgent resolves { status: error }', async () => {
-    _setSpecialistCatalogForTesting(makeCatalog([{ name: 'Alpha', prompt: 'p' }]));
+    _setSpecialistCatalogForTesting(
+      makeCatalog([{ name: 'Alpha', prompt: 'p' }]),
+    );
     mockGetMessagesSince.mockReturnValue([makeMessage('@Alpha hi')]);
 
-    fakeRunner.runAgent = vi.fn().mockResolvedValue({ status: 'error', result: null });
+    fakeRunner.runAgent = vi
+      .fn()
+      .mockResolvedValue({ status: 'error', result: null });
 
     const result = await processGroupMessages(chatJid);
 
@@ -1523,21 +1589,30 @@ describe('processGroupMessages dispatch', () => {
   });
 
   it('Story 51 — AC4: only the errored specialist appears in failedSpecialists (via recordSpecialistUsage)', async () => {
-    _setSpecialistCatalogForTesting(makeCatalog([
-      { name: 'Alpha', prompt: 'pa' },
-      { name: 'Beta', prompt: 'pb' },
-    ]));
+    _setSpecialistCatalogForTesting(
+      makeCatalog([
+        { name: 'Alpha', prompt: 'pa' },
+        { name: 'Beta', prompt: 'pb' },
+      ]),
+    );
     mockGetMessagesSince.mockReturnValue([makeMessage('@Alpha @Beta please')]);
 
-    fakeRunner.runAgent = vi.fn().mockImplementation(async (_g: any, input: any) => {
-      if (input.prompt.includes('name="Alpha"')) return { status: 'error', result: null };
-      return { status: 'success', result: null };
-    });
+    fakeRunner.runAgent = vi
+      .fn()
+      .mockImplementation(async (_g: any, input: any) => {
+        if (input.prompt.includes('name="Alpha"'))
+          return { status: 'error', result: null };
+        return { status: 'success', result: null };
+      });
 
     await processGroupMessages(chatJid);
 
-    const alphaCalls = recordSpecialistUsageCalls.filter((c) => c.specialistName === 'Alpha');
-    const betaCalls = recordSpecialistUsageCalls.filter((c) => c.specialistName === 'Beta');
+    const alphaCalls = recordSpecialistUsageCalls.filter(
+      (c) => c.specialistName === 'Alpha',
+    );
+    const betaCalls = recordSpecialistUsageCalls.filter(
+      (c) => c.specialistName === 'Beta',
+    );
     expect(alphaCalls).toHaveLength(1);
     expect(alphaCalls[0].status).toBe('error');
     expect(betaCalls).toHaveLength(1);
@@ -1549,31 +1624,38 @@ describe('processGroupMessages dispatch', () => {
     // The runner emits partial text via onOutput first, then resolves with
     // { status: 'error', result: 'partial text' }. Only the streamed message
     // should reach the channel — the error path must be suppressed.
-    _setSpecialistCatalogForTesting(makeCatalog([{ name: 'Alpha', prompt: 'p' }]));
+    _setSpecialistCatalogForTesting(
+      makeCatalog([{ name: 'Alpha', prompt: 'p' }]),
+    );
     mockGetMessagesSince.mockReturnValue([makeMessage('@Alpha do work')]);
 
-    fakeRunner.runAgent = vi.fn().mockImplementation(async (
-      _g: any,
-      _input: any,
-      _spec: any,
-      onOutput: any,
-    ) => {
-      // Simulate streaming: first emit a partial result that sets outputSentToUser
-      if (onOutput) await onOutput({ status: 'success', result: 'partial output here' });
-      // Then resolve as an error (e.g. runner finished with error status)
-      return { status: 'error', result: 'partial text' };
-    });
+    fakeRunner.runAgent = vi
+      .fn()
+      .mockImplementation(
+        async (_g: any, _input: any, _spec: any, onOutput: any) => {
+          // Simulate streaming: first emit a partial result that sets outputSentToUser
+          if (onOutput)
+            await onOutput({
+              status: 'success',
+              result: 'partial output here',
+            });
+          // Then resolve as an error (e.g. runner finished with error status)
+          return { status: 'error', result: 'partial text' };
+        },
+      );
 
     await processGroupMessages(chatJid);
 
-    const allSent = (mockChannel.sendMessage as ReturnType<typeof vi.fn>).mock.calls.map(
-      (c: any[]) => c[1] as string,
-    );
+    const allSent = (
+      mockChannel.sendMessage as ReturnType<typeof vi.fn>
+    ).mock.calls.map((c: any[]) => c[1] as string);
     // Exactly one message: the streamed partial output
     expect(allSent).toHaveLength(1);
     expect(allSent[0]).toBe('[@Alpha] partial output here');
     // No error message sent
-    expect(allSent.some((m: string) => m.includes('Error: specialist run failed'))).toBe(false);
+    expect(
+      allSent.some((m: string) => m.includes('Error: specialist run failed')),
+    ).toBe(false);
   });
 
   // Reset the runner mock so subsequent describe blocks that don't call
@@ -2071,7 +2153,11 @@ describe('handleSpecialistsCommand', () => {
   }
 
   it('returns "No specialists configured" when catalog is empty', () => {
-    const reply = handleSpecialistsCommand('g1', '/specialists list', makeDeps([]));
+    const reply = handleSpecialistsCommand(
+      'g1',
+      '/specialists list',
+      makeDeps([]),
+    );
     expect(reply.toLowerCase()).toContain('no specialists configured');
   });
 
@@ -2118,7 +2204,11 @@ describe('handleSpecialistsCommand', () => {
   });
 
   it('returns help when unknown sub-command given', () => {
-    const reply = handleSpecialistsCommand('g1', '/specialists bad', makeDeps([]));
+    const reply = handleSpecialistsCommand(
+      'g1',
+      '/specialists bad',
+      makeDeps([]),
+    );
     expect(reply).toContain('Unknown subcommand: bad');
   });
 });
@@ -2139,9 +2229,24 @@ describe('handleSpecialistsCommand — empty history', () => {
 describe('handleSpecialistsCommand — formatting ok/error mix', () => {
   it('formats rows newest-first with correct tags', () => {
     const rows = [
-      { specialistName: 'gamma', usedAt: 1716249600000, durationMs: 300, status: 'success' as const },
-      { specialistName: 'beta', usedAt: 1716249500000, durationMs: 200, status: 'error' as const },
-      { specialistName: 'alpha', usedAt: 1716249400000, durationMs: 100, status: 'success' as const },
+      {
+        specialistName: 'gamma',
+        usedAt: 1716249600000,
+        durationMs: 300,
+        status: 'success' as const,
+      },
+      {
+        specialistName: 'beta',
+        usedAt: 1716249500000,
+        durationMs: 200,
+        status: 'error' as const,
+      },
+      {
+        specialistName: 'alpha',
+        usedAt: 1716249400000,
+        durationMs: 100,
+        status: 'success' as const,
+      },
     ];
     const deps = {
       catalog: { getAll: () => [] },
@@ -2244,15 +2349,34 @@ describe('handleSpecialistsCommand — help and unknown verb', () => {
 describe('handleSpecialistsCommand — unit test: 3 rows newest-first (Story 58 AC5)', () => {
   it('returns reply containing all 3 specialist names in newest-first order', () => {
     const rows = [
-      { specialistName: 'newest', usedAt: 3000, durationMs: 300, status: 'success' as const },
-      { specialistName: 'middle', usedAt: 2000, durationMs: 200, status: 'error' as const },
-      { specialistName: 'oldest', usedAt: 1000, durationMs: 100, status: 'success' as const },
+      {
+        specialistName: 'newest',
+        usedAt: 3000,
+        durationMs: 300,
+        status: 'success' as const,
+      },
+      {
+        specialistName: 'middle',
+        usedAt: 2000,
+        durationMs: 200,
+        status: 'error' as const,
+      },
+      {
+        specialistName: 'oldest',
+        usedAt: 1000,
+        durationMs: 100,
+        status: 'success' as const,
+      },
     ];
     const deps = {
       catalog: { getAll: () => [] },
       getSpecialistUsage: vi.fn().mockReturnValue(rows),
     };
-    const reply = handleSpecialistsCommand('test-group', '/specialists history', deps);
+    const reply = handleSpecialistsCommand(
+      'test-group',
+      '/specialists history',
+      deps,
+    );
 
     const lines = reply.split('\n');
     expect(lines).toHaveLength(3);
@@ -2276,9 +2400,7 @@ describe('/specialists list dispatch via processGroupMessages', () => {
 
   beforeEach(() => {
     fakeSpecialistsRunner = {
-      runAgent: vi
-        .fn()
-        .mockResolvedValue({ status: 'success', result: null }),
+      runAgent: vi.fn().mockResolvedValue({ status: 'success', result: null }),
       writeTasksSnapshot: vi.fn(),
       writeGroupsSnapshot: vi.fn(),
     };
@@ -2293,15 +2415,17 @@ describe('/specialists list dispatch via processGroupMessages', () => {
 
   it('sends specialist list via channel.sendMessage without invoking the LLM', async () => {
     const msgTimestamp = new Date(Date.now() - 1000).toISOString();
-    mockGetMessagesSince.mockReturnValueOnce([{
-      id: 'spec-list-msg-1',
-      chat_jid: CHAT_JID,
-      sender: 'user123',
-      sender_name: 'Alice',
-      content: '/specialists list',
-      timestamp: msgTimestamp,
-      is_from_me: false,
-    }]);
+    mockGetMessagesSince.mockReturnValueOnce([
+      {
+        id: 'spec-list-msg-1',
+        chat_jid: CHAT_JID,
+        sender: 'user123',
+        sender_name: 'Alice',
+        content: '/specialists list',
+        timestamp: msgTimestamp,
+        is_from_me: false,
+      },
+    ]);
 
     const fakeChannel = {
       ownsJid: (jid: string) => jid === CHAT_JID,
@@ -2344,15 +2468,17 @@ describe('/specialists list dispatch via processGroupMessages', () => {
 
   it('sends "No specialists configured" when catalog is empty', async () => {
     const msgTimestamp = new Date(Date.now() - 1000).toISOString();
-    mockGetMessagesSince.mockReturnValueOnce([{
-      id: 'spec-list-msg-2',
-      chat_jid: CHAT_JID,
-      sender: 'user123',
-      sender_name: 'Alice',
-      content: '/specialists list',
-      timestamp: msgTimestamp,
-      is_from_me: false,
-    }]);
+    mockGetMessagesSince.mockReturnValueOnce([
+      {
+        id: 'spec-list-msg-2',
+        chat_jid: CHAT_JID,
+        sender: 'user123',
+        sender_name: 'Alice',
+        content: '/specialists list',
+        timestamp: msgTimestamp,
+        is_from_me: false,
+      },
+    ]);
 
     const fakeChannel = {
       ownsJid: (jid: string) => jid === CHAT_JID,
@@ -2386,15 +2512,17 @@ describe('/specialists list dispatch via processGroupMessages', () => {
 
   it('sends usage hint for unknown sub-command', async () => {
     const msgTimestamp = new Date(Date.now() - 1000).toISOString();
-    mockGetMessagesSince.mockReturnValueOnce([{
-      id: 'spec-list-msg-3',
-      chat_jid: CHAT_JID,
-      sender: 'user123',
-      sender_name: 'Alice',
-      content: '/specialists foobar',
-      timestamp: msgTimestamp,
-      is_from_me: false,
-    }]);
+    mockGetMessagesSince.mockReturnValueOnce([
+      {
+        id: 'spec-list-msg-3',
+        chat_jid: CHAT_JID,
+        sender: 'user123',
+        sender_name: 'Alice',
+        content: '/specialists foobar',
+        timestamp: msgTimestamp,
+        is_from_me: false,
+      },
+    ]);
 
     const fakeChannel = {
       ownsJid: (jid: string) => jid === CHAT_JID,
@@ -2430,13 +2558,15 @@ describe('/specialists list dispatch via processGroupMessages', () => {
   });
 });
 
-
-
 // ── /memory command unit tests ────────────────────────────────────────────────
 
 import { promises as fsp } from 'fs';
 import os from 'os';
-import { isMemoryCommand, handleMemoryCommand, HELP_TEXT } from './channel-runner.js';
+import {
+  isMemoryCommand,
+  handleMemoryCommand,
+  HELP_TEXT,
+} from './channel-runner.js';
 
 describe('isMemoryCommand', () => {
   it('returns true for /memory show', () => {
@@ -2490,77 +2620,158 @@ describe('handleMemoryCommand — mocked fs', () => {
   });
 
   it('AC1: /memory show returns "No memory set." when file absent', async () => {
-    const reply = await handleMemoryCommand(groupFolder, '/memory show', tmpDir);
+    const reply = await handleMemoryCommand(
+      groupFolder,
+      '/memory show',
+      tmpDir,
+    );
     expect(reply).toBe('No memory set.');
   });
 
   it('AC1: /memory show returns file contents when present', async () => {
-    await fsp.writeFile(`${tmpDir}/${groupFolder}/CLAUDE.md`, 'hello memory', 'utf8');
-    const reply = await handleMemoryCommand(groupFolder, '/memory show', tmpDir);
+    await fsp.writeFile(
+      `${tmpDir}/${groupFolder}/CLAUDE.md`,
+      'hello memory',
+      'utf8',
+    );
+    const reply = await handleMemoryCommand(
+      groupFolder,
+      '/memory show',
+      tmpDir,
+    );
     expect(reply).toBe('hello memory');
   });
 
   it('AC2: /memory append creates file and returns "Memory updated."', async () => {
-    const reply = await handleMemoryCommand(groupFolder, '/memory append first line', tmpDir);
+    const reply = await handleMemoryCommand(
+      groupFolder,
+      '/memory append first line',
+      tmpDir,
+    );
     expect(reply).toBe('Memory updated.');
-    const contents = await fsp.readFile(`${tmpDir}/${groupFolder}/CLAUDE.md`, 'utf8');
+    const contents = await fsp.readFile(
+      `${tmpDir}/${groupFolder}/CLAUDE.md`,
+      'utf8',
+    );
     expect(contents).toContain('first line');
   });
 
   it('AC2: /memory append adds to existing file with newline', async () => {
-    await fsp.writeFile(`${tmpDir}/${groupFolder}/CLAUDE.md`, 'existing content', 'utf8');
+    await fsp.writeFile(
+      `${tmpDir}/${groupFolder}/CLAUDE.md`,
+      'existing content',
+      'utf8',
+    );
     await handleMemoryCommand(groupFolder, '/memory append added line', tmpDir);
-    const contents = await fsp.readFile(`${tmpDir}/${groupFolder}/CLAUDE.md`, 'utf8');
+    const contents = await fsp.readFile(
+      `${tmpDir}/${groupFolder}/CLAUDE.md`,
+      'utf8',
+    );
     expect(contents).toContain('existing content');
     expect(contents).toContain('added line');
   });
 
   it('AC2: /memory show after append confirms the addition', async () => {
     await handleMemoryCommand(groupFolder, '/memory append my note', tmpDir);
-    const reply = await handleMemoryCommand(groupFolder, '/memory show', tmpDir);
+    const reply = await handleMemoryCommand(
+      groupFolder,
+      '/memory show',
+      tmpDir,
+    );
     expect(reply).toContain('my note');
   });
 
   it('AC3: /memory set overwrites file', async () => {
-    await fsp.writeFile(`${tmpDir}/${groupFolder}/CLAUDE.md`, 'old content', 'utf8');
-    const reply = await handleMemoryCommand(groupFolder, '/memory set new content', tmpDir);
+    await fsp.writeFile(
+      `${tmpDir}/${groupFolder}/CLAUDE.md`,
+      'old content',
+      'utf8',
+    );
+    const reply = await handleMemoryCommand(
+      groupFolder,
+      '/memory set new content',
+      tmpDir,
+    );
     expect(reply).toBe('Memory updated.');
-    const contents = await fsp.readFile(`${tmpDir}/${groupFolder}/CLAUDE.md`, 'utf8');
+    const contents = await fsp.readFile(
+      `${tmpDir}/${groupFolder}/CLAUDE.md`,
+      'utf8',
+    );
     expect(contents).toBe('new content');
     expect(contents).not.toContain('old content');
   });
 
   it('AC3: /memory show after set returns only the new text', async () => {
-    await handleMemoryCommand(groupFolder, '/memory set brand new memory', tmpDir);
-    const reply = await handleMemoryCommand(groupFolder, '/memory show', tmpDir);
+    await handleMemoryCommand(
+      groupFolder,
+      '/memory set brand new memory',
+      tmpDir,
+    );
+    const reply = await handleMemoryCommand(
+      groupFolder,
+      '/memory show',
+      tmpDir,
+    );
     expect(reply).toBe('brand new memory');
   });
 
   it('AC4: /memory set "" truncates to empty; show returns "No memory set."', async () => {
-    await fsp.writeFile(`${tmpDir}/${groupFolder}/CLAUDE.md`, 'something here', 'utf8');
-    const setReply = await handleMemoryCommand(groupFolder, '/memory set ', tmpDir);
+    await fsp.writeFile(
+      `${tmpDir}/${groupFolder}/CLAUDE.md`,
+      'something here',
+      'utf8',
+    );
+    const setReply = await handleMemoryCommand(
+      groupFolder,
+      '/memory set ',
+      tmpDir,
+    );
     expect(setReply).toBe('Memory cleared.');
-    const showReply = await handleMemoryCommand(groupFolder, '/memory show', tmpDir);
+    const showReply = await handleMemoryCommand(
+      groupFolder,
+      '/memory show',
+      tmpDir,
+    );
     expect(showReply).toBe('No memory set.');
   });
 
   it('AC4: /memory set with only spaces clears memory', async () => {
-    await fsp.writeFile(`${tmpDir}/${groupFolder}/CLAUDE.md`, 'had content', 'utf8');
+    await fsp.writeFile(
+      `${tmpDir}/${groupFolder}/CLAUDE.md`,
+      'had content',
+      'utf8',
+    );
     // "/memory set" with no trailing text
-    const setReply = await handleMemoryCommand(groupFolder, '/memory set', tmpDir);
+    const setReply = await handleMemoryCommand(
+      groupFolder,
+      '/memory set',
+      tmpDir,
+    );
     expect(setReply).toBe('Memory cleared.');
-    const showReply = await handleMemoryCommand(groupFolder, '/memory show', tmpDir);
+    const showReply = await handleMemoryCommand(
+      groupFolder,
+      '/memory show',
+      tmpDir,
+    );
     expect(showReply).toBe('No memory set.');
   });
 
   it('unknown subcommand returns help text', async () => {
-    const reply = await handleMemoryCommand(groupFolder, '/memory frobnicate', tmpDir);
+    const reply = await handleMemoryCommand(
+      groupFolder,
+      '/memory frobnicate',
+      tmpDir,
+    );
     expect(reply).toContain('Unknown subcommand');
     expect(reply).toContain('/memory show');
   });
 
   it('/memory append with no text returns usage hint', async () => {
-    const reply = await handleMemoryCommand(groupFolder, '/memory append', tmpDir);
+    const reply = await handleMemoryCommand(
+      groupFolder,
+      '/memory append',
+      tmpDir,
+    );
     expect(reply).toMatch(/usage/i);
   });
 });
@@ -2596,7 +2807,11 @@ describe('handleMemoryCommand — per-group isolation', () => {
   it('AC5: alice and bob have independent memories', async () => {
     await handleMemoryCommand('alice', '/memory set alice memory', tmpDir);
     await handleMemoryCommand('bob', '/memory set bob memory', tmpDir);
-    const aliceReply = await handleMemoryCommand('alice', '/memory show', tmpDir);
+    const aliceReply = await handleMemoryCommand(
+      'alice',
+      '/memory show',
+      tmpDir,
+    );
     const bobReply = await handleMemoryCommand('bob', '/memory show', tmpDir);
     expect(aliceReply).toBe('alice memory');
     expect(bobReply).toBe('bob memory');
@@ -2654,7 +2869,9 @@ describe('parseScheduleAddCommand', () => {
   });
 
   it('returns null for an unknown schedule type', () => {
-    expect(parseScheduleAddCommand('/schedule add weekly monday ping')).toBeNull();
+    expect(
+      parseScheduleAddCommand('/schedule add weekly monday ping'),
+    ).toBeNull();
   });
 
   it('returns null when prompt is missing', () => {
@@ -2782,7 +2999,10 @@ describe('handleScheduleCommand — remove (AC3 & AC4)', () => {
       '/schedule remove test-id-1234',
     );
 
-    expect(db.deleteTaskForGroup).toHaveBeenCalledWith('test-id-1234', 'group-alice');
+    expect(db.deleteTaskForGroup).toHaveBeenCalledWith(
+      'test-id-1234',
+      'group-alice',
+    );
     expect(reply).toMatch(/Removed/i);
   });
 
@@ -2858,7 +3078,11 @@ describe('handleScheduleCommand — history (Story 60)', () => {
     vi.mocked(db.getTaskById).mockReturnValue(TASK_OWNER);
     vi.mocked(db.getTaskRunLogs).mockReturnValue(STUB_ROWS);
 
-    const reply = await handleScheduleCommand('mygroup', 'jid@g.us', '/schedule history task-abc');
+    const reply = await handleScheduleCommand(
+      'mygroup',
+      'jid@g.us',
+      '/schedule history task-abc',
+    );
 
     expect(reply).toContain('2025-01-02T10:00:00.000Z');
     expect(reply).toContain('[ok]');
@@ -2872,7 +3096,11 @@ describe('handleScheduleCommand — history (Story 60)', () => {
     vi.mocked(db.getTaskById).mockReturnValue(TASK_OWNER);
     vi.mocked(db.getTaskRunLogs).mockReturnValue(STUB_ROWS);
 
-    const reply = await handleScheduleCommand('mygroup', 'jid@g.us', '/schedule history task-abc');
+    const reply = await handleScheduleCommand(
+      'mygroup',
+      'jid@g.us',
+      '/schedule history task-abc',
+    );
     expect(reply).toContain('task-abc');
     expect(reply).toContain('2 rows');
   });
@@ -2880,7 +3108,11 @@ describe('handleScheduleCommand — history (Story 60)', () => {
   it('returns not-found for unknown task id', async () => {
     vi.mocked(db.getTaskById).mockReturnValue(undefined);
 
-    const reply = await handleScheduleCommand('mygroup', 'jid@g.us', '/schedule history no-such-task');
+    const reply = await handleScheduleCommand(
+      'mygroup',
+      'jid@g.us',
+      '/schedule history no-such-task',
+    );
     expect(reply).toMatch(/not found/i);
   });
 
@@ -2888,7 +3120,11 @@ describe('handleScheduleCommand — history (Story 60)', () => {
     const otherGroupTask = { ...TASK_OWNER, group_folder: 'other-group' };
     vi.mocked(db.getTaskById).mockReturnValue(otherGroupTask);
 
-    const reply = await handleScheduleCommand('mygroup', 'jid@g.us', '/schedule history task-abc');
+    const reply = await handleScheduleCommand(
+      'mygroup',
+      'jid@g.us',
+      '/schedule history task-abc',
+    );
     expect(reply).toMatch(/not found/i);
   });
 
@@ -2896,7 +3132,11 @@ describe('handleScheduleCommand — history (Story 60)', () => {
     vi.mocked(db.getTaskById).mockReturnValue(TASK_OWNER);
     vi.mocked(db.getTaskRunLogs).mockReturnValue(STUB_ROWS);
 
-    await handleScheduleCommand('mygroup', 'jid@g.us', '/schedule history task-abc 3');
+    await handleScheduleCommand(
+      'mygroup',
+      'jid@g.us',
+      '/schedule history task-abc 3',
+    );
     expect(db.getTaskRunLogs).toHaveBeenCalledWith('task-abc', 'mygroup', 3);
   });
 
@@ -2904,27 +3144,55 @@ describe('handleScheduleCommand — history (Story 60)', () => {
     vi.mocked(db.getTaskById).mockReturnValue(TASK_OWNER);
     vi.mocked(db.getTaskRunLogs).mockReturnValue([]);
 
-    const reply = await handleScheduleCommand('mygroup', 'jid@g.us', '/schedule history task-abc');
+    const reply = await handleScheduleCommand(
+      'mygroup',
+      'jid@g.us',
+      '/schedule history task-abc',
+    );
     expect(reply).toMatch(/no run history/i);
   });
 
   it('truncates long result to ~120 chars', async () => {
     const longResult = 'x'.repeat(200);
-    const rows = [{ run_at: '2025-01-01T00:00:00.000Z', status: 'success' as const, duration_ms: 10, result: longResult, error: null }];
+    const rows = [
+      {
+        run_at: '2025-01-01T00:00:00.000Z',
+        status: 'success' as const,
+        duration_ms: 10,
+        result: longResult,
+        error: null,
+      },
+    ];
     vi.mocked(db.getTaskById).mockReturnValue(TASK_OWNER);
     vi.mocked(db.getTaskRunLogs).mockReturnValue(rows);
 
-    const reply = await handleScheduleCommand('mygroup', 'jid@g.us', '/schedule history task-abc');
+    const reply = await handleScheduleCommand(
+      'mygroup',
+      'jid@g.us',
+      '/schedule history task-abc',
+    );
     expect(reply).toContain('…');
     expect(reply).not.toContain(longResult);
   });
 
   it('shows error detail when status is error', async () => {
-    const rows = [{ run_at: '2025-01-01T00:00:00.000Z', status: 'error' as const, duration_ms: 10, result: null, error: 'Task timed out' }];
+    const rows = [
+      {
+        run_at: '2025-01-01T00:00:00.000Z',
+        status: 'error' as const,
+        duration_ms: 10,
+        result: null,
+        error: 'Task timed out',
+      },
+    ];
     vi.mocked(db.getTaskById).mockReturnValue(TASK_OWNER);
     vi.mocked(db.getTaskRunLogs).mockReturnValue(rows);
 
-    const reply = await handleScheduleCommand('mygroup', 'jid@g.us', '/schedule history task-abc');
+    const reply = await handleScheduleCommand(
+      'mygroup',
+      'jid@g.us',
+      '/schedule history task-abc',
+    );
     expect(reply).toContain('Task timed out');
     expect(reply).toContain('[error]');
   });
@@ -2933,19 +3201,31 @@ describe('handleScheduleCommand — history (Story 60)', () => {
     vi.mocked(db.getTaskById).mockReturnValue(TASK_OWNER);
     vi.mocked(db.getTaskRunLogs).mockReturnValue([]);
 
-    const reply = await handleScheduleCommand('mygroup', 'jid@g.us', '/schedule help');
+    const reply = await handleScheduleCommand(
+      'mygroup',
+      'jid@g.us',
+      '/schedule help',
+    );
     expect(reply).toMatch(/history/i);
   });
 
   it('rejects non-integer limit', async () => {
     vi.mocked(db.getTaskById).mockReturnValue(TASK_OWNER);
 
-    const reply = await handleScheduleCommand('mygroup', 'jid@g.us', '/schedule history task-abc abc');
+    const reply = await handleScheduleCommand(
+      'mygroup',
+      'jid@g.us',
+      '/schedule history task-abc abc',
+    );
     expect(reply).toMatch(/invalid limit/i);
   });
 
   it('returns usage for missing task id', async () => {
-    const reply = await handleScheduleCommand('mygroup', 'jid@g.us', '/schedule history');
+    const reply = await handleScheduleCommand(
+      'mygroup',
+      'jid@g.us',
+      '/schedule history',
+    );
     expect(reply).toMatch(/usage/i);
   });
 });
@@ -3001,7 +3281,11 @@ describe('/cancel — processGroupMessages intercept', () => {
   const CANCEL_JID = 'cancel-test@g.us';
   const CANCEL_FOLDER = 'tg_cancel-test';
   const sendMessageSpy = vi.fn().mockResolvedValue(undefined);
-  let cancelFakeRunner: { runAgent: ReturnType<typeof vi.fn>; writeTasksSnapshot: ReturnType<typeof vi.fn>; writeGroupsSnapshot: ReturnType<typeof vi.fn> };
+  let cancelFakeRunner: {
+    runAgent: ReturnType<typeof vi.fn>;
+    writeTasksSnapshot: ReturnType<typeof vi.fn>;
+    writeGroupsSnapshot: ReturnType<typeof vi.fn>;
+  };
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -3027,15 +3311,17 @@ describe('/cancel — processGroupMessages intercept', () => {
 
     // Return a /cancel message from getMessagesSince
     const msgTimestamp = new Date(Date.now() - 1000).toISOString();
-    mockGetMessagesSince.mockReturnValueOnce([{
-      id: 'cancel-msg-1',
-      chat_jid: CANCEL_JID,
-      sender: 'user123',
-      sender_name: 'Alice',
-      content: '/cancel',
-      timestamp: msgTimestamp,
-      is_from_me: false,
-    }]);
+    mockGetMessagesSince.mockReturnValueOnce([
+      {
+        id: 'cancel-msg-1',
+        chat_jid: CANCEL_JID,
+        sender: 'user123',
+        sender_name: 'Alice',
+        content: '/cancel',
+        timestamp: msgTimestamp,
+        is_from_me: false,
+      },
+    ]);
 
     const fakeChannel = {
       ownsJid: (jid: string) => jid === CANCEL_JID,
@@ -3050,11 +3336,19 @@ describe('/cancel — processGroupMessages intercept', () => {
     );
     // xadd returns a stream ID; xread returns the result immediately
     (mockRedis as any).xadd = vi.fn().mockResolvedValue('1-0');
-    (mockRedis as any).xread = vi.fn().mockResolvedValue([
-      ['kubeclaw:cancel-result:test', [
-        ['1-0', ['result', JSON.stringify({ ok: true, status: 'no_active_job' })]],
-      ]],
-    ]);
+    (mockRedis as any).xread = vi
+      .fn()
+      .mockResolvedValue([
+        [
+          'kubeclaw:cancel-result:test',
+          [
+            [
+              '1-0',
+              ['result', JSON.stringify({ ok: true, status: 'no_active_job' })],
+            ],
+          ],
+        ],
+      ]);
 
     _testInjectState(
       {
@@ -3263,7 +3557,11 @@ describe('handleCapabilitiesCommand — /capabilities tools', () => {
   });
 
   it('AC4: /capabilities tools (no type) → usage help, no crash', async () => {
-    const result = await handleCapabilitiesCommand(CAP_GROUP, '/capabilities tools', noOpIpc);
+    const result = await handleCapabilitiesCommand(
+      CAP_GROUP,
+      '/capabilities tools',
+      noOpIpc,
+    );
     expect(result.reply).toMatch(/Usage:/i);
     expect(result.reply).toContain('/capabilities tools <type>');
   });
@@ -3274,12 +3572,24 @@ describe('handleCapabilitiesCommand — /capabilities tools', () => {
       kind: 'mcp-group',
       state: 'ready',
       toolSchemas: [
-        { name: 'echo_text', description: 'Echoes the input text back unchanged', inputSchema: {} },
-        { name: 'echo_json', description: 'Echoes a JSON object back', inputSchema: {} },
+        {
+          name: 'echo_text',
+          description: 'Echoes the input text back unchanged',
+          inputSchema: {},
+        },
+        {
+          name: 'echo_json',
+          description: 'Echoes a JSON object back',
+          inputSchema: {},
+        },
       ],
     };
     _groupCapabilityEntries.set('echo', echoEntry);
-    const result = await handleCapabilitiesCommand(CAP_GROUP, '/capabilities tools echo', noOpIpc);
+    const result = await handleCapabilitiesCommand(
+      CAP_GROUP,
+      '/capabilities tools echo',
+      noOpIpc,
+    );
     expect(result.reply).toContain('echo_text');
     expect(result.reply).toContain('echo_json');
   });
@@ -3336,17 +3646,29 @@ describe('handleCapabilitiesCommand — help and fallback (Story 54)', () => {
   });
 
   it('returns CAPABILITIES_HELP including tools line for /capabilities help', async () => {
-    const result = await handleCapabilitiesCommand(CAP_GROUP, '/capabilities help', noOpIpc);
+    const result = await handleCapabilitiesCommand(
+      CAP_GROUP,
+      '/capabilities help',
+      noOpIpc,
+    );
     expect(result.reply).toContain('/capabilities tools <type>');
   });
 
   it('returns CAPABILITIES_HELP including tools line for /capabilities with no verb', async () => {
-    const result = await handleCapabilitiesCommand(CAP_GROUP, '/capabilities', noOpIpc);
+    const result = await handleCapabilitiesCommand(
+      CAP_GROUP,
+      '/capabilities',
+      noOpIpc,
+    );
     expect(result.reply).toContain('/capabilities tools <type>');
   });
 
   it('returns unknown subcommand message for unrecognised verb', async () => {
-    const result = await handleCapabilitiesCommand(CAP_GROUP, '/capabilities foo', noOpIpc);
+    const result = await handleCapabilitiesCommand(
+      CAP_GROUP,
+      '/capabilities foo',
+      noOpIpc,
+    );
     expect(result.reply).toMatch(/Unknown subcommand/i);
   });
 });
@@ -3366,8 +3688,16 @@ describe('Story 53 — mixed-batch: normal message + slash command in same batch
   };
 
   let sentMessages: string[];
-  let fakeRunner: { runAgent: ReturnType<typeof vi.fn>; writeTasksSnapshot: ReturnType<typeof vi.fn>; writeGroupsSnapshot: ReturnType<typeof vi.fn> };
-  let mockChannel: { sendMessage: ReturnType<typeof vi.fn>; setTyping: ReturnType<typeof vi.fn>; owns: ReturnType<typeof vi.fn> };
+  let fakeRunner: {
+    runAgent: ReturnType<typeof vi.fn>;
+    writeTasksSnapshot: ReturnType<typeof vi.fn>;
+    writeGroupsSnapshot: ReturnType<typeof vi.fn>;
+  };
+  let mockChannel: {
+    sendMessage: ReturnType<typeof vi.fn>;
+    setTyping: ReturnType<typeof vi.fn>;
+    owns: ReturnType<typeof vi.fn>;
+  };
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -3382,9 +3712,11 @@ describe('Story 53 — mixed-batch: normal message + slash command in same batch
     mockGetDirectLLMRunner.mockReturnValue(fakeRunner);
 
     mockChannel = {
-      sendMessage: vi.fn().mockImplementation(async (_jid: string, text: string) => {
-        sentMessages.push(text);
-      }),
+      sendMessage: vi
+        .fn()
+        .mockImplementation(async (_jid: string, text: string) => {
+          sentMessages.push(text);
+        }),
       setTyping: vi.fn().mockResolvedValue(undefined),
       owns: vi.fn().mockReturnValue(true),
     };
@@ -3401,7 +3733,8 @@ describe('Story 53 — mixed-batch: normal message + slash command in same batch
     const t2 = '2026-01-01T00:00:02.000Z';
 
     // Seed DB for /search to have something to find
-    const { _initTestDatabase, appendConversationMessage } = await import('./db.js');
+    const { _initTestDatabase, appendConversationMessage } =
+      await import('./db.js');
     await _initTestDatabase();
     appendConversationMessage('story53-group', 'user', 'tell me about Rust');
 
@@ -3414,7 +3747,9 @@ describe('Story 53 — mixed-batch: normal message + slash command in same batch
 
     // /search reply must have been sent
     expect(mockChannel.sendMessage).toHaveBeenCalled();
-    const sentTexts = (mockChannel.sendMessage.mock.calls as [string, string][]).map(([, text]) => text);
+    const sentTexts = (
+      mockChannel.sendMessage.mock.calls as [string, string][]
+    ).map(([, text]) => text);
     const searchReply = sentTexts.find((t) => /rust/i.test(t));
     expect(searchReply).toBeTruthy();
 
@@ -3428,7 +3763,8 @@ describe('Story 53 — mixed-batch: normal message + slash command in same batch
     const t2 = '2026-01-01T00:00:02.000Z';
 
     // Seed DB for /search
-    const { _initTestDatabase, appendConversationMessage } = await import('./db.js');
+    const { _initTestDatabase, appendConversationMessage } =
+      await import('./db.js');
     await _initTestDatabase();
     appendConversationMessage('story53-group', 'user', 'help me with foo');
 
@@ -3460,15 +3796,19 @@ describe('Story 53 — mixed-batch: normal message + slash command in same batch
 
     // Capture what lastAgentTimestamp is after the call by observing setRouterState
     const setRouterStateCalls: Array<[string, string]> = [];
-    vi.mocked(db.setRouterState).mockImplementation((key: string, value: string) => {
-      setRouterStateCalls.push([key, value]);
-    });
+    vi.mocked(db.setRouterState).mockImplementation(
+      (key: string, value: string) => {
+        setRouterStateCalls.push([key, value]);
+      },
+    );
 
     await processGroupMessages(chatJid);
 
     // The last_agent_timestamp should contain t2 (the timestamp of the last message).
     // Use the last call (saveState is called once per slash command + once at end).
-    const agentTsCalls = setRouterStateCalls.filter(([key]) => key === 'last_agent_timestamp');
+    const agentTsCalls = setRouterStateCalls.filter(
+      ([key]) => key === 'last_agent_timestamp',
+    );
     expect(agentTsCalls.length).toBeGreaterThan(0);
     const lastAgentTsCall = agentTsCalls[agentTsCalls.length - 1];
     const saved = JSON.parse(lastAgentTsCall[1]) as Record<string, string>;
@@ -3481,9 +3821,7 @@ describe('Story 53 — mixed-batch: normal message + slash command in same batch
     const { _initTestDatabase } = await import('./db.js');
     await _initTestDatabase();
 
-    mockGetMessagesSince.mockReturnValueOnce([
-      makeMessage('/skills list', t1),
-    ]);
+    mockGetMessagesSince.mockReturnValueOnce([makeMessage('/skills list', t1)]);
 
     await processGroupMessages(chatJid);
 
@@ -3523,8 +3861,12 @@ describe('Story 53 — mixed-batch: normal message + slash command in same batch
     await processGroupMessages(chatJid);
 
     // /help reply must have been sent and contain command listing
-    const sentTexts = (mockChannel.sendMessage.mock.calls as [string, string][]).map(([, text]) => text);
-    const helpReply = sentTexts.find((t) => /available slash commands/i.test(t));
+    const sentTexts = (
+      mockChannel.sendMessage.mock.calls as [string, string][]
+    ).map(([, text]) => text);
+    const helpReply = sentTexts.find((t) =>
+      /available slash commands/i.test(t),
+    );
     expect(helpReply).toBeTruthy();
 
     // LLM must have been invoked for the normal message
@@ -3549,14 +3891,19 @@ describe('Story 53 — integration: /help after normal message, lastAgentTimesta
   it('AC3: /skills reply sent AND lastAgentTimestamp advanced to last message timestamp', async () => {
     // Use a real in-memory DB so getMessagesSince is bypassed via the mock, and
     // appendConversationMessage is live.
-    const { _initTestDatabase, appendConversationMessage } = await import('./db.js');
+    const { _initTestDatabase, appendConversationMessage } =
+      await import('./db.js');
     await _initTestDatabase();
 
     const normalTs = '2026-05-01T12:00:00.000Z';
-    const slashTs  = '2026-05-01T12:00:01.000Z';
+    const slashTs = '2026-05-01T12:00:01.000Z';
 
     // Two rows in conversation_history for the group
-    appendConversationMessage(GROUP_FOLDER, 'user', 'what are the system requirements');
+    appendConversationMessage(
+      GROUP_FOLDER,
+      'user',
+      'what are the system requirements',
+    );
     appendConversationMessage(GROUP_FOLDER, 'user', '/skills list');
 
     // getMessagesSince is still mocked; set up both messages
@@ -3567,9 +3914,11 @@ describe('Story 53 — integration: /help after normal message, lastAgentTimesta
 
     const fakeChannel2 = {
       ownsJid: (jid: string) => jid === chatJid,
-      sendMessage: vi.fn().mockImplementation(async (_jid: string, text: string) => {
-        sentMessages.push(text);
-      }),
+      sendMessage: vi
+        .fn()
+        .mockImplementation(async (_jid: string, text: string) => {
+          sentMessages.push(text);
+        }),
       setTyping: vi.fn().mockResolvedValue(undefined),
     };
     mockFindChannel.mockReturnValue(fakeChannel2);
@@ -3599,16 +3948,22 @@ describe('Story 53 — integration: /help after normal message, lastAgentTimesta
 
     // Capture setRouterState calls to inspect lastAgentTimestamp
     const routerStateSaved: Record<string, string> = {};
-    vi.mocked(db.setRouterState).mockImplementation((key: string, value: string) => {
-      routerStateSaved[key] = value;
-    });
+    vi.mocked(db.setRouterState).mockImplementation(
+      (key: string, value: string) => {
+        routerStateSaved[key] = value;
+      },
+    );
 
     await processGroupMessages(chatJid);
 
     // /skills reply was sent
     expect(fakeChannel2.sendMessage).toHaveBeenCalled();
-    const replies = (fakeChannel2.sendMessage.mock.calls as [string, string][]).map(([, text]) => text);
-    expect(replies.some((r) => /skills/i.test(r) || /no skills/i.test(r))).toBe(true);
+    const replies = (
+      fakeChannel2.sendMessage.mock.calls as [string, string][]
+    ).map(([, text]) => text);
+    expect(replies.some((r) => /skills/i.test(r) || /no skills/i.test(r))).toBe(
+      true,
+    );
 
     // LLM was also invoked for the normal message
     expect(fakeRunner2.runAgent).toHaveBeenCalled();
@@ -3616,15 +3971,18 @@ describe('Story 53 — integration: /help after normal message, lastAgentTimesta
     // lastAgentTimestamp was saved and equals slashTs (the LAST message's timestamp).
     // routerStateSaved is overwritten on each call so it holds the final saveState() value.
     expect(routerStateSaved['last_agent_timestamp']).toBeTruthy();
-    const saved = JSON.parse(routerStateSaved['last_agent_timestamp']) as Record<string, string>;
+    const saved = JSON.parse(
+      routerStateSaved['last_agent_timestamp'],
+    ) as Record<string, string>;
     expect(saved[chatJid]).toBe(slashTs);
   });
 });
 
-
 // ── /jobs <id> logs unit tests (Story 59) ─────────────────────────────────────
 
-function makeJobsDeps(overrides: Partial<JobsCommandDeps> = {}): JobsCommandDeps {
+function makeJobsDeps(
+  overrides: Partial<JobsCommandDeps> = {},
+): JobsCommandDeps {
   return {
     getJobLogs: vi.fn().mockResolvedValue('stdout line\nstderr line'),
     killJob: vi.fn().mockResolvedValue('Cancelled job `job-abc`'),
@@ -3640,11 +3998,16 @@ describe('truncateLogs', () => {
   });
 
   it('keeps the last MAX_LOG_LINES lines when over the limit', () => {
-    const lines = Array.from({ length: MAX_LOG_LINES + 10 }, (_, i) => `line ${i}`);
+    const lines = Array.from(
+      { length: MAX_LOG_LINES + 10 },
+      (_, i) => `line ${i}`,
+    );
     const result = truncateLogs(lines.join('\n'));
     const resultLines = result.split('\n');
     expect(resultLines[0]).toMatch(/10 earlier lines omitted/);
-    expect(resultLines[resultLines.length - 1]).toBe(`line ${MAX_LOG_LINES + 9}`);
+    expect(resultLines[resultLines.length - 1]).toBe(
+      `line ${MAX_LOG_LINES + 9}`,
+    );
   });
 
   it('shows correct omission count', () => {
@@ -3693,7 +4056,11 @@ describe('handleJobsCommand — logs subcommand (Story 59)', () => {
     const deps = makeJobsDeps({
       getJobLogs: vi.fn().mockRejectedValue(new Error('not_found')),
     });
-    const result = await handleJobsCommand('grp', '/jobs missing-id logs', deps);
+    const result = await handleJobsCommand(
+      'grp',
+      '/jobs missing-id logs',
+      deps,
+    );
     expect(result).toMatch(/not found/i);
     expect(result).toContain('missing-id');
   });
@@ -3753,9 +4120,11 @@ describe('handleJobsCommand — logs subcommand (Story 59)', () => {
 
   it('preserves log lines containing "not found" as substring (not GC sentinel)', async () => {
     const deps = makeJobsDeps({
-      getJobLogs: vi.fn().mockResolvedValue(
-        'INFO: File not found in /tmp/data\nstderr: more output',
-      ),
+      getJobLogs: vi
+        .fn()
+        .mockResolvedValue(
+          'INFO: File not found in /tmp/data\nstderr: more output',
+        ),
     });
     const result = await handleJobsCommand('grp', '/jobs job-abc logs', deps);
     expect(result).toContain('File not found');
@@ -3764,9 +4133,11 @@ describe('handleJobsCommand — logs subcommand (Story 59)', () => {
 
   it('GC sentinel requires prefix match — substring mid-log is not flagged', async () => {
     const deps = makeJobsDeps({
-      getJobLogs: vi.fn().mockResolvedValue(
-        'WARN something\nNo pods found for job was expected',
-      ),
+      getJobLogs: vi
+        .fn()
+        .mockResolvedValue(
+          'WARN something\nNo pods found for job was expected',
+        ),
     });
     // This does NOT start with the sentinel, so it should NOT be flagged
     const result = await handleJobsCommand('grp', '/jobs job-abc logs', deps);
@@ -3788,9 +4159,10 @@ describe('handleJobsCommand — /jobs <id> kill (Story 66)', () => {
    * Build a JobsCommandDeps with a stub killJob implementation.
    * The stub records calls and returns the configured reply.
    */
-  function makeKillDeps(
-    killReply: string,
-  ): { deps: JobsCommandDeps; killSpy: ReturnType<typeof vi.fn> } {
+  function makeKillDeps(killReply: string): {
+    deps: JobsCommandDeps;
+    killSpy: ReturnType<typeof vi.fn>;
+  } {
     const killSpy = vi.fn().mockResolvedValue(killReply);
     const deps: JobsCommandDeps = {
       getJobLogs: vi.fn(),
@@ -3801,27 +4173,45 @@ describe('handleJobsCommand — /jobs <id> kill (Story 66)', () => {
 
   it('AC1: active job → killJob called with correct jobId and returns confirmation', async () => {
     const { deps, killSpy } = makeKillDeps('Cancelled job `job-abc`');
-    const reply = await handleJobsCommand(GROUP_FOLDER, '/jobs job-abc kill', deps);
+    const reply = await handleJobsCommand(
+      GROUP_FOLDER,
+      '/jobs job-abc kill',
+      deps,
+    );
     expect(killSpy).toHaveBeenCalledWith('job-abc', GROUP_FOLDER);
     expect(reply).toBe('Cancelled job `job-abc`');
   });
 
   it('AC2: already-resolved job → returns not-active message with current status', async () => {
-    const { deps } = makeKillDeps('Job `job-xyz` is not active (status: completed)');
-    const reply = await handleJobsCommand(GROUP_FOLDER, '/jobs job-xyz kill', deps);
+    const { deps } = makeKillDeps(
+      'Job `job-xyz` is not active (status: completed)',
+    );
+    const reply = await handleJobsCommand(
+      GROUP_FOLDER,
+      '/jobs job-xyz kill',
+      deps,
+    );
     expect(reply).toContain('not active');
     expect(reply).toContain('completed');
   });
 
   it('AC3: job belongs to another group → returns "Job not found"', async () => {
     const { deps } = makeKillDeps('Job not found');
-    const reply = await handleJobsCommand('other-group', '/jobs job-abc kill', deps);
+    const reply = await handleJobsCommand(
+      'other-group',
+      '/jobs job-abc kill',
+      deps,
+    );
     expect(reply).toBe('Job not found');
   });
 
   it('AC4: unknown job id → returns "Job not found"', async () => {
     const { deps } = makeKillDeps('Job not found');
-    const reply = await handleJobsCommand(GROUP_FOLDER, '/jobs unknown-id kill', deps);
+    const reply = await handleJobsCommand(
+      GROUP_FOLDER,
+      '/jobs unknown-id kill',
+      deps,
+    );
     expect(reply).toBe('Job not found');
   });
 
@@ -3842,7 +4232,11 @@ describe('handleJobsCommand — /jobs <id> kill (Story 66)', () => {
       getJobLogs: vi.fn(),
       killJob: vi.fn().mockRejectedValue(new Error('timeout')),
     };
-    const reply = await handleJobsCommand(GROUP_FOLDER, '/jobs job-abc kill', deps);
+    const reply = await handleJobsCommand(
+      GROUP_FOLDER,
+      '/jobs job-abc kill',
+      deps,
+    );
     expect(reply).toContain('Failed to cancel job');
     expect(reply).toContain('timeout');
   });
@@ -3858,28 +4252,48 @@ describe('handleScheduleCommand — pause (Story 62)', () => {
 
   it('returns confirmation when pauseTask succeeds', async () => {
     vi.mocked(db.pauseTask).mockReturnValue(true);
-    const reply = await handleScheduleCommand('mygroup', 'jid@g.us', '/schedule pause task-abc');
+    const reply = await handleScheduleCommand(
+      'mygroup',
+      'jid@g.us',
+      '/schedule pause task-abc',
+    );
     expect(reply).toBe('Task "task-abc" paused.');
     expect(vi.mocked(db.pauseTask)).toHaveBeenCalledWith('task-abc', 'mygroup');
   });
 
   it('returns "Task not found." when pauseTask returns false (unknown id)', async () => {
     vi.mocked(db.pauseTask).mockReturnValue(false);
-    const reply = await handleScheduleCommand('mygroup', 'jid@g.us', '/schedule pause no-such-id');
+    const reply = await handleScheduleCommand(
+      'mygroup',
+      'jid@g.us',
+      '/schedule pause no-such-id',
+    );
     expect(reply).toBe('Task not found.');
   });
 
   it('returns "Task not found." when pauseTask returns false (cross-group)', async () => {
     vi.mocked(db.pauseTask).mockReturnValue(false);
-    const crossReply = await handleScheduleCommand('attacker', 'jid@g.us', '/schedule pause task-abc');
-    const unknownReply = await handleScheduleCommand('attacker', 'jid@g.us', '/schedule pause totally-unknown');
+    const crossReply = await handleScheduleCommand(
+      'attacker',
+      'jid@g.us',
+      '/schedule pause task-abc',
+    );
+    const unknownReply = await handleScheduleCommand(
+      'attacker',
+      'jid@g.us',
+      '/schedule pause totally-unknown',
+    );
     // both cases must return exact same text (no enumeration)
     expect(crossReply).toBe(unknownReply);
     expect(crossReply).toBe('Task not found.');
   });
 
   it('returns usage hint when pause is called without id', async () => {
-    const reply = await handleScheduleCommand('mygroup', 'jid@g.us', '/schedule pause');
+    const reply = await handleScheduleCommand(
+      'mygroup',
+      'jid@g.us',
+      '/schedule pause',
+    );
     expect(reply).toBe('Usage: /schedule pause <id>');
   });
 });
@@ -3892,27 +4306,50 @@ describe('handleScheduleCommand — resume (Story 62)', () => {
 
   it('returns confirmation when resumeTask succeeds', async () => {
     vi.mocked(db.resumeTask).mockReturnValue(true);
-    const reply = await handleScheduleCommand('mygroup', 'jid@g.us', '/schedule resume task-abc');
+    const reply = await handleScheduleCommand(
+      'mygroup',
+      'jid@g.us',
+      '/schedule resume task-abc',
+    );
     expect(reply).toBe('Task "task-abc" resumed.');
-    expect(vi.mocked(db.resumeTask)).toHaveBeenCalledWith('task-abc', 'mygroup');
+    expect(vi.mocked(db.resumeTask)).toHaveBeenCalledWith(
+      'task-abc',
+      'mygroup',
+    );
   });
 
   it('returns "Task not found." when resumeTask returns false (unknown id)', async () => {
     vi.mocked(db.resumeTask).mockReturnValue(false);
-    const reply = await handleScheduleCommand('mygroup', 'jid@g.us', '/schedule resume no-such-id');
+    const reply = await handleScheduleCommand(
+      'mygroup',
+      'jid@g.us',
+      '/schedule resume no-such-id',
+    );
     expect(reply).toBe('Task not found.');
   });
 
   it('returns "Task not found." when resumeTask returns false (cross-group)', async () => {
     vi.mocked(db.resumeTask).mockReturnValue(false);
-    const crossReply = await handleScheduleCommand('attacker', 'jid@g.us', '/schedule resume task-abc');
-    const unknownReply = await handleScheduleCommand('attacker', 'jid@g.us', '/schedule resume totally-unknown');
+    const crossReply = await handleScheduleCommand(
+      'attacker',
+      'jid@g.us',
+      '/schedule resume task-abc',
+    );
+    const unknownReply = await handleScheduleCommand(
+      'attacker',
+      'jid@g.us',
+      '/schedule resume totally-unknown',
+    );
     expect(crossReply).toBe(unknownReply);
     expect(crossReply).toBe('Task not found.');
   });
 
   it('returns usage hint when resume is called without id', async () => {
-    const reply = await handleScheduleCommand('mygroup', 'jid@g.us', '/schedule resume');
+    const reply = await handleScheduleCommand(
+      'mygroup',
+      'jid@g.us',
+      '/schedule resume',
+    );
     expect(reply).toBe('Usage: /schedule resume <id>');
   });
 });
@@ -3940,7 +4377,11 @@ describe('handleScheduleCommand — list [paused] prefix (Story 62)', () => {
     };
     vi.mocked(db.getTasksForGroup).mockReturnValue([activeTask, pausedTask]);
 
-    const reply = await handleScheduleCommand('mygroup', 'jid@g.us', '/schedule list');
+    const reply = await handleScheduleCommand(
+      'mygroup',
+      'jid@g.us',
+      '/schedule list',
+    );
 
     const lines = reply.split('\n');
     const activeLine = lines.find((l) => l.includes('task-active'));
@@ -3952,7 +4393,11 @@ describe('handleScheduleCommand — list [paused] prefix (Story 62)', () => {
   });
 
   it('SCHEDULE_HELP includes /schedule pause and /schedule resume', async () => {
-    const reply = await handleScheduleCommand('mygroup', 'jid@g.us', '/schedule help');
+    const reply = await handleScheduleCommand(
+      'mygroup',
+      'jid@g.us',
+      '/schedule help',
+    );
     expect(reply).toMatch(/pause/i);
     expect(reply).toMatch(/resume/i);
   });
@@ -3997,12 +4442,14 @@ describe('formatHumanDelta', () => {
 describe('handleScheduleCommand — next (Story 67)', () => {
   const NOW = new Date('2026-06-01T10:00:00.000Z').getTime();
 
-  const makeTask = (overrides: Partial<{
-    id: string;
-    group_folder: string;
-    next_run: string | null;
-    status: 'active' | 'paused' | 'completed';
-  }>) => ({
+  const makeTask = (
+    overrides: Partial<{
+      id: string;
+      group_folder: string;
+      next_run: string | null;
+      status: 'active' | 'paused' | 'completed';
+    }>,
+  ) => ({
     id: 'task-default',
     group_folder: 'group-alice',
     chat_jid: 'http:alice',
@@ -4032,17 +4479,31 @@ describe('handleScheduleCommand — next (Story 67)', () => {
   it('AC4: returns "No scheduled tasks" when group has no tasks', async () => {
     vi.mocked(db.getTasksForGroup).mockReturnValue([]);
 
-    const reply = await handleScheduleCommand('group-alice', 'http:alice', '/schedule next');
+    const reply = await handleScheduleCommand(
+      'group-alice',
+      'http:alice',
+      '/schedule next',
+    );
 
     expect(reply).toBe('No scheduled tasks');
   });
 
   it('AC1: multi-task view — shows id, ISO timestamp, and human delta for each task', async () => {
-    const t1 = makeTask({ id: 'task-aaa', next_run: '2026-06-01T10:05:00.000Z' }); // 5m ahead
-    const t2 = makeTask({ id: 'task-bbb', next_run: '2026-06-01T12:00:00.000Z' }); // 2h ahead
+    const t1 = makeTask({
+      id: 'task-aaa',
+      next_run: '2026-06-01T10:05:00.000Z',
+    }); // 5m ahead
+    const t2 = makeTask({
+      id: 'task-bbb',
+      next_run: '2026-06-01T12:00:00.000Z',
+    }); // 2h ahead
     vi.mocked(db.getTasksForGroup).mockReturnValue([t1, t2]);
 
-    const reply = await handleScheduleCommand('group-alice', 'http:alice', '/schedule next');
+    const reply = await handleScheduleCommand(
+      'group-alice',
+      'http:alice',
+      '/schedule next',
+    );
 
     expect(reply).toContain('task-aaa');
     expect(reply).toContain('task-bbb');
@@ -4060,7 +4521,11 @@ describe('handleScheduleCommand — next (Story 67)', () => {
     });
     vi.mocked(db.getTasksForGroup).mockReturnValue([t]);
 
-    const reply = await handleScheduleCommand('group-alice', 'http:alice', '/schedule next');
+    const reply = await handleScheduleCommand(
+      'group-alice',
+      'http:alice',
+      '/schedule next',
+    );
 
     expect(reply).toContain('[paused]');
     expect(reply).toContain('task-paused');
@@ -4070,10 +4535,17 @@ describe('handleScheduleCommand — next (Story 67)', () => {
   });
 
   it('AC2: single-task view with valid id', async () => {
-    const t = makeTask({ id: 'task-xyz', next_run: '2026-06-01T10:05:00.000Z' });
+    const t = makeTask({
+      id: 'task-xyz',
+      next_run: '2026-06-01T10:05:00.000Z',
+    });
     vi.mocked(db.getTaskById).mockReturnValue(t);
 
-    const reply = await handleScheduleCommand('group-alice', 'http:alice', '/schedule next task-xyz');
+    const reply = await handleScheduleCommand(
+      'group-alice',
+      'http:alice',
+      '/schedule next task-xyz',
+    );
 
     expect(reply).toContain('task-xyz');
     expect(reply).toContain('2026-06-01T10:05:00.000Z');
@@ -4089,7 +4561,11 @@ describe('handleScheduleCommand — next (Story 67)', () => {
     });
     vi.mocked(db.getTaskById).mockReturnValue(t);
 
-    const reply = await handleScheduleCommand('group-alice', 'http:alice', '/schedule next task-done');
+    const reply = await handleScheduleCommand(
+      'group-alice',
+      'http:alice',
+      '/schedule next task-done',
+    );
 
     expect(reply).toContain('task-done');
     expect(reply).toContain('no future run');
@@ -4099,7 +4575,11 @@ describe('handleScheduleCommand — next (Story 67)', () => {
   it('AC3: unknown id returns "Task not found"', async () => {
     vi.mocked(db.getTaskById).mockReturnValue(undefined);
 
-    const reply = await handleScheduleCommand('group-alice', 'http:alice', '/schedule next no-such-id');
+    const reply = await handleScheduleCommand(
+      'group-alice',
+      'http:alice',
+      '/schedule next no-such-id',
+    );
 
     expect(reply).toBe('Task not found');
   });
@@ -4108,7 +4588,11 @@ describe('handleScheduleCommand — next (Story 67)', () => {
     const t = makeTask({ id: 'task-bob', group_folder: 'group-bob' });
     vi.mocked(db.getTaskById).mockReturnValue(t);
 
-    const reply = await handleScheduleCommand('group-alice', 'http:alice', '/schedule next task-bob');
+    const reply = await handleScheduleCommand(
+      'group-alice',
+      'http:alice',
+      '/schedule next task-bob',
+    );
 
     expect(reply).toBe('Task not found');
   });
@@ -4150,7 +4634,9 @@ describe('Story 83 — handleSecretCommand audit (secret.remove)', () => {
   });
 
   it('does NOT write audit row when remove fails (IPC error)', async () => {
-    const ipc = vi.fn(async (): Promise<IpcResponse> => ({ ok: false, error: 'not found' }));
+    const ipc = vi.fn(
+      async (): Promise<IpcResponse> => ({ ok: false, error: 'not found' }),
+    );
 
     await handleSecretCommand(
       'group-alice',
@@ -4229,7 +4715,9 @@ describe('Story 83 — handleSecretCommand audit (secret.add)', () => {
   });
 
   it('does NOT write audit row when add fails (IPC error)', async () => {
-    const ipc = vi.fn(async (): Promise<IpcResponse> => ({ ok: false, error: 'store failed' }));
+    const ipc = vi.fn(
+      async (): Promise<IpcResponse> => ({ ok: false, error: 'store failed' }),
+    );
 
     await handleSecretCommand(
       'group-alice',
@@ -4384,7 +4872,9 @@ describe('update_profile local tool registration', () => {
     const mockRunner = {
       configureMcp: vi.fn(),
       configureGroupMcpTemplates: vi.fn(),
-      registerLocalTool: vi.fn((name: string) => { registeredTools.push(name); }),
+      registerLocalTool: vi.fn((name: string) => {
+        registeredTools.push(name);
+      }),
       setChannelMetrics: vi.fn(),
       writeTasksSnapshot: vi.fn(),
       writeGroupsSnapshot: vi.fn(),
@@ -4392,7 +4882,11 @@ describe('update_profile local tool registration', () => {
     };
 
     // Act: call registerProfileTool with the mock runner
-    registerProfileTool(mockRunner as unknown as ReturnType<typeof import('./runtime/index.js').getDirectLLMRunner>);
+    registerProfileTool(
+      mockRunner as unknown as ReturnType<
+        typeof import('./runtime/index.js').getDirectLLMRunner
+      >,
+    );
 
     // Assert
     expect(registeredTools).toContain('update_profile');

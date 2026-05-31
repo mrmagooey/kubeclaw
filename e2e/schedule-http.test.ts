@@ -213,15 +213,17 @@ describe('GET /schedule — HTTP endpoint (Story 68)', () => {
     expect(res.status).toBe(401);
   }, 5000);
 
-  // ── AC4: POST → 405; HEAD → no body ────────────────────────────────────────
+  // ── AC4: unsupported method → 405; HEAD → no body ─────────────────────────
+  // POST is now a supported method (Story 71 — create scheduled task), so this
+  // AC was updated to assert that other methods still return 405.
 
-  it('AC4: POST /schedule → 405 with Allow: GET, HEAD', async () => {
+  it('AC4: PUT /schedule → 405 with Allow: GET, HEAD, POST', async () => {
     const res = await fetch(`http://localhost:${HTTP_PORT}/schedule`, {
-      method: 'POST',
+      method: 'PUT',
       headers: { Authorization: basicAuth(TEST_USER, TEST_PASS) },
     });
     expect(res.status).toBe(405);
-    expect(res.headers.get('allow')).toBe('GET, HEAD');
+    expect(res.headers.get('allow')).toBe('GET, HEAD, POST');
   }, 5000);
 
   it('AC4: HEAD /schedule → 200 same headers as GET, no body', async () => {

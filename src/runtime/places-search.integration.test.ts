@@ -17,11 +17,17 @@ const REALISTIC_RESPONSE = {
       location: { latitude: 40.7241, longitude: -74.0003 },
       rating: 4.3,
       priceLevel: 'PRICE_LEVEL_EXPENSIVE',
-      types: ['italian_restaurant', 'restaurant', 'food', 'establishment', 'point_of_interest'],
+      types: [
+        'italian_restaurant',
+        'restaurant',
+        'food',
+        'establishment',
+        'point_of_interest',
+      ],
       regularOpeningHours: { openNow: false },
     },
     {
-      displayName: { text: 'Juliana\'s Pizza', languageCode: 'en' },
+      displayName: { text: "Juliana's Pizza", languageCode: 'en' },
       formattedAddress: '1 Front St, Brooklyn, NY 11201',
       location: { latitude: 40.7025, longitude: -73.9934 },
       rating: 4.7,
@@ -55,10 +61,13 @@ describe('places-search integration', () => {
     process.env.GOOGLE_PLACES_API_KEY = 'AIzaIntegrationTestKey123456789012345';
     process.env.GOOGLE_PLACES_BASE_URL = 'https://places.googleapis.com';
 
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => REALISTIC_RESPONSE,
-    }));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => REALISTIC_RESPONSE,
+      }),
+    );
   });
 
   afterAll(() => {

@@ -79,29 +79,49 @@ describe('validateSpecialist', () => {
   });
 
   it('rejects maxToolRounds that is zero', () => {
-    const r = validateSpecialist({ name: 'X', prompt: 'p', maxToolRounds: 0 } as any);
+    const r = validateSpecialist({
+      name: 'X',
+      prompt: 'p',
+      maxToolRounds: 0,
+    } as any);
     expect(r.ok).toBe(false);
     expect((r as any).error).toMatch(/maxToolRounds/);
   });
 
   it('rejects maxToolRounds that is negative', () => {
-    const r = validateSpecialist({ name: 'X', prompt: 'p', maxToolRounds: -1 } as any);
+    const r = validateSpecialist({
+      name: 'X',
+      prompt: 'p',
+      maxToolRounds: -1,
+    } as any);
     expect(r.ok).toBe(false);
   });
 
   it('rejects maxToolRounds that is a float', () => {
-    const r = validateSpecialist({ name: 'X', prompt: 'p', maxToolRounds: 2.5 } as any);
+    const r = validateSpecialist({
+      name: 'X',
+      prompt: 'p',
+      maxToolRounds: 2.5,
+    } as any);
     expect(r.ok).toBe(false);
   });
 
   it('rejects maxToolOutputBytes that is zero', () => {
-    const r = validateSpecialist({ name: 'X', prompt: 'p', maxToolOutputBytes: 0 } as any);
+    const r = validateSpecialist({
+      name: 'X',
+      prompt: 'p',
+      maxToolOutputBytes: 0,
+    } as any);
     expect(r.ok).toBe(false);
     expect((r as any).error).toMatch(/maxToolOutputBytes/);
   });
 
   it('rejects unknown field that looks similar to a budget field', () => {
-    const r = validateSpecialist({ name: 'X', prompt: 'p', maxRounds: 5 } as any);
+    const r = validateSpecialist({
+      name: 'X',
+      prompt: 'p',
+      maxRounds: 5,
+    } as any);
     expect(r.ok).toBe(false);
     expect((r as any).error).toContain('unknown field');
   });

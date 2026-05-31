@@ -71,7 +71,9 @@ vi.mock('../config.js', () => ({
 vi.mock('./redis-client.js', () => {
   const { EventEmitter } = require('events');
   const mockSubscriber = new EventEmitter() as any;
-  mockSubscriber.subscribe = vi.fn((_ch: string, cb: (err: Error | null) => void) => cb(null));
+  mockSubscriber.subscribe = vi.fn(
+    (_ch: string, cb: (err: Error | null) => void) => cb(null),
+  );
   mockSubscriber.unsubscribe = vi.fn();
   mockSubscriber.off = vi.fn();
   mockSubscriber.quit = vi.fn().mockResolvedValue('OK');
@@ -136,12 +138,24 @@ const testInput: JobInput = {
 
 /** Build a fake publisher that records calls */
 function makePublisherFake() {
-  const calls: Array<{ groupFolder: string; chatJid: string; text: string; noticeId: string }> = [];
+  const calls: Array<{
+    groupFolder: string;
+    chatJid: string;
+    text: string;
+    noticeId: string;
+  }> = [];
   return {
     calls,
-    publish: vi.fn(async (groupFolder: string, chatJid: string, text: string, noticeId: string) => {
-      calls.push({ groupFolder, chatJid, text, noticeId });
-    }),
+    publish: vi.fn(
+      async (
+        groupFolder: string,
+        chatJid: string,
+        text: string,
+        noticeId: string,
+      ) => {
+        calls.push({ groupFolder, chatJid, text, noticeId });
+      },
+    ),
   };
 }
 
@@ -150,14 +164,22 @@ function makeMetricsFake(): OrchestratorMetrics & {
   durationCalls: Array<{ image: string; success: boolean; durationMs: number }>;
   failureCalls: Array<{ image: string; reason: string }>;
 } {
-  const durationCalls: Array<{ image: string; success: boolean; durationMs: number }> = [];
+  const durationCalls: Array<{
+    image: string;
+    success: boolean;
+    durationMs: number;
+  }> = [];
   const failureCalls: Array<{ image: string; reason: string }> = [];
   return {
     durationCalls,
     failureCalls,
     recordToolJobSpawn: vi.fn(),
-    recordToolJobDuration: vi.fn((labels) => { durationCalls.push(labels as any); }),
-    recordToolJobFailure: vi.fn((labels) => { failureCalls.push(labels as any); }),
+    recordToolJobDuration: vi.fn((labels) => {
+      durationCalls.push(labels as any);
+    }),
+    recordToolJobFailure: vi.fn((labels) => {
+      failureCalls.push(labels as any);
+    }),
     recordRedisMessage: vi.fn(),
     setGroupQueueDepth: vi.fn(),
     recordSpecialistResolution: vi.fn(),
@@ -354,10 +376,15 @@ describe('tool-job DeadlineExceeded — integration', () => {
     mockBatchApi.createNamespacedJob.mockResolvedValueOnce({
       metadata: { name: jobId1 },
     });
-    mockBatchApi.readNamespacedJob.mockResolvedValueOnce(DEADLINE_EXCEEDED_STATUS);
+    mockBatchApi.readNamespacedJob.mockResolvedValueOnce(
+      DEADLINE_EXCEEDED_STATUS,
+    );
 
     recordToolJob(jobId1, GROUP_FOLDER, CHAT_JID);
-    const result1 = await runner.runToolJob(testGroup, { ...testInput, jobId: jobId1 });
+    const result1 = await runner.runToolJob(testGroup, {
+      ...testInput,
+      jobId: jobId1,
+    });
     expect(result1.status).toBe('timeout');
 
     // Second job: succeeds normally
@@ -365,10 +392,15 @@ describe('tool-job DeadlineExceeded — integration', () => {
     mockBatchApi.createNamespacedJob.mockResolvedValueOnce({
       metadata: { name: jobId2 },
     });
-    mockBatchApi.readNamespacedJob.mockResolvedValueOnce({ status: { succeeded: 1 } });
+    mockBatchApi.readNamespacedJob.mockResolvedValueOnce({
+      status: { succeeded: 1 },
+    });
 
     recordToolJob(jobId2, GROUP_FOLDER, CHAT_JID);
-    const result2 = await runner.runToolJob(testGroup, { ...testInput, jobId: jobId2 });
+    const result2 = await runner.runToolJob(testGroup, {
+      ...testInput,
+      jobId: jobId2,
+    });
     expect(result2.status).toBe('success');
   });
 });

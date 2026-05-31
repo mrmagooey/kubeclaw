@@ -187,7 +187,12 @@ describe('handleSkillsCommand', () => {
       for (let i = 1; i <= 12; i++) {
         recordSkillLoad(GROUP, `skill-${i}`, i * 1000);
       }
-      const reply = handleSkillsCommand(root, GROUP, JID, '/skills history abc');
+      const reply = handleSkillsCommand(
+        root,
+        GROUP,
+        JID,
+        '/skills history abc',
+      );
       const lines = reply.split('\n').filter((l) => l.match(/\d+x\s+/));
       expect(lines.length).toBe(10);
     });
@@ -197,7 +202,12 @@ describe('handleSkillsCommand', () => {
       for (let i = 1; i <= 110; i++) {
         recordSkillLoad(GROUP, `skill-${i}`, i * 1000);
       }
-      const reply = handleSkillsCommand(root, GROUP, JID, `/skills history 200`);
+      const reply = handleSkillsCommand(
+        root,
+        GROUP,
+        JID,
+        `/skills history 200`,
+      );
       const lines = reply.split('\n').filter((l) => l.match(/\d+x\s+/));
       expect(lines.length).toBe(MAX_SKILLS_HISTORY_LIMIT);
     });

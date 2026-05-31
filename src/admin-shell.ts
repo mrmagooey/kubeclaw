@@ -76,8 +76,8 @@ const specialistReconciler = new SpecialistReconciler({
         body,
       });
     } catch (err: unknown) {
-      const status = (err as { response?: { statusCode?: number } })
-        ?.response?.statusCode;
+      const status = (err as { response?: { statusCode?: number } })?.response
+        ?.statusCode;
       if (status === 404) {
         await coreV1.createNamespacedConfigMap({ namespace: NAMESPACE, body });
       } else {
@@ -761,7 +761,10 @@ function handleRegisterSpecialist(input: ToolInput): string {
     ...(input.claudemd !== undefined && { claudemd: input.claudemd as string }),
     ...(input.tools !== undefined && { tools: input.tools as string[] }),
   };
-  const result = registerSpecialist(spec, specialistReconciler.apply.bind(specialistReconciler));
+  const result = registerSpecialist(
+    spec,
+    specialistReconciler.apply.bind(specialistReconciler),
+  );
   if (!result.ok) return `Error: ${result.error}`;
   return `Registered specialist "${spec.name}". Changes are live; channel pods will see the updated catalog within ~30s.`;
 }
@@ -776,7 +779,10 @@ function handleEditSpecialist(input: ToolInput): string {
   if (input.memory !== undefined) patch.memory = input.memory;
   if (input.claudemd !== undefined) patch.claudemd = input.claudemd;
   if (input.tools !== undefined) patch.tools = input.tools;
-  const result = editSpecialist({ name, patch }, specialistReconciler.apply.bind(specialistReconciler));
+  const result = editSpecialist(
+    { name, patch },
+    specialistReconciler.apply.bind(specialistReconciler),
+  );
   if (!result.ok) return `Error: ${result.error}`;
   return `Updated specialist "${name}". Changes are live; channel pods will see the updated catalog within ~30s.`;
 }
@@ -784,7 +790,10 @@ function handleEditSpecialist(input: ToolInput): string {
 function handleRemoveSpecialist(input: ToolInput): string {
   const name = input.name as string;
   if (!name) return 'Error: name is required.';
-  const result = removeSpecialist({ name }, specialistReconciler.apply.bind(specialistReconciler));
+  const result = removeSpecialist(
+    { name },
+    specialistReconciler.apply.bind(specialistReconciler),
+  );
   if (!result.ok) return `Error: ${result.error}`;
   return `Removed specialist override "${name}". Changes are live; channel pods will see the updated catalog within ~30s.`;
 }

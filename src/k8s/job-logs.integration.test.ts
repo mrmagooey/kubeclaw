@@ -65,26 +65,36 @@ function buildDeps(
 // ---------------------------------------------------------------------------
 
 describe('job-logs integration: ownership', () => {
-  const rows: FakeJobRow[] = [
-    { jobId: 'job-abc', groupFolder: 'group-a' },
-  ];
+  const rows: FakeJobRow[] = [{ jobId: 'job-abc', groupFolder: 'group-a' }];
 
   it('returns logs when group matches', async () => {
     const deps = buildDeps(rows, 'hello world');
-    const reply = await handleJobsCommand('group-a', '/jobs job-abc logs', deps);
+    const reply = await handleJobsCommand(
+      'group-a',
+      '/jobs job-abc logs',
+      deps,
+    );
     expect(reply).toContain('hello world');
   });
 
   it('returns not-found for wrong group (AC 3)', async () => {
     const deps = buildDeps(rows, 'hello world');
-    const reply = await handleJobsCommand('group-b', '/jobs job-abc logs', deps);
+    const reply = await handleJobsCommand(
+      'group-b',
+      '/jobs job-abc logs',
+      deps,
+    );
     expect(reply).toMatch(/not found/i);
     expect(reply).toContain('job-abc');
   });
 
   it('returns not-found for unknown job ID (AC 2)', async () => {
     const deps = buildDeps(rows, 'hello world');
-    const reply = await handleJobsCommand('group-a', '/jobs unknown-id logs', deps);
+    const reply = await handleJobsCommand(
+      'group-a',
+      '/jobs unknown-id logs',
+      deps,
+    );
     expect(reply).toMatch(/not found/i);
   });
 });

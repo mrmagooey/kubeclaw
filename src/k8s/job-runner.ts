@@ -73,7 +73,9 @@ import { resolveToolJob } from '../db.js';
 export class DeadlineExceededError extends Error {
   public readonly jobName: string;
   constructor(jobName: string) {
-    super(`DeadlineExceeded: Job ${jobName} exceeded its activeDeadlineSeconds`);
+    super(
+      `DeadlineExceeded: Job ${jobName} exceeded its activeDeadlineSeconds`,
+    );
     this.name = 'DeadlineExceededError';
     this.jobName = jobName;
   }
@@ -562,8 +564,15 @@ export class JobRunner {
         }
 
         // Record metrics for the timeout path.
-        this.metrics?.recordToolJobFailure({ image, reason: 'deadline_exceeded' });
-        this.metrics?.recordToolJobDuration({ image, success: false, durationMs: duration });
+        this.metrics?.recordToolJobFailure({
+          image,
+          reason: 'deadline_exceeded',
+        });
+        this.metrics?.recordToolJobDuration({
+          image,
+          success: false,
+          durationMs: duration,
+        });
 
         return {
           status: 'timeout',
@@ -616,7 +625,11 @@ export class JobRunner {
 
         // Record metrics for the OOM path.
         this.metrics?.recordToolJobFailure({ image, reason: 'oomkilled' });
-        this.metrics?.recordToolJobDuration({ image, success: false, durationMs: duration });
+        this.metrics?.recordToolJobDuration({
+          image,
+          success: false,
+          durationMs: duration,
+        });
 
         return {
           status: 'oomkill',

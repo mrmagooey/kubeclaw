@@ -225,9 +225,7 @@ function createSchema(database: SqlJsDatabase): void {
 
   // Story 84: additive migration for edited_at — safe to run repeatedly.
   try {
-    database.run(
-      `ALTER TABLE conversation_history ADD COLUMN edited_at TEXT`,
-    );
+    database.run(`ALTER TABLE conversation_history ADD COLUMN edited_at TEXT`);
   } catch {
     /* column already exists */
   }
@@ -1012,10 +1010,10 @@ export function deleteTaskForGroup(id: string, groupFolder: string): boolean {
   if (!exists) return false;
 
   db.run('DELETE FROM task_run_logs WHERE task_id = ?', [id]);
-  db.run(
-    'DELETE FROM scheduled_tasks WHERE id = ? AND group_folder = ?',
-    [id, groupFolder],
-  );
+  db.run('DELETE FROM scheduled_tasks WHERE id = ? AND group_folder = ?', [
+    id,
+    groupFolder,
+  ]);
   saveDatabase();
   return true;
 }
@@ -1657,9 +1655,7 @@ export function deleteConversationHistoryBefore(
     [groupFolder, beforeIso],
   );
   const count =
-    countResult.length > 0
-      ? (countResult[0].values[0][0] as number)
-      : 0;
+    countResult.length > 0 ? (countResult[0].values[0][0] as number) : 0;
   if (count === 0) return 0;
 
   db.run('BEGIN');
@@ -1689,10 +1685,10 @@ export function deleteMessageById(id: string, groupFolder: string): boolean {
       : 0;
   if (count === 0) return false;
 
-  db.run(
-    `DELETE FROM conversation_history WHERE id = ? AND group_folder = ?`,
-    [id, groupFolder],
-  );
+  db.run(`DELETE FROM conversation_history WHERE id = ? AND group_folder = ?`, [
+    id,
+    groupFolder,
+  ]);
   saveDatabase();
   return true;
 }
@@ -2430,7 +2426,7 @@ export function getToolJobByIdForGroup(
     job_id: row[0] as string,
     group_folder: row[1] as string,
     chat_jid: (row[2] as string | null) ?? '',
-    status: (row[3] as string) as ToolJobRecord['status'],
+    status: row[3] as string as ToolJobRecord['status'],
     created_at: row[4] as string,
     resolved_at: row[5] as string | null,
     message_id: row[6] as string | null,
@@ -2469,9 +2465,7 @@ export function pruneOldToolJobs(retentionDays: number): number {
     [retentionDays],
   );
   const deleted =
-    countResult.length > 0
-      ? (countResult[0].values[0][0] as number)
-      : 0;
+    countResult.length > 0 ? (countResult[0].values[0][0] as number) : 0;
 
   if (deleted > 0) {
     db.run(
@@ -2525,9 +2519,8 @@ export function getDiagSnapshot(
       `SELECT COUNT(*) FROM conversation_history WHERE group_folder = ?`,
       [groupFolder],
     );
-    conversation_history_rows = r.length > 0
-      ? (r[0].values[0][0] as number)
-      : 0;
+    conversation_history_rows =
+      r.length > 0 ? (r[0].values[0][0] as number) : 0;
   } catch {
     /* table missing or other error → null */
   }
@@ -2539,9 +2532,7 @@ export function getDiagSnapshot(
       `SELECT COUNT(*) FROM scheduled_tasks WHERE group_folder = ? AND status = 'active'`,
       [groupFolder],
     );
-    scheduled_tasks_active = r.length > 0
-      ? (r[0].values[0][0] as number)
-      : 0;
+    scheduled_tasks_active = r.length > 0 ? (r[0].values[0][0] as number) : 0;
   } catch {
     /* table missing → null */
   }
@@ -2553,9 +2544,7 @@ export function getDiagSnapshot(
       `SELECT COUNT(*) FROM tool_jobs WHERE group_folder = ? AND datetime(created_at) > datetime('now','-1 days')`,
       [groupFolder],
     );
-    tool_jobs_recent_24h = r.length > 0
-      ? (r[0].values[0][0] as number)
-      : 0;
+    tool_jobs_recent_24h = r.length > 0 ? (r[0].values[0][0] as number) : 0;
   } catch {
     /* table missing → null */
   }
@@ -2566,8 +2555,14 @@ export function getDiagSnapshot(
 
   try {
     // Use injected groupsDir if provided, otherwise derive from GROUPS_DIR config.
-    const resolvedGroupsDir = groupsDir ?? path.join(path.dirname(storeDir), 'groups');
-    const attachDir = path.join(resolvedGroupsDir, groupFolder, 'attachments', 'raw');
+    const resolvedGroupsDir =
+      groupsDir ?? path.join(path.dirname(storeDir), 'groups');
+    const attachDir = path.join(
+      resolvedGroupsDir,
+      groupFolder,
+      'attachments',
+      'raw',
+    );
     const entries = fs.readdirSync(attachDir);
     let count = 0;
     let bytes = 0;
@@ -2770,9 +2765,22 @@ export function upsertGroupProfile(p: GroupProfile): void {
        updated_at           = ?`,
     [
       // INSERT values (8 columns)
-      p.groupFolder, tz, loc, cl, cd, dr, bt, p.updatedAt,
+      p.groupFolder,
+      tz,
+      loc,
+      cl,
+      cd,
+      dr,
+      bt,
+      p.updatedAt,
       // UPDATE COALESCE values (6 nullable columns) + updated_at
-      tz, loc, cl, cd, dr, bt, p.updatedAt,
+      tz,
+      loc,
+      cl,
+      cd,
+      dr,
+      bt,
+      p.updatedAt,
     ],
   );
   saveDatabase();

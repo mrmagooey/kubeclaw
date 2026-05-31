@@ -53,7 +53,9 @@ vi.mock('./db.js', async (importOriginal) => {
   };
 });
 vi.mock('./k8s/redis-client.js', () => ({
-  getRedisClient: vi.fn().mockReturnValue({ publish: vi.fn().mockResolvedValue(0), quit: vi.fn() }),
+  getRedisClient: vi
+    .fn()
+    .mockReturnValue({ publish: vi.fn().mockResolvedValue(0), quit: vi.fn() }),
   getChannelStatusChannel: vi.fn().mockReturnValue('ch'),
   getTaskRequestStream: vi.fn().mockReturnValue('ts'),
   getSpawnToolPodStream: vi.fn().mockReturnValue('sp'),
@@ -95,7 +97,11 @@ describe('/memory command integration — real tmpdir', () => {
 
   it('AC1: /memory show returns file contents when CLAUDE.md exists', async () => {
     await fsp.mkdir(path.join(tmpDir, 'alice'), { recursive: true });
-    await fsp.writeFile(path.join(tmpDir, 'alice', 'CLAUDE.md'), 'my memory content', 'utf8');
+    await fsp.writeFile(
+      path.join(tmpDir, 'alice', 'CLAUDE.md'),
+      'my memory content',
+      'utf8',
+    );
     const reply = await handleMemoryCommand('alice', '/memory show', tmpDir);
     expect(reply).toBe('my memory content');
   });
@@ -104,7 +110,11 @@ describe('/memory command integration — real tmpdir', () => {
 
   it('AC2: /memory append creates file when absent', async () => {
     await fsp.mkdir(path.join(tmpDir, 'alice'), { recursive: true });
-    const reply = await handleMemoryCommand('alice', '/memory append first note', tmpDir);
+    const reply = await handleMemoryCommand(
+      'alice',
+      '/memory append first note',
+      tmpDir,
+    );
     expect(reply).toBe('Memory updated.');
 
     const confirm = await handleMemoryCommand('alice', '/memory show', tmpDir);
@@ -150,7 +160,11 @@ describe('/memory command integration — real tmpdir', () => {
       'old content to be replaced',
       'utf8',
     );
-    const reply = await handleMemoryCommand('alice', '/memory set brand new content', tmpDir);
+    const reply = await handleMemoryCommand(
+      'alice',
+      '/memory set brand new content',
+      tmpDir,
+    );
     expect(reply).toBe('Memory updated.');
 
     const confirm = await handleMemoryCommand('alice', '/memory show', tmpDir);
@@ -231,24 +245,40 @@ describe('/memory command integration — real tmpdir', () => {
     await fsp.mkdir(path.join(tmpDir, 'bob'), { recursive: true });
 
     // Setup independent memories
-    await handleMemoryCommand('alice', '/memory set alice memory contents', tmpDir);
+    await handleMemoryCommand(
+      'alice',
+      '/memory set alice memory contents',
+      tmpDir,
+    );
     await handleMemoryCommand('bob', '/memory set bob memory contents', tmpDir);
 
     // Each shows their own
-    const aliceShow = await handleMemoryCommand('alice', '/memory show', tmpDir);
+    const aliceShow = await handleMemoryCommand(
+      'alice',
+      '/memory show',
+      tmpDir,
+    );
     const bobShow = await handleMemoryCommand('bob', '/memory show', tmpDir);
     expect(aliceShow).toBe('alice memory contents');
     expect(bobShow).toBe('bob memory contents');
 
     // Alice appends — does not affect bob
     await handleMemoryCommand('alice', '/memory append alice extra', tmpDir);
-    const bobShowAfter = await handleMemoryCommand('bob', '/memory show', tmpDir);
+    const bobShowAfter = await handleMemoryCommand(
+      'bob',
+      '/memory show',
+      tmpDir,
+    );
     expect(bobShowAfter).toBe('bob memory contents');
     expect(bobShowAfter).not.toContain('alice extra');
 
     // Bob sets new — does not affect alice
     await handleMemoryCommand('bob', '/memory set bob completely new', tmpDir);
-    const aliceShowAfter = await handleMemoryCommand('alice', '/memory show', tmpDir);
+    const aliceShowAfter = await handleMemoryCommand(
+      'alice',
+      '/memory show',
+      tmpDir,
+    );
     expect(aliceShowAfter).toContain('alice memory contents');
     expect(aliceShowAfter).not.toContain('bob completely new');
   });
@@ -258,13 +288,25 @@ describe('/memory command integration — real tmpdir', () => {
   it('creates the group directory if it does not exist when appending', async () => {
     // Note: tmpDir exists but 'newgroup' subdir does not
     await handleMemoryCommand('newgroup', '/memory append hello', tmpDir);
-    const confirm = await handleMemoryCommand('newgroup', '/memory show', tmpDir);
+    const confirm = await handleMemoryCommand(
+      'newgroup',
+      '/memory show',
+      tmpDir,
+    );
     expect(confirm).toContain('hello');
   });
 
   it('creates the group directory if it does not exist when setting', async () => {
-    await handleMemoryCommand('brandnewgroup', '/memory set initial memory', tmpDir);
-    const confirm = await handleMemoryCommand('brandnewgroup', '/memory show', tmpDir);
+    await handleMemoryCommand(
+      'brandnewgroup',
+      '/memory set initial memory',
+      tmpDir,
+    );
+    const confirm = await handleMemoryCommand(
+      'brandnewgroup',
+      '/memory show',
+      tmpDir,
+    );
     expect(confirm).toBe('initial memory');
   });
 });

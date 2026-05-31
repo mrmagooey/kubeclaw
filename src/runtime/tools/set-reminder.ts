@@ -20,9 +20,7 @@ export type ScheduleTaskFn = (
  * Factory — accepts `scheduleTaskFn` so unit tests can inject a stub
  * without going through the module graph.
  */
-export function makeSetReminderTool(
-  scheduleTaskFn: ScheduleTaskFn,
-): LocalTool {
+export function makeSetReminderTool(scheduleTaskFn: ScheduleTaskFn): LocalTool {
   return {
     def: {
       type: 'function',
@@ -61,17 +59,22 @@ export function makeSetReminderTool(
       const whenIso = String(args.when_iso ?? '');
 
       // Validate: must be an absolute ISO 8601 datetime string
-      const ISO_8601_REGEX = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d{2})?$/;
+      const ISO_8601_REGEX =
+        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d{2})?$/;
       if (!whenIso || !ISO_8601_REGEX.test(whenIso)) {
-        return JSON.stringify({ error: "when_iso must be an absolute ISO 8601 datetime (e.g. 2026-06-01T09:00:00Z)" });
+        return JSON.stringify({
+          error:
+            'when_iso must be an absolute ISO 8601 datetime (e.g. 2026-06-01T09:00:00Z)',
+        });
       }
       const dt = new Date(whenIso);
       if (isNaN(dt.getTime())) {
-        return JSON.stringify({ error: `Invalid datetime: "${whenIso}". Please provide an absolute ISO 8601 datetime string (e.g. "2026-06-01T09:00:00Z").` });
+        return JSON.stringify({
+          error: `Invalid datetime: "${whenIso}". Please provide an absolute ISO 8601 datetime string (e.g. "2026-06-01T09:00:00Z").`,
+        });
       }
 
-      const prompt =
-        `Deliver this reminder message to the user verbatim: ${reminderText}`;
+      const prompt = `Deliver this reminder message to the user verbatim: ${reminderText}`;
 
       const scheduleResult = await scheduleTaskFn(
         input.groupFolder,
@@ -84,7 +87,10 @@ export function makeSetReminderTool(
         },
       );
 
-      const humanTime = dt.toLocaleString('en-US', { timeZone: 'UTC', timeZoneName: 'short' });
+      const humanTime = dt.toLocaleString('en-US', {
+        timeZone: 'UTC',
+        timeZoneName: 'short',
+      });
       return `Reminder set for ${humanTime}: "${reminderText}". ${scheduleResult}`;
     },
   };

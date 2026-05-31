@@ -435,7 +435,8 @@ export const TOOLS: OpenAI.ChatCompletionFunctionTool[] = [
           },
           max_results: {
             type: 'number',
-            description: 'Maximum number of results to return (default 5, max 10)',
+            description:
+              'Maximum number of results to return (default 5, max 10)',
           },
         },
         required: ['query'],
@@ -987,10 +988,16 @@ function loadSystemPrompt(
     const bullets: string[] = [];
     if (profile.timezone) bullets.push(`- **Timezone:** ${profile.timezone}`);
     if (profile.location) bullets.push(`- **Location:** ${profile.location}`);
-    if (profile.cuisineLikes) bullets.push(`- **Cuisine likes:** ${profile.cuisineLikes}`);
-    if (profile.cuisineDislikes) bullets.push(`- **Cuisine dislikes:** ${profile.cuisineDislikes}`);
-    if (profile.dietaryRestrictions) bullets.push(`- **Dietary restrictions:** ${profile.dietaryRestrictions}`);
-    if (profile.budgetTier) bullets.push(`- **Budget tier:** ${profile.budgetTier}`);
+    if (profile.cuisineLikes)
+      bullets.push(`- **Cuisine likes:** ${profile.cuisineLikes}`);
+    if (profile.cuisineDislikes)
+      bullets.push(`- **Cuisine dislikes:** ${profile.cuisineDislikes}`);
+    if (profile.dietaryRestrictions)
+      bullets.push(
+        `- **Dietary restrictions:** ${profile.dietaryRestrictions}`,
+      );
+    if (profile.budgetTier)
+      bullets.push(`- **Budget tier:** ${profile.budgetTier}`);
     if (bullets.length > 0) {
       prompt += `\n\n## Your profile\n${bullets.join('\n')}`;
     }
@@ -1029,7 +1036,6 @@ export function _loadSystemPromptForTest(
 export function stripContextHeader(prompt: string): string {
   return prompt.replace(/^<context [^/]*\/>\n?/, '');
 }
-
 
 /** Derive a stable provider label from the configured base URL. */
 function resolveProviderLabel(): string {
@@ -1530,7 +1536,11 @@ export class DirectLLMRunner implements MessageRunner {
             content: fullResponse,
           });
         } else {
-          appendConversationMessage(input.groupFolder, 'user', persistedUserContent);
+          appendConversationMessage(
+            input.groupFolder,
+            'user',
+            persistedUserContent,
+          );
           appendConversationMessage(
             input.groupFolder,
             'assistant',

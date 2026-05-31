@@ -35,6 +35,10 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { EventSource } from 'eventsource';
+import {
+  setupTestCluster,
+  type ClusterHandle,
+} from './lib/per-test-cluster.js';
 
 const NAMESPACE = 'kubeclaw-e2e-oomkill';
 const HTTP_PORT = 14130;
@@ -143,19 +147,22 @@ async function postMessage(
 
 const authHeaders = { Authorization: basicAuth(TEST_USER, TEST_PASS) };
 
-beforeAll(async () => {
-  const ping = await fetch(`${HTTP_URL}/healthz`).catch(() => null);
-  if (!ping || !ping.ok) {
-    console.warn(
-      `[tool-job-oomkill e2e] HTTP channel unreachable at ${HTTP_URL} — ` +
-        `ensure port-forward is running for namespace ${NAMESPACE}`,
-    );
-  }
-}, 10_000);
+let cluster: ClusterHandle | null = null;
 
-afterAll(() => {
-  // Nothing to clean up if CI manages the cluster lifecycle.
-});
+beforeAll(async () => {
+  cluster = await setupTestCluster({
+    namespace: NAMESPACE,
+    httpChannel: {
+      localPort: HTTP_PORT,
+      users: `${TEST_USER}:${TEST_PASS}`,
+    },
+    quiet: true,
+  });
+}, 600_000);
+
+afterAll(async () => {
+  if (cluster) await cluster.teardown();
+}, 120_000);
 
 // ── Tests ──────────────────────────────────────────────────────────────────
 
