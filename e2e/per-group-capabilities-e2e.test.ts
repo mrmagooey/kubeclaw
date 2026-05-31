@@ -27,7 +27,9 @@ const echoSpec: CapabilitySpec = {
   kind: 'mcp',
   image: ECHO_IMAGE,
   scope: 'group',
-  scaleDownAfterIdleSeconds: 60,
+  // 300s gives plenty of headroom for the kubectl run probe pod to schedule,
+  // pull the curl image (first run), and complete — even under load.
+  scaleDownAfterIdleSeconds: 300,
   volumeFromGroupPvc: false,
   credentialsFrom: 'none',
   resources: {
@@ -157,9 +159,13 @@ describe.skipIf(!K8S_AVAILABLE)('per-group capabilities — discovery e2e', () =
       const hash = groupHash(groupFolder);
       const svcName = `mcp-echo-${hash}`;
       // Run a short curl from inside the cluster to confirm the pod's /health endpoint responds.
+      // The NetworkPolicy on the capability pod allows ingress only from pods with
+      // kubeclaw.io/role=channel or kubeclaw.io/role=orchestrator, so we label the
+      // probe pod accordingly.
       const probe = sh(
         `kubectl run pgc-disco-probe-${requestId.slice(0, 8)} ` +
-        `-n ${NAMESPACE} --rm -i --restart=Never --image=curlimages/curl:latest -- ` +
+        `-n ${NAMESPACE} --rm -i --restart=Never --image=curlimages/curl:latest ` +
+        `--labels='kubeclaw.io/role=channel' -- ` +
         `curl -s -o /dev/null -w '%{http_code}' http://${svcName}:3000/health || true`,
       );
       expect(probe.trim()).toContain('200');
