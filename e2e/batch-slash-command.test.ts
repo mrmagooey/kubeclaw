@@ -60,16 +60,23 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
- * Open an SSE stream for the given user. Returns collected data lines and a
- * helper that polls until a predicate is satisfied (or timeout).
+ * Open an SSE stream for the given user. Returns collected data lines, a
+ * ready promise that resolves once the server sends the initial ':ok' heartbeat
+ * (meaning the client is registered and will receive subsequent messages), and
+ * a helper that polls until a predicate is satisfied (or timeout).
  */
 async function openSseStream(
   user: string,
   pass: string,
   timeoutMs: number = 15_000,
-): Promise<{ lines: string[]; abort: () => void; waitFor: (pred: (lines: string[]) => boolean, ms?: number) => Promise<boolean> }> {
+): Promise<{ lines: string[]; abort: () => void; ready: Promise<void>; waitFor: (pred: (lines: string[]) => boolean, ms?: number) => Promise<boolean> }> {
   const lines: string[] = [];
   const controller = new AbortController();
+
+  // Resolves when the server sends its initial ':ok\n\n' heartbeat, which
+  // indicates the SSE client has been registered and will receive replies.
+  let resolveReady!: () => void;
+  const ready = new Promise<void>((resolve) => { resolveReady = resolve; });
 
   // Fire-and-forget the SSE fetch; collect data lines in `lines`
   (async () => {
@@ -78,21 +85,31 @@ async function openSseStream(
         headers: { Authorization: basicAuth(user, pass) },
         signal: controller.signal,
       });
-      if (!res.body) return;
+      if (!res.body) { resolveReady(); return; }
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
+      let buffer = '';
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        const chunk = decoder.decode(value, { stream: true });
-        for (const line of chunk.split('\n')) {
+        buffer += decoder.decode(value, { stream: true });
+        for (const line of buffer.split('\n')) {
+          if (line === ':ok') {
+            // Server-side SSE client is now registered; subsequent messages
+            // sent via POST /message will reach this stream.
+            resolveReady();
+          }
           if (line.startsWith('data: ')) {
             lines.push(line.slice(6));
           }
         }
+        // Keep only the last (potentially incomplete) line in the buffer
+        const lastNl = buffer.lastIndexOf('\n');
+        buffer = lastNl >= 0 ? buffer.slice(lastNl + 1) : buffer;
       }
     } catch {
-      // AbortError on cleanup
+      // AbortError on cleanup or connection closed
+      resolveReady();
     }
   })();
 
@@ -105,7 +122,7 @@ async function openSseStream(
     return false;
   };
 
-  return { lines, abort: () => controller.abort(), waitFor };
+  return { lines, abort: () => controller.abort(), ready, waitFor };
 }
 
 describe('Story 53 — Batch slash-command: mixed normal + slash in one batch', () => {
@@ -134,10 +151,12 @@ describe('Story 53 — Batch slash-command: mixed normal + slash in one batch', 
    * optional via SKIP_LLM_CHECK).
    */
   it('AC1: /search reply received on SSE; normal message is not discarded', async () => {
-    const { lines, abort, waitFor } = await openSseStream(TEST_USER, TEST_PASS);
+    const { lines, abort, ready, waitFor } = await openSseStream(TEST_USER, TEST_PASS);
 
-    // Small delay to ensure the SSE connection is established
-    await sleep(300);
+    // Wait until the server has registered this SSE client (initial ':ok' heartbeat).
+    // This eliminates the race where a /search reply is dispatched before the
+    // SSE client is added to the server's sseClients list.
+    await Promise.race([ready, sleep(5_000)]);
 
     // Message 1: normal text
     const normalRes = await fetch(`${HTTP_URL}/message`, {
@@ -186,9 +205,10 @@ describe('Story 53 — Batch slash-command: mixed normal + slash in one batch', 
    * Both must produce SSE replies.
    */
   it('AC4: two consecutive slash commands both produce replies', async () => {
-    const { lines, abort, waitFor } = await openSseStream(TEST_USER, TEST_PASS);
+    const { lines, abort, ready, waitFor } = await openSseStream(TEST_USER, TEST_PASS);
 
-    await sleep(300);
+    // Wait until the SSE client is registered on the server side.
+    await Promise.race([ready, sleep(5_000)]);
 
     // Slash command 1
     const r1 = await fetch(`${HTTP_URL}/message`, {
