@@ -32,7 +32,11 @@ const HTTP_PORT = 14136;
 const HTTP_URL = `http://127.0.0.1:${HTTP_PORT}`;
 const TEST_USER = 'alice';
 const TEST_PASS = 'testsecret';
-const SKIP_LLM = process.env.SKIP_LLM_CHECK === '1';
+// Skip the LLM-dependent assertion when the mock LLM is not reachable from
+// inside the cluster (per-test-cluster default) or when explicitly disabled.
+const SKIP_LLM =
+  process.env.SKIP_LLM_CHECK === '1' ||
+  process.env.KUBECLAW_NO_LLM === 'true';
 
 function basicAuth(user: string, pass: string): string {
   return 'Basic ' + Buffer.from(`${user}:${pass}`).toString('base64');

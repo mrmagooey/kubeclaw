@@ -157,8 +157,14 @@ afterAll(async () => {
 
 // ── Tests ──────────────────────────────────────────────────────────────────
 
+// Per-test-cluster tests deploy a real Helm release inside minikube but cannot
+// route pod→host traffic to the mock LLM server. Tests that require a real LLM
+// (tool dispatch, DeadlineExceeded reaction) are skipped when KUBECLAW_NO_LLM
+// is set. Override with KUBECLAW_NO_LLM=false to run them against a live provider.
+const shouldSkipLlmTests = process.env.KUBECLAW_NO_LLM === 'true';
+
 describe('tool-job DeadlineExceeded — e2e (Story 43)', () => {
-  it(
+  it.skipIf(shouldSkipLlmTests)(
     'AC1: SSE stream delivers a "timed out" message within 30 s of K8s deadline',
     async () => {
       // Trigger the specialist with a command known to exceed its deadline
@@ -180,7 +186,7 @@ describe('tool-job DeadlineExceeded — e2e (Story 43)', () => {
     40_000,
   );
 
-  it(
+  it.skipIf(shouldSkipLlmTests)(
     'AC2: orchestrator log contains event: tool_job_timeout with groupFolder and jobName',
     async () => {
       // Retrieve orchestrator logs from the last 60 s
@@ -223,7 +229,7 @@ describe('tool-job DeadlineExceeded — e2e (Story 43)', () => {
     20_000,
   );
 
-  it(
+  it.skipIf(shouldSkipLlmTests)(
     'AC5: kubeclaw_tool_job_duration_seconds histogram has an observation for the timed-out job',
     async () => {
       const metrics = await fetchMetrics();
