@@ -111,7 +111,7 @@ describe('credential-broker e2e', () => {
     const out = k(
       `run probe-no-auth --rm -i --restart=Never --image=curlimages/curl:8.10.1 -- ` +
         `curl -sS -o /dev/null -w "%{http_code}" -X POST ` +
-        `http://credential-broker.${NS}.svc:8080/authz ` +
+        `http://kubeclaw-credential-broker.${NS}.svc:8080/authz ` +
         `-H "X-Forwarded-Authority: api.anthropic.com"`,
     );
     // kubectl run --rm outputs the pod deletion message on stdout after the

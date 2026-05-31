@@ -239,7 +239,48 @@ export async function startBroker(): Promise<http.Server> {
     metrics,
   });
 
-  fs.watchFile(CONFIG_PATH, { interval: 5000 }, reloadCallback);
+  // Kubernetes ConfigMap volumes use a double-symlink structure:
+  //   config.yaml → ..data/config.yaml → ..TIMESTAMP/config.yaml
+  // When the ConfigMap is updated, Kubernetes atomically replaces the ..data
+  // symlink; the config.yaml symlink target never changes.  fs.watchFile()
+  // and fs.watch() both rely on inotify/lstat() on the symlink itself, which
+  // never changes, so they miss every ConfigMap update.
+  //
+  // The reliable approach is to poll with fs.stat() (not lstat) which follows
+  // symlinks and detects the new target file's mtime change.
+  //
+  // WATCH_INTERVAL_MS controls the stat-poll frequency; the default 5 s is
+  // fast enough for operator/test use while keeping CPU cost negligible.
+  {
+    const WATCH_INTERVAL_MS = parseInt(
+      process.env.BROKER_CONFIG_WATCH_INTERVAL_MS ?? '5000',
+      10,
+    );
+    let lastMtimeMs = 0;
+    try {
+      lastMtimeMs = fs.statSync(CONFIG_PATH).mtimeMs;
+    } catch {
+      // If the file doesn't exist yet, we'll catch it on the next poll.
+    }
+
+    setInterval(() => {
+      try {
+        const { mtimeMs } = fs.statSync(CONFIG_PATH);
+        if (mtimeMs !== lastMtimeMs) {
+          lastMtimeMs = mtimeMs;
+          reloadCallback();
+        }
+      } catch (err) {
+        // File temporarily missing during a ConfigMap update — ignore.
+        logger.warn({ err }, 'config stat failed during poll — will retry');
+      }
+    }, WATCH_INTERVAL_MS);
+
+    logger.info(
+      { configPath: CONFIG_PATH, intervalMs: WATCH_INTERVAL_MS },
+      'polling config file for changes (stat-based, follows symlinks)',
+    );
+  }
 
   const identityVerifier = new IdentityVerifier({
     createTokenReview: async (token, audiences) => {

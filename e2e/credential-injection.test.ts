@@ -225,7 +225,7 @@ spec:
     const out = k(
       `run probe-broker --rm -i --restart=Never --image=curlimages/curl:8.10.1 -- ` +
         `curl -sS -o /dev/null -w "%{http_code}" -X POST ` +
-        `http://credential-broker.${NS}.svc:8080/authz ` +
+        `http://kubeclaw-credential-broker.${NS}.svc:8080/authz ` +
         `-H "X-Forwarded-Authority: api.anthropic.com"`,
     );
     // kubectl run --rm appends the pod-deletion message after the curl output,
@@ -525,7 +525,7 @@ function runAuthzProbe(opts: {
     { stdio: 'pipe' },
   );
 
-  const brokerUrl = `http://credential-broker.${PG_NS}.svc:8080/authz`;
+  const brokerUrl = `http://kubeclaw-credential-broker.${PG_NS}.svc:8080/authz`;
   const mockHeaderFlags = mockHeaders.map((h) => `-H "${h}"`).join(' ');
 
   // Shell script: read SA token, call broker, optionally call mock.

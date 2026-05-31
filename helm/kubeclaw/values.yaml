@@ -363,6 +363,10 @@ credentialInjection:
     image: ghcr.io/mrmagooey/kubeclaw-credential-broker:latest
     port: 8080
     replicas: 1
+    # How often to poll the config file for changes (ms).
+    # Uses stat() to follow symlinks — required for Kubernetes ConfigMap mounts
+    # which update via symlink swap (inotify/watchFile miss these).
+    configWatchIntervalMs: 5000
     resources:
       requests: { cpu: 50m, memory: 64Mi }
       limits:   { cpu: 500m, memory: 256Mi }
