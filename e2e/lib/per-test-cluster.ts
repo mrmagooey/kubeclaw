@@ -160,7 +160,13 @@ export interface ClusterOpts {
   extraSet?: string[];
   /** helm install timeout (string passed to --timeout, e.g. '180s'). */
   helmTimeout?: string;
-  /** Maximum overall setup time. Defaults to 6 min. */
+  /**
+   * Maximum time to wait for the cluster lock. Defaults to 30 min.
+   * Lock acquisition happens BEFORE the setup deadline starts, so this
+   * is in addition to setupTimeoutMs.
+   */
+  lockTimeoutMs?: number;
+  /** Maximum setup time AFTER the lock is acquired. Defaults to 6 min. */
   setupTimeoutMs?: number;
   /**
    * Which deployments/statefulsets to wait for before returning. Defaults to
@@ -195,10 +201,16 @@ export async function setupTestCluster(
   opts: ClusterOpts,
 ): Promise<ClusterHandle> {
   const releaseName = opts.releaseName ?? opts.namespace;
+
+  // Acquire the global cluster lock first, with its own timeout (default 30 min).
+  // The setup deadline is computed AFTER the lock is in hand, so lock-wait time
+  // does not eat into the time budget for helm install + rollout waits.
+  const releaseLock = await acquireClusterLock(
+    opts.lockTimeoutMs ?? DEFAULT_LOCK_TIMEOUT_MS,
+  );
+
   const setupDeadline = Date.now() + (opts.setupTimeoutMs ?? 6 * 60 * 1000);
   const remaining = () => Math.max(1000, setupDeadline - Date.now());
-
-  const releaseLock = await acquireClusterLock(remaining());
 
   const portForwards: ChildProcess[] = [];
 
