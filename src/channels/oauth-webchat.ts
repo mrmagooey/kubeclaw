@@ -666,6 +666,26 @@ export class OAuthWebchatChannel implements Channel {
   ): Promise<void> {
     const url = new URL(req.url ?? '/', this.config.publicUrl);
 
+    // Liveness + readiness probes (no auth required — kubelet probes from
+    // outside the auth flow). The helm chart's channel-pod template targets
+    // `/readyz` on the http port when httpPort is set; without these the pod
+    // sits 0/1 Ready forever and global-setup times out.
+    if (
+      (req.method === 'GET' || req.method === 'HEAD') &&
+      (url.pathname === '/healthz' || url.pathname === '/readyz')
+    ) {
+      res.writeHead(200, {
+        'Content-Type': 'application/json',
+        'Cache-Control': 'no-store',
+      });
+      if (req.method === 'HEAD') {
+        res.end();
+      } else {
+        res.end(JSON.stringify({ status: 'ok' }));
+      }
+      return;
+    }
+
     if (req.method === 'GET' && url.pathname === '/login') {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end(LOGIN_HTML(this.config.providerName));
