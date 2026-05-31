@@ -228,7 +228,7 @@ describe('Story 53 — Batch slash-command: mixed normal + slash in one batch', 
    */
   it('kubectl: channel pod is Running in the expected namespace', () => {
     const r = kubectl(
-      ['get', 'pods', '-n', NAMESPACE, '-l', 'app.kubernetes.io/component=channel', '--no-headers'],
+      ['get', 'pods', '-n', NAMESPACE, '-l', 'kubeclaw.io/role=channel', '--no-headers'],
       { timeout: 10_000 },
     );
 
