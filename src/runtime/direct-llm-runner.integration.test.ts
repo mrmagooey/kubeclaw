@@ -447,11 +447,16 @@ describe('DirectLLMRunner — maxToolOutputBytes pod env injection', () => {
 
   afterEach(async () => {
     // Restore the default getRedisClient mock behaviour so no state leaks to
-    // other tests even if the test body throws.
+    // other tests even if the test body throws. Must match the file-level
+    // factory mock (lines 49-58): `xread` returns a well-formed response so
+    // downstream `scheduleTaskDirect`-style poll loops resolve immediately
+    // instead of spinning for their 5 s deadline.
     const { getRedisClient } = await import('../k8s/redis-client.js');
     vi.mocked(getRedisClient).mockReturnValue({
       xadd: vi.fn().mockResolvedValue('1-0'),
-      xread: vi.fn().mockResolvedValue(null),
+      xread: vi.fn().mockResolvedValue([
+        ['result-stream', [['1-0', ['result', 'Scheduled task "task-test".']]]],
+      ]),
       quit: vi.fn().mockResolvedValue(undefined),
     } as any);
   });

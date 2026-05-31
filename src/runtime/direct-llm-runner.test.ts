@@ -833,7 +833,13 @@ describe('loadSystemPrompt — skill composition', () => {
     });
     const { __testing__ } = await import('./direct-llm-runner.js');
     const out = __testing__.loadSystemPromptForTest('g1', tmpGroupsDir);
-    expect(out).toBe('BASE PROMPT');
+    // The recommendation contract is appended to `base` BEFORE the
+    // skill-loader is invoked (loadSystemPrompt unconditionally adds it
+    // unless the prompt opts out). When skill-loader throws, the catch
+    // arm keeps `prompt = base`, which already includes the contract.
+    // The behavioural assertion is: no skill suffix made it in.
+    expect(out).toContain('BASE PROMPT');
+    expect(out).not.toContain('Learned skills');
   });
 });
 
