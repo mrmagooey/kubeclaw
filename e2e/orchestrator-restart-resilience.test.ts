@@ -154,6 +154,7 @@ describe('Story 37: orchestrator restart with in-flight tool job', () => {
         localPort: HTTP_PORT,
         users: `${TEST_USER}:${TEST_PASS}`,
       },
+      setupTimeoutMs: 9 * 60 * 1000,
       quiet: true,
     });
     clusterReachable = true;

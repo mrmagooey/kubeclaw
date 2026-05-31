@@ -118,6 +118,7 @@ describe('Story 53 — Batch slash-command: mixed normal + slash in one batch', 
         localPort: HTTP_PORT,
         users: `${TEST_USER}:${TEST_PASS}`,
       },
+      setupTimeoutMs: 9 * 60 * 1000,
       quiet: true,
     });
   }, 600_000);

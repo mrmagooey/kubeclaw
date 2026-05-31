@@ -102,6 +102,7 @@ describe('GIF and WebP attachment round-trip (Story 42)', () => {
         localPort: HTTP_PORT,
         users: `${KUBECLAW_LIVE_USER}:${KUBECLAW_LIVE_PASS}`,
       },
+      setupTimeoutMs: 9 * 60 * 1000,
       quiet: true,
     });
     provisioned = true;
