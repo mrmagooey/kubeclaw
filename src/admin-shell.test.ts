@@ -24,7 +24,8 @@ const {
   mockEditSpecialist,
   mockRemoveSpecialist,
   mockListSpecialistOverrides,
-  mockPatchNamespacedConfigMap,
+  mockReadNamespacedConfigMap,
+  mockReplaceNamespacedConfigMap,
   mockCreateNamespacedConfigMap,
 } = vi.hoisted(() => ({
   mockGetAllRegisteredGroups: vi.fn().mockReturnValue({}),
@@ -48,7 +49,10 @@ const {
   mockEditSpecialist: vi.fn().mockReturnValue({ ok: true }),
   mockRemoveSpecialist: vi.fn().mockReturnValue({ ok: true }),
   mockListSpecialistOverrides: vi.fn().mockReturnValue([]),
-  mockPatchNamespacedConfigMap: vi.fn().mockResolvedValue(undefined),
+  mockReadNamespacedConfigMap: vi
+    .fn()
+    .mockResolvedValue({ metadata: { resourceVersion: '1' } }),
+  mockReplaceNamespacedConfigMap: vi.fn().mockResolvedValue(undefined),
   mockCreateNamespacedConfigMap: vi.fn().mockResolvedValue(undefined),
 }));
 
@@ -99,7 +103,8 @@ vi.mock('@kubernetes/client-node', () => {
       mockReadNamespacedPersistentVolumeClaim,
     createNamespacedPersistentVolumeClaim:
       mockCreateNamespacedPersistentVolumeClaim,
-    patchNamespacedConfigMap: mockPatchNamespacedConfigMap,
+    readNamespacedConfigMap: mockReadNamespacedConfigMap,
+    replaceNamespacedConfigMap: mockReplaceNamespacedConfigMap,
     createNamespacedConfigMap: mockCreateNamespacedConfigMap,
   };
   const mockAppsV1 = {
@@ -738,9 +743,12 @@ describe('executeTool', () => {
   // ── register_specialist reconcile wiring (Task 3) ─────────────────────────
 
   describe('register_specialist reconcile wiring', () => {
-    it('calls patchNamespacedConfigMap after successful register', async () => {
+    it('calls replaceNamespacedConfigMap after successful register', async () => {
       mockRegisterSpecialist.mockReturnValue({ ok: true });
-      mockPatchNamespacedConfigMap.mockResolvedValue(undefined);
+      mockReadNamespacedConfigMap.mockResolvedValue({
+        metadata: { resourceVersion: '42' },
+      });
+      mockReplaceNamespacedConfigMap.mockResolvedValue(undefined);
       await executeTool('register_specialist', {
         name: 'Wired',
         prompt: 'prompt text',
@@ -753,7 +761,10 @@ describe('executeTool', () => {
       const reconcileFn = mockRegisterSpecialist.mock
         .calls[0][1] as () => Promise<void>;
       await reconcileFn();
-      expect(mockPatchNamespacedConfigMap).toHaveBeenCalledWith(
+      expect(mockReadNamespacedConfigMap).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'kubeclaw-specialists' }),
+      );
+      expect(mockReplaceNamespacedConfigMap).toHaveBeenCalledWith(
         expect.objectContaining({ name: 'kubeclaw-specialists' }),
       );
     });
@@ -768,12 +779,12 @@ describe('executeTool', () => {
       expect(result).not.toContain('next orchestrator restart');
     });
 
-    it('404 falls back to createNamespacedConfigMap', async () => {
+    it('404 from readNamespacedConfigMap falls back to createNamespacedConfigMap', async () => {
       mockRegisterSpecialist.mockReturnValue({ ok: true });
       const notFound = Object.assign(new Error('not found'), {
         response: { statusCode: 404 },
       });
-      mockPatchNamespacedConfigMap.mockRejectedValue(notFound);
+      mockReadNamespacedConfigMap.mockRejectedValue(notFound);
       mockCreateNamespacedConfigMap.mockResolvedValue(undefined);
       await executeTool('register_specialist', {
         name: 'New',
@@ -789,7 +800,9 @@ describe('executeTool', () => {
       // specialist-registry.ts:31-34 already .catch()es the reconcile fn —
       // a k8s error must not surface as an executeTool rejection.
       mockRegisterSpecialist.mockReturnValue({ ok: true });
-      mockPatchNamespacedConfigMap.mockRejectedValue(new Error('k8s 500'));
+      mockReadNamespacedConfigMap.mockRejectedValue(
+        Object.assign(new Error('k8s 500'), { response: { statusCode: 500 } }),
+      );
       const result = await executeTool('register_specialist', {
         name: 'Fail',
         prompt: 'p',

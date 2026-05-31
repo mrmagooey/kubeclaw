@@ -639,8 +639,11 @@ describe('Real Orchestrator E2E', () => {
     // BLOCK with '$' pointing at the now-empty stream.
     await new Promise((r) => setTimeout(r, 6000));
 
-    // Record time before publishing so we can filter for jobs created after this point
-    const publishedAt = new Date();
+    // Record time before publishing so we can filter for jobs created after this point.
+    // K8s creationTimestamp has second precision (RFC 3339, no sub-second component),
+    // so floor publishedAt to the second to avoid filtering out jobs created in the
+    // same second as publishedAt but whose timestamp rounds down to the previous second.
+    const publishedAtMs = Math.floor(Date.now() / 1000) * 1000;
 
     const agentJobId = `e2e-job-${Date.now()}`;
     const testGroup = `test-group-${Date.now()}`;
@@ -662,7 +665,7 @@ describe('Real Orchestrator E2E', () => {
       const output = execSync('kubectl get jobs -n ' + NAMESPACE + ' -o json', { encoding: 'utf8' });
       const jobList: { items: KubernetesJob[] } = JSON.parse(output);
       newJobs = jobList.items.filter(
-        (j) => new Date(j.metadata.creationTimestamp).getTime() >= publishedAt.getTime(),
+        (j) => new Date(j.metadata.creationTimestamp).getTime() >= publishedAtMs,
       );
       if (newJobs.length > 0) break;
       await new Promise((r) => setTimeout(r, 3000));

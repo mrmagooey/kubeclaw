@@ -363,33 +363,47 @@ async function main(): Promise<void> {
       baselineLoader: loadBaselineFromDisk,
       configMapApply: async (rendered: string) => {
         const data: Record<string, string> = { 'specialists.json': rendered };
+        // GET the existing ConfigMap to obtain its resourceVersion (needed for PUT).
+        // Fall back to CREATE if the ConfigMap does not exist yet.
+        // Note: patchNamespacedConfigMap sends application/json-patch+json which
+        // expects an array of patch ops, not a full object — so we use GET+replace
+        // (PUT) or create instead.
+        let resourceVersion: string | undefined;
+        try {
+          const existing = await coreApi.readNamespacedConfigMap({
+            name: 'kubeclaw-specialists',
+            namespace: KUBECLAW_NAMESPACE,
+          });
+          resourceVersion = existing.metadata?.resourceVersion;
+        } catch (err: unknown) {
+          const status = (err as { response?: { statusCode?: number } })
+            ?.response?.statusCode;
+          if (status !== 404) throw err;
+        }
+
         const body = {
           apiVersion: 'v1',
           kind: 'ConfigMap',
           metadata: {
             name: 'kubeclaw-specialists',
             namespace: KUBECLAW_NAMESPACE,
+            ...(resourceVersion ? { resourceVersion } : {}),
           },
           data,
         };
-        // Try patch first; fall back to create if not found.
-        try {
-          await coreApi.patchNamespacedConfigMap({
+        if (resourceVersion !== undefined) {
+          // ConfigMap exists — replace it (PUT). No patch content-type ambiguity.
+          await coreApi.replaceNamespacedConfigMap({
             name: 'kubeclaw-specialists',
             namespace: KUBECLAW_NAMESPACE,
             body,
           });
-        } catch (err: unknown) {
-          const status = (err as { response?: { statusCode?: number } })
-            ?.response?.statusCode;
-          if (status === 404) {
-            await coreApi.createNamespacedConfigMap({
-              namespace: KUBECLAW_NAMESPACE,
-              body,
-            });
-          } else {
-            throw err;
-          }
+        } else {
+          // ConfigMap does not exist — create it.
+          await coreApi.createNamespacedConfigMap({
+            namespace: KUBECLAW_NAMESPACE,
+            body,
+          });
         }
       },
     });
