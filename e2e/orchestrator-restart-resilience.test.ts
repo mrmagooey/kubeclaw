@@ -173,7 +173,7 @@ describe('Story 37: orchestrator restart with in-flight tool job', () => {
   }, 120_000);
 
   // ── AC1 + AC2 + AC3 + AC4 ─────────────────────────────────────────────────
-  it(
+  it.skipIf(process.env.KUBECLAW_NO_LLM === 'true')(
     'AC1–AC4: restart while tool job is running surfaces interruption notice',
     async () => {
       expect(clusterReachable, 'cluster not reachable').toBe(true);
@@ -194,8 +194,8 @@ describe('Story 37: orchestrator restart with in-flight tool job', () => {
       });
       expect(postRes.status, 'POST /message should return 200').toBe(200);
 
-      const postBody = (await postRes.json()) as { messageId?: string };
-      const messageId = postBody.messageId;
+      const postBody = (await postRes.json()) as { id?: string };
+      const messageId = postBody.id;
       expect(messageId, 'POST /message should return a messageId').toBeDefined();
 
       // ── 2. Wait until the tool-job pod is Running ─────────────────────────

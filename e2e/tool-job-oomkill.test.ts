@@ -167,8 +167,10 @@ afterAll(async () => {
 
 // ── Tests ──────────────────────────────────────────────────────────────────
 
+const shouldSkipLlmTests = process.env.KUBECLAW_NO_LLM === 'true';
+
 describe('tool-job OOMKill — e2e (Story 46)', () => {
-  it(
+  it.skipIf(shouldSkipLlmTests)(
     'AC1: SSE stream delivers an "out of memory" message within 30 s of OOMKill',
     async () => {
       // Trigger the memory-bomb specialist
@@ -190,7 +192,7 @@ describe('tool-job OOMKill — e2e (Story 46)', () => {
     40_000,
   );
 
-  it(
+  it.skipIf(shouldSkipLlmTests)(
     'AC2: orchestrator log contains event: tool_job_oomkill with groupFolder and jobName',
     async () => {
       const result = kubectl(

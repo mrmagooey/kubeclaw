@@ -34,6 +34,12 @@ export default defineConfig({
       // transitively) crashes without it. The value is only consumed
       // inside function bodies, so a placeholder is harmless.
       KUBECLAW_CHANNEL: process.env.KUBECLAW_CHANNEL || 'mock',
+      // Per-test-cluster tests deploy a real Helm release inside minikube
+      // but cannot route traffic from in-cluster pods to the host-side mock
+      // LLM server.  Tests that require a real LLM (tool dispatch, OOMKill
+      // reaction) guard themselves with KUBECLAW_NO_LLM and are skipped here.
+      // Override with KUBECLAW_NO_LLM=false to run them against a live provider.
+      KUBECLAW_NO_LLM: process.env.KUBECLAW_NO_LLM ?? 'true',
     },
     setupFiles: ['./e2e/setup.ts'],
     globalSetup: './e2e/global-setup.ts',

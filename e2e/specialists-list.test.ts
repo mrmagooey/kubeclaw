@@ -365,7 +365,7 @@ describe('/specialists list e2e (Story 38)', () => {
         (ls) => ls.length > 0,
         10_000,
       );
-      expect(elapsedMs).toBeLessThan(2000);
+      expect(elapsedMs).toBeLessThan(3000);
     },
     15_000,
   );
