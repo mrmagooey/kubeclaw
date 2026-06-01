@@ -3091,7 +3091,7 @@ status: passing 3/3
 - Implementation lives in `src/per-group-capabilities/index.ts`.
 - LLM-dependence: **none**.
 
-status: drafted
+status: passing 3/3
 
 ## Story 125: Mock usage — full happy-path message routing through mock channel + mock LLM
 
