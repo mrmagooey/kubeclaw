@@ -3572,3 +3572,75 @@ status: passing 4/4
 - LLM-dependence: **none**.
 
 status: passing 3/3
+
+## Story 145: Retry state cleanup — successful call clears the retry counter
+
+**As a** KubeClaw operator
+**I want** the retry counter for an operation to reset to zero after a successful call
+**So that** a brief network blip doesn't permanently inflate the retry budget for subsequent calls
+
+### Acceptance criteria
+
+1. After N failed retries followed by a successful call, the retry counter for that operation is 0.
+2. Cleanup happens immediately on success (not lazily).
+3. Multiple distinct operations have independent counters (one's cleanup doesn't affect another's).
+4. The cleanup is observable via state inspection (counter key reset / removed).
+5. Tests use real Redis with simulated failure + recovery.
+
+### Notes for the test author
+
+- Test file: `e2e/timeout-retry.test.ts` — `describe('Retry State Cleanup After Success', ...)` at line 463.
+- Run with: `npm run test:e2e -- timeout-retry -t "Retry State Cleanup"`.
+- Harness: requires `isRedisAvailable()`. **Requires a live cluster.**
+- Implementation lives in `src/k8s/ipc-redis.ts`.
+- LLM-dependence: **none**.
+
+status: drafted
+
+## Story 146: Sidecar ACL Infrastructure — Redis supports ACL commands
+
+**As a** KubeClaw operator
+**I want** the in-cluster Redis to expose ACL management commands (`ACL SETUSER`, `ACL DELUSER`, `ACL LIST`, `ACL WHOAMI`)
+**So that** per-job ACL creation/revocation can actually be performed at runtime
+
+### Acceptance criteria
+
+1. `ACL LIST` returns the configured users (default + any provisioned).
+2. `ACL SETUSER` with valid syntax creates a user with correct permissions.
+3. `ACL DELUSER` removes a user.
+4. `ACL WHOAMI` returns the current authenticated user.
+5. ACL commands require the appropriate admin role; non-admin users get NOPERM.
+
+### Notes for the test author
+
+- Test file: `e2e/sidecar-acl.test.ts` — `describe('Redis ACL Infrastructure', ...)` at line 74.
+- Run with: `npm run test:e2e -- sidecar-acl -t "Redis ACL Infrastructure"`.
+- Harness: requires `isKubernetesAvailable()` + `getSharedRedis()`. **Requires a live cluster.**
+- Implementation lives in the Redis chart config (`aclfile`).
+- LLM-dependence: **none**.
+
+status: drafted
+
+## Story 147: Helm chart PVCs — persistent volume claims for sessions + groups + Redis
+
+**As a** KubeClaw operator
+**I want** the chart to render `PersistentVolumeClaim` objects for the orchestrator's session data, per-group volumes, and Redis storage
+**So that** state survives pod restarts and the cluster runs on a real storage class
+
+### Acceptance criteria
+
+1. The chart renders PVCs for `kubeclaw-sessions` (orchestrator session data) + per-group volumes.
+2. The Redis PVC is rendered with the configured `storageClassName`.
+3. PVC access modes (ReadWriteOnce / ReadWriteMany) match the expected workload pattern.
+4. PVC reclaim policy aligns with the chart values (retain vs delete).
+5. Tests verify PVCs are bound after helm install.
+
+### Notes for the test author
+
+- Test file: `e2e/helm-chart.test.ts` — `describe('persistent volume claims', ...)` at line 396.
+- Run with: `npm run test:e2e -- helm-chart -t "persistent volume claims"`.
+- Harness: requires `requireKubernetes()`. **Requires a live cluster + helm install.**
+- Implementation lives in `helm/kubeclaw/templates/storage.yaml` and `helm/kubeclaw/templates/redis.yaml`.
+- LLM-dependence: **none**.
+
+status: drafted
