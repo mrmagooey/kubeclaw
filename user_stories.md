@@ -3859,4 +3859,4 @@ status: passing 2/2
 - Implementation lives in `helm/kubeclaw/templates/envoyfilter.yaml` + values for `credentialInjection.mode`.
 - LLM-dependence: **none**.
 
-status: drafted
+status: passing 22/22
