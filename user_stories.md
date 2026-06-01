@@ -2587,7 +2587,7 @@ status: passing 2/2
 - Implementation lives in `src/k8s/job-runner.ts`.
 - LLM-dependence: **none**.
 
-status: drafted
+status: passing 3/3
 
 ## Story 104: Per-group state — message storage and retrieval round-trip
 
