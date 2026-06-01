@@ -3883,7 +3883,7 @@ status: passing 22/22
 - Implementation lives in `src/k8s/http-sidecar-runner.ts`.
 - LLM-dependence: **none**.
 
-status: drafted
+status: passing 2/2
 
 ## Story 158: File-sidecar Multiple Sequential — N consecutive calls succeed
 
