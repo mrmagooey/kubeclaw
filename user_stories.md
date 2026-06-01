@@ -3115,7 +3115,7 @@ status: drafted
 - Implementation lives in `src/channel-runner.ts` + `e2e/lib/`.
 - LLM-dependence: **none** (mock).
 
-status: drafted
+status: passing 5/5
 
 ## Story 126: Session state persistence — sessions survive within TTL window
 
