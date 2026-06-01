@@ -3691,7 +3691,7 @@ status: passing 1/1
 - Implementation lives in `src/channel-runner.ts`.
 - LLM-dependence: **none**.
 
-status: drafted
+status: passing 3/3
 
 ## Story 150: Helm chart orchestrator Deployment — exists, ready, healthy
 
