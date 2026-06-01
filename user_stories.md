@@ -3475,7 +3475,7 @@ status: passing 2/2
 - Implementation lives in `helm/kubeclaw/templates/secrets.yaml` and orchestrator deployment manifest.
 - LLM-dependence: **none**.
 
-status: drafted
+status: passing 2/2
 
 ## Story 141: Group state isolation — state writes scoped per-group never leak
 
