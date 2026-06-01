@@ -3979,7 +3979,7 @@ status: passing 1/1
 - Implementation lives in `container/agent-runner/src/tool-server.ts` (file-bridge loop).
 - LLM-dependence: **none**.
 
-status: drafted
+status: passing 4/4
 
 ## Story 162: Helm chart ClusterRoleBinding name is release-scoped (collision regression)
 
