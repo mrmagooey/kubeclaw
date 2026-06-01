@@ -2216,7 +2216,7 @@ status: passing 6/6
 - Closes Plan 2 from `docs/aspirational-stories-and-plans.md` (per-group structured user profile).
 - LLM-dependence: **none** (mock LLM).
 
-status: drafted
+status: passing 4/4
 
 ## Story 89: `places_search` tool calls Google Places HTTP API and maps results
 
