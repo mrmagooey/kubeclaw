@@ -876,10 +876,19 @@ async function handleUnsetGroupCredential(input: ToolInput): Promise<string> {
   }
 }
 
+// db may be undefined when this module is imported directly (e.g. via kubectl
+// exec node -e) without main() running first. Guard here so executeTool works
+// in both the production path (main → initDatabase) and the test/exec path.
+let _dbInitPromise: Promise<void> | null = null;
+
 export async function executeTool(
   name: string,
   input: ToolInput,
 ): Promise<string> {
+  if (!db.db) {
+    if (!_dbInitPromise) _dbInitPromise = initDatabase();
+    await _dbInitPromise;
+  }
   switch (name) {
     case 'list_groups':
       return handleListGroups();
