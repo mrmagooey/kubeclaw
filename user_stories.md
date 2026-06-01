@@ -3811,7 +3811,7 @@ status: passing 2/2
 - Implementation lives in `container/agent-runner/src/tool-server.ts` (file-bridge), shared-volume sizing in chart.
 - LLM-dependence: **none**.
 
-status: drafted
+status: passing 1/1
 
 ## Story 155: HTTP-sidecar Session Persistence — sidecar keeps session across calls
 
