@@ -3427,4 +3427,4 @@ status: passing 2/2
 - Implementation lives in `container/agent-runner/src/tool-server.ts` (probe handler) + chart template `helm/kubeclaw/templates/tool-job.yaml`.
 - LLM-dependence: **none**.
 
-status: drafted
+status: passing 1/1
