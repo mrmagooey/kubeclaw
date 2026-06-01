@@ -2539,7 +2539,7 @@ status: passing 4/4
 - Implementation lives in `src/channels/http.ts` (HTTP channel) and the sidecar adapter.
 - LLM-dependence: **none** (echo handler).
 
-status: drafted
+status: blocked — Redis ACL auth fails with `WRONGPASS invalid username-password pair or user is disabled` when the K8s Jobs try to authenticate to `kubeclaw-redis:6379`. The `kubeclaw-http-adapter` image had never been loaded into minikube prior to this run (so `ADAPTER_AVAILABLE=false` previously and the test never actually exercised this path). The fresh build now reaches the auth step and reveals a latent bug in `createClusterACLUser` (in `src/k8s/acl-manager.ts`) — likely the admin auth `-a ${password}` flag in `execRedisCommand` fails silently when `KUBECLAW_REDIS_URL` is unset or malformed in the test process, leaving the SETUSER command unauthenticated and the user created as disabled. Fix requires either ensuring the admin auth env propagates correctly OR adding error-checking around `ACL SETUSER`. See `docs/superpowers/plans/2026-06-01-story-101-http-sidecar.md` for full diagnosis.
 
 ## Story 102: Sidecar ACL lifecycle — create and revoke per-job Redis ACL users
 
