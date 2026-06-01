@@ -2114,3 +2114,81 @@ status: passing 5/5
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-history-edited-at --create-namespace`, `--set namespace=kubeclaw-e2e-history-edited-at`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14167`.
 
 status: passing 5/5
+
+## Story 85: `@Researcher` specialist grounds reply in web-fetched content
+
+**As a** KubeClaw user wanting external research without leaving the channel
+**I want** to @mention the `Researcher` specialist with a URL and a question and receive a reply grounded in the fetched page
+**So that** I can dispatch a focused research task to a specialist that runs `web_fetch` in a real browser-category tool pod and returns a grounded summary back to the chat
+
+### Acceptance criteria
+
+1. The chart's `specialists` value registers a `Researcher` specialist with `tools: ["web_search", "web_fetch"]` and `llmProvider: openrouter`; the channel pod reads the merged catalog from the `kubeclaw-specialists` ConfigMap.
+2. A user message containing `@Researcher Use web_fetch on <URL> and tell me <question>` is detected by the @mention parser in `src/channel-runner.ts`, routed to the specialist runner, and dispatched as a `DirectLLMRunner` invocation with the specialist's prompt and `toolFilter`.
+3. The specialist's LLM call results in a `web_fetch` tool invocation that runs in a `browser`-category tool-job pod — verified via orchestrator log containing `Tool pod job created` with `"category":"browser"`, scoped by `--since-time` to exclude unrelated traffic in the shared `kubeclaw-live` namespace.
+4. The specialist's reply is delivered back to the channel as a single SSE message prefixed `[@Researcher]` and contains the answer grounded in the fetched URL (assertion: contains `Maathai` when fetching the Mottainai Wikipedia article and asking about the Kenyan environmentalist).
+5. The reply text cites or mentions the fetched URL hostname (`wikipedia.org/wiki/Mottainai`).
+
+### Notes for the test author
+
+- Test file: `e2e/minikube-live-researcher.test.ts` (already exists).
+- Run with: `npm run test:minikube-live -- minikube-live-researcher`.
+- Cluster: minikube-live install (`kubeclaw-live` namespace via `minikube-live-setup.ts`). Requires a running minikube cluster.
+- Requires `LIVE_LLM_*` env vars in `.env.test.local` (gitignored). Currently `LIVE_LLM_MODEL=openai/gpt-4o-mini`.
+- The Researcher specialist is injected via `--set-json specialists=[Researcher]` at helm install time. The chart default `specialists: []` does not register it.
+- NetworkPolicy egress for `browser`-category tool pods allows TCP/443; pod can reach `en.wikipedia.org` directly.
+- Approach A from brainstorming: URL is given directly in the user prompt so the specialist goes straight to `web_fetch`, bypassing `web_search`.
+- Multi-line SSE handling: the `[@Researcher]` prefix only appears on the first `data:` frame; join all frames from the researcher index forward when asserting against the reply body.
+- LLM-dependence: **yes** (real LLM via OpenRouter, real `web_fetch` to Wikipedia).
+
+status: drafted
+
+## Story 86: `set_reminder` tool dispatches and emits human-readable confirmation in the same turn
+
+**As a** KubeClaw user
+**I want** to ask the assistant to remind me about something at a future time and receive an immediate, human-readable confirmation in the same conversation turn
+**So that** I have proof that the reminder was accepted (with the text and datetime echoed back) before the scheduler asynchronously fires it
+
+### Acceptance criteria
+
+1. The `set_reminder` LocalTool is registered on `DirectLLMRunner` (visible via the runner's local tool list at construction time).
+2. When the LLM calls `set_reminder` with `{ text, when_iso }`, the tool result fed back to the LLM contains the literal `"Reminder set"` and echoes the reminder text.
+3. The runner's final output status is `'success'`.
+4. The assistant's natural-language confirmation reply contains both the reminder text and a human-readable representation of the datetime (month name and 12-hour clock format).
+5. Malformed `when_iso` values are rejected by the tool with a clear error before any scheduler row is written (strict ISO-8601 validation).
+
+### Notes for the test author
+
+- Test file: `e2e/set-reminder.test.ts` (already exists).
+- Run with: `npm run test:e2e -- set-reminder`.
+- Harness: in-process mock LLM server (`getMockLlmPort()`), real SQLite via `_initTestDatabase()`. **No Kubernetes required.**
+- Scope: this story covers ONLY the tool dispatch + confirmation reply path. It does NOT exercise the scheduler-loop wake-up at fire time or the channel-side outbound delivery — that's the full reminder lifecycle story (Story B in `docs/aspirational-stories-and-plans.md`), which is separately staged.
+- Implementation lives in `src/runtime/direct-llm-runner.ts` (`set_reminder` LocalTool definition).
+- LLM-dependence: **none** (mock LLM).
+
+status: drafted
+
+## Story 87: Recommendation contract wires up `read_user_profile`, `places_search`, and multi-turn history threading
+
+**As a** KubeClaw user asking for a personalized recommendation (restaurant, gift, etc.)
+**I want** the assistant to be told (via system prompt) to consult my stored profile and to use the `places_search` tool, with conversation history threaded across turns
+**So that** the assistant can refine a recommendation iteratively and personalize it based on my profile rather than starting fresh each turn
+
+### Acceptance criteria
+
+1. The system prompt sent to the LLM contains the `RECOMMENDATION_CONTRACT` section — specifically the `## Recommendation guidelines` heading and explicit references to `read_user_profile` and `places_search`.
+2. `read_user_profile` is registered as a local tool on `DirectLLMRunner` (visible via `getLocalToolNames()`).
+3. When no profile row exists for the group, `read_user_profile` returns `'{}'` without throwing — `null`/missing handled gracefully.
+4. Conversation history from a first user turn is visible to the second turn's LLM call within the same `group_folder` (history threading carries across turns).
+5. `places_search` is present in the tool list advertised to the LLM at runner construction time.
+
+### Notes for the test author
+
+- Test file: `e2e/recommendation-pattern.test.ts` (already exists, covering AC1–AC5).
+- Run with: `npm run test:e2e -- recommendation-pattern`.
+- Harness: in-process mock LLM server (`getMockLlmPort()`), real SQLite via `_initTestDatabase()`. **No Kubernetes required.**
+- Implementation lives in `src/runtime/direct-llm-runner.ts` (`read_user_profile` and `places_search` LocalTool definitions; `RECOMMENDATION_CONTRACT` constant).
+- Scope: this story covers wiring only. It does NOT exercise the live `places_search` HTTP backend (Google Places API) — that's tested separately under places-search integration.
+- LLM-dependence: **none** (mock LLM).
+
+status: drafted
