@@ -2192,3 +2192,80 @@ status: passing 2/2
 - LLM-dependence: **none** (mock LLM).
 
 status: passing 6/6
+
+## Story 88: Per-group user profile persists across turns and isolates by group
+
+**As a** KubeClaw user with personal preferences (timezone, dietary restrictions, budget tier, etc.)
+**I want** the assistant to remember a structured profile about me, scoped to my group, and include it in the system prompt for subsequent turns
+**So that** recommendations and answers can be personalized without me re-stating preferences every conversation, while another group's data stays private
+
+### Acceptance criteria
+
+1. The LLM can call the `update_profile` tool with a JSON payload that writes a row to the `group_profiles` SQLite table for the current `group_folder` (verifiable via `getGroupProfile`).
+2. On the next `runAgent` call for the same group, the system prompt sent to the LLM contains the `## Your profile` section with the stored profile JSON inlined.
+3. Two distinct `group_folder` values maintain independent profiles — writing to group A does NOT change what group B sees in its system prompt, and `getGroupProfile(A) ≠ getGroupProfile(B)`.
+4. The `update_profile` tool is registered as a LocalTool on `DirectLLMRunner` and visible via the runner's local tool list.
+5. `upsertGroupProfile(groupFolder, json)` followed by `getGroupProfile(groupFolder)` returns the exact written payload (round-trip persistence).
+
+### Notes for the test author
+
+- Test file: `e2e/group-profile.test.ts` (already exists, 3 named tests E2E-1/E2E-2/E2E-3).
+- Run with: `npm run test:e2e -- group-profile`.
+- Harness: in-process mock LLM server (`getMockLlmPort()`), real SQLite via `_initTestDatabase()`. **No Kubernetes required.**
+- Implementation lives in `src/db.ts` (`getGroupProfile`/`upsertGroupProfile`, `group_profiles` table schema), `src/runtime/direct-llm-runner.ts` (`update_profile` LocalTool + system-prompt injection via `_loadSystemPromptForTest`).
+- Closes Plan 2 from `docs/aspirational-stories-and-plans.md` (per-group structured user profile).
+- LLM-dependence: **none** (mock LLM).
+
+status: drafted
+
+## Story 89: `places_search` tool calls Google Places HTTP API and maps results
+
+**As a** KubeClaw user asking for a venue recommendation
+**I want** the assistant's `places_search` tool to query Google Places via HTTPS and return structured place objects (name, address, rating, types)
+**So that** the LLM can ground its recommendations in real-world venue data rather than hallucinating place names
+
+### Acceptance criteria
+
+1. The `places_search` LocalTool, when invoked, performs an HTTP POST against `https://places.googleapis.com/v1/places:searchText` with the user query in the request body and the API key in the `X-Goog-Api-Key` header.
+2. The HTTP response JSON is validated against the tool's Zod schema — malformed responses are rejected with a clear error rather than passed through unchecked.
+3. Each `places` element in the response is mapped to a Place object exposing `displayName`, `formattedAddress`, `rating`, and `types` to the LLM.
+4. When credentials are missing or unset (`CREDENTIAL_INJECTION_MODE=off` and no `GOOGLE_PLACES_API_KEY`), the tool surfaces a structured error rather than crashing the runner.
+5. The tool is registered as a LocalTool on `DirectLLMRunner` and the handler imports the real module + real Zod schema + real fetch dispatch (not a mocked module).
+
+### Notes for the test author
+
+- Test file: `e2e/places-search.test.ts` (already exists).
+- Run with: `npm run test:e2e -- places-search`.
+- Harness: in-process mock LLM server + real SQLite + `vi.stubGlobal('fetch')` to intercept the Google Places HTTP call. **No Kubernetes required, no live Google API call.**
+- The mock LLM server in `e2e/setup.ts` does NOT expose a tool-call injection hook, so the full LLM → tool_call → handler → reply path is not exercised here. Direct-handler tests are the canonical assertions.
+- Implementation lives in `src/runtime/places-search.ts` and `src/runtime/direct-llm-runner.ts` (tool registration).
+- Closes Plan 9 from `docs/aspirational-stories-and-plans.md` (places-search tool).
+- LLM-dependence: **none** (mock LLM + stubbed fetch).
+
+status: drafted
+
+## Story 90: Current wall-clock time is injected into every LLM prompt and stripped from persisted history
+
+**As a** KubeClaw user asking time-sensitive questions ("remind me in 3 days", "what's open right now", "is it after lunch yet")
+**I want** the LLM to know the current wall-clock time on every turn
+**So that** it can compute relative times correctly — without polluting conversation history with stale timestamps that would mislead future turns
+
+### Acceptance criteria
+
+1. Every `runAgent` call injects a `current_time="<ISO>"` token into the user message sent to the LLM (visible in the captured mock LLM payload).
+2. The injected timestamp is computed fresh per turn and within 5 seconds of the call site (asserts the time is "now", not cached).
+3. The persisted `conversation_history` row for the user turn does NOT contain the `current_time=` token — it stores the user's original prompt text only (covered by sibling integration test).
+4. The timestamp uses ISO-8601 UTC format (matches `/current_time="[^"]+"/` and parses cleanly as a `Date`).
+5. The token is part of the user message content sent to the LLM, not the system prompt — so it doesn't get cached by providers that cache system messages.
+
+### Notes for the test author
+
+- Primary e2e test: `e2e/direct-llm-runner.test.ts` — specifically the `it('includes current_time in the prompt sent to the LLM, within 5s of test start', ...)` block (around line 151).
+- Sibling integration coverage (do NOT count toward this story's status; they're separate test files): `src/runtime/direct-llm-runner.test.ts` includes "current_time reaches LLM payload and is absent from history" (commit 22e32b6) and "current_time stripped from persisted history" (commit 4626273).
+- Run with: `npm run test:e2e -- direct-llm-runner -t "current_time"` (filters to the e2e current_time test only — expect 1 passing test).
+- Harness: in-process mock LLM server captures the LLM payload. **No Kubernetes required.**
+- Implementation lives in `src/runtime/direct-llm-runner.ts` (`formatMessages()` injects `current_time=`, history-write code strips it before persisting).
+- Closes Plan 1 from `docs/aspirational-stories-and-plans.md` (inject current wall-clock time into LLM context).
+- LLM-dependence: **none** (mock LLM).
+
+status: drafted
