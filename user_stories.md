@@ -2707,4 +2707,4 @@ status: drafted
 - Implementation lives in `src/k8s/tool-pod-spawn.ts`, `src/k8s/job-runner.ts`.
 - LLM-dependence: **none**.
 
-status: drafted
+status: passing 1/1
