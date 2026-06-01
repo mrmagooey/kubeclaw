@@ -2708,3 +2708,75 @@ status: passing 3/3
 - LLM-dependence: **none**.
 
 status: passing 1/1
+
+## Story 109: Skill-harvest pipeline — propose → review → accept → load into next prompt
+
+**As a** KubeClaw user whose conversations surface reusable skills
+**I want** the assistant to propose skill candidates from transcripts, let me review and accept them via `/skills`, and have accepted skills load into the system prompt on my next turn
+**So that** the assistant builds up a personalized library of reusable patterns without me authoring them by hand
+
+### Acceptance criteria
+
+1. A pre-existing skill file on disk is loaded into the system prompt on `runAgent`.
+2. Full lifecycle: candidate appears in `/skills review`; `/skills accept <id>` moves it to active; next `runAgent` includes the accepted skill in the prompt.
+3. The `propose_skill` tool stages a candidate; `/skills accept` moves it to active.
+4. The skill-curator scans transcripts and stages candidates; user accept resolves and the skill appears in the next prompt.
+5. Uses real filesystem + in-memory SQLite; only LLM-facing functions are stubbed.
+
+### Notes for the test author
+
+- Test file: `e2e/skill-harvest.test.ts` (4 it() tests).
+- Run with: `npm run test:e2e -- skill-harvest`.
+- Harness: real fs + in-memory SQLite + stubbed LLM. **No Kubernetes required.**
+- Implementation lives in `src/runtime/skill-store.ts`, `src/runtime/skill-curator.ts`, `src/runtime/direct-llm-runner.ts`.
+- LLM-dependence: **none** (stubs).
+
+status: drafted
+
+## Story 110: Alpine sidecar tool pod executes a shell command via file-bridge and returns the result
+
+**As a** KubeClaw user invoking a custom tool wrapped as an alpine sidecar
+**I want** the agent to spawn an alpine container with the file-bridge pattern, send a shell command, and receive stdout back over the Redis toolresults stream
+**So that** arbitrary CLI tools can be plugged into the agent loop without writing a bespoke tool server
+
+### Acceptance criteria
+
+1. The agent publishes a tool call to `kubeclaw:toolcalls:{agentJobId}:alpine-shell`.
+2. The orchestrator spawns a sidecar Job: `alpine:latest` user container alongside the `kubeclaw-file-adapter` bridge.
+3. The file-bridge writes the request to `/shared/<id>.request.json`; alpine polls, runs the command, writes `/shared/<id>.response.json`.
+4. The file-bridge reads the response and publishes to `kubeclaw:toolresults:{agentJobId}:alpine-shell`.
+5. Full round-trip completes against a real cluster.
+
+### Notes for the test author
+
+- Test file: `e2e/alpine-tool-execution.test.ts` (1 it() test).
+- Run with: `npm run test:e2e -- alpine-tool-execution`.
+- Harness: requires `requireKubernetes()`. **Requires a live cluster.**
+- Implementation lives in `src/k8s/tool-pod-spawn.ts`, `container/agent-runner/src/tool-server.ts`.
+- LLM-dependence: **none**.
+
+status: drafted
+
+## Story 111: Retry logic for failed Redis operations — exponential backoff with max-retry cap
+
+**As a** KubeClaw operator running the orchestrator against a flaky Redis
+**I want** failed Redis operations to retry with exponential backoff, bounded by a max-retry cap
+**So that** transient failures self-heal without thrashing, while persistent failures escalate cleanly
+
+### Acceptance criteria
+
+1. A failed Redis operation triggers a retry attempt after a short delay.
+2. Subsequent retries use exponential backoff.
+3. The retry loop honors a max-retry cap.
+4. After eventual success, retry state is cleaned up.
+5. Testable against real Redis via `isRedisAvailable` + injected faults.
+
+### Notes for the test author
+
+- Test file: `e2e/timeout-retry.test.ts` — `describe('Retry Logic for Failed Operations', ...)` at line 189.
+- Run with: `npm run test:e2e -- timeout-retry -t "Retry Logic for Failed Operations"`.
+- Harness: requires `isRedisAvailable()`. **Requires a live cluster (Redis).**
+- Implementation lives in `src/k8s/ipc-redis.ts`.
+- LLM-dependence: **none**.
+
+status: drafted
