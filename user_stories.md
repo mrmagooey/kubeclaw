@@ -3523,7 +3523,7 @@ status: passing 4/4
 - Implementation lives in `src/k8s/ipc-redis.ts` (reconnect handler) and Redis chart config (AOF enabled).
 - LLM-dependence: **none**.
 
-status: drafted
+status: passing 5/5 (state survives Redis restart; AOF + ioredis retryStrategy verified)
 
 ## Story 143: Max retry limit — retries stop after N attempts
 
