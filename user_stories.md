@@ -2924,3 +2924,75 @@ status: passing 2/2
 - LLM-dependence: **none**.
 
 status: passing 2/2
+
+## Story 118: Phase 1 — infrastructure readiness checks
+
+**As a** KubeClaw operator validating a fresh deployment
+**I want** an automated suite that confirms cluster, Redis, namespace, and helm release are all in the expected state before integration tests run
+**So that** I have a clear smoke-test layer that fails fast when infrastructure isn't ready
+
+### Acceptance criteria
+
+1. Kubernetes cluster is reachable (`isKubernetesAvailable`).
+2. The kubeclaw helm release is deployed (`isKubeclawDeployed`).
+3. The configured namespace exists.
+4. The orchestrator deployment exists.
+5. Redis is reachable from outside the cluster (port-forward).
+
+### Notes for the test author
+
+- Test file: `e2e/phase-1-infrastructure.test.ts` — `describe('Phase 1: Infrastructure', ...)` (7 it() tests).
+- Run with: `npm run test:e2e -- phase-1-infrastructure`.
+- Harness: requires `requireKubernetes()`. **Requires a live cluster + helm-installed kubeclaw.**
+- Implementation lives across `helm/kubeclaw/templates/*.yaml` and `e2e/global-setup.ts`.
+- LLM-dependence: **none**.
+
+status: drafted
+
+## Story 119: Phase 2 — orchestrator integration smoke (deploy, spawn, route)
+
+**As a** KubeClaw operator
+**I want** Phase 2 integration tests to validate orchestrator deployment, tool-job spawning, and message routing as a single sweep
+**So that** I catch integration-level regressions before running the heavier Phase 3 end-to-end tests
+
+### Acceptance criteria
+
+1. Orchestrator deployment is Available.
+2. Tool-job spawning end-to-end (publish spawn message → Job exists).
+3. Message routing through orchestrator IPC.
+4. Phase 2 is shorter than Phase 3.
+5. Phase 2 surfaces enough failure detail to localize regressions.
+
+### Notes for the test author
+
+- Test file: `e2e/phase-2-integration.test.ts` — `describe('Phase 2: Integration', ...)` (5 it() tests).
+- Run with: `npm run test:e2e -- phase-2-integration`.
+- Harness: requires `requireKubernetes()`. **Requires a live cluster.**
+- Implementation lives across `src/index.ts`, `src/k8s/*`.
+- LLM-dependence: **none**.
+
+status: drafted
+
+## Story 120: Phase 3 — full end-to-end message → reply pipeline
+
+**As a** KubeClaw operator
+**I want** Phase 3 to exercise the complete message → tool → reply pipeline against a real cluster + real Redis
+**So that** I have one canonical end-to-end gate that, when green, proves the system is shippable
+
+### Acceptance criteria
+
+1. Message published to inbound channel reaches the orchestrator.
+2. Orchestrator spawns tool-job pod, waits for completion.
+3. Tool result published back through Redis to the channel.
+4. Channel delivers reply downstream (verifiable via Redis or storage).
+5. Phase 3 covers more scenarios than Phase 2.
+
+### Notes for the test author
+
+- Test file: `e2e/phase-3-end-to-end.test.ts` (8 it() tests).
+- Run with: `npm run test:e2e -- phase-3-end-to-end`.
+- Harness: requires `requireKubernetes()` + `isRedisAvailable()`. **Requires a live cluster.**
+- Implementation lives across the stack.
+- LLM-dependence: **none**.
+
+status: drafted
