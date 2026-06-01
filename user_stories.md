@@ -2899,7 +2899,7 @@ status: passing 6/6
 - Implementation lives in `src/k8s/tool-pod-spawn.ts`, `container/agent-runner/src/tool-server.ts`.
 - LLM-dependence: **none**.
 
-status: drafted
+status: passing 2/2
 
 ## Story 117: Tool-server idle timeout — pod exits cleanly when no calls arrive
 
