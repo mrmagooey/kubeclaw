@@ -2823,11 +2823,11 @@ status: passing 4/4
 
 - Test file: `e2e/file-sidecar.test.ts` — `describe('Simple Echo Task Processing', ...)` at line 465.
 - Run with: `npm run test:e2e -- file-sidecar -t "Simple Echo Task Processing"`.
-- Harness: requires `requireKubernetes()`. **Requires a live cluster + file-sidecar adapter image.**
+- Harness: requires `requireKubernetes()`. **Requires a live cluster + `kubeclaw-file-adapter:latest` image loaded into minikube** (build via `docker build -t kubeclaw-file-adapter:latest container/file-adapter/`).
 - Implementation lives in `container/agent-runner/src/tool-server.ts` (file-bridge), `src/k8s/tool-pod-spawn.ts`.
 - LLM-dependence: **none**.
 
-status: drafted
+status: passing 2/2 — required building + loading `kubeclaw-file-adapter:latest` into minikube (global-setup doesn't build adapter images automatically). Test runs the Simple Echo describe block (2 tests); other describes in the same file are gated on additional adapter setup.
 
 ## Story 114: Sidecar security boundaries — sidecar can't access other sidecars' keys or run admin commands
 
