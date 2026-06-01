@@ -3619,7 +3619,7 @@ status: drafted
 - Implementation lives in the Redis chart config (`aclfile`).
 - LLM-dependence: **none**.
 
-status: drafted
+status: passing 3/3
 
 ## Story 147: Helm chart PVCs — persistent volume claims for sessions + groups + Redis
 
