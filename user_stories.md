@@ -2369,7 +2369,7 @@ status: passing 2/2
 - Harness: minikube + helm + kubectl exec into running orchestrator. **Requires a live cluster.**
 - Implementation lives in `src/specialists/reconciler.ts` (the `configMapApply` closure), `src/skills/orchestrator/specialist-registry.ts` (admin shell tool), `src/specialists/catalog-loader.ts` (channel-side stat-poll for ConfigMap changes).
 - Closes Plan 6 from `docs/aspirational-stories-and-plans.md` (immediate ConfigMap apply for specialist overrides).
-- LLM-dependence: **none** — the test invokes `register_specialist` directly via `kubectl exec` calling the admin-shell node API (`executeTool`), bypassing the LLM dispatch layer.
+- LLM-dependence: **yes** — after the ConfigMap patch, the test dispatches `@Ping` and expects `pong` in the SSE reply, which requires a real LLM provider (LIVE_LLM_BASE_URL/API_KEY/MODEL must be set; the test self-skips if the provider probe fails).
 
 status: drafted
 
