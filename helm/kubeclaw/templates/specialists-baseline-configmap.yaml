@@ -2,7 +2,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: kubeclaw-specialists-baseline
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ include "kubeclaw.namespace" . }}
   labels:
     app: kubeclaw
     component: specialists-baseline
@@ -23,7 +23,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: kubeclaw-specialists
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ include "kubeclaw.namespace" . }}
   labels:
     app: kubeclaw
     component: specialists-catalog
