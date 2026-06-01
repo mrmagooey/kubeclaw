@@ -3379,7 +3379,7 @@ status: passing 4/4
 - Implementation lives in `src/channel-runner.ts` (the debounce loop).
 - LLM-dependence: **none**.
 
-status: drafted
+status: passing 3/3
 
 ## Story 137: File-sidecar Session Persistence — sidecar persists state across pod restarts
 
