@@ -50,3 +50,6 @@ agents-sdk-docs
 .claude/scheduled_tasks.lock
 e2e/.pre-merge-backup/
 .env*.local
+
+# Per-session scratch — not for upstream
+future_work.md
