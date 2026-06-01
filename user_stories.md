@@ -3932,3 +3932,75 @@ status: passing 1/1
 - LLM-dependence: **none**.
 
 status: passing 3/3
+
+## Story 160: HTTP-sidecar Large Payload — multi-MB POST round-trip cleanly
+
+**As a** KubeClaw user invoking an HTTP-sidecar tool with a large payload
+**I want** the sidecar to forward multi-MB payloads to the user container without truncation
+**So that** real-world tool inputs (transcripts, source files) don't silently get clipped
+
+### Acceptance criteria
+
+1. A 1 MB payload POSTed to the sidecar round-trips byte-identical to the user container's response.
+2. A larger payload (5 MB) either succeeds cleanly or surfaces a configured size error.
+3. JSON encoding preserves Unicode.
+4. Request body buffering is bounded (no OOM on payloads slightly under the limit).
+5. Tests use real cluster + http-adapter.
+
+### Notes for the test author
+
+- Test file: `e2e/http-sidecar.test.ts` — `describe('Large Payload Handling', ...)` at line 572.
+- Run with: `npm run test:e2e -- http-sidecar -t "Large Payload"`.
+- Harness: requires `requireKubernetes()` + `kubeclaw-http-adapter:latest`. **Requires a live cluster.**
+- Implementation lives in `src/k8s/http-sidecar-runner.ts`.
+- LLM-dependence: **none**.
+
+status: drafted
+
+## Story 161: File-sidecar Follow-up Message Flow — sidecar handles follow-up tool calls
+
+**As a** KubeClaw user whose agent issues follow-up tool calls within a session
+**I want** the file-sidecar to handle a fresh request after delivering the first response
+**So that** multi-step tool sessions don't require respawning the sidecar pod
+
+### Acceptance criteria
+
+1. After call 1 returns, call 2 succeeds against the same sidecar pod.
+2. Session state from call 1 is visible to call 2 (PVC-backed).
+3. The sidecar doesn't restart between calls.
+4. Per-call request/response files are cleaned up.
+5. Tests use real cluster + file-adapter.
+
+### Notes for the test author
+
+- Test file: `e2e/file-sidecar.test.ts` — `describe('Follow-up Message Flow', ...)` at line 637.
+- Run with: `npm run test:e2e -- file-sidecar -t "Follow-up Message Flow"`.
+- Harness: requires `requireKubernetes()` + `kubeclaw-file-adapter:latest`. **Requires a live cluster.**
+- Implementation lives in `container/agent-runner/src/tool-server.ts` (file-bridge loop).
+- LLM-dependence: **none**.
+
+status: drafted
+
+## Story 162: Helm chart ClusterRoleBinding name is release-scoped (collision regression)
+
+**As a** KubeClaw operator running multiple kubeclaw releases on one cluster
+**I want** the credential broker's ClusterRoleBinding name to include the release name
+**So that** installing two releases doesn't conflict on a single cluster-scoped resource
+
+### Acceptance criteria
+
+1. The CRB name includes `{{ .Release.Name }}` so two releases yield distinct CRB objects.
+2. Installing two releases simultaneously doesn't fail with "already exists".
+3. Each release's broker SA is bound only to its own CRB.
+4. Uninstalling one release doesn't remove the other's CRB.
+5. The naming pattern is documented in the chart README / values.
+
+### Notes for the test author
+
+- Test file: `e2e/helm-chart.test.ts` — `describe('ClusterRoleBinding name is release-scoped (collision regression)', ...)` at line 797.
+- Run with: `npm run test:e2e -- helm-chart -t "ClusterRoleBinding"`.
+- Harness: `helm template` + multi-release rendering. **No cluster required for the render-only test.**
+- Implementation lives in `helm/kubeclaw/templates/credential-broker.yaml`.
+- LLM-dependence: **none**.
+
+status: drafted
