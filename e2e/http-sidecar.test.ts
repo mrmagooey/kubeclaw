@@ -62,6 +62,7 @@ describe('HTTP Sidecar E2E Tests', () => {
   let runner: HttpSidecarJobRunner;
   const createdJobs: string[] = [];
   const createdACLs: string[] = [];
+  let testJobIds: string[] = [];
 
   const testGroup: RegisteredGroup = {
     name: 'Test Group',
@@ -125,6 +126,23 @@ describe('HTTP Sidecar E2E Tests', () => {
     // Clean up test keys before each test
     if (K8S_AVAILABLE) {
       cleanupTestKeys('kubeclaw:*:http-echo-test-*');
+    }
+    testJobIds = [];
+  });
+
+  afterEach(async () => {
+    // Clean up jobs spawned in this test
+    for (const jobId of testJobIds) {
+      try {
+        execSync(
+          `kubectl delete job ${jobId} -n ${NAMESPACE} --ignore-not-found --wait=false`,
+          {
+            stdio: 'ignore',
+          },
+        );
+      } catch {
+        // Ignore cleanup errors to avoid test failure due to cleanup
+      }
     }
   });
 
@@ -250,6 +268,7 @@ describe('HTTP Sidecar E2E Tests', () => {
       }
     }
     createdJobs.push(jobId);
+    testJobIds.push(jobId);
 
     return { jobId, credentials };
   }
