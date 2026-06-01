@@ -2564,3 +2564,75 @@ status: blocked — Redis ACL auth fails with `WRONGPASS invalid username-passwo
 - LLM-dependence: **none**.
 
 status: passing 2/2
+
+## Story 103: K8s `JobRunner` monitors job completion and retrieves logs
+
+**As a** KubeClaw operator running tool-jobs as Kubernetes Jobs
+**I want** the orchestrator's `JobRunner` to wait for job completion, retrieve stdout from the pod, and time out cleanly when the job exceeds `activeDeadlineSeconds`
+**So that** tool results flow back to the user, slow jobs are bounded, and the user sees a definitive outcome (success / logs / timeout error)
+
+### Acceptance criteria
+
+1. `waitForJobCompletion()` detects when a Kubernetes Job reaches `status.succeeded > 0` and returns within the polling interval.
+2. `getJobLogs()` retrieves stdout from the completed job's pod (via the `kubeclaw-agent:latest` test image that echoes a marker string).
+3. `waitForJobCompletion()` throws when a job exceeds `activeDeadlineSeconds` rather than hanging — the user-visible timeout error is sourced from this throw.
+4. The tests use a real Kubernetes Job (no fake `Job` object); real reconcile latency is exercised.
+5. The test image is loaded by global-setup; no manual image management needed in the test itself.
+
+### Notes for the test author
+
+- Test file: `e2e/job-lifecycle.test.ts` — `describe('K8s Job Lifecycle', ...)` at line 57 (3 it() tests).
+- Run with: `npm run test:e2e -- job-lifecycle`.
+- Harness: requires `requireKubernetes()`. **Requires a live cluster.**
+- Implementation lives in `src/k8s/job-runner.ts`.
+- LLM-dependence: **none**.
+
+status: drafted
+
+## Story 104: Per-group state — message storage and retrieval round-trip
+
+**As a** KubeClaw user reading their conversation history
+**I want** every message I send and receive to be stored and retrievable from the persistence layer (Redis-backed state)
+**So that** scrolling back, `/search`, `/export`, and the LLM's context window all see the same canonical history
+
+### Acceptance criteria
+
+1. A POST `appendMessage` for a group writes a row that is retrievable via `getMessages` with byte-identical content.
+2. Message ordering is preserved by `getMessages` (FIFO append order).
+3. Different groups have isolated message stores — a write to group A is not visible in group B's read.
+4. Concurrent appends from the same group preserve linearizability (no lost updates).
+5. The state layer runs against a real Redis (cluster-deployed), not a mock.
+
+### Notes for the test author
+
+- Test file: `e2e/state-persistence.test.ts` — `describe('Message State Storage and Retrieval', ...)` block at line 80.
+- Run with: `npm run test:e2e -- state-persistence -t "Message State Storage and Retrieval"`.
+- Harness: requires `isKubernetesAvailable()` + `isRedisAvailable()` (`getSharedRedis()`). **Requires a live cluster.**
+- Implementation lives in the state layer (`src/state/*` or similar — verify in the worktree).
+- LLM-dependence: **none**.
+
+status: drafted
+
+## Story 105: Credential-injection `sidecar` mode renders correctly and stamps the configured header
+
+**As a** KubeClaw operator deploying with credential-injection in sidecar mode
+**I want** the helm chart to render a working credential-broker sidecar attached to each tool-pod, with the configured catalog entries stamping the right header on outbound requests
+**So that** tool pods reach external APIs (e.g. Google Places, Brave Search) without ever seeing the raw API key
+
+### Acceptance criteria
+
+1. `helm install --set credentialInjection.mode=sidecar ...` succeeds and produces a tool-pod with the credential-broker sidecar container running alongside.
+2. The sidecar reads the broker ConfigMap and the bound Secret on startup and is ready for proxied requests.
+3. An outbound request from the tool container, when routed via the sidecar, has the configured header (e.g. `X-Goog-Api-Key`) stamped before egress.
+4. Requests to hosts NOT in the catalog are NOT stamped (and are typically rejected by the sidecar policy).
+5. The sidecar-mode tests pass against a real cluster (not just template lint).
+
+### Notes for the test author
+
+- Test file: `e2e/credential-injection.test.ts` — `describe('credential-injection sidecar mode (e2e)', ...)` block at line 94.
+- Run with: `npm run test:e2e -- credential-injection -t "sidecar mode"`.
+- Harness: real cluster + helm install. **Requires a live cluster.**
+- Implementation lives in `src/credential-broker/*` (sidecar dispatcher), `src/credential-injection/*` (orchestrator-side wiring), `helm/kubeclaw/templates/credential-broker-*.yaml` (chart).
+- LLM-dependence: **none**.
+
+status: drafted
