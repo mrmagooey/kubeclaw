@@ -3451,7 +3451,7 @@ status: passing 1/1
 - Implementation lives in `src/k8s/ipc-redis.ts`.
 - LLM-dependence: **none**.
 
-status: drafted
+status: passing 2/2
 
 ## Story 140: Helm chart secrets — credentials render via Secret, not embedded in YAML
 
