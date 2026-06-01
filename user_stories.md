@@ -2395,7 +2395,7 @@ status: drafted
 - Implementation lives in `src/per-group-capabilities/*` (reconciler, schema-cache), `container/filesystem-mcp/*` (the MCP server), and the helm chart values for `capabilities.filesystem`.
 - LLM-dependence: **none** — schema scrape and round-trip are below the LLM layer.
 
-status: drafted
+status: passing 3/3
 
 ## Story 96: Per-group MCP consumer wakes from zero on first use and round-trips an MCP call
 
