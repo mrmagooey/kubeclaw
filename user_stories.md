@@ -2420,4 +2420,4 @@ status: drafted
 - Implementation lives in `src/per-group-capabilities/{index.ts,schema-cache.ts}`, `src/capabilities/discovery.ts`.
 - LLM-dependence: **none**.
 
-status: drafted
+status: passing 2/2
