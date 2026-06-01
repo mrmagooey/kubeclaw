@@ -3043,7 +3043,7 @@ status: drafted
 - Implementation lives in `src/channel-runner.ts`.
 - LLM-dependence: **none** (mock).
 
-status: drafted
+status: passing 5/5
 
 ## Story 123: Message queue — Redis Queue Publishing semantics
 
