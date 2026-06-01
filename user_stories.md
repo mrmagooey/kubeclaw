@@ -3860,3 +3860,75 @@ status: passing 2/2
 - LLM-dependence: **none**.
 
 status: passing 22/22
+
+## Story 157: HTTP-sidecar Error Handling — adapter surfaces user-container failures
+
+**As a** KubeClaw user invoking an HTTP-sidecar tool
+**I want** errors from the user container (HTTP 5xx, connection refused, timeout) to be reported as toolresult errors
+**So that** I see "the tool failed" with diagnostic info instead of a silently dropped call
+
+### Acceptance criteria
+
+1. User container returns HTTP 5xx → toolresult contains error with status code.
+2. User container connection refused → toolresult contains error.
+3. User container request timeout → toolresult contains timeout error.
+4. The sidecar pod itself doesn't crash on user container failure.
+5. Tests use real cluster + http-adapter.
+
+### Notes for the test author
+
+- Test file: `e2e/http-sidecar.test.ts` — `describe('Error Handling', ...)` at line 530.
+- Run with: `npm run test:e2e -- http-sidecar -t "Error Handling"`.
+- Harness: requires `requireKubernetes()` + `kubeclaw-http-adapter:latest`. **Requires a live cluster.**
+- Implementation lives in `src/k8s/http-sidecar-runner.ts`.
+- LLM-dependence: **none**.
+
+status: drafted
+
+## Story 158: File-sidecar Multiple Sequential — N consecutive calls succeed
+
+**As a** KubeClaw user making many sequential tool calls
+**I want** the file-sidecar to handle N consecutive calls without leaking shared-volume state
+**So that** long agent loops don't accumulate shared-volume garbage or fail mid-loop
+
+### Acceptance criteria
+
+1. N sequential calls all complete successfully.
+2. Each call's request/response files are cleaned up before the next call starts.
+3. Shared-volume disk usage stays bounded across N calls.
+4. The Nth call gets the same latency as the 1st (no degradation).
+5. Tests use real cluster + file-adapter.
+
+### Notes for the test author
+
+- Test file: `e2e/file-sidecar.test.ts` — `describe('Multiple Sequential Tasks', ...)` at line 608.
+- Run with: `npm run test:e2e -- file-sidecar -t "Multiple Sequential"`.
+- Harness: requires `requireKubernetes()` + `kubeclaw-file-adapter:latest`. **Requires a live cluster.**
+- Implementation lives in `container/agent-runner/src/tool-server.ts` (file-bridge loop).
+- LLM-dependence: **none**.
+
+status: drafted
+
+## Story 159: Helm chart Lua substitution filter — Envoy rewrites Authorization header
+
+**As a** KubeClaw operator in istio mode
+**I want** the embedded Lua filter to rewrite the `Authorization` header on outbound requests to catalog hosts
+**So that** the credential broker's stamping logic runs inside Envoy, not in application code
+
+### Acceptance criteria
+
+1. The Lua filter source (`envoy-substitution-filter.lua`) is embedded in the EnvoyFilter resource.
+2. The Lua loop matches catalog hosts and stamps the configured header (e.g. `X-Goog-Api-Key`).
+3. Requests to non-catalog hosts pass through unchanged.
+4. The Lua filter handles missing-header gracefully (no Envoy crash).
+5. Chart renders cleanly via `helm template`.
+
+### Notes for the test author
+
+- Test file: `e2e/helm-chart.test.ts` — `describe('helm template — Lua substitution filter', ...)` at line 1029.
+- Run with: `npm run test:e2e -- helm-chart -t "Lua substitution"`.
+- Harness: `helm template` + YAML parse asserts. **No cluster required.**
+- Implementation lives in `helm/kubeclaw/files/envoy-substitution-filter.lua` and `helm/kubeclaw/templates/istio-envoyfilter.yaml`.
+- LLM-dependence: **none**.
+
+status: drafted
