@@ -3547,7 +3547,7 @@ status: drafted
 - Implementation lives in `src/k8s/ipc-redis.ts`.
 - LLM-dependence: **none**.
 
-status: drafted
+status: passing 4/4
 
 ## Story 144: Helm chart NetworkPolicies — pod egress is locked down per category
 
