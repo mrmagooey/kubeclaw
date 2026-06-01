@@ -3788,3 +3788,75 @@ status: passing 2/2
 - LLM-dependence: **none**.
 
 status: passing 2/2
+
+## Story 154: File-sidecar Large Payload — multi-MB inputs round-trip cleanly
+
+**As a** KubeClaw user invoking a tool with a large input (multi-MB JSON, base64-encoded blob)
+**I want** the file-sidecar to forward the payload without truncation or corruption
+**So that** real-world tool inputs don't silently get clipped
+
+### Acceptance criteria
+
+1. A 1 MB payload round-trips through the file-sidecar with byte-identical content.
+2. A 5 MB payload also round-trips cleanly (or surfaces a configured limit error).
+3. JSON encoding/decoding preserves Unicode characters.
+4. Disk space for shared volume is bounded (cleanup happens after each call).
+5. Tests use real cluster + file-adapter.
+
+### Notes for the test author
+
+- Test file: `e2e/file-sidecar.test.ts` — `describe('Large Payload Handling', ...)` at line 587.
+- Run with: `npm run test:e2e -- file-sidecar -t "Large Payload"`.
+- Harness: requires `requireKubernetes()` + `kubeclaw-file-adapter:latest`. **Requires a live cluster.**
+- Implementation lives in `container/agent-runner/src/tool-server.ts` (file-bridge), shared-volume sizing in chart.
+- LLM-dependence: **none**.
+
+status: drafted
+
+## Story 155: HTTP-sidecar Session Persistence — sidecar keeps session across calls
+
+**As a** KubeClaw user invoking sequential tool calls with shared session state
+**I want** the HTTP-sidecar to keep the same user-container session across calls
+**So that** in-memory state (e.g. an open browser tab) persists between LLM rounds
+
+### Acceptance criteria
+
+1. The user container handles N sequential tool calls within the same pod lifetime.
+2. State written by call N is visible to call N+1.
+3. The sidecar doesn't restart the user container between calls.
+4. After idle timeout, the pod exits cleanly.
+5. Tests use real cluster + http-adapter.
+
+### Notes for the test author
+
+- Test file: `e2e/http-sidecar.test.ts` — `describe('Session Persistence', ...)` at line 492.
+- Run with: `npm run test:e2e -- http-sidecar -t "Session Persistence"`.
+- Harness: requires `requireKubernetes()` + `kubeclaw-http-adapter:latest`. **Requires a live cluster.**
+- Implementation lives in `src/k8s/http-sidecar-runner.ts`.
+- LLM-dependence: **none**.
+
+status: drafted
+
+## Story 156: Helm chart `mode=istio` — Istio sidecar + EnvoyFilter render correctly
+
+**As a** KubeClaw operator deploying with `credentialInjection.mode=istio`
+**I want** the chart to render Istio sidecar injection annotations and a working EnvoyFilter for header substitution
+**So that** the istio mode is a viable alternative to the in-pod sidecar broker
+
+### Acceptance criteria
+
+1. Pods get `sidecar.istio.io/inject: "true"` annotations in istio mode.
+2. EnvoyFilter renders with the Lua substitution filter for header stamping.
+3. The filter targets the configured outbound hosts (catalog-driven).
+4. mode=istio renders without error against the cluster.
+5. The same chart values work with mode=sidecar (no chart-level conflict).
+
+### Notes for the test author
+
+- Test file: `e2e/helm-chart.test.ts` — `describe('helm template — mode=istio', ...)` at line 846.
+- Run with: `npm run test:e2e -- helm-chart -t "mode=istio"`.
+- Harness: `helm template` based (no live Istio cluster needed for the template-render tests).
+- Implementation lives in `helm/kubeclaw/templates/envoyfilter.yaml` + values for `credentialInjection.mode`.
+- LLM-dependence: **none**.
+
+status: drafted
