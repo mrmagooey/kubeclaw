@@ -4004,3 +4004,75 @@ status: passing 4/4
 - LLM-dependence: **none**.
 
 status: passing 2/2
+
+## Story 163: HTTP-sidecar Multiple Sequential — N consecutive HTTP calls succeed
+
+**As a** KubeClaw user invoking many HTTP-sidecar tool calls in a single agent loop
+**I want** the sidecar to handle N sequential calls without resource exhaustion
+**So that** long agent loops don't degrade or fail mid-loop
+
+### Acceptance criteria
+
+1. N consecutive tool calls all succeed against the same sidecar pod.
+2. Per-call latency stays bounded (no growth over N).
+3. Memory usage stays bounded.
+4. Sockets / connections are reused or cleanly cycled.
+5. Tests use real cluster + http-adapter.
+
+### Notes for the test author
+
+- Test file: `e2e/http-sidecar.test.ts` — `describe('Multiple Sequential Tasks', ...)` at line 593.
+- Run with: `npm run test:e2e -- http-sidecar -t "Multiple Sequential"`.
+- Harness: requires `requireKubernetes()` + `kubeclaw-http-adapter:latest`. **Requires a live cluster.**
+- Implementation lives in `src/k8s/http-sidecar-runner.ts`.
+- LLM-dependence: **none**.
+
+status: drafted
+
+## Story 164: HTTP-sidecar Follow-up Message Flow — multi-turn tool sessions
+
+**As a** KubeClaw user whose agent issues HTTP-sidecar follow-up tool calls
+**I want** the HTTP-sidecar to handle a follow-up call after delivering the first response
+**So that** multi-turn tool sessions don't require respawning the sidecar pod
+
+### Acceptance criteria
+
+1. After call 1 returns, call 2 succeeds against the same sidecar pod.
+2. Session state from call 1 is visible to call 2.
+3. The sidecar doesn't restart between calls.
+4. Per-call timing stays consistent.
+5. Tests use real cluster + http-adapter.
+
+### Notes for the test author
+
+- Test file: `e2e/http-sidecar.test.ts` — `describe('Follow-up Message Flow', ...)` at line 622.
+- Run with: `npm run test:e2e -- http-sidecar -t "Follow-up Message Flow"`.
+- Harness: requires `requireKubernetes()` + `kubeclaw-http-adapter:latest`. **Requires a live cluster.**
+- Implementation lives in `src/k8s/http-sidecar-runner.ts`.
+- LLM-dependence: **none**.
+
+status: drafted
+
+## Story 165: Helm chart `mode=sidecar` (no Istio regression)
+
+**As a** KubeClaw operator
+**I want** `helm template --set credentialInjection.mode=sidecar` to render cleanly with no Istio-specific resources
+**So that** sidecar mode works on clusters without Istio installed
+
+### Acceptance criteria
+
+1. `mode=sidecar` does NOT render an EnvoyFilter.
+2. `mode=sidecar` DOES render the credential-broker sidecar container alongside tool pods.
+3. The chart renders without error in sidecar mode.
+4. ConfigMaps and Secrets needed for the in-pod broker render correctly.
+5. The sidecar mode is the default in chart values.
+
+### Notes for the test author
+
+- Test file: `e2e/helm-chart.test.ts` — `describe('helm template — mode=sidecar (no Istio regression)', ...)` at line 1058.
+- Run with: `npm run test:e2e -- helm-chart -t "mode=sidecar"`.
+- Harness: `helm template`. **No cluster required.**
+- Implementation lives in `helm/kubeclaw/templates/credential-broker-*.yaml` and chart values defaults.
+- LLM-dependence: **none**.
+
+status: drafted
