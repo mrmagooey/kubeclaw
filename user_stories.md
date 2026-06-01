@@ -2803,7 +2803,7 @@ status: passing 3/3
 - Implementation lives in `helm/kubeclaw/templates/redis-*.yaml` and the values that pass `requirepass`.
 - LLM-dependence: **none**.
 
-status: drafted
+status: passing 4/4
 
 ## Story 113: File-sidecar processes a Simple Echo task end-to-end
 
