@@ -2346,4 +2346,4 @@ status: passing 3/3
 - Scope: this story covers chart rendering and config wiring ONLY. The runtime path (tool-server actually calls `api.search.brave.com` and returns JSON results) is tested separately in `e2e/minikube-live-browser.test.ts` and is gated on a Brave API key, which this story does NOT require.
 - LLM-dependence: **none**.
 
-status: drafted
+status: passing 2/2
