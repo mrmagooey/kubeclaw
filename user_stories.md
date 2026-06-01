@@ -3211,4 +3211,4 @@ status: passing 4/4
 - Implementation lives in `src/k8s/ipc-redis.ts`.
 - LLM-dependence: **none**.
 
-status: drafted
+status: passing 2/2
