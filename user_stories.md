@@ -3644,3 +3644,75 @@ status: passing 3/3
 - LLM-dependence: **none**.
 
 status: passing 4/4
+
+## Story 148: Sidecar ACL Key Isolation — sidecar can't write to other jobs' streams
+
+**As a** KubeClaw operator
+**I want** a sidecar's ACL to deny writes to stream keys outside its own job-id scope
+**So that** a misbehaving sidecar can't corrupt another job's input/output
+
+### Acceptance criteria
+
+1. Sidecar A's creds can XADD to its own input stream key.
+2. The same creds cannot XADD to Sidecar B's input stream key (NOPERM).
+3. The same creds cannot SUBSCRIBE to other jobs' channels.
+4. Scope is enforced via Redis ACL key patterns.
+5. Tests use real Redis ACL.
+
+### Notes for the test author
+
+- Test file: `e2e/sidecar-acl.test.ts` — `describe('Key Isolation', ...)` at line 390.
+- Run with: `npm run test:e2e -- sidecar-acl -t "Key Isolation"`.
+- Harness: requires `isKubernetesAvailable()` + `getSharedRedis()`. **Requires a live cluster.**
+- Implementation lives in `src/k8s/acl-manager.ts`.
+- LLM-dependence: **none**.
+
+status: drafted
+
+## Story 149: User-interaction Error Handling — agent errors deliver a user-visible reply
+
+**As a** KubeClaw user
+**I want** errors from the agent runner to result in a user-visible error message
+**So that** I'm not left hanging when something breaks
+
+### Acceptance criteria
+
+1. Exception in agent runner → delivered error message to the channel.
+2. Error message hides internal details (no stack traces leaked).
+3. User-visible message includes enough context to seek help.
+4. Persistent failures don't infinite-loop.
+5. Mocked agent + mock LLM with injected faults.
+
+### Notes for the test author
+
+- Test file: `e2e/user-interaction.test.ts` — `describe('User Interaction: Error Handling', ...)` at line 502.
+- Run with: `npm run test:e2e -- user-interaction -t "Error Handling"`.
+- Harness: mock channel + mock LLM + SQLite. **No Kubernetes required.**
+- Implementation lives in `src/channel-runner.ts`.
+- LLM-dependence: **none**.
+
+status: drafted
+
+## Story 150: Helm chart orchestrator Deployment — exists, ready, healthy
+
+**As a** KubeClaw operator
+**I want** the chart to render an orchestrator Deployment that reaches Ready and exposes its service
+**So that** the orchestrator pod is the canonical entry point for IPC and admin
+
+### Acceptance criteria
+
+1. Chart renders orchestrator `Deployment` with expected name.
+2. Deployment uses configured image + tag from values.
+3. Resources (CPU/memory) set per values.
+4. Orchestrator Pod reaches Ready.
+5. Orchestrator Service reachable from inside cluster.
+
+### Notes for the test author
+
+- Test file: `e2e/helm-chart.test.ts` — `describe('orchestrator deployment', ...)` at line 618.
+- Run with: `npm run test:e2e -- helm-chart -t "orchestrator deployment"`.
+- Harness: requires `requireKubernetes()`. **Requires a live cluster + helm install.**
+- Implementation lives in `helm/kubeclaw/templates/orchestrator.yaml`.
+- LLM-dependence: **none**.
+
+status: drafted
