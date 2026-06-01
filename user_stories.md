@@ -2320,7 +2320,7 @@ status: passing 2/2
 - Scope: this story covers the DB semantics that the missed-fire behavior relies on. The full lifecycle (orchestrator down → restart → reminder delivered via Redis pub/sub) is a separate story.
 - LLM-dependence: **none**.
 
-status: drafted
+status: passing 3/3
 
 ## Story 93: Brave Search catalog entry renders correctly in the credential-broker ConfigMap
 
