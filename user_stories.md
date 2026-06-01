@@ -2947,7 +2947,7 @@ status: passing 2/2
 - Implementation lives across `helm/kubeclaw/templates/*.yaml` and `e2e/global-setup.ts`.
 - LLM-dependence: **none**.
 
-status: drafted
+status: passing 7/7
 
 ## Story 119: Phase 2 — orchestrator integration smoke (deploy, spawn, route)
 
