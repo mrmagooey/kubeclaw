@@ -3212,3 +3212,75 @@ status: passing 4/4
 - LLM-dependence: **none**.
 
 status: passing 2/2
+
+## Story 130: Sidecar ACL Follow-up Message Flow — re-use the same ACL for the agent's follow-up turns
+
+**As a** KubeClaw user whose agent issues a follow-up tool call mid-turn
+**I want** the existing per-job ACL credentials to authorize the follow-up
+**So that** mid-turn follow-ups don't require minting a fresh ACL per call
+
+### Acceptance criteria
+
+1. After `createJobACL`, a follow-up XADD on the same input stream with the same creds succeeds.
+2. The follow-up's PUBLISH on the same group channel succeeds with the same creds.
+3. A follow-up against a different job's stream is rejected (NOPERM).
+4. After `revokeJobACL`, follow-ups with the same creds get WRONGPASS / NOAUTH.
+5. SQLite `job_acls` table reflects status correctly across the follow-up window.
+
+### Notes for the test author
+
+- Test file: `e2e/sidecar-acl.test.ts` — `describe('Follow-up Message Flow', ...)` at line 252.
+- Run with: `npm run test:e2e -- sidecar-acl -t "Follow-up Message Flow"`.
+- Harness: requires `isKubernetesAvailable()` + `getSharedRedis()`. **Requires a live cluster.**
+- Implementation lives in `src/k8s/acl-manager.ts`.
+- LLM-dependence: **none**.
+
+status: drafted
+
+## Story 131: User-interaction Multi-turn Conversation — context carries across turns
+
+**As a** KubeClaw user holding a conversation with the bot
+**I want** each turn's context (prior messages) to inform the next LLM call
+**So that** the bot doesn't lose state between turns within the same group
+
+### Acceptance criteria
+
+1. Turn N's prompt to the LLM includes context from turn N-1 (previous user + assistant messages).
+2. Tool-call results from turn N-1 are available in turn N's context window.
+3. Per-group isolation: turns in group A do NOT bleed into group B's context.
+4. After `/clear`, the next turn starts with no prior context (clean slate).
+5. Multi-turn works with mocked agent + mocked LLM (no cluster needed).
+
+### Notes for the test author
+
+- Test file: `e2e/user-interaction.test.ts` — `describe('User Interaction: Multi-turn Conversation', ...)` at line 423.
+- Run with: `npm run test:e2e -- user-interaction -t "Multi-turn"`.
+- Harness: mock channel + mock LLM + SQLite. **No Kubernetes required.**
+- Implementation lives in `src/channel-runner.ts` (history loading + threading).
+- LLM-dependence: **none**.
+
+status: drafted
+
+## Story 132: Helm chart renders namespace, RBAC, and configmaps correctly
+
+**As a** KubeClaw operator
+**I want** the helm chart to produce a correct namespace declaration, RBAC objects, and configmaps for a default install
+**So that** the orchestrator + ancillary components have the right cluster-scoped identity and config on install
+
+### Acceptance criteria
+
+1. The rendered output contains a `Namespace` object with the configured name and labels.
+2. The Role / RoleBinding / ClusterRole / ClusterRoleBinding objects exist with the expected verbs (get/list/watch + create/delete on Jobs).
+3. The configmaps for orchestrator + credential broker render with the expected keys.
+4. The ServiceAccount referenced by the orchestrator Deployment is created.
+5. These objects pass on a real cluster (helm install succeeds + objects are observable via kubectl).
+
+### Notes for the test author
+
+- Test file: `e2e/helm-chart.test.ts` — `describe('namespace', ...)` (line 330), `describe('configmaps', ...)` (line 434), `describe('RBAC', ...)` (line 454).
+- Run with: `npm run test:e2e -- helm-chart -t "namespace|configmaps|RBAC"`.
+- Harness: requires `requireKubernetes()`. **Requires a live cluster + helm install.**
+- Implementation lives in `helm/kubeclaw/templates/{namespace,configmap,rbac}.yaml`.
+- LLM-dependence: **none**.
+
+status: drafted
