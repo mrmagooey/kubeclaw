@@ -2141,7 +2141,7 @@ status: passing 5/5
 - Multi-line SSE handling: the `[@Researcher]` prefix only appears on the first `data:` frame; join all frames from the researcher index forward when asserting against the reply body.
 - LLM-dependence: **yes** (real LLM via OpenRouter, real `web_fetch` to Wikipedia).
 
-status: drafted
+status: passing 1/1
 
 ## Story 86: `set_reminder` tool dispatches and emits human-readable confirmation in the same turn
 
