@@ -2996,3 +2996,75 @@ status: passing 5/5
 - LLM-dependence: **none**.
 
 status: passing 8/8
+
+## Story 121: Tool-job lifecycle — Job creation, pod execution, completion, cleanup
+
+**As a** KubeClaw operator
+**I want** the orchestrator's tool-job creation path to build a Job spec, schedule it onto a node, run the pod to completion, and clean up afterward
+**So that** the basic K8s Job lifecycle for tool-jobs is observably correct and resource-leak-free
+
+### Acceptance criteria
+
+1. Orchestrator constructs valid Job templates with expected labels (`app: kubeclaw-agent`, `type: tool-job`).
+2. Job Creation: Job with constructed template successfully creates via K8s API.
+3. Pod Execution: Job's pod runs and reaches `status.succeeded > 0`.
+4. Completion: orchestrator detects completion via watch/poll.
+5. Cleanup: completed Jobs are pruned per policy.
+
+### Notes for the test author
+
+- Test file: `e2e/tool-job.test.ts` (~9 it() tests across Templates / Creation / Execution / Completion / Cleanup).
+- Run with: `npm run test:e2e -- tool-job`.
+- Harness: requires `requireKubernetes()`. **Requires a live cluster.**
+- Implementation lives in `src/k8s/tool-job.ts`, `src/k8s/job-runner.ts`.
+- LLM-dependence: **none**.
+
+status: drafted
+
+## Story 122: Mock onboarding flow — first-time user gets the onboarding handshake
+
+**As a** new KubeClaw user opening a channel for the first time
+**I want** the assistant to recognise me as new and run an onboarding handshake
+**So that** I have a guided first experience instead of facing a blank prompt
+
+### Acceptance criteria
+
+1. New (unknown JID) inbound message triggers onboarding response.
+2. Onboarding message advertises core capabilities.
+3. After first onboarding round, user routes normally.
+4. Onboarding state is persisted per-user.
+5. Mock channel + mock LLM; no cluster.
+
+### Notes for the test author
+
+- Test file: `e2e/mock-onboarding.test.ts` (5 it() tests).
+- Run with: `npm run test:e2e -- mock-onboarding`.
+- Harness: mock channel, mock LLM, real SQLite. **No Kubernetes required.**
+- Implementation lives in `src/channel-runner.ts`.
+- LLM-dependence: **none** (mock).
+
+status: drafted
+
+## Story 123: Message queue — Redis Queue Publishing semantics
+
+**As a** KubeClaw operator
+**I want** the orchestrator's inbound message queue (Redis) to accept, serialize, and deliver messages in order
+**So that** messages aren't lost or reordered when channels publish faster than the orchestrator consumes
+
+### Acceptance criteria
+
+1. Inbound message published via channel's enqueue path lands on configured Redis stream/list.
+2. JSON serialization round-trips.
+3. Order preserved per group.
+4. Consumer pattern correctly reads + acks.
+5. Malformed payloads are quarantined without crashing consumer.
+
+### Notes for the test author
+
+- Test file: `e2e/message-queue.test.ts` — `describe('Redis Queue Publishing', ...)` at line 60.
+- Run with: `npm run test:e2e -- message-queue -t "Redis Queue Publishing"`.
+- Harness: requires `isRedisAvailable()`. **Requires a live cluster (Redis).**
+- Implementation lives in `src/k8s/ipc-redis.ts`.
+- LLM-dependence: **none**.
+
+status: drafted
