@@ -3307,7 +3307,7 @@ status: passing 10/10
 - Implementation lives in `src/k8s/ipc-redis.ts`.
 - LLM-dependence: **none**.
 
-status: drafted
+status: passing 4/4
 
 ## Story 134: Exponential backoff — retry intervals double per attempt (capped at max)
 
