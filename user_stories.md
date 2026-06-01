@@ -3571,4 +3571,4 @@ status: passing 4/4
 - Implementation lives in `helm/kubeclaw/templates/networkpolicies.yaml`.
 - LLM-dependence: **none**.
 
-status: drafted
+status: passing 3/3
