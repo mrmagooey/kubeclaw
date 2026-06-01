@@ -3643,4 +3643,4 @@ status: passing 3/3
 - Implementation lives in `helm/kubeclaw/templates/storage.yaml` and `helm/kubeclaw/templates/redis.yaml`.
 - LLM-dependence: **none**.
 
-status: drafted
+status: passing 4/4
