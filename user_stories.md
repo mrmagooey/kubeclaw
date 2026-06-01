@@ -4051,7 +4051,7 @@ status: passing 1/1
 - Implementation lives in `src/k8s/http-sidecar-runner.ts`.
 - LLM-dependence: **none**.
 
-status: drafted
+status: passing 4/4
 
 ## Story 165: Helm chart `mode=sidecar` (no Istio regression)
 
