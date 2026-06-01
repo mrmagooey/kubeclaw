@@ -3283,4 +3283,4 @@ status: passing 3/3
 - Implementation lives in `helm/kubeclaw/templates/{namespace,configmap,rbac}.yaml`.
 - LLM-dependence: **none**.
 
-status: drafted
+status: passing 10/10
