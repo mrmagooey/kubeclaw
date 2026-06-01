@@ -2683,7 +2683,7 @@ status: passing 3/3
 - Implementation lives in `src/k8s/tool-pod-spawn.ts`, `src/k8s/tool-job.ts`.
 - LLM-dependence: **none**.
 
-status: drafted
+status: passing 3/3
 
 ## Story 108: Tool-job result is written back to Redis at `kubeclaw:agent-job-result:<id>`
 
