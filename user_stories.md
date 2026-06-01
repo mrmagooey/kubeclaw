@@ -2443,7 +2443,7 @@ status: passing 2/2
 - Harness: in-process mock IRC server (`startIRCServer`/`stopIRCServer` from `e2e/lib/irc-server.ts`); real `IRCChannel` class from `src/channels/irc.ts`. **No Kubernetes required, no real IRC network.**
 - LLM-dependence: **none**.
 
-status: drafted
+status: passing 3/3
 
 ## Story 98: Helm chart `static checks` — lint + template render without errors
 
