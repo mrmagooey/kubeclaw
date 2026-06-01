@@ -11,27 +11,52 @@ const NAMESPACE = getNamespace();
 const REDIS_POD = 'kubeclaw-redis-0';
 
 /**
- * Read the Redis admin password from KUBECLAW_REDIS_URL set by global-setup.
- * Format: redis://:password@host:port
+ * Parse Redis admin credentials from KUBECLAW_REDIS_URL set by global-setup.
+ * Handles both:
+ *   redis://:password@host:port        (no username — legacy format)
+ *   redis://username:password@host:port (with username — standard URL format)
  */
-function getAdminPassword(): string {
-  const url = process.env.KUBECLAW_REDIS_URL || process.env.REDIS_URL || '';
-  const match = url.match(/redis:\/\/:([^@]+)@/);
-  return match ? match[1] : '';
+function getAdminCredentials(): { username: string; password: string } {
+  const raw = process.env.KUBECLAW_REDIS_URL || process.env.REDIS_URL || '';
+  try {
+    const parsed = new URL(raw);
+    return {
+      username: parsed.username || '',
+      password: parsed.password || '',
+    };
+  } catch {
+    // Fallback: plain regex for malformed URLs
+    const match = raw.match(/redis:\/\/(?:([^:@]+):)?([^@]+)@/);
+    return {
+      username: match?.[1] || '',
+      password: match?.[2] || '',
+    };
+  }
 }
 
 /**
  * Execute a Redis CLI command inside the minikube Redis pod (authenticated).
+ * Throws if Redis returns an error response (e.g. NOAUTH, WRONGPASS, ERR).
  */
 export function execRedisCommand(command: string): string {
-  const password = getAdminPassword();
-  const authFlag = password ? `-a ${password}` : '';
+  const { username, password } = getAdminCredentials();
+  const authArgs =
+    username && password
+      ? `--user ${username} -a ${password}`
+      : password
+        ? `-a ${password}`
+        : '';
   try {
     const result = execSync(
-      `kubectl exec -n ${NAMESPACE} ${REDIS_POD} -- redis-cli ${authFlag} ${command}`,
+      `kubectl exec -n ${NAMESPACE} ${REDIS_POD} -- redis-cli ${authArgs} ${command}`,
       { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] },
-    );
-    return result.trim();
+    ).trim();
+    // redis-cli exits 0 even when Redis returns an error response. Detect and
+    // surface those failures so callers don't silently swallow them.
+    if (/^\(error\)\s/.test(result)) {
+      throw new Error(`Redis returned error: ${result}`);
+    }
+    return result;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`Redis command failed: ${message}`);
