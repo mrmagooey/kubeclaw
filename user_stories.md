@@ -2166,7 +2166,7 @@ status: drafted
 - Implementation lives in `src/runtime/direct-llm-runner.ts` (`set_reminder` LocalTool definition).
 - LLM-dependence: **none** (mock LLM).
 
-status: drafted
+status: passing 2/2
 
 ## Story 87: Recommendation contract wires up `read_user_profile`, `places_search`, and multi-turn history threading
 
