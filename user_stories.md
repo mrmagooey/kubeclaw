@@ -2636,3 +2636,75 @@ status: passing 4/4
 - LLM-dependence: **none**.
 
 status: passing 4/4
+
+## Story 106: Orchestrator pod runs, connects to Redis on startup, and creates Kubernetes jobs
+
+**As a** KubeClaw operator
+**I want** the orchestrator pod to come up cleanly, register with Redis, and spawn Kubernetes Jobs in response to inbound work
+**So that** the basic orchestrator-mode lifecycle is observable as healthy and tool-job execution can flow
+
+### Acceptance criteria
+
+1. The orchestrator pod reaches `Running` status under its deployment in the kubeclaw namespace.
+2. On startup, the orchestrator connects to Redis (logged) and is reachable via the orchestrator service for IPC.
+3. When an agent-job is enqueued, the orchestrator creates a corresponding Kubernetes Job.
+4. The tests use the REAL orchestrator deployment, not a mock.
+5. Real prerequisites are honored: cluster + Redis + image build.
+
+### Notes for the test author
+
+- Test file: `e2e/orchestrator.test.ts` — `describe('Real Orchestrator E2E', ...)` at line 339. Targeted tests at lines 566, 598, 625.
+- Run with: `npm run test:e2e -- e2e/orchestrator.test.ts -t "should have orchestrator pod running|should connect to Redis and log startup|should create Kubernetes jobs"`.
+- Harness: requires `requireKubernetes()`. **Requires a live cluster.**
+- Implementation lives in `src/index.ts`, `src/k8s/job-runner.ts`, `src/k8s/ipc-redis.ts`.
+- LLM-dependence: **none** for these tests.
+
+status: drafted
+
+## Story 107: Tool-pod spawn watcher creates the right K8s Job for each spawn type
+
+**As a** KubeClaw operator
+**I want** the orchestrator's `startToolPodSpawnWatcher` to consume `kubeclaw:spawn-tool-pod` messages and create the appropriate K8s Job per spawn type
+**So that** category-based tool pods (standard / sidecar / file-bridge) materialize on demand without manual intervention
+
+### Acceptance criteria
+
+1. A standard-category spawn (no `toolImage`) creates a single-container Job labeled `app=kubeclaw-tool-pod`.
+2. A sidecar spawn (with `toolImage` set) creates a two-container Job with `kubeclaw-tool-bridge` + `user-tool` containers, labeled `app=kubeclaw-sidecar-tool`.
+3. A sidecar spawn with a file pattern includes a shared `emptyDir` volume mounted into both containers.
+4. The Jobs are created in the orchestrator's namespace, idempotent on retry.
+5. The spawn watcher polls the Redis stream and processes messages incrementally.
+
+### Notes for the test author
+
+- Test file: `e2e/tool-pod-spawn.test.ts` (3 it() tests).
+- Run with: `npm run test:e2e -- tool-pod-spawn`.
+- Harness: requires `requireKubernetes()`. **Requires a live cluster.**
+- Implementation lives in `src/k8s/tool-pod-spawn.ts`, `src/k8s/tool-job.ts`.
+- LLM-dependence: **none**.
+
+status: drafted
+
+## Story 108: Tool-job result is written back to Redis at `kubeclaw:agent-job-result:<id>`
+
+**As a** KubeClaw user awaiting a tool result via orchestrator IPC
+**I want** the completed K8s Job's stdout to be captured and written to `kubeclaw:agent-job-result:<agentJobId>`
+**So that** the channel pod's awaiting reader sees the result and can deliver it to me as a reply
+
+### Acceptance criteria
+
+1. After a tool-job pod completes successfully, the orchestrator reads stdout from the pod via `getJobLogs()`.
+2. The captured result is written to the Redis key `kubeclaw:agent-job-result:<agentJobId>`.
+3. The waiting reader on that key receives the value within the polling interval.
+4. The result write happens once per job.
+5. The integration uses a real K8s Job that emits a known marker string.
+
+### Notes for the test author
+
+- Test file: `e2e/tool-job-result.test.ts` — describe at line 51 (1 it() test).
+- Run with: `npm run test:e2e -- tool-job-result`.
+- Harness: requires `requireKubernetes()`. **Requires a live cluster.**
+- Implementation lives in `src/k8s/tool-pod-spawn.ts`, `src/k8s/job-runner.ts`.
+- LLM-dependence: **none**.
+
+status: drafted
