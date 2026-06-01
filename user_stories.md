@@ -4003,4 +4003,4 @@ status: drafted
 - Implementation lives in `helm/kubeclaw/templates/credential-broker.yaml`.
 - LLM-dependence: **none**.
 
-status: drafted
+status: passing 2/2
