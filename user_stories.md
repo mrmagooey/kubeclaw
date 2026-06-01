@@ -2659,7 +2659,7 @@ status: passing 4/4
 - Implementation lives in `src/index.ts`, `src/k8s/job-runner.ts`, `src/k8s/ipc-redis.ts`.
 - LLM-dependence: **none** for these tests.
 
-status: drafted
+status: passing 3/3
 
 ## Story 107: Tool-pod spawn watcher creates the right K8s Job for each spawn type
 
