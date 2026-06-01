@@ -3715,4 +3715,4 @@ status: drafted
 - Implementation lives in `helm/kubeclaw/templates/orchestrator.yaml`.
 - LLM-dependence: **none**.
 
-status: drafted
+status: passing 2/2
