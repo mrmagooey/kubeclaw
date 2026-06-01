@@ -2923,4 +2923,4 @@ status: passing 2/2
 - Implementation lives in `container/agent-runner/src/tool-server.ts` (idle-timeout handler).
 - LLM-dependence: **none**.
 
-status: drafted
+status: passing 2/2
