@@ -3259,7 +3259,7 @@ status: passing 2/2
 - Implementation lives in `src/channel-runner.ts` (history loading + threading).
 - LLM-dependence: **none**.
 
-status: drafted
+status: passing 3/3
 
 ## Story 132: Helm chart renders namespace, RBAC, and configmaps correctly
 
