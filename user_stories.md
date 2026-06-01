@@ -3356,3 +3356,75 @@ status: passing 6/6
 - LLM-dependence: **none**.
 
 status: passing 4/4
+
+## Story 136: Message accumulation — burst-in messages coalesce into one LLM turn
+
+**As a** KubeClaw user typing a message in chunks ("Hey..." "...quick question..." "...about X")
+**I want** the orchestrator to accumulate consecutive inbound chunks into a single turn rather than triggering one LLM call per chunk
+**So that** my message is processed coherently and tool budget isn't burned on partial fragments
+
+### Acceptance criteria
+
+1. Two consecutive inbounds within the debounce window are merged into one prompt.
+2. Inbounds outside the debounce window trigger separate turns.
+3. The merged prompt preserves chunk ordering.
+4. Per-group debounce is independent (group A's debounce doesn't delay group B).
+5. The accumulation honors the configured debounce period.
+
+### Notes for the test author
+
+- Test file: `e2e/user-interaction.test.ts` — `describe('User Interaction: Message Accumulation', ...)` at line 367.
+- Run with: `npm run test:e2e -- user-interaction -t "Message Accumulation"`.
+- Harness: mock channel + mock LLM + SQLite. **No Kubernetes required.**
+- Implementation lives in `src/channel-runner.ts` (the debounce loop).
+- LLM-dependence: **none**.
+
+status: drafted
+
+## Story 137: File-sidecar Session Persistence — sidecar persists state across pod restarts
+
+**As a** KubeClaw user holding a long-running file-sidecar session (e.g. a REPL or build server)
+**I want** the sidecar's session state to persist across container restarts (PVC-backed)
+**So that** in-flight work isn't lost on pod reschedule
+
+### Acceptance criteria
+
+1. The file-sidecar mounts a PVC for session data.
+2. State written before a restart is readable after the restart.
+3. The pod's restart policy is `OnFailure` or `Never` (not `Always`) so the Job lifecycle owns it.
+4. PVC reclaim policy is correct (retain or delete per chart config).
+5. Tests use a real cluster.
+
+### Notes for the test author
+
+- Test file: `e2e/file-sidecar.test.ts` — `describe('Session Persistence', ...)` at line 504.
+- Run with: `npm run test:e2e -- file-sidecar -t "Session Persistence"`.
+- Harness: requires `requireKubernetes()`. **Requires a live cluster + `kubeclaw-file-adapter:latest` image loaded into minikube.**
+- Implementation lives in `src/k8s/tool-pod-spawn.ts` (PVC binding for sidecar Jobs) and `helm/kubeclaw/templates/storage.yaml`.
+- LLM-dependence: **none**.
+
+status: drafted
+
+## Story 138: HTTP-sidecar Health Check Polling — sidecar marked Ready only after user container responds
+
+**As a** KubeClaw operator
+**I want** the HTTP-sidecar's readiness check to depend on the user container's `/healthz` returning 200
+**So that** Kubernetes routes traffic only when the whole pod (sidecar + user container) is actually serving
+
+### Acceptance criteria
+
+1. Pod becomes Ready only after user container's `/healthz` returns 200.
+2. If user container starts slow, pod stays NotReady until it does.
+3. Once Ready, the sidecar accepts inbound tasks.
+4. If user container crashes, pod transitions back to NotReady within the probe period.
+5. Tests use a real cluster.
+
+### Notes for the test author
+
+- Test file: `e2e/http-sidecar.test.ts` — `describe('Health Check Polling', ...)` at line 468.
+- Run with: `npm run test:e2e -- http-sidecar -t "Health Check Polling"`.
+- Harness: requires `requireKubernetes()` + `kubeclaw-http-adapter:latest` image. **Requires a live cluster.**
+- Implementation lives in `container/agent-runner/src/tool-server.ts` (probe handler) + chart template `helm/kubeclaw/templates/tool-job.yaml`.
+- LLM-dependence: **none**.
+
+status: drafted
