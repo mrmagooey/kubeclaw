@@ -2347,3 +2347,77 @@ status: passing 3/3
 - LLM-dependence: **none**.
 
 status: passing 2/2
+
+## Story 94: `register_specialist` immediately patches the specialists ConfigMap (no orchestrator restart)
+
+**As a** KubeClaw operator adding a new specialist at runtime
+**I want** `register_specialist` (via admin shell) to immediately patch the `kubeclaw-specialists` ConfigMap and have channel pods see the new entry without bouncing the orchestrator
+**So that** I can iterate on specialist definitions live, without service interruption, and discover the new specialist via `/specialists list` immediately after registering
+
+### Acceptance criteria
+
+1. Calling `register_specialist` against a running orchestrator triggers a Kubernetes `apply`/`patch` on the `kubeclaw-specialists` ConfigMap within seconds — not on next reconcile loop, not after restart.
+2. After the patch, the channel pod's specialist catalog loader picks up the new entry via the ConfigMap volume-mount `..data` symlink swap (or stat-poll fallback) without requiring a channel-pod restart either.
+3. The reconcile is incremental: existing specialists in the ConfigMap are preserved; only the newly registered name is added.
+4. The patch uses a read-modify-replace pattern (NOT a JSON-Patch RFC 6902 body), so it works with the `@kubernetes/client-node` v1.4.x default request content-type.
+5. Subsequent `register_specialist` calls update existing entries by name (idempotent for same name; additive for new name).
+
+### Notes for the test author
+
+- Test file: `e2e/specialist-catalog.test.ts` — `it.skipIf(shouldSkip)('register_specialist immediately patches ConfigMap — no orchestrator restart required', ...)` at line ~1065 (Test 7).
+- Run with: `npm run test:e2e -- specialist-catalog -t "register_specialist immediately patches ConfigMap"`.
+- Harness: minikube + helm + kubectl exec into running orchestrator. **Requires a live cluster.**
+- Implementation lives in `src/specialists/reconciler.ts` (the `configMapApply` closure), `src/skills/orchestrator/specialist-registry.ts` (admin shell tool), `src/specialists/catalog-loader.ts` (channel-side stat-poll for ConfigMap changes).
+- Closes Plan 6 from `docs/aspirational-stories-and-plans.md` (immediate ConfigMap apply for specialist overrides).
+- LLM-dependence: **none** — the test invokes `register_specialist` directly via `kubectl exec` calling the admin-shell node API (`executeTool`), bypassing the LLM dispatch layer.
+
+status: drafted
+
+## Story 95: Filesystem MCP per-group capability schema-scrape and read/write round-trip
+
+**As a** KubeClaw user with a per-group `filesystem` MCP capability provisioned
+**I want** the orchestrator to scrape the filesystem MCP server's tool schemas, cache them, and the per-group pod to handle `read_file`/`write_file` calls with path-traversal protection
+**So that** I can use a sandboxed filesystem from my group's LLM without leaking access outside the configured mount root
+
+### Acceptance criteria
+
+1. The schema-scrape step against a real filesystem MCP server caches all 5 advertised tools (`read_file`, `write_file`, `list_directory`, `delete_path`, `move_path` or similar) end-to-end through the orchestrator → per-group MCP pod → schema-cache flow.
+2. A `write_file` followed by `read_file` through the per-group pod round-trips byte-identical content (proves request/response framing + persistence inside the pod work together).
+3. Path-traversal attempts (`../`, absolute paths outside the mount root) are rejected before reaching the filesystem — the MCP server returns an error and no file outside the root is touched.
+4. The per-group pod isolates to the group's mount; another group cannot read or overwrite files written by the first group.
+5. The integration uses real Kubernetes (real `kubeclaw-orchestrator` deployment, real per-group MCP pod) — not mocks.
+
+### Notes for the test author
+
+- Test file: `e2e/filesystem-mcp-integration.test.ts` — `describe('filesystem MCP (real K8s)', ...)` at line 110 (3 it() blocks: schema-scrape, write-then-read, path-traversal).
+- Run with: `npm run test:e2e -- filesystem-mcp-integration`.
+- Harness: requires `isKubernetesAvailable()` (the test self-skips otherwise). **Requires a live cluster with the orchestrator deployed.**
+- Implementation lives in `src/per-group-capabilities/*` (reconciler, schema-cache), `container/filesystem-mcp/*` (the MCP server), and the helm chart values for `capabilities.filesystem`.
+- LLM-dependence: **none** — schema scrape and round-trip are below the LLM layer.
+
+status: drafted
+
+## Story 96: Per-group MCP consumer wakes from zero on first use and round-trips an MCP call
+
+**As a** KubeClaw user whose group has a per-group MCP capability scaled to zero
+**I want** the orchestrator to scale the capability up on demand and round-trip an MCP tool call to it
+**So that** my LLM can use MCP-backed tools without paying idle-pod cost when nobody in the group is using them
+
+### Acceptance criteria
+
+1. The orchestrator's schema-scraper, on first run, scales the per-group capability deployment from zero to one replica, waits for the pod to be ready, scrapes `tools/list` over the MCP `streamableHttp` transport, caches the schemas, then scales back to zero — all in a single test invocation.
+2. The cached schemas are populated in the schema-cache table (verifiable via `getCachedSchemas()`) for the test group + capability.
+3. A discovery-client round-trip (scale up, verify endpoint, make a real MCP call) returns the expected result for the echo MCP — proves the per-group routing, port-forward/in-cluster client, and JSON-RPC framing all work together.
+4. The instance returns to a usable state for repeat calls within the same test run (no leftover lock or scale-confusion).
+5. Real `RealPerGroupK8sClient` is used (no mocked K8s API), exercising the full reconcile loop.
+
+### Notes for the test author
+
+- Test file: `e2e/per-group-mcp-consumer-integration.test.ts` — `describe('per-group MCP consumer (real K8s)', ...)` (2 it() blocks: schema scraper end-to-end, discovery client round-trip).
+- Run with: `npm run test:e2e -- per-group-mcp-consumer-integration`.
+- Harness: requires `isKubernetesAvailable()`. **Requires a live cluster.** Test uses `kubeclaw-test-pgc` namespace.
+- Requires the `kubeclaw-echo-mcp:test` image to be loaded into minikube (the test builds + loads via `container/echo-mcp/build.sh` in `beforeAll`).
+- Implementation lives in `src/per-group-capabilities/{index.ts,schema-cache.ts}`, `src/capabilities/discovery.ts`.
+- LLM-dependence: **none**.
+
+status: drafted
