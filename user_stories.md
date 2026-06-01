@@ -2971,7 +2971,7 @@ status: passing 7/7
 - Implementation lives across `src/index.ts`, `src/k8s/*`.
 - LLM-dependence: **none**.
 
-status: drafted
+status: passing 5/5
 
 ## Story 120: Phase 3 — full end-to-end message → reply pipeline
 
