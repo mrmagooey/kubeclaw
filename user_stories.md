@@ -3763,7 +3763,7 @@ status: passing 2/2
 - Implementation lives in `container/agent-runner/src/tool-server.ts` (file-bridge error path).
 - LLM-dependence: **none**.
 
-status: drafted
+status: passing 2/2
 
 ## Story 153: Helm chart `helm upgrade` — values change without data loss
 
