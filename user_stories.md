@@ -2780,3 +2780,75 @@ status: passing 1/1
 - LLM-dependence: **none**.
 
 status: passing 3/3
+
+## Story 112: In-cluster Redis enforces authentication (NOAUTH / WRONGPASS / accept correct)
+
+**As a** KubeClaw operator deploying with credential-injection or per-job ACLs
+**I want** the in-cluster Redis to reject unauthenticated connections, reject wrong-password connections, and accept correct credentials
+**So that** Redis is a hardened component — no client can read/write streams without proving identity
+
+### Acceptance criteria
+
+1. A connection without any password is rejected with `NOAUTH`.
+2. A connection with a wrong password is rejected with `WRONGPASS`.
+3. A connection with the correct admin credentials succeeds and can perform normal operations.
+4. The tests run against the in-cluster Redis (port-forwarded by global-setup).
+5. Auth enforcement is deterministic.
+
+### Notes for the test author
+
+- Test file: `e2e/redis-auth.test.ts` (4 it() tests).
+- Run with: `npm run test:e2e -- redis-auth`.
+- Harness: requires Redis from `global-setup.ts` port-forward. **Requires a live cluster.**
+- Implementation lives in `helm/kubeclaw/templates/redis-*.yaml` and the values that pass `requirepass`.
+- LLM-dependence: **none**.
+
+status: drafted
+
+## Story 113: File-sidecar processes a Simple Echo task end-to-end
+
+**As a** KubeClaw user invoking a tool wrapped as a file-sidecar
+**I want** the file-bridge sidecar to accept a task, hand it to the user container via shared files, and return the result over Redis
+**So that** the file-bridge path works against a real cluster
+
+### Acceptance criteria
+
+1. The file-sidecar accepts a task POST and writes the request to `/shared/<id>.request.json`.
+2. The user container polls, processes, and writes `/shared/<id>.response.json`.
+3. The sidecar publishes the response to the toolresults Redis stream.
+4. Simple Echo describe isolates state per test via `beforeEach`.
+5. End-to-end against a real cluster.
+
+### Notes for the test author
+
+- Test file: `e2e/file-sidecar.test.ts` — `describe('Simple Echo Task Processing', ...)` at line 465.
+- Run with: `npm run test:e2e -- file-sidecar -t "Simple Echo Task Processing"`.
+- Harness: requires `requireKubernetes()`. **Requires a live cluster + file-sidecar adapter image.**
+- Implementation lives in `container/agent-runner/src/tool-server.ts` (file-bridge), `src/k8s/tool-pod-spawn.ts`.
+- LLM-dependence: **none**.
+
+status: drafted
+
+## Story 114: Sidecar security boundaries — sidecar can't access other sidecars' keys or run admin commands
+
+**As a** KubeClaw operator running multiple tool-job sidecars on shared Redis
+**I want** each sidecar's ACL to forbid access to OTHER sidecars' streams AND deny admin commands (CONFIG, FLUSHDB)
+**So that** a compromised sidecar pod cannot read another job's data or break the Redis configuration
+
+### Acceptance criteria
+
+1. Sidecar A's credentials cannot read or write to Sidecar B's input/output keys (NOPERM).
+2. Sidecar credentials cannot run admin commands like `CONFIG GET` or `FLUSHDB` (NOPERM).
+3. Sidecar can read its own input keys and publish to its own output channel.
+4. Invalid (revoked or never-created) credentials are rejected.
+5. Tests use real Redis ACL on the in-cluster Redis.
+
+### Notes for the test author
+
+- Test file: `e2e/sidecar-security.test.ts` (4 it() tests).
+- Run with: `npm run test:e2e -- sidecar-security`.
+- Harness: requires `isKubernetesAvailable()`. **Requires a live cluster + per-job ACL setup.**
+- Implementation lives in `src/k8s/acl-manager.ts`.
+- LLM-dependence: **none**.
+
+status: drafted
