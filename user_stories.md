@@ -3284,3 +3284,75 @@ status: passing 3/3
 - LLM-dependence: **none**.
 
 status: passing 10/10
+
+## Story 133: Atomic state updates — concurrent updates to the same key linearize
+
+**As a** KubeClaw operator with multiple writers updating the same session state
+**I want** concurrent updates to be linearized at the Redis layer (no lost updates)
+**So that** state correctness is preserved under realistic load
+
+### Acceptance criteria
+
+1. Two concurrent INCR operations against the same counter produce the correct final value (no lost increments).
+2. WATCH/MULTI/EXEC transactions abort cleanly when the watched key changes underneath.
+3. Lua-scripted atomic operations behave as documented (single-shot, no interleaving).
+4. SETNX semantics work for distributed locks (first writer wins).
+5. Tests run against in-cluster Redis.
+
+### Notes for the test author
+
+- Test file: `e2e/state-persistence.test.ts` — `describe('Atomic State Updates', ...)` at line 401.
+- Run with: `npm run test:e2e -- state-persistence -t "Atomic"`.
+- Harness: requires `getSharedRedis()`. **Requires a live cluster.**
+- Implementation lives in `src/k8s/ipc-redis.ts`.
+- LLM-dependence: **none**.
+
+status: drafted
+
+## Story 134: Exponential backoff — retry intervals double per attempt (capped at max)
+
+**As a** KubeClaw operator
+**I want** retry intervals to follow exponential backoff (1s, 2s, 4s, ...) capped at a max
+**So that** retries respect Redis without thrashing while still recovering from transient faults
+
+### Acceptance criteria
+
+1. The first retry delay matches the initial backoff (e.g. 1s).
+2. Subsequent retry delays double (1s → 2s → 4s → 8s).
+3. Delays are capped at a configured max (e.g. 30s).
+4. After the cap is hit, subsequent retries use the capped delay.
+5. The backoff respects max-retry budget — total retries don't exceed the cap.
+
+### Notes for the test author
+
+- Test file: `e2e/timeout-retry.test.ts` — `describe('Exponential Backoff Behavior', ...)` at line 287.
+- Run with: `npm run test:e2e -- timeout-retry -t "Exponential Backoff"`.
+- Harness: requires `isRedisAvailable()`. **Requires a live cluster.**
+- Implementation lives in `src/k8s/ipc-redis.ts`.
+- LLM-dependence: **none**.
+
+status: drafted
+
+## Story 135: Helm chart Redis sub-chart — Redis Deployment + Service + ACL render and run
+
+**As a** KubeClaw operator deploying the chart
+**I want** the chart's Redis sub-chart to render a Redis Deployment + Service + ACL config that comes up Ready and serves the orchestrator
+**So that** Redis-dependent components have a working in-cluster backend without external dependencies
+
+### Acceptance criteria
+
+1. `helm install` renders a `redis` Deployment that reaches `Available: True`.
+2. The `redis` Service is created and routes to the Deployment on port 6379.
+3. The Redis ACL config (`init-acl` initContainer or `--aclfile`) is loaded so auth is enforced.
+4. The orchestrator can connect to Redis via the in-cluster service name + port.
+5. The Redis sub-chart can be disabled via values (operator may bring their own Redis).
+
+### Notes for the test author
+
+- Test file: `e2e/helm-chart.test.ts` — `describe('Redis', ...)` at line 550.
+- Run with: `npm run test:e2e -- helm-chart -t "Redis"`.
+- Harness: requires `requireKubernetes()`. **Requires a live cluster + helm install.**
+- Implementation lives in `helm/kubeclaw/templates/redis-*.yaml`.
+- LLM-dependence: **none**.
+
+status: drafted
