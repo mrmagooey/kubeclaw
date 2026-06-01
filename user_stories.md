@@ -2515,7 +2515,7 @@ status: passing 2/2
 - Implementation lives in `container/agent-runner/src/tool-server.ts` (bridge dispatcher).
 - LLM-dependence: **none**.
 
-status: drafted
+status: passing 4/4
 
 ## Story 101: HTTP-channel sidecar processes a simple echo task end-to-end
 
