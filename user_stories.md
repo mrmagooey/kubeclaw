@@ -3068,3 +3068,75 @@ status: passing 5/5
 - LLM-dependence: **none**.
 
 status: passing 3/3
+
+## Story 124: Per-group capabilities integration — reconcile, scale-up, sweep, GC
+
+**As a** KubeClaw operator running per-group MCP capabilities
+**I want** the reconcile loop to scale instances up on demand, sweep idle ones down, and GC stale groups
+**So that** capability resources track actual group usage without manual intervention
+
+### Acceptance criteria
+
+1. `reconcileGroupCapabilities` creates expected Deployments/Services on first call for a group.
+2. `scaleUpInstance` brings a scaled-to-zero deployment to 1 replica and waits ready.
+3. `sweepIdleInstances` scales an unused instance back to 0 after idle threshold.
+4. `gcGroup` removes all resources for a deleted group.
+5. All ops use `RealPerGroupK8sClient` against a real cluster.
+
+### Notes for the test author
+
+- Test file: `e2e/per-group-capabilities-integration.test.ts` (3 it() tests).
+- Run with: `npm run test:e2e -- per-group-capabilities-integration`.
+- Harness: real K8s client + cluster. **Requires a live cluster.**
+- Implementation lives in `src/per-group-capabilities/index.ts`.
+- LLM-dependence: **none**.
+
+status: drafted
+
+## Story 125: Mock usage — full happy-path message routing through mock channel + mock LLM
+
+**As a** KubeClaw contributor running the e2e suite without a cluster
+**I want** the mock-channel + mock-LLM harness to exercise message-routing end-to-end (channel → orchestrator → LLM → response → channel)
+**So that** integration-level correctness can be verified cheaply on developer laptops
+
+### Acceptance criteria
+
+1. Message published to mock channel is routed through the orchestrator.
+2. Orchestrator invokes mock LLM and gets a templated response.
+3. Response delivered back to mock channel's queued-messages buffer.
+4. End-to-end conversation flow across multiple turns.
+5. Custom response templates can be set per test.
+
+### Notes for the test author
+
+- Test file: `e2e/mock-usage.test.ts` — `describe('Mock E2E Usage', ...)` (5 it() tests).
+- Run with: `npm run test:e2e -- mock-usage`.
+- Harness: mock channel + mock LLM + real SQLite. **No Kubernetes required.**
+- Implementation lives in `src/channel-runner.ts` + `e2e/lib/`.
+- LLM-dependence: **none** (mock).
+
+status: drafted
+
+## Story 126: Session state persistence — sessions survive within TTL window
+
+**As a** KubeClaw operator running stateful sessions for the agent
+**I want** session state to persist across orchestrator restarts and Redis reconnects, scoped by TTL
+**So that** users don't lose session context when components hiccup
+
+### Acceptance criteria
+
+1. Writing then reading a session field returns the exact value.
+2. Session key TTL is set per config; reading after expiry returns null.
+3. Session state survives an orchestrator restart.
+4. Concurrent updates to the same session preserve linearizability.
+5. State runs against in-cluster Redis (not a mock).
+
+### Notes for the test author
+
+- Test file: `e2e/state-persistence.test.ts` — `describe('Session State Persistence', ...)` at line 197.
+- Run with: `npm run test:e2e -- state-persistence -t "Session State Persistence"`.
+- Harness: requires Redis via `getSharedRedis()`. **Requires a live cluster.**
+- Implementation lives in `src/k8s/ipc-redis.ts` and adjacent state helpers.
+- LLM-dependence: **none**.
+
+status: drafted
