@@ -2371,7 +2371,7 @@ status: passing 2/2
 - Closes Plan 6 from `docs/aspirational-stories-and-plans.md` (immediate ConfigMap apply for specialist overrides).
 - LLM-dependence: **yes** — after the ConfigMap patch, the test dispatches `@Ping` and expects `pong` in the SSE reply, which requires a real LLM provider (LIVE_LLM_BASE_URL/API_KEY/MODEL must be set; the test self-skips if the provider probe fails).
 
-status: drafted
+status: blocked — test reveals db-init bug in `src/admin-shell.ts`. The test path `await import('/app/dist/admin-shell.js')` + `executeTool(...)` bypasses `main()`, so `initDatabase()` never runs and `db` is undefined when the patch handler tries to use it. Fix requires adding a lazy `initDatabase()` guard inside `executeTool` (out of scope for the promote pattern). See `docs/superpowers/plans/2026-06-01-story-94-configmap-apply.md` for full diagnosis.
 
 ## Story 95: Filesystem MCP per-group capability schema-scrape and read/write round-trip
 
