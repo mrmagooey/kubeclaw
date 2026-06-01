@@ -3163,7 +3163,7 @@ status: passing 4/4
 - Implementation lives in `src/k8s/ipc-redis.ts`.
 - LLM-dependence: **none**.
 
-status: drafted
+status: passing 5/5
 
 ## Story 128: User-interaction Response Delivery — bot reply reaches the user
 
