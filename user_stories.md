@@ -3595,7 +3595,7 @@ status: passing 3/3
 - Implementation lives in `src/k8s/ipc-redis.ts`.
 - LLM-dependence: **none**.
 
-status: drafted
+status: passing 4/4
 
 ## Story 146: Sidecar ACL Infrastructure — Redis supports ACL commands
 
