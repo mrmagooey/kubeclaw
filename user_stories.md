@@ -2492,3 +2492,75 @@ status: passing 7/7
 - LLM-dependence: **none**.
 
 status: passing 2/2
+
+## Story 100: Sidecar tool-pod bridge forwards a tool call to the user container and returns the result
+
+**As a** KubeClaw operator running a long-lived sidecar tool pod (e.g. a Playwright browser session)
+**I want** the bridge to forward tool calls from `kubeclaw:toolcalls:<id>:<tool>` to the user container and stream the result back to `kubeclaw:toolresults:<id>:<tool>`
+**So that** persistent tool sessions (browser, REPL, build server) can be reused across LLM rounds without spawning a fresh pod for each call
+
+### Acceptance criteria
+
+1. The `dist/tool-server.js` artifact exists after the build bootstrap.
+2. In `http-bridge` mode, a tool call written to `kubeclaw:toolcalls:<agentJobId>:<toolName>` is forwarded to a local HTTP user-container endpoint and the response shows up at `kubeclaw:toolresults:<agentJobId>:<toolName>`.
+3. An error response from the HTTP user container is propagated through the bridge to the toolresults stream.
+4. In `file-bridge` mode, the same call/response semantics hold via shared-file polling.
+5. The bridge is a local subprocess; no Kubernetes is required for this test.
+
+### Notes for the test author
+
+- Test file: `e2e/sidecar-tool-pod.test.ts` (3 describes: build artifact, http-bridge, file-bridge; 4 tests total).
+- Run with: `npm run test:e2e -- sidecar-tool-pod`.
+- Harness: real Redis streams + local subprocess running `tool-server.js`; small in-process HTTP server / file watcher as the user container. **No Kubernetes required.**
+- Implementation lives in `container/agent-runner/src/tool-server.ts` (bridge dispatcher).
+- LLM-dependence: **none**.
+
+status: drafted
+
+## Story 101: HTTP-channel sidecar processes a simple echo task end-to-end
+
+**As a** KubeClaw user sending a message via the HTTP channel
+**I want** the channel sidecar to accept the inbound task, push it to the orchestrator, and return the echoed result via SSE
+**So that** the basic HTTP-channel happy path works against a real cluster
+
+### Acceptance criteria
+
+1. The HTTP sidecar accepts a task POST and routes it through the orchestrator.
+2. The orchestrator's echo handler returns the input verbatim.
+3. The full path uses real Kubernetes (helm-installed kubeclaw, real channel pod), not stubs.
+4. The Simple Echo describe isolates state via `beforeEach` so repeated runs are deterministic.
+5. SSE response timing is bounded.
+
+### Notes for the test author
+
+- Test file: `e2e/http-sidecar.test.ts` — `describe('Simple Echo Task Processing', ...)` block at line 429.
+- Run with: `npm run test:e2e -- http-sidecar -t "Simple Echo Task Processing"`.
+- Harness: requires `requireKubernetes()`. **Requires a live cluster.**
+- Implementation lives in `src/channels/http.ts` (HTTP channel) and the sidecar adapter.
+- LLM-dependence: **none** (echo handler).
+
+status: drafted
+
+## Story 102: Sidecar ACL lifecycle — create and revoke per-job Redis ACL users
+
+**As a** KubeClaw operator running multiple isolated tool-job pods
+**I want** each sidecar job to receive a unique per-job Redis ACL user that's revoked when the job completes
+**So that** a compromised tool-job pod cannot read or write streams belonging to other groups or jobs
+
+### Acceptance criteria
+
+1. The cluster's Redis supports ACL commands (`ACL LIST`, `ACL SETUSER`, `ACL DELUSER`).
+2. The orchestrator creates a per-job ACL user when starting a sidecar tool-job pod.
+3. After the job completes (or is killed), the ACL user is revoked.
+4. The ACL user's permissions are scoped to the job's stream keys.
+5. The full lifecycle runs against a real cluster Redis.
+
+### Notes for the test author
+
+- Test file: `e2e/sidecar-acl.test.ts` — `describe('ACL Lifecycle', ...)` block at line 157.
+- Run with: `npm run test:e2e -- sidecar-acl -t "ACL Lifecycle"`.
+- Harness: real cluster Redis via `getSharedRedis()`. **Requires a live cluster.**
+- Implementation lives in `src/k8s/redis-acl.ts`, `src/k8s/tool-job.ts`.
+- LLM-dependence: **none**.
+
+status: drafted
