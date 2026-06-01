@@ -3235,7 +3235,7 @@ status: passing 2/2
 - Implementation lives in `src/k8s/acl-manager.ts`.
 - LLM-dependence: **none**.
 
-status: drafted
+status: passing 2/2
 
 ## Story 131: User-interaction Multi-turn Conversation — context carries across turns
 
