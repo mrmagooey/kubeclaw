@@ -3716,3 +3716,75 @@ status: passing 3/3
 - LLM-dependence: **none**.
 
 status: passing 2/2
+
+## Story 151: Message processing timeout — long-running message turns time out
+
+**As a** KubeClaw operator
+**I want** a single message turn that exceeds the configured processing timeout to be aborted
+**So that** a runaway turn doesn't block the queue forever
+
+### Acceptance criteria
+
+1. Turn exceeding configured `MESSAGE_PROCESSING_TIMEOUT_MS` is aborted.
+2. User receives a "timed out" reply.
+3. Subsequent messages in the same group queue can proceed.
+4. Orchestrator processing state cleaned up.
+5. Tests use fake timer or synthetic slow handler against real Redis.
+
+### Notes for the test author
+
+- Test file: `e2e/timeout-retry.test.ts` — `describe('Message Processing Timeout Simulation', ...)` at line 137.
+- Run with: `npm run test:e2e -- timeout-retry -t "Message Processing Timeout"`.
+- Harness: requires `isRedisAvailable()`. **Requires a live cluster.**
+- Implementation lives in `src/channel-runner.ts` + `src/k8s/ipc-redis.ts`.
+- LLM-dependence: **none**.
+
+status: drafted
+
+## Story 152: File-sidecar error handling — sidecar surfaces user-container errors
+
+**As a** KubeClaw user invoking a file-sidecar tool
+**I want** errors from the user container to be reported as toolresult errors
+**So that** I see "the tool failed" instead of a hung agent loop
+
+### Acceptance criteria
+
+1. User container exits non-zero → toolresult contains error.
+2. User container writes malformed JSON → toolresult contains parse error.
+3. User container times out → toolresult contains timeout error.
+4. The sidecar pod doesn't crash on user container failure.
+5. Tests use real cluster + file-adapter image.
+
+### Notes for the test author
+
+- Test file: `e2e/file-sidecar.test.ts` — `describe('Error Handling', ...)` at line 542.
+- Run with: `npm run test:e2e -- file-sidecar -t "Error Handling"`.
+- Harness: requires `requireKubernetes()` + `kubeclaw-file-adapter:latest`. **Requires a live cluster.**
+- Implementation lives in `container/agent-runner/src/tool-server.ts` (file-bridge error path).
+- LLM-dependence: **none**.
+
+status: drafted
+
+## Story 153: Helm chart `helm upgrade` — values change without data loss
+
+**As a** KubeClaw operator
+**I want** `helm upgrade` to roll out config changes without losing PVC-backed state or restarting the Redis password
+**So that** in-place upgrades are safe
+
+### Acceptance criteria
+
+1. Changing `maxConcurrentJobs` via `helm upgrade --set` is reflected in orchestrator config.
+2. PVCs preserved through upgrade.
+3. Redis password not regenerated on upgrade (`lookup`-stable).
+4. Pod rollouts complete within timeout.
+5. Tests use real cluster with `helm install` + `helm upgrade`.
+
+### Notes for the test author
+
+- Test file: `e2e/helm-chart.test.ts` — `describe('helm upgrade', ...)` at line 743.
+- Run with: `npm run test:e2e -- helm-chart -t "helm upgrade"`.
+- Harness: requires `requireKubernetes()`. **Requires a live cluster + helm install.**
+- Implementation lives in `helm/kubeclaw/templates/secrets.yaml` (`lookup` pattern) + chart upgrade hooks.
+- LLM-dependence: **none**.
+
+status: drafted
