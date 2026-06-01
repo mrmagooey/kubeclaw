@@ -3500,3 +3500,75 @@ status: passing 2/2
 - LLM-dependence: **none**.
 
 status: passing 4/4
+
+## Story 142: Redis restart recovery — state survives Redis pod restart
+
+**As a** KubeClaw operator
+**I want** persisted state to survive a Redis pod restart (AOF/RDB)
+**So that** unscheduled Redis restarts don't lose user state
+
+### Acceptance criteria
+
+1. Writing key X, restarting Redis pod, reading key X → returns the written value.
+2. The restart timing window is bounded (state available within the reconnect timeout).
+3. The client reconnects without process restart on the orchestrator side.
+4. In-flight ops at restart time are surfaced as errors and retried by the application layer.
+5. Tests use real Redis with a controlled restart (kubectl delete pod or RESTART command).
+
+### Notes for the test author
+
+- Test file: `e2e/state-persistence.test.ts` — `describe('State Recovery After Redis Restart', ...)` at line 608.
+- Run with: `npm run test:e2e -- state-persistence -t "Redis Restart"`.
+- Harness: requires `getSharedRedis()`. **Requires a live cluster.**
+- Implementation lives in `src/k8s/ipc-redis.ts` (reconnect handler) and Redis chart config (AOF enabled).
+- LLM-dependence: **none**.
+
+status: drafted
+
+## Story 143: Max retry limit — retries stop after N attempts
+
+**As a** KubeClaw operator
+**I want** the retry loop to give up after the configured max-retry count rather than retrying forever
+**So that** persistent failures escalate quickly instead of silently consuming resources
+
+### Acceptance criteria
+
+1. After N failures, the next call returns the error rather than retrying further.
+2. The max-retry count is configurable.
+3. The error surfaced to the caller identifies the underlying failure.
+4. Retry counters reset after a successful intervening call.
+5. Tests use injected faults against real Redis.
+
+### Notes for the test author
+
+- Test file: `e2e/timeout-retry.test.ts` — `describe('Max Retry Limit Enforcement', ...)` at line 362.
+- Run with: `npm run test:e2e -- timeout-retry -t "Max Retry Limit"`.
+- Harness: requires `isRedisAvailable()`. **Requires a live cluster.**
+- Implementation lives in `src/k8s/ipc-redis.ts`.
+- LLM-dependence: **none**.
+
+status: drafted
+
+## Story 144: Helm chart NetworkPolicies — pod egress is locked down per category
+
+**As a** KubeClaw operator deploying with network policy enforcement
+**I want** the chart's NetworkPolicies to restrict pod egress per category (orchestrator allowed to Redis, browser allowed to TCP/443, etc.)
+**So that** a compromised pod can't make arbitrary egress to the internet or to other group services
+
+### Acceptance criteria
+
+1. The chart renders NetworkPolicies for each pod category (orchestrator, channel, browser tool, etc.).
+2. Each policy whitelists only the necessary egress (e.g. browser tool → TCP/443 to any CIDR).
+3. The default-deny policy is in effect (pods without a matching policy have no egress).
+4. Policies are enforceable by Cilium / Calico (the cluster's CNI).
+5. Tests use a real cluster with network policy enforcement enabled.
+
+### Notes for the test author
+
+- Test file: `e2e/helm-chart.test.ts` — `describe('network policies', ...)` at line 368.
+- Run with: `npm run test:e2e -- helm-chart -t "network policies"`.
+- Harness: requires `requireKubernetes()`. **Requires a live cluster + helm install.**
+- Implementation lives in `helm/kubeclaw/templates/networkpolicies.yaml`.
+- LLM-dependence: **none**.
+
+status: drafted
