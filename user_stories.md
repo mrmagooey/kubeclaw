@@ -3835,7 +3835,7 @@ status: passing 1/1
 - Implementation lives in `src/k8s/http-sidecar-runner.ts`.
 - LLM-dependence: **none**.
 
-status: drafted
+status: passing 2/2
 
 ## Story 156: Helm chart `mode=istio` — Istio sidecar + EnvoyFilter render correctly
 
