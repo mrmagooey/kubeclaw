@@ -2191,4 +2191,4 @@ status: passing 2/2
 - Scope: this story covers wiring only. It does NOT exercise the live `places_search` HTTP backend (Google Places API) — that's tested separately under places-search integration.
 - LLM-dependence: **none** (mock LLM).
 
-status: drafted
+status: passing 6/6
