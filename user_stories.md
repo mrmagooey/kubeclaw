@@ -109,7 +109,7 @@ status: partial (3/5) — AC1 (POST 200), AC2 (queued state), AC4 (≤2 active j
 - IMPORTANT: target the kind cluster `kubeclaw-e2e-istio`. Install kubeclaw with default values (mode=sidecar) in an isolated namespace. Use `--set image.tag=e2e-test --set image.pullPolicy=IfNotPresent` (the kind cluster has `kubeclaw-orchestrator:e2e-test` pre-loaded). Use `KUBECLAW_SKIP_HELM_INSTALL=true` to bypass vitest globalSetup.
 
 status: passing 5/5
-## Story 5: Redis ACL user is created per tool-job and revoked on completion (status: deferred — test infra fails at helm install in vitest run despite same command succeeding manually; needs further debugging)
+## Story 5: Redis ACL user is created per tool-job and revoked on completion (status: passing 5/5)
 
 **As a** KubeClaw operator running specialist tool jobs in my cluster
 **I want** each tool-job pod to receive a unique, scoped Redis ACL user that is automatically revoked when the job finishes
@@ -4075,4 +4075,4 @@ status: passing 4/4
 - Implementation lives in `helm/kubeclaw/templates/credential-broker-*.yaml` and chart values defaults.
 - LLM-dependence: **none**.
 
-status: blocked — static `helm template` tests are gated by `e2e/helm-chart.test.ts`'s file-level `beforeAll` that does a full `helm install` into `kubeclaw-helm-test` and waits 60s for Redis Ready. Install fails with NetworkPolicy ownership-metadata collision against the long-running `kubeclaw` namespace install (`kubeclaw-workload-egress-restricted-tool-pod` exists owned by release `kubeclaw`, not `kubeclaw-helm-test`). Unblock paths: (a) extract static-template describe blocks into a sibling file with no `beforeAll`, or (b) make cluster-scoped/cross-namespace resources release-aware. The mode=sidecar tests themselves are fine — blocked by suite-level wiring, not implementation.
+status: chart fix verified (commits 97339c9 + 6ae6b04, 2026-06-01); `mode=sidecar` describe still gated by `e2e/helm-chart.test.ts`'s file-level `beforeAll` 60s Redis-Ready timeout, which is a separate test-infra issue (cluster-saturation), not the NetworkPolicy ownership collision Story 165 was about. The chart fix has three independent confirmations: (a) `helm template` renders every namespace as `--namespace` value with no `kubeclaw` literal; (b) Story 5's `e2e/redis-acl-isolation.test.ts` installs into `kubeclaw-e2e-redisacl` and passes 5/5 — the previously-blocked install path; (c) this suite's `beforeAll` now progresses past `helm install` (failing only at the downstream Redis-Ready wait). Suggested follow-up: extract static-template describe blocks (Static Checks, mode=istio, mode=sidecar, Lua filter, CRB, namespace isolation) into a sibling `e2e/helm-chart-template.test.ts` with no `beforeAll` so they run without a cluster.
