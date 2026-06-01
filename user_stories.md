@@ -2755,7 +2755,7 @@ status: passing 4/4
 - Implementation lives in `src/k8s/tool-pod-spawn.ts`, `container/agent-runner/src/tool-server.ts`.
 - LLM-dependence: **none**.
 
-status: drafted
+status: passing 1/1
 
 ## Story 111: Retry logic for failed Redis operations — exponential backoff with max-retry cap
 
