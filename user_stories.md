@@ -3428,3 +3428,75 @@ status: passing 2/2
 - LLM-dependence: **none**.
 
 status: passing 1/1
+
+## Story 139: Redis Operation Timeout — long-running ops return error within timeout window
+
+**As a** KubeClaw operator
+**I want** individual Redis operations (XREAD, GET, SET) to time out within a configured window when the server is slow
+**So that** a stuck Redis call doesn't hang the orchestrator indefinitely
+
+### Acceptance criteria
+
+1. A Redis operation against a slow server returns an error after the configured timeout.
+2. The error message identifies it as an operation timeout (distinct from a connect timeout).
+3. The connection itself remains usable for subsequent operations.
+4. Different operations honor their own timeouts (not shared globally).
+5. Tests use a real Redis with throttling or fake timers.
+
+### Notes for the test author
+
+- Test file: `e2e/timeout-retry.test.ts` — `describe('Redis Operation Timeout', ...)` at line 101.
+- Run with: `npm run test:e2e -- timeout-retry -t "Redis Operation Timeout"`.
+- Harness: requires `isRedisAvailable()`. **Requires a live cluster.**
+- Implementation lives in `src/k8s/ipc-redis.ts`.
+- LLM-dependence: **none**.
+
+status: drafted
+
+## Story 140: Helm chart secrets — credentials render via Secret, not embedded in YAML
+
+**As a** KubeClaw operator
+**I want** the helm chart to render any credentials via Kubernetes `Secret` objects
+**So that** credentials are not embedded in plaintext YAML or in the rendered chart output
+
+### Acceptance criteria
+
+1. The chart renders a `Secret` object for orchestrator credentials.
+2. Pods reference the Secret via `envFrom` or `valueFrom.secretKeyRef`, NOT inline `value:`.
+3. Secrets are not echoed in chart-rendered output (no raw `password:` lines in the rendered YAML).
+4. Secret values can be overridden via `--set credentials.adminPassword=...` or `--values`.
+5. Helm install with provided secrets succeeds and the pods can read them.
+
+### Notes for the test author
+
+- Test file: `e2e/helm-chart.test.ts` — `describe('secrets', ...)` at line 345.
+- Run with: `npm run test:e2e -- helm-chart -t "secrets"`.
+- Harness: requires `requireKubernetes()`. **Requires a live cluster + helm install.**
+- Implementation lives in `helm/kubeclaw/templates/secrets.yaml` and orchestrator deployment manifest.
+- LLM-dependence: **none**.
+
+status: drafted
+
+## Story 141: Group state isolation — state writes scoped per-group never leak
+
+**As a** KubeClaw operator running many groups on shared state
+**I want** group A's state writes to be invisible to group B (key namespace isolation)
+**So that** there's no risk of cross-group data leakage via Redis key collisions
+
+### Acceptance criteria
+
+1. Writing key X under group A → read key X under group B → returns null.
+2. The state layer prefixes keys with `group:<folder>:` (or equivalent).
+3. Deleting all of group A's keys does NOT delete any of group B's keys.
+4. List/scan operations within group A do not return group B's keys.
+5. Tests use real Redis with two distinct group_folders.
+
+### Notes for the test author
+
+- Test file: `e2e/state-persistence.test.ts` — `describe('Group State Isolation', ...)` at line 514.
+- Run with: `npm run test:e2e -- state-persistence -t "Group State Isolation"`.
+- Harness: requires `getSharedRedis()`. **Requires a live cluster.**
+- Implementation lives in `src/k8s/ipc-redis.ts`.
+- LLM-dependence: **none**.
+
+status: drafted
