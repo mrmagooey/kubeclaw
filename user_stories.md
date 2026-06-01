@@ -2421,3 +2421,74 @@ status: passing 3/3
 - LLM-dependence: **none**.
 
 status: passing 2/2
+
+## Story 97: IRC channel connects, joins configured channels, and disconnects cleanly
+
+**As a** KubeClaw operator running an IRC channel deployment
+**I want** the IRC channel to connect to the IRC server, join the configured channels, and disconnect cleanly on shutdown
+**So that** my IRC integration is a well-behaved member of the IRC network — no zombie connections, no missed channel joins
+
+### Acceptance criteria
+
+1. `IRCChannel.start()` connects to the configured IRC server and the connection reaches the `Registered` state (server welcome received).
+2. After connection, the channel auto-joins every channel in its `channels` config option.
+3. `IRCChannel.stop()` issues `QUIT` and the socket closes cleanly; no leftover connection state in the mock IRC server.
+4. The behaviors are verified against a real mock IRC server in `e2e/lib/irc-server.ts`, not stubbed.
+5. The connection-lifecycle suite isolates from other test groups via `beforeEach`/`afterEach` server reset.
+
+### Notes for the test author
+
+- Test file: `e2e/irc-channel.test.ts` — `describe('Connection Lifecycle', ...)` block (3 it() tests).
+- Run with: `npm run test:e2e -- irc-channel -t "Connection Lifecycle"`.
+- Harness: in-process mock IRC server (`startIRCServer`/`stopIRCServer` from `e2e/lib/irc-server.ts`); real `IRCChannel` class from `src/channels/irc.ts`. **No Kubernetes required, no real IRC network.**
+- LLM-dependence: **none**.
+
+status: drafted
+
+## Story 98: Helm chart `static checks` — lint + template render without errors
+
+**As a** KubeClaw operator about to deploy the chart
+**I want** `helm lint` and `helm template` to succeed against the chart for every supported value set
+**So that** I catch chart syntax errors, missing helpers, and bad value defaults before they hit a real cluster
+
+### Acceptance criteria
+
+1. `helm lint helm/kubeclaw/` passes with zero errors (warnings allowed).
+2. `helm template helm/kubeclaw/` renders valid YAML for the default value set — no template errors, no `nil`-reference panics.
+3. The rendered output contains the expected core resources: orchestrator Deployment, namespace, secrets, network policies, PVCs, configmaps, RBAC.
+4. The chart renders cleanly for every value combination exercised in the `helm chart static checks` describe block.
+5. These checks run without a Kubernetes cluster (lint + template only).
+
+### Notes for the test author
+
+- Test file: `e2e/helm-chart.test.ts` — `describe('helm chart static checks', ...)` block at line 228.
+- Run with: `npm run test:e2e -- helm-chart -t "helm chart static checks"`.
+- Harness: vitest e2e + shells out to `helm`. **No Kubernetes cluster required.**
+- Note: the test file also contains many other describes (`describe('namespace', ...)`, `describe('Redis', ...)`, etc.) that DO require a cluster. The `-t "helm chart static checks"` filter scopes to only the cluster-free subset.
+- LLM-dependence: **none**.
+
+status: drafted
+
+## Story 99: Credential broker pod is Ready and rejects unauthenticated `/authz` requests
+
+**As a** KubeClaw operator deploying with credential-injection enabled
+**I want** the credential-broker pod to become Ready after helm install and reject requests to `/authz` without a Bearer token
+**So that** the broker's role as an authenticated proxy is enforced from the moment it starts — no credentials leak via misconfigured access
+
+### Acceptance criteria
+
+1. After `helm install` with credential-injection enabled, the credential-broker pod reaches `Ready: True` within the wait timeout.
+2. An HTTP request to the broker's `/authz` endpoint WITHOUT a `Bearer` token returns HTTP 401.
+3. The broker pod is built from the current worktree (so it includes any in-flight feature code, not just whatever the cluster already has).
+4. The test uses an isolated namespace (`kubeclaw-e2e-broker`) so it doesn't disturb other deployments.
+5. Cluster lock serialization via `acquireClusterLock` prevents concurrent test interference.
+
+### Notes for the test author
+
+- Test file: `e2e/credential-broker.test.ts` — `describe('credential-broker e2e', ...)` block (2 it() tests: pod Ready, /authz 401).
+- Run with: `npm run test:e2e -- credential-broker`.
+- Harness: builds the broker image from the worktree, helm-installs into `kubeclaw-e2e-broker` namespace, port-forwards to the broker pod, checks readiness + `/authz` 401.
+- **Requires a live Kubernetes cluster + minikube docker-env for image build.**
+- LLM-dependence: **none**.
+
+status: drafted
