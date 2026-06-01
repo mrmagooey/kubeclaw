@@ -3667,7 +3667,7 @@ status: passing 4/4
 - Implementation lives in `src/k8s/acl-manager.ts`.
 - LLM-dependence: **none**.
 
-status: drafted
+status: passing 1/1
 
 ## Story 149: User-interaction Error Handling — agent errors deliver a user-visible reply
 
