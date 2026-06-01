@@ -2851,4 +2851,4 @@ status: drafted
 - Implementation lives in `src/k8s/acl-manager.ts`.
 - LLM-dependence: **none**.
 
-status: drafted
+status: passing 10/10
