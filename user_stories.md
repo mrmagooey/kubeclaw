@@ -4027,7 +4027,7 @@ status: passing 2/2
 - Implementation lives in `src/k8s/http-sidecar-runner.ts`.
 - LLM-dependence: **none**.
 
-status: drafted
+status: passing 1/1
 
 ## Story 164: HTTP-sidecar Follow-up Message Flow — multi-turn tool sessions
 
