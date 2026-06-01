@@ -2269,3 +2269,81 @@ status: passing 3/3
 - LLM-dependence: **none** (mock LLM).
 
 status: passing 1/1
+
+## Story 91: Per-specialist `maxToolRounds` budget caps tool-loop iteration
+
+**As a** KubeClaw operator running specialists with cost or latency constraints
+**I want** to cap how many tool-call rounds a specialist's LLM may execute by setting `overrides.maxToolRounds`
+**So that** a runaway specialist cannot consume unbounded tool budget or wall-clock time within a single turn
+
+### Acceptance criteria
+
+1. When the specialist override `maxToolRounds` is set BELOW the default, the runner stops issuing further tool-call rounds once that count is reached — even if the LLM continues to request tools.
+2. When `maxToolRounds` is not set in overrides, the runner uses the module-level default `MAX_TOOL_ROUNDS = 10`.
+3. The cap applies at the per-`runAgent` call boundary, not the per-process lifetime — different invocations get fresh budgets.
+4. Reaching the cap does NOT throw; the runner completes its current round and returns whatever output it has, marking the result as `success` (not `error`).
+5. The behavior is deterministic against a mocked Redis xadd/xread loop that synthesises a constant tool result, so the test is fast and offline.
+
+### Notes for the test author
+
+- Test file: `src/runtime/direct-llm-runner.test.ts` — `describe('DirectLLMRunner — tool-round budget', ...)` block at line 952.
+- Run with: `npm test -- src/runtime/direct-llm-runner.test.ts -t "tool-round budget"` (2 tests in the block).
+- Harness: vitest default config (NOT e2e); fully in-process with mocked Redis. **No Kubernetes required, no LLM call.**
+- Implementation lives in `src/runtime/direct-llm-runner.ts` (`MAX_TOOL_ROUNDS` constant, override threading through `runAgent`/`runSpecialist` codepaths).
+- Closes Plan 5 from `docs/aspirational-stories-and-plans.md` (per-specialist tool budgets).
+- Scope: integration-level. The e2e budget enforcement against a live LLM is not promoted here — that would require a deterministic LLM that always wants more tool rounds, which the in-process mock does not provide.
+- LLM-dependence: **none** (mocked).
+
+status: drafted
+
+## Story 92: Once-task with overdue `next_run` fires exactly once on next scheduler poll
+
+**As a** KubeClaw user who scheduled a reminder via `set_reminder` while the orchestrator was down
+**I want** the task to fire on the next scheduler poll after the orchestrator restarts, regardless of how long ago the fire time passed
+**So that** my reminder is not silently dropped just because the system was unavailable when it was originally due
+
+### Acceptance criteria
+
+1. A once-task with `next_run` 48 hours in the past appears in `getDueTasks()` — overdue tasks are not filtered out by an upper time bound.
+2. After firing, `updateTaskAfterRun(id, null, 'Completed')` sets the row's `status` to `completed` (with `next_run = null`).
+3. A completed once-task does NOT reappear in `getDueTasks()` — completed-status rows are excluded so a re-run cannot occur.
+4. The semantics are testable purely against the SQLite layer (`createTask` + `getDueTasks` + `updateTaskAfterRun` + `getTaskById`) without the scheduler loop running.
+5. These behaviors compose into the user-visible guarantee: missed-then-restored orchestrator delivers the reminder on first poll after restart, and exactly once.
+
+### Notes for the test author
+
+- Test file: `src/task-scheduler.test.ts` — `describe('once-task missed-fire DB semantics', ...)` block at line 431.
+- Run with: `npm test -- src/task-scheduler.test.ts -t "missed-fire"` (3 tests in the block: overdue appears, updateTaskAfterRun-completed, no-refire).
+- Harness: vitest default config; in-memory SQLite via `_initTestDatabase()`. **No Kubernetes required, no LLM call.**
+- Implementation lives in `src/task-scheduler.ts` and `src/db.ts` (`createTask`, `getDueTasks`, `updateTaskAfterRun`).
+- Closes Plan 8 from `docs/aspirational-stories-and-plans.md` (missed-fire regression tests for once-tasks).
+- Scope: this story covers the DB semantics that the missed-fire behavior relies on. The full lifecycle (orchestrator down → restart → reminder delivered via Redis pub/sub) is a separate story.
+- LLM-dependence: **none**.
+
+status: drafted
+
+## Story 93: Brave Search catalog entry renders correctly in the credential-broker ConfigMap
+
+**As a** KubeClaw operator configuring Brave Search as a web-search backend
+**I want** the helm chart's `credentialInjection.catalog[]` to accept a `brave-search` entry and render the broker ConfigMap with the correct host and header rules
+**So that** the credential broker stamps `X-Subscription-Token` against `api.search.brave.com` and forwards calls without leaking the API key into the rendered YAML
+
+### Acceptance criteria
+
+1. `helm template --set credentialInjection.mode=sidecar --set credentialInjection.catalog[0].id=brave-search ...` renders the broker ConfigMap with `api.search.brave.com` as a configured host.
+2. The rendered ConfigMap includes `BRAVE_API_KEY` as the named env-var binding for the catalog entry.
+3. The catalog entry parses with `allowedPositions: header` (the credential is stamped as a header, not a query parameter — verified by the rendered chart shape).
+4. Real Brave API key values are not embedded in the rendered YAML — the secret-scrub invariant from the sibling `describe('secret-scrub invariant: ...')` block still holds when `brave-search` is in the catalog.
+5. Both `mode=sidecar` and `mode=istio` produce valid renders with the brave-search entry (no chart-template errors).
+
+### Notes for the test author
+
+- Test file: `e2e/credential-injection-integration.test.ts` — `describe('brave-search catalog entry renders correctly', ...)` block at line 79.
+- Run with: `npm run test:e2e -- credential-injection-integration -t "brave-search"` (2 tests in the block).
+- Harness: vitest e2e config; the test shells out to `helm template` and asserts on the rendered YAML. **No Kubernetes cluster required, no live Brave API call.**
+- Implementation lives in `helm/kubeclaw/templates/credential-broker-configmap.yaml` (and chart values for catalog defaults).
+- Closes Plan 3 from `docs/aspirational-stories-and-plans.md` (structured-results web-search backend) at the chart-wiring level.
+- Scope: this story covers chart rendering and config wiring ONLY. The runtime path (tool-server actually calls `api.search.brave.com` and returns JSON results) is tested separately in `e2e/minikube-live-browser.test.ts` and is gated on a Brave API key, which this story does NOT require.
+- LLM-dependence: **none**.
+
+status: drafted
