@@ -1,4 +1,18 @@
 {{/*
+Resolve the namespace for all kubeclaw resources.
+
+Uses .Values.namespace when explicitly set (legacy override path), otherwise
+falls back to .Release.Namespace (the --namespace flag passed to helm install/upgrade).
+This ensures that two Helm releases installed into different namespaces never
+share resources — fixing the multi-release collision described in Story 165.
+
+Usage: {{ include "kubeclaw.namespace" . }}
+*/}}
+{{- define "kubeclaw.namespace" -}}
+{{- .Values.namespace | default .Release.Namespace -}}
+{{- end -}}
+
+{{/*
 Full image reference for a named kubeclaw image.
 Usage: include "kubeclaw.image" (dict "root" . "name" "kubeclaw-orchestrator")
 */}}
@@ -164,7 +178,7 @@ than a bare slice (Helm's fromJson cannot range over a top-level JSON array).
         "port" 80
         "upstreamPort" 80
         "upstreamProtocol" "HTTP"
-        "endpointAddress" (printf "kubeclaw-mock-upstream.%s.svc.cluster.local" .Values.namespace)) -}}
+        "endpointAddress" (printf "kubeclaw-mock-upstream.%s.svc.cluster.local" (include "kubeclaw.namespace" .))) -}}
 {{- end -}}
 {{- toJson (dict "items" (concat $built_in $extra $test)) -}}
 {{- end -}}

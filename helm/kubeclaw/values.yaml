@@ -1,7 +1,10 @@
 # Default values for kubeclaw.
 
 # Kubernetes namespace to install into.
-namespace: kubeclaw
+# Leave empty (or unset) to use the --namespace flag passed to helm install/upgrade.
+# Setting this overrides .Release.Namespace and is preserved for backward compatibility
+# with existing installations that pin the namespace explicitly.
+namespace: ""
 
 image:
   # Container registry prefix. Empty = use local images (imagePullPolicy: Never).

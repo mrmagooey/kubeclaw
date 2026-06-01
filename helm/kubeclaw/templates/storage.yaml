@@ -4,7 +4,7 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: kubeclaw-groups
-  namespace: {{ .Values.namespace }}
+  namespace: {{ include "kubeclaw.namespace" . }}
 spec:
   accessModes:
     - {{ .Values.storage.accessMode }}
@@ -18,7 +18,7 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: kubeclaw-sessions
-  namespace: {{ .Values.namespace }}
+  namespace: {{ include "kubeclaw.namespace" . }}
 spec:
   accessModes:
     - {{ .Values.storage.accessMode }}
@@ -32,7 +32,7 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: kubeclaw-project
-  namespace: {{ .Values.namespace }}
+  namespace: {{ include "kubeclaw.namespace" . }}
 spec:
   accessModes:
     - {{ .Values.storage.accessMode }}
@@ -46,7 +46,7 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: kubeclaw-store
-  namespace: {{ .Values.namespace }}
+  namespace: {{ include "kubeclaw.namespace" . }}
 spec:
   accessModes:
     - ReadWriteOnce
@@ -65,7 +65,7 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: kubeclaw-channel-{{ $name }}-groups
-  namespace: {{ $.Values.namespace }}
+  namespace: {{ include "kubeclaw.namespace" $ }}
   annotations:
     helm.sh/resource-policy: keep
 spec:
@@ -80,7 +80,7 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: kubeclaw-channel-{{ $name }}-store
-  namespace: {{ $.Values.namespace }}
+  namespace: {{ include "kubeclaw.namespace" $ }}
   annotations:
     helm.sh/resource-policy: keep
 spec:
@@ -95,7 +95,7 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: kubeclaw-channel-{{ $name }}-sessions
-  namespace: {{ $.Values.namespace }}
+  namespace: {{ include "kubeclaw.namespace" $ }}
 spec:
   accessModes:
     - ReadWriteOnce

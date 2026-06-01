@@ -4,7 +4,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: kubeclaw-runner-wrapper
-  namespace: {{ .Values.namespace }}
+  namespace: {{ include "kubeclaw.namespace" . }}
 data:
   runner-wrapper.sh: |
     #!/bin/sh
@@ -68,7 +68,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: kubeclaw-wrapper-script
-  namespace: {{ .Values.namespace }}
+  namespace: {{ include "kubeclaw.namespace" . }}
 data:
   runner-wrapper.sh: |
     #!/bin/sh

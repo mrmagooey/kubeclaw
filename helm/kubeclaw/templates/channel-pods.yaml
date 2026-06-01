@@ -5,7 +5,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: kubeclaw-channel-{{ $name }}
-  namespace: {{ $.Values.namespace }}
+  namespace: {{ include "kubeclaw.namespace" $ }}
 spec:
   replicas: 1
   selector:
@@ -242,7 +242,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: kubeclaw-channel-{{ $name }}-ingress
-  namespace: {{ $.Values.namespace }}
+  namespace: {{ include "kubeclaw.namespace" $ }}
 spec:
   podSelector:
     matchLabels:
@@ -259,7 +259,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: kubeclaw-channel-{{ $name }}
-  namespace: {{ $.Values.namespace }}
+  namespace: {{ include "kubeclaw.namespace" $ }}
 spec:
   selector:
     app: kubeclaw-channel-{{ $name }}
@@ -276,7 +276,7 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: kubeclaw-channel-{{ $name }}
-  namespace: {{ $.Values.namespace }}
+  namespace: {{ include "kubeclaw.namespace" $ }}
   {{- if $cfg.ingress.annotations }}
   annotations:
     {{- toYaml $cfg.ingress.annotations | nindent 4 }}
@@ -307,7 +307,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: kubeclaw-channel-{{ $name }}-metrics
-  namespace: {{ $.Values.namespace }}
+  namespace: {{ include "kubeclaw.namespace" $ }}
   labels:
     app: kubeclaw-channel-{{ $name }}
     kubeclaw/channel: {{ $name }}

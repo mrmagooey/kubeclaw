@@ -6,7 +6,7 @@ apiVersion: cert-manager.io/v1
 kind: Issuer
 metadata:
   name: kubeclaw-egress-ca-bootstrap
-  namespace: {{ .Values.namespace }}
+  namespace: {{ include "kubeclaw.namespace" . }}
 spec:
   selfSigned: {}
 ---
@@ -14,7 +14,7 @@ apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
   name: kubeclaw-egress-ca
-  namespace: {{ .Values.namespace }}
+  namespace: {{ include "kubeclaw.namespace" . }}
   annotations:
     helm.sh/resource-policy: keep
 spec:
@@ -34,7 +34,7 @@ apiVersion: cert-manager.io/v1
 kind: Issuer
 metadata:
   name: kubeclaw-egress-ca
-  namespace: {{ .Values.namespace }}
+  namespace: {{ include "kubeclaw.namespace" . }}
 spec:
   ca:
     secretName: kubeclaw-egress-ca-tls

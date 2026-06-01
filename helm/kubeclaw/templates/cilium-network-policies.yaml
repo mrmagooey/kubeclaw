@@ -7,7 +7,7 @@ apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
   name: kubeclaw-agent-egress
-  namespace: {{ .Values.namespace }}
+  namespace: {{ include "kubeclaw.namespace" . }}
 spec:
   endpointSelector:
     matchLabels:
@@ -27,7 +27,7 @@ spec:
   # Redis — in-namespace only.
   - toEndpoints:
     - matchLabels:
-        "k8s:io.kubernetes.pod.namespace": {{ .Values.namespace }}
+        "k8s:io.kubernetes.pod.namespace": {{ include "kubeclaw.namespace" . }}
         app: kubeclaw-redis
     toPorts:
     - ports:
@@ -50,7 +50,7 @@ apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
   name: kubeclaw-orchestrator-egress
-  namespace: {{ .Values.namespace }}
+  namespace: {{ include "kubeclaw.namespace" . }}
 spec:
   endpointSelector:
     matchLabels:
@@ -70,7 +70,7 @@ spec:
   # Redis
   - toEndpoints:
     - matchLabels:
-        "k8s:io.kubernetes.pod.namespace": {{ .Values.namespace }}
+        "k8s:io.kubernetes.pod.namespace": {{ include "kubeclaw.namespace" . }}
         app: kubeclaw-redis
     toPorts:
     - ports:
@@ -106,7 +106,7 @@ apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
   name: kubeclaw-channel-egress
-  namespace: {{ .Values.namespace }}
+  namespace: {{ include "kubeclaw.namespace" . }}
 spec:
   endpointSelector:
     matchExpressions:
@@ -127,7 +127,7 @@ spec:
   # Redis
   - toEndpoints:
     - matchLabels:
-        "k8s:io.kubernetes.pod.namespace": {{ .Values.namespace }}
+        "k8s:io.kubernetes.pod.namespace": {{ include "kubeclaw.namespace" . }}
         app: kubeclaw-redis
     toPorts:
     - ports:
@@ -153,7 +153,7 @@ apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
   name: kubeclaw-tool-pod-egress
-  namespace: {{ .Values.namespace }}
+  namespace: {{ include "kubeclaw.namespace" . }}
 spec:
   endpointSelector:
     matchExpressions:
@@ -175,7 +175,7 @@ spec:
   # Redis
   - toEndpoints:
     - matchLabels:
-        "k8s:io.kubernetes.pod.namespace": {{ .Values.namespace }}
+        "k8s:io.kubernetes.pod.namespace": {{ include "kubeclaw.namespace" . }}
         app: kubeclaw-redis
     toPorts:
     - ports:

@@ -9,7 +9,7 @@ apiVersion: networking.istio.io/v1
 kind: ServiceEntry
 metadata:
   name: kubeclaw-egress-{{ index $dest "host" | replace "." "-" | replace ":" "-" }}
-  namespace: {{ $.Values.namespace }}
+  namespace: {{ include "kubeclaw.namespace" $ }}
 spec:
   hosts:
     - {{ index $dest "host" }}

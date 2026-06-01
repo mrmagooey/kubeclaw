@@ -32,7 +32,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: kubeclaw-broker-ingress-istio
-  namespace: {{ .Values.namespace }}
+  namespace: {{ include "kubeclaw.namespace" . }}
 spec:
   podSelector:
     matchLabels:
@@ -63,7 +63,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: kubeclaw-workload-egress-restricted-istio-tool-pod
-  namespace: {{ .Values.namespace }}
+  namespace: {{ include "kubeclaw.namespace" . }}
 spec:
   podSelector:
     matchLabels:
@@ -97,7 +97,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: kubeclaw-workload-egress-restricted-istio-sidecar-tool
-  namespace: {{ .Values.namespace }}
+  namespace: {{ include "kubeclaw.namespace" . }}
 spec:
   podSelector:
     matchLabels:
@@ -126,7 +126,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: kubeclaw-workload-egress-restricted-istio-channel
-  namespace: {{ .Values.namespace }}
+  namespace: {{ include "kubeclaw.namespace" . }}
 spec:
   podSelector:
     matchExpressions:
@@ -155,7 +155,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: kubeclaw-workload-egress-restricted-istio-capability
-  namespace: {{ .Values.namespace }}
+  namespace: {{ include "kubeclaw.namespace" . }}
 spec:
   podSelector:
     matchExpressions:

@@ -20,7 +20,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: kubeclaw-workload-egress-restricted-tool-pod
-  namespace: {{ .Values.namespace }}
+  namespace: {{ include "kubeclaw.namespace" . }}
 spec:
   podSelector:
     matchLabels:
@@ -44,7 +44,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: kubeclaw-workload-egress-restricted-sidecar-tool
-  namespace: {{ .Values.namespace }}
+  namespace: {{ include "kubeclaw.namespace" . }}
 spec:
   podSelector:
     matchLabels:
@@ -68,7 +68,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: kubeclaw-workload-egress-restricted-channel
-  namespace: {{ .Values.namespace }}
+  namespace: {{ include "kubeclaw.namespace" . }}
 spec:
   podSelector:
     matchExpressions:
@@ -92,7 +92,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: kubeclaw-workload-egress-restricted-capability
-  namespace: {{ .Values.namespace }}
+  namespace: {{ include "kubeclaw.namespace" . }}
 spec:
   podSelector:
     matchExpressions:

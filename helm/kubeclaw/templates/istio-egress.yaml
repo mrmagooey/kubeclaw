@@ -9,7 +9,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: kubeclaw-istio-egressgateway
-  namespace: {{ .Values.namespace }}
+  namespace: {{ include "kubeclaw.namespace" . }}
   labels:
     app: kubeclaw-istio-egressgateway
     istio: kubeclaw-egressgateway
@@ -46,13 +46,13 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: kubeclaw-istio-egressgateway
-  namespace: {{ .Values.namespace }}
+  namespace: {{ include "kubeclaw.namespace" . }}
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: kubeclaw-istio-egressgateway
-  namespace: {{ .Values.namespace }}
+  namespace: {{ include "kubeclaw.namespace" . }}
   labels:
     app: kubeclaw-istio-egressgateway
     istio: kubeclaw-egressgateway
@@ -75,7 +75,7 @@ apiVersion: networking.istio.io/v1
 kind: Gateway
 metadata:
   name: kubeclaw-egressgateway
-  namespace: {{ .Values.namespace }}
+  namespace: {{ include "kubeclaw.namespace" . }}
 spec:
   selector:
     istio: kubeclaw-egressgateway
@@ -97,7 +97,7 @@ apiVersion: networking.istio.io/v1
 kind: VirtualService
 metadata:
   name: kubeclaw-egress-routing
-  namespace: {{ .Values.namespace }}
+  namespace: {{ include "kubeclaw.namespace" . }}
 spec:
   hosts:
 {{- range $dest := $destinations }}
@@ -115,7 +115,7 @@ spec:
             exact: {{ index $dest "host" }}
       route:
         - destination:
-            host: kubeclaw-istio-egressgateway.{{ $.Values.namespace }}.svc.cluster.local
+            host: kubeclaw-istio-egressgateway.{{ include "kubeclaw.namespace" $ }}.svc.cluster.local
             port: { number: 80 }
     - match:
         - gateways: [kubeclaw-egressgateway]
@@ -137,7 +137,7 @@ apiVersion: security.istio.io/v1beta1
 kind: PeerAuthentication
 metadata:
   name: kubeclaw-egressgateway-strict
-  namespace: {{ $.Values.namespace }}
+  namespace: {{ include "kubeclaw.namespace" $ }}
 spec:
   selector:
     matchLabels:
@@ -155,7 +155,7 @@ apiVersion: networking.istio.io/v1
 kind: DestinationRule
 metadata:
   name: kubeclaw-egress-tls-{{ index $dest "host" | replace "." "-" | replace ":" "-" }}
-  namespace: {{ $.Values.namespace }}
+  namespace: {{ include "kubeclaw.namespace" $ }}
 spec:
   host: {{ index $dest "host" }}
   trafficPolicy:

@@ -9,7 +9,7 @@ apiVersion: networking.istio.io/v1
 kind: Sidecar
 metadata:
   name: kubeclaw-egress-restriction
-  namespace: {{ .Values.namespace }}
+  namespace: {{ include "kubeclaw.namespace" . }}
 spec:
   egress:
     # Single catch-all egress listener (port unset). Istio's Sidecar validator

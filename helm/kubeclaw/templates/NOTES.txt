@@ -1,4 +1,4 @@
-KubeClaw has been deployed to namespace "{{ .Values.namespace }}".
+KubeClaw has been deployed to namespace "{{ include "kubeclaw.namespace" . }}".
 
 === Next Step: Add a Channel ===
 
@@ -6,7 +6,7 @@ Open the admin shell to connect a messaging channel.
 
 Exec (interactive terminal inside the pod):
 
-  kubectl exec -it deployment/kubeclaw-orchestrator -n {{ .Values.namespace }} -- node dist/admin-shell.js
+  kubectl exec -it deployment/kubeclaw-orchestrator -n {{ include "kubeclaw.namespace" . }} -- node dist/admin-shell.js
 
 HTTP browser UI — set these env vars in the orchestrator Deployment and expose via Service + Ingress:
 
@@ -19,13 +19,13 @@ It will ask for credentials, create the channel pod, and register your first gro
 
 === Status ===
 
-  kubectl get pods -n {{ .Values.namespace }}
-  kubectl logs -f deployment/kubeclaw-orchestrator -n {{ .Values.namespace }}
+  kubectl get pods -n {{ include "kubeclaw.namespace" . }}
+  kubectl logs -f deployment/kubeclaw-orchestrator -n {{ include "kubeclaw.namespace" . }}
 
 === Tool Jobs ===
 
-  kubectl get jobs -n {{ .Values.namespace }}
-  kubectl logs job/<job-name> -n {{ .Values.namespace }}
+  kubectl get jobs -n {{ include "kubeclaw.namespace" . }}
+  kubectl logs job/<job-name> -n {{ include "kubeclaw.namespace" . }}
 
 {{- if not .Values.secrets.anthropicApiKey }}
 
@@ -35,7 +35,7 @@ tool jobs will fail. Add credentials:
   helm upgrade kubeclaw ./helm/kubeclaw \
     --set secrets.anthropicApiKey=YOUR_KEY \
     --set secrets.claudeCodeOauthToken=YOUR_TOKEN \
-    -n {{ .Values.namespace }}
+    -n {{ include "kubeclaw.namespace" . }}
 {{- end }}
 
 {{- if eq .Values.storage.accessMode "ReadWriteOnce" }}

@@ -3,14 +3,14 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: kubeclaw-orchestrator
-  namespace: {{ .Values.namespace }}
+  namespace: {{ include "kubeclaw.namespace" . }}
 ---
 # Grants the orchestrator permission to create/list/delete tool Jobs and read pod logs.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: kubeclaw-job-manager
-  namespace: {{ .Values.namespace }}
+  namespace: {{ include "kubeclaw.namespace" . }}
 rules:
   - apiGroups: ["batch"]
     resources: ["jobs"]
@@ -57,11 +57,11 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: kubeclaw-orchestrator-binding
-  namespace: {{ .Values.namespace }}
+  namespace: {{ include "kubeclaw.namespace" . }}
 subjects:
   - kind: ServiceAccount
     name: kubeclaw-orchestrator
-    namespace: {{ .Values.namespace }}
+    namespace: {{ include "kubeclaw.namespace" . }}
 roleRef:
   kind: Role
   name: kubeclaw-job-manager
@@ -71,7 +71,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: kubeclaw-orchestrator
-  namespace: {{ .Values.namespace }}
+  namespace: {{ include "kubeclaw.namespace" . }}
 spec:
   replicas: {{ .Values.orchestrator.replicas }}
   selector:
@@ -155,7 +155,7 @@ spec:
             - name: KUBECLAW_RUNTIME
               value: kubernetes
             - name: KUBECLAW_NAMESPACE
-              value: {{ .Values.namespace }}
+              value: {{ include "kubeclaw.namespace" . }}
             - name: KUBECLAW_IPC_BASE
               value: /data/sessions
             - name: MAX_CONCURRENT_JOBS
@@ -300,7 +300,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: kubeclaw-admin
-  namespace: {{ .Values.namespace }}
+  namespace: {{ include "kubeclaw.namespace" . }}
 spec:
   selector:
     app: kubeclaw-orchestrator
@@ -316,7 +316,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: kubeclaw-orchestrator
-  namespace: {{ .Values.namespace }}
+  namespace: {{ include "kubeclaw.namespace" . }}
 spec:
   selector:
     app: kubeclaw-orchestrator

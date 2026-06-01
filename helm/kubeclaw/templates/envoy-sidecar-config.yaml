@@ -12,7 +12,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: kubeclaw-envoy-sidecar
-  namespace: {{ .Values.namespace }}
+  namespace: {{ include "kubeclaw.namespace" . }}
   labels:
     kubeclaw.io/component: credential-sidecar
 data:
@@ -40,7 +40,7 @@ data:
                           transport_api_version: V3
                           http_service:
                             server_uri:
-                              uri: http://kubeclaw-credential-broker.{{ .Values.namespace }}.svc:{{ .Values.credentialInjection.broker.port }}
+                              uri: http://kubeclaw-credential-broker.{{ include "kubeclaw.namespace" . }}.svc:{{ .Values.credentialInjection.broker.port }}
                               cluster: credential_broker
                               timeout: 2s
                             path_prefix: /authz
@@ -106,7 +106,7 @@ data:
                   - endpoint:
                       address:
                         socket_address:
-                          address: kubeclaw-credential-broker.{{ .Values.namespace }}.svc
+                          address: kubeclaw-credential-broker.{{ include "kubeclaw.namespace" . }}.svc
                           port_value: {{ .Values.credentialInjection.broker.port }}
         - name: dynamic_forward_cluster
           lb_policy: CLUSTER_PROVIDED

@@ -843,6 +843,91 @@ describe('ClusterRoleBinding name is release-scoped (collision regression)', () 
   });
 });
 
+// ─── Story-165 regression: namespace-scoped resources follow --namespace ──────
+//
+// Before the fix, every resource had `namespace: kubeclaw` (from values.yaml
+// default) regardless of the --namespace flag, causing install collisions.
+// After the fix, the helper kubeclaw.namespace resolves to .Release.Namespace
+// when .Values.namespace is empty, so all resources land in the correct namespace.
+describe('helm template — namespace isolation (story-165 regression)', () => {
+  it('all namespace-scoped resources carry the --namespace value, never a hardcoded default', () => {
+    const result = spawnSync(
+      'helm',
+      [
+        'template', 'kubeclaw-helm-test', CHART_DIR,
+        '--namespace', 'foobar-test',
+        '--set', 'secrets.anthropicApiKey=test',
+        '--set', 'secrets.claudeCodeOauthToken=test',
+        '--set', 'redis.password=test',
+      ],
+      { encoding: 'utf8' },
+    );
+    expect(result.status, result.stderr).toBe(0);
+
+    // Parse out every `namespace:` line (handles both 2- and 4-space indent).
+    const namespaceLines = result.stdout
+      .split('\n')
+      .filter((line) => /^\s+namespace:/.test(line))
+      .map((line) => line.trim());
+
+    // There must be at least one namespace-scoped resource.
+    expect(namespaceLines.length).toBeGreaterThan(0);
+
+    for (const line of namespaceLines) {
+      expect(line, `Expected 'namespace: foobar-test', got: '${line}'`).toBe(
+        'namespace: foobar-test',
+      );
+    }
+
+    // Explicit check: the legacy default 'kubeclaw' must never appear.
+    expect(result.stdout).not.toMatch(/^\s+namespace:\s+kubeclaw\s*$/m);
+  });
+
+  it('two parallel installs into different namespaces produce non-overlapping resource namespaces', () => {
+    const renderNs = (releaseName: string, ns: string) =>
+      spawnSync(
+        'helm',
+        [
+          'template', releaseName, CHART_DIR,
+          '--namespace', ns,
+          '--set', 'secrets.anthropicApiKey=test',
+          '--set', 'secrets.claudeCodeOauthToken=test',
+          '--set', 'redis.password=test',
+        ],
+        { encoding: 'utf8' },
+      );
+
+    const alpha = renderNs('kubeclaw', 'kubeclaw');
+    const beta = renderNs('kubeclaw-helm-test', 'kubeclaw-helm-test');
+
+    expect(alpha.status, alpha.stderr).toBe(0);
+    expect(beta.status, beta.stderr).toBe(0);
+
+    // Alpha resources must all be in 'kubeclaw', not 'kubeclaw-helm-test'.
+    const alphaNamespaceLines = alpha.stdout
+      .split('\n')
+      .filter((line) => /^\s+namespace:/.test(line))
+      .map((line) => line.trim());
+    for (const line of alphaNamespaceLines) {
+      expect(line, `Alpha resource should be in kubeclaw, got: '${line}'`).toBe(
+        'namespace: kubeclaw',
+      );
+    }
+
+    // Beta resources must all be in 'kubeclaw-helm-test', not 'kubeclaw'.
+    const betaNamespaceLines = beta.stdout
+      .split('\n')
+      .filter((line) => /^\s+namespace:/.test(line))
+      .map((line) => line.trim());
+    for (const line of betaNamespaceLines) {
+      expect(
+        line,
+        `Beta resource should be in kubeclaw-helm-test, got: '${line}'`,
+      ).toBe('namespace: kubeclaw-helm-test');
+    }
+  });
+});
+
 describe('helm template — mode=istio', () => {
   const render = (extraArgs = '') =>
     execSync(

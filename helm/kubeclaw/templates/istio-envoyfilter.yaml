@@ -8,7 +8,7 @@ apiVersion: networking.istio.io/v1alpha3
 kind: EnvoyFilter
 metadata:
   name: kubeclaw-credential-authz
-  namespace: {{ .Values.namespace }}
+  namespace: {{ include "kubeclaw.namespace" . }}
 spec:
   workloadSelector:
     labels:
@@ -65,8 +65,8 @@ spec:
             "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz
             http_service:
               server_uri:
-                uri: http://kubeclaw-credential-broker.{{ .Values.namespace }}.svc.cluster.local:{{ .Values.credentialInjection.broker.port }}
-                cluster: outbound|{{ .Values.credentialInjection.broker.port }}||kubeclaw-credential-broker.{{ .Values.namespace }}.svc.cluster.local
+                uri: http://kubeclaw-credential-broker.{{ include "kubeclaw.namespace" . }}.svc.cluster.local:{{ .Values.credentialInjection.broker.port }}
+                cluster: outbound|{{ .Values.credentialInjection.broker.port }}||kubeclaw-credential-broker.{{ include "kubeclaw.namespace" . }}.svc.cluster.local
                 timeout: 5s
               path_prefix: /authz
               authorization_request:
