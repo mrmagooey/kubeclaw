@@ -4075,4 +4075,4 @@ status: drafted
 - Implementation lives in `helm/kubeclaw/templates/credential-broker-*.yaml` and chart values defaults.
 - LLM-dependence: **none**.
 
-status: drafted
+status: blocked — static `helm template` tests are gated by `e2e/helm-chart.test.ts`'s file-level `beforeAll` that does a full `helm install` into `kubeclaw-helm-test` and waits 60s for Redis Ready. Install fails with NetworkPolicy ownership-metadata collision against the long-running `kubeclaw` namespace install (`kubeclaw-workload-egress-restricted-tool-pod` exists owned by release `kubeclaw`, not `kubeclaw-helm-test`). Unblock paths: (a) extract static-template describe blocks into a sibling file with no `beforeAll`, or (b) make cluster-scoped/cross-namespace resources release-aware. The mode=sidecar tests themselves are fine — blocked by suite-level wiring, not implementation.
