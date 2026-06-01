@@ -3187,7 +3187,7 @@ status: passing 5/5
 - Implementation lives in `src/channel-runner.ts`.
 - LLM-dependence: **none**.
 
-status: drafted
+status: passing 4/4
 
 ## Story 129: Redis Connection Timeout — connect attempt fails fast on unreachable host
 
