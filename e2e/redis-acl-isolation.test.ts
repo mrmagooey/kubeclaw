@@ -78,23 +78,20 @@ function redisCli(
 ): string {
   const adminPwd = getRedisAdminPassword();
 
-  let authFlags: string;
-  if (auth) {
-    // Escape the password for sh -c single-quote context by ending the quote,
-    // inserting an escaped single quote, then reopening. redis-cli -a flag.
-    const safePwd = auth.password.replace(/'/g, "'\\''");
-    authFlags = `--user ${auth.username} -a '${safePwd}'`;
-  } else {
-    const safePwd = adminPwd.replace(/'/g, "'\\''");
-    authFlags = `--user orchestrator -a '${safePwd}'`;
-  }
+  // Passwords are alphanumeric (Helm randAlphaNum) or base64url (job ACLs),
+  // so they never contain shell-special characters.  We pass the entire
+  // shellCmd through JSON.stringify so it arrives as a double-quoted string to
+  // sh -c.  This avoids the single-quote quoting problem that arises when cmd
+  // contains redis-cli argument literals like '*' (used by XADD auto-ID).
+  const username = auth ? auth.username : 'orchestrator';
+  const password = auth ? auth.password : adminPwd;
+  const authFlags = `--user ${username} -a ${password}`;
 
-  // Use sh -c so that shell word-splitting handles the auth flags properly.
   const shellCmd = `redis-cli --no-auth-warning ${authFlags} ${cmd}`;
 
   try {
     return execSync(
-      `kubectl -n ${NS} exec kubeclaw-redis-0 -- sh -c '${shellCmd}'`,
+      `kubectl -n ${NS} exec kubeclaw-redis-0 -- sh -c ${JSON.stringify(shellCmd)}`,
       { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 15_000 },
     ).trim();
   } catch (e: any) {
@@ -112,7 +109,14 @@ function redisCli(
 function orchestratorNode(script: string, timeout = 30_000): string {
   // The orchestrator runs the compiled JS at /app/dist/index.js.
   // We target the same node binary and module resolution context.
-  const wrapped = `(async () => { ${script} })().catch(e => { process.stderr.write(String(e)); process.exit(1); });`;
+  //
+  // IMPORTANT: the script must be single-line when passed to the shell via
+  // JSON.stringify — the shell does NOT expand \n in double-quoted strings to
+  // actual newlines, so literal backslash-n sequences in source text would cause
+  // SyntaxError. We strip newlines and leading whitespace so statements
+  // (already terminated with `;`) run safely on one line.
+  const oneLiner = script.replace(/\n\s*/g, ' ');
+  const wrapped = `(async () => { ${oneLiner} })().catch(e => { process.stderr.write(String(e)); process.exit(1); });`;
   return execSync(
     `kubectl -n ${NS} exec deploy/kubeclaw-orchestrator -- node --input-type=module -e ${JSON.stringify(wrapped)}`,
     { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], timeout },
@@ -120,26 +124,47 @@ function orchestratorNode(script: string, timeout = 30_000): string {
 }
 
 /**
- * Read a value from SQLite inside the orchestrator pod.
- * Returns trimmed stdout.
+ * Read a single column value from SQLite inside the orchestrator pod using Node.js.
+ * The sql.js database is used instead of the sqlite3 CLI (not available in the image).
+ * Returns the first column of the first row, or empty string if no rows.
  */
 function sqliteQuery(sql: string): string {
-  return execSync(
-    `kubectl -n ${NS} exec deploy/kubeclaw-orchestrator -- sqlite3 /data/kubeclaw.db ${JSON.stringify(sql)}`,
-    { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 10_000 },
-  ).trim();
+  const raw = orchestratorNode(
+    `const dbModule = await import('/app/dist/db.js');
+     await dbModule.initDatabase();
+     const result = dbModule.db.exec(${JSON.stringify(sql)});
+     const value = result.length > 0 && result[0].values.length > 0 ? String(result[0].values[0][0]) : '';
+     process.stdout.write('SQLRESULT:' + value);
+     process.exit(0);`,
+    15_000,
+  );
+  const marker = 'SQLRESULT:';
+  // Find the marker in raw output (may be mixed with log lines)
+  const idx = raw.indexOf(marker);
+  if (idx === -1) {
+    throw new Error(`sqliteQuery: no SQLRESULT marker in output: ${raw}`);
+  }
+  return raw.slice(idx + marker.length).trim();
 }
 
 /**
  * Invoke createJobACL(jobId, groupFolder) on the ACLManager running inside the orchestrator.
  * The orchestrator pod has all env vars (REDIS_URL, REDIS_ADMIN_PASSWORD, ACL_ENCRYPTION_KEY)
  * already set — we just import the manager and call the method.
+ *
+ * Note: dynamic import() is used because the script runs inside an async IIFE where
+ * top-level static `import` declarations are not permitted. initDatabase() must be
+ * called before ACL operations because the fresh node process starts without it.
  */
 function createJobACL(jobId: string, groupFolder: string): void {
   orchestratorNode(
-    `import { getACLManager } from '/app/dist/k8s/acl-manager.js';
+    `const { initDatabase } = await import('/app/dist/db.js');
+     const { getACLManager } = await import('/app/dist/k8s/acl-manager.js');
+     await initDatabase();
      await getACLManager().createJobACL(${JSON.stringify(jobId)}, ${JSON.stringify(groupFolder)});
-     process.stdout.write('ok');`,
+     process.stdout.write('ok');
+     await getACLManager().close();
+     process.exit(0);`,
     60_000,
   );
 }
@@ -149,9 +174,13 @@ function createJobACL(jobId: string, groupFolder: string): void {
  */
 function revokeJobACL(jobId: string): void {
   orchestratorNode(
-    `import { getACLManager } from '/app/dist/k8s/acl-manager.js';
+    `const { initDatabase } = await import('/app/dist/db.js');
+     const { getACLManager } = await import('/app/dist/k8s/acl-manager.js');
+     await initDatabase();
      await getACLManager().revokeJobACL(${JSON.stringify(jobId)});
-     process.stdout.write('ok');`,
+     process.stdout.write('ok');
+     await getACLManager().close();
+     process.exit(0);`,
     30_000,
   );
 }
@@ -161,13 +190,22 @@ function revokeJobACL(jobId: string): void {
  * Returns { username, password } or throws if not found.
  */
 function getJobCredentials(jobId: string): { username: string; password: string } {
-  const json = orchestratorNode(
-    `import { getACLManager } from '/app/dist/k8s/acl-manager.js';
+  const raw = orchestratorNode(
+    `const { initDatabase } = await import('/app/dist/db.js');
+     const { getACLManager } = await import('/app/dist/k8s/acl-manager.js');
+     await initDatabase();
      const creds = getACLManager().getJobCredentials(${JSON.stringify(jobId)});
-     process.stdout.write(JSON.stringify(creds));`,
+     process.stdout.write('CREDS:' + JSON.stringify(creds));
+     await getACLManager().close();
+     process.exit(0);`,
     15_000,
   );
-  const parsed = JSON.parse(json);
+  // Strip pino log lines (contain "level":) and find the CREDS: marker line.
+  const credsLine = raw.split('\n').find((l) => l.startsWith('CREDS:'));
+  if (!credsLine) {
+    throw new Error(`getJobCredentials(${jobId}): no CREDS marker in output: ${raw}`);
+  }
+  const parsed = JSON.parse(credsLine.slice('CREDS:'.length));
   if (!parsed || !parsed.username || !parsed.password) {
     throw new Error(`getJobCredentials(${jobId}) returned null`);
   }
@@ -193,9 +231,9 @@ function poll(
 
 // ── Suite ────────────────────────────────────────────────────────────────────
 
-// Guard: skip entire suite if the target kind cluster is not reachable.
+// Guard: skip entire suite if the active kubectl cluster is not reachable.
 const clusterReachable =
-  spawnSync('kubectl', ['cluster-info', '--context', 'kind-kubeclaw-e2e-istio'], {
+  spawnSync('kubectl', ['cluster-info'], {
     stdio: 'pipe',
   }).status === 0;
 
@@ -207,12 +245,12 @@ describe.skipIf(!clusterReachable)(
 
     // ── beforeAll: install kubeclaw into isolated namespace ─────────────────
     beforeAll(() => {
-      // Switch kubectl context to the kind cluster for this suite.
-      execSync('kubectl config use-context kind-kubeclaw-e2e-istio', { stdio: 'inherit' });
+      // No explicit context switch — rely on whatever kubectl currently points to.
 
-      // Wait for any lingering namespace deletion from a previous run.
+      // Tear down any leftover namespace from a previous run and wait for it to go away.
+      execSync(`kubectl delete ns ${NS} --wait=false 2>/dev/null || true`, { stdio: 'pipe' });
       execSync(
-        `kubectl wait --for=delete ns/${NS} --timeout=90s 2>/dev/null || true`,
+        `kubectl wait --for=delete ns/${NS} --timeout=120s 2>/dev/null || true`,
         { stdio: 'pipe' },
       );
       execSync(`kubectl create ns ${NS}`, { stdio: 'inherit' });
@@ -248,6 +286,11 @@ describe.skipIf(!clusterReachable)(
           '--set orchestrator.replicas=1',
           '--set orchestrator.admin.enabled=false',
           '--set credentialInjection.mode=off',
+          // Tell helm the secrets were pre-created so it doesn't try to own them.
+          '--set secrets.existingSecret=kubeclaw-secrets',
+          // Null out resource requests so the test can schedule on a resource-saturated cluster.
+          '--set-json \'orchestrator.resources=null\'',
+          '--set-json \'redis.resources=null\'',
           // No channels — keeps the install lean.
         ].join(' '),
         { stdio: 'inherit', timeout: 5 * 60 * 1000 },
