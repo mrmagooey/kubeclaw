@@ -2294,7 +2294,7 @@ status: passing 1/1
 - Scope: integration-level. The e2e budget enforcement against a live LLM is not promoted here — that would require a deterministic LLM that always wants more tool rounds, which the in-process mock does not provide.
 - LLM-dependence: **none** (mocked).
 
-status: drafted
+status: passing 2/2
 
 ## Story 92: Once-task with overdue `next_run` fires exactly once on next scheduler poll
 
