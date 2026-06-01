@@ -3787,4 +3787,4 @@ status: passing 2/2
 - Implementation lives in `helm/kubeclaw/templates/secrets.yaml` (`lookup` pattern) + chart upgrade hooks.
 - LLM-dependence: **none**.
 
-status: drafted
+status: passing 2/2
