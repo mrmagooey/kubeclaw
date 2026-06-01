@@ -2563,4 +2563,4 @@ status: drafted
 - Implementation lives in `src/k8s/redis-acl.ts`, `src/k8s/tool-job.ts`.
 - LLM-dependence: **none**.
 
-status: drafted
+status: passing 2/2
