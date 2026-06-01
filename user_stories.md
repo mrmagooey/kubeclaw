@@ -2731,7 +2731,7 @@ status: passing 1/1
 - Implementation lives in `src/runtime/skill-store.ts`, `src/runtime/skill-curator.ts`, `src/runtime/direct-llm-runner.ts`.
 - LLM-dependence: **none** (stubs).
 
-status: drafted
+status: passing 4/4
 
 ## Story 110: Alpine sidecar tool pod executes a shell command via file-bridge and returns the result
 
