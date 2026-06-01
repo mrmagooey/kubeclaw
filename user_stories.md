@@ -2852,3 +2852,75 @@ status: passing 2/2 — required building + loading `kubeclaw-file-adapter:lates
 - LLM-dependence: **none**.
 
 status: passing 10/10
+
+## Story 115: Trigger detection — only messages matching the group's trigger pattern reach the agent
+
+**As a** KubeClaw user in a busy group chat
+**I want** the assistant to respond only when my message matches the configured trigger (e.g. `@bot` or `claude:`), not to every message
+**So that** the assistant doesn't interrupt unrelated conversation and tool budget isn't burned on irrelevant inbound text
+
+### Acceptance criteria
+
+1. Inbound message containing the configured trigger pattern triggers `runAgent` exactly once.
+2. Inbound message NOT containing the trigger pattern is stored but does NOT trigger `runAgent`.
+3. Multiple trigger patterns (per-group config) all match independently.
+4. Trigger matching is case-insensitive where configured.
+5. The DM channel auto-triggers every message (no trigger pattern needed for direct-message groups).
+
+### Notes for the test author
+
+- Test file: `e2e/user-interaction.test.ts` — `describe('User Interaction: Trigger Detection', ...)` block at line 230.
+- Run with: `npm run test:e2e -- user-interaction -t "Trigger Detection"`.
+- Harness: mocked agent runner + real orchestrator trigger-detection logic. **No Kubernetes required.**
+- Implementation lives in `src/channel-runner.ts` (trigger-match path) and `src/sender-allowlist.ts`.
+- LLM-dependence: **none** (mock agent).
+
+status: drafted
+
+## Story 116: Tool-execution category — full call/response round-trip via tool pod
+
+**As a** KubeClaw user invoking a tool exposed by an `execution`-category tool pod
+**I want** the agent to spawn the pod, publish the call, and receive the response over Redis streams
+**So that** the full tool-invocation path is exercised end-to-end (spawn → call → response → toolresults)
+
+### Acceptance criteria
+
+1. The orchestrator spawns a tool pod for category `execution` in response to a `kubeclaw:spawn-tool-pod` message.
+2. The agent publishes a tool call to `kubeclaw:toolcalls:{agentJobId}:execution`.
+3. The tool pod reads the call (using `lastId='0-0'` so pre-existing calls aren't lost), executes, and writes the response.
+4. The response appears on `kubeclaw:toolresults:{agentJobId}:execution` within the polling interval.
+5. The result content matches expected output.
+
+### Notes for the test author
+
+- Test file: `e2e/tool-execution.test.ts` (2 it() tests).
+- Run with: `npm run test:e2e -- tool-execution`.
+- Harness: requires `requireKubernetes()`. **Requires a live cluster.**
+- Implementation lives in `src/k8s/tool-pod-spawn.ts`, `container/agent-runner/src/tool-server.ts`.
+- LLM-dependence: **none**.
+
+status: drafted
+
+## Story 117: Tool-server idle timeout — pod exits cleanly when no calls arrive
+
+**As a** KubeClaw operator paying for cluster resources
+**I want** a tool-server pod to exit after its idle timeout when no calls arrive, completing the K8s Job
+**So that** the pod is cleaned up automatically and doesn't burn resources waiting indefinitely
+
+### Acceptance criteria
+
+1. A tool pod spawned with a short idle timeout (e.g. 20s) exits when no tool calls arrive within that window.
+2. The corresponding K8s Job reaches `status.succeeded > 0` (not `failed`) — clean exit, not timeout/oomkill.
+3. The exit is exactly once per idle period.
+4. The pod's exit code is 0 (clean termination, not signal-killed).
+5. Repeating the spawn with the same parameters yields the same behavior (deterministic).
+
+### Notes for the test author
+
+- Test file: `e2e/tool-server-idle-timeout.test.ts` (2 it() tests).
+- Run with: `npm run test:e2e -- tool-server-idle-timeout`.
+- Harness: requires `requireKubernetes()`. **Requires a live cluster.**
+- Implementation lives in `container/agent-runner/src/tool-server.ts` (idle-timeout handler).
+- LLM-dependence: **none**.
+
+status: drafted
