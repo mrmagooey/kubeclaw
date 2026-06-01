@@ -2875,7 +2875,7 @@ status: passing 10/10
 - Implementation lives in `src/channel-runner.ts` (trigger-match path) and `src/sender-allowlist.ts`.
 - LLM-dependence: **none** (mock agent).
 
-status: drafted
+status: passing 6/6
 
 ## Story 116: Tool-execution category — full call/response round-trip via tool pod
 
