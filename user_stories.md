@@ -3355,4 +3355,4 @@ status: passing 6/6
 - Implementation lives in `helm/kubeclaw/templates/redis-*.yaml`.
 - LLM-dependence: **none**.
 
-status: drafted
+status: passing 4/4
