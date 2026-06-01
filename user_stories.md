@@ -3955,7 +3955,7 @@ status: passing 3/3
 - Implementation lives in `src/k8s/http-sidecar-runner.ts`.
 - LLM-dependence: **none**.
 
-status: drafted
+status: passing 1/1
 
 ## Story 161: File-sidecar Follow-up Message Flow — sidecar handles follow-up tool calls
 
