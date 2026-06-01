@@ -2242,7 +2242,7 @@ status: passing 4/4
 - Closes Plan 9 from `docs/aspirational-stories-and-plans.md` (places-search tool).
 - LLM-dependence: **none** (mock LLM + stubbed fetch).
 
-status: drafted
+status: passing 3/3
 
 ## Story 90: Current wall-clock time is injected into every LLM prompt and stripped from persisted history
 
