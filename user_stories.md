@@ -2635,4 +2635,4 @@ status: passing 4/4
 - Implementation lives in `src/credential-broker/*` (sidecar dispatcher), `src/credential-injection/*` (orchestrator-side wiring), `helm/kubeclaw/templates/credential-broker-*.yaml` (chart).
 - LLM-dependence: **none**.
 
-status: drafted
+status: passing 4/4
