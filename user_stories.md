@@ -3931,4 +3931,4 @@ status: passing 1/1
 - Implementation lives in `helm/kubeclaw/files/envoy-substitution-filter.lua` and `helm/kubeclaw/templates/istio-envoyfilter.yaml`.
 - LLM-dependence: **none**.
 
-status: drafted
+status: passing 3/3
