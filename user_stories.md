@@ -2268,4 +2268,4 @@ status: passing 3/3
 - Closes Plan 1 from `docs/aspirational-stories-and-plans.md` (inject current wall-clock time into LLM context).
 - LLM-dependence: **none** (mock LLM).
 
-status: drafted
+status: passing 1/1
