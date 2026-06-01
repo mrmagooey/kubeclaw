@@ -2491,4 +2491,4 @@ status: passing 7/7
 - **Requires a live Kubernetes cluster + minikube docker-env for image build.**
 - LLM-dependence: **none**.
 
-status: drafted
+status: passing 2/2
