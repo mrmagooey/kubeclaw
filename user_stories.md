@@ -3907,7 +3907,7 @@ status: drafted
 - Implementation lives in `container/agent-runner/src/tool-server.ts` (file-bridge loop).
 - LLM-dependence: **none**.
 
-status: drafted
+status: passing 1/1
 
 ## Story 159: Helm chart Lua substitution filter — Envoy rewrites Authorization header
 
