@@ -2467,7 +2467,7 @@ status: passing 3/3
 - Note: the test file also contains many other describes (`describe('namespace', ...)`, `describe('Redis', ...)`, etc.) that DO require a cluster. The `-t "helm chart static checks"` filter scopes to only the cluster-free subset.
 - LLM-dependence: **none**.
 
-status: drafted
+status: passing 7/7
 
 ## Story 99: Credential broker pod is Ready and rejects unauthenticated `/authz` requests
 
