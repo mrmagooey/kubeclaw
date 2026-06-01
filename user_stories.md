@@ -3739,7 +3739,7 @@ status: passing 2/2
 - Implementation lives in `src/channel-runner.ts` + `src/k8s/ipc-redis.ts`.
 - LLM-dependence: **none**.
 
-status: drafted
+status: passing 2/2
 
 ## Story 152: File-sidecar error handling — sidecar surfaces user-container errors
 
