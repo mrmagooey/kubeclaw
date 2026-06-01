@@ -3140,3 +3140,75 @@ status: passing 5/5
 - LLM-dependence: **none**.
 
 status: passing 4/4
+
+## Story 127: State TTL — expired session keys are reclaimed
+
+**As a** KubeClaw operator
+**I want** session keys with a TTL to be reclaimed automatically when the TTL elapses
+**So that** Redis memory doesn't grow unbounded with stale sessions
+
+### Acceptance criteria
+
+1. Writing a key with TTL N + reading within N → returns value.
+2. Reading after N → null (reclaimed).
+3. Re-writing without TTL keeps indefinitely.
+4. EXPIRE refresh updates TTL atomically.
+5. Tests run against in-cluster Redis.
+
+### Notes for the test author
+
+- Test file: `e2e/state-persistence.test.ts` — `describe('TTL/Expiration Handling for State Data', ...)` at line 288.
+- Run with: `npm run test:e2e -- state-persistence -t "TTL/Expiration"`.
+- Harness: requires `getSharedRedis()`. **Requires a live cluster.**
+- Implementation lives in `src/k8s/ipc-redis.ts`.
+- LLM-dependence: **none**.
+
+status: drafted
+
+## Story 128: User-interaction Response Delivery — bot reply reaches the user
+
+**As a** KubeClaw user who has triggered the bot
+**I want** the bot's response to be delivered back to my channel
+**So that** the trigger → LLM → response loop closes end-to-end
+
+### Acceptance criteria
+
+1. Triggered inbound → LLM response forwarded to channel's outbound queue.
+2. Response text preserved byte-for-byte.
+3. Internal tags (e.g. `<tool_call>`) stripped before delivery.
+4. Multi-part responses split per channel's character limit.
+5. Delivery is idempotent.
+
+### Notes for the test author
+
+- Test file: `e2e/user-interaction.test.ts` — `describe('User Interaction: Response Delivery', ...)` at line 306.
+- Run with: `npm run test:e2e -- user-interaction -t "Response Delivery"`.
+- Harness: mock channel + mock LLM + SQLite. **No Kubernetes required.**
+- Implementation lives in `src/channel-runner.ts`.
+- LLM-dependence: **none**.
+
+status: drafted
+
+## Story 129: Redis Connection Timeout — connect attempt fails fast on unreachable host
+
+**As a** KubeClaw operator
+**I want** Redis connection attempts to fail fast (within a bounded time) when unreachable
+**So that** the orchestrator surfaces connection problems quickly instead of hanging
+
+### Acceptance criteria
+
+1. Connect attempt against unreachable host returns error within configured connect timeout.
+2. Error message identifies it as connection/network issue.
+3. No infinite retry at ioredis layer (app-level retry handles it).
+4. Successful reconnection (host comes back) doesn't require process restart.
+5. Tests use a wrong host/port to force the failure.
+
+### Notes for the test author
+
+- Test file: `e2e/timeout-retry.test.ts` — `describe('Redis Connection Timeout Handling', ...)` at line 54.
+- Run with: `npm run test:e2e -- timeout-retry -t "Redis Connection Timeout Handling"`.
+- Harness: requires `isRedisAvailable()`. **Requires a live cluster.**
+- Implementation lives in `src/k8s/ipc-redis.ts`.
+- LLM-dependence: **none**.
+
+status: drafted
