@@ -2611,7 +2611,7 @@ status: passing 3/3
 - Implementation lives in the state layer (`src/state/*` or similar — verify in the worktree).
 - LLM-dependence: **none**.
 
-status: drafted
+status: passing 4/4
 
 ## Story 105: Credential-injection `sidecar` mode renders correctly and stamps the configured header
 
