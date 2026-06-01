@@ -3331,7 +3331,7 @@ status: drafted
 - Implementation lives in `src/k8s/ipc-redis.ts`.
 - LLM-dependence: **none**.
 
-status: drafted
+status: passing 6/6
 
 ## Story 135: Helm chart Redis sub-chart — Redis Deployment + Service + ACL render and run
 
