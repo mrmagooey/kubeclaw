@@ -3403,7 +3403,7 @@ status: drafted
 - Implementation lives in `src/k8s/tool-pod-spawn.ts` (PVC binding for sidecar Jobs) and `helm/kubeclaw/templates/storage.yaml`.
 - LLM-dependence: **none**.
 
-status: drafted
+status: passing 2/2
 
 ## Story 138: HTTP-sidecar Health Check Polling — sidecar marked Ready only after user container responds
 
