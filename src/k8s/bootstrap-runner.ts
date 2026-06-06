@@ -378,6 +378,223 @@ export async function bootstrapChannelFromSkill(
   return { bootstrapJobId };
 }
 
+// ─── Story 181: Upgrade runner ────────────────────────────────────────────────
+
+export interface RunUpgradeOpts {
+  instanceName: string;
+  targetManifestHash: string;
+  k8sDeps: BootstrapK8sDeps & {
+    appsV1: import('@kubernetes/client-node').AppsV1Api;
+  };
+  namespace: string;
+  channelBaseImage: string;
+  /** Shared map — uses composite key `<instance>:upgrade` */
+  activeBootstraps: Map<string, string>;
+  timeoutSeconds?: number;
+  pvcSize?: string;
+  redisUrl?: string;
+  redisUsername?: string;
+  redisAdminPassword?: string;
+  openaiApiKey?: string;
+  openaiBaseUrl?: string;
+  directLlmModel?: string;
+}
+
+export interface RunUpgradeResult {
+  upgradeJobId: string;
+  newPvcName: string;
+  oldPvcName: string;
+  alreadyInProgress?: 'bootstrap' | 'upgrade';
+}
+
+/**
+ * Spawn the upgrade bootstrap Job and new versioned runtime PVC.
+ *
+ * Concurrent rejection:
+ *   - Returns `{ alreadyInProgress: 'upgrade' }` if `<instance>:upgrade` is in activeBootstraps.
+ *   - Returns `{ alreadyInProgress: 'bootstrap' }` if `<instance>` is in activeBootstraps.
+ *
+ * On success:
+ *   - Creates PVC `kubeclaw-channel-<instance>-runtime-v<N+1>`
+ *   - Creates Job `kubeclaw-bootstrap-<instance>-upgrade`
+ *   - Registers `<instance>:upgrade` in activeBootstraps
+ */
+export async function runUpgrade(opts: RunUpgradeOpts): Promise<RunUpgradeResult> {
+  const {
+    instanceName,
+    targetManifestHash,
+    k8sDeps,
+    namespace,
+    channelBaseImage,
+    activeBootstraps,
+    timeoutSeconds = DEFAULT_TIMEOUT_SECONDS,
+    pvcSize = DEFAULT_PVC_SIZE,
+  } = opts;
+
+  const upgradeKey = `${instanceName}:upgrade`;
+
+  // ── Concurrent rejection ────────────────────────────────────────────────────
+  if (activeBootstraps.has(upgradeKey)) {
+    const existing = activeBootstraps.get(upgradeKey)!;
+    logger.warn({ instanceName, existing }, 'runUpgrade: upgrade already in progress');
+    return { upgradeJobId: existing, newPvcName: '', oldPvcName: '', alreadyInProgress: 'upgrade' };
+  }
+  if (activeBootstraps.has(instanceName)) {
+    const existing = activeBootstraps.get(instanceName)!;
+    logger.warn({ instanceName, existing }, 'runUpgrade: initial bootstrap already in progress');
+    return { upgradeJobId: existing, newPvcName: '', oldPvcName: '', alreadyInProgress: 'bootstrap' };
+  }
+
+  // ── Discover current PVC from Deployment ───────────────────────────────────
+  const deploymentName = `kubeclaw-channel-${instanceName}`;
+  const deployment = await k8sDeps.appsV1.readNamespacedDeployment({
+    name: deploymentName,
+    namespace,
+  });
+  const volumes = deployment.spec?.template?.spec?.volumes ?? [];
+  const runtimeVolume = volumes.find((v: any) => v.name === 'runtime');
+  const currentPvcName =
+    (runtimeVolume as any)?.persistentVolumeClaim?.claimName ??
+    `kubeclaw-channel-${instanceName}-runtime`;
+
+  const newPvcName = nextRuntimePvcName(currentPvcName);
+  const upgradeJobId = randomUUID();
+  const jobName = `kubeclaw-bootstrap-${instanceName}-upgrade`;
+
+  // ── Create new PVC ──────────────────────────────────────────────────────────
+  try {
+    await k8sDeps.coreV1.readNamespacedPersistentVolumeClaim({
+      name: newPvcName,
+      namespace,
+    });
+    logger.info({ newPvcName }, 'runUpgrade: new runtime PVC already exists, reusing');
+  } catch {
+    await k8sDeps.coreV1.createNamespacedPersistentVolumeClaim({
+      namespace,
+      body: {
+        apiVersion: 'v1',
+        kind: 'PersistentVolumeClaim',
+        metadata: {
+          name: newPvcName,
+          namespace,
+          labels: {
+            'kubeclaw-channel': instanceName,
+            'kubeclaw.io/role': 'channel-runtime',
+            'kubeclaw.io/runtime': 'true',
+          },
+        },
+        spec: {
+          accessModes: ['ReadWriteOnce'],
+          resources: { requests: { storage: pvcSize } },
+        },
+      },
+    });
+    logger.info({ newPvcName, pvcSize }, 'runUpgrade: created new runtime PVC');
+  }
+
+  // ── Build env vars ──────────────────────────────────────────────────────────
+  const envVars: Array<{ name: string; value: string }> = [
+    { name: 'KUBECLAW_SUPERUSER', value: 'true' },
+    { name: 'KUBECLAW_BOOTSTRAP_JOB_ID', value: upgradeJobId },
+    { name: 'KUBECLAW_BOOTSTRAP_INSTANCE', value: instanceName },
+    { name: 'KUBECLAW_BOOTSTRAP_TARGET_MANIFEST_HASH', value: targetManifestHash },
+    { name: 'KUBECLAW_UPGRADE_FROM_PVC', value: currentPvcName },
+    {
+      name: 'REDIS_URL',
+      value: opts.redisUrl || process.env.REDIS_URL || 'redis://kubeclaw-redis:6379',
+    },
+  ];
+  if (opts.redisUsername)
+    envVars.push({ name: 'REDIS_USERNAME', value: opts.redisUsername });
+  if (opts.redisAdminPassword)
+    envVars.push({ name: 'REDIS_ADMIN_PASSWORD', value: opts.redisAdminPassword });
+  if (opts.openaiApiKey)
+    envVars.push({ name: 'OPENAI_API_KEY', value: opts.openaiApiKey });
+  if (opts.openaiBaseUrl)
+    envVars.push({ name: 'OPENAI_BASE_URL', value: opts.openaiBaseUrl });
+  if (opts.directLlmModel)
+    envVars.push({ name: 'DIRECT_LLM_MODEL', value: opts.directLlmModel });
+
+  // ── Create upgrade bootstrap Job ────────────────────────────────────────────
+  const jobBody = {
+    apiVersion: 'batch/v1',
+    kind: 'Job',
+    metadata: {
+      name: jobName,
+      namespace,
+      labels: {
+        'kubeclaw-channel': instanceName,
+        'kubeclaw.io/role': 'bootstrap',
+        'kubeclaw.io/bootstrap-job-id': upgradeJobId,
+        'kubeclaw.io/upgrade': 'true',
+        app: 'kubeclaw-bootstrap',
+      },
+    },
+    spec: {
+      backoffLimit: 0,
+      activeDeadlineSeconds: timeoutSeconds,
+      ttlSecondsAfterFinished: BOOTSTRAP_JOB_TTL,
+      template: {
+        metadata: {
+          labels: {
+            'kubeclaw-channel': instanceName,
+            'kubeclaw.io/role': 'bootstrap',
+            'kubeclaw.io/upgrade': 'true',
+            app: 'kubeclaw-bootstrap',
+          },
+        },
+        spec: {
+          serviceAccountName: 'kubeclaw-bootstrap',
+          restartPolicy: 'Never',
+          automountServiceAccountToken: false,
+          containers: [
+            {
+              name: 'bootstrap',
+              image: channelBaseImage,
+              imagePullPolicy: 'IfNotPresent',
+              env: envVars,
+              volumeMounts: [
+                { name: 'runtime', mountPath: '/runtime' },
+                { name: 'skills', mountPath: '/workspace/skills' },
+                { name: 'manifests', mountPath: '/workspace/manifests' },
+              ],
+            },
+            {
+              name: 'inspector',
+              image: channelBaseImage,
+              imagePullPolicy: 'IfNotPresent',
+              command: ['sleep', 'infinity'],
+              volumeMounts: [
+                { name: 'runtime', mountPath: '/runtime-inspect' },
+              ],
+            },
+          ],
+          volumes: [
+            {
+              name: 'runtime',
+              persistentVolumeClaim: { claimName: newPvcName },
+            },
+            {
+              name: 'skills',
+              configMap: { name: 'kubeclaw-bootstrap-skills' },
+            },
+            {
+              name: 'manifests',
+              configMap: { name: 'kubeclaw-channel-manifests' },
+            },
+          ],
+        },
+      },
+    },
+  };
+
+  await k8sDeps.batchV1.createNamespacedJob({ namespace, body: jobBody as any });
+  logger.info({ jobName, upgradeJobId, instanceName }, 'runUpgrade: upgrade Job created');
+
+  activeBootstraps.set(upgradeKey, upgradeJobId);
+  return { upgradeJobId, newPvcName, oldPvcName: currentPvcName };
+}
+
 // ─── Story 175: Timeout cleanup ───────────────────────────────────────────────
 
 /**
