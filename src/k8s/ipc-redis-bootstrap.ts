@@ -32,6 +32,14 @@ export interface CommitChannelConfigPayload {
    * the ConfigMap hash, closing the TOCTOU window.
    */
   runtime_pvc_lock_hash?: string;
+  /**
+   * Story 181 (upgrade path): when present, this payload is for an in-flight
+   * upgrade rather than an initial bootstrap. Contains the OLD runtime PVC name
+   * (e.g. `kubeclaw-channel-foo-runtime-v1`). The commit path will patch the
+   * Deployment and schedule the old PVC for deletion instead of creating a new
+   * Deployment.
+   */
+  upgradeFromPvc?: string;
 }
 
 export interface CommitChannelConfigDeps {
@@ -82,6 +90,20 @@ export interface CommitChannelConfigDeps {
     errorCode?: string;
     errorMessage?: string;
   }): void;
+  /**
+   * Story 181 (upgrade path): patch the Deployment's runtime volume to newPvcName.
+   * Only required when the payload contains `upgradeFromPvc`.
+   */
+  patchDeployment?(instanceName: string, newPvcName: string): Promise<void>;
+  /**
+   * Story 181 (upgrade path): wait for the Deployment rollout to complete.
+   */
+  waitForRollout?(deploymentName: string): Promise<void>;
+  /**
+   * Story 181 (upgrade path): schedule deletion of the old PVC after the
+   * grace period. Called synchronously — implementation uses setTimeout.
+   */
+  scheduleOldPvcDeletion?(oldPvcName: string): void;
 }
 
 // ─── Handler ──────────────────────────────────────────────────────────────────
@@ -233,111 +255,163 @@ export async function processCommitChannelConfig(
 
     // ── Hash matched (or no manifest registered) — proceed with happy path ────
 
-    // 1. Create credentials Secret
-    await deps.createSecret(secretName, secret_data);
-    logger.info(
-      { secretName, instance_name },
-      'Channel credentials Secret created',
-    );
+    if (payload.upgradeFromPvc) {
+      // ── UPGRADE PATH (Story 181) ─────────────────────────────────────────
+      // Patch Deployment to new PVC; wait for rollout; schedule old PVC deletion.
+      // Secret is preserved — credentials belong to the instance, not the PVC version.
 
-    // 2. Build steady-state Deployment spec
-    const deployment: V1Deployment = {
-      apiVersion: 'apps/v1',
-      kind: 'Deployment',
-      metadata: {
-        name: deploymentName,
-        namespace,
-        labels: {
-          app: `kubeclaw-channel-${instance_name}`,
-          'kubeclaw/channel': instance_name,
-          'kubeclaw.io/role': 'channel',
-          'kubeclaw.io/bootstrap-installed': 'true',
+      const oldPvcName = payload.upgradeFromPvc;
+
+      if (
+        !deps.patchDeployment ||
+        !deps.waitForRollout ||
+        !deps.scheduleOldPvcDeletion
+      ) {
+        throw new Error(
+          'commit_channel_config upgrade path requires patchDeployment, waitForRollout, and scheduleOldPvcDeletion deps',
+        );
+      }
+
+      await deps.patchDeployment(instance_name, pvcName);
+      logger.info(
+        { deploymentName, newPvcName: pvcName },
+        'Upgrade: Deployment patched to new PVC',
+      );
+
+      await deps.waitForRollout(deploymentName);
+      logger.info({ deploymentName }, 'Upgrade: rollout complete');
+
+      deps.scheduleOldPvcDeletion(oldPvcName);
+      logger.info({ oldPvcName }, 'Upgrade: old PVC deletion scheduled');
+
+      deps.releaseBootstrap(instance_name);
+
+      deps.recordTerminal?.({
+        instanceName: instance_name,
+        bootstrapJobId,
+        outcome: 'succeeded',
+      });
+
+      await deps.publishReply(replyChannel, { ok: true });
+
+      await deps.publishSse(
+        sseTopic,
+        `Channel ${channel_type}/${instance_name} upgraded and ready. Deployment patched to ${pvcName}. Old PVC ${oldPvcName} will be deleted after grace period.`,
+      );
+
+      logger.info(
+        { deploymentName, bootstrapJobId, channel_type, instance_name },
+        'commit_channel_config (upgrade): channel upgraded successfully',
+      );
+    } else {
+      // ── INITIAL BOOTSTRAP PATH (existing, unchanged) ─────────────────────
+
+      // 1. Create credentials Secret
+      await deps.createSecret(secretName, secret_data);
+      logger.info(
+        { secretName, instance_name },
+        'Channel credentials Secret created',
+      );
+
+      // 2. Build steady-state Deployment spec
+      const deployment: V1Deployment = {
+        apiVersion: 'apps/v1',
+        kind: 'Deployment',
+        metadata: {
+          name: deploymentName,
+          namespace,
+          labels: {
+            app: `kubeclaw-channel-${instance_name}`,
+            'kubeclaw/channel': instance_name,
+            'kubeclaw.io/role': 'channel',
+            'kubeclaw.io/bootstrap-installed': 'true',
+          },
         },
-      },
-      spec: {
-        replicas: 1,
-        selector: {
-          matchLabels: { app: `kubeclaw-channel-${instance_name}` },
-        },
-        template: {
-          metadata: {
-            labels: {
-              app: `kubeclaw-channel-${instance_name}`,
-              'kubeclaw/channel': instance_name,
-              'kubeclaw.io/role': 'channel',
+        spec: {
+          replicas: 1,
+          selector: {
+            matchLabels: { app: `kubeclaw-channel-${instance_name}` },
+          },
+          template: {
+            metadata: {
+              labels: {
+                app: `kubeclaw-channel-${instance_name}`,
+                'kubeclaw/channel': instance_name,
+                'kubeclaw.io/role': 'channel',
+              },
+            },
+            spec: {
+              automountServiceAccountToken: false,
+              // No KUBECLAW_SUPERUSER — must be absent from steady-state pod (AC5)
+              // No KUBECLAW_BOOTSTRAP_SKILL — must be absent from steady-state pod (AC5)
+              containers: [
+                {
+                  name: 'channel',
+                  image: channelBaseImage,
+                  imagePullPolicy: 'IfNotPresent',
+                  command: ['node', '/app/channel-loader.js'],
+                  env: [
+                    { name: 'KUBECLAW_CHANNEL', value: instance_name },
+                    { name: 'KUBECLAW_CHANNEL_TYPE', value: channel_type },
+                    {
+                      name: 'REDIS_URL',
+                      value:
+                        process.env.REDIS_URL || 'redis://kubeclaw-redis:6379',
+                    },
+                  ],
+                  envFrom: [{ secretRef: { name: secretName } }],
+                  volumeMounts: [
+                    // Runtime PVC mounted READ-ONLY (AC5)
+                    { name: 'runtime', mountPath: '/runtime', readOnly: true },
+                  ],
+                },
+              ],
+              volumes: [
+                {
+                  name: 'runtime',
+                  persistentVolumeClaim: {
+                    claimName: pvcName,
+                    // readOnly flag on PVC spec is advisory; the container-level readOnly
+                    // in volumeMounts is the binding enforcement. Both are set for clarity.
+                  } as any,
+                },
+              ],
             },
           },
-          spec: {
-            automountServiceAccountToken: false,
-            // No KUBECLAW_SUPERUSER — must be absent from steady-state pod (AC5)
-            // No KUBECLAW_BOOTSTRAP_SKILL — must be absent from steady-state pod (AC5)
-            containers: [
-              {
-                name: 'channel',
-                image: channelBaseImage,
-                imagePullPolicy: 'IfNotPresent',
-                command: ['node', '/app/channel-loader.js'],
-                env: [
-                  { name: 'KUBECLAW_CHANNEL', value: instance_name },
-                  { name: 'KUBECLAW_CHANNEL_TYPE', value: channel_type },
-                  {
-                    name: 'REDIS_URL',
-                    value:
-                      process.env.REDIS_URL || 'redis://kubeclaw-redis:6379',
-                  },
-                ],
-                envFrom: [{ secretRef: { name: secretName } }],
-                volumeMounts: [
-                  // Runtime PVC mounted READ-ONLY (AC5)
-                  { name: 'runtime', mountPath: '/runtime', readOnly: true },
-                ],
-              },
-            ],
-            volumes: [
-              {
-                name: 'runtime',
-                persistentVolumeClaim: {
-                  claimName: pvcName,
-                  // readOnly flag on PVC spec is advisory; the container-level readOnly
-                  // in volumeMounts is the binding enforcement. Both are set for clarity.
-                } as any,
-              },
-            ],
-          },
         },
-      },
-    };
+      };
 
-    // 3. Create steady-state Deployment
-    await deps.createDeployment(deployment);
-    logger.info(
-      { deploymentName, channelBaseImage, instance_name },
-      'Steady-state Deployment created',
-    );
+      // 3. Create steady-state Deployment
+      await deps.createDeployment(deployment);
+      logger.info(
+        { deploymentName, channelBaseImage, instance_name },
+        'Steady-state Deployment created',
+      );
 
-    // 4. Release instance name from active bootstraps
-    deps.releaseBootstrap(instance_name);
+      // 4. Release instance name from active bootstraps
+      deps.releaseBootstrap(instance_name);
 
-    // 4.5. Story 180: record terminal outcome in bootstrap_history
-    deps.recordTerminal?.({
-      instanceName: instance_name,
-      bootstrapJobId,
-      outcome: 'succeeded',
-    });
+      // 4.5. Story 180: record terminal outcome in bootstrap_history
+      deps.recordTerminal?.({
+        instanceName: instance_name,
+        bootstrapJobId,
+        outcome: 'succeeded',
+      });
 
-    // 5. Reply success to bootstrap pod
-    await deps.publishReply(replyChannel, { ok: true });
+      // 5. Reply success to bootstrap pod
+      await deps.publishReply(replyChannel, { ok: true });
 
-    // 6. Notify admin via SSE
-    await deps.publishSse(
-      sseTopic,
-      `Channel ${channel_type}/${instance_name} ready. Steady-state Deployment "${deploymentName}" created.`,
-    );
+      // 6. Notify admin via SSE
+      await deps.publishSse(
+        sseTopic,
+        `Channel ${channel_type}/${instance_name} ready. Steady-state Deployment "${deploymentName}" created.`,
+      );
 
-    logger.info(
-      { deploymentName, bootstrapJobId, channel_type, instance_name },
-      'commit_channel_config: channel deployed successfully',
-    );
+      logger.info(
+        { deploymentName, bootstrapJobId, channel_type, instance_name },
+        'commit_channel_config: channel deployed successfully',
+      );
+    }
   } catch (err) {
     const errorMsg = err instanceof Error ? err.message : String(err);
     logger.error(
