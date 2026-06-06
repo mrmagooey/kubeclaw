@@ -15,7 +15,7 @@
 
 import type { V1Deployment } from '@kubernetes/client-node';
 import { logger } from '../logger.js';
-import { computeManifestHash } from './bootstrap-runner.js';
+import { computeManifestHash, nextRuntimePvcName } from './bootstrap-runner.js';
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
@@ -150,7 +150,14 @@ export async function processCommitChannelConfig(
   const secretName = `kubeclaw-channel-${instance_name}-credentials`;
   const deploymentName = `kubeclaw-channel-${instance_name}`;
   const pvcName = `kubeclaw-channel-${instance_name}-runtime`;
-  const jobName = `kubeclaw-bootstrap-${instance_name}`;
+  // For upgrade path, the bootstrap Job uses a versioned PVC (the new one).
+  // On MANIFEST_DIVERGENCE we must delete the Job's PVC, not the base-name PVC.
+  const jobPvcName = payload.upgradeFromPvc
+    ? nextRuntimePvcName(payload.upgradeFromPvc)
+    : pvcName;
+  const jobName = payload.upgradeFromPvc
+    ? `kubeclaw-bootstrap-${instance_name}-upgrade`
+    : `kubeclaw-bootstrap-${instance_name}`;
   const replyChannel = `kubeclaw:bootstrap-reply:${bootstrapJobId}`;
   const sseTopic = `kubeclaw:bootstrap:${bootstrapJobId}`;
 
@@ -203,17 +210,20 @@ export async function processCommitChannelConfig(
             logger.warn({ e }, 'Failed to publish MANIFEST_DIVERGENCE reply'),
           );
 
-        // (b) Delete runtime PVC — idempotent (NotFound OK)
+        // (b) Delete the bootstrap Job's runtime PVC — idempotent (NotFound OK).
+        // For upgrades, jobPvcName is the new versioned PVC; for initial bootstrap
+        // it is the base-name PVC. The old PVC is never touched on mismatch.
         await deps
-          .deletePvc(pvcName)
+          .deletePvc(jobPvcName)
           .catch((e) =>
             logger.warn(
-              { e, pvcName },
+              { e, jobPvcName },
               'Failed to delete PVC on mismatch; continuing',
             ),
           );
 
         // (c) Terminate the bootstrap Job — idempotent (NotFound OK)
+        // For upgrades, jobName is kubeclaw-bootstrap-<instance>-upgrade.
         await deps
           .deleteJob(jobName)
           .catch((e) =>
