@@ -32,9 +32,6 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import {
   KUBECLAW_LIVE_ADMIN_LOCAL_PORT,
   KUBECLAW_LIVE_ADMIN_USERNAME,
@@ -45,55 +42,6 @@ const ADMIN_URL = `http://127.0.0.1:${KUBECLAW_LIVE_ADMIN_LOCAL_PORT}`;
 const INSTANCE_NAME = 'e2e-http-echo';
 const CHANNEL_PORT = 18764; // arbitrary high port; passed in via dialogue
 const LOCAL_FORWARD_PORT = 18765; // host-side port-forward target
-
-// http-echo manifest: zero npm dependencies. Both files are JSON literals so
-// the runtime PVC's contents can be computed-and-hashed deterministically.
-const HTTP_ECHO_PACKAGE_JSON = JSON.stringify({
-  name: 'http-echo-runtime',
-  version: '1.0.0',
-  dependencies: {},
-});
-const HTTP_ECHO_PACKAGE_LOCK_JSON = JSON.stringify({
-  name: 'http-echo-runtime',
-  version: '1.0.0',
-  lockfileVersion: 3,
-  requires: true,
-  packages: {
-    '': {
-      name: 'http-echo-runtime',
-      version: '1.0.0',
-    },
-  },
-});
-
-function canonicalJson(value: unknown): string {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value);
-  if (Array.isArray(value)) {
-    return '[' + value.map(canonicalJson).join(',') + ']';
-  }
-  const obj = value as Record<string, unknown>;
-  const keys = Object.keys(obj).sort();
-  return (
-    '{' +
-    keys.map((k) => JSON.stringify(k) + ':' + canonicalJson(obj[k])).join(',') +
-    '}'
-  );
-}
-
-function computeManifestHash(
-  packageJsonStr: string,
-  packageLockJsonStr: string,
-): string {
-  const pj = JSON.parse(packageJsonStr);
-  const pl = JSON.parse(packageLockJsonStr);
-  const canon = canonicalJson(pj) + '\n' + canonicalJson(pl);
-  return createHash('sha256').update(canon, 'utf8').digest('hex');
-}
-
-const HTTP_ECHO_MANIFEST_HASH = computeManifestHash(
-  HTTP_ECHO_PACKAGE_JSON,
-  HTTP_ECHO_PACKAGE_LOCK_JSON,
-);
 
 function basicAuth(user: string, pass: string): string {
   return 'Basic ' + Buffer.from(`${user}:${pass}`).toString('base64');
@@ -191,103 +139,6 @@ async function chatAndWaitForReply(
   throw new Error(`No assistant reply within ${timeoutMs}ms`);
 }
 
-/**
- * Patch the kubeclaw-channel-manifests-baseline ConfigMap with the http-echo
- * entry. We patch the BASELINE (not the live ConfigMap) so the orchestrator's
- * ChannelManifestReconciler doesn't overwrite us on next reconcile — the
- * baseline is read on orchestrator startup and merged with SQLite overrides
- * into the live ConfigMap.
- *
- * Shape: data key `<channelType>.json`, value is JSON with `packageJson`,
- * `packageLockJson`, `manifestHash` (camelCase — matches what the chart
- * template renders from Helm `bootstrap.channelManifests` values).
- */
-function seedManifestBaseline(): void {
-  const entry = {
-    packageJson: HTTP_ECHO_PACKAGE_JSON,
-    packageLockJson: HTTP_ECHO_PACKAGE_LOCK_JSON,
-    manifestHash: HTTP_ECHO_MANIFEST_HASH,
-  };
-  const patch = JSON.stringify({
-    data: { 'http-echo.json': JSON.stringify(entry) },
-  });
-  const r = kubectl([
-    'patch',
-    'configmap',
-    'kubeclaw-channel-manifests-baseline',
-    '-n',
-    NAMESPACE,
-    '--type=merge',
-    '-p',
-    patch,
-  ]);
-  if (!r.ok) {
-    throw new Error(
-      `Failed to seed channel-manifests-baseline ConfigMap: ${r.stderr || r.stdout}`,
-    );
-  }
-}
-
-/**
- * Patch the kubeclaw-bootstrap-skills-baseline ConfigMap with the http-echo
- * skill. Same baseline-vs-live distinction as seedManifestBaseline above.
- * The skill markdown is read directly from disk so the test stays in sync
- * with the canonical source-of-truth file.
- *
- * Shape: data key `<name>.md`, value is raw markdown.
- */
-function seedSkillBaseline(): void {
-  const skillPath = join(
-    process.cwd(),
-    'helm',
-    'kubeclaw',
-    'files',
-    'bootstrap-skills',
-    'bootstrap-http-echo.md',
-  );
-  const markdown = readFileSync(skillPath, 'utf-8');
-  const patch = JSON.stringify({
-    data: { 'bootstrap-http-echo.md': markdown },
-  });
-  const r = kubectl([
-    'patch',
-    'configmap',
-    'kubeclaw-bootstrap-skills-baseline',
-    '-n',
-    NAMESPACE,
-    '--type=merge',
-    '-p',
-    patch,
-  ]);
-  if (!r.ok) {
-    throw new Error(
-      `Failed to seed bootstrap-skills-baseline ConfigMap: ${r.stderr || r.stdout}`,
-    );
-  }
-}
-
-/**
- * Restart the orchestrator so it re-reads the baseline ConfigMaps and
- * reconciles them into the live ConfigMaps that bootstrap Jobs actually mount.
- */
-function restartOrchestratorAndWait(): void {
-  kubectl(
-    ['rollout', 'restart', 'deployment/kubeclaw-orchestrator', '-n', NAMESPACE],
-    { timeout: 30_000 },
-  );
-  kubectl(
-    [
-      'rollout',
-      'status',
-      'deployment/kubeclaw-orchestrator',
-      '-n',
-      NAMESPACE,
-      '--timeout=120s',
-    ],
-    { timeout: 130_000 },
-  );
-}
-
 describe('Minikube-live: bootstrap HTTP-echo channel end-to-end', () => {
   let provisioned = false;
   let adminPass = '';
@@ -327,13 +178,10 @@ describe('Minikube-live: bootstrap HTTP-echo channel end-to-end', () => {
       return;
     }
 
-    // Seed the http-echo manifest + skill into the BASELINE ConfigMaps, then
-    // restart the orchestrator so it reloads the baseline and reconciles the
-    // entries into the live ConfigMaps that bootstrap Jobs mount.
-    seedManifestBaseline();
-    seedSkillBaseline();
-    restartOrchestratorAndWait();
-  }, 180_000);
+    // http-echo manifest + skill are installed at helm-install time via
+    // minikube-live-setup.ts (--set-json bootstrap.channelManifests / --set-file
+    // bootstrap.skills.bootstrap-http-echo). No runtime seeding needed.
+  }, 60_000);
 
   afterAll(() => {
     // Resource cleanup. All operations are idempotent.
@@ -349,33 +197,8 @@ describe('Minikube-live: bootstrap HTTP-echo channel end-to-end', () => {
         { allowFail: true, timeout: 10_000 },
       );
     }
-    // Remove the baseline ConfigMap entries (patch with json-op remove).
-    kubectl(
-      [
-        'patch',
-        'configmap',
-        'kubeclaw-channel-manifests-baseline',
-        '-n',
-        NAMESPACE,
-        '--type=json',
-        '-p',
-        '[{"op":"remove","path":"/data/http-echo.json"}]',
-      ],
-      { allowFail: true },
-    );
-    kubectl(
-      [
-        'patch',
-        'configmap',
-        'kubeclaw-bootstrap-skills-baseline',
-        '-n',
-        NAMESPACE,
-        '--type=json',
-        '-p',
-        '[{"op":"remove","path":"/data/bootstrap-http-echo.md"}]',
-      ],
-      { allowFail: true },
-    );
+    // The http-echo baseline ConfigMap entries are Helm-managed and stay in
+    // place across test runs — nothing to clean up here.
   });
 
   // ── AC1: bootstrap Job created with correct env ────────────────────────────
