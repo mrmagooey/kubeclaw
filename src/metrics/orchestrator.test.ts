@@ -55,4 +55,30 @@ describe('createOrchestratorMetrics', () => {
     );
     expect(counter?.values[0]?.value).toBe(2);
   });
+
+  describe('recordBootstrapManifestMismatch (Story 176)', () => {
+    it('increments kubeclaw_bootstrap_manifest_mismatch_total with channel_type label', async () => {
+      const registry = new Registry();
+      const m = createOrchestratorMetrics(registry);
+      m.recordBootstrapManifestMismatch({ channel_type: 'telegram' });
+      const text = await registry.metrics();
+      expect(text).toMatch(
+        /kubeclaw_bootstrap_manifest_mismatch_total\{channel_type="telegram"\} 1/,
+      );
+    });
+
+    it('counter appears in scrape output at 0 before any mismatch event', async () => {
+      const registry = new Registry();
+      createOrchestratorMetrics(registry);
+      const text = await registry.metrics();
+      expect(text).toMatch(/kubeclaw_bootstrap_manifest_mismatch_total/);
+    });
+
+    it('is registered in the metric names list', async () => {
+      const registry = new Registry();
+      createOrchestratorMetrics(registry);
+      const names = (await registry.getMetricsAsJSON()).map((m) => m.name);
+      expect(names).toContain('kubeclaw_bootstrap_manifest_mismatch_total');
+    });
+  });
 });

@@ -3,19 +3,19 @@
  *
  * When the bootstrap pod finishes gathering credentials and running `npm ci`,
  * it calls `commit_channel_config` over Redis. This module handles that call:
- *   1. Validates the payload
- *   2. Creates the credentials Secret
- *   3. Creates the steady-state channel Deployment (with runtime PVC read-only)
- *   4. Replies to the bootstrap pod
- *   5. Notifies the admin via SSE
- *   6. Releases the instance name from activeBootstraps
- *
- * Story 176 will add independent PVC hash verification (orchestrator reads the
- * PVC directly via ephemeral container and compares against the ConfigMap hash).
+ *   1. Gets the expected manifest hash from the ConfigMap
+ *   2. Independently reads package.json + package-lock.json from the runtime PVC
+ *      via the inspector sidecar (Story 176 — TOCTOU defense)
+ *   3. Computes the actual hash and hard-rejects on mismatch (MANIFEST_DIVERGENCE)
+ *   4. On match: creates the credentials Secret and steady-state channel Deployment
+ *   5. Replies to the bootstrap pod
+ *   6. Notifies the admin via SSE
+ *   7. Releases the instance name from activeBootstraps
  */
 
 import type { V1Deployment } from '@kubernetes/client-node';
 import { logger } from '../logger.js';
+import { computeManifestHash } from './bootstrap-runner.js';
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
@@ -25,6 +25,12 @@ export interface CommitChannelConfigPayload {
   channel_type: string;
   instance_name: string;
   secret_data: Record<string, string>;
+  /**
+   * Advisory field only — the agent's self-reported hash after `npm ci`.
+   * Story 176: this value is LOGGED but NEVER used for the comparison.
+   * The orchestrator independently reads the PVC and compares against
+   * the ConfigMap hash, closing the TOCTOU window.
+   */
   runtime_pvc_lock_hash?: string;
 }
 
@@ -44,6 +50,22 @@ export interface CommitChannelConfigDeps {
   getManifestHash(channelType: string): Promise<string | null>;
   /** Remove the instance name from the activeBootstraps Map */
   releaseBootstrap(instanceName: string): void;
+  /**
+   * Story 176: Independently read package.json and package-lock.json from the
+   * runtime PVC by exec-ing into the inspector sidecar of the bootstrap Job pod.
+   * This is the TOCTOU-closing read — the agent's self-reported hash is never
+   * used for the comparison.
+   */
+  readPvcFiles(instanceName: string): Promise<{
+    packageJson: string;
+    packageLockJson: string;
+  }>;
+  /** Delete the bootstrap Job by name (NotFound → return normally) */
+  deleteJob(jobName: string): Promise<void>;
+  /** Delete the runtime PVC by name (NotFound → return normally) */
+  deletePvc(pvcName: string): Promise<void>;
+  /** Increment kubeclaw_bootstrap_manifest_mismatch_total{channel_type} (Story 176) */
+  recordMismatch(labels: { channel_type: string }): void;
 }
 
 // ─── Handler ──────────────────────────────────────────────────────────────────
@@ -51,12 +73,14 @@ export interface CommitChannelConfigDeps {
 /**
  * Process a `commit_channel_config` payload received from a bootstrap pod.
  *
- * This is the orchestrator-side gate for channel creation. It:
- *   - Validates required fields
- *   - Optionally checks the reported hash against the ConfigMap (advisory; Story 176 makes it independent)
- *   - Creates the K8s Secret with channel credentials
- *   - Creates the steady-state Deployment using channelBaseImage with runtime PVC read-only
- *   - Publishes success/failure reply and SSE notification
+ * Story 176 adds independent PVC hash verification:
+ *   - Reads package.json + package-lock.json from the runtime PVC via the
+ *     inspector sidecar (kubectl exec).
+ *   - Computes sha256(canonical(pkg) + '\n' + canonical(lock)).
+ *   - Hard-rejects with MANIFEST_DIVERGENCE if the independently computed hash
+ *     does not match the ConfigMap's expected hash.
+ *   - The agent's runtime_pvc_lock_hash is logged as advisory only; it is never
+ *     used for the comparison (TOCTOU defense).
  */
 export async function processCommitChannelConfig(
   payload: CommitChannelConfigPayload,
@@ -88,27 +112,101 @@ export async function processCommitChannelConfig(
   const secretName = `kubeclaw-channel-${instance_name}-credentials`;
   const deploymentName = `kubeclaw-channel-${instance_name}`;
   const pvcName = `kubeclaw-channel-${instance_name}-runtime`;
+  const jobName = `kubeclaw-bootstrap-${instance_name}`;
   const replyChannel = `kubeclaw:bootstrap-reply:${bootstrapJobId}`;
   const sseTopic = `kubeclaw:bootstrap:${bootstrapJobId}`;
 
   logger.info(
-    { bootstrapJobId, channel_type, instance_name },
-    'commit_channel_config received — creating channel resources',
+    {
+      bootstrapJobId,
+      channel_type,
+      instance_name,
+      advisory_hash: runtime_pvc_lock_hash,
+    },
+    'commit_channel_config received — runtime_pvc_lock_hash is advisory only; orchestrator reads PVC independently',
   );
 
   try {
-    // Advisory hash check (Story 176 adds independent PVC read)
+    // ── Step 1: Get expected hash from ConfigMap ──────────────────────────────
     const expectedHash = await deps.getManifestHash(channel_type);
-    if (
-      expectedHash &&
-      runtime_pvc_lock_hash &&
-      runtime_pvc_lock_hash !== expectedHash
-    ) {
-      logger.warn(
-        { channel_type, expected: expectedHash, actual: runtime_pvc_lock_hash },
-        'commit_channel_config: reported hash does not match manifest (advisory — Story 176 adds independent verification)',
+
+    // ── Step 2: Independently read PVC contents via inspector sidecar ─────────
+    // Only perform the check when a manifest hash is registered for this type.
+    // If null (no manifest in ConfigMap), skip the check and proceed to happy path.
+    if (expectedHash !== null) {
+      const { packageJson: actualPkgJson, packageLockJson: actualLockJson } =
+        await deps.readPvcFiles(instance_name);
+
+      const actualHash = computeManifestHash(actualPkgJson, actualLockJson);
+
+      logger.info(
+        { channel_type, instance_name, expectedHash, actualHash },
+        'commit_channel_config: independently computed PVC hash',
       );
+
+      // ── Step 3: Hard-reject on mismatch ────────────────────────────────────
+      if (actualHash !== expectedHash) {
+        logger.warn(
+          { channel_type, instance_name, expectedHash, actualHash },
+          'commit_channel_config: MANIFEST_DIVERGENCE — hard-rejecting commit',
+        );
+
+        const divergenceError = JSON.stringify({
+          code: 'MANIFEST_DIVERGENCE',
+          expected_hash: expectedHash,
+          actual_hash: actualHash,
+          channel_type,
+        });
+
+        // (a) Reply to bootstrap pod with structured error
+        await deps
+          .publishReply(replyChannel, { ok: false, error: divergenceError })
+          .catch((e) =>
+            logger.warn({ e }, 'Failed to publish MANIFEST_DIVERGENCE reply'),
+          );
+
+        // (b) Delete runtime PVC — idempotent (NotFound OK)
+        await deps
+          .deletePvc(pvcName)
+          .catch((e) =>
+            logger.warn(
+              { e, pvcName },
+              'Failed to delete PVC on mismatch; continuing',
+            ),
+          );
+
+        // (c) Terminate the bootstrap Job — idempotent (NotFound OK)
+        await deps
+          .deleteJob(jobName)
+          .catch((e) =>
+            logger.warn(
+              { e, jobName },
+              'Failed to delete Job on mismatch; continuing',
+            ),
+          );
+
+        // (d) Increment metric
+        deps.recordMismatch({ channel_type });
+
+        // (e) Emit SSE message to admin
+        const sseText = [
+          `Bootstrap rejected: runtime PVC packages don't match the \`${channel_type}\` manifest.`,
+          `Expected hash \`${expectedHash}\`, got \`${actualHash}\`.`,
+          `No channel was created.`,
+        ].join(' ');
+        await deps
+          .publishSse(sseTopic, sseText)
+          .catch((e) => logger.warn({ e }, 'Failed to publish mismatch SSE'));
+
+        // (f) Release instance name so a retry can reuse it (Story 176 AC5)
+        deps.releaseBootstrap(instance_name);
+
+        // (g) Return early — no Secret or Deployment created
+        return;
+      }
     }
+
+    // ── Hash matched (or no manifest registered) — proceed with happy path ────
 
     // 1. Create credentials Secret
     await deps.createSecret(secretName, secret_data);
