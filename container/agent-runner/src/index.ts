@@ -1159,7 +1159,283 @@ async function runAgentLoop(
 
 // ---- Main ----
 
+// ---- Bootstrap mode ----
+//
+// When KUBECLAW_BOOTSTRAP_SKILL is set, this image is being run as a bootstrap
+// Job for a new channel install (Stories 174-184). Instead of the normal agent
+// loop, we:
+//   - Load the named skill markdown as the system prompt
+//   - Register the four superuser local_* tools (local_bash/read/write/edit)
+//     plus a commit_channel_config IPC tool that hands off to the orchestrator
+//   - Drive an agent loop that publishes assistant turns to the admin shell SSE
+//     via Redis topic kubeclaw:bootstrap:<jobId>
+//
+// The skill customises this generic agent container in the running cluster —
+// no separate channel image is built.
+
+async function waitForBootstrapCommitReply(
+  redisUrl: string,
+  replyChannel: string,
+  timeoutMs: number,
+): Promise<string> {
+  return new Promise((resolve) => {
+    let resolved = false;
+    const sub = createClient({ url: redisUrl }) as RedisClientType;
+    sub.on('error', () => {});
+    sub.connect().then(() => {
+      sub.subscribe(replyChannel, (msg: string) => {
+        if (resolved) return;
+        resolved = true;
+        try {
+          const data = JSON.parse(msg);
+          sub.unsubscribe(replyChannel).catch(() => {});
+          sub.quit().catch(() => {});
+          if (data.ok) {
+            resolve('Channel ready. Bootstrap complete.');
+          } else {
+            resolve(`Error from orchestrator: ${data.error}`);
+          }
+        } catch (err: any) {
+          resolve(`Error parsing reply: ${err.message}`);
+        }
+      });
+    });
+    setTimeout(() => {
+      if (resolved) return;
+      resolved = true;
+      sub.unsubscribe(replyChannel).catch(() => {});
+      sub.quit().catch(() => {});
+      resolve('Timeout waiting for orchestrator reply (60s).');
+    }, timeoutMs);
+  });
+}
+
+async function runBootstrapMode(redis: RedisClientType): Promise<void> {
+  const skillName = process.env.KUBECLAW_BOOTSTRAP_SKILL!;
+  const jobId = process.env.KUBECLAW_BOOTSTRAP_JOB_ID || '';
+  const instanceName = process.env.KUBECLAW_BOOTSTRAP_INSTANCE || '';
+  const channelType = process.env.KUBECLAW_BOOTSTRAP_CHANNEL_TYPE || '';
+  const redisUrl = process.env.REDIS_URL || 'redis://kubeclaw-redis:6379';
+
+  if (!jobId || !instanceName || !channelType) {
+    log('ERROR: bootstrap mode requires KUBECLAW_BOOTSTRAP_JOB_ID, '
+      + 'KUBECLAW_BOOTSTRAP_INSTANCE, KUBECLAW_BOOTSTRAP_CHANNEL_TYPE');
+    process.exit(1);
+  }
+
+  const skillPath = `/workspace/skills/${skillName}.md`;
+  if (!fs.existsSync(skillPath)) {
+    log(`ERROR: Skill file not found: ${skillPath}`);
+    process.exit(1);
+  }
+  const skillMarkdown = fs.readFileSync(skillPath, 'utf-8');
+
+  const bootstrapTopic = `kubeclaw:bootstrap:${jobId}`;
+  const taskChannel = `kubeclaw:bootstrap-task:${jobId}`;
+  const replyChannel = `kubeclaw:bootstrap-reply:${jobId}`;
+
+  async function publishToAdmin(text: string): Promise<void> {
+    try {
+      await redis.publish(bootstrapTopic, JSON.stringify({ type: 'agent', text }));
+    } catch (err: any) {
+      log(`Warning: failed to publish to admin: ${err.message}`);
+    }
+  }
+
+  await publishToAdmin(
+    `Bootstrap started for channel ${channelType}/${instanceName}. Loading skill: ${skillName}`,
+  );
+
+  const systemPrompt = [
+    skillMarkdown,
+    '',
+    `## Bootstrap context`,
+    `Channel type:     ${channelType}`,
+    `Instance name:    ${instanceName}`,
+    `Bootstrap job ID: ${jobId}`,
+    '',
+    `## Mounted paths`,
+    `  /workspace/skills/    — skill files`,
+    `  /workspace/manifests/ — per-channel-type npm manifests`,
+    `  /runtime              — writable runtime PVC; install packages and write channel-entry.js here`,
+    '',
+    `When credentials are gathered, validated, and the runtime PVC is ready,`,
+    `call commit_channel_config to hand off to the orchestrator.`,
+  ].join('\n');
+
+  const commitTool: AgentTool = {
+    name: 'commit_channel_config',
+    label: 'Commit Channel Config',
+    description:
+      'Hand off the configured channel to the orchestrator. Call after all '
+      + 'credentials are gathered/validated and the runtime PVC contains '
+      + 'channel-entry.js and any installed node_modules.',
+    parameters: Type.Object({
+      channel_type: Type.String({ description: 'Channel type (e.g. "telegram")' }),
+      instance_name: Type.String({ description: 'Instance name' }),
+      secret_data: Type.Record(Type.String(), Type.String(), {
+        description: 'Credential key-value pairs to store in a K8s Secret',
+      }),
+      runtime_pvc_lock_hash: Type.String({
+        description:
+          'sha256 of canonical(package.json) + "\\n" + canonical(package-lock.json) '
+          + 'on the runtime PVC. Advisory only — orchestrator independently verifies.',
+      }),
+    }),
+    execute: async (_id, args) => {
+      const a = args as Record<string, unknown>;
+      await publishToAdmin(
+        `Requesting hand-off for ${a.channel_type}/${a.instance_name}...`,
+      );
+      try {
+        await redis.publish(
+          taskChannel,
+          JSON.stringify({
+            type: 'commit_channel_config',
+            bootstrapJobId: jobId,
+            channel_type: a.channel_type,
+            instance_name: a.instance_name,
+            secret_data: a.secret_data,
+            runtime_pvc_lock_hash: a.runtime_pvc_lock_hash,
+          }),
+        );
+        const reply = await waitForBootstrapCommitReply(
+          redisUrl,
+          replyChannel,
+          60_000,
+        );
+        return textResult(reply);
+      } catch (err: any) {
+        return textResult(`Error: ${err.message}`);
+      }
+    },
+  };
+
+  // Bootstrap tools = the four superuser local_* tools + commit_channel_config.
+  // No execution-pod fan-out, no browser tools, no web tools — bootstrap runs
+  // in a single pod with its runtime PVC as the only durable surface.
+  const tools: AgentTool[] = [
+    {
+      name: 'local_bash',
+      label: 'Local Bash',
+      description:
+        'Run a bash command in this bootstrap container. Use for npm ci, '
+        + 'credential validation (curl), file inspection.',
+      parameters: Type.Object({
+        command: Type.String(),
+        timeout: Type.Optional(Type.Number()),
+      }),
+      execute: async (_id, params) =>
+        textResult(await localBash(params as Record<string, unknown>)),
+    },
+    {
+      name: 'local_read',
+      label: 'Local Read',
+      description: "Read a file from this container's filesystem.",
+      parameters: Type.Object({
+        file_path: Type.String(),
+        offset: Type.Optional(Type.Number()),
+        limit: Type.Optional(Type.Number()),
+      }),
+      execute: async (_id, params) =>
+        textResult(localRead(params as Record<string, unknown>)),
+    },
+    {
+      name: 'local_write',
+      label: 'Local Write',
+      description:
+        'Write a file to this container (creates parent dirs). Use to write '
+        + '/runtime/channel-entry.js, credential helpers, etc.',
+      parameters: Type.Object({
+        file_path: Type.String(),
+        content: Type.String(),
+      }),
+      execute: async (_id, params) =>
+        textResult(localWrite(params as Record<string, unknown>)),
+    },
+    {
+      name: 'local_edit',
+      label: 'Local Edit',
+      description: 'Edit a file by find-and-replace on its contents.',
+      parameters: Type.Object({
+        file_path: Type.String(),
+        old_string: Type.String(),
+        new_string: Type.String(),
+        replace_all: Type.Optional(Type.Boolean()),
+      }),
+      execute: async (_id, params) =>
+        textResult(localEdit(params as Record<string, unknown>)),
+    },
+    commitTool,
+  ];
+
+  const model = buildModel();
+  const agent = new Agent({
+    initialState: { systemPrompt, model, tools, messages: [] },
+    getApiKey: getApiKeyForProvider,
+    streamFn: streamSimple,
+  });
+
+  let toolRounds = 0;
+  let lastPublishedIndex = -1;
+
+  agent.subscribe(async (event: AgentEvent) => {
+    if (event.type === 'turn_end') {
+      toolRounds++;
+      if (toolRounds >= MAX_TOOL_ROUNDS) {
+        log(`Max tool rounds (${MAX_TOOL_ROUNDS}) reached in bootstrap, aborting`);
+        agent.abort();
+        return;
+      }
+      // Publish any new assistant messages since the last turn to the admin SSE.
+      const messages = agent.state.messages;
+      for (let i = lastPublishedIndex + 1; i < messages.length; i++) {
+        const m = messages[i] as any;
+        if (m.role === 'assistant' && Array.isArray(m.content)) {
+          const text = m.content
+            .filter((c: any) => c.type === 'text')
+            .map((c: any) => c.text)
+            .join('');
+          if (text) await publishToAdmin(text);
+        }
+      }
+      lastPublishedIndex = messages.length - 1;
+    }
+  });
+
+  const initialPrompt =
+    `Please set up the ${channelType} channel for instance "${instanceName}". `
+    + `Follow the skill instructions: install any required packages onto /runtime, `
+    + `write the channel-entry.js, gather credentials, validate them, then call `
+    + `commit_channel_config.`;
+
+  try {
+    await agent.prompt(initialPrompt);
+    log('Bootstrap agent loop complete');
+  } catch (err: any) {
+    log(`Bootstrap error: ${err.message}`);
+    await publishToAdmin(`Bootstrap error: ${err.message}`);
+  }
+}
+
 async function main(): Promise<void> {
+  // Bootstrap mode short-circuit — when KUBECLAW_BOOTSTRAP_SKILL is set, this
+  // image runs as a channel bootstrap Job (Stories 174-184). Skip stdin/IPC
+  // setup entirely and drive the skill-loaded agent loop directly.
+  if (process.env.KUBECLAW_BOOTSTRAP_SKILL) {
+    const redisUrl = process.env.REDIS_URL || 'redis://kubeclaw-redis:6379';
+    const redis = createClient({ url: redisUrl }) as RedisClientType;
+    redis.on('error', (err) => log(`Redis error: ${err.message}`));
+    await redis.connect();
+    log('Redis connected (bootstrap mode)');
+    try {
+      await runBootstrapMode(redis);
+    } finally {
+      try { await redis.quit(); } catch { /* best effort */ }
+    }
+    return;
+  }
+
   let containerInput: ContainerInput;
   try {
     const stdinData = await readStdin();

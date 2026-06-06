@@ -79,12 +79,15 @@ RUN cat > /app/entrypoint.sh <<'ENTRYPOINT'
 #!/bin/bash
 set -e
 
-# Mode 1: bootstrap (skill set via env)
+# Mode 1: bootstrap (skill set via env) → agent-runner short-circuits on the
+# same env var and runs the skill-loaded agent loop with superuser tools.
+# No stdin input is needed; main() detects bootstrap mode before reading.
 if [ -n "$KUBECLAW_BOOTSTRAP_SKILL" ]; then
-  exec node /app/channel-loader.js
+  exec node /app/dist/index.js
 fi
 
-# Mode 2: steady-state channel (PVC contains channel-entry.js)
+# Mode 2: steady-state channel (PVC contains channel-entry.js) → channel-loader
+# imports the entry file as a normal ES module and hands control to it.
 if [ -f "/runtime/channel-entry.js" ]; then
   exec node /app/channel-loader.js
 fi
