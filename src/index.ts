@@ -66,6 +66,10 @@ import {
   deregisterBootstrapMeta,
   reconcileOrphanedBootstrapsOnStartup,
 } from './k8s/bootstrap-runner.js';
+import {
+  patchRuntimePvc,
+  waitForDeploymentRollout,
+} from './skills/orchestrator/channel-setup.js';
 import { KUBECLAW_NAMESPACE } from './config.js';
 import { getOutputChannel, getRedisClient } from './k8s/redis-client.js';
 import { jobRunner } from './k8s/job-runner.js';
@@ -533,6 +537,42 @@ async function main(): Promise<void> {
           errorMessage: args.errorMessage,
         });
         deregisterBootstrapMeta(args.instanceName);
+      },
+      // Story 181: upgrade-path deps — patch Deployment PVC, wait for rollout,
+      // schedule old PVC deletion after grace period.
+      patchDeployment: async (instanceName: string, newPvcName: string) => {
+        await patchRuntimePvc(instanceName, newPvcName, {
+          appsV1: appsApi,
+          namespace: KUBECLAW_NAMESPACE,
+        });
+      },
+      waitForRollout: async (deploymentName: string) => {
+        await waitForDeploymentRollout(deploymentName, {
+          appsV1: appsApi,
+          namespace: KUBECLAW_NAMESPACE,
+        });
+      },
+      scheduleOldPvcDeletion: (oldPvcName: string) => {
+        const graceSec = parseInt(
+          process.env.UPGRADE_OLD_PVC_GRACE_SECONDS || '300',
+          10,
+        );
+        setTimeout(async () => {
+          try {
+            await coreApi.deleteNamespacedPersistentVolumeClaim({
+              name: oldPvcName,
+              namespace: KUBECLAW_NAMESPACE,
+              gracePeriodSeconds: 0,
+            });
+            logger.info({ oldPvcName }, 'Upgrade grace period: old PVC deleted');
+          } catch (err) {
+            logger.warn(
+              { oldPvcName, err },
+              'Upgrade grace period: failed to delete old PVC',
+            );
+          }
+        }, graceSec * 1000);
+        logger.info({ oldPvcName, graceSec }, 'Old PVC deletion scheduled');
       },
     },
     channelBaseImage,
