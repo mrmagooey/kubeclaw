@@ -240,6 +240,11 @@ spec:
                   name: {{ include "kubeclaw.secretName" . }}
                   key: admin-http-password
             {{- end }}
+            # Story 182: bootstrap runtime PVC accessModes + steady-state replica count
+            - name: BOOTSTRAP_RUNTIME_PVC_ACCESS_MODES
+              value: {{ .Values.bootstrap.runtimePvc.accessModes | default (list "ReadWriteOnce") | join "," | quote }}
+            - name: BOOTSTRAP_STEADY_STATE_REPLICAS
+              value: {{ .Values.bootstrap.steadyState.defaultReplicas | default 1 | quote }}
           ports:
             - name: health
               containerPort: 8080

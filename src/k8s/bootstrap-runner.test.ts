@@ -2,7 +2,7 @@
  * Unit tests for Story 174: bootstrap-runner manifest validation, hash, and Job spawner.
  * Story 180: state machine, filter/limit, report_step truncation, recordBootstrapTerminal wiring.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { CoreV1Api, BatchV1Api } from '@kubernetes/client-node';
 
 // ---- validateChannelManifest + computeManifestHash ----
@@ -342,6 +342,142 @@ describe('bootstrapChannelFromSkill', () => {
     expect(
       inspector?.volumeMounts?.some((m) => m.mountPath === '/runtime-inspect'),
     ).toBe(true);
+  });
+});
+
+// ─── Story 182: accessModes wiring + RO/RW mount invariants ──────────────────
+
+describe('bootstrapChannelFromSkill — Story 182: accessModes wiring', () => {
+  let fakeK8s: ReturnType<typeof makeFakeK8s>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const OLD_ENV: any = process.env;
+
+  beforeEach(() => {
+    fakeK8s = makeFakeK8s();
+    process.env = { ...OLD_ENV };
+    delete process.env.BOOTSTRAP_RUNTIME_PVC_ACCESS_MODES;
+  });
+  afterEach(() => {
+    process.env = OLD_ENV;
+  });
+
+  it('PVC defaults to ReadWriteOnce when env var is absent', async () => {
+    await bootstrapChannelFromSkill({
+      skillName: 'bootstrap-telegram',
+      channelType: 'telegram',
+      instanceName: 'my-telegram',
+      k8sDeps: { coreV1: fakeK8s.coreV1, batchV1: fakeK8s.batchV1 },
+      namespace: 'test-ns',
+      channelBaseImage: 'kubeclaw-channel-base:latest',
+      activeBootstraps: new Map(),
+    });
+    const pvcBody = fakeK8s.createdPvcs[0].body as {
+      spec: { accessModes: string[] };
+    };
+    expect(pvcBody.spec.accessModes).toEqual(['ReadWriteOnce']);
+  });
+
+  it('PVC uses accessModes from BOOTSTRAP_RUNTIME_PVC_ACCESS_MODES env var', async () => {
+    process.env.BOOTSTRAP_RUNTIME_PVC_ACCESS_MODES = 'ReadWriteMany';
+    await bootstrapChannelFromSkill({
+      skillName: 'bootstrap-telegram',
+      channelType: 'telegram',
+      instanceName: 'my-telegram',
+      k8sDeps: { coreV1: fakeK8s.coreV1, batchV1: fakeK8s.batchV1 },
+      namespace: 'test-ns',
+      channelBaseImage: 'kubeclaw-channel-base:latest',
+      activeBootstraps: new Map(),
+    });
+    const pvcBody = fakeK8s.createdPvcs[0].body as {
+      body: { spec: { accessModes: string[] } };
+    };
+    expect(pvcBody.spec.accessModes).toEqual(['ReadWriteMany']);
+  });
+
+  it('PVC handles comma-separated accessModes list', async () => {
+    process.env.BOOTSTRAP_RUNTIME_PVC_ACCESS_MODES = 'ReadWriteMany,ReadWriteOnce';
+    await bootstrapChannelFromSkill({
+      skillName: 'bootstrap-telegram',
+      channelType: 'telegram',
+      instanceName: 'my-telegram',
+      k8sDeps: { coreV1: fakeK8s.coreV1, batchV1: fakeK8s.batchV1 },
+      namespace: 'test-ns',
+      channelBaseImage: 'kubeclaw-channel-base:latest',
+      activeBootstraps: new Map(),
+    });
+    const pvcBody = fakeK8s.createdPvcs[0].body as {
+      body: { spec: { accessModes: string[] } };
+    };
+    expect(pvcBody.spec.accessModes).toEqual(['ReadWriteMany', 'ReadWriteOnce']);
+  });
+
+  it('Bootstrap Job mounts runtime PVC read-write (readOnly absent or false) — AC4 invariant', async () => {
+    await bootstrapChannelFromSkill({
+      skillName: 'bootstrap-telegram',
+      channelType: 'telegram',
+      instanceName: 'my-telegram',
+      k8sDeps: { coreV1: fakeK8s.coreV1, batchV1: fakeK8s.batchV1 },
+      namespace: 'test-ns',
+      channelBaseImage: 'kubeclaw-channel-base:latest',
+      activeBootstraps: new Map(),
+    });
+    const jobBody = fakeK8s.createdJobs[0].body as {
+      spec: {
+        template: {
+          spec: {
+            containers: Array<{
+              name: string;
+              volumeMounts?: Array<{ name: string; readOnly?: boolean }>;
+            }>;
+          };
+        };
+      };
+    };
+    const containers = jobBody.spec.template.spec.containers;
+    // Both bootstrap and inspector containers mount the runtime volume
+    for (const container of containers) {
+      const runtimeMount = container.volumeMounts?.find(
+        (vm) => vm.name === 'runtime',
+      );
+      if (runtimeMount) {
+        // readOnly must be absent (undefined) or explicitly false — never true
+        expect(runtimeMount.readOnly).not.toBe(true);
+      }
+    }
+  });
+
+  it('Bootstrap Job mounts runtime PVC read-write even when RWX accessMode is set — AC4 invariant', async () => {
+    process.env.BOOTSTRAP_RUNTIME_PVC_ACCESS_MODES = 'ReadWriteMany';
+    await bootstrapChannelFromSkill({
+      skillName: 'bootstrap-telegram',
+      channelType: 'telegram',
+      instanceName: 'my-telegram',
+      k8sDeps: { coreV1: fakeK8s.coreV1, batchV1: fakeK8s.batchV1 },
+      namespace: 'test-ns',
+      channelBaseImage: 'kubeclaw-channel-base:latest',
+      activeBootstraps: new Map(),
+    });
+    const jobBody = fakeK8s.createdJobs[0].body as {
+      spec: {
+        template: {
+          spec: {
+            containers: Array<{
+              name: string;
+              volumeMounts?: Array<{ name: string; readOnly?: boolean }>;
+            }>;
+          };
+        };
+      };
+    };
+    const containers = jobBody.spec.template.spec.containers;
+    for (const container of containers) {
+      const runtimeMount = container.volumeMounts?.find(
+        (vm) => vm.name === 'runtime',
+      );
+      if (runtimeMount) {
+        expect(runtimeMount.readOnly).not.toBe(true);
+      }
+    }
   });
 });
 

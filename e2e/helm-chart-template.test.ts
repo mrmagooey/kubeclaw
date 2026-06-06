@@ -532,3 +532,60 @@ describe('helm template — mode=off (no regression)', () => {
     expect(render()).not.toContain('kind: EnvoyFilter');
   });
 });
+
+// ─── Story 182: RWX/RWO replica guardrail ────────────────────────────────────
+
+describe('helm template — story-182 RWX/RWO replica guardrail', () => {
+  const renderWith = (extraArgs: string[]) =>
+    spawnSync(
+      'helm',
+      [
+        'template', 'smoke', CHART_DIR,
+        '--set', 'secrets.anthropicApiKey=test',
+        '--set', 'secrets.claudeCodeOauthToken=test',
+        '--set', 'redis.password=test',
+        ...extraArgs,
+      ],
+      { encoding: 'utf8' },
+    );
+
+  it('renders HPA with maxReplicas:1 for RWO (default)', () => {
+    const result = renderWith([]);
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain('kind: HorizontalPodAutoscaler');
+    expect(result.stdout).toContain('maxReplicas: 1');
+    expect(result.stdout).toContain('name: kubeclaw-channel-rwo-guardrail');
+  });
+
+  it('HPA annotation names the accessModes constraint', () => {
+    const result = renderWith([]);
+    expect(result.status, result.stderr).toBe(0);
+    // HPA annotation must name the accessModes constraint per story AC3
+    expect(result.stdout).toContain('ReadWriteMany');
+  });
+
+  it('does NOT render HPA guardrail when accessModes is RWX', () => {
+    const result = renderWith([
+      '--set', 'bootstrap.runtimePvc.accessModes[0]=ReadWriteMany',
+    ]);
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).not.toContain('kind: HorizontalPodAutoscaler');
+  });
+
+  it('RWO render includes BOOTSTRAP_RUNTIME_PVC_ACCESS_MODES env var in orchestrator', () => {
+    const result = renderWith([]);
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain('BOOTSTRAP_RUNTIME_PVC_ACCESS_MODES');
+    expect(result.stdout).toContain('ReadWriteOnce');
+  });
+
+  it('RWX render includes BOOTSTRAP_STEADY_STATE_REPLICAS env var with custom value', () => {
+    const result = renderWith([
+      '--set', 'bootstrap.runtimePvc.accessModes[0]=ReadWriteMany',
+      '--set', 'bootstrap.steadyState.defaultReplicas=3',
+    ]);
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain('BOOTSTRAP_STEADY_STATE_REPLICAS');
+    expect(result.stdout).toContain('"3"');
+  });
+});

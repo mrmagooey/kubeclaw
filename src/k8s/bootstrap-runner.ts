@@ -198,6 +198,23 @@ const BOOTSTRAP_JOB_TTL = parseInt(
 );
 
 /**
+ * Parse the runtime PVC accessModes from the BOOTSTRAP_RUNTIME_PVC_ACCESS_MODES
+ * env var (comma-separated). Defaults to ['ReadWriteOnce'] when absent.
+ *
+ * Story 182: the Helm chart injects this env var into the orchestrator pod via
+ * bootstrap.runtimePvc.accessModes values. Both the bootstrap Job and upgrade Job
+ * use this to create PVCs with the correct accessModes.
+ */
+function parseRuntimePvcAccessModes(): string[] {
+  const raw = process.env.BOOTSTRAP_RUNTIME_PVC_ACCESS_MODES;
+  if (!raw || !raw.trim()) return ['ReadWriteOnce'];
+  return raw
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+/**
  * Spawn a bootstrap Job and its runtime PVC for a channel instance.
  *
  * - If the instance is already active (present in activeBootstraps), returns
@@ -255,7 +272,7 @@ export async function bootstrapChannelFromSkill(
           },
         },
         spec: {
-          accessModes: ['ReadWriteOnce'],
+          accessModes: parseRuntimePvcAccessModes(),
           resources: { requests: { storage: pvcSize } },
         },
       },
@@ -505,7 +522,7 @@ export async function runUpgrade(
           },
         },
         spec: {
-          accessModes: ['ReadWriteOnce'],
+          accessModes: parseRuntimePvcAccessModes(),
           resources: { requests: { storage: pvcSize } },
         },
       },

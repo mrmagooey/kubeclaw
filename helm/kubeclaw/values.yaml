@@ -533,6 +533,19 @@ bootstrap:
   timeoutSeconds: 900
   pvcSize: 1Gi
   allowedLifecycleScripts: []
+  # runtimePvc.accessModes: PVC access modes for the per-channel runtime PVC.
+  # Set to [ReadWriteMany] only if your storage class supports RWX (NFS, EFS, CephFS, etc.).
+  # On RWX, steady-state channel Deployments may scale to multiple replicas — the runtime
+  # PVC mounts read-only across all replicas. On RWO (default), each channel runs as a
+  # single pod.
+  runtimePvc:
+    accessModes:
+      - ReadWriteOnce
+  # steadyState.defaultReplicas: initial replica count for the steady-state channel Deployment.
+  # Ignored when runtimePvc.accessModes contains only ReadWriteOnce — the HPA guardrail
+  # caps maxReplicas: 1 regardless. Only takes effect on RWX clusters.
+  steadyState:
+    defaultReplicas: 1
   # channelManifests: {}
   # Example:
   #   channelManifests:

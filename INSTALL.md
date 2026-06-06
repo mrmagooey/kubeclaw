@@ -243,6 +243,59 @@ Add secrets for any channels you use. For guided setup, use the orchestrator adm
 | On-prem     | NFS provisioner or Longhorn                |
 | Single-node | `standard` (minikube), `local-path` (kind) |
 
+### Multi-replica channels
+
+By default, each channel Deployment runs as a single pod (`replicas: 1`). The per-channel runtime PVC (`kubeclaw-channel-<instance>-runtime`) uses `ReadWriteOnce` — only one pod may mount it at a time. Scaling beyond 1 replica on a RWO PVC causes a `Multi-Attach error` on the second pod.
+
+To enable multi-replica steady-state channel pods, provision an RWX-capable storage class and configure the chart:
+
+```bash
+helm upgrade kubeclaw ./helm/kubeclaw \
+  --set bootstrap.runtimePvc.accessModes[0]=ReadWriteMany \
+  --set bootstrap.steadyState.defaultReplicas=2 \
+  -n kubeclaw
+```
+
+**Common RWX storage classes by provider:**
+
+| Provider | Storage Class | Notes |
+|----------|--------------|-------|
+| AWS | EFS CSI (`efs.csi.aws.com`) | Provision an AccessPoint per PVC for isolation |
+| GCP | Filestore (`filestore.csi.storage.gke.io`) | Requires a Filestore instance; supports RWX |
+| Azure | Azure Files (`azurefile-csi`) | SMB/NFS backed; supports RWX in AKS |
+| On-prem | NFS provisioner / Longhorn | Use `nfs.csi.k8s.io` or Longhorn with RWX mode |
+| minikube | NFS via `storage-provisioner-rancher` | Enable: `minikube addons enable storage-provisioner-rancher` |
+| kind | csi-driver-nfs | Install: `helm install csi-driver-nfs csi-driver-nfs/csi-driver-nfs` |
+
+**minikube NFS setup:**
+
+```bash
+minikube addons enable storage-provisioner-rancher
+kubectl apply -f - <<EOF
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: nfs-sc
+provisioner: rancher.io/local-path
+volumeBindingMode: WaitForFirstConsumer
+EOF
+```
+
+Then upgrade the chart with `--set bootstrap.runtimePvc.accessModes[0]=ReadWriteMany`.
+
+**kind / csi-driver-nfs setup:**
+
+```bash
+helm repo add csi-driver-nfs https://raw.githubusercontent.com/kubernetes-csi/csi-driver-nfs/master/charts
+helm install csi-driver-nfs csi-driver-nfs/csi-driver-nfs --namespace kube-system
+```
+
+Create a StorageClass pointing at your NFS server, then set the chart values as above.
+
+> **Note:** The runtime PVC mounts **read-only** on all steady-state replicas and **read-write** on the bootstrap Job only. This is an invariant enforced by KubeClaw — it holds regardless of the PVC's accessModes.
+
+> **Note:** A `HorizontalPodAutoscaler` named `kubeclaw-channel-rwo-guardrail` is deployed when `bootstrap.runtimePvc.accessModes` does not include `ReadWriteMany`. It caps channel Deployments at `maxReplicas: 1`. When you switch to RWX, the HPA is not rendered and channel Deployments may scale freely. The HPA exists solely as a guardrail — operators who want true auto-scaling should disable it and install their own.
+
 ---
 
 ## Secrets Reference

@@ -17,6 +17,32 @@ import type { V1Deployment } from '@kubernetes/client-node';
 import { logger } from '../logger.js';
 import { computeManifestHash, nextRuntimePvcName } from './bootstrap-runner.js';
 
+// ─── Story 182: replica cap helper ────────────────────────────────────────────
+
+/**
+ * Determine the replica count for the steady-state channel Deployment.
+ *
+ * Story 182 rules:
+ *   - If accessModes does NOT include ReadWriteMany → always 1 (RWO cap)
+ *   - If accessModes includes ReadWriteMany → use BOOTSTRAP_STEADY_STATE_REPLICAS
+ *     (parsed as integer, minimum 1, default 1)
+ *
+ * Both env vars are injected by the Helm chart via the orchestrator Deployment's
+ * env block (orchestrator.yaml, Story 182).
+ */
+export function resolveSteadyStateReplicas(): number {
+  const accessModesRaw = process.env.BOOTSTRAP_RUNTIME_PVC_ACCESS_MODES ?? '';
+  const isRwx = accessModesRaw
+    .split(',')
+    .map((s) => s.trim())
+    .includes('ReadWriteMany');
+  if (!isRwx) return 1;
+
+  const replicasRaw = process.env.BOOTSTRAP_STEADY_STATE_REPLICAS;
+  const replicas = parseInt(replicasRaw ?? '1', 10);
+  return Number.isInteger(replicas) && replicas >= 1 ? replicas : 1;
+}
+
 // ─── Public types ─────────────────────────────────────────────────────────────
 
 export interface CommitChannelConfigPayload {
@@ -338,7 +364,7 @@ export async function processCommitChannelConfig(
           },
         },
         spec: {
-          replicas: 1,
+          replicas: resolveSteadyStateReplicas(),
           selector: {
             matchLabels: { app: `kubeclaw-channel-${instance_name}` },
           },

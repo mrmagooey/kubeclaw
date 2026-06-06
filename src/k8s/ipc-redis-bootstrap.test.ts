@@ -2,8 +2,11 @@
  * Unit tests for Story 174: commit_channel_config IPC handler.
  * Story 176 adds: mismatch detection tests using injected readPvcFiles stub.
  */
-import { describe, it, expect, vi } from 'vitest';
-import { processCommitChannelConfig } from './ipc-redis-bootstrap.js';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import {
+  processCommitChannelConfig,
+  resolveSteadyStateReplicas,
+} from './ipc-redis-bootstrap.js';
 import type {
   CommitChannelConfigDeps,
   CommitChannelConfigPayload,
@@ -700,5 +703,177 @@ describe('processCommitChannelConfig — upgrade path', () => {
     expect(deps.patchedDeployments).toHaveLength(0);
     expect(deps.deletePvc).toHaveBeenCalled();
     expect(deps.releaseBootstrap).toHaveBeenCalledWith('my-telegram');
+  });
+});
+
+// ─── Story 182: replica cap + RO mount invariant ──────────────────────────────
+
+describe('resolveSteadyStateReplicas — Story 182', () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const OLD_ENV: any = process.env;
+
+  beforeEach(() => {
+    process.env = { ...OLD_ENV };
+    delete process.env.BOOTSTRAP_RUNTIME_PVC_ACCESS_MODES;
+    delete process.env.BOOTSTRAP_STEADY_STATE_REPLICAS;
+  });
+  afterEach(() => {
+    process.env = OLD_ENV;
+  });
+
+  it('returns 1 when env var is absent (default RWO)', () => {
+    expect(resolveSteadyStateReplicas()).toBe(1);
+  });
+
+  it('returns 1 when accessModes is ReadWriteOnce', () => {
+    process.env.BOOTSTRAP_RUNTIME_PVC_ACCESS_MODES = 'ReadWriteOnce';
+    expect(resolveSteadyStateReplicas()).toBe(1);
+  });
+
+  it('caps at 1 even when BOOTSTRAP_STEADY_STATE_REPLICAS=3 and RWO', () => {
+    process.env.BOOTSTRAP_RUNTIME_PVC_ACCESS_MODES = 'ReadWriteOnce';
+    process.env.BOOTSTRAP_STEADY_STATE_REPLICAS = '3';
+    expect(resolveSteadyStateReplicas()).toBe(1);
+  });
+
+  it('returns BOOTSTRAP_STEADY_STATE_REPLICAS value when RWX', () => {
+    process.env.BOOTSTRAP_RUNTIME_PVC_ACCESS_MODES = 'ReadWriteMany';
+    process.env.BOOTSTRAP_STEADY_STATE_REPLICAS = '3';
+    expect(resolveSteadyStateReplicas()).toBe(3);
+  });
+
+  it('returns 1 when RWX but BOOTSTRAP_STEADY_STATE_REPLICAS is absent', () => {
+    process.env.BOOTSTRAP_RUNTIME_PVC_ACCESS_MODES = 'ReadWriteMany';
+    expect(resolveSteadyStateReplicas()).toBe(1);
+  });
+
+  it('returns 1 when RWX but BOOTSTRAP_STEADY_STATE_REPLICAS is invalid', () => {
+    process.env.BOOTSTRAP_RUNTIME_PVC_ACCESS_MODES = 'ReadWriteMany';
+    process.env.BOOTSTRAP_STEADY_STATE_REPLICAS = 'not-a-number';
+    expect(resolveSteadyStateReplicas()).toBe(1);
+  });
+});
+
+describe('processCommitChannelConfig — Story 182: replica cap + RO mount invariant', () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const OLD_ENV: any = process.env;
+
+  beforeEach(() => {
+    process.env = { ...OLD_ENV };
+    delete process.env.BOOTSTRAP_RUNTIME_PVC_ACCESS_MODES;
+    delete process.env.BOOTSTRAP_STEADY_STATE_REPLICAS;
+  });
+  afterEach(() => {
+    process.env = OLD_ENV;
+  });
+
+  const basePayload: CommitChannelConfigPayload = {
+    type: 'commit_channel_config',
+    bootstrapJobId: 'job-182',
+    channel_type: 'telegram',
+    instance_name: 'my-telegram',
+    secret_data: { TELEGRAM_BOT_TOKEN: 'bot182' },
+  };
+
+  it('Steady-state Deployment has replicas:1 on RWO (default) — AC3', async () => {
+    const deps = makeDeps();
+    await processCommitChannelConfig(
+      basePayload,
+      deps,
+      'test-ns',
+      'kubeclaw-channel-base:latest',
+    );
+    const deploymentBody = (deps.createDeployment as ReturnType<typeof vi.fn>)
+      .mock.calls[0][0] as { spec: { replicas: number } };
+    expect(deploymentBody.spec.replicas).toBe(1);
+  });
+
+  it('Steady-state Deployment has replicas:1 even when BOOTSTRAP_STEADY_STATE_REPLICAS=3 and RWO — AC3 cap', async () => {
+    process.env.BOOTSTRAP_STEADY_STATE_REPLICAS = '3';
+    process.env.BOOTSTRAP_RUNTIME_PVC_ACCESS_MODES = 'ReadWriteOnce';
+    const deps = makeDeps();
+    await processCommitChannelConfig(
+      basePayload,
+      deps,
+      'test-ns',
+      'kubeclaw-channel-base:latest',
+    );
+    const deploymentBody = (deps.createDeployment as ReturnType<typeof vi.fn>)
+      .mock.calls[0][0] as { spec: { replicas: number } };
+    expect(deploymentBody.spec.replicas).toBe(1);
+  });
+
+  it('Steady-state Deployment uses BOOTSTRAP_STEADY_STATE_REPLICAS when RWX — AC2 support', async () => {
+    process.env.BOOTSTRAP_STEADY_STATE_REPLICAS = '3';
+    process.env.BOOTSTRAP_RUNTIME_PVC_ACCESS_MODES = 'ReadWriteMany';
+    const deps = makeDeps();
+    await processCommitChannelConfig(
+      basePayload,
+      deps,
+      'test-ns',
+      'kubeclaw-channel-base:latest',
+    );
+    const deploymentBody = (deps.createDeployment as ReturnType<typeof vi.fn>)
+      .mock.calls[0][0] as { spec: { replicas: number } };
+    expect(deploymentBody.spec.replicas).toBe(3);
+  });
+
+  it('Steady-state Deployment mounts runtime PVC read-only (readOnly: true) — AC4 invariant', async () => {
+    const deps = makeDeps();
+    await processCommitChannelConfig(
+      basePayload,
+      deps,
+      'test-ns',
+      'kubeclaw-channel-base:latest',
+    );
+    const deploymentBody = (deps.createDeployment as ReturnType<typeof vi.fn>)
+      .mock.calls[0][0] as {
+      spec: {
+        template: {
+          spec: {
+            containers: Array<{
+              name: string;
+              volumeMounts?: Array<{ name: string; readOnly?: boolean }>;
+            }>;
+          };
+        };
+      };
+    };
+    const channel = deploymentBody.spec.template.spec.containers.find(
+      (c) => c.name === 'channel',
+    );
+    expect(channel).toBeDefined();
+    const runtimeMount = channel!.volumeMounts?.find((vm) => vm.name === 'runtime');
+    expect(runtimeMount).toBeDefined();
+    expect(runtimeMount!.readOnly).toBe(true);
+  });
+
+  it('Steady-state Deployment mounts runtime PVC read-only even when RWX — AC4 invariant', async () => {
+    process.env.BOOTSTRAP_RUNTIME_PVC_ACCESS_MODES = 'ReadWriteMany';
+    const deps = makeDeps();
+    await processCommitChannelConfig(
+      basePayload,
+      deps,
+      'test-ns',
+      'kubeclaw-channel-base:latest',
+    );
+    const deploymentBody = (deps.createDeployment as ReturnType<typeof vi.fn>)
+      .mock.calls[0][0] as {
+      spec: {
+        template: {
+          spec: {
+            containers: Array<{
+              name: string;
+              volumeMounts?: Array<{ name: string; readOnly?: boolean }>;
+            }>;
+          };
+        };
+      };
+    };
+    const channel = deploymentBody.spec.template.spec.containers.find(
+      (c) => c.name === 'channel',
+    );
+    const runtimeMount = channel!.volumeMounts?.find((vm) => vm.name === 'runtime');
+    expect(runtimeMount!.readOnly).toBe(true);
   });
 });

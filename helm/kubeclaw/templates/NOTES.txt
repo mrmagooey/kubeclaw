@@ -45,6 +45,17 @@ on multi-node clusters. For production use ReadWriteMany with a compatible
 CSI driver (EFS, Azure Files, NFS, Ceph).
 {{- end }}
 
+{{- if not (include "kubeclaw.bootstrap.isRwx" .) }}
+
+NOTE: RWO replica guardrail active.
+  A HorizontalPodAutoscaler (kubeclaw-channel-rwo-guardrail) has been deployed
+  that caps channel Deployments at 1 replica. This prevents Multi-Attach errors
+  when runtime PVCs use ReadWriteOnce. To enable multi-replica scaling, set:
+    bootstrap.runtimePvc.accessModes[0]=ReadWriteMany
+  and install an RWX-capable storage class (EFS, Azure Files, GCP Filestore, NFS).
+  The HPA exists solely as a guardrail — disable it and install your own if you
+  want true auto-scaling behavior.
+{{- end }}
 {{- include "kubeclaw.requireIstio" . }}
 {{- if eq .Values.credentialInjection.mode "istio" }}
 

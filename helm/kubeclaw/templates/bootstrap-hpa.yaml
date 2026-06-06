@@ -1,0 +1,51 @@
+{{/*
+  Story 182: HPA guardrail for RWO channels.
+
+  When bootstrap.runtimePvc.accessModes contains only ReadWriteOnce, render a
+  HorizontalPodAutoscaler resource that caps any channel Deployment at 1 replica.
+  This prevents the silent Multi-Attach crash-loop that results when a second pod
+  tries to mount an already-bound RWO volume.
+
+  The HPA targets the kubeclaw-channel-placeholder Deployment as a static example.
+  Runtime enforcement is handled in ipc-redis-bootstrap.ts via resolveSteadyStateReplicas()
+  which reads BOOTSTRAP_RUNTIME_PVC_ACCESS_MODES at Deployment-creation time.
+
+  See NOTES.txt for the operator note about this guardrail.
+
+  This resource is omitted when accessModes includes ReadWriteMany (RWX clusters
+  may scale freely).
+*/}}
+{{- if not (include "kubeclaw.bootstrap.isRwx" .) }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: kubeclaw-channel-rwo-guardrail
+  namespace: {{ include "kubeclaw.namespace" . }}
+  labels:
+    app: kubeclaw
+    component: channel-rwo-guardrail
+    kubeclaw.io/story: "182"
+  annotations:
+    kubeclaw.io/purpose: >-
+      RWO replica guardrail — re-drives any channel Deployment back to 1 replica
+      when bootstrap.runtimePvc.accessModes does not include ReadWriteMany.
+      cannot scale beyond 1 replica: runtime PVC accessModes [ReadWriteOnce] does
+      not include ReadWriteMany. To allow scaling, set
+      bootstrap.runtimePvc.accessModes[0]=ReadWriteMany and upgrade the chart
+      with an RWX-capable storage class (AWS EFS, GCP Filestore, Azure Files, NFS).
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: kubeclaw-channel-placeholder
+  minReplicas: 1
+  maxReplicas: 1
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 80
+{{- end }}

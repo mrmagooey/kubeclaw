@@ -201,3 +201,27 @@ credentialInjection.auditOnly == false.
 - { name: ANTHROPIC_BASE_URL,  value: "http://api.anthropic.com" }
 - { name: OPENROUTER_BASE_URL, value: "http://openrouter.ai" }
 {{- end -}}
+
+{{/*
+kubeclaw.bootstrap.runtimePvcAccessModes — renders the accessModes list for the
+per-channel runtime PVC. Defaults to [ReadWriteOnce] when not set.
+Usage: {{ include "kubeclaw.bootstrap.runtimePvcAccessModes" . }}
+*/}}
+{{- define "kubeclaw.bootstrap.runtimePvcAccessModes" -}}
+{{- $modes := .Values.bootstrap.runtimePvc.accessModes | default (list "ReadWriteOnce") -}}
+{{- range $modes }}
+- {{ . }}
+{{- end }}
+{{- end -}}
+
+{{/*
+kubeclaw.bootstrap.isRwx — returns "true" if accessModes includes ReadWriteMany.
+*/}}
+{{- define "kubeclaw.bootstrap.isRwx" -}}
+{{- $modes := .Values.bootstrap.runtimePvc.accessModes | default (list "ReadWriteOnce") -}}
+{{- range $modes -}}
+{{- if eq . "ReadWriteMany" -}}
+true
+{{- end -}}
+{{- end -}}
+{{- end -}}
