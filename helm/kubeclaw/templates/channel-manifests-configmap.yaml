@@ -1,10 +1,28 @@
-{{- if .Values.bootstrap.channelManifests }}
 ---
-# kubeclaw-channel-manifests: per-channel-type npm manifests consumed by bootstrap Jobs.
-# Keyed by channel type. Each value is a JSON object:
-#   { packageJson, packageLockJson, manifestHash }
-# The orchestrator reads manifestHash for post-install hash verification.
-# Story 178 adds a runtime-write path; this Helm template is the baseline path.
+# kubeclaw-channel-manifests-baseline: Helm-supplied baseline channel manifests.
+# Read-only from the reconciler's perspective. The orchestrator loads this at
+# startup to build the initial merged view alongside SQLite admin overrides.
+# Mounted at /etc/kubeclaw/channel-manifests-baseline inside the orchestrator pod.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kubeclaw-channel-manifests-baseline
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: kubeclaw
+    component: channel-manifests-baseline
+data:
+  {{- range $channelType, $manifest := .Values.bootstrap.channelManifests }}
+  {{ $channelType }}.json: |
+    {{ toJson (dict "packageJson" $manifest.packageJson "packageLockJson" $manifest.packageLockJson "manifestHash" $manifest.manifestHash) }}
+  {{- end }}
+---
+# kubeclaw-channel-manifests: the live merged catalog written by the orchestrator
+# reconciler. Starts empty from Helm; the reconciler writes the merged content
+# (Helm baseline + admin SQLite overrides) on startup and on every mutation.
+# Bootstrap Jobs mount this ConfigMap to obtain the packageJson and packageLockJson
+# for npm ci. The orchestrator uses the same GET+replace (PUT) pattern as the
+# kubeclaw-specialists ConfigMap.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -13,9 +31,4 @@ metadata:
   labels:
     app: kubeclaw
     component: channel-manifests
-data:
-  {{- range $channelType, $manifest := .Values.bootstrap.channelManifests }}
-  {{ $channelType }}.json: |
-    {{ toJson $manifest }}
-  {{- end }}
-{{- end }}
+data: {}
