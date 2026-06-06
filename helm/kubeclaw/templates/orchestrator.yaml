@@ -288,6 +288,12 @@ spec:
             - name: specialists-baseline
               mountPath: /etc/kubeclaw/specialists-baseline
               readOnly: true
+            - name: channel-manifests-baseline
+              mountPath: /etc/kubeclaw/channel-manifests-baseline
+              readOnly: true
+            - name: bootstrap-skills-baseline
+              mountPath: /etc/kubeclaw/bootstrap-skills-baseline
+              readOnly: true
           resources:
             {{- toYaml .Values.orchestrator.resources | nindent 12 }}
       volumes:
@@ -303,6 +309,14 @@ spec:
         - name: specialists-baseline
           configMap:
             name: kubeclaw-specialists-baseline
+            optional: true
+        - name: channel-manifests-baseline
+          configMap:
+            name: kubeclaw-channel-manifests-baseline
+            optional: true
+        - name: bootstrap-skills-baseline
+          configMap:
+            name: kubeclaw-bootstrap-skills-baseline
             optional: true
 {{- if .Values.orchestrator.admin.enabled }}
 ---

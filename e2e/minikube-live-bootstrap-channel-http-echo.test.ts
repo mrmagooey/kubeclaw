@@ -192,27 +192,29 @@ async function chatAndWaitForReply(
 }
 
 /**
- * Patch the kubeclaw-channel-manifests ConfigMap with the http-echo entry.
- * Bypasses the admin LLM (deterministic). The ConfigMap shape mirrors what
- * the orchestrator's ChannelManifestReconciler produces.
+ * Patch the kubeclaw-channel-manifests-baseline ConfigMap with the http-echo
+ * entry. We patch the BASELINE (not the live ConfigMap) so the orchestrator's
+ * ChannelManifestReconciler doesn't overwrite us on next reconcile — the
+ * baseline is read on orchestrator startup and merged with SQLite overrides
+ * into the live ConfigMap.
+ *
+ * Shape: data key `<channelType>.json`, value is JSON with `packageJson`,
+ * `packageLockJson`, `manifestHash` (camelCase — matches what the chart
+ * template renders from Helm `bootstrap.channelManifests` values).
  */
-function seedManifestConfigMap(): void {
+function seedManifestBaseline(): void {
   const entry = {
-    channel_type: 'http-echo',
-    package_json: HTTP_ECHO_PACKAGE_JSON,
-    package_lock_json: HTTP_ECHO_PACKAGE_LOCK_JSON,
-    manifest_hash: HTTP_ECHO_MANIFEST_HASH,
-    source: 'test-fixture',
+    packageJson: HTTP_ECHO_PACKAGE_JSON,
+    packageLockJson: HTTP_ECHO_PACKAGE_LOCK_JSON,
+    manifestHash: HTTP_ECHO_MANIFEST_HASH,
   };
-  // Strategic merge patch: add `data.http-echo.json` without disturbing other
-  // entries the chart may have registered.
   const patch = JSON.stringify({
     data: { 'http-echo.json': JSON.stringify(entry) },
   });
   const r = kubectl([
     'patch',
     'configmap',
-    'kubeclaw-channel-manifests',
+    'kubeclaw-channel-manifests-baseline',
     '-n',
     NAMESPACE,
     '--type=merge',
@@ -221,17 +223,20 @@ function seedManifestConfigMap(): void {
   ]);
   if (!r.ok) {
     throw new Error(
-      `Failed to seed channel-manifests ConfigMap: ${r.stderr || r.stdout}`,
+      `Failed to seed channel-manifests-baseline ConfigMap: ${r.stderr || r.stdout}`,
     );
   }
 }
 
 /**
- * Patch the kubeclaw-bootstrap-skills ConfigMap with the http-echo skill.
+ * Patch the kubeclaw-bootstrap-skills-baseline ConfigMap with the http-echo
+ * skill. Same baseline-vs-live distinction as seedManifestBaseline above.
  * The skill markdown is read directly from disk so the test stays in sync
  * with the canonical source-of-truth file.
+ *
+ * Shape: data key `<name>.md`, value is raw markdown.
  */
-function seedSkillConfigMap(): void {
+function seedSkillBaseline(): void {
   const skillPath = join(
     process.cwd(),
     'helm',
@@ -247,7 +252,7 @@ function seedSkillConfigMap(): void {
   const r = kubectl([
     'patch',
     'configmap',
-    'kubeclaw-bootstrap-skills',
+    'kubeclaw-bootstrap-skills-baseline',
     '-n',
     NAMESPACE,
     '--type=merge',
@@ -256,9 +261,31 @@ function seedSkillConfigMap(): void {
   ]);
   if (!r.ok) {
     throw new Error(
-      `Failed to seed bootstrap-skills ConfigMap: ${r.stderr || r.stdout}`,
+      `Failed to seed bootstrap-skills-baseline ConfigMap: ${r.stderr || r.stdout}`,
     );
   }
+}
+
+/**
+ * Restart the orchestrator so it re-reads the baseline ConfigMaps and
+ * reconciles them into the live ConfigMaps that bootstrap Jobs actually mount.
+ */
+function restartOrchestratorAndWait(): void {
+  kubectl(
+    ['rollout', 'restart', 'deployment/kubeclaw-orchestrator', '-n', NAMESPACE],
+    { timeout: 30_000 },
+  );
+  kubectl(
+    [
+      'rollout',
+      'status',
+      'deployment/kubeclaw-orchestrator',
+      '-n',
+      NAMESPACE,
+      '--timeout=120s',
+    ],
+    { timeout: 130_000 },
+  );
 }
 
 describe('Minikube-live: bootstrap HTTP-echo channel end-to-end', () => {
@@ -300,10 +327,13 @@ describe('Minikube-live: bootstrap HTTP-echo channel end-to-end', () => {
       return;
     }
 
-    // Seed the http-echo manifest + skill into the ConfigMaps.
-    seedManifestConfigMap();
-    seedSkillConfigMap();
-  }, 60_000);
+    // Seed the http-echo manifest + skill into the BASELINE ConfigMaps, then
+    // restart the orchestrator so it reloads the baseline and reconciles the
+    // entries into the live ConfigMaps that bootstrap Jobs mount.
+    seedManifestBaseline();
+    seedSkillBaseline();
+    restartOrchestratorAndWait();
+  }, 180_000);
 
   afterAll(() => {
     // Resource cleanup. All operations are idempotent.
@@ -319,12 +349,12 @@ describe('Minikube-live: bootstrap HTTP-echo channel end-to-end', () => {
         { allowFail: true, timeout: 10_000 },
       );
     }
-    // Remove ConfigMap entries (patch with null deletes the key).
+    // Remove the baseline ConfigMap entries (patch with json-op remove).
     kubectl(
       [
         'patch',
         'configmap',
-        'kubeclaw-channel-manifests',
+        'kubeclaw-channel-manifests-baseline',
         '-n',
         NAMESPACE,
         '--type=json',
@@ -337,7 +367,7 @@ describe('Minikube-live: bootstrap HTTP-echo channel end-to-end', () => {
       [
         'patch',
         'configmap',
-        'kubeclaw-bootstrap-skills',
+        'kubeclaw-bootstrap-skills-baseline',
         '-n',
         NAMESPACE,
         '--type=json',
