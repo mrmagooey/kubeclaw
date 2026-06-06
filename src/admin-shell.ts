@@ -43,6 +43,15 @@ import {
   SpecialistReconciler,
   loadBaselineFromDisk,
 } from './specialists/reconciler.js';
+import {
+  registerChannelManifest,
+  listChannelManifestOverrides,
+} from './skills/orchestrator/channel-manifest-registry.js';
+import {
+  ChannelManifestReconciler,
+  loadBaselineFromDisk as loadChannelManifestBaselineFromDisk,
+  mergeManifests,
+} from './channel-manifests/reconciler.js';
 import { RealPerGroupK8sClient } from './per-group-capabilities/k8s-client.js';
 import {
   setGroupCredential,
@@ -104,6 +113,71 @@ const specialistReconciler = new SpecialistReconciler({
     if (resourceVersion !== undefined) {
       await coreV1.replaceNamespacedConfigMap({
         name: 'kubeclaw-specialists',
+        namespace: NAMESPACE,
+        body,
+      });
+    } else {
+      await coreV1.createNamespacedConfigMap({ namespace: NAMESPACE, body });
+    }
+  },
+});
+
+const channelManifestReconciler = new ChannelManifestReconciler({
+  baselineLoader: loadChannelManifestBaselineFromDisk,
+  configMapApply: async (rendered: string) => {
+    // Parse the rendered JSON to extract per-channel-type ConfigMap keys.
+    // Build ConfigMap data: one key per channel_type, value is JSON with
+    // packageJson, packageLockJson, manifestHash (same shape Helm baseline uses).
+    const parsed = JSON.parse(rendered) as {
+      manifests: Array<{
+        channel_type: string;
+        package_json?: string;
+        package_lock_json?: string;
+        manifest_hash: string;
+        source: string;
+        registered_at: string;
+        registered_by: string;
+        package_name: string;
+        package_version: string;
+      }>;
+    };
+    const data: Record<string, string> = {};
+    for (const m of parsed.manifests) {
+      if (m.package_json && m.package_lock_json) {
+        data[`${m.channel_type}.json`] = JSON.stringify({
+          packageJson: m.package_json,
+          packageLockJson: m.package_lock_json,
+          manifestHash: m.manifest_hash,
+        });
+      }
+    }
+
+    let resourceVersion: string | undefined;
+    try {
+      const existing = await coreV1.readNamespacedConfigMap({
+        name: 'kubeclaw-channel-manifests',
+        namespace: NAMESPACE,
+      });
+      resourceVersion = existing.metadata?.resourceVersion;
+    } catch (err: unknown) {
+      const status = (err as { response?: { statusCode?: number } })?.response
+        ?.statusCode;
+      if (status !== 404) throw err;
+    }
+
+    const body = {
+      apiVersion: 'v1',
+      kind: 'ConfigMap',
+      metadata: {
+        name: 'kubeclaw-channel-manifests',
+        namespace: NAMESPACE,
+        ...(resourceVersion ? { resourceVersion } : {}),
+      },
+      data,
+    };
+    if (resourceVersion !== undefined) {
+      await coreV1.replaceNamespacedConfigMap({
+        name: 'kubeclaw-channel-manifests',
         namespace: NAMESPACE,
         body,
       });
@@ -318,6 +392,44 @@ export const TOOLS: OpenAI.ChatCompletionTool[] = [
           },
         },
         required: ['instanceName'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_channel_manifests',
+      description:
+        'List all channel manifests — both Helm-baseline entries and admin-registered overrides. Returns an array of objects with {channel_type, package_name, package_version, manifest_hash, source, registered_at, registered_by}. Admin-registered entries win on channel_type collision (source: "admin-registered").',
+      parameters: { type: 'object', properties: {}, required: [] },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'register_channel_manifest',
+      description:
+        'Register a new per-channel-type npm manifest at runtime. Validates JSON structure (top-level dependencies required, no devDependencies, lifecycle-script allowlist enforced), computes sha256 integrity hash, persists to SQLite, and triggers a ConfigMap reconcile. Idempotent on identical (channel_type, content).',
+      parameters: {
+        type: 'object',
+        required: ['channel_type', 'package_json', 'package_lock_json'],
+        properties: {
+          channel_type: {
+            type: 'string',
+            description:
+              'Channel type name (e.g. "telegram", "slack"). Used as the ConfigMap key.',
+          },
+          package_json: {
+            type: 'string',
+            description:
+              'Full content of package.json as a JSON string. Must have top-level "dependencies", no "devDependencies", no non-allowlisted lifecycle scripts.',
+          },
+          package_lock_json: {
+            type: 'string',
+            description:
+              'Full content of package-lock.json as a JSON string. Must be npm lockfile v3 (lockfileVersion: 3). Per-package lifecycle scripts checked against the same allowlist.',
+          },
+        },
       },
     },
   },
@@ -1049,6 +1161,66 @@ function handleListSpecialists(): string {
     .join('\n\n');
 }
 
+// ---- Channel manifest tool handlers ----
+
+function handleListChannelManifests(): string {
+  const baselineEntries = loadChannelManifestBaselineFromDisk();
+  const overrideRows = listChannelManifestOverrides();
+  const overrides = overrideRows.map((row) => {
+    const p = JSON.parse(row.package_json) as {
+      name?: string;
+      version?: string;
+    };
+    return {
+      channel_type: row.channel_type,
+      package_name: p.name ?? row.channel_type,
+      package_version: p.version ?? '0.0.0',
+      manifest_hash: row.manifest_hash,
+      source: 'admin-registered' as const,
+      registered_at: row.registered_at,
+      registered_by: row.registered_by,
+    };
+  });
+  const merged = mergeManifests(baselineEntries, overrides);
+  if (merged.length === 0) return 'No channel manifests registered.';
+  // Strip raw package content from list output for readability
+  const listView = merged.map(
+    ({ package_json: _pj, package_lock_json: _pl, ...rest }) => rest,
+  );
+  return JSON.stringify(listView, null, 2);
+}
+
+async function handleRegisterChannelManifest(
+  input: ToolInput,
+): Promise<string> {
+  const channel_type = input.channel_type as string;
+  const package_json = input.package_json as string;
+  const package_lock_json = input.package_lock_json as string;
+  if (!channel_type || !package_json || !package_lock_json) {
+    return 'Error: channel_type, package_json, and package_lock_json are all required.';
+  }
+  // Read allowedLifecycleScripts from env (set by Helm values via env injection).
+  // Default: empty (no lifecycle scripts allowed).
+  const allowedRaw = process.env.BOOTSTRAP_ALLOWED_LIFECYCLE_SCRIPTS ?? '';
+  const allowedLifecycleScripts = allowedRaw
+    ? allowedRaw
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+    : [];
+  const result = registerChannelManifest(
+    { channel_type, package_json, package_lock_json },
+    allowedLifecycleScripts,
+    channelManifestReconciler.apply.bind(channelManifestReconciler),
+  );
+  if (!result.ok) return `Error: ${result.error}`;
+  return JSON.stringify({
+    channel_type,
+    manifest_hash: result.manifest_hash,
+    source: result.source,
+  });
+}
+
 async function handleSetGroupCredential(input: ToolInput): Promise<string> {
   const groupFolder = input.group_folder as string;
   const capabilityName = input.capability_name as string;
@@ -1145,6 +1317,10 @@ export async function executeTool(
       return handleRemoveSpecialist(input);
     case 'list_specialists':
       return handleListSpecialists();
+    case 'list_channel_manifests':
+      return handleListChannelManifests();
+    case 'register_channel_manifest':
+      return handleRegisterChannelManifest(input);
     case 'set_group_credential':
       return handleSetGroupCredential(input);
     case 'unset_group_credential':
