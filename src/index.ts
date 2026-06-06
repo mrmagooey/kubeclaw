@@ -50,12 +50,18 @@ import {
 } from './k8s/ipc-redis.js';
 import { CatalogInformer } from './k8s/catalog.js';
 import { SecretManager } from './k8s/secret-manager.js';
-import { KubeConfig, CoreV1Api, AppsV1Api } from '@kubernetes/client-node';
+import {
+  KubeConfig,
+  CoreV1Api,
+  AppsV1Api,
+  BatchV1Api,
+} from '@kubernetes/client-node';
 import { activeBootstraps } from './admin-shell.js';
 import { KUBECLAW_NAMESPACE } from './config.js';
 import { getOutputChannel, getRedisClient } from './k8s/redis-client.js';
 import { jobRunner } from './k8s/job-runner.js';
 import { reconcileOrphanedJobsOnStartup } from './k8s/orphan-jobs.js';
+import { reconcileOrphanedBootstrapsOnStartup } from './k8s/bootstrap-runner.js';
 import { findChannel, formatMessages, formatOutbound } from './router.js';
 import {
   isSenderAllowed,
@@ -302,6 +308,7 @@ async function main(): Promise<void> {
   const kc = new KubeConfig();
   kc.loadFromDefault();
   const coreApi = kc.makeApiClient(CoreV1Api);
+  const batchApi = kc.makeApiClient(BatchV1Api);
 
   const catalogInformer = new CatalogInformer({
     namespace: KUBECLAW_NAMESPACE,
@@ -544,6 +551,119 @@ async function main(): Promise<void> {
     timeoutMs: 30_000,
   }).catch((err) => {
     logger.warn({ err }, 'Orphan tool-job reconciliation failed');
+  });
+
+  // ── Orphaned bootstrap reconciliation (Story 175) ─────────────────────────
+  // Detect bootstrap Jobs that expired (DeadlineExceeded) while the orchestrator
+  // was down. For each orphan: delete the Job, PVC, and any partial Secret, then
+  // publish a timeout SSE notice so admin clients learn the bootstrap was rolled
+  // back. Bounded to 30 s. Idempotent — NotFound errors are swallowed.
+  await reconcileOrphanedBootstrapsOnStartup({
+    listFailedBootstrapJobs: async () => {
+      try {
+        const jobs = await batchApi.listNamespacedJob({
+          namespace: KUBECLAW_NAMESPACE,
+          labelSelector: 'kubeclaw.io/role=bootstrap',
+        });
+        const failed: import('./k8s/bootstrap-runner.js').FailedBootstrapJob[] =
+          [];
+        for (const job of jobs.items ?? []) {
+          const conditions = job.status?.conditions ?? [];
+          const failedCond = conditions.find(
+            (c: { type: string; status: string }) =>
+              c.type === 'Failed' && c.status === 'True',
+          );
+          if (!failedCond) continue;
+          const instanceName = job.metadata?.labels?.['kubeclaw-channel'] ?? '';
+          const bootstrapJobId =
+            job.metadata?.labels?.['kubeclaw.io/bootstrap-job-id'] ?? '';
+          const jobName = job.metadata?.name ?? '';
+          if (!instanceName || !bootstrapJobId || !jobName) continue;
+          failed.push({
+            jobName,
+            instanceName,
+            bootstrapJobId,
+            failureReason: failedCond.reason ?? 'Unknown',
+          });
+        }
+        return failed;
+      } catch (err) {
+        logger.warn({ err }, 'listFailedBootstrapJobs: K8s query failed');
+        return [];
+      }
+    },
+    cleanup: {
+      deleteJob: async (name: string) => {
+        try {
+          await batchApi.deleteNamespacedJob({
+            name,
+            namespace: KUBECLAW_NAMESPACE,
+            gracePeriodSeconds: 0,
+          });
+          logger.debug({ name }, 'reconcileBootstraps: Job deleted');
+        } catch (err: unknown) {
+          const status = (err as { response?: { statusCode?: number } })
+            ?.response?.statusCode;
+          if (status === 404) {
+            logger.debug({ name }, 'reconcileBootstraps: Job already absent');
+            return;
+          }
+          throw err;
+        }
+      },
+      deletePvc: async (name: string) => {
+        try {
+          await coreApi.deleteNamespacedPersistentVolumeClaim({
+            name,
+            namespace: KUBECLAW_NAMESPACE,
+            gracePeriodSeconds: 0,
+          });
+          logger.debug({ name }, 'reconcileBootstraps: PVC deleted');
+        } catch (err: unknown) {
+          const status = (err as { response?: { statusCode?: number } })
+            ?.response?.statusCode;
+          if (status === 404) {
+            logger.debug({ name }, 'reconcileBootstraps: PVC already absent');
+            return;
+          }
+          throw err;
+        }
+      },
+      deleteSecret: async (name: string) => {
+        try {
+          await coreApi.deleteNamespacedSecret({
+            name,
+            namespace: KUBECLAW_NAMESPACE,
+          });
+          logger.debug({ name }, 'reconcileBootstraps: Secret deleted');
+        } catch (err: unknown) {
+          const status = (err as { response?: { statusCode?: number } })
+            ?.response?.statusCode;
+          if (status === 404) {
+            logger.debug(
+              { name },
+              'reconcileBootstraps: Secret already absent',
+            );
+            return;
+          }
+          throw err;
+        }
+      },
+      publishSse: async (topic, payload) => {
+        try {
+          await getRedisClient().publish(topic, JSON.stringify(payload));
+        } catch (err) {
+          logger.warn(
+            { topic, err },
+            'reconcileBootstraps: failed to publish SSE',
+          );
+        }
+      },
+      activeBootstraps,
+    },
+    timeoutMs: 30_000,
+  }).catch((err) => {
+    logger.warn({ err }, 'Orphan bootstrap reconciliation failed');
   });
 
   // Graceful shutdown handlers

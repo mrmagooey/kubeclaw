@@ -447,3 +447,187 @@ describe('processCommitChannelConfig (bootstrap commit integration)', () => {
     expect(deps.sseMessages[0].text).toContain('K8s 403 Forbidden');
   });
 });
+
+// ── Story 175: reconcileOrphanedBootstrapsOnStartup integration ───────────────
+
+import {
+  cleanupBootstrapResources,
+  reconcileOrphanedBootstrapsOnStartup,
+} from './bootstrap-runner.js';
+import type {
+  CleanupBootstrapDeps,
+  ReconcileOrphanedBootstrapsDeps,
+  FailedBootstrapJob,
+} from './bootstrap-runner.js';
+
+function makeIntegCleanupDeps(): CleanupBootstrapDeps & {
+  deletedJobs: string[];
+  deletedPvcs: string[];
+  deletedSecrets: string[];
+  sseMessages: Array<{
+    topic: string;
+    payload: { type: string; text: string };
+  }>;
+} {
+  const deletedJobs: string[] = [];
+  const deletedPvcs: string[] = [];
+  const deletedSecrets: string[] = [];
+  const sseMessages: Array<{
+    topic: string;
+    payload: { type: string; text: string };
+  }> = [];
+  const activeBootstraps = new Map<string, string>();
+
+  return {
+    deletedJobs,
+    deletedPvcs,
+    deletedSecrets,
+    sseMessages,
+    activeBootstraps,
+    deleteJob: async (name: string) => {
+      deletedJobs.push(name);
+    },
+    deletePvc: async (name: string) => {
+      deletedPvcs.push(name);
+    },
+    deleteSecret: async (name: string) => {
+      deletedSecrets.push(name);
+    },
+    publishSse: async (
+      topic: string,
+      payload: { type: string; text: string },
+    ) => {
+      sseMessages.push({ topic, payload });
+    },
+  };
+}
+
+function makeOrphan(
+  overrides: Partial<FailedBootstrapJob> = {},
+): FailedBootstrapJob {
+  return {
+    jobName: 'kubeclaw-bootstrap-integ-tg',
+    instanceName: 'integ-tg',
+    bootstrapJobId: 'integ-orphan-001',
+    failureReason: 'DeadlineExceeded',
+    ...overrides,
+  };
+}
+
+describe('reconcileOrphanedBootstrapsOnStartup (integration)', () => {
+  it('cleans up a single DeadlineExceeded orphan — Job, PVC, Secret, SSE', async () => {
+    const cleanupDeps = makeIntegCleanupDeps();
+    cleanupDeps.activeBootstraps.set('integ-tg', 'integ-orphan-001');
+
+    const orphan = makeOrphan();
+    const deps: ReconcileOrphanedBootstrapsDeps = {
+      listFailedBootstrapJobs: async () => [orphan],
+      cleanup: cleanupDeps,
+    };
+
+    await reconcileOrphanedBootstrapsOnStartup(deps);
+
+    expect(cleanupDeps.deletedJobs).toContain('kubeclaw-bootstrap-integ-tg');
+    expect(cleanupDeps.deletedPvcs).toContain(
+      'kubeclaw-channel-integ-tg-runtime',
+    );
+    expect(cleanupDeps.deletedSecrets).toContain(
+      'kubeclaw-channel-integ-tg-credentials',
+    );
+    expect(cleanupDeps.sseMessages[0].topic).toBe(
+      'kubeclaw:bootstrap:integ-orphan-001',
+    );
+    expect(cleanupDeps.sseMessages[0].payload.type).toBe('timeout');
+    expect(cleanupDeps.activeBootstraps.has('integ-tg')).toBe(false);
+  });
+
+  it('handles NotFound gracefully for already-absent resources', async () => {
+    const cleanupDeps = makeIntegCleanupDeps();
+    // Simulate all deletes returning NotFound (swallowed by the dep implementations)
+    cleanupDeps.deleteJob = async () => {
+      // NotFound — return normally (already swallowed)
+    };
+    cleanupDeps.deletePvc = async () => {
+      /* NotFound */
+    };
+    cleanupDeps.deleteSecret = async () => {
+      /* NotFound */
+    };
+
+    const orphan = makeOrphan();
+    const deps: ReconcileOrphanedBootstrapsDeps = {
+      listFailedBootstrapJobs: async () => [orphan],
+      cleanup: cleanupDeps,
+    };
+
+    // Should not throw even when all resources are already absent
+    await expect(
+      reconcileOrphanedBootstrapsOnStartup(deps),
+    ).resolves.toBeUndefined();
+    // SSE still published
+    expect(cleanupDeps.sseMessages[0].payload.type).toBe('timeout');
+  });
+
+  it('cleans up multiple orphans in one pass', async () => {
+    const cleanupDeps = makeIntegCleanupDeps();
+
+    const orphans: FailedBootstrapJob[] = [
+      makeOrphan({
+        instanceName: 'tg-a',
+        bootstrapJobId: 'job-a',
+        jobName: 'kubeclaw-bootstrap-tg-a',
+      }),
+      makeOrphan({
+        instanceName: 'tg-b',
+        bootstrapJobId: 'job-b',
+        jobName: 'kubeclaw-bootstrap-tg-b',
+        failureReason: 'BackoffLimitExceeded',
+      }),
+    ];
+
+    const deps: ReconcileOrphanedBootstrapsDeps = {
+      listFailedBootstrapJobs: async () => orphans,
+      cleanup: cleanupDeps,
+    };
+
+    await reconcileOrphanedBootstrapsOnStartup(deps);
+
+    expect(cleanupDeps.deletedJobs).toContain('kubeclaw-bootstrap-tg-a');
+    expect(cleanupDeps.deletedJobs).toContain('kubeclaw-bootstrap-tg-b');
+    expect(cleanupDeps.sseMessages).toHaveLength(2);
+  });
+
+  it('cleanupBootstrapResources correctly frees the activeBootstraps entry', async () => {
+    const cleanupDeps = makeIntegCleanupDeps();
+    cleanupDeps.activeBootstraps.set('released-tg', 'released-job-id');
+
+    // Call cleanupBootstrapResources directly to test the integration
+    await cleanupBootstrapResources(
+      'released-job-id',
+      'released-tg',
+      cleanupDeps,
+    );
+
+    expect(cleanupDeps.activeBootstraps.has('released-tg')).toBe(false);
+    expect(cleanupDeps.deletedJobs).toEqual(['kubeclaw-bootstrap-released-tg']);
+    expect(cleanupDeps.deletedPvcs).toEqual([
+      'kubeclaw-channel-released-tg-runtime',
+    ]);
+  });
+
+  it('cleanupBootstrapResources SSE payload contains bootstrapJobId in text', async () => {
+    const cleanupDeps = makeIntegCleanupDeps();
+
+    await cleanupBootstrapResources(
+      'specific-job-xyz',
+      'some-channel',
+      cleanupDeps,
+    );
+
+    const msg = cleanupDeps.sseMessages[0];
+    expect(msg.topic).toBe('kubeclaw:bootstrap:specific-job-xyz');
+    expect(msg.payload.text).toContain('specific-job-xyz');
+    expect(msg.payload.text).toContain('timed out');
+    expect(msg.payload.text).toContain('nothing was installed');
+  });
+});

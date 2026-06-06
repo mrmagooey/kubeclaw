@@ -1,19 +1,35 @@
 /**
- * Bootstrap runner — Story 174.
+ * Bootstrap runner — Stories 174, 175.
  *
  * Responsible for:
  *   - Manifest schema validation (validateChannelManifest)
  *   - Canonical JSON hash computation (computeManifestHash, canonicalJson)
  *   - Spawning bootstrap Jobs + runtime PVCs (bootstrapChannelFromSkill)
+ *   - Timeout cleanup (cleanupBootstrapResources, waitForBootstrapJobCompletion)
+ *   - Orphan reconciliation on startup (reconcileOrphanedBootstrapsOnStartup)
  *
- * Stories 175-184 will extend this file with timeout cleanup, orphan reconciliation,
- * and independent PVC hash verification.
+ * Stories 176-184 will extend this file with independent PVC hash verification
+ * and further lifecycle management.
  */
 
 import { createHash } from 'node:crypto';
 import { randomUUID } from 'node:crypto';
 import type { CoreV1Api, BatchV1Api } from '@kubernetes/client-node';
 import { logger } from '../logger.js';
+
+// ─── Story 175 constants ──────────────────────────────────────────────────────
+
+/**
+ * Grace period (ms) added to BOOTSTRAP_SKILL_TIMEOUT_SECONDS when computing
+ * the orchestrator-side poll timeout for waitForBootstrapJobCompletion.
+ *
+ * Rationale: the K8s Job's activeDeadlineSeconds fires on the K8s side, but
+ * the Failed condition may take a few seconds to propagate before the
+ * orchestrator's polling loop observes it. 60 s of headroom is ample even
+ * under load.  With BOOTSTRAP_SKILL_TIMEOUT_SECONDS=60 (the e2e test override),
+ * the orchestrator polls for up to 120 s while the Job deadline fires at 60 s.
+ */
+const BOOTSTRAP_ORCHESTRATOR_GRACE_MS = 60_000;
 
 // ─── Canonical JSON ───────────────────────────────────────────────────────────
 
@@ -315,4 +331,301 @@ export async function bootstrapChannelFromSkill(
 
   activeBootstraps.set(instanceName, bootstrapJobId);
   return { bootstrapJobId };
+}
+
+// ─── Story 175: Timeout cleanup ───────────────────────────────────────────────
+
+/**
+ * Dependencies injected into cleanupBootstrapResources.
+ * All delete operations are expected to swallow NotFound errors internally
+ * (return normally); the caller logs and continues on other errors.
+ */
+export interface CleanupBootstrapDeps {
+  /** Delete the K8s Job by name (NotFound → return normally; others → throw). */
+  deleteJob(jobName: string): Promise<void>;
+  /** Delete the runtime PVC by name (NotFound → return normally; others → throw). */
+  deletePvc(pvcName: string): Promise<void>;
+  /** Delete the credentials Secret by name (NotFound → return normally; others → throw). */
+  deleteSecret(secretName: string): Promise<void>;
+  /**
+   * Publish a message to the admin SSE stream via Redis pub/sub.
+   * topic = 'kubeclaw:bootstrap:<bootstrapJobId>'
+   * The payload is JSON-stringified before publishing.
+   */
+  publishSse(
+    topic: string,
+    payload: { type: string; text: string },
+  ): Promise<void>;
+  /** Shared in-memory map: instanceName → bootstrapJobId */
+  activeBootstraps: Map<string, string>;
+}
+
+/**
+ * Atomically clean up all resources created for a bootstrap operation.
+ *
+ * Execution order (each step is independent — failure does not abort subsequent steps):
+ *   (a) Delete K8s Job `kubeclaw-bootstrap-<instanceName>`
+ *   (b) Delete runtime PVC `kubeclaw-channel-<instanceName>-runtime`
+ *   (c) Delete credentials Secret `kubeclaw-channel-<instanceName>-credentials`
+ *   (d) Publish timeout SSE message to `kubeclaw:bootstrap:<bootstrapJobId>`
+ *   (e) Remove `instanceName` from `activeBootstraps` (always runs, regardless of prior failures)
+ *
+ * Idempotent: NotFound errors on delete steps are silently swallowed (logged at debug).
+ * Other errors are logged at warn level but do not abort the cleanup chain.
+ */
+export async function cleanupBootstrapResources(
+  bootstrapJobId: string,
+  instanceName: string,
+  deps: CleanupBootstrapDeps,
+): Promise<void> {
+  const jobName = `kubeclaw-bootstrap-${instanceName}`;
+  const pvcName = `kubeclaw-channel-${instanceName}-runtime`;
+  const secretName = `kubeclaw-channel-${instanceName}-credentials`;
+  const sseTopic = `kubeclaw:bootstrap:${bootstrapJobId}`;
+
+  logger.info(
+    { bootstrapJobId, instanceName, jobName, pvcName },
+    'cleanupBootstrapResources: starting cleanup for timed-out bootstrap',
+  );
+
+  // (a) Delete the bootstrap Job — idempotent
+  try {
+    await deps.deleteJob(jobName);
+    logger.debug({ jobName }, 'cleanupBootstrapResources: Job deleted');
+  } catch (err) {
+    logger.warn(
+      { jobName, err },
+      'cleanupBootstrapResources: failed to delete Job (non-NotFound); continuing',
+    );
+  }
+
+  // (b) Delete the runtime PVC — idempotent
+  try {
+    await deps.deletePvc(pvcName);
+    logger.debug({ pvcName }, 'cleanupBootstrapResources: PVC deleted');
+  } catch (err) {
+    logger.warn(
+      { pvcName, err },
+      'cleanupBootstrapResources: failed to delete PVC (non-NotFound); continuing',
+    );
+  }
+
+  // (c) Defensively delete the credentials Secret — idempotent
+  // This Secret is only created by commit_channel_config, so it will usually
+  // not exist when the timeout fires. NotFound is silently swallowed.
+  try {
+    await deps.deleteSecret(secretName);
+    logger.debug(
+      { secretName },
+      'cleanupBootstrapResources: credentials Secret deleted (or did not exist)',
+    );
+  } catch (err) {
+    logger.warn(
+      { secretName, err },
+      'cleanupBootstrapResources: failed to delete credentials Secret (non-NotFound); continuing',
+    );
+  }
+
+  // (d) Publish timeout SSE message — best-effort
+  try {
+    await deps.publishSse(sseTopic, {
+      type: 'timeout',
+      text: `Bootstrap ${bootstrapJobId} timed out; nothing was installed.`,
+    });
+    logger.debug(
+      { sseTopic },
+      'cleanupBootstrapResources: timeout SSE published',
+    );
+  } catch (err) {
+    logger.warn(
+      { sseTopic, err },
+      'cleanupBootstrapResources: failed to publish timeout SSE; continuing',
+    );
+  }
+
+  // (e) Free the instance name — always runs
+  deps.activeBootstraps.delete(instanceName);
+  logger.info(
+    { instanceName, bootstrapJobId },
+    'cleanupBootstrapResources: instance freed from activeBootstraps',
+  );
+}
+
+// ─── Story 175: Wait for bootstrap job with timeout detection ────────────────
+
+export interface WaitForBootstrapJobOpts {
+  /**
+   * Injected wait function — polls the bootstrap Job until it completes
+   * (succeeds or fails). Rejects with an error whose message contains
+   * 'DeadlineExceeded' when the Job's activeDeadlineSeconds fires.
+   *
+   * In production this is `(name, ms) => jobRunner.waitForJobCompletion(name, ms)`.
+   * In tests it is a vi.fn() that simulates success or DeadlineExceeded.
+   */
+  waitForJob(jobName: string, timeoutMs: number): Promise<void>;
+  cleanupDeps: CleanupBootstrapDeps;
+  /**
+   * Override for BOOTSTRAP_SKILL_TIMEOUT_SECONDS (seconds).
+   * Defaults to the env var value (900 s if unset).
+   */
+  bootstrapTimeoutSeconds?: number;
+}
+
+/**
+ * Wait for a bootstrap Job to finish, then clean up on deadline expiry.
+ *
+ * Passes `(BOOTSTRAP_SKILL_TIMEOUT_SECONDS + 60) * 1000` to `waitForJob` as
+ * the orchestrator-side poll timeout.  The +60 s grace period ensures the
+ * orchestrator observes the K8s DeadlineExceeded condition before its own
+ * timeout fires (see BOOTSTRAP_ORCHESTRATOR_GRACE_MS constant for rationale).
+ *
+ * On DeadlineExceeded: calls cleanupBootstrapResources.
+ * On other errors: logs at warn; does NOT clean up (may be a transient error).
+ * On success: logs at info; no cleanup.
+ */
+export async function waitForBootstrapJobCompletion(
+  jobName: string,
+  bootstrapJobId: string,
+  instanceName: string,
+  opts: WaitForBootstrapJobOpts,
+): Promise<void> {
+  const timeoutSec =
+    opts.bootstrapTimeoutSeconds ??
+    parseInt(process.env.BOOTSTRAP_SKILL_TIMEOUT_SECONDS || '900', 10);
+  const timeoutMs = timeoutSec * 1000 + BOOTSTRAP_ORCHESTRATOR_GRACE_MS;
+
+  logger.debug(
+    { jobName, bootstrapJobId, timeoutMs },
+    'waitForBootstrapJobCompletion: starting to watch bootstrap Job',
+  );
+
+  try {
+    await opts.waitForJob(jobName, timeoutMs);
+    logger.info(
+      { jobName, bootstrapJobId },
+      'waitForBootstrapJobCompletion: bootstrap Job completed successfully',
+    );
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes('DeadlineExceeded')) {
+      logger.info(
+        { jobName, bootstrapJobId, instanceName },
+        'waitForBootstrapJobCompletion: DeadlineExceeded detected — running cleanup',
+      );
+      await cleanupBootstrapResources(
+        bootstrapJobId,
+        instanceName,
+        opts.cleanupDeps,
+      );
+    } else {
+      logger.warn(
+        { jobName, bootstrapJobId, err },
+        'waitForBootstrapJobCompletion: Job wait failed with non-deadline error',
+      );
+    }
+  }
+}
+
+// ─── Story 175: Orphan bootstrap reconciliation on startup ───────────────────
+
+/**
+ * A failed bootstrap Job discovered during startup reconciliation.
+ */
+export interface FailedBootstrapJob {
+  /** K8s Job name, e.g. 'kubeclaw-bootstrap-my-telegram' */
+  jobName: string;
+  /** Instance name from kubeclaw-channel label, e.g. 'my-telegram' */
+  instanceName: string;
+  /** bootstrapJobId from kubeclaw.io/bootstrap-job-id label */
+  bootstrapJobId: string;
+  /** Failure reason from Job status conditions, e.g. 'DeadlineExceeded' */
+  failureReason: string;
+}
+
+export interface ReconcileOrphanedBootstrapsDeps {
+  /**
+   * List bootstrap Jobs that are in terminal Failed state.
+   * Implementations should query with label selector `kubeclaw.io/role=bootstrap`
+   * and filter for items where status.conditions contains a Failed=True condition.
+   */
+  listFailedBootstrapJobs(): Promise<FailedBootstrapJob[]>;
+  /** Dependencies passed through to cleanupBootstrapResources for each orphan */
+  cleanup: CleanupBootstrapDeps;
+  /** Wall-clock limit for the entire reconciliation pass. Default: 30 000 ms. */
+  timeoutMs?: number;
+}
+
+/**
+ * Reconcile orphaned bootstrap Jobs on orchestrator startup.
+ *
+ * Called once during startup (after registerBootstrapDeps).  Queries the cluster
+ * for bootstrap Jobs in terminal Failed state. For each orphan, calls
+ * cleanupBootstrapResources to delete K8s resources and notify the admin (if any
+ * SSE subscriber is still connected).
+ *
+ * Idempotent: all delete steps swallow NotFound errors. A second restart after a
+ * partial cleanup will not re-emit errors for already-deleted resources.
+ *
+ * Bounded by timeoutMs (default 30 s) — the same pattern used by
+ * reconcileOrphanedJobsOnStartup in orphan-jobs.ts.
+ */
+export async function reconcileOrphanedBootstrapsOnStartup(
+  deps: ReconcileOrphanedBootstrapsDeps,
+): Promise<void> {
+  const { listFailedBootstrapJobs, cleanup, timeoutMs = 30_000 } = deps;
+  const deadline = Date.now() + timeoutMs;
+
+  let orphans: FailedBootstrapJob[];
+  try {
+    orphans = await listFailedBootstrapJobs();
+  } catch (err) {
+    logger.warn(
+      { err },
+      'reconcileOrphanedBootstrapsOnStartup: failed to list failed bootstrap Jobs; skipping',
+    );
+    return;
+  }
+
+  if (orphans.length === 0) {
+    logger.debug(
+      'reconcileOrphanedBootstrapsOnStartup: no orphaned bootstrap Jobs found',
+    );
+    return;
+  }
+
+  logger.info(
+    { count: orphans.length },
+    'reconcileOrphanedBootstrapsOnStartup: found orphaned bootstrap Jobs; reconciling',
+  );
+
+  for (const orphan of orphans) {
+    if (Date.now() > deadline) {
+      logger.warn(
+        { remaining: orphans.length },
+        'reconcileOrphanedBootstrapsOnStartup: timeout reached; aborting reconciliation',
+      );
+      break;
+    }
+
+    const { jobName, instanceName, bootstrapJobId, failureReason } = orphan;
+    logger.info(
+      { jobName, instanceName, bootstrapJobId, failureReason },
+      'reconcileOrphanedBootstrapsOnStartup: reconciling orphaned bootstrap Job',
+    );
+
+    try {
+      await cleanupBootstrapResources(bootstrapJobId, instanceName, cleanup);
+    } catch (err) {
+      // cleanupBootstrapResources is designed not to throw (each step is try/catch),
+      // but guard defensively so one broken orphan cannot abort the rest.
+      logger.warn(
+        { jobName, instanceName, err },
+        'reconcileOrphanedBootstrapsOnStartup: cleanupBootstrapResources threw unexpectedly; continuing',
+      );
+    }
+  }
+
+  logger.info(
+    'reconcileOrphanedBootstrapsOnStartup: reconciliation pass complete',
+  );
 }
