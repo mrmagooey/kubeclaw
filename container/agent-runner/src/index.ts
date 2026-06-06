@@ -1234,6 +1234,61 @@ async function waitForBootstrapCommitReply(
   });
 }
 
+// How long the bootstrap agent waits for the admin to answer a question before
+// giving up. Overridable for tests/non-interactive runs.
+const ADMIN_REPLY_TIMEOUT_MS: number = (() => {
+  const raw = process.env.KUBECLAW_BOOTSTRAP_ADMIN_REPLY_TIMEOUT_MS;
+  if (raw) {
+    const parsed = parseInt(raw, 10);
+    if (!Number.isNaN(parsed) && parsed > 0) return parsed;
+  }
+  return 600_000;
+})();
+
+// Block until the admin publishes a reply on the admin->pod channel. The
+// orchestrator's reply_to_bootstrap tool publishes { text } here. Mirrors
+// waitForBootstrapCommitReply's subscriber lifecycle.
+async function waitForAdminReply(
+  redisUrl: string,
+  channel: string,
+  timeoutMs: number,
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const sub = createClient({ url: redisUrl }) as RedisClientType;
+    const cleanup = () => {
+      sub.unsubscribe(channel).catch(() => {});
+      sub.quit().catch(() => {});
+    };
+    sub.on('error', (err: Error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(err);
+    });
+    sub.connect().then(() => {
+      sub.subscribe(channel, (msg: string) => {
+        if (settled) return;
+        try {
+          const data = JSON.parse(msg) as { text?: string };
+          if (typeof data.text !== 'string') return;
+          settled = true;
+          cleanup();
+          resolve(data.text);
+        } catch {
+          // ignore malformed messages
+        }
+      });
+    });
+    setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(new Error(`Timeout waiting for admin reply on ${channel}`));
+    }, timeoutMs);
+  });
+}
+
 async function runBootstrapMode(redis: RedisClientType): Promise<void> {
   const skillName = process.env.KUBECLAW_BOOTSTRAP_SKILL!;
   const jobId = process.env.KUBECLAW_BOOTSTRAP_JOB_ID || '';
@@ -1257,6 +1312,7 @@ async function runBootstrapMode(redis: RedisClientType): Promise<void> {
   const bootstrapTopic = `kubeclaw:bootstrap:${jobId}`;
   const taskChannel = `kubeclaw:bootstrap-task:${jobId}`;
   const replyChannel = `kubeclaw:bootstrap-reply:${jobId}`;
+  const adminChannel = `kubeclaw:bootstrap-admin:${jobId}`;
 
   async function publishToAdmin(text: string): Promise<void> {
     try {
@@ -1340,6 +1396,44 @@ async function runBootstrapMode(redis: RedisClientType): Promise<void> {
   // in a single pod with its runtime PVC as the only durable surface.
   const tools: AgentTool[] = [
     {
+      name: 'ask_admin',
+      label: 'Ask Admin',
+      description:
+        'Ask the admin operator a question (e.g. which port, an API token) '
+        + 'and BLOCK until they answer. Returns the admin reply text. Use this '
+        + 'whenever the skill tells you to ask the admin something; never guess '
+        + 'a value the admin is supposed to provide.',
+      parameters: Type.Object({
+        question: Type.String({
+          description:
+            "The question to ask the admin operator. The returned value is "
+            + "the admin's answer.",
+        }),
+      }),
+      execute: async (_id, params) => {
+        const question = (params as { question: string }).question;
+        await redis.publish(
+          bootstrapTopic,
+          JSON.stringify({ type: 'question', text: question }),
+        );
+        log(`[bootstrap] ask_admin: ${question}`);
+        try {
+          const reply = await waitForAdminReply(
+            redisUrl,
+            adminChannel,
+            ADMIN_REPLY_TIMEOUT_MS,
+          );
+          log(`[bootstrap] admin replied: ${reply}`);
+          return textResult(reply);
+        } catch {
+          return textResult(
+            'Timed out waiting for admin reply. Abort the bootstrap and '
+            + 'report the failure to the admin.',
+          );
+        }
+      },
+    },
+    {
       name: 'local_bash',
       label: 'Local Bash',
       description:
@@ -1420,7 +1514,10 @@ async function runBootstrapMode(redis: RedisClientType): Promise<void> {
             .filter((c: any) => c.type === 'text')
             .map((c: any) => c.text)
             .join('');
-          if (text) await publishToAdmin(text);
+          if (text) {
+            log(`[bootstrap] assistant: ${text}`);
+            await publishToAdmin(text);
+          }
         }
       }
       lastPublishedIndex = messages.length - 1;

@@ -200,7 +200,10 @@ vi.mock('./k8s/redis-client.js', () => ({
 
 // ── Import after mocks ─────────────────────────────────────────────────────
 
-const { executeTool, TOOLS } = await import('./admin-shell.js');
+const { executeTool, TOOLS, activeBootstraps } = await import(
+  './admin-shell.js'
+);
+const { getRedisClient } = await import('./k8s/redis-client.js');
 
 // ── Tests ───────────────────────────────────────────────────────────────────
 
@@ -229,6 +232,7 @@ describe('admin-shell TOOLS array', () => {
       'upgrade_channel',
       // Story 180: bootstrap status tools
       'report_step',
+      'reply_to_bootstrap',
       'bootstrap_status',
       // Story 184: bootstrap audit log
       'bootstrap_audit_log',
@@ -945,6 +949,64 @@ describe('executeTool', () => {
         target_manifest_hash: 'abc123',
       });
       expect(result).toMatch(/lowercase|alphanumeric/i);
+    });
+  });
+
+  describe('reply_to_bootstrap', () => {
+    let publishSpy: ReturnType<typeof vi.fn>;
+
+    beforeEach(() => {
+      activeBootstraps.clear();
+      publishSpy = vi.fn().mockResolvedValue(1);
+      (getRedisClient as ReturnType<typeof vi.fn>).mockReturnValue({
+        publish: publishSpy,
+      });
+    });
+
+    it('publishes the reply to the bootstrap-admin channel for an active bootstrap', async () => {
+      activeBootstraps.set('my-echo', 'job-uuid-123');
+      const result = await executeTool('reply_to_bootstrap', {
+        instance_name: 'my-echo',
+        message: 'Use port 8080.',
+      });
+      expect(publishSpy).toHaveBeenCalledWith(
+        'kubeclaw:bootstrap-admin:job-uuid-123',
+        JSON.stringify({ text: 'Use port 8080.' }),
+      );
+      expect(result).toMatch(/forwarded.*my-echo/i);
+    });
+
+    it('resolves the upgrade-keyed bootstrap when no plain instance entry exists', async () => {
+      activeBootstraps.set('my-echo:upgrade', 'job-upgrade-456');
+      const result = await executeTool('reply_to_bootstrap', {
+        instance_name: 'my-echo',
+        message: 'token-xyz',
+      });
+      expect(publishSpy).toHaveBeenCalledWith(
+        'kubeclaw:bootstrap-admin:job-upgrade-456',
+        JSON.stringify({ text: 'token-xyz' }),
+      );
+      expect(result).toMatch(/forwarded/i);
+    });
+
+    it('returns an error when no active bootstrap matches the instance', async () => {
+      const result = await executeTool('reply_to_bootstrap', {
+        instance_name: 'unknown',
+        message: 'hello',
+      });
+      expect(publishSpy).not.toHaveBeenCalled();
+      expect(result).toMatch(/no active bootstrap/i);
+    });
+
+    it('returns an error when instance_name or message is missing', async () => {
+      const r1 = await executeTool('reply_to_bootstrap', {
+        message: 'hi',
+      });
+      const r2 = await executeTool('reply_to_bootstrap', {
+        instance_name: 'my-echo',
+      });
+      expect(r1).toMatch(/required/i);
+      expect(r2).toMatch(/required/i);
     });
   });
 });

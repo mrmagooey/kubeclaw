@@ -701,6 +701,33 @@ export const TOOLS: OpenAI.ChatCompletionTool[] = [
   {
     type: 'function',
     function: {
+      name: 'reply_to_bootstrap',
+      description:
+        "Forward the admin user's reply to an in-progress channel bootstrap " +
+        '(e.g. answering a port or credential question the bootstrap agent asked). ' +
+        'Looks up the active bootstrap by instance name and delivers the message ' +
+        'to the bootstrap pod over Redis. Call this whenever the user answers a ' +
+        'question raised by a running bootstrap.',
+      parameters: {
+        type: 'object',
+        required: ['instance_name', 'message'],
+        properties: {
+          instance_name: {
+            type: 'string',
+            description:
+              'The channel instance name of the active bootstrap to reply to.',
+          },
+          message: {
+            type: 'string',
+            description: "The admin's reply text to forward to the bootstrap pod.",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'bootstrap_status',
       description:
         'Return a structured snapshot of all in-progress and recently-completed bootstrap operations. ' +
@@ -1900,6 +1927,35 @@ async function handleReportStep(input: ToolInput): Promise<string> {
   }
 }
 
+async function handleReplyToBootstrap(input: ToolInput): Promise<string> {
+  const instanceName = input.instance_name as string | undefined;
+  const message = input.message as string | undefined;
+
+  if (!instanceName || !message) {
+    return 'Error: instance_name and message are required.';
+  }
+
+  // activeBootstraps maps instanceName -> bootstrapJobId; the bootstrap pod
+  // subscribes to kubeclaw:bootstrap-admin:<bootstrapJobId>. Also support the
+  // upgrade path, whose key is "<instance>:upgrade".
+  const bjid =
+    activeBootstraps.get(instanceName) ??
+    activeBootstraps.get(`${instanceName}:upgrade`);
+  if (!bjid) {
+    return `Error: No active bootstrap found for instance "${instanceName}".`;
+  }
+
+  try {
+    await getRedisClient().publish(
+      `kubeclaw:bootstrap-admin:${bjid}`,
+      JSON.stringify({ text: message }),
+    );
+    return `Reply forwarded to bootstrap pod for ${instanceName}.`;
+  } catch (err) {
+    return `Error publishing reply: ${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+
 async function handleBootstrapStatus(input: ToolInput): Promise<string> {
   const limit = input.limit as number | undefined;
   const channelTypeFilter = input.channel_type_filter as string | undefined;
@@ -2055,6 +2111,8 @@ export async function executeTool(
       return handleUpgradeChannel(input);
     case 'report_step':
       return handleReportStep(input);
+    case 'reply_to_bootstrap':
+      return handleReplyToBootstrap(input);
     case 'bootstrap_status':
       return handleBootstrapStatus(input);
     default:
@@ -2082,7 +2140,9 @@ When setting up a channel:
 6. After the channel pod starts (~30s), ask the user for the chat JID (they can get it by sending /chatid to the bot). For HTTP, JIDs are http:{username} — register each user's group immediately.
 7. Call register_group to register the group with direct=true.
 
-When registering a group, confirm the details before calling register_group. After registering, inform the user that changes take effect on the next orchestrator poll (~2 seconds).`;
+When registering a group, confirm the details before calling register_group. After registering, inform the user that changes take effect on the next orchestrator poll (~2 seconds).
+
+When a channel bootstrap is in progress (started via bootstrap_channel_from_skill) and the user provides an answer to a question the bootstrap agent asked — such as a TCP port, API token, or other configuration value — call reply_to_bootstrap with the channel instance name and the user's answer as the message. Do not answer such questions yourself; forward them so the bootstrap agent can continue.`;
 
 // ---- Shared agentic loop ----
 
