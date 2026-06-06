@@ -65,6 +65,13 @@ spec:
 # Ingress is denied from all cluster pods — kubelet health probes bypass NetworkPolicy.
 # For channels with httpPort, channel-pods.yaml adds a per-channel ingress policy.
 # No K8s API access — automountServiceAccountToken is false on these pods.
+#
+# Story 183: registry.npmjs.org, registry.yarnpkg.com, and the npm mirror host
+# (when bootstrap.npmRegistry is set) must be denied from channel pods.
+# LIMITATION: standard Kubernetes NetworkPolicy cannot express hostname-based deny rules.
+# Enable Cilium (ciliumNetworkPolicy.enabled=true) to enforce FQDN-level deny via
+# kubeclaw-channel-egress CiliumNetworkPolicy, which uses allowlist semantics:
+# only explicitly listed FQDNs are permitted — registry hosts are intentionally excluded.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

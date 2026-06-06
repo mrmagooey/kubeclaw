@@ -1447,3 +1447,137 @@ describe('runUpgrade — concurrent rejection', () => {
     );
   });
 });
+
+// ─── Story 183: NPM_CONFIG_REGISTRY env injection ─────────────────────────────
+
+import { runUpgrade } from './bootstrap-runner.js';
+
+describe('bootstrapChannelFromSkill — Story 183: NPM_CONFIG_REGISTRY injection', () => {
+  let fakeK8s183: ReturnType<typeof makeFakeK8s>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const OLD_ENV_183: any = process.env;
+
+  beforeEach(() => {
+    fakeK8s183 = makeFakeK8s();
+    process.env = { ...OLD_ENV_183 };
+    delete process.env.BOOTSTRAP_NPM_REGISTRY;
+  });
+  afterEach(() => {
+    process.env = OLD_ENV_183;
+  });
+
+  function getBootstrapEnvMap(fk: ReturnType<typeof makeFakeK8s>) {
+    const jobBody = fk.createdJobs[0].body as {
+      spec: {
+        template: {
+          spec: { containers: [{ env: { name: string; value: string }[] }] };
+        };
+      };
+    };
+    const envs = jobBody.spec.template.spec.containers[0].env;
+    return Object.fromEntries(envs.map((e) => [e.name, e.value]));
+  }
+
+  it('bootstrap Job env includes NPM_CONFIG_REGISTRY when BOOTSTRAP_NPM_REGISTRY env var is set', async () => {
+    process.env.BOOTSTRAP_NPM_REGISTRY = 'https://npm.internal.corp';
+    await bootstrapChannelFromSkill({
+      skillName: 'bootstrap-telegram',
+      channelType: 'telegram',
+      instanceName: 'my-telegram',
+      k8sDeps: { coreV1: fakeK8s183.coreV1, batchV1: fakeK8s183.batchV1 },
+      namespace: 'test-ns',
+      channelBaseImage: 'kubeclaw-channel-base:latest',
+      activeBootstraps: new Map(),
+    });
+    const envMap = getBootstrapEnvMap(fakeK8s183);
+    expect(envMap['NPM_CONFIG_REGISTRY']).toBe('https://npm.internal.corp');
+  });
+
+  it('bootstrap Job env includes NPM_CONFIG_REGISTRY when npmRegistry option is passed directly', async () => {
+    await bootstrapChannelFromSkill({
+      skillName: 'bootstrap-telegram',
+      channelType: 'telegram',
+      instanceName: 'my-telegram',
+      k8sDeps: { coreV1: fakeK8s183.coreV1, batchV1: fakeK8s183.batchV1 },
+      namespace: 'test-ns',
+      channelBaseImage: 'kubeclaw-channel-base:latest',
+      activeBootstraps: new Map(),
+      npmRegistry: 'https://npm.option.corp',
+    });
+    const envMap = getBootstrapEnvMap(fakeK8s183);
+    expect(envMap['NPM_CONFIG_REGISTRY']).toBe('https://npm.option.corp');
+  });
+
+  it('bootstrap Job env does NOT include NPM_CONFIG_REGISTRY when neither env var nor option is set', async () => {
+    await bootstrapChannelFromSkill({
+      skillName: 'bootstrap-telegram',
+      channelType: 'telegram',
+      instanceName: 'my-telegram',
+      k8sDeps: { coreV1: fakeK8s183.coreV1, batchV1: fakeK8s183.batchV1 },
+      namespace: 'test-ns',
+      channelBaseImage: 'kubeclaw-channel-base:latest',
+      activeBootstraps: new Map(),
+    });
+    const envMap = getBootstrapEnvMap(fakeK8s183);
+    expect(envMap['NPM_CONFIG_REGISTRY']).toBeUndefined();
+  });
+
+  it('npmRegistry option takes precedence over BOOTSTRAP_NPM_REGISTRY env var', async () => {
+    process.env.BOOTSTRAP_NPM_REGISTRY = 'https://env.registry.corp';
+    await bootstrapChannelFromSkill({
+      skillName: 'bootstrap-telegram',
+      channelType: 'telegram',
+      instanceName: 'my-telegram',
+      k8sDeps: { coreV1: fakeK8s183.coreV1, batchV1: fakeK8s183.batchV1 },
+      namespace: 'test-ns',
+      channelBaseImage: 'kubeclaw-channel-base:latest',
+      activeBootstraps: new Map(),
+      npmRegistry: 'https://opt.registry.corp',
+    });
+    const envMap = getBootstrapEnvMap(fakeK8s183);
+    expect(envMap['NPM_CONFIG_REGISTRY']).toBe('https://opt.registry.corp');
+  });
+
+  it('upgrade Job env includes NPM_CONFIG_REGISTRY when BOOTSTRAP_NPM_REGISTRY env var is set', async () => {
+    process.env.BOOTSTRAP_NPM_REGISTRY = 'https://npm.internal.corp';
+    const k8sDepsUpgrade = {
+      coreV1: fakeK8s183.coreV1,
+      batchV1: fakeK8s183.batchV1,
+      appsV1: {
+        readNamespacedDeployment: vi.fn().mockResolvedValue({
+          spec: {
+            template: {
+              spec: {
+                volumes: [
+                  {
+                    name: 'runtime',
+                    persistentVolumeClaim: { claimName: 'kubeclaw-channel-my-telegram-runtime' },
+                  },
+                ],
+              },
+            },
+          },
+        }),
+      } as any,
+    };
+    const active = new Map<string, string>();
+    await runUpgrade({
+      instanceName: 'my-telegram',
+      targetManifestHash: 'abc123',
+      k8sDeps: k8sDepsUpgrade,
+      namespace: 'test-ns',
+      channelBaseImage: 'kubeclaw-channel-base:latest',
+      activeBootstraps: active,
+    });
+    const jobBody = fakeK8s183.createdJobs[0].body as {
+      spec: {
+        template: {
+          spec: { containers: [{ env: { name: string; value: string }[] }] };
+        };
+      };
+    };
+    const envs = jobBody.spec.template.spec.containers[0].env;
+    const envMap = Object.fromEntries(envs.map((e: any) => [e.name, e.value]));
+    expect(envMap['NPM_CONFIG_REGISTRY']).toBe('https://npm.internal.corp');
+  });
+});

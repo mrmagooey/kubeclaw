@@ -202,4 +202,54 @@ spec:
       - port: "80"
         protocol: TCP
   {{- end }}
+{{- if .Values.bootstrap.npmRegistry }}
+{{- $parsedBootstrapMirror := urlParse .Values.bootstrap.npmRegistry }}
+---
+# Story 183: CiliumNetworkPolicy for bootstrap pods — mirror-only egress.
+# Applies when ciliumNetworkPolicy.enabled AND bootstrap.npmRegistry is set.
+# registry.npmjs.org and registry.yarnpkg.com are NOT in the toFQDNs allowlist —
+# they are implicitly denied by Cilium's default-deny posture.
+# NOTE: registry.yarnpkg.com deny is only enforceable via Cilium (standard K8s
+# NetworkPolicy cannot express hostname-based deny rules).
+# TODO(Story 183 follow-on): multi-mirror support (bootstrap.npmRegistries[]).
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: kubeclaw-bootstrap-egress
+  namespace: {{ include "kubeclaw.namespace" . }}
+spec:
+  endpointSelector:
+    matchLabels:
+      kubeclaw.io/role: bootstrap
+  egress:
+  # DNS — required before any FQDN rule can resolve.
+  - toEndpoints:
+    - matchLabels:
+        "k8s:io.kubernetes.pod.namespace": kube-system
+        k8s-app: kube-dns
+    toPorts:
+    - ports:
+      - port: "53"
+        protocol: UDP
+      - port: "53"
+        protocol: TCP
+  # Redis IPC
+  - toEndpoints:
+    - matchLabels:
+        "k8s:io.kubernetes.pod.namespace": {{ include "kubeclaw.namespace" . }}
+        app: kubeclaw-redis
+    toPorts:
+    - ports:
+      - port: "6379"
+        protocol: TCP
+  # npm mirror — FQDN allowlist only. registry.npmjs.org intentionally excluded.
+  - toFQDNs:
+    - matchName: {{ $parsedBootstrapMirror.host | quote }}
+    toPorts:
+    - ports:
+      - port: "443"
+        protocol: TCP
+      - port: "80"
+        protocol: TCP
+{{- end }}
 {{- end }}

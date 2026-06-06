@@ -180,6 +180,14 @@ export interface BootstrapChannelFromSkillOpts {
   openaiApiKey?: string;
   openaiBaseUrl?: string;
   directLlmModel?: string;
+  /**
+   * Story 183: optional npm mirror registry URL. When set, the bootstrap Job's
+   * container receives NPM_CONFIG_REGISTRY=<url>. When absent, falls back to
+   * BOOTSTRAP_NPM_REGISTRY env var on the orchestrator pod (Helm-injected from
+   * bootstrap.npmRegistry). When neither is set, no NPM_CONFIG_REGISTRY is injected
+   * and npm uses its built-in default registry.
+   */
+  npmRegistry?: string;
 }
 
 export interface BootstrapChannelFromSkillResult {
@@ -308,6 +316,14 @@ export async function bootstrapChannelFromSkill(
   if (opts.directLlmModel)
     envVars.push({ name: 'DIRECT_LLM_MODEL', value: opts.directLlmModel });
 
+  // Story 183: inject NPM_CONFIG_REGISTRY when a mirror is configured.
+  // opts.npmRegistry (caller-supplied) takes precedence over the orchestrator
+  // pod's BOOTSTRAP_NPM_REGISTRY env var (Helm-injected from bootstrap.npmRegistry).
+  const npmRegistry = opts.npmRegistry || process.env.BOOTSTRAP_NPM_REGISTRY;
+  if (npmRegistry) {
+    envVars.push({ name: 'NPM_CONFIG_REGISTRY', value: npmRegistry });
+  }
+
   // ── Create Job ──────────────────────────────────────────────────────────────
   const jobBody = {
     apiVersion: 'batch/v1',
@@ -415,6 +431,8 @@ export interface RunUpgradeOpts {
   openaiApiKey?: string;
   openaiBaseUrl?: string;
   directLlmModel?: string;
+  /** Story 183: optional npm mirror registry URL. See BootstrapChannelFromSkillOpts.npmRegistry. */
+  npmRegistry?: string;
 }
 
 export interface RunUpgradeResult {
@@ -559,6 +577,13 @@ export async function runUpgrade(
     envVars.push({ name: 'OPENAI_BASE_URL', value: opts.openaiBaseUrl });
   if (opts.directLlmModel)
     envVars.push({ name: 'DIRECT_LLM_MODEL', value: opts.directLlmModel });
+
+  // Story 183: inject NPM_CONFIG_REGISTRY when a mirror is configured.
+  const upgradeNpmRegistry =
+    opts.npmRegistry || process.env.BOOTSTRAP_NPM_REGISTRY;
+  if (upgradeNpmRegistry) {
+    envVars.push({ name: 'NPM_CONFIG_REGISTRY', value: upgradeNpmRegistry });
+  }
 
   // ── Create upgrade bootstrap Job ────────────────────────────────────────────
   const jobBody = {

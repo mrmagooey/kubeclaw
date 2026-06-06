@@ -245,6 +245,11 @@ spec:
               value: {{ .Values.bootstrap.runtimePvc.accessModes | default (list "ReadWriteOnce") | join "," | quote }}
             - name: BOOTSTRAP_STEADY_STATE_REPLICAS
               value: {{ .Values.bootstrap.steadyState.defaultReplicas | default 1 | quote }}
+            {{- if .Values.bootstrap.npmRegistry }}
+            # Story 183: air-gapped npm mirror — orchestrator threads this into bootstrap Job env.
+            - name: BOOTSTRAP_NPM_REGISTRY
+              value: {{ .Values.bootstrap.npmRegistry | quote }}
+            {{- end }}
           ports:
             - name: health
               containerPort: 8080

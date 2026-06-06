@@ -530,6 +530,13 @@ dashboards:
 #                                    in manifests (default: [] — none allowed)
 bootstrap:
   npmRegistry: ""
+  npmRegistryAuth:
+    # Name of a K8s Secret holding key `auth-token` for the npm mirror.
+    # Only used when bootstrap.npmRegistry is set.
+    # The credential broker reads this secret and stamps Authorization: Bearer
+    # on outbound requests to the mirror host.
+    # Example: bootstrap.npmRegistryAuth.secretRef: kubeclaw-npm-mirror-auth
+    secretRef: ""
   timeoutSeconds: 900
   pvcSize: 1Gi
   allowedLifecycleScripts: []

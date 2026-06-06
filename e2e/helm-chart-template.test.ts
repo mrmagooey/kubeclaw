@@ -589,3 +589,191 @@ describe('helm template — story-182 RWX/RWO replica guardrail', () => {
     expect(result.stdout).toContain('"3"');
   });
 });
+
+// ─── Story 183: air-gapped npm mirror ────────────────────────────────────────
+
+describe('helm template — bootstrap.npmRegistry (Story 183)', () => {
+  const baseArgs = [
+    '--set', 'secrets.anthropicApiKey=test',
+    '--set', 'secrets.claudeCodeOauthToken=test',
+    '--set', 'redis.password=test',
+  ];
+
+  it('orchestrator Deployment gets BOOTSTRAP_NPM_REGISTRY env when npmRegistry is set', () => {
+    const result = spawnSync(
+      'helm',
+      [
+        'template', 'smoke', CHART_DIR,
+        ...baseArgs,
+        '--set', 'bootstrap.npmRegistry=https://npm.internal.corp',
+      ],
+      { encoding: 'utf8' },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain('BOOTSTRAP_NPM_REGISTRY');
+    expect(result.stdout).toContain('https://npm.internal.corp');
+  });
+
+  it('orchestrator Deployment has no BOOTSTRAP_NPM_REGISTRY env when npmRegistry is empty', () => {
+    const result = spawnSync(
+      'helm',
+      ['template', 'smoke', CHART_DIR, ...baseArgs],
+      { encoding: 'utf8' },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).not.toContain('BOOTSTRAP_NPM_REGISTRY');
+  });
+
+  it('credential-broker ConfigMap gets mirror mapping when npmRegistry and secretRef are set', () => {
+    const result = spawnSync(
+      'helm',
+      [
+        'template', 'smoke', CHART_DIR,
+        ...baseArgs,
+        '--set', 'bootstrap.npmRegistry=https://npm.internal.corp',
+        '--set', 'bootstrap.npmRegistryAuth.secretRef=my-npm-secret',
+      ],
+      { encoding: 'utf8' },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain('id: npm-mirror');
+    expect(result.stdout).toContain('npm.internal.corp');
+    expect(result.stdout).toContain('my-npm-secret');
+    expect(result.stdout).toContain('auth-token');
+  });
+
+  it('credential-broker ConfigMap has no mirror mapping when npmRegistry is empty', () => {
+    const result = spawnSync(
+      'helm',
+      ['template', 'smoke', CHART_DIR, ...baseArgs],
+      { encoding: 'utf8' },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).not.toContain('id: npm-mirror');
+  });
+
+  it('bootstrap NetworkPolicy removes broad port-443 allow-all when mirror and Cilium enabled', () => {
+    const result = spawnSync(
+      'helm',
+      [
+        'template', 'smoke', CHART_DIR,
+        ...baseArgs,
+        '--set', 'bootstrap.npmRegistry=https://npm.internal.corp',
+        '--set', 'ciliumNetworkPolicy.enabled=true',
+      ],
+      { encoding: 'utf8' },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    const sections = result.stdout.split('---');
+    const bootstrapSection = sections.find(
+      (s) => s.includes('kubeclaw-bootstrap-policy') && s.includes('kind: NetworkPolicy'),
+    );
+    expect(bootstrapSection, 'kubeclaw-bootstrap-policy not found').toBeTruthy();
+    // Should have no port: 443 rule when Cilium handles it
+    const portLines = (bootstrapSection ?? '').split('\n').filter(
+      (l) => /^\s+port:\s+443\s*$/.test(l),
+    );
+    expect(portLines, 'Expected no port: 443 in bootstrap NetworkPolicy when Cilium+mirror active').toHaveLength(0);
+  });
+
+  it('bootstrap NetworkPolicy keeps broad port-443 rule when mirror set but Cilium disabled', () => {
+    const result = spawnSync(
+      'helm',
+      [
+        'template', 'smoke', CHART_DIR,
+        ...baseArgs,
+        '--set', 'bootstrap.npmRegistry=https://npm.internal.corp',
+        // ciliumNetworkPolicy.enabled defaults to false
+      ],
+      { encoding: 'utf8' },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    const sections = result.stdout.split('---');
+    const bootstrapSection = sections.find(
+      (s) => s.includes('kubeclaw-bootstrap-policy') && s.includes('kind: NetworkPolicy'),
+    );
+    expect(bootstrapSection, 'kubeclaw-bootstrap-policy not found').toBeTruthy();
+    expect(bootstrapSection).toContain('port: 443');
+  });
+
+  it('bootstrap NetworkPolicy keeps broad port-443 when npmRegistry is unset (backwards compat)', () => {
+    const result = spawnSync(
+      'helm',
+      ['template', 'smoke', CHART_DIR, ...baseArgs],
+      { encoding: 'utf8' },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    const sections = result.stdout.split('---');
+    const bootstrapSection = sections.find(
+      (s) => s.includes('kubeclaw-bootstrap-policy') && s.includes('kind: NetworkPolicy'),
+    );
+    expect(bootstrapSection, 'kubeclaw-bootstrap-policy not found').toBeTruthy();
+    expect(bootstrapSection).toContain('port: 443');
+  });
+
+  it('CiliumNetworkPolicy kubeclaw-bootstrap-egress renders when cilium enabled and mirror set', () => {
+    const result = spawnSync(
+      'helm',
+      [
+        'template', 'smoke', CHART_DIR,
+        ...baseArgs,
+        '--set', 'ciliumNetworkPolicy.enabled=true',
+        '--set', 'bootstrap.npmRegistry=https://npm.internal.corp',
+      ],
+      { encoding: 'utf8' },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    // Look for the actual CiliumNetworkPolicy resource name declaration
+    expect(result.stdout).toContain('name: kubeclaw-bootstrap-egress');
+    expect(result.stdout).toContain('npm.internal.corp');
+  });
+
+  it('kubeclaw-bootstrap-egress CiliumNetworkPolicy does not render when cilium disabled', () => {
+    const result = spawnSync(
+      'helm',
+      [
+        'template', 'smoke', CHART_DIR,
+        ...baseArgs,
+        '--set', 'bootstrap.npmRegistry=https://npm.internal.corp',
+        // ciliumNetworkPolicy.enabled defaults to false
+      ],
+      { encoding: 'utf8' },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    // Verify the actual K8s resource name is absent (comments may mention it)
+    expect(result.stdout).not.toContain('name: kubeclaw-bootstrap-egress');
+  });
+
+  it('kubeclaw-bootstrap-egress CiliumNetworkPolicy does not render when mirror is unset', () => {
+    const result = spawnSync(
+      'helm',
+      [
+        'template', 'smoke', CHART_DIR,
+        ...baseArgs,
+        '--set', 'ciliumNetworkPolicy.enabled=true',
+      ],
+      { encoding: 'utf8' },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).not.toContain('name: kubeclaw-bootstrap-egress');
+  });
+
+  it('registry.npmjs.org does not appear as allowed matchName in Cilium bootstrap policy', () => {
+    const result = spawnSync(
+      'helm',
+      [
+        'template', 'smoke', CHART_DIR,
+        ...baseArgs,
+        '--set', 'ciliumNetworkPolicy.enabled=true',
+        '--set', 'bootstrap.npmRegistry=https://npm.internal.corp',
+      ],
+      { encoding: 'utf8' },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    const lines = result.stdout.split('\n');
+    const matchNameLines = lines.filter(
+      (l) => l.includes('matchName') && l.includes('registry.npmjs.org'),
+    );
+    expect(matchNameLines, 'registry.npmjs.org must not appear as an allowed FQDN').toHaveLength(0);
+  });
+});

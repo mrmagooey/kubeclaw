@@ -1,11 +1,29 @@
 {{- if .Values.networkPolicy.enabled }}
 ---
 # Bootstrap Job pods: egress to DNS, Redis, and npm registry.
-# This is intentionally more permissive than steady-state channel pods —
-# bootstrap Jobs need to reach the npm registry to install packages.
-# After commit_channel_config, the steady-state Deployment uses the standard
-# kubeclaw-channel-policy which does NOT include npm registry egress on port 443
-# (in production: use FQDN-based policies via Cilium to deny registry.npmjs.org).
+#
+# Egress behaviour depends on two flags: bootstrap.npmRegistry and ciliumNetworkPolicy.enabled.
+#
+# Case 1 — no mirror (default, bootstrap.npmRegistry empty):
+#   Broad port-443 + port-80 allow-all is preserved. This is the Story 174 baseline:
+#   the bootstrap Job can reach registry.npmjs.org and any other HTTPS host.
+#
+# Case 2 — mirror set + ciliumNetworkPolicy.enabled=true:
+#   The broad allow-all is REMOVED from this standard NetworkPolicy.
+#   A companion CiliumNetworkPolicy (kubeclaw-bootstrap-egress) allows egress only to
+#   the configured mirror host via toFQDNs. registry.npmjs.org and registry.yarnpkg.com
+#   are implicitly denied by Cilium's default-deny posture.
+#
+# Case 3 — mirror set but ciliumNetworkPolicy.enabled=false:
+#   Standard Kubernetes NetworkPolicy cannot express hostname-based allow or deny rules.
+#   The broad port-443 allow-all is RETAINED (backwards-compatible fallback).
+#   OPERATOR ACTION REQUIRED: enable Cilium CNI and set ciliumNetworkPolicy.enabled=true
+#   to enforce FQDN-level egress restrictions in air-gapped mode. Without Cilium,
+#   the bootstrap pod can still reach registry.npmjs.org on port 443.
+#
+# NOTE: registry.yarnpkg.com deny is only enforceable via Cilium; standard K8s
+# NetworkPolicy cannot express hostname-based deny rules. See also:
+# helm/kubeclaw/templates/cilium-network-policies.yaml for FQDN-based enforcement.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -34,11 +52,18 @@ spec:
       ports:
         - protocol: TCP
           port: 6379
-    # npm registry + channel API validation (HTTPS + HTTP)
+    {{- if and .Values.bootstrap.npmRegistry .Values.ciliumNetworkPolicy.enabled }}
+    # Mirror mode + Cilium enabled: broad allow-all REMOVED.
+    # CiliumNetworkPolicy kubeclaw-bootstrap-egress provides FQDN-level allow for the mirror.
+    # registry.npmjs.org and registry.yarnpkg.com are implicitly denied by Cilium default-deny.
+    {{- else }}
+    # npm registry + channel API validation (HTTPS + HTTP).
+    # Standard K8s NetworkPolicy: cannot deny by hostname; see Case 3 comment above.
     - to: []
       ports:
         - protocol: TCP
           port: 443
         - protocol: TCP
           port: 80
+    {{- end }}
 {{- end }}
