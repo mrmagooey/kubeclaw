@@ -44,6 +44,8 @@ import {
 // loadSpecialists removed — per-group agents.json specialist loading is deprecated.
 // Task 12 will clean up the remaining IPC specialist-dispatch path.
 import type { OrchestratorMetrics } from '../metrics/orchestrator.js';
+import { processCommitChannelConfig } from './ipc-redis-bootstrap.js';
+import type { CommitChannelConfigDeps } from './ipc-redis-bootstrap.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
@@ -78,6 +80,73 @@ export function registerSecretDeps(
 ): void {
   _secretManager = secretManager;
   _catalogInformer = catalogInformer;
+}
+
+// Bootstrap deps — set by registerBootstrapDeps() called from index.ts (Story 174)
+let _bootstrapCommitDeps: CommitChannelConfigDeps | null = null;
+let _channelBaseImage = 'kubeclaw-channel-base:latest';
+let _bootstrapNamespace = process.env.KUBECLAW_NAMESPACE || 'kubeclaw';
+
+/**
+ * Register bootstrap dependencies used by the commit_channel_config IPC handler.
+ * Must be called before startBootstrapTaskWatcher().
+ */
+export function registerBootstrapDeps(
+  deps: CommitChannelConfigDeps,
+  channelBaseImage: string,
+  namespace: string,
+): void {
+  _bootstrapCommitDeps = deps;
+  _channelBaseImage = channelBaseImage;
+  _bootstrapNamespace = namespace;
+}
+
+/**
+ * Watch the kubeclaw:bootstrap-task:* pub/sub pattern for commit_channel_config
+ * messages sent by bootstrap pods. Each message is handled by processCommitChannelConfig.
+ * Uses psubscribe (pattern subscribe) on the shared Redis subscriber.
+ */
+export function startBootstrapTaskWatcher(): void {
+  const subscriber = getRedisSubscriber();
+
+  subscriber.psubscribe('kubeclaw:bootstrap-task:*', (err) => {
+    if (err)
+      logger.error({ err }, 'Failed to subscribe to bootstrap task pattern');
+    else
+      logger.info(
+        'Bootstrap task watcher subscribed (kubeclaw:bootstrap-task:*)',
+      );
+  });
+
+  subscriber.on(
+    'pmessage',
+    (_pattern: string, channel: string, message: string) => {
+      if (!channel.startsWith('kubeclaw:bootstrap-task:')) return;
+      if (!_bootstrapCommitDeps) {
+        logger.error(
+          { channel },
+          'commit_channel_config received but bootstrap deps not registered',
+        );
+        return;
+      }
+      try {
+        const data = JSON.parse(message);
+        if (data.type === 'commit_channel_config') {
+          void processCommitChannelConfig(
+            data,
+            _bootstrapCommitDeps,
+            _bootstrapNamespace,
+            _channelBaseImage,
+          );
+        }
+      } catch (err) {
+        logger.error(
+          { err, channel },
+          'Error processing bootstrap task message',
+        );
+      }
+    },
+  );
 }
 
 function channelPvcNames(channel: string): {
@@ -1365,7 +1434,8 @@ export async function startTaskRequestWatcher(
             let response: string;
             try {
               const fields = JSON.parse(fieldsJson) as Record<string, string>;
-              if (!_secretManager) throw new Error('SecretManager not initialised');
+              if (!_secretManager)
+                throw new Error('SecretManager not initialised');
               await _secretManager.setGroupSecret(group, catalogId, fields);
               logger.info(
                 { group, catalogId },
@@ -1373,8 +1443,7 @@ export async function startTaskRequestWatcher(
               );
               response = JSON.stringify({ ok: true });
             } catch (err) {
-              const error =
-                err instanceof Error ? err.message : String(err);
+              const error = err instanceof Error ? err.message : String(err);
               logger.warn({ group, catalogId, error }, 'secret.add failed');
               response = JSON.stringify({ ok: false, error });
             }
@@ -1384,7 +1453,8 @@ export async function startTaskRequestWatcher(
             if (!group || !catalogId || !resultStream) continue;
             let response: string;
             try {
-              if (!_secretManager) throw new Error('SecretManager not initialised');
+              if (!_secretManager)
+                throw new Error('SecretManager not initialised');
               await _secretManager.deleteGroupSecret(group, catalogId);
               logger.info(
                 { group, catalogId },
@@ -1392,8 +1462,7 @@ export async function startTaskRequestWatcher(
               );
               response = JSON.stringify({ ok: true });
             } catch (err) {
-              const error =
-                err instanceof Error ? err.message : String(err);
+              const error = err instanceof Error ? err.message : String(err);
               logger.warn({ group, catalogId, error }, 'secret.remove failed');
               response = JSON.stringify({ ok: false, error });
             }
@@ -1403,12 +1472,12 @@ export async function startTaskRequestWatcher(
             if (!group || !resultStream) continue;
             let response: string;
             try {
-              if (!_secretManager) throw new Error('SecretManager not initialised');
+              if (!_secretManager)
+                throw new Error('SecretManager not initialised');
               const entries = await _secretManager.listGroupSecrets(group);
               response = JSON.stringify({ ok: true, result: entries });
             } catch (err) {
-              const error =
-                err instanceof Error ? err.message : String(err);
+              const error = err instanceof Error ? err.message : String(err);
               logger.warn({ group, error }, 'secret.list failed');
               response = JSON.stringify({ ok: false, error });
             }
@@ -1418,12 +1487,12 @@ export async function startTaskRequestWatcher(
             if (!resultStream) continue;
             let response: string;
             try {
-              if (!_catalogInformer) throw new Error('CatalogInformer not initialised');
+              if (!_catalogInformer)
+                throw new Error('CatalogInformer not initialised');
               const catalog = _catalogInformer.getCatalog();
               response = JSON.stringify({ ok: true, result: catalog });
             } catch (err) {
-              const error =
-                err instanceof Error ? err.message : String(err);
+              const error = err instanceof Error ? err.message : String(err);
               logger.warn({ error }, 'catalog.list failed');
               response = JSON.stringify({ ok: false, error });
             }

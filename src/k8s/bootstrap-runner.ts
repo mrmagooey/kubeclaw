@@ -27,7 +27,13 @@ export function canonicalJson(obj: unknown): string {
   if (Array.isArray(obj)) return '[' + obj.map(canonicalJson).join(',') + ']';
   const rec = obj as Record<string, unknown>;
   const sorted = Object.keys(rec).sort();
-  return '{' + sorted.map((k) => `${JSON.stringify(k)}:${canonicalJson(rec[k])}`).join(',') + '}';
+  return (
+    '{' +
+    sorted
+      .map((k) => `${JSON.stringify(k)}:${canonicalJson(rec[k])}`)
+      .join(',') +
+    '}'
+  );
 }
 
 /**
@@ -82,7 +88,10 @@ export function validateChannelManifest(
 
   // Check per-package lifecycle scripts in lockfile (npm lockfile v3 schema)
   const lock = JSON.parse(manifest.packageLockJson) as Record<string, unknown>;
-  const packages = (lock.packages as Record<string, { scripts?: Record<string, string> }> | undefined) ?? {};
+  const packages =
+    (lock.packages as
+      | Record<string, { scripts?: Record<string, string> }>
+      | undefined) ?? {};
   for (const [pkgPath, pkgData] of Object.entries(packages)) {
     if (pkgData.scripts) {
       for (const script of Object.keys(pkgData.scripts)) {
@@ -214,13 +223,18 @@ export async function bootstrapChannelFromSkill(
     { name: 'KUBECLAW_BOOTSTRAP_JOB_ID', value: bootstrapJobId },
     {
       name: 'REDIS_URL',
-      value: opts.redisUrl || process.env.REDIS_URL || 'redis://kubeclaw-redis:6379',
+      value:
+        opts.redisUrl || process.env.REDIS_URL || 'redis://kubeclaw-redis:6379',
     },
   ];
 
-  if (opts.redisUsername) envVars.push({ name: 'REDIS_USERNAME', value: opts.redisUsername });
+  if (opts.redisUsername)
+    envVars.push({ name: 'REDIS_USERNAME', value: opts.redisUsername });
   if (opts.redisAdminPassword)
-    envVars.push({ name: 'REDIS_ADMIN_PASSWORD', value: opts.redisAdminPassword });
+    envVars.push({
+      name: 'REDIS_ADMIN_PASSWORD',
+      value: opts.redisAdminPassword,
+    });
   if (opts.openaiApiKey)
     envVars.push({ name: 'OPENAI_API_KEY', value: opts.openaiApiKey });
   if (opts.openaiBaseUrl)
@@ -290,8 +304,14 @@ export async function bootstrapChannelFromSkill(
     },
   };
 
-  await k8sDeps.batchV1.createNamespacedJob({ namespace, body: jobBody as any });
-  logger.info({ jobName, bootstrapJobId, instanceName, channelType }, 'Bootstrap Job created');
+  await k8sDeps.batchV1.createNamespacedJob({
+    namespace,
+    body: jobBody as any,
+  });
+  logger.info(
+    { jobName, bootstrapJobId, instanceName, channelType },
+    'Bootstrap Job created',
+  );
 
   activeBootstraps.set(instanceName, bootstrapJobId);
   return { bootstrapJobId };
