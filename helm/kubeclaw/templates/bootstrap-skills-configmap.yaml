@@ -1,7 +1,28 @@
 ---
-# kubeclaw-bootstrap-skills: skill markdown files mounted into bootstrap Job pods.
-# Pre-populated from files/bootstrap-skills/*.md at chart render time.
-# Story 178 adds a runtime-write path via register_channel_manifest.
+# kubeclaw-bootstrap-skills-baseline: Helm-supplied baseline bootstrap skills.
+# Read-only from the reconciler's perspective. The orchestrator loads this at
+# startup to build the initial merged view alongside SQLite admin overrides.
+# Mounted at /etc/kubeclaw/bootstrap-skills-baseline inside the orchestrator pod.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kubeclaw-bootstrap-skills-baseline
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: kubeclaw
+    component: bootstrap-skills-baseline
+data:
+  {{- range $name, $markdown := .Values.bootstrap.skills }}
+  {{ $name }}.md: |
+    {{ $markdown | indent 4 | trimAll " " }}
+  {{- end }}
+---
+# kubeclaw-bootstrap-skills: the live merged catalog written by the orchestrator
+# reconciler. Starts with Helm-baseline content from files/bootstrap-skills/*.md;
+# the reconciler writes the merged content (Helm baseline + admin SQLite overrides)
+# on startup and on every mutation. Bootstrap Jobs mount this ConfigMap to obtain
+# the skill markdown. The orchestrator uses the same GET+replace (PUT) pattern as
+# the kubeclaw-channel-manifests ConfigMap.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -18,9 +39,14 @@ data:
   {{ $name }}.md: |
     {{ $.Files.Get $path | indent 4 | trimAll " " }}
   {{- end }}
+  {{- range $name, $markdown := .Values.bootstrap.skills }}
+  {{- $found = true }}
+  {{ $name }}.md: |
+    {{ $markdown | indent 4 | trimAll " " }}
+  {{- end }}
   {{- if not $found }}
-  # No baseline skills embedded. Add markdown files to helm/kubeclaw/files/bootstrap-skills/
-  # naming convention: bootstrap-<channeltype>.md (e.g. bootstrap-telegram.md)
-  # or register skills via the admin shell (Story 178).
+  # No baseline skills. Register skills via the admin shell (Story 179)
+  # or add markdown files to helm/kubeclaw/files/bootstrap-skills/
+  # or set bootstrap.skills in values.yaml.
   _placeholder: ""
   {{- end }}

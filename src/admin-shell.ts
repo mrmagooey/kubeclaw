@@ -52,6 +52,16 @@ import {
   loadBaselineFromDisk as loadChannelManifestBaselineFromDisk,
   mergeManifests,
 } from './channel-manifests/reconciler.js';
+import {
+  registerBootstrapSkill,
+  removeBootstrapSkill,
+  listBootstrapSkillOverrides,
+} from './skills/orchestrator/bootstrap-skill-registry.js';
+import {
+  BootstrapSkillReconciler,
+  loadBaselineFromDisk as loadBootstrapSkillBaselineFromDisk,
+  mergeSkills,
+} from './bootstrap-skills/reconciler.js';
 import { RealPerGroupK8sClient } from './per-group-capabilities/k8s-client.js';
 import {
   setGroupCredential,
@@ -178,6 +188,62 @@ const channelManifestReconciler = new ChannelManifestReconciler({
     if (resourceVersion !== undefined) {
       await coreV1.replaceNamespacedConfigMap({
         name: 'kubeclaw-channel-manifests',
+        namespace: NAMESPACE,
+        body,
+      });
+    } else {
+      await coreV1.createNamespacedConfigMap({ namespace: NAMESPACE, body });
+    }
+  },
+});
+
+const bootstrapSkillReconciler = new BootstrapSkillReconciler({
+  baselineLoader: loadBootstrapSkillBaselineFromDisk,
+  configMapApply: async (rendered: string) => {
+    // Parse rendered JSON to build ConfigMap data: one key per skill name (*.md).
+    const parsed = JSON.parse(rendered) as {
+      skills: Array<{
+        name: string;
+        markdown?: string;
+        content_hash: string;
+        source: string;
+        registered_at: string;
+        registered_by: string;
+      }>;
+    };
+    const data: Record<string, string> = {};
+    for (const s of parsed.skills) {
+      if (s.markdown) {
+        data[`${s.name}.md`] = s.markdown;
+      }
+    }
+
+    let resourceVersion: string | undefined;
+    try {
+      const existing = await coreV1.readNamespacedConfigMap({
+        name: 'kubeclaw-bootstrap-skills',
+        namespace: NAMESPACE,
+      });
+      resourceVersion = existing.metadata?.resourceVersion;
+    } catch (err: unknown) {
+      const status = (err as { response?: { statusCode?: number } })?.response
+        ?.statusCode;
+      if (status !== 404) throw err;
+    }
+
+    const body = {
+      apiVersion: 'v1',
+      kind: 'ConfigMap',
+      metadata: {
+        name: 'kubeclaw-bootstrap-skills',
+        namespace: NAMESPACE,
+        ...(resourceVersion ? { resourceVersion } : {}),
+      },
+      data,
+    };
+    if (resourceVersion !== undefined) {
+      await coreV1.replaceNamespacedConfigMap({
+        name: 'kubeclaw-bootstrap-skills',
         namespace: NAMESPACE,
         body,
       });
@@ -428,6 +494,57 @@ export const TOOLS: OpenAI.ChatCompletionTool[] = [
             type: 'string',
             description:
               'Full content of package-lock.json as a JSON string. Must be npm lockfile v3 (lockfileVersion: 3). Per-package lifecycle scripts checked against the same allowlist.',
+          },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_bootstrap_skills',
+      description:
+        'List all bootstrap skills — both Helm-baseline entries and admin-registered overrides. Returns an array with {name, channel_type, manifest_version, content_hash, source, registered_at, registered_by}. Admin-registered entries win on name collision (source: "admin-registered").',
+      parameters: { type: 'object', properties: {}, required: [] },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'register_bootstrap_skill',
+      description:
+        'Register a new bootstrap skill at runtime. Validates YAML frontmatter strictly at upload time (not at bootstrap runtime): name must match the argument, description non-empty, bootstrap.channelType non-empty, bootstrap.manifestVersion must match an existing entry in kubeclaw-channel-manifests, bootstrap.expectedQuestions non-empty array. Computes sha256(markdown), persists to SQLite bootstrap_skill_overrides, and triggers a ConfigMap reconcile. Idempotent on identical (name, content).',
+      parameters: {
+        type: 'object',
+        required: ['name', 'markdown'],
+        properties: {
+          name: {
+            type: 'string',
+            description:
+              'Skill name (e.g. "bootstrap-telegram"). Must match the name field in the markdown frontmatter.',
+          },
+          markdown: {
+            type: 'string',
+            description:
+              'Full markdown content of the skill file, including YAML frontmatter block (--- ... ---). Required frontmatter fields: name, description, bootstrap.channelType, bootstrap.manifestVersion, bootstrap.expectedQuestions.',
+          },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'remove_bootstrap_skill',
+      description:
+        'Remove an admin-registered bootstrap skill. Refuses Helm baseline skills with code PROTECTED_BASELINE. Idempotent on already-removed skills (returns status: "already absent").',
+      parameters: {
+        type: 'object',
+        required: ['name'],
+        properties: {
+          name: {
+            type: 'string',
+            description: 'Skill name to remove.',
           },
         },
       },
@@ -1221,6 +1338,97 @@ async function handleRegisterChannelManifest(
   });
 }
 
+// ---- Bootstrap skill tool handlers (Story 179) ----
+
+function handleListBootstrapSkills(): string {
+  const baselineEntries = loadBootstrapSkillBaselineFromDisk();
+  const overrideRows = listBootstrapSkillOverrides();
+  const overrides = overrideRows.map((row) => {
+    const channelTypeMatch = /channelType:\s*(\S+)/.exec(row.markdown);
+    const manifestVersionMatch = /manifestVersion:\s*(\S+)/.exec(row.markdown);
+    return {
+      name: row.name,
+      channel_type: channelTypeMatch ? channelTypeMatch[1] : '',
+      manifest_version: manifestVersionMatch ? manifestVersionMatch[1] : '',
+      content_hash: row.content_hash,
+      source: 'admin-registered' as const,
+      registered_at: row.registered_at,
+      registered_by: row.registered_by,
+    };
+  });
+  const merged = mergeSkills(baselineEntries, overrides);
+  if (merged.length === 0) return 'No bootstrap skills registered.';
+  // Strip raw markdown from list output for readability
+  const listView = merged.map(({ markdown: _md, ...rest }) => rest);
+  return JSON.stringify(listView, null, 2);
+}
+
+async function handleRegisterBootstrapSkill(input: ToolInput): Promise<string> {
+  const name = input.name as string;
+  const markdown = input.markdown as string;
+  if (!name || !markdown) {
+    return 'Error: name and markdown are both required.';
+  }
+
+  // Build knownManifests from the Story 178 registry (baseline + overrides).
+  // This is the cross-validation source for bootstrap.channelType/manifestVersion.
+  const manifestBaselineEntries = loadChannelManifestBaselineFromDisk();
+  const manifestOverrideRows = listChannelManifestOverrides();
+  const knownManifests = [
+    ...manifestBaselineEntries.map((e) => ({
+      channelType: e.channel_type,
+      manifestVersion: (() => {
+        try {
+          const pkg = JSON.parse(e.package_json ?? '{}') as {
+            version?: string;
+          };
+          return pkg.version ?? '0.0.0';
+        } catch {
+          return '0.0.0';
+        }
+      })(),
+    })),
+    ...manifestOverrideRows.map((row) => {
+      try {
+        const pkg = JSON.parse(row.package_json) as { version?: string };
+        return {
+          channelType: row.channel_type,
+          manifestVersion: pkg.version ?? '0.0.0',
+        };
+      } catch {
+        return { channelType: row.channel_type, manifestVersion: '0.0.0' };
+      }
+    }),
+  ];
+
+  const result = registerBootstrapSkill(
+    { name, markdown },
+    knownManifests,
+    bootstrapSkillReconciler.apply.bind(bootstrapSkillReconciler),
+  );
+  if (!result.ok) return `Error: ${result.error}`;
+  return JSON.stringify({
+    name,
+    content_hash: result.content_hash,
+    source: result.source,
+  });
+}
+
+function handleRemoveBootstrapSkill(input: ToolInput): string {
+  const name = input.name as string;
+  if (!name) return 'Error: name is required.';
+  const result = removeBootstrapSkill(
+    name,
+    loadBootstrapSkillBaselineFromDisk,
+    bootstrapSkillReconciler.apply.bind(bootstrapSkillReconciler),
+  );
+  if (!result.ok) {
+    // PROTECTED_BASELINE structured error
+    return JSON.stringify(result);
+  }
+  return JSON.stringify({ name, status: result.status });
+}
+
 async function handleSetGroupCredential(input: ToolInput): Promise<string> {
   const groupFolder = input.group_folder as string;
   const capabilityName = input.capability_name as string;
@@ -1321,6 +1529,12 @@ export async function executeTool(
       return handleListChannelManifests();
     case 'register_channel_manifest':
       return handleRegisterChannelManifest(input);
+    case 'list_bootstrap_skills':
+      return handleListBootstrapSkills();
+    case 'register_bootstrap_skill':
+      return handleRegisterBootstrapSkill(input);
+    case 'remove_bootstrap_skill':
+      return handleRemoveBootstrapSkill(input);
     case 'set_group_credential':
       return handleSetGroupCredential(input);
     case 'unset_group_credential':

@@ -215,6 +215,17 @@ function createSchema(database: SqlJsDatabase): void {
     )
   `);
 
+  // Story 179: admin-registered bootstrap skills (runtime write path).
+  database.run(`
+    CREATE TABLE IF NOT EXISTS bootstrap_skill_overrides (
+      name          TEXT PRIMARY KEY,
+      markdown      TEXT NOT NULL,
+      content_hash  TEXT NOT NULL,
+      registered_at TEXT NOT NULL,
+      registered_by TEXT NOT NULL
+    )
+  `);
+
   database.run(`
     CREATE TABLE IF NOT EXISTS specialist_usage (
       id              INTEGER PRIMARY KEY AUTOINCREMENT,
