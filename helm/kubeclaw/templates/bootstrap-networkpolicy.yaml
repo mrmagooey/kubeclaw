@@ -1,0 +1,44 @@
+{{- if .Values.networkPolicy.enabled }}
+---
+# Bootstrap Job pods: egress to DNS, Redis, and npm registry.
+# This is intentionally more permissive than steady-state channel pods —
+# bootstrap Jobs need to reach the npm registry to install packages.
+# After commit_channel_config, the steady-state Deployment uses the standard
+# kubeclaw-channel-policy which does NOT include npm registry egress on port 443
+# (in production: use FQDN-based policies via Cilium to deny registry.npmjs.org).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kubeclaw-bootstrap-policy
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: kubeclaw
+    component: bootstrap
+spec:
+  podSelector:
+    matchLabels:
+      kubeclaw.io/role: bootstrap
+  policyTypes:
+    - Egress
+  egress:
+    # DNS
+    - to: []
+      ports:
+        - protocol: UDP
+          port: 53
+    # Redis IPC
+    - to:
+        - podSelector:
+            matchLabels:
+              app: kubeclaw-redis
+      ports:
+        - protocol: TCP
+          port: 6379
+    # npm registry + channel API validation (HTTPS + HTTP)
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 80
+{{- end }}

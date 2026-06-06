@@ -1,0 +1,46 @@
+---
+# ServiceAccount for bootstrap Jobs (Story 174).
+# Bootstrap pods have NO K8s API write permissions — they cannot create Secrets,
+# Deployments, or PVCs. All mutations go through the orchestrator via the
+# commit_channel_config IPC tool over Redis.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kubeclaw-bootstrap
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: kubeclaw
+    component: bootstrap
+automountServiceAccountToken: false
+---
+# Read-only access to bootstrap ConfigMaps only.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: kubeclaw-bootstrap-role
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: kubeclaw
+    component: bootstrap
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["kubeclaw-bootstrap-skills", "kubeclaw-channel-manifests"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: kubeclaw-bootstrap-rolebinding
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: kubeclaw
+    component: bootstrap
+subjects:
+  - kind: ServiceAccount
+    name: kubeclaw-bootstrap
+    namespace: {{ .Values.namespace }}
+roleRef:
+  kind: Role
+  apiGroup: rbac.authorization.k8s.io
+  name: kubeclaw-bootstrap-role

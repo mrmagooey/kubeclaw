@@ -1,0 +1,21 @@
+{{- if .Values.bootstrap.channelManifests }}
+---
+# kubeclaw-channel-manifests: per-channel-type npm manifests consumed by bootstrap Jobs.
+# Keyed by channel type. Each value is a JSON object:
+#   { packageJson, packageLockJson, manifestHash }
+# The orchestrator reads manifestHash for post-install hash verification.
+# Story 178 adds a runtime-write path; this Helm template is the baseline path.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kubeclaw-channel-manifests
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: kubeclaw
+    component: channel-manifests
+data:
+  {{- range $channelType, $manifest := .Values.bootstrap.channelManifests }}
+  {{ $channelType }}.json: |
+    {{ toJson $manifest }}
+  {{- end }}
+{{- end }}
