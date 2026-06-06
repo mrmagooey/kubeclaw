@@ -16,6 +16,7 @@ import { createHash } from 'node:crypto';
 import { randomUUID } from 'node:crypto';
 import type { CoreV1Api, BatchV1Api } from '@kubernetes/client-node';
 import { logger } from '../logger.js';
+import { insertBootstrapAuditRow } from '../skills/orchestrator/bootstrap-audit.js';
 
 // ─── Story 175 constants ──────────────────────────────────────────────────────
 
@@ -188,6 +189,15 @@ export interface BootstrapChannelFromSkillOpts {
    * and npm uses its built-in default registry.
    */
   npmRegistry?: string;
+  // Story 184: admin identity + audit hashes for bootstrap_audit start row.
+  /** Authenticated admin username; 'anonymous' when no password configured. */
+  adminIdentity?: string;
+  /** Per-SSE-connection UUID, or null for direct POST /tool without SSE. */
+  adminSessionId?: string | null;
+  /** sha256 of skill markdown content at job-spawn time. */
+  skillContentHash?: string;
+  /** Pre-computed manifest hash from ConfigMap for the requested channel_type. */
+  manifestHashRequested?: string;
 }
 
 export interface BootstrapChannelFromSkillResult {
@@ -408,6 +418,27 @@ export async function bootstrapChannelFromSkill(
   );
 
   activeBootstraps.set(instanceName, bootstrapJobId);
+
+  // ── Story 180 + Story 184: co-located audit inserts ───────────────────────
+  // bootstrap_history terminal row is written by recordBootstrapTerminal at
+  // terminal time (see CleanupBootstrapDeps.recordTerminal and admin-shell.ts).
+  // bootstrap_audit start row is written here at job-spawn time.
+  // Both tables are populated from this same orchestrator code path so a future
+  // refactor cannot orphan one (Story 184 requirement).
+  insertBootstrapAuditRow({
+    bootstrapJobId,
+    recordedAt: new Date().toISOString(),
+    adminIdentity: opts.adminIdentity ?? 'anonymous',
+    adminSessionId: opts.adminSessionId ?? null,
+    channelType,
+    instanceName,
+    skillName,
+    skillContentHash: opts.skillContentHash ?? '',
+    manifestHashRequested: opts.manifestHashRequested ?? '',
+    manifestHashObserved: null,
+    outcome: 'in-progress',
+  });
+
   return { bootstrapJobId };
 }
 
@@ -706,6 +737,22 @@ export interface CleanupBootstrapDeps {
     bootstrapJobId: string,
     outcome: string,
   ): void;
+  /**
+   * Story 184: audit context threaded from the original bootstrap_channel_from_skill call.
+   * Used when writing the terminal bootstrap_audit row in cleanupBootstrapResources.
+   * Both Story 180 (bootstrap_history) and Story 184 (bootstrap_audit) terminal rows are
+   * written from the same code path so they cannot drift (Story 184 requirement).
+   */
+  auditContext?: {
+    adminIdentity: string;
+    adminSessionId: string | null;
+    channelType: string;
+    instanceName: string;
+    skillName: string;
+    skillContentHash: string;
+    manifestHashRequested: string;
+    startedAt: string;
+  };
 }
 
 /**
@@ -791,7 +838,8 @@ export async function cleanupBootstrapResources(
     );
   }
 
-  // (d.5) Story 180: record terminal outcome in bootstrap_history — best-effort
+  // (d.5) Story 180 + Story 184: record terminal rows in both tables — co-located so they
+  // cannot drift. bootstrap_history written via recordTerminal; bootstrap_audit written below.
   if (deps.recordTerminal) {
     try {
       deps.recordTerminal(instanceName, bootstrapJobId, 'timed-out');
@@ -801,6 +849,30 @@ export async function cleanupBootstrapResources(
         'cleanupBootstrapResources: failed to record terminal; continuing',
       );
     }
+  }
+
+  // (d.6) Story 184: write terminal bootstrap_audit row (never throws).
+  if (deps.auditContext) {
+    const ctx = deps.auditContext;
+    const terminalAt = new Date().toISOString();
+    const durationSeconds = Math.round(
+      (new Date(terminalAt).getTime() - new Date(ctx.startedAt).getTime()) /
+        1000,
+    );
+    insertBootstrapAuditRow({
+      bootstrapJobId,
+      recordedAt: terminalAt,
+      adminIdentity: ctx.adminIdentity,
+      adminSessionId: ctx.adminSessionId,
+      channelType: ctx.channelType,
+      instanceName: ctx.instanceName,
+      skillName: ctx.skillName,
+      skillContentHash: ctx.skillContentHash,
+      manifestHashRequested: ctx.manifestHashRequested,
+      manifestHashObserved: null,
+      outcome: 'timed-out',
+      durationSeconds,
+    });
   }
 
   // (e) Free the instance name — always runs

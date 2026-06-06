@@ -230,6 +230,8 @@ describe('admin-shell TOOLS array', () => {
       // Story 180: bootstrap status tools
       'report_step',
       'bootstrap_status',
+      // Story 184: bootstrap audit log
+      'bootstrap_audit_log',
       'get_orchestrator_status',
       'restart_orchestrator',
       'install_capability',
