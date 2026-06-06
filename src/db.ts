@@ -247,6 +247,37 @@ function createSchema(database: SqlJsDatabase): void {
      ON bootstrap_history(completed_at DESC)`,
   );
 
+  // Story 184: bootstrap_audit — immutable append-only compliance record.
+  // outcome values: 'in-progress' | 'succeeded' | 'timed-out' | 'manifest-divergence' | 'rejected' | 'error'
+  // Append-only: every bootstrap produces exactly TWO rows (start + terminal). Never UPDATE.
+  database.run(`
+    CREATE TABLE IF NOT EXISTS bootstrap_audit (
+      audit_id INTEGER PRIMARY KEY AUTOINCREMENT,
+      bootstrap_job_id TEXT NOT NULL,
+      recorded_at TEXT NOT NULL,
+      admin_identity TEXT NOT NULL,
+      admin_session_id TEXT,
+      channel_type TEXT NOT NULL,
+      instance_name TEXT NOT NULL,
+      skill_name TEXT NOT NULL,
+      skill_content_hash TEXT NOT NULL,
+      manifest_hash_requested TEXT NOT NULL,
+      manifest_hash_observed TEXT,
+      outcome TEXT NOT NULL,
+      error_code TEXT,
+      error_message TEXT,
+      duration_seconds INTEGER
+    )
+  `);
+  database.run(
+    `CREATE INDEX IF NOT EXISTS bootstrap_audit_by_type
+     ON bootstrap_audit (channel_type, recorded_at DESC)`,
+  );
+  database.run(
+    `CREATE INDEX IF NOT EXISTS bootstrap_audit_by_outcome
+     ON bootstrap_audit (outcome, recorded_at DESC)`,
+  );
+
   database.run(`
     CREATE TABLE IF NOT EXISTS specialist_usage (
       id              INTEGER PRIMARY KEY AUTOINCREMENT,
