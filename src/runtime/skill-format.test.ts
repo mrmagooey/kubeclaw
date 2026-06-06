@@ -3,7 +3,9 @@ import {
   parseSkill,
   serializeSkill,
   validateSlug,
+  parseBootstrapSkillFrontmatter,
   SkillFile,
+  type KnownManifest,
 } from './skill-format.js';
 
 describe('skill-format', () => {
@@ -116,5 +118,214 @@ describe('skill-format', () => {
       expect(validateSlug('')).toBe(false);
       expect(validateSlug('_starts-with-underscore')).toBe(false);
     });
+  });
+});
+
+// ─── parseBootstrapSkillFrontmatter (Story 179) ───────────────────────────────
+
+const KNOWN_MANIFESTS: KnownManifest[] = [
+  { channelType: 'telegram', manifestVersion: '1.0.0' },
+  { channelType: 'discord', manifestVersion: '2.0.0' },
+];
+
+function makeBootstrapMarkdown(
+  overrides: {
+    name?: string;
+    description?: string;
+    channelType?: string;
+    manifestVersion?: string;
+    expectedQuestions?: string[];
+    body?: string;
+  } = {},
+): string {
+  const name = overrides.name ?? 'bootstrap-telegram';
+  const description = overrides.description ?? 'Bootstrap a Telegram channel';
+  const channelType = overrides.channelType ?? 'telegram';
+  const manifestVersion = overrides.manifestVersion ?? '1.0.0';
+  const questions = overrides.expectedQuestions ?? ['What is your bot token?'];
+  const questionsYaml = questions.map((q) => `      - "${q}"`).join('\n');
+  const body = overrides.body ?? 'Skill body content here.';
+  return [
+    '---',
+    `name: ${name}`,
+    `description: ${description}`,
+    `created: 2026-06-06`,
+    `source: manual`,
+    `bootstrap:`,
+    `  channelType: ${channelType}`,
+    `  manifestVersion: ${manifestVersion}`,
+    `  expectedQuestions:`,
+    questionsYaml,
+    '---',
+    '',
+    body,
+  ].join('\n');
+}
+
+describe('parseBootstrapSkillFrontmatter', () => {
+  it('parses valid bootstrap skill frontmatter', () => {
+    const raw = makeBootstrapMarkdown();
+    const result = parseBootstrapSkillFrontmatter(
+      raw,
+      KNOWN_MANIFESTS,
+      'bootstrap-telegram',
+    );
+    expect(result.name).toBe('bootstrap-telegram');
+    expect(result.description).toBe('Bootstrap a Telegram channel');
+    expect(result.bootstrap.channelType).toBe('telegram');
+    expect(result.bootstrap.manifestVersion).toBe('1.0.0');
+    expect(result.bootstrap.expectedQuestions).toEqual([
+      'What is your bot token?',
+    ]);
+  });
+
+  it('rejects when name in frontmatter does not match expectedName arg (AC3a)', () => {
+    const raw = makeBootstrapMarkdown({ name: 'bootstrap-telegram' });
+    expect(() =>
+      parseBootstrapSkillFrontmatter(raw, KNOWN_MANIFESTS, 'bootstrap-discord'),
+    ).toThrow(
+      /frontmatter name mismatch.*expected bootstrap-discord.*got bootstrap-telegram/i,
+    );
+  });
+
+  it('rejects when description is missing (AC3b)', () => {
+    // parseSkill will throw on missing description
+    const raw = [
+      '---',
+      'name: bootstrap-telegram',
+      'created: 2026-06-06',
+      'source: manual',
+      'bootstrap:',
+      '  channelType: telegram',
+      '  manifestVersion: 1.0.0',
+      '  expectedQuestions:',
+      '    - "Question?"',
+      '---',
+      '',
+      'body',
+    ].join('\n');
+    expect(() =>
+      parseBootstrapSkillFrontmatter(
+        raw,
+        KNOWN_MANIFESTS,
+        'bootstrap-telegram',
+      ),
+    ).toThrow(/description/i);
+  });
+
+  it('rejects when bootstrap.channelType is missing (AC3c)', () => {
+    const raw = [
+      '---',
+      'name: bootstrap-telegram',
+      'description: Bootstrap Telegram',
+      'created: 2026-06-06',
+      'source: manual',
+      'bootstrap:',
+      '  manifestVersion: 1.0.0',
+      '  expectedQuestions:',
+      '    - "Question?"',
+      '---',
+      '',
+      'body',
+    ].join('\n');
+    expect(() =>
+      parseBootstrapSkillFrontmatter(
+        raw,
+        KNOWN_MANIFESTS,
+        'bootstrap-telegram',
+      ),
+    ).toThrow(/frontmatter missing required field: bootstrap\.channelType/i);
+  });
+
+  it('rejects when bootstrap.manifestVersion not in knownManifests for channelType (AC3d)', () => {
+    const raw = makeBootstrapMarkdown({
+      channelType: 'telegram',
+      manifestVersion: '9.9.9',
+    });
+    expect(() =>
+      parseBootstrapSkillFrontmatter(
+        raw,
+        KNOWN_MANIFESTS,
+        'bootstrap-telegram',
+      ),
+    ).toThrow(
+      /bootstrap\.manifestVersion does not match any registered manifest for channelType=telegram/,
+    );
+  });
+
+  it('rejects skill with typo in channelType (e.g. "telegramm") (AC3f)', () => {
+    const raw = makeBootstrapMarkdown({
+      channelType: 'telegramm',
+      manifestVersion: '1.0.0',
+    });
+    expect(() =>
+      parseBootstrapSkillFrontmatter(
+        raw,
+        KNOWN_MANIFESTS,
+        'bootstrap-telegram',
+      ),
+    ).toThrow(
+      /bootstrap\.manifestVersion does not match any registered manifest for channelType=telegramm/,
+    );
+  });
+
+  it('rejects when bootstrap.expectedQuestions is missing (AC3e)', () => {
+    const raw = [
+      '---',
+      'name: bootstrap-telegram',
+      'description: Bootstrap Telegram',
+      'created: 2026-06-06',
+      'source: manual',
+      'bootstrap:',
+      '  channelType: telegram',
+      '  manifestVersion: 1.0.0',
+      '---',
+      '',
+      'body',
+    ].join('\n');
+    expect(() =>
+      parseBootstrapSkillFrontmatter(
+        raw,
+        KNOWN_MANIFESTS,
+        'bootstrap-telegram',
+      ),
+    ).toThrow(
+      /frontmatter missing required field: bootstrap\.expectedQuestions/i,
+    );
+  });
+
+  it('rejects when bootstrap.expectedQuestions is empty array (AC3e)', () => {
+    const raw = makeBootstrapMarkdown({ expectedQuestions: [] });
+    expect(() =>
+      parseBootstrapSkillFrontmatter(
+        raw,
+        KNOWN_MANIFESTS,
+        'bootstrap-telegram',
+      ),
+    ).toThrow(
+      /frontmatter missing required field: bootstrap\.expectedQuestions/i,
+    );
+  });
+
+  it('accepts multiple expectedQuestions', () => {
+    const raw = makeBootstrapMarkdown({
+      expectedQuestions: ['Question 1?', 'Question 2?', 'Question 3?'],
+    });
+    const result = parseBootstrapSkillFrontmatter(
+      raw,
+      KNOWN_MANIFESTS,
+      'bootstrap-telegram',
+    );
+    expect(result.bootstrap.expectedQuestions).toHaveLength(3);
+  });
+
+  it('works without expectedName arg (name not checked)', () => {
+    const raw = makeBootstrapMarkdown({
+      name: 'bootstrap-discord',
+      channelType: 'discord',
+      manifestVersion: '2.0.0',
+    });
+    const result = parseBootstrapSkillFrontmatter(raw, KNOWN_MANIFESTS);
+    expect(result.name).toBe('bootstrap-discord');
   });
 });

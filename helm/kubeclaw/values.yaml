@@ -543,3 +543,21 @@ bootstrap:
   #         {"name":"runtime","lockfileVersion":3,...}
   #       manifestHash: "abc123..."
   channelManifests: {}
+  # bootstrap.skills: map of skill name to raw markdown string.
+  # Each entry is mounted as <name>.md in the kubeclaw-bootstrap-skills-baseline ConfigMap
+  # and merged with admin-registered skills at runtime.
+  # Example:
+  #   skills:
+  #     bootstrap-telegram: |
+  #       ---
+  #       name: bootstrap-telegram
+  #       description: Bootstrap a Telegram channel
+  #       bootstrap:
+  #         channelType: telegram
+  #         manifestVersion: 1.0.0
+  #         expectedQuestions:
+  #           - "What is your bot token?"
+  #       ---
+  #
+  #       ...skill body...
+  skills: {}

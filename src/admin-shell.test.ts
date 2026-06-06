@@ -185,6 +185,10 @@ describe('admin-shell TOOLS array', () => {
       // Story 178: channel manifest IPC tools
       'list_channel_manifests',
       'register_channel_manifest',
+      // Story 179: bootstrap skill IPC tools
+      'list_bootstrap_skills',
+      'register_bootstrap_skill',
+      'remove_bootstrap_skill',
       'bootstrap_channel_from_skill',
       'get_orchestrator_status',
       'restart_orchestrator',
