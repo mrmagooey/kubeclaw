@@ -139,6 +139,111 @@ async function chatAndWaitForReply(
   throw new Error(`No assistant reply within ${timeoutMs}ms`);
 }
 
+/**
+ * POST a chat message and open an SSE stream, but do NOT require an assistant
+ * text reply. Returns the reply text if one arrives within timeoutMs, or null
+ * if none arrives (which is acceptable — the test only needs the tool to have
+ * fired, evidenced by cluster state). Throws only on hard errors (non-202 from
+ * /chat, or non-200 from /events).
+ */
+async function postChatAndCollectReply(
+  authHeader: string,
+  text: string,
+  timeoutMs: number,
+): Promise<string | null> {
+  const eventsController = new AbortController();
+  const eventsRes = await fetch(`${ADMIN_URL}/events`, {
+    headers: { Authorization: authHeader, Accept: 'text/event-stream' },
+    signal: eventsController.signal,
+  });
+  if (eventsRes.status !== 200) {
+    throw new Error(`SSE /events returned ${eventsRes.status}`);
+  }
+
+  const chatRes = await fetch(`${ADMIN_URL}/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: authHeader },
+    body: JSON.stringify({ text }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (chatRes.status !== 202) {
+    eventsController.abort();
+    throw new Error(`POST /chat returned ${chatRes.status}`);
+  }
+
+  const reader = eventsRes.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  const deadline = Date.now() + timeoutMs;
+
+  try {
+    while (Date.now() < deadline) {
+      const readTimeout = Math.min(5000, deadline - Date.now());
+      const result = await Promise.race([
+        reader.read(),
+        sleep(readTimeout).then(() => ({ value: undefined, done: false })),
+      ]);
+      if (result.done) break;
+      if (result.value) {
+        buffer += decoder.decode(result.value, { stream: true });
+      }
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? '';
+      for (const line of lines) {
+        if (line.startsWith('data:')) {
+          try {
+            const payload = JSON.parse(line.slice(5).trim()) as {
+              type?: string;
+              text?: string;
+            };
+            if (payload.type === 'assistant' && payload.text) {
+              return payload.text;
+            }
+          } catch {
+            // not JSON
+          }
+        }
+      }
+    }
+  } finally {
+    eventsController.abort();
+  }
+
+  // No assistant text reply — not an error; caller decides what to do.
+  return null;
+}
+
+/**
+ * Poll for the bootstrap Job to appear in the cluster. Resolves with the Job's
+ * YAML when it appears, or rejects after timeoutMs. Uses 2s poll interval.
+ */
+async function waitForBootstrapJob(
+  instanceName: string,
+  timeoutMs: number,
+): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const r = kubectl([
+      'get',
+      'job',
+      `kubeclaw-bootstrap-${instanceName}`,
+      '-n',
+      NAMESPACE,
+      '-o',
+      'yaml',
+    ]);
+    if (r.ok && r.stdout) {
+      return r.stdout;
+    }
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
+    await sleep(Math.min(2000, remaining));
+  }
+  throw new Error(
+    `bootstrap Job kubeclaw-bootstrap-${instanceName} did not appear within ${timeoutMs}ms`,
+  );
+}
+
 describe('Minikube-live: bootstrap HTTP-echo channel end-to-end', () => {
   let provisioned = false;
   let adminPass = '';
@@ -212,28 +317,50 @@ describe('Minikube-live: bootstrap HTTP-echo channel end-to-end', () => {
     const prompt =
       `Please bootstrap a new channel using the bootstrap-http-echo skill. ` +
       `The channel type is http-echo and the instance name is ${INSTANCE_NAME}.`;
-    const reply = await chatAndWaitForReply(authHeader, prompt, 60_000);
-    expect(reply.toLowerCase()).toContain('bootstrap');
 
-    // Poll for the Job to appear.
+    // Race: accept EITHER an assistant text reply from the LLM OR the bootstrap
+    // Job appearing in the cluster — whichever comes first within 60 s. This
+    // makes the test model-agnostic: some LLMs emit a text reply alongside the
+    // tool call (e.g. gpt-4o-mini), others make the tool call silently and
+    // never emit a wrapping assistant message (e.g. gemini-2.0-flash,
+    // deepseek-v4-flash). The contract is "the tool fired", evidenced by the
+    // Job existing in the cluster.
+    const RACE_TIMEOUT_MS = 60_000;
+    const chatReplyPromise = postChatAndCollectReply(
+      authHeader,
+      prompt,
+      RACE_TIMEOUT_MS,
+    );
+    const jobAppearedPromise = waitForBootstrapJob(
+      INSTANCE_NAME,
+      RACE_TIMEOUT_MS,
+    );
+
+    // The race resolves with whichever settled first. We don't throw if the
+    // chat reply never arrived — cluster state is the load-bearing assertion.
     let jobYaml = '';
-    for (let i = 0; i < 30; i++) {
-      const r = kubectl([
-        'get',
-        'job',
-        `kubeclaw-bootstrap-${INSTANCE_NAME}`,
-        '-n',
-        NAMESPACE,
-        '-o',
-        'yaml',
+    try {
+      const raceResult = await Promise.race([
+        chatReplyPromise.then((reply) => ({ kind: 'reply' as const, reply })),
+        jobAppearedPromise.then((yaml) => ({ kind: 'job' as const, yaml })),
       ]);
-      if (r.ok) {
-        jobYaml = r.stdout;
-        break;
+
+      if (raceResult.kind === 'job') {
+        // Job appeared first — still collect chat reply in the background (don't
+        // block, just ensure it doesn't become an unhandled rejection).
+        chatReplyPromise.catch(() => undefined);
+        jobYaml = raceResult.yaml;
+      } else {
+        // Assistant reply arrived first — wait for the Job as well (it should
+        // appear very shortly after the reply).
+        jobYaml = await jobAppearedPromise;
       }
-      await sleep(2000);
+    } catch (err) {
+      // If both legs reject (e.g. Job truly never appeared), surface the error.
+      throw err;
     }
-    expect(jobYaml, 'bootstrap Job not created within 60s').toContain(
+
+    expect(jobYaml, 'bootstrap Job not found within 60s').toContain(
       'KUBECLAW_BOOTSTRAP_SKILL',
     );
     expect(jobYaml).toContain('bootstrap-http-echo');
@@ -270,13 +397,10 @@ describe('Minikube-live: bootstrap HTTP-echo channel end-to-end', () => {
       .toBe(true);
 
     // Answer the port question via admin chat. The admin LLM forwards to the
-    // bootstrap pod over Redis IPC.
-    const reply = await chatAndWaitForReply(
-      authHeader,
-      `Use port ${CHANNEL_PORT}.`,
-      60_000,
-    );
-    expect(reply).toBeTruthy();
+    // bootstrap pod over Redis IPC. We do NOT require the admin LLM to emit a
+    // visible text reply — some models route the answer silently. The
+    // load-bearing assertion is the Job completing (checked below).
+    await postChatAndCollectReply(authHeader, `Use port ${CHANNEL_PORT}.`, 60_000);
 
     // Wait for the Job to complete.
     let complete = false;
