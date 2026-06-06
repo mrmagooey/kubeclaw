@@ -49,8 +49,16 @@ import {
   unsetGroupCredential,
 } from './per-group-capabilities/credentials.js';
 import { onGroupRemoved } from './per-group-capabilities/index.js';
-import { bootstrapChannelFromSkill } from './k8s/bootstrap-runner.js';
-import type { BootstrapK8sDeps } from './k8s/bootstrap-runner.js';
+import {
+  bootstrapChannelFromSkill,
+  waitForBootstrapJobCompletion,
+} from './k8s/bootstrap-runner.js';
+import type {
+  BootstrapK8sDeps,
+  CleanupBootstrapDeps,
+} from './k8s/bootstrap-runner.js';
+import { jobRunner } from './k8s/job-runner.js';
+import { getRedisClient } from './k8s/redis-client.js';
 
 // K8s clients (in-cluster config, auto-detected from service account)
 const kc = new k8s.KubeConfig();
@@ -762,6 +770,97 @@ async function handleBootstrapChannelFromSkill(
     if (result.alreadyInProgress) {
       return `Bootstrap already in progress for instance "${instanceName}" (bootstrapJobId: ${result.bootstrapJobId}). Follow progress via the /events SSE stream.`;
     }
+
+    // ── Fire-and-forget: watch the bootstrap Job for DeadlineExceeded (Story 175) ──
+    // Build the cleanup deps inline so waitForBootstrapJobCompletion can delete
+    // K8s resources and publish the timeout SSE if the job's activeDeadlineSeconds fires.
+    const batchV1ForCleanup = batchV1;
+    const coreV1ForCleanup = coreV1;
+    const cleanupDeps: CleanupBootstrapDeps = {
+      deleteJob: async (name: string) => {
+        try {
+          await batchV1ForCleanup.deleteNamespacedJob({
+            name,
+            namespace: NAMESPACE,
+            gracePeriodSeconds: 0,
+          });
+        } catch (err: unknown) {
+          const status = (err as { response?: { statusCode?: number } })
+            ?.response?.statusCode;
+          if (status === 404) {
+            logger.debug({ name }, 'bootstrap cleanup: Job already absent');
+            return;
+          }
+          throw err;
+        }
+      },
+      deletePvc: async (name: string) => {
+        try {
+          await coreV1ForCleanup.deleteNamespacedPersistentVolumeClaim({
+            name,
+            namespace: NAMESPACE,
+            gracePeriodSeconds: 0,
+          });
+        } catch (err: unknown) {
+          const status = (err as { response?: { statusCode?: number } })
+            ?.response?.statusCode;
+          if (status === 404) {
+            logger.debug({ name }, 'bootstrap cleanup: PVC already absent');
+            return;
+          }
+          throw err;
+        }
+      },
+      deleteSecret: async (name: string) => {
+        try {
+          await coreV1ForCleanup.deleteNamespacedSecret({
+            name,
+            namespace: NAMESPACE,
+          });
+        } catch (err: unknown) {
+          const status = (err as { response?: { statusCode?: number } })
+            ?.response?.statusCode;
+          if (status === 404) {
+            logger.debug({ name }, 'bootstrap cleanup: Secret already absent');
+            return;
+          }
+          throw err;
+        }
+      },
+      publishSse: async (topic, payload) => {
+        try {
+          await getRedisClient().publish(topic, JSON.stringify(payload));
+        } catch (err) {
+          logger.warn(
+            { topic, err },
+            'bootstrap cleanup: failed to publish SSE',
+          );
+        }
+      },
+      activeBootstraps,
+    };
+
+    const timeoutSeconds = parseInt(
+      process.env.BOOTSTRAP_SKILL_TIMEOUT_SECONDS || '900',
+      10,
+    );
+    const bootstrapJobName = `kubeclaw-bootstrap-${instanceName}`;
+    waitForBootstrapJobCompletion(
+      bootstrapJobName,
+      result.bootstrapJobId,
+      instanceName,
+      {
+        waitForJob: (name: string, timeoutMs: number) =>
+          jobRunner.waitForJobCompletion(name, timeoutMs),
+        cleanupDeps,
+        bootstrapTimeoutSeconds: timeoutSeconds,
+      },
+    ).catch((err) => {
+      logger.warn(
+        { bootstrapJobName, instanceName, err },
+        'waitForBootstrapJobCompletion crashed unexpectedly',
+      );
+    });
 
     return [
       `Bootstrap started successfully.`,
