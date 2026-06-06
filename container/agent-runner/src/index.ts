@@ -1173,6 +1173,25 @@ async function runAgentLoop(
 // The skill customises this generic agent container in the running cluster —
 // no separate channel image is built.
 
+/**
+ * Build a Redis URL with ACL auth for bootstrap mode. The bootstrap Job is
+ * given REDIS_USERNAME + REDIS_ADMIN_PASSWORD env vars; we inject them into
+ * the URL so the redis client authenticates. Required because Stories 5/146
+ * locked Redis behind ACLs.
+ */
+function buildRedisUrlForBootstrap(): string {
+  const base = process.env.REDIS_URL || 'redis://kubeclaw-redis:6379';
+  const password = process.env.REDIS_ADMIN_PASSWORD;
+  const username = process.env.REDIS_USERNAME;
+  if (!password) return base;
+  if (base.includes('@')) return base;
+  const userPart = username ? encodeURIComponent(username) : '';
+  return base.replace(
+    /^(redis:\/\/)/,
+    `$1${userPart}:${encodeURIComponent(password)}@`,
+  );
+}
+
 async function waitForBootstrapCommitReply(
   redisUrl: string,
   replyChannel: string,
@@ -1215,7 +1234,7 @@ async function runBootstrapMode(redis: RedisClientType): Promise<void> {
   const jobId = process.env.KUBECLAW_BOOTSTRAP_JOB_ID || '';
   const instanceName = process.env.KUBECLAW_BOOTSTRAP_INSTANCE || '';
   const channelType = process.env.KUBECLAW_BOOTSTRAP_CHANNEL_TYPE || '';
-  const redisUrl = process.env.REDIS_URL || 'redis://kubeclaw-redis:6379';
+  const redisUrl = buildRedisUrlForBootstrap();
 
   if (!jobId || !instanceName || !channelType) {
     log('ERROR: bootstrap mode requires KUBECLAW_BOOTSTRAP_JOB_ID, '
@@ -1423,7 +1442,7 @@ async function main(): Promise<void> {
   // image runs as a channel bootstrap Job (Stories 174-184). Skip stdin/IPC
   // setup entirely and drive the skill-loaded agent loop directly.
   if (process.env.KUBECLAW_BOOTSTRAP_SKILL) {
-    const redisUrl = process.env.REDIS_URL || 'redis://kubeclaw-redis:6379';
+    const redisUrl = buildRedisUrlForBootstrap();
     const redis = createClient({ url: redisUrl }) as RedisClientType;
     redis.on('error', (err) => log(`Redis error: ${err.message}`));
     await redis.connect();

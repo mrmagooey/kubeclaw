@@ -20,15 +20,20 @@ exactly.
 
 The orchestrator independently rehashes `/runtime/package.json` and
 `/runtime/package-lock.json` at commit time (Story 176 TOCTOU defense). The
-manifest contents must match the registered manifest hash, so copy the files
-from `/workspace/manifests/http-echo/` rather than constructing them yourself.
+manifest contents must match the registered manifest hash exactly.
+
+The live ConfigMap `kubeclaw-channel-manifests` is mounted at
+`/workspace/manifests/` as one file per channel type
+(`/workspace/manifests/http-echo.json`), each file holding a single JSON
+object with `packageJson`, `packageLockJson`, and `manifestHash` fields.
+Extract the two embedded strings onto `/runtime/`:
 
 ```
-local_bash("cp /workspace/manifests/http-echo/package.json /workspace/manifests/http-echo/package-lock.json /runtime/")
+local_bash("node -e \"const fs=require('fs');const m=JSON.parse(fs.readFileSync('/workspace/manifests/http-echo.json','utf8'));fs.writeFileSync('/runtime/package.json',m.packageJson);fs.writeFileSync('/runtime/package-lock.json',m.packageLockJson);\"")
 ```
 
 This http-echo manifest declares **zero** dependencies, so no `npm ci` step is
-required. Confirm both files copied:
+required. Confirm both files landed:
 
 ```
 local_bash("ls -la /runtime/")
