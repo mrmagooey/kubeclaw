@@ -15,6 +15,7 @@
  */
 
 import http from 'node:http';
+import { randomUUID } from 'node:crypto';
 import readline from 'readline';
 import OpenAI from 'openai';
 import * as k8s from '@kubernetes/client-node';
@@ -89,6 +90,11 @@ import type {
 import { currentStepByJob } from './k8s/ipc-redis.js';
 import { jobRunner } from './k8s/job-runner.js';
 import { getRedisClient } from './k8s/redis-client.js';
+import {
+  startBootstrapAuditGcInterval,
+  queryBootstrapAudit,
+  type BootstrapAuditOutcome,
+} from './skills/orchestrator/bootstrap-audit.js';
 
 // K8s clients (in-cluster config, auto-detected from service account)
 const kc = new k8s.KubeConfig();
@@ -726,6 +732,42 @@ export const TOOLS: OpenAI.ChatCompletionTool[] = [
   {
     type: 'function',
     function: {
+      name: 'bootstrap_audit_log',
+      description:
+        'Query the immutable bootstrap_audit compliance log. Returns rows ordered by recorded_at DESC. ' +
+        'Each bootstrap_channel_from_skill call produces exactly two rows: a start row (outcome=in-progress) ' +
+        'and a terminal row (succeeded | timed-out | manifest-divergence | rejected | error).',
+      parameters: {
+        type: 'object',
+        required: [],
+        properties: {
+          limit: {
+            type: 'number',
+            description:
+              'Maximum rows to return (default 50, capped at 500). Must be a positive integer.',
+          },
+          channel_type: {
+            type: 'string',
+            description:
+              'Exact-match filter on channel_type (e.g. "telegram").',
+          },
+          outcome: {
+            type: 'string',
+            description:
+              'Exact-match filter on outcome. One of: in-progress, succeeded, timed-out, manifest-divergence, rejected, error.',
+          },
+          since: {
+            type: 'string',
+            description:
+              'ISO-8601 datetime string. Only rows with recorded_at >= since are returned.',
+          },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'get_orchestrator_status',
       description:
         'Get the current status of the orchestrator Deployment: pod phase, ready replicas, and which channel env vars are set.',
@@ -1081,6 +1123,8 @@ async function handleRemoveChannel(input: ToolInput): Promise<string> {
 
 async function handleBootstrapChannelFromSkill(
   input: ToolInput,
+  adminIdentity: string = 'anonymous',
+  adminSessionId: string | null = null,
 ): Promise<string> {
   const skillName = input.skill_name as string;
   const channelType = input.channel_type as string;
@@ -1133,6 +1177,14 @@ async function handleBootstrapChannelFromSkill(
       openaiApiKey: process.env.OPENAI_API_KEY,
       openaiBaseUrl: process.env.OPENAI_BASE_URL,
       directLlmModel: process.env.DIRECT_LLM_MODEL,
+      // Story 184: thread admin identity for bootstrap_audit start row.
+      adminIdentity,
+      adminSessionId,
+      // skillContentHash and manifestHashRequested would be computed from the
+      // loaded ConfigMaps at call time. Placeholder empty strings — follow-on
+      // story can inject real hashes once ConfigMap reads are wired here.
+      skillContentHash: '',
+      manifestHashRequested: '',
     });
 
     if (result.alreadyInProgress) {
@@ -1140,10 +1192,11 @@ async function handleBootstrapChannelFromSkill(
     }
 
     // Story 180: register bootstrap metadata so bootstrapStatus can return it
+    const bootstrapStartedAt = new Date().toISOString();
     registerBootstrapMeta(instanceName, {
       channelType,
       skillName,
-      startedAt: new Date().toISOString(),
+      startedAt: bootstrapStartedAt,
     });
 
     // ── Fire-and-forget: watch the bootstrap Job for DeadlineExceeded (Story 175) ──
@@ -1228,6 +1281,19 @@ async function handleBootstrapChannelFromSkill(
           });
         }
         deregisterBootstrapMeta(instName);
+      },
+      // Story 184: pass audit context so cleanupBootstrapResources can write terminal audit row.
+      // Both Story 180 (bootstrap_history) and Story 184 (bootstrap_audit) terminal rows are
+      // written from cleanupBootstrapResources to prevent drift between the two tables.
+      auditContext: {
+        adminIdentity,
+        adminSessionId,
+        channelType,
+        instanceName,
+        skillName,
+        skillContentHash: '',
+        manifestHashRequested: '',
+        startedAt: bootstrapStartedAt,
       },
     };
 
@@ -1892,6 +1958,23 @@ async function handleBootstrapStatus(input: ToolInput): Promise<string> {
   return JSON.stringify(result, null, 2);
 }
 
+// ─── Story 184: bootstrap_audit_log handler ───────────────────────────────────
+
+function handleBootstrapAuditLog(input: ToolInput): string {
+  const limit = input.limit as number | undefined;
+  const channelType = input.channel_type as string | undefined;
+  const outcome = input.outcome as BootstrapAuditOutcome | undefined;
+  const since = input.since as string | undefined;
+
+  const rows = queryBootstrapAudit({
+    limit,
+    channelType,
+    outcome,
+    since,
+  });
+  return JSON.stringify(rows, null, 2);
+}
+
 // db may be undefined when this module is imported directly (e.g. via kubectl
 // exec node -e) without main() running first. Guard here so executeTool works
 // in both the production path (main → initDatabase) and the test/exec path.
@@ -1900,6 +1983,8 @@ let _dbInitPromise: Promise<void> | null = null;
 export async function executeTool(
   name: string,
   input: ToolInput,
+  adminIdentity: string = 'anonymous',
+  adminSessionId: string | null = null,
 ): Promise<string> {
   if (!db.db) {
     if (!_dbInitPromise) _dbInitPromise = initDatabase();
@@ -1959,7 +2044,13 @@ export async function executeTool(
     case 'unset_group_credential':
       return handleUnsetGroupCredential(input);
     case 'bootstrap_channel_from_skill':
-      return handleBootstrapChannelFromSkill(input);
+      return handleBootstrapChannelFromSkill(
+        input,
+        adminIdentity,
+        adminSessionId,
+      );
+    case 'bootstrap_audit_log':
+      return handleBootstrapAuditLog(input);
     case 'upgrade_channel':
       return handleUpgradeChannel(input);
     case 'report_step':
@@ -1999,6 +2090,8 @@ async function runAgenticTurn(
   client: OpenAI,
   history: OpenAI.ChatCompletionMessageParam[],
   userInput: string,
+  adminIdentity: string = 'anonymous',
+  adminSessionId: string | null = null,
 ): Promise<string> {
   history.push({ role: 'user', content: userInput });
   let lastToolResult = '';
@@ -2033,7 +2126,12 @@ async function runAgenticTurn(
       }
       let result: string;
       try {
-        result = await executeTool(call.function.name, args);
+        result = await executeTool(
+          call.function.name,
+          args,
+          adminIdentity,
+          adminSessionId,
+        );
       } catch (err) {
         result = `Error: ${err instanceof Error ? err.message : String(err)}`;
       }
@@ -2134,6 +2232,8 @@ input.addEventListener('keydown', e => {
 
 interface SseAdminClient {
   username: string;
+  /** UUID generated at SSE registration — used as admin_session_id in bootstrap_audit rows. */
+  sessionId: string;
   res: http.ServerResponse;
 }
 
@@ -2210,7 +2310,11 @@ export function startHttpAdminServer(client?: OpenAI): void {
         'X-Accel-Buffering': 'no',
       });
       res.write(':ok\n\n');
-      const c: SseAdminClient = { username: user, res };
+      const c: SseAdminClient = {
+        username: user,
+        sessionId: randomUUID(),
+        res,
+      };
       sseClients.push(c);
       const ping = setInterval(() => {
         if (!res.writableEnded) res.write(': ping\n\n');
@@ -2249,7 +2353,12 @@ export function startHttpAdminServer(client?: OpenAI): void {
         inProgress.add(user);
         if (!histories.has(user)) histories.set(user, []);
         const history = histories.get(user)!;
-        runAgenticTurn(client, history, text.trim())
+        // Story 184: resolve sessionId from the most-recently-registered SSE client for this user.
+        const sseClient = [...sseClients]
+          .reverse()
+          .find((c) => c.username === user);
+        const sessionId = sseClient?.sessionId ?? null;
+        runAgenticTurn(client, history, text.trim(), user, sessionId)
           .then((reply) => {
             pushSse(user, 'assistant', reply);
           })
@@ -2337,6 +2446,11 @@ async function main() {
   }
 
   await initDatabase();
+
+  // Story 180: prune old bootstrap_history rows
+  startBootstrapHistoryGcInterval();
+  // Story 184: prune old bootstrap_audit rows
+  startBootstrapAuditGcInterval();
 
   const client: OpenAI = createLLMClient();
   const httpPort = parseInt(process.env.ADMIN_HTTP_PORT || '0', 10);

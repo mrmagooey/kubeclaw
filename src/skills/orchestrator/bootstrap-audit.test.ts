@@ -139,7 +139,9 @@ describe('AC2: two-row append-only pattern', () => {
   });
 
   it('insertBootstrapAuditRow does not throw when db write fails', () => {
-    const originalRun = (db as unknown as { run: (...args: unknown[]) => unknown }).run.bind(db);
+    const originalRun = (
+      db as unknown as { run: (...args: unknown[]) => unknown }
+    ).run.bind(db);
     (db as unknown as { run: (...args: unknown[]) => unknown }).run = () => {
       throw new Error('simulated DB failure');
     };
@@ -152,7 +154,8 @@ describe('AC2: two-row append-only pattern', () => {
         }),
       ).not.toThrow();
     } finally {
-      (db as unknown as { run: (...args: unknown[]) => unknown }).run = originalRun;
+      (db as unknown as { run: (...args: unknown[]) => unknown }).run =
+        originalRun;
     }
   });
 
@@ -368,7 +371,9 @@ describe('AC5: pruneBootstrapAudit GC', () => {
   });
 
   it('returns 0 for negative retentionDays', () => {
-    const oldAt = new Date(Date.now() - 200 * 24 * 60 * 60 * 1000).toISOString();
+    const oldAt = new Date(
+      Date.now() - 200 * 24 * 60 * 60 * 1000,
+    ).toISOString();
     insertBootstrapAuditRow({
       ...BASE_ARGS,
       recordedAt: oldAt,
