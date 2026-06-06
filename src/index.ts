@@ -444,6 +444,62 @@ async function main(): Promise<void> {
       releaseBootstrap: (instanceName: string) => {
         activeBootstraps.delete(instanceName);
       },
+      // Story 176: independently read package.json + package-lock.json from the
+      // runtime PVC by exec-ing into the inspector sidecar (TOCTOU defense).
+      readPvcFiles: async (instanceName: string) => {
+        const { execSync } = await import('node:child_process');
+        // Find the running pod for this bootstrap Job
+        const podListJson = execSync(
+          `kubectl get pods -n ${KUBECLAW_NAMESPACE} ` +
+            `-l kubeclaw-channel=${instanceName},kubeclaw.io/role=bootstrap ` +
+            `--field-selector=status.phase=Running -o json`,
+          { encoding: 'utf8' },
+        );
+        const podList = JSON.parse(podListJson) as {
+          items: Array<{ metadata: { name: string } }>;
+        };
+        if (podList.items.length === 0) {
+          throw new Error(
+            `No running bootstrap pod found for instance ${instanceName}`,
+          );
+        }
+        const podName = podList.items[0].metadata.name;
+        const execFile = (file: string): string =>
+          execSync(
+            `kubectl exec -n ${KUBECLAW_NAMESPACE} ${podName} -c inspector -- cat /runtime-inspect/${file}`,
+            { encoding: 'utf8' },
+          );
+        const packageJson = execFile('package.json');
+        const packageLockJson = execFile('package-lock.json');
+        return { packageJson, packageLockJson };
+      },
+      deleteJob: async (name: string) => {
+        try {
+          await batchApi.deleteNamespacedJob({
+            name,
+            namespace: KUBECLAW_NAMESPACE,
+            gracePeriodSeconds: 0,
+          });
+        } catch (err: any) {
+          if (err?.statusCode === 404 || err?.body?.code === 404) return;
+          throw err;
+        }
+      },
+      deletePvc: async (name: string) => {
+        try {
+          await coreApi.deleteNamespacedPersistentVolumeClaim({
+            name,
+            namespace: KUBECLAW_NAMESPACE,
+            gracePeriodSeconds: 0,
+          });
+        } catch (err: any) {
+          if (err?.statusCode === 404 || err?.body?.code === 404) return;
+          throw err;
+        }
+      },
+      recordMismatch: ({ channel_type }: { channel_type: string }) => {
+        orchMetrics.recordBootstrapManifestMismatch({ channel_type });
+      },
     },
     channelBaseImage,
     KUBECLAW_NAMESPACE,

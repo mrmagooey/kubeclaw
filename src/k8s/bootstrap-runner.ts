@@ -300,6 +300,18 @@ export async function bootstrapChannelFromSkill(
                 { name: 'manifests', mountPath: '/workspace/manifests' },
               ],
             },
+            // Story 176: inspector sidecar — mounts the runtime PVC at /runtime-inspect
+            // and runs `sleep infinity` so the orchestrator can `kubectl exec` into it
+            // to independently read package.json and package-lock.json for TOCTOU defense.
+            {
+              name: 'inspector',
+              image: channelBaseImage,
+              imagePullPolicy: 'IfNotPresent',
+              command: ['sleep', 'infinity'],
+              volumeMounts: [
+                { name: 'runtime', mountPath: '/runtime-inspect' },
+              ],
+            },
           ],
           volumes: [
             {

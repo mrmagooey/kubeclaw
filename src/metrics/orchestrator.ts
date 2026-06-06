@@ -12,6 +12,8 @@ export interface OrchestratorMetrics {
   setGroupQueueDepth(labels: { group: string }, depth: number): void;
   recordSpecialistResolution(labels: { specialist: string }): void;
   recordDbQuery(labels: { operation: string; durationMs: number }): void;
+  /** Story 176: increment when commit_channel_config is hard-rejected due to PVC hash divergence */
+  recordBootstrapManifestMismatch(labels: { channel_type: string }): void;
 }
 
 /**
@@ -76,6 +78,13 @@ export function createOrchestratorMetrics(
     registers: [registry],
   });
 
+  const bootstrapManifestMismatch = new Counter({
+    name: 'kubeclaw_bootstrap_manifest_mismatch_total',
+    help: 'Total bootstrap commits hard-rejected due to runtime PVC hash diverging from the channel manifest (Story 176)',
+    labelNames: ['channel_type'] as const,
+    registers: [registry],
+  });
+
   return {
     recordToolJobSpawn({ image }) {
       toolJobSpawned.inc({ image });
@@ -100,6 +109,9 @@ export function createOrchestratorMetrics(
     },
     recordDbQuery({ operation, durationMs }) {
       dbQueryDuration.observe({ operation }, durationMs / 1000);
+    },
+    recordBootstrapManifestMismatch({ channel_type }) {
+      bootstrapManifestMismatch.inc({ channel_type });
     },
   };
 }

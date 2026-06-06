@@ -298,6 +298,38 @@ describe('bootstrapChannelFromSkill', () => {
     };
     expect(jobBody.spec.activeDeadlineSeconds).toBe(60);
   });
+
+  it('bootstrap Job spec includes an inspector sidecar mounting runtime PVC at /runtime-inspect (Story 176)', async () => {
+    await bootstrapChannelFromSkill({
+      skillName: 'bootstrap-telegram',
+      channelType: 'telegram',
+      instanceName: 'my-telegram',
+      k8sDeps: { coreV1: fakeK8s.coreV1, batchV1: fakeK8s.batchV1 },
+      namespace: 'test-ns',
+      channelBaseImage: 'kubeclaw-channel-base:latest',
+      activeBootstraps: new Map(),
+    });
+    const jobBody = fakeK8s.createdJobs[0].body as {
+      spec: {
+        template: {
+          spec: {
+            containers: Array<{
+              name: string;
+              command?: string[];
+              volumeMounts?: Array<{ mountPath: string }>;
+            }>;
+          };
+        };
+      };
+    };
+    const containers = jobBody.spec.template.spec.containers;
+    const inspector = containers.find((c) => c.name === 'inspector');
+    expect(inspector).toBeTruthy();
+    expect(inspector?.command).toEqual(['sleep', 'infinity']);
+    expect(
+      inspector?.volumeMounts?.some((m) => m.mountPath === '/runtime-inspect'),
+    ).toBe(true);
+  });
 });
 
 // ─── Story 175: cleanupBootstrapResources ────────────────────────────────────
