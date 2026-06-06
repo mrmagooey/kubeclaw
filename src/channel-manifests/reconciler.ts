@@ -62,7 +62,9 @@ const BASELINE_DIR = '/etc/kubeclaw/channel-manifests-baseline';
  * Each file is named `<channel_type>.json` and contains a BaselineFileContent.
  * Returns an empty array if the directory does not exist or files cannot be parsed.
  */
-export function loadBaselineFromDisk(dir = BASELINE_DIR): ChannelManifestEntry[] {
+export function loadBaselineFromDisk(
+  dir = BASELINE_DIR,
+): ChannelManifestEntry[] {
   if (!existsSync(dir)) return [];
   let files: string[];
   try {
