@@ -19,6 +19,8 @@ import {
   deregisterBootstrapMeta,
   getBootstrapMeta,
   cleanupBootstrapResources,
+  parseRuntimePvcVersion,
+  nextRuntimePvcName,
   type BootstrapMeta,
   type BootstrapStatusDeps,
 } from './bootstrap-runner.js';
@@ -1142,5 +1144,49 @@ describe('registerBootstrapMeta / getBootstrapMeta / deregisterBootstrapMeta', (
     });
     deregisterBootstrapMeta('inst-b');
     expect(getBootstrapMeta('inst-b')).toBeUndefined();
+  });
+});
+
+// ─── Story 181: PVC version parsing ──────────────────────────────────────────
+
+describe('parseRuntimePvcVersion', () => {
+  it('returns 1 for a PVC with no version suffix', () => {
+    expect(parseRuntimePvcVersion('kubeclaw-channel-foo-runtime')).toBe(1);
+  });
+
+  it('returns 1 for a PVC with -v1 suffix', () => {
+    expect(parseRuntimePvcVersion('kubeclaw-channel-foo-runtime-v1')).toBe(1);
+  });
+
+  it('returns 2 for a PVC with -v2 suffix', () => {
+    expect(parseRuntimePvcVersion('kubeclaw-channel-foo-runtime-v2')).toBe(2);
+  });
+
+  it('returns 99 for -v99', () => {
+    expect(parseRuntimePvcVersion('kubeclaw-channel-my-inst-runtime-v99')).toBe(99);
+  });
+
+  it('treats non-numeric suffix as version 1', () => {
+    expect(parseRuntimePvcVersion('kubeclaw-channel-foo-runtime-vX')).toBe(1);
+  });
+});
+
+describe('nextRuntimePvcName', () => {
+  it('produces -v2 from a no-suffix PVC', () => {
+    expect(nextRuntimePvcName('kubeclaw-channel-foo-runtime')).toBe(
+      'kubeclaw-channel-foo-runtime-v2',
+    );
+  });
+
+  it('produces -v2 from a -v1 PVC', () => {
+    expect(nextRuntimePvcName('kubeclaw-channel-foo-runtime-v1')).toBe(
+      'kubeclaw-channel-foo-runtime-v2',
+    );
+  });
+
+  it('produces -v8 from a -v7 PVC', () => {
+    expect(nextRuntimePvcName('kubeclaw-channel-foo-runtime-v7')).toBe(
+      'kubeclaw-channel-foo-runtime-v8',
+    );
   });
 });

@@ -67,6 +67,39 @@ export function computeManifestHash(
   return createHash('sha256').update(canonical).digest('hex');
 }
 
+// ─── Story 181: PVC version parsing helpers ───────────────────────────────────
+
+/**
+ * Parse the version number from a runtime PVC name.
+ *
+ * Rules:
+ *   - No suffix (e.g. `kubeclaw-channel-foo-runtime`)          → 1
+ *   - Suffix `-v1`                                             → 1
+ *   - Suffix `-v<N>` where N is a positive integer             → N
+ *   - Any other suffix (non-numeric)                           → 1
+ */
+export function parseRuntimePvcVersion(pvcName: string): number {
+  const match = /-v(\d+)$/.exec(pvcName);
+  if (!match) return 1;
+  const n = parseInt(match[1], 10);
+  return Number.isInteger(n) && n >= 1 ? n : 1;
+}
+
+/**
+ * Given the current runtime PVC name, return the next versioned name.
+ *
+ * Examples:
+ *   `kubeclaw-channel-foo-runtime`    → `kubeclaw-channel-foo-runtime-v2`
+ *   `kubeclaw-channel-foo-runtime-v1` → `kubeclaw-channel-foo-runtime-v2`
+ *   `kubeclaw-channel-foo-runtime-v7` → `kubeclaw-channel-foo-runtime-v8`
+ */
+export function nextRuntimePvcName(currentPvcName: string): string {
+  const version = parseRuntimePvcVersion(currentPvcName);
+  // Strip any existing -vN suffix, then append -v(N+1)
+  const base = currentPvcName.replace(/-v\d+$/, '');
+  return `${base}-v${version + 1}`;
+}
+
 // ─── Manifest validation ──────────────────────────────────────────────────────
 
 export interface ChannelManifest {
