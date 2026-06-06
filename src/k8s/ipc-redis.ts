@@ -124,6 +124,14 @@ let _bootstrapCommitDeps: CommitChannelConfigDeps | null = null;
 let _channelBaseImage = 'kubeclaw-channel-base:latest';
 let _bootstrapNamespace = process.env.KUBECLAW_NAMESPACE || 'kubeclaw';
 
+// Story 180: in-memory map of most-recent step label per bootstrapJobId.
+// Updated by the bootstrap topic subscriber when a { type: "step" } message arrives.
+// Exported so bootstrap-runner.ts can read it when building active entries.
+export const currentStepByJob: Map<
+  string,
+  { label: string; ts: string }
+> = new Map();
+
 /**
  * Register bootstrap dependencies used by the commit_channel_config IPC handler.
  * Must be called before startBootstrapTaskWatcher().
@@ -141,11 +149,14 @@ export function registerBootstrapDeps(
 /**
  * Watch the kubeclaw:bootstrap-task:* pub/sub pattern for commit_channel_config
  * messages sent by bootstrap pods. Each message is handled by processCommitChannelConfig.
- * Uses psubscribe (pattern subscribe) on the shared Redis subscriber.
+ *
+ * Story 180: also psubscribes kubeclaw:bootstrap:* to capture { type: "step" }
+ * messages published by bootstrap pods via report_step, updating currentStepByJob.
  */
 export function startBootstrapTaskWatcher(): void {
   const subscriber = getRedisSubscriber();
 
+  // Existing: listen for commit_channel_config messages from bootstrap pods.
   subscriber.psubscribe('kubeclaw:bootstrap-task:*', (err) => {
     if (err)
       logger.error({ err }, 'Failed to subscribe to bootstrap task pattern');
@@ -155,32 +166,70 @@ export function startBootstrapTaskWatcher(): void {
       );
   });
 
+  // Story 180: listen for step/question/commit_ack messages published on the
+  // SSE-forward topic by bootstrap pods so we can update currentStepByJob.
+  subscriber.psubscribe('kubeclaw:bootstrap:*', (err) => {
+    if (err)
+      logger.error({ err }, 'Failed to subscribe to bootstrap topic pattern');
+    else
+      logger.info('Bootstrap step watcher subscribed (kubeclaw:bootstrap:*)');
+  });
+
   subscriber.on(
     'pmessage',
     (_pattern: string, channel: string, message: string) => {
-      if (!channel.startsWith('kubeclaw:bootstrap-task:')) return;
-      if (!_bootstrapCommitDeps) {
-        logger.error(
-          { channel },
-          'commit_channel_config received but bootstrap deps not registered',
-        );
-        return;
-      }
-      try {
-        const data = JSON.parse(message);
-        if (data.type === 'commit_channel_config') {
-          void processCommitChannelConfig(
-            data,
-            _bootstrapCommitDeps,
-            _bootstrapNamespace,
-            _channelBaseImage,
+      // Handle commit_channel_config (existing path)
+      if (channel.startsWith('kubeclaw:bootstrap-task:')) {
+        if (!_bootstrapCommitDeps) {
+          logger.error(
+            { channel },
+            'commit_channel_config received but bootstrap deps not registered',
+          );
+          return;
+        }
+        try {
+          const data = JSON.parse(message);
+          if (data.type === 'commit_channel_config') {
+            void processCommitChannelConfig(
+              data,
+              _bootstrapCommitDeps,
+              _bootstrapNamespace,
+              _channelBaseImage,
+            );
+          }
+        } catch (err) {
+          logger.error(
+            { err, channel },
+            'Error processing bootstrap task message',
           );
         }
-      } catch (err) {
-        logger.error(
-          { err, channel },
-          'Error processing bootstrap task message',
-        );
+        return;
+      }
+
+      // Story 180: handle step messages on kubeclaw:bootstrap:<bootstrapJobId>
+      if (channel.startsWith('kubeclaw:bootstrap:')) {
+        const bootstrapJobId = channel.slice('kubeclaw:bootstrap:'.length);
+        try {
+          const data = JSON.parse(message) as {
+            type?: string;
+            label?: string;
+            ts?: string;
+          };
+          if (data.type === 'step' && typeof data.label === 'string') {
+            const label = data.label.slice(0, 200); // server-side 200-char cap
+            const ts = data.ts ?? new Date().toISOString();
+            currentStepByJob.set(bootstrapJobId, { label, ts });
+            logger.debug(
+              { bootstrapJobId, label },
+              'bootstrap step label recorded',
+            );
+          }
+        } catch (err) {
+          logger.warn(
+            { err, channel },
+            'Error processing bootstrap topic message',
+          );
+        }
       }
     },
   );
