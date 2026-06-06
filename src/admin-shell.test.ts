@@ -74,6 +74,25 @@ vi.mock('./skills/orchestrator/specialist-registry.js', () => ({
   listSpecialistOverrides: mockListSpecialistOverrides,
 }));
 
+vi.mock('./skills/orchestrator/channel-manifest-registry.js', () => ({
+  registerChannelManifest: vi.fn().mockReturnValue({
+    ok: true,
+    manifest_hash: 'abc',
+    source: 'admin-registered',
+  }),
+  listChannelManifestOverrides: vi.fn().mockReturnValue([]),
+}));
+
+vi.mock('./channel-manifests/reconciler.js', () => ({
+  ChannelManifestReconciler: class {
+    apply() {
+      return Promise.resolve();
+    }
+  },
+  loadBaselineFromDisk: vi.fn().mockReturnValue([]),
+  mergeManifests: vi.fn().mockReturnValue([]),
+}));
+
 vi.mock('./per-group-capabilities/k8s-client.js', () => ({
   RealPerGroupK8sClient: class {
     constructor(_kc?: unknown) {}
@@ -163,6 +182,10 @@ describe('admin-shell TOOLS array', () => {
       'clear_conversation',
       'setup_channel',
       'remove_channel',
+      // Story 178: channel manifest IPC tools
+      'list_channel_manifests',
+      'register_channel_manifest',
+      'bootstrap_channel_from_skill',
       'get_orchestrator_status',
       'restart_orchestrator',
       'install_capability',
