@@ -49,6 +49,8 @@ import {
   unsetGroupCredential,
 } from './per-group-capabilities/credentials.js';
 import { onGroupRemoved } from './per-group-capabilities/index.js';
+import { bootstrapChannelFromSkill } from './k8s/bootstrap-runner.js';
+import type { BootstrapK8sDeps } from './k8s/bootstrap-runner.js';
 
 // K8s clients (in-cluster config, auto-detected from service account)
 const kc = new k8s.KubeConfig();
@@ -314,6 +316,40 @@ export const TOOLS: OpenAI.ChatCompletionTool[] = [
   {
     type: 'function',
     function: {
+      name: 'bootstrap_channel_from_skill',
+      description:
+        'Bootstrap a new channel using a skill. Spawns a slim bootstrap Job that installs npm packages onto a per-channel runtime PVC, gathers credentials interactively, then hands off to a steady-state channel pod. Returns a bootstrapJobId for tracking via the SSE stream. Use this for channel types that have a bootstrap skill (e.g. "bootstrap-telegram").',
+      parameters: {
+        type: 'object',
+        properties: {
+          skill_name: {
+            type: 'string',
+            description:
+              'Name of the bootstrap skill (e.g. "bootstrap-telegram"). Must exist in the kubeclaw-bootstrap-skills ConfigMap.',
+          },
+          channel_type: {
+            type: 'string',
+            description:
+              'Channel type (e.g. "telegram"). Must have a manifest in the kubeclaw-channel-manifests ConfigMap.',
+          },
+          instance_name: {
+            type: 'string',
+            description:
+              'Unique instance name (lowercase, hyphens only). Used for K8s resource naming: PVC, Job, and Deployment will all be named after this.',
+          },
+          channel_credentials_hint: {
+            type: 'string',
+            description:
+              'Optional hint about credentials the admin already has (forwarded to the bootstrap agent).',
+          },
+        },
+        required: ['skill_name', 'channel_type', 'instance_name'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'get_orchestrator_status',
       description:
         'Get the current status of the orchestrator Deployment: pod phase, ready replicas, and which channel env vars are set.',
@@ -549,6 +585,12 @@ export const TOOLS: OpenAI.ChatCompletionTool[] = [
 
 type ToolInput = Record<string, unknown>;
 
+/**
+ * In-memory map tracking active bootstrap operations: instanceName → bootstrapJobId.
+ * Exported so orchestrator startup can pass it to registerBootstrapDeps.
+ */
+export const activeBootstraps: Map<string, string> = new Map();
+
 function handleListGroups(): string {
   const groups = db.getAllRegisteredGroups();
   const entries = Object.entries(groups);
@@ -659,6 +701,82 @@ async function handleRemoveChannel(input: ToolInput): Promise<string> {
   if (!instanceName) return 'Error: instanceName is required.';
   const result = await removeChannel(instanceName);
   return result.summary;
+}
+
+async function handleBootstrapChannelFromSkill(
+  input: ToolInput,
+): Promise<string> {
+  const skillName = input.skill_name as string;
+  const channelType = input.channel_type as string;
+  const instanceName = input.instance_name as string;
+  const channelCredentialsHint = input.channel_credentials_hint as
+    | string
+    | undefined;
+
+  if (!skillName || !channelType || !instanceName) {
+    return 'Error: skill_name, channel_type, and instance_name are required.';
+  }
+
+  // Validate instanceName is safe for K8s resource naming
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(instanceName) || instanceName.length > 40) {
+    const sanitized = instanceName
+      .toLowerCase()
+      .replace(/[^a-z0-9-]/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 40);
+    return `Error: instance_name must be lowercase alphanumeric with hyphens only (max 40 chars). Suggested: "${sanitized}"`;
+  }
+
+  try {
+    const { BatchV1Api: BatchV1ApiClass } =
+      await import('@kubernetes/client-node');
+    const batchV1 = kc.makeApiClient(BatchV1ApiClass);
+
+    const k8sDeps: BootstrapK8sDeps = { coreV1, batchV1 };
+
+    const channelBaseImage =
+      process.env.KUBECLAW_CHANNEL_BASE_IMAGE || 'kubeclaw-channel-base:latest';
+
+    const result = await bootstrapChannelFromSkill({
+      skillName,
+      channelType,
+      instanceName,
+      channelCredentialsHint,
+      k8sDeps,
+      namespace: NAMESPACE,
+      channelBaseImage,
+      activeBootstraps,
+      timeoutSeconds: parseInt(
+        process.env.BOOTSTRAP_SKILL_TIMEOUT_SECONDS || '900',
+        10,
+      ),
+      pvcSize: process.env.BOOTSTRAP_PVC_SIZE || '1Gi',
+      redisUrl: process.env.REDIS_URL,
+      redisUsername: process.env.REDIS_BOOTSTRAP_USERNAME,
+      redisAdminPassword: process.env.REDIS_ADMIN_PASSWORD,
+      openaiApiKey: process.env.OPENAI_API_KEY,
+      openaiBaseUrl: process.env.OPENAI_BASE_URL,
+      directLlmModel: process.env.DIRECT_LLM_MODEL,
+    });
+
+    if (result.alreadyInProgress) {
+      return `Bootstrap already in progress for instance "${instanceName}" (bootstrapJobId: ${result.bootstrapJobId}). Follow progress via the /events SSE stream.`;
+    }
+
+    return [
+      `Bootstrap started successfully.`,
+      `  bootstrapJobId: ${result.bootstrapJobId}`,
+      `  Channel: ${channelType}/${instanceName}`,
+      `  Skill: ${skillName}`,
+      `  Job: kubeclaw-bootstrap-${instanceName}`,
+      `  PVC: kubeclaw-channel-${instanceName}-runtime`,
+      ``,
+      `The bootstrap agent will appear on the SSE event stream (/events).`,
+      `Respond to its questions via /chat in the admin shell.`,
+    ].join('\n');
+  } catch (err) {
+    return `Error: ${err instanceof Error ? err.message : String(err)}`;
+  }
 }
 
 async function handleGetOrchestratorStatus(): Promise<string> {
@@ -932,6 +1050,8 @@ export async function executeTool(
       return handleSetGroupCredential(input);
     case 'unset_group_credential':
       return handleUnsetGroupCredential(input);
+    case 'bootstrap_channel_from_skill':
+      return handleBootstrapChannelFromSkill(input);
     default:
       return `Unknown tool: ${name}`;
   }

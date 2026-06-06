@@ -56,15 +56,15 @@ export let KUBECLAW_LIVE_ADMIN_PASS = '';
 export const KUBECLAW_LIVE_TEST_OAUTH_LOCAL_PORT = 18090;
 export const KUBECLAW_LIVE_OAUTH_WEBCHAT_USER = 'alice@test.local';
 // Cookie secret must be ≥32 chars (enforced by parseConfig).
-export const KUBECLAW_LIVE_OAUTH_WEBCHAT_COOKIE_SECRET = 'kubeclaw-live-e2e-oauth-cookie-secret-32bytes!';
+export const KUBECLAW_LIVE_OAUTH_WEBCHAT_COOKIE_SECRET =
+  'kubeclaw-live-e2e-oauth-cookie-secret-32bytes!';
 
 // Read from a Secret at runtime (initialised inside setup()).
 export let KUBECLAW_LIVE_REDIS_URL = '';
 
 const LIVE_BASE_URL =
   process.env.LIVE_LLM_BASE_URL || 'http://192.168.7.100:8080/v1';
-const LIVE_MODEL =
-  process.env.LIVE_LLM_MODEL || 'gemma-4-E4B-it-Q4_0.gguf';
+const LIVE_MODEL = process.env.LIVE_LLM_MODEL || 'gemma-4-E4B-it-Q4_0.gguf';
 const LIVE_API_KEY = process.env.LIVE_LLM_API_KEY || 'no-key';
 
 let portForwardProcess: ChildProcess | null = null;
@@ -110,8 +110,13 @@ function isEnforcingCniReady(): boolean {
   const r = spawnSync(
     'kubectl',
     [
-      'get', 'daemonset', 'cilium', '-n', 'kube-system',
-      '-o', 'jsonpath={.status.numberReady}',
+      'get',
+      'daemonset',
+      'cilium',
+      '-n',
+      'kube-system',
+      '-o',
+      'jsonpath={.status.numberReady}',
     ],
     { encoding: 'utf8' },
   );
@@ -129,9 +134,9 @@ async function ensureMinikube(): Promise<void> {
   }
 
   // Probe current minikube status. If running with the wrong CNI, recreate.
-  const status = run(
-    'minikube', ['status', '--format={{.Host}}'], { allowFail: true },
-  );
+  const status = run('minikube', ['status', '--format={{.Host}}'], {
+    allowFail: true,
+  });
   const isRunning = status.ok && status.stdout.trim() === 'Running';
 
   if (isRunning && isEnforcingCniReady()) {
@@ -142,11 +147,16 @@ async function ensureMinikube(): Promise<void> {
   if (isRunning) {
     console.log(
       `⚠️  minikube is running but ${REQUIRED_CNI} DaemonSet is not present — ` +
-      'recreating cluster so NetworkPolicy enforcement is active.',
+        'recreating cluster so NetworkPolicy enforcement is active.',
     );
-    const del = run('minikube', ['delete'], { timeout: 120_000, allowFail: true });
+    const del = run('minikube', ['delete'], {
+      timeout: 120_000,
+      allowFail: true,
+    });
     if (!del.ok) {
-      console.warn('⚠️  minikube delete reported non-zero; continuing to start anyway.');
+      console.warn(
+        '⚠️  minikube delete reported non-zero; continuing to start anyway.',
+      );
     }
   }
 
@@ -185,18 +195,29 @@ async function ensureMinikube(): Promise<void> {
   throw new Error(`${REQUIRED_CNI} DaemonSet did not become Ready within 180s`);
 }
 
-function latestMtimeUnder(dir: string, exclude: Set<string> = new Set(['node_modules', '.git', '.claude', 'dist'])): number {
+function latestMtimeUnder(
+  dir: string,
+  exclude: Set<string> = new Set(['node_modules', '.git', '.claude', 'dist']),
+): number {
   let latest = 0;
   const stack: string[] = [dir];
   while (stack.length) {
     const cur = stack.pop()!;
     let entries: string[];
-    try { entries = readdirSync(cur); } catch { continue; }
+    try {
+      entries = readdirSync(cur);
+    } catch {
+      continue;
+    }
     for (const name of entries) {
       if (exclude.has(name)) continue;
       const p = join(cur, name);
       let st;
-      try { st = statSync(p); } catch { continue; }
+      try {
+        st = statSync(p);
+      } catch {
+        continue;
+      }
       if (st.isDirectory()) stack.push(p);
       else if (st.mtimeMs > latest) latest = st.mtimeMs;
     }
@@ -235,7 +256,9 @@ async function ensureImage(
         if (m > latest) latest = m;
       }
       if (latest > imageCreatedMs) {
-        console.log(`⚠️  ${imageName} is older than source files in ${sourceDirs.join(', ')} — rebuilding...`);
+        console.log(
+          `⚠️  ${imageName} is older than source files in ${sourceDirs.join(', ')} — rebuilding...`,
+        );
         needsBuild = true;
       }
     }
@@ -256,7 +279,9 @@ async function ensureImage(
         { encoding: 'utf8' },
       );
       if (verify.status !== 0) {
-        console.log(`⚠️  ${imageName} exists but is missing ${f} — rebuilding...`);
+        console.log(
+          `⚠️  ${imageName} exists but is missing ${f} — rebuilding...`,
+        );
         needsBuild = true;
         break;
       }
@@ -283,24 +308,31 @@ async function ensureImage(
   console.log(`✅ ${imageName} built\n`);
 }
 
-function waitForPod(
-  labelSelector: string,
-  timeoutMs: number,
-): Promise<void> {
+function waitForPod(labelSelector: string, timeoutMs: number): Promise<void> {
   return new Promise(async (resolve, reject) => {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       const res = run(
         'kubectl',
         [
-          'get', 'pods',
-          '-n', NAMESPACE,
-          '-l', labelSelector,
-          '-o', 'jsonpath={.items[*].status.conditions[?(@.type=="Ready")].status}',
+          'get',
+          'pods',
+          '-n',
+          NAMESPACE,
+          '-l',
+          labelSelector,
+          '-o',
+          'jsonpath={.items[*].status.conditions[?(@.type=="Ready")].status}',
         ],
         { allowFail: true },
       );
-      if (res.ok && res.stdout.trim().split(/\s+/).every((s) => s === 'True')) {
+      if (
+        res.ok &&
+        res.stdout
+          .trim()
+          .split(/\s+/)
+          .every((s) => s === 'True')
+      ) {
         return resolve();
       }
       await sleep(3000);
@@ -323,11 +355,16 @@ async function helmInstall(): Promise<void> {
   // Pre-create the namespace with Helm ownership metadata.
   run('kubectl', ['create', 'namespace', NAMESPACE], { allowFail: true });
   run('kubectl', [
-    'label', 'namespace', NAMESPACE,
-    'app.kubernetes.io/managed-by=Helm', '--overwrite',
+    'label',
+    'namespace',
+    NAMESPACE,
+    'app.kubernetes.io/managed-by=Helm',
+    '--overwrite',
   ]);
   run('kubectl', [
-    'annotate', 'namespace', NAMESPACE,
+    'annotate',
+    'namespace',
+    NAMESPACE,
     `meta.helm.sh/release-name=${RELEASE}`,
     `meta.helm.sh/release-namespace=${NAMESPACE}`,
     '--overwrite',
@@ -335,21 +372,41 @@ async function helmInstall(): Promise<void> {
 
   // Clean up any prior channel Secret left from a failed run — the chart
   // recreates it from values below.
-  run('kubectl', [
-    'delete', 'secret', 'kubeclaw-channel-http',
-    '-n', NAMESPACE, '--ignore-not-found',
-  ], { allowFail: true });
+  run(
+    'kubectl',
+    [
+      'delete',
+      'secret',
+      'kubeclaw-channel-http',
+      '-n',
+      NAMESPACE,
+      '--ignore-not-found',
+    ],
+    { allowFail: true },
+  );
 
   // The chart has no auto-create path for irc channel secrets (unlike http
   // which keys off secrets.httpChannelUsers). Pre-create the secret manually
   // so the channel pod can read its env vars.
+  run(
+    'kubectl',
+    [
+      'delete',
+      'secret',
+      'kubeclaw-channel-irc',
+      '-n',
+      NAMESPACE,
+      '--ignore-not-found',
+    ],
+    { allowFail: true },
+  );
   run('kubectl', [
-    'delete', 'secret', 'kubeclaw-channel-irc',
-    '-n', NAMESPACE, '--ignore-not-found',
-  ], { allowFail: true });
-  run('kubectl', [
-    'create', 'secret', 'generic', 'kubeclaw-channel-irc',
-    '-n', NAMESPACE,
+    'create',
+    'secret',
+    'generic',
+    'kubeclaw-channel-irc',
+    '-n',
+    NAMESPACE,
     '--from-literal=server=kubeclaw-capability-test-ircd',
     '--from-literal=port=6667',
     '--from-literal=nick=kubeclaw-bot',
@@ -362,15 +419,28 @@ async function helmInstall(): Promise<void> {
   // The OIDC issuer URL points to the test-oauth capability pod (in-cluster).
   // OAUTH_WEBCHAT_PUBLIC_URL is the port-forward address reachable by test
   // clients on the host — used to build the redirect_uri in the OAuth flow.
+  run(
+    'kubectl',
+    [
+      'delete',
+      'secret',
+      'kubeclaw-channel-oauth-webchat',
+      '-n',
+      NAMESPACE,
+      '--ignore-not-found',
+    ],
+    { allowFail: true },
+  );
   run('kubectl', [
-    'delete', 'secret', 'kubeclaw-channel-oauth-webchat',
-    '-n', NAMESPACE, '--ignore-not-found',
-  ], { allowFail: true });
-  run('kubectl', [
-    'create', 'secret', 'generic', 'kubeclaw-channel-oauth-webchat',
-    '-n', NAMESPACE,
+    'create',
+    'secret',
+    'generic',
+    'kubeclaw-channel-oauth-webchat',
+    '-n',
+    NAMESPACE,
     '--from-literal=oidc-issuer=http://kubeclaw-capability-test-oauth:8080',
-    '--from-literal=public-url=http://127.0.0.1:' + KUBECLAW_LIVE_OAUTH_WEBCHAT_LOCAL_PORT,
+    '--from-literal=public-url=http://127.0.0.1:' +
+      KUBECLAW_LIVE_OAUTH_WEBCHAT_LOCAL_PORT,
     '--from-literal=client-id=test-client',
     '--from-literal=client-secret=test-secret',
     '--from-literal=allowed-emails=alice@test.local',
@@ -379,103 +449,168 @@ async function helmInstall(): Promise<void> {
     '--from-literal=session-ttl-days=1',
   ]);
 
-  console.log(`📦 helm install ${RELEASE} → ${NAMESPACE} (LLM=${LIVE_BASE_URL}, model=${LIVE_MODEL})...`);
+  console.log(
+    `📦 helm install ${RELEASE} → ${NAMESPACE} (LLM=${LIVE_BASE_URL}, model=${LIVE_MODEL})...`,
+  );
   const setArgs = [
-    'upgrade', '--install', RELEASE, CHART_DIR,
-    '--namespace', NAMESPACE,
-    '-f', './helm/kubeclaw/values-minikube.yaml',
-    '--timeout', '180s',
-    '--set', `namespace=${NAMESPACE}`,
-    '--set', `secrets.anthropicApiKey=test-key`,
-    '--set', `secrets.claudeCodeOauthToken=test-token`,
-    '--set', `secrets.openaiApiKey=${LIVE_API_KEY}`,
-    '--set-string', `secrets.openaiBaseUrl=${LIVE_BASE_URL}`,
-    '--set-string', `secrets.directLlmModel=${LIVE_MODEL}`,
+    'upgrade',
+    '--install',
+    RELEASE,
+    CHART_DIR,
+    '--namespace',
+    NAMESPACE,
+    '-f',
+    './helm/kubeclaw/values-minikube.yaml',
+    '--timeout',
+    '180s',
+    '--set',
+    `namespace=${NAMESPACE}`,
+    '--set',
+    `secrets.anthropicApiKey=test-key`,
+    '--set',
+    `secrets.claudeCodeOauthToken=test-token`,
+    '--set',
+    `secrets.openaiApiKey=${LIVE_API_KEY}`,
+    '--set-string',
+    `secrets.openaiBaseUrl=${LIVE_BASE_URL}`,
+    '--set-string',
+    `secrets.directLlmModel=${LIVE_MODEL}`,
     // Chart auto-creates kubeclaw-channel-http with these users (comma-separated user:pass pairs).
     // Use --set-string to prevent helm from treating the value as a YAML list.
     // Commas in --set-string values must be escaped as \, to prevent list-splitting.
-    '--set-string', `secrets.httpChannelUsers=${KUBECLAW_LIVE_USER_A}:${KUBECLAW_LIVE_PASS_A}\\,${KUBECLAW_LIVE_USER_B}:${KUBECLAW_LIVE_PASS_B}`,
-    '--set', `credentialInjection.mode=off`,
+    '--set-string',
+    `secrets.httpChannelUsers=${KUBECLAW_LIVE_USER_A}:${KUBECLAW_LIVE_PASS_A}\\,${KUBECLAW_LIVE_USER_B}:${KUBECLAW_LIVE_PASS_B}`,
+    '--set',
+    `credentialInjection.mode=off`,
     // 8080 = local LLM endpoint, 6333 = Qdrant (RAG), 6667 = test IRC daemon,
     // 3000 = MCP capability pods (channel→capability for tools tests).
-    '--set', `networkPolicy.extraEgressPorts={8080,6333,6667,3000}`,
+    '--set',
+    `networkPolicy.extraEgressPorts={8080,6333,6667,3000}`,
     // Note: the test MCP capability is installed at RUNTIME from the test
     // file (via Redis IPC), not at helm time — this avoids a startup-time race
     // where the orchestrator publishes capabilities_update before the channel
     // pod has subscribed to its control channel.
-    '--set', `channels.http.enabled=true`,
-    '--set', `channels.http.type=http`,
-    '--set', `channels.http.httpPort=4080`,
-    '--set', `channels.http.envVars[0].name=HTTP_CHANNEL_USERS`,
-    '--set', `channels.http.envVars[0].key=users`,
-    '--set', `channels.http.envVars[1].name=HTTP_CHANNEL_PORT`,
-    '--set', `channels.http.envVars[1].key=port`,
-    '--set', `channels.http.envVars[1].optional=true`,
+    '--set',
+    `channels.http.enabled=true`,
+    '--set',
+    `channels.http.type=http`,
+    '--set',
+    `channels.http.httpPort=4080`,
+    '--set',
+    `channels.http.envVars[0].name=HTTP_CHANNEL_USERS`,
+    '--set',
+    `channels.http.envVars[0].key=users`,
+    '--set',
+    `channels.http.envVars[1].name=HTTP_CHANNEL_PORT`,
+    '--set',
+    `channels.http.envVars[1].key=port`,
+    '--set',
+    `channels.http.envVars[1].optional=true`,
     // Enable RAG (deploys Qdrant via the chart's StatefulSet and sets
     // QDRANT_URL on the channel pod at startup so RAG_ENABLED=true at
     // module load).
-    '--set', 'rag.enabled=true',
+    '--set',
+    'rag.enabled=true',
     // Use the chart's `capabilities:` helm-time templates to deploy our
     // test embedding server as a Deployment+Service at
     // kubeclaw-capability-test-embed:8080 — channel pods reach it by name.
-    '--set', 'capabilities.test-embed.image=kubeclaw-test-embedding:latest',
-    '--set', 'capabilities.test-embed.port=8080',
+    '--set',
+    'capabilities.test-embed.image=kubeclaw-test-embedding:latest',
+    '--set',
+    'capabilities.test-embed.port=8080',
     // Point the embedding client (in channel pod) at the test embedding
     // server. Also override embedding dim to match the fixture (1536).
-    '--set-string', `secrets.embeddingBaseUrl=http://kubeclaw-capability-test-embed:8080/v1`,
-    '--set', 'secrets.embeddingDim=1536',
+    '--set-string',
+    `secrets.embeddingBaseUrl=http://kubeclaw-capability-test-embed:8080/v1`,
+    '--set',
+    'secrets.embeddingDim=1536',
     // Deploy the test IRC daemon as a capability pod. The capability template
     // renders a Deployment+Service named kubeclaw-capability-test-ircd.
     // Port 6667 is the IRC port; the readiness probe targets it via tcpSocket.
     // The HTTP side-channel (8080) is only reached via kubectl exec from tests.
-    '--set', 'capabilities.test-ircd.image=kubeclaw-test-ircd:latest',
-    '--set', 'capabilities.test-ircd.port=6667',
+    '--set',
+    'capabilities.test-ircd.image=kubeclaw-test-ircd:latest',
+    '--set',
+    'capabilities.test-ircd.port=6667',
     // Deploy the IRC channel pod. The Secret kubeclaw-channel-irc was
     // pre-created above with the correct server/port/nick/channels values.
-    '--set', 'channels.irc.enabled=true',
-    '--set', 'channels.irc.type=irc',
-    '--set', 'channels.irc.envVars[0].name=IRC_SERVER',
-    '--set', 'channels.irc.envVars[0].key=server',
-    '--set', 'channels.irc.envVars[1].name=IRC_PORT',
-    '--set', 'channels.irc.envVars[1].key=port',
-    '--set', 'channels.irc.envVars[2].name=IRC_NICK',
-    '--set', 'channels.irc.envVars[2].key=nick',
-    '--set', 'channels.irc.envVars[3].name=IRC_CHANNELS',
-    '--set', 'channels.irc.envVars[3].key=channels',
+    '--set',
+    'channels.irc.enabled=true',
+    '--set',
+    'channels.irc.type=irc',
+    '--set',
+    'channels.irc.envVars[0].name=IRC_SERVER',
+    '--set',
+    'channels.irc.envVars[0].key=server',
+    '--set',
+    'channels.irc.envVars[1].name=IRC_PORT',
+    '--set',
+    'channels.irc.envVars[1].key=port',
+    '--set',
+    'channels.irc.envVars[2].name=IRC_NICK',
+    '--set',
+    'channels.irc.envVars[2].key=nick',
+    '--set',
+    'channels.irc.envVars[3].name=IRC_CHANNELS',
+    '--set',
+    'channels.irc.envVars[3].key=channels',
     // Deploy the test OIDC provider as a capability pod. It serves the
     // OpenID Connect Authorization Code flow for the oauth-webchat channel.
     // Port 8080 is already allowed by extraEgressPorts — no additional
     // network-policy change needed. The test user is alice@test.local.
-    '--set', 'capabilities.test-oauth.image=kubeclaw-test-oauth:latest',
-    '--set', 'capabilities.test-oauth.port=8080',
+    '--set',
+    'capabilities.test-oauth.image=kubeclaw-test-oauth:latest',
+    '--set',
+    'capabilities.test-oauth.port=8080',
     // Deploy the oauth-webchat channel pod. The Secret kubeclaw-channel-oauth-webchat
     // was pre-created above with all required OAUTH_WEBCHAT_* env vars.
-    '--set', 'channels.oauth-webchat.enabled=true',
-    '--set', 'channels.oauth-webchat.type=oauth-webchat',
-    '--set', 'channels.oauth-webchat.httpPort=4080',
-    '--set', 'channels.oauth-webchat.envVars[0].name=OAUTH_WEBCHAT_OIDC_ISSUER',
-    '--set', 'channels.oauth-webchat.envVars[0].key=oidc-issuer',
-    '--set', 'channels.oauth-webchat.envVars[1].name=OAUTH_WEBCHAT_PUBLIC_URL',
-    '--set', 'channels.oauth-webchat.envVars[1].key=public-url',
-    '--set', 'channels.oauth-webchat.envVars[2].name=OAUTH_WEBCHAT_CLIENT_ID',
-    '--set', 'channels.oauth-webchat.envVars[2].key=client-id',
-    '--set', 'channels.oauth-webchat.envVars[3].name=OAUTH_WEBCHAT_CLIENT_SECRET',
-    '--set', 'channels.oauth-webchat.envVars[3].key=client-secret',
-    '--set', 'channels.oauth-webchat.envVars[4].name=OAUTH_WEBCHAT_ALLOWED_EMAILS',
-    '--set', 'channels.oauth-webchat.envVars[4].key=allowed-emails',
-    '--set', 'channels.oauth-webchat.envVars[5].name=OAUTH_WEBCHAT_COOKIE_SECRET',
-    '--set', 'channels.oauth-webchat.envVars[5].key=cookie-secret',
-    '--set', 'channels.oauth-webchat.envVars[6].name=OAUTH_WEBCHAT_PROVIDER_NAME',
-    '--set', 'channels.oauth-webchat.envVars[6].key=provider-name',
-    '--set', 'channels.oauth-webchat.envVars[7].name=OAUTH_WEBCHAT_SESSION_TTL_DAYS',
-    '--set', 'channels.oauth-webchat.envVars[7].key=session-ttl-days',
-    '--set', 'channels.oauth-webchat.envVars[7].optional=true',
+    '--set',
+    'channels.oauth-webchat.enabled=true',
+    '--set',
+    'channels.oauth-webchat.type=oauth-webchat',
+    '--set',
+    'channels.oauth-webchat.httpPort=4080',
+    '--set',
+    'channels.oauth-webchat.envVars[0].name=OAUTH_WEBCHAT_OIDC_ISSUER',
+    '--set',
+    'channels.oauth-webchat.envVars[0].key=oidc-issuer',
+    '--set',
+    'channels.oauth-webchat.envVars[1].name=OAUTH_WEBCHAT_PUBLIC_URL',
+    '--set',
+    'channels.oauth-webchat.envVars[1].key=public-url',
+    '--set',
+    'channels.oauth-webchat.envVars[2].name=OAUTH_WEBCHAT_CLIENT_ID',
+    '--set',
+    'channels.oauth-webchat.envVars[2].key=client-id',
+    '--set',
+    'channels.oauth-webchat.envVars[3].name=OAUTH_WEBCHAT_CLIENT_SECRET',
+    '--set',
+    'channels.oauth-webchat.envVars[3].key=client-secret',
+    '--set',
+    'channels.oauth-webchat.envVars[4].name=OAUTH_WEBCHAT_ALLOWED_EMAILS',
+    '--set',
+    'channels.oauth-webchat.envVars[4].key=allowed-emails',
+    '--set',
+    'channels.oauth-webchat.envVars[5].name=OAUTH_WEBCHAT_COOKIE_SECRET',
+    '--set',
+    'channels.oauth-webchat.envVars[5].key=cookie-secret',
+    '--set',
+    'channels.oauth-webchat.envVars[6].name=OAUTH_WEBCHAT_PROVIDER_NAME',
+    '--set',
+    'channels.oauth-webchat.envVars[6].key=provider-name',
+    '--set',
+    'channels.oauth-webchat.envVars[7].name=OAUTH_WEBCHAT_SESSION_TTL_DAYS',
+    '--set',
+    'channels.oauth-webchat.envVars[7].key=session-ttl-days',
+    '--set',
+    'channels.oauth-webchat.envVars[7].optional=true',
     // Register the Researcher specialist so @Researcher mentions are dispatched
     // to the specialist runner. The default chart values.yaml has specialists:[]
     // (empty); we inject it here so the minikube-live suite gets the specialist
     // without requiring changes to the chart defaults.
     // Used by e2e/minikube-live-researcher.test.ts.
-    '--set-json', 'specialists=[{"name":"Researcher","prompt":"You are a web-research specialist. When given a topic or question:\\n1. Search for relevant, current information using available search tools.\\n2. Fetch and read promising sources to gather details.\\n3. Synthesise findings into a concise, structured summary with:\\n   - A one-paragraph executive summary.\\n   - Key facts as a bulleted list.\\n   - Source URLs cited inline.\\nStay factual; note when information is uncertain or conflicting.\\n","triggers":["researcher"],"llmProvider":"openrouter","tools":["web_search","web_fetch"]}]',
+    '--set-json',
+    'specialists=[{"name":"Researcher","prompt":"You are a web-research specialist. When given a topic or question:\\n1. Search for relevant, current information using available search tools.\\n2. Fetch and read promising sources to gather details.\\n3. Synthesise findings into a concise, structured summary with:\\n   - A one-paragraph executive summary.\\n   - Key facts as a bulleted list.\\n   - Source URLs cited inline.\\nStay factual; note when information is uncertain or conflicting.\\n","triggers":["researcher"],"llmProvider":"openrouter","tools":["web_search","web_fetch"]}]',
   ];
   const install = run('helm', setArgs, { timeout: 240_000, allowFail: true });
   if (!install.ok) {
@@ -513,7 +648,9 @@ async function startPortForward(): Promise<void> {
       { stdio: 'pipe' },
     );
     if (nc.status === 0) {
-      console.log(`✅ Port-forward live on :${KUBECLAW_LIVE_HTTP_LOCAL_PORT}\n`);
+      console.log(
+        `✅ Port-forward live on :${KUBECLAW_LIVE_HTTP_LOCAL_PORT}\n`,
+      );
       return;
     }
   }
@@ -523,10 +660,19 @@ async function startPortForward(): Promise<void> {
 async function startRedisPortForward(): Promise<void> {
   // Look up the Redis admin password from the chart-managed Secret so the
   // test can authenticate as the 'orchestrator' ACL user.
-  const pwdLookup = run('kubectl', [
-    'get', 'secret', '-n', NAMESPACE, 'kubeclaw-redis',
-    '-o', 'jsonpath={.data.admin-password}',
-  ], { allowFail: true });
+  const pwdLookup = run(
+    'kubectl',
+    [
+      'get',
+      'secret',
+      '-n',
+      NAMESPACE,
+      'kubeclaw-redis',
+      '-o',
+      'jsonpath={.data.admin-password}',
+    ],
+    { allowFail: true },
+  );
   if (!pwdLookup.ok || !pwdLookup.stdout) {
     throw new Error('failed to read kubeclaw-redis admin-password Secret');
   }
@@ -562,7 +708,9 @@ async function startRedisPortForward(): Promise<void> {
       { stdio: 'pipe' },
     );
     if (nc.status === 0) {
-      console.log(`✅ Redis port-forward live on :${KUBECLAW_LIVE_REDIS_LOCAL_PORT}\n`);
+      console.log(
+        `✅ Redis port-forward live on :${KUBECLAW_LIVE_REDIS_LOCAL_PORT}\n`,
+      );
       return;
     }
   }
@@ -594,7 +742,9 @@ async function startTestOauthPortForward(): Promise<void> {
       { stdio: 'pipe' },
     );
     if (nc.status === 0) {
-      console.log(`✅ Port-forward live on :${KUBECLAW_LIVE_TEST_OAUTH_LOCAL_PORT}\n`);
+      console.log(
+        `✅ Port-forward live on :${KUBECLAW_LIVE_TEST_OAUTH_LOCAL_PORT}\n`,
+      );
       return;
     }
   }
@@ -622,7 +772,9 @@ async function startOauthWebchatPortForward(): Promise<void> {
       { stdio: 'pipe' },
     );
     if (nc.status === 0) {
-      console.log(`✅ Port-forward live on :${KUBECLAW_LIVE_OAUTH_WEBCHAT_LOCAL_PORT}\n`);
+      console.log(
+        `✅ Port-forward live on :${KUBECLAW_LIVE_OAUTH_WEBCHAT_LOCAL_PORT}\n`,
+      );
       return;
     }
   }
@@ -631,14 +783,25 @@ async function startOauthWebchatPortForward(): Promise<void> {
 
 async function startAdminPortForward(): Promise<void> {
   // Read the auto-generated admin HTTP password from the chart-managed Secret.
-  const pwdLookup = run('kubectl', [
-    'get', 'secret', '-n', NAMESPACE, 'kubeclaw-secrets',
-    '-o', 'jsonpath={.data.admin-http-password}',
-  ], { allowFail: true });
+  const pwdLookup = run(
+    'kubectl',
+    [
+      'get',
+      'secret',
+      '-n',
+      NAMESPACE,
+      'kubeclaw-secrets',
+      '-o',
+      'jsonpath={.data.admin-http-password}',
+    ],
+    { allowFail: true },
+  );
   if (!pwdLookup.ok || !pwdLookup.stdout) {
     throw new Error('failed to read kubeclaw-secrets admin-http-password');
   }
-  KUBECLAW_LIVE_ADMIN_PASS = Buffer.from(pwdLookup.stdout, 'base64').toString('utf8');
+  KUBECLAW_LIVE_ADMIN_PASS = Buffer.from(pwdLookup.stdout, 'base64').toString(
+    'utf8',
+  );
 
   console.log(
     `🔌 Port-forward svc/kubeclaw-admin → localhost:${KUBECLAW_LIVE_ADMIN_LOCAL_PORT}`,
@@ -660,7 +823,9 @@ async function startAdminPortForward(): Promise<void> {
       { stdio: 'pipe' },
     );
     if (nc.status === 0) {
-      console.log(`✅ Admin port-forward live on :${KUBECLAW_LIVE_ADMIN_LOCAL_PORT}\n`);
+      console.log(
+        `✅ Admin port-forward live on :${KUBECLAW_LIVE_ADMIN_LOCAL_PORT}\n`,
+      );
       return;
     }
   }
@@ -681,7 +846,11 @@ export async function restartChannelPortForward(): Promise<void> {
     try {
       process.kill(-portForwardProcess.pid, 'SIGTERM');
     } catch {
-      try { portForwardProcess.kill(); } catch { /* ignore */ }
+      try {
+        portForwardProcess.kill();
+      } catch {
+        /* ignore */
+      }
     }
     portForwardProcess = null;
   }
@@ -703,7 +872,11 @@ async function teardownImpl() {
     try {
       process.kill(-p.pid, 'SIGTERM');
     } catch {
-      try { p.kill(); } catch { /* ignore */ }
+      try {
+        p.kill();
+      } catch {
+        /* ignore */
+      }
     }
   };
   killTree(portForwardProcess);
@@ -717,11 +890,26 @@ async function teardownImpl() {
   killTree(adminPortForwardProcess);
   adminPortForwardProcess = null;
   // Belt-and-braces: kill any lingering kubectl port-forward that targets our ports.
-  spawnSync('bash', ['-c', `pkill -f 'kubectl port-forward.*${KUBECLAW_LIVE_HTTP_LOCAL_PORT}:80' || true`]);
-  spawnSync('bash', ['-c', `pkill -f 'kubectl port-forward.*${KUBECLAW_LIVE_OAUTH_WEBCHAT_LOCAL_PORT}:80' || true`]);
-  spawnSync('bash', ['-c', `pkill -f 'kubectl port-forward.*${KUBECLAW_LIVE_TEST_OAUTH_LOCAL_PORT}:8080' || true`]);
-  spawnSync('bash', ['-c', `pkill -f 'kubectl port-forward.*${KUBECLAW_LIVE_REDIS_LOCAL_PORT}:6379' || true`]);
-  spawnSync('bash', ['-c', `pkill -f 'kubectl port-forward.*${KUBECLAW_LIVE_ADMIN_LOCAL_PORT}:9090' || true`]);
+  spawnSync('bash', [
+    '-c',
+    `pkill -f 'kubectl port-forward.*${KUBECLAW_LIVE_HTTP_LOCAL_PORT}:80' || true`,
+  ]);
+  spawnSync('bash', [
+    '-c',
+    `pkill -f 'kubectl port-forward.*${KUBECLAW_LIVE_OAUTH_WEBCHAT_LOCAL_PORT}:80' || true`,
+  ]);
+  spawnSync('bash', [
+    '-c',
+    `pkill -f 'kubectl port-forward.*${KUBECLAW_LIVE_TEST_OAUTH_LOCAL_PORT}:8080' || true`,
+  ]);
+  spawnSync('bash', [
+    '-c',
+    `pkill -f 'kubectl port-forward.*${KUBECLAW_LIVE_REDIS_LOCAL_PORT}:6379' || true`,
+  ]);
+  spawnSync('bash', [
+    '-c',
+    `pkill -f 'kubectl port-forward.*${KUBECLAW_LIVE_ADMIN_LOCAL_PORT}:9090' || true`,
+  ]);
 
   // Always uninstall — this is our own isolated namespace.
   run('helm', ['uninstall', RELEASE, '--namespace', NAMESPACE], {
@@ -758,7 +946,11 @@ export default async function setup() {
     [],
     ['src', 'package.json', 'tsconfig.json', 'Dockerfile'],
   );
-  await ensureImage('kubeclaw-test-mcp:latest', 'e2e/fixtures/test-mcp-server/Dockerfile', 'e2e/fixtures/test-mcp-server');
+  await ensureImage(
+    'kubeclaw-test-mcp:latest',
+    'e2e/fixtures/test-mcp-server/Dockerfile',
+    'e2e/fixtures/test-mcp-server',
+  );
   await ensureImage(
     'kubeclaw-test-embedding:latest',
     'e2e/fixtures/test-embedding-server/Dockerfile',
@@ -773,6 +965,14 @@ export default async function setup() {
     'kubeclaw-test-oauth:latest',
     'e2e/fixtures/test-oauth-provider/Dockerfile',
     'e2e/fixtures/test-oauth-provider',
+  );
+  // Slim channel-base image — used by bootstrap Jobs (Story 174)
+  await ensureImage(
+    'kubeclaw-channel-base:latest',
+    'container/channel-base/Dockerfile',
+    '.',
+    ['/app/channel-loader.js'],
+    ['container/channel-base'],
   );
 
   try {
@@ -811,13 +1011,19 @@ export default async function setup() {
   // subscribe runs against a fully-warm Redis.
   console.log('♻️  Restarting channel pod against warm Redis...');
   run('kubectl', [
-    'rollout', 'restart', 'deployment/kubeclaw-channel-http',
-    '-n', NAMESPACE,
+    'rollout',
+    'restart',
+    'deployment/kubeclaw-channel-http',
+    '-n',
+    NAMESPACE,
   ]);
   // Also restart the oauth-webchat channel pod for the same reason.
   run('kubectl', [
-    'rollout', 'restart', 'deployment/kubeclaw-channel-oauth-webchat',
-    '-n', NAMESPACE,
+    'rollout',
+    'restart',
+    'deployment/kubeclaw-channel-oauth-webchat',
+    '-n',
+    NAMESPACE,
   ]);
   // Wait briefly for the old pod's termination then for the new one to be Ready.
   await sleep(3000);

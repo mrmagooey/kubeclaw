@@ -16,9 +16,14 @@ BUILD_FILE_ADAPTER=false
 BUILD_HTTP_ADAPTER=false
 BUILD_BROWSER=false
 BUILD_ORCHESTRATOR=false
+BUILD_CHANNEL_BASE=false
 
 while [[ $# -gt 0 ]]; do
   case $1 in
+    --channel-base)
+      BUILD_CHANNEL_BASE=true
+      shift
+      ;;
     --claude-only)
       BUILD_CLAUDE=true
       BUILD_OPENROUTER=false
@@ -54,6 +59,7 @@ while [[ $# -gt 0 ]]; do
       BUILD_HTTP_ADAPTER=true
       BUILD_BROWSER=true
       BUILD_ORCHESTRATOR=true
+      BUILD_CHANNEL_BASE=true
       shift
       ;;
     *)
@@ -136,6 +142,18 @@ if [ "$BUILD_ORCHESTRATOR" = true ]; then
   echo "Image: kubeclaw-orchestrator:latest"
   ${CONTAINER_RUNTIME} build --network=host -f Dockerfile -t kubeclaw-orchestrator:latest .
   echo "Orchestrator build complete!"
+  echo ""
+fi
+
+# Build channel-base slim image (Story 174)
+if [ "$BUILD_CHANNEL_BASE" = true ]; then
+  echo "Building channel-base slim image..."
+  echo "Image: kubeclaw-channel-base:latest"
+  ${CONTAINER_RUNTIME} build --network=host \
+    -f container/channel-base/Dockerfile \
+    -t kubeclaw-channel-base:latest \
+    .
+  echo "Channel-base build complete!"
   echo ""
 fi
 

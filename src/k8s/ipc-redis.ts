@@ -54,6 +54,8 @@ import {
   removeCapabilityInstance,
   type ProvisionDeps,
 } from '../per-group-capabilities/index.js';
+import { processCommitChannelConfig } from './ipc-redis-bootstrap.js';
+import type { CommitChannelConfigDeps } from './ipc-redis-bootstrap.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
@@ -115,6 +117,73 @@ export function registerCapabilityDeps(deps: ProvisionDeps): void {
 /** Test-only: reset capability deps. */
 export function _resetCapabilityDepsForTest(): void {
   _capabilityDeps = null;
+}
+
+// Bootstrap deps — set by registerBootstrapDeps() called from index.ts (Story 174)
+let _bootstrapCommitDeps: CommitChannelConfigDeps | null = null;
+let _channelBaseImage = 'kubeclaw-channel-base:latest';
+let _bootstrapNamespace = process.env.KUBECLAW_NAMESPACE || 'kubeclaw';
+
+/**
+ * Register bootstrap dependencies used by the commit_channel_config IPC handler.
+ * Must be called before startBootstrapTaskWatcher().
+ */
+export function registerBootstrapDeps(
+  deps: CommitChannelConfigDeps,
+  channelBaseImage: string,
+  namespace: string,
+): void {
+  _bootstrapCommitDeps = deps;
+  _channelBaseImage = channelBaseImage;
+  _bootstrapNamespace = namespace;
+}
+
+/**
+ * Watch the kubeclaw:bootstrap-task:* pub/sub pattern for commit_channel_config
+ * messages sent by bootstrap pods. Each message is handled by processCommitChannelConfig.
+ * Uses psubscribe (pattern subscribe) on the shared Redis subscriber.
+ */
+export function startBootstrapTaskWatcher(): void {
+  const subscriber = getRedisSubscriber();
+
+  subscriber.psubscribe('kubeclaw:bootstrap-task:*', (err) => {
+    if (err)
+      logger.error({ err }, 'Failed to subscribe to bootstrap task pattern');
+    else
+      logger.info(
+        'Bootstrap task watcher subscribed (kubeclaw:bootstrap-task:*)',
+      );
+  });
+
+  subscriber.on(
+    'pmessage',
+    (_pattern: string, channel: string, message: string) => {
+      if (!channel.startsWith('kubeclaw:bootstrap-task:')) return;
+      if (!_bootstrapCommitDeps) {
+        logger.error(
+          { channel },
+          'commit_channel_config received but bootstrap deps not registered',
+        );
+        return;
+      }
+      try {
+        const data = JSON.parse(message);
+        if (data.type === 'commit_channel_config') {
+          void processCommitChannelConfig(
+            data,
+            _bootstrapCommitDeps,
+            _bootstrapNamespace,
+            _channelBaseImage,
+          );
+        }
+      } catch (err) {
+        logger.error(
+          { err, channel },
+          'Error processing bootstrap task message',
+        );
+      }
+    },
+  );
 }
 
 function channelPvcNames(channel: string): {

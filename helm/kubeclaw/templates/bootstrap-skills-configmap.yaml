@@ -1,0 +1,26 @@
+---
+# kubeclaw-bootstrap-skills: skill markdown files mounted into bootstrap Job pods.
+# Pre-populated from files/bootstrap-skills/*.md at chart render time.
+# Story 178 adds a runtime-write path via register_channel_manifest.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kubeclaw-bootstrap-skills
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: kubeclaw
+    component: bootstrap-skills
+data:
+  {{- $found := false }}
+  {{- range $path, $_ := .Files.Glob "files/bootstrap-skills/*.md" }}
+  {{- $found = true }}
+  {{- $name := base $path | trimSuffix ".md" }}
+  {{ $name }}.md: |
+    {{ $.Files.Get $path | indent 4 | trimAll " " }}
+  {{- end }}
+  {{- if not $found }}
+  # No baseline skills embedded. Add markdown files to helm/kubeclaw/files/bootstrap-skills/
+  # naming convention: bootstrap-<channeltype>.md (e.g. bootstrap-telegram.md)
+  # or register skills via the admin shell (Story 178).
+  _placeholder: ""
+  {{- end }}

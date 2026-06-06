@@ -1,0 +1,403 @@
+
+> kubeclaw@1.2.10 test:minikube-live
+> vitest run --config vitest.minikube-live.config.ts
+
+[1m[43m DEPRECATED [49m[22m [33m`test.poolOptions` was removed in Vitest 4. All previous `poolOptions` are now top-level options. Please, refer to the migration guide: https://vitest.dev/guide/migration#pool-rework[39m
+
+[1m[46m RUN [49m[22m [36mv4.0.18 [39m[90m/home/peter/projects/kubeclaw[39m
+
+🚀 minikube-live global setup starting...
+
+✅ minikube running with cilium CNI
+🐳 Checking for kubeclaw-agent:latest in minikube docker daemon...
+⚠️  kubeclaw-agent:latest is older than source files in src, container, package.json, tsconfig.json — rebuilding...
+🔨 Building kubeclaw-agent:latest inside minikube docker daemon...
+#0 building with "default" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 2.88kB done
+#1 DONE 0.0s
+
+#2 [internal] load metadata for docker.io/library/node:22-slim
+#2 DONE 0.9s
+
+#3 [internal] load .dockerignore
+#3 transferring context: 2B done
+#3 DONE 0.0s
+
+#4 [ 1/13] FROM docker.io/library/node:22-slim@sha256:7af03b14a13c8cdd38e45058fd957bf00a72bbe17feac43b1c15a689c029c732
+#4 DONE 0.0s
+
+#5 [internal] load build context
+#5 transferring context: 1.66MB 3.5s done
+#5 DONE 3.6s
+
+#6 [ 4/13] WORKDIR /app
+#6 CACHED
+
+#7 [ 9/13] RUN mkdir -p /workspace/group /workspace/global /workspace/extra /workspace/ipc/messages /workspace/ipc/tasks /workspace/ipc/input
+#7 CACHED
+
+#8 [10/13] RUN cat > /app/entrypoint.sh <<'ENTRYPOINT'
+#8 CACHED
+
+#9 [11/13] RUN chmod +x /app/entrypoint.sh
+#9 CACHED
+
+#10 [ 2/13] RUN apt-get update && apt-get install -y     chromium     fonts-liberation     fonts-noto-cjk     fonts-noto-color-emoji     libgbm1     libnss3     libatk-bridge2.0-0     libgtk-3-0     libx11-xcb1     libxcomposite1     libxdamage1     libxrandr2     libasound2     libpangocairo-1.0-0     libcups2     libdrm2     libxshmfence1     curl     git     && rm -rf /var/lib/apt/lists/*
+#10 CACHED
+
+#11 [ 7/13] COPY container/agent-runner/ ./
+#11 CACHED
+
+#12 [12/13] RUN chown -R node:node /workspace && chmod 777 /home/node
+#12 CACHED
+
+#13 [ 5/13] COPY container/agent-runner/package*.json ./
+#13 CACHED
+
+#14 [ 6/13] RUN npm install
+#14 CACHED
+
+#15 [ 8/13] RUN npm run build
+#15 CACHED
+
+#16 [ 3/13] RUN npm install -g agent-browser @anthropic-ai/claude-code
+#16 CACHED
+
+#17 [13/13] WORKDIR /workspace/group
+#17 CACHED
+
+#18 exporting to image
+#18 exporting layers done
+#18 writing image sha256:7b8b110e249468411a978757376857f77a811f2a8da6005fb3d623f24336b506 0.0s done
+#18 naming to docker.io/library/kubeclaw-agent:latest done
+#18 DONE 0.1s
+✅ kubeclaw-agent:latest built
+
+🐳 Checking for kubeclaw-orchestrator:latest in minikube docker daemon...
+✅ kubeclaw-orchestrator:latest already present
+
+🐳 Checking for kubeclaw-test-mcp:latest in minikube docker daemon...
+✅ kubeclaw-test-mcp:latest already present
+
+🐳 Checking for kubeclaw-test-embedding:latest in minikube docker daemon...
+✅ kubeclaw-test-embedding:latest already present
+
+🐳 Checking for kubeclaw-test-ircd:latest in minikube docker daemon...
+✅ kubeclaw-test-ircd:latest already present
+
+🐳 Checking for kubeclaw-test-oauth:latest in minikube docker daemon...
+✅ kubeclaw-test-oauth:latest already present
+
+{"level":30,"time":1780206099031,"pid":1524246,"hostname":"dev-box","msg":"cert-manager already installed — skipping"}
+📦 helm install kubeclaw-live → kubeclaw-live (LLM=https://openrouter.ai/api/v1, model=google/gemma-4-31b-it:free)...
+✅ helm install complete
+
+⏳ Waiting for orchestrator pod Ready...
+⏳ Waiting for redis pod Ready...
+⏳ Waiting for channel pod Ready...
+⏳ Waiting for qdrant pod Ready...
+⏳ Waiting for test embedding pod Ready...
+⏳ Waiting for test ircd pod Ready...
+⏳ Waiting for IRC channel pod Ready...
+⏳ Waiting for test oauth provider pod Ready...
+⏳ Waiting for oauth-webchat channel pod Ready...
+♻️  Restarting channel pod against warm Redis...
+🔌 Port-forward svc/kubeclaw-channel-http → localhost:14081
+[port-forward restart 05:42:03] http
+✅ Port-forward live on :14081
+
+🔌 Port-forward svc/kubeclaw-redis → localhost:16381
+[port-forward restart 05:42:04] redis
+✅ Redis port-forward live on :16381
+
+🔌 Port-forward svc/kubeclaw-channel-oauth-webchat → localhost:14082
+[port-forward restart 05:42:05] oauth-webchat
+✅ Port-forward live on :14082
+
+🔌 Port-forward svc/kubeclaw-capability-test-oauth → localhost:18090
+[port-forward restart 05:42:06] test-oauth
+✅ Port-forward live on :18090
+
+🔌 Port-forward svc/kubeclaw-admin → localhost:14083
+[port-forward restart 05:42:07] admin
+✅ Admin port-forward live on :14083
+
+✅ minikube-live global setup complete
+
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-orchestrator-restart.test.ts[2m > [22mMinikube-live: orchestrator restart resilience[2m > [22mcapability install survives orchestrator restart[33m 41547[2mms[22m[39m
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-orchestrator-restart.test.ts[2m > [22mMinikube-live: orchestrator restart resilience[2m > [22mscheduled task survives orchestrator restart[33m 41468[2mms[22m[39m
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-orchestrator-restart.test.ts[2m > [22mMinikube-live: orchestrator restart resilience[2m > [22mregistered group survives orchestrator restart[33m 40551[2mms[22m[39m
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-orchestrator-restart.test.ts[2m > [22mMinikube-live: orchestrator restart resilience[2m > [22mchannel pod survives orchestrator restart without restarting itself[33m 35586[2mms[22m[39m
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-orchestrator-restart.test.ts[2m > [22mMinikube-live: orchestrator restart resilience[2m > [22mcapabilities_update arrives at channel pod within 30 s of orchestrator restart[33m 35593[2mms[22m[39m
+[90mstdout[2m | e2e/minikube-live-browser.test.ts[2m > [22m[2mMinikube-live: browser/web tool pod spawned via LLM directive[2m > [22m[2mweb_fetch via channel → tool pod → example.com
+[22m[39mweb_fetch observability: SSE delivered=true, SSE contains "example domain"=false, tool pod name=nc-http-http-alice-browser-tcx2ig-st5js
+
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-browser.test.ts[2m > [22mMinikube-live: browser/web tool pod spawned via LLM directive[2m > [22mweb_fetch via channel → tool pod → example.com[33m 61621[2mms[22m[39m
+[90mstdout[2m | e2e/minikube-live-browser.test.ts[2m > [22m[2mMinikube-live: browser/web tool pod spawned via LLM directive[2m > [22m[2mweb_search via channel → tool pod → Brave Search API returns structured results
+[22m[39mweb_search observability: SSE delivered=true, SSE contains related terms=true, structured snippet in SSE=false, tool pod name=nc-http-http-alice-browser-tcxdpu-qtj7k
+
+[90mstdout[2m | e2e/minikube-live-browser.test.ts[2m > [22m[2mMinikube-live: browser/web tool pod spawned via LLM directive[2m > [22m[2mbrowser (Playwright agent_browser) tool spawns a browser-category tool pod and executes Chromium-backed navigation
+[22m[39mbrowser (LLM-driven) observability: SSE delivered=true, SSE contains browser navigation result=false, agentBrowser log found=true, tool pod name=nc-http-http-alice-browser-tcz35e-c9fdk
+
+ [31m×[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-browser.test.ts[2m > [22mMinikube-live: browser/web tool pod spawned via LLM directive[2m > [22mweb_search via channel → tool pod → Brave Search API returns structured results[33m 65168[2mms[22m[39m
+[31m   → SSE stream delivered data but no line contained a Brave Search structured result with a non-empty `snippet` field. The old DuckDuckGo plain-text path would also fail here — verify the Brave API key is injected and the broker mapping is active.: expected false to be true // Object.is equality[39m
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-browser.test.ts[2m > [22mMinikube-live: browser/web tool pod spawned via LLM directive[2m > [22mbrowser (Playwright agent_browser) tool spawns a browser-category tool pod and executes Chromium-backed navigation[33m 88274[2mms[22m[39m
+[90mstdout[2m | e2e/minikube-live-browser.test.ts[2m > [22m[2mMinikube-live: browser/web tool pod spawned via LLM directive[2m > [22m[2mbrowser tool dispatched via Redis bypass executes via agent-browser CLI
+[22m[39mbrowser (Redis bypass): agentBrowser dispatched and confirmed in pod nc-http-browser-td0ge6-c7m6h (agentJobId=e2e-browser-bypass-1780206543869)
+
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-browser.test.ts[2m > [22mMinikube-live: browser/web tool pod spawned via LLM directive[2m > [22mbrowser tool dispatched via Redis bypass executes via agent-browser CLI[33m 2184[2mms[22m[39m
+[90mstdout[2m | e2e/minikube-live-tasks.test.ts[2m > [22m[2mMinikube-live: task-scheduler subsystem via Redis IPC[2m > [22m[2mschedule_task: a one-shot task scheduled 20 s in the future fires and writes to its result stream
+[22m[39mTask-scheduler observability: accepted=Scheduled task "task-once-5d4fd712" (once: 2026-05-31T05:49:28.363Z). It will ru, SSE delivered=true, marker in SSE=false
+
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-tasks.test.ts[2m > [22mMinikube-live: task-scheduler subsystem via Redis IPC[2m > [22mschedule_task: a one-shot task scheduled 20 s in the future fires and writes to its result stream[33m 27477[2mms[22m[39m
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-tasks.test.ts[2m > [22mMinikube-live: task-scheduler subsystem via Redis IPC[2m > [22mlist_tasks: after scheduling an interval task, list returns the task ID[32m 12[2mms[22m[39m
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-tasks.test.ts[2m > [22mMinikube-live: task-scheduler subsystem via Redis IPC[2m > [22mcancel_task: cancelling stops the task from firing again[33m 75279[2mms[22m[39m
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-tasks.test.ts[2m > [22mMinikube-live: task-scheduler subsystem via Redis IPC[2m > [22mpause_task: paused task does not fire; resume re-enables it[33m 75256[2mms[22m[39m
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-capabilities.test.ts[2m > [22mMinikube-live: capability installed at runtime + used by channel[2m > [22mcapability pod is Running/Ready and its Service exists[32m 104[2mms[22m[39m
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-capabilities.test.ts[2m > [22mMinikube-live: capability installed at runtime + used by channel[2m > [22mchannel pod logs show capability was discovered (capabilities_update)[32m 64[2mms[22m[39m
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-capabilities.test.ts[2m > [22mMinikube-live: capability installed at runtime + used by channel[2m > [22mchannel pod logs show successful MCP client connection + tool discovery[32m 68[2mms[22m[39m
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-capabilities.test.ts[2m > [22mMinikube-live: capability installed at runtime + used by channel[2m > [22mchannel pod can reach the capability pod over the cluster network[33m 312[2mms[22m[39m
+[90mstdout[2m | e2e/minikube-live-capabilities.test.ts[2m > [22m[2mMinikube-live: capability installed at runtime + used by channel[2m > [22m[2mPOST /message with tool-call directive — capability pod reachable + channel pod alive
+[22m[39m📊 Live-LLM tool-call observability: SSE delivered=false, marker recorded=true
+✅ LLM successfully called record_test_message with the marker phrase.
+
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-capabilities.test.ts[2m > [22mMinikube-live: capability installed at runtime + used by channel[2m > [22mPOST /message with tool-call directive — capability pod reachable + channel pod alive[33m 60262[2mms[22m[39m
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-capabilities.test.ts[2m > [22mMinikube-live: capability installed at runtime + used by channel[2m > [22mACL: a capability scoped to a different channel is not exposed to http[33m 16406[2mms[22m[39m
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-capabilities.test.ts[2m > [22mMinikube-live: capability installed at runtime + used by channel[2m > [22mremove_capability tears down the Deployment and the channel pod sees an updated capabilities_update[33m 479[2mms[22m[39m
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-capabilities.test.ts[2m > [22mMinikube-live: capability installed at runtime + used by channel[2m > [22mMCP allowedTools filter restricts which tools the channel pod connects/registers[33m 19107[2mms[22m[39m
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-capabilities.test.ts[2m > [22mMinikube-live: capability installed at runtime + used by channel[2m > [22mMCP LLM tools (deploy/remove/list) route through Redis IPC correctly via fake LLM tool-call bypass[33m 3389[2mms[22m[39m
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-capabilities.test.ts[2m > [22mMinikube-live: capability installed at runtime + used by channel[2m > [22massertNoConflictingRag rejects a second unscoped RAG install[33m 31025[2mms[22m[39m
+[90mstdout[2m | e2e/minikube-live-rag.test.ts[2m > [22m[2mMinikube-live: RAG capability installed at runtime + indexing verified[2m > [22m[2mPOST message causes Qdrant collection to be created and contain indexed points
+[22m[39mSSE not delivered within 5 s — fine, the indexing path is async; we poll Qdrant directly below.
+ℹ️  "RAG provider: Qdrant" not yet logged — will keep polling Qdrant directly
+
+[90mstdout[2m | e2e/minikube-live-rag.test.ts[2m > [22m[2mMinikube-live: RAG capability installed at runtime + indexing verified[2m > [22m[2mPOST message causes Qdrant collection to be created and contain indexed points
+[22m[39mQdrant collection 'kubeclaw-http-http-alice' created with 1 point(s).
+
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-rag.test.ts[2m > [22mMinikube-live: RAG capability installed at runtime + indexing verified[2m > [22mruntime RAG capability install switches channel pod provider to Qdrant[32m 57[2mms[22m[39m
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-rag.test.ts[2m > [22mMinikube-live: RAG capability installed at runtime + indexing verified[2m > [22mPOST message causes Qdrant collection to be created and contain indexed points[33m 18625[2mms[22m[39m
+[90mstdout[2m | e2e/minikube-live-rag.test.ts[2m > [22m[2mMinikube-live: RAG capability installed at runtime + indexing verified[2m > [22m[2mindexed phrase purple-orchid-7392 is retrievable via Qdrant vector search
+[22m[39mRAG end-to-end verified: SEARCH_OK:collection=kubeclaw-http-http-alice | SEARCH_OK:count=1 | SEARCH_OK:phrase_found=true | SEARCH_OK:top_text=User: <messages>
+
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-rag.test.ts[2m > [22mMinikube-live: RAG capability installed at runtime + indexing verified[2m > [22mindexed phrase purple-orchid-7392 is retrievable via Qdrant vector search[33m 301[2mms[22m[39m
+[90mstderr[2m | e2e/minikube-live-network-policy.test.ts[2m > [22m[2mMinikube-live: NetworkPolicy enforcement
+[22m[39m
+⚠️  WARNING: No enforcing CNI detected (Calico/Cilium/Flannel absent).
+   The default minikube bridge CNI does NOT enforce NetworkPolicy.
+   Tests asserting blocked traffic will FAIL — this is intentional.
+   Fix: minikube delete && minikube start --cni=calico
+
+
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-network-policy.test.ts[2m > [22mMinikube-live: NetworkPolicy enforcement[2m > [22mchannel pod cannot egress on non-whitelisted port (policy must block TCP/23)[33m 10236[2mms[22m[39m
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-network-policy.test.ts[2m > [22mMinikube-live: NetworkPolicy enforcement[2m > [22mchannel pod can reach Redis on port 6379 (whitelisted — positive control)[32m 256[2mms[22m[39m
+[90mstderr[2m | e2e/minikube-live-network-policy.test.ts[2m > [22m[2mMinikube-live: NetworkPolicy enforcement[2m > [22m[2morchestrator admin port 9090 unreachable from channel pod (ingress policy)
+[22m[39mSkipping runtime 9090-blocked check: no enforcing CNI is installed. Asserting that the helm-rendered policy *does not* whitelist port 9090.
+
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-network-policy.test.ts[2m > [22mMinikube-live: NetworkPolicy enforcement[2m > [22morchestrator admin port 9090 unreachable from channel pod (ingress policy)[32m 53[2mms[22m[39m
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-network-policy.test.ts[2m > [22mMinikube-live: NetworkPolicy enforcement[2m > [22mcapability pod reachable from orchestrator, not from unlabelled pod[33m 15763[2mms[22m[39m
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-network-policy.test.ts[2m > [22mMinikube-live: NetworkPolicy enforcement[2m > [22mtool pod (simulated) cannot reach orchestrator admin port 9090[33m 13215[2mms[22m[39m
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live.test.ts[2m > [22mMinikube-live: real-user flow through helm-deployed kubeclaw[2m > [22mall expected pods are Ready in kubeclaw-live namespace[32m 171[2mms[22m[39m
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live.test.ts[2m > [22mMinikube-live: real-user flow through helm-deployed kubeclaw[2m > [22mGET / requires Basic auth and serves chat UI when authenticated[32m 14[2mms[22m[39m
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live.test.ts[2m > [22mMinikube-live: real-user flow through helm-deployed kubeclaw[2m > [22mchannel pod has TCP egress to the live LLM provider[32m 284[2mms[22m[39m
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live.test.ts[2m > [22mMinikube-live: real-user flow through helm-deployed kubeclaw[2m > [22mPOST /message produces an SSE assistant reply from the live LLM[33m 18699[2mms[22m[39m
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live.test.ts[2m > [22mMinikube-live: real-user flow through helm-deployed kubeclaw[2m > [22mfirst message auto-registers the user's group in the channel pod's SQLite[33m 1301[2mms[22m[39m
+E0531 05:56:07.030090 1526543 portforward.go:424] "Unhandled Error" err=<
+	an error occurred forwarding 14081 -> 4080: error forwarding port 4080 to pod 1aab4dc8c43b34b455d96c871c185d89d4fdb30c6190da9958301fdd6699c914, uid : exit status 1: 2026/05/31 05:56:07 socat[411232] E connect(5, AF=2 127.0.0.1:4080, 16): Connection refused
+ >
+error: lost connection to pod
+[port-forward restart 05:56:07] http
+error: error upgrading connection: unable to upgrade connection: pod not found ("kubeclaw-channel-http-5bc76c6b9-c6q7n_kubeclaw-live")
+[port-forward restart 05:56:07] http
+error: unable to forward port because pod is not running. Current status=Pending
+[port-forward restart 05:56:07] http
+error: unable to forward port because pod is not running. Current status=Pending
+[port-forward restart 05:56:07] http
+error: unable to forward port because pod is not running. Current status=Pending
+[port-forward restart 05:56:07] http
+error: unable to forward port because pod is not running. Current status=Pending
+[port-forward restart 05:56:08] http
+error: unable to forward port because pod is not running. Current status=Pending
+[port-forward restart 05:56:08] http
+error: unable to forward port because pod is not running. Current status=Pending
+[port-forward restart 05:56:08] http
+error: unable to forward port because pod is not running. Current status=Pending
+[port-forward restart 05:56:08] http
+error: unable to forward port because pod is not running. Current status=Pending
+[port-forward restart 05:56:08] http
+error: unable to forward port because pod is not running. Current status=Pending
+[port-forward restart 05:56:08] http
+error: unable to forward port because pod is not running. Current status=Pending
+[port-forward restart 05:56:09] http
+error: unable to forward port because pod is not running. Current status=Pending
+[port-forward restart 05:56:09] http
+error: unable to forward port because pod is not running. Current status=Pending
+[port-forward restart 05:56:09] http
+error: unable to forward port because pod is not running. Current status=Pending
+[port-forward restart 05:56:09] http
+error: unable to forward port because pod is not running. Current status=Pending
+[port-forward restart 05:56:09] http
+error: unable to forward port because pod is not running. Current status=Pending
+[port-forward restart 05:56:09] http
+error: unable to forward port because pod is not running. Current status=Pending
+[port-forward restart 05:56:09] http
+error: unable to forward port because pod is not running. Current status=Pending
+[port-forward restart 05:56:10] http
+error: unable to forward port because pod is not running. Current status=Pending
+[port-forward restart 05:56:10] http
+error: unable to forward port because pod is not running. Current status=Pending
+[port-forward restart 05:56:10] http
+error: unable to forward port because pod is not running. Current status=Pending
+[port-forward restart 05:56:10] http
+error: unable to forward port because pod is not running. Current status=Pending
+[port-forward restart 05:56:10] http
+error: unable to forward port because pod is not running. Current status=Pending
+[port-forward restart 05:56:10] http
+error: unable to forward port because pod is not running. Current status=Pending
+[port-forward restart 05:56:11] http
+error: unable to forward port because pod is not running. Current status=Pending
+[port-forward restart 05:56:11] http
+[90mstdout[2m | e2e/minikube-live.test.ts[2m > [22m[2mMinikube-live: real-user flow through helm-deployed kubeclaw[2m > [22m[2mconversation history persists across channel pod restart (PVC)
+[22m[39m🔌 Port-forward svc/kubeclaw-channel-http → localhost:14081
+
+[port-forward restart 05:56:23] http
+[90mstdout[2m | e2e/minikube-live.test.ts[2m > [22m[2mMinikube-live: real-user flow through helm-deployed kubeclaw[2m > [22m[2mconversation history persists across channel pod restart (PVC)
+[22m[39m✅ Port-forward live on :14081
+
+
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live.test.ts[2m > [22mMinikube-live: real-user flow through helm-deployed kubeclaw[2m > [22mconversation history persists across channel pod restart (PVC)[33m 38163[2mms[22m[39m
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live.test.ts[2m > [22mMinikube-live: real-user flow through helm-deployed kubeclaw[2m > [22morchestrator pod's logs show the channel pod registered as ready[32m 74[2mms[22m[39m
+[90mstdout[2m | e2e/minikube-live-tool-pods.test.ts[2m > [22m[2mMinikube-live: tool pod and tool job spawning via Redis IPC (direct bypass)[2m > [22m[2mexecution-category tool pod spawn via Redis IPC (bash)
+[22m[39mWaiting for execution tool pod (agentJobId=direct-test-bash-1780206996052-506xa4)...
+
+[90mstdout[2m | e2e/minikube-live-tool-pods.test.ts[2m > [22m[2mMinikube-live: tool pod and tool job spawning via Redis IPC (direct bypass)[2m > [22m[2mexecution-category tool pod spawn via Redis IPC (bash)
+[22m[39mTool pod appeared: nc-http-http-alice-execution-tda62n-kgwx6
+
+[90mstdout[2m | e2e/minikube-live-tool-pods.test.ts[2m > [22m[2mMinikube-live: tool pod and tool job spawning via Redis IPC (direct bypass)[2m > [22m[2mexecution-category tool pod spawn via Redis IPC (bash)
+[22m[39mTool pod result: "kubeclaw-bash-e2e-marker\n"
+
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-tool-pods.test.ts[2m > [22mMinikube-live: tool pod and tool job spawning via Redis IPC (direct bypass)[2m > [22mexecution-category tool pod spawn via Redis IPC (bash)[33m 3071[2mms[22m[39m
+[90mstdout[2m | e2e/minikube-live-tool-pods.test.ts[2m > [22m[2mMinikube-live: tool pod and tool job spawning via Redis IPC (direct bypass)[2m > [22m[2mexecute_agent full tool-job spawn via Redis IPC
+[22m[39mWaiting for tool job (agentJobId=direct-test-agent-1780206999122-a0ubfd)...
+
+[90mstdout[2m | e2e/minikube-live-tool-pods.test.ts[2m > [22m[2mMinikube-live: tool pod and tool job spawning via Redis IPC (direct bypass)[2m > [22m[2mexecute_agent full tool-job spawn via Redis IPC
+[22m[39mTool job appeared: nc-http-http-alice-tda7o4
+
+[90mstdout[2m | e2e/minikube-live-tool-pods.test.ts[2m > [22m[2mMinikube-live: tool pod and tool job spawning via Redis IPC (direct bypass)[2m > [22m[2mexecute_agent full tool-job spawn via Redis IPC
+[22m[39mTool job result (first 200 chars): Tool job completed
+
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-tool-pods.test.ts[2m > [22mMinikube-live: tool pod and tool job spawning via Redis IPC (direct bypass)[2m > [22mexecute_agent full tool-job spawn via Redis IPC[33m 12096[2mms[22m[39m
+E0531 05:56:51.476264 1526652 portforward.go:424] "Unhandled Error" err="an error occurred forwarding 14083 -> 9090: error forwarding port 9090 to pod 61d9444ecb05116c9d15979dcf81d83d507bc32c91f69dc04a05cdf8ae16ec9a, uid : Error response from daemon: No such container: 61d9444ecb05116c9d15979dcf81d83d507bc32c91f69dc04a05cdf8ae16ec9a"
+error: lost connection to pod
+[port-forward restart 05:56:51] admin
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-admin-shell.test.ts[2m > [22mMinikube-live: orchestrator admin shell (port 9090)[2m > [22madmin sidecar container is Running and Ready in the orchestrator pod[32m 156[2mms[22m[39m
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-admin-shell.test.ts[2m > [22mMinikube-live: orchestrator admin shell (port 9090)[2m > [22mGET / without auth returns 401 with WWW-Authenticate header[32m 8[2mms[22m[39m
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-admin-shell.test.ts[2m > [22mMinikube-live: orchestrator admin shell (port 9090)[2m > [22mGET / with correct admin credentials returns HTML admin UI[32m 5[2mms[22m[39m
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-admin-shell.test.ts[2m > [22mMinikube-live: orchestrator admin shell (port 9090)[2m > [22mGET /events with correct credentials establishes an SSE stream[32m 7[2mms[22m[39m
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-admin-shell.test.ts[2m > [22mMinikube-live: orchestrator admin shell (port 9090)[2m > [22mPOST /chat "list groups" returns a non-empty assistant reply via SSE within 60s[33m 13246[2mms[22m[39m
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-capability-lifecycle.test.ts[2m > [22mMinikube-live: capability lifecycle (install → update → reapply)[2m > [22mreapply with new port: Deployment updated; no 403 logged; channel notified; DB reflects new spec[33m 5479[2mms[22m[39m
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-capability-lifecycle.test.ts[2m > [22mMinikube-live: capability lifecycle (install → update → reapply)[2m > [22minstall with allowedTools: channel receives capabilities_update and DB stores spec[33m 2399[2mms[22m[39m
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-capability-lifecycle.test.ts[2m > [22mMinikube-live: capability lifecycle (install → update → reapply)[2m > [22mACL change via remove+reinstall: http channel count drops from 1 to 0; Deployment survives[33m 2710[2mms[22m[39m
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-capability-lifecycle.test.ts[2m > [22mMinikube-live: capability lifecycle (install → update → reapply)[2m > [22mDB upsert: re-installing the same capability name does not create duplicate entries in list_capabilities[33m 3163[2mms[22m[39m
+[90mstdout[2m | e2e/minikube-live-failures.test.ts[2m > [22m[2mMinikube-live: failure modes for tools, capabilities, and HTTP channel[2m > [22m[2mbash tool: non-zero exit code produces a result entry on the execution results stream
+[22m[39m[fail-bash] Waiting for result on kubeclaw:toolresults:fail-bash-1780207042633-e06ce428:execution...
+
+[90mstdout[2m | e2e/minikube-live-failures.test.ts[2m > [22m[2mMinikube-live: failure modes for tools, capabilities, and HTTP channel[2m > [22m[2mbash tool: non-zero exit code produces a result entry on the execution results stream
+[22m[39m[fail-bash] Result received (first 200 chars): "Command failed: /bin/bash -c false\n"
+
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-failures.test.ts[2m > [22mMinikube-live: failure modes for tools, capabilities, and HTTP channel[2m > [22mbash tool: non-zero exit code produces a result entry on the execution results stream[33m 2011[2mms[22m[39m
+[90mstdout[2m | e2e/minikube-live-failures.test.ts[2m > [22m[2mMinikube-live: failure modes for tools, capabilities, and HTTP channel[2m > [22m[2mweb_fetch to an unresolvable host produces an error result (no hang)
+[22m[39m[fail-fetch] Waiting for result on kubeclaw:toolresults:fail-fetch-1780207044643-2579e530:browser...
+
+[90mstdout[2m | e2e/minikube-live-failures.test.ts[2m > [22m[2mMinikube-live: failure modes for tools, capabilities, and HTTP channel[2m > [22m[2mweb_fetch to an unresolvable host produces an error result (no hang)
+[22m[39m[fail-fetch] Error result (first 200 chars): null
+
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-failures.test.ts[2m > [22mMinikube-live: failure modes for tools, capabilities, and HTTP channel[2m > [22mweb_fetch to an unresolvable host produces an error result (no hang)[33m 2008[2mms[22m[39m
+[90mstdout[2m | e2e/minikube-live-failures.test.ts[2m > [22m[2mMinikube-live: failure modes for tools, capabilities, and HTTP channel[2m > [22m[2mschedule_task with invalid cron expression: orchestrator logs a warning and creates no task
+[22m[39m[fail-cron] Warning logged: {"level":40,"time":1780207046654,"pid":1,"hostname":"kubeclaw-orchestrator-db9b97dbd-hb67g","schedule_value":"not a cron","err":{"type":"Error","message":"Invalid characters, got value: a","stack":"Er
+
+[90mstdout[2m | e2e/minikube-live-failures.test.ts[2m > [22m[2mMinikube-live: failure modes for tools, capabilities, and HTTP channel[2m > [22m[2mschedule_task: (N+1)th task gets a "Task limit reached" rejection
+[22m[39m[fail-limit] Rejection received: Task limit reached (3 active tasks). Cancel an existing task first.
+
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-failures.test.ts[2m > [22mMinikube-live: failure modes for tools, capabilities, and HTTP channel[2m > [22mschedule_task with invalid cron expression: orchestrator logs a warning and creates no task[32m 72[2mms[22m[39m
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-failures.test.ts[2m > [22mMinikube-live: failure modes for tools, capabilities, and HTTP channel[2m > [22mschedule_task: (N+1)th task gets a "Task limit reached" rejection[32m 10[2mms[22m[39m
+[90mstdout[2m | e2e/minikube-live-failures.test.ts[2m > [22m[2mMinikube-live: failure modes for tools, capabilities, and HTTP channel[2m > [22m[2minstall_capability from non-main group: orchestrator logs "Unauthorized install_capability" and creates no Deployment
+[22m[39m[fail-unauth] Unauthorized warning logged: {"level":40,"time":1780207046735,"pid":1,"hostname":"kubeclaw-orchestrator-db9b97dbd-hb67g","groupFolder":"http-http-alice","msg":"Unauthorized install_capability"}
+
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-failures.test.ts[2m > [22mMinikube-live: failure modes for tools, capabilities, and HTTP channel[2m > [22minstall_capability from non-main group: orchestrator logs "Unauthorized install_capability" and creates no Deployment[33m 10358[2mms[22m[39m
+[90mstdout[2m | e2e/minikube-live-failures.test.ts[2m > [22m[2mMinikube-live: failure modes for tools, capabilities, and HTTP channel[2m > [22m[2minstall_capability with malformed spec JSON: orchestrator logs error and watcher keeps running
+[22m[39m[fail-malformed] Error logged: {"level":50,"time":1780207057093,"pid":1,"hostname":"kubeclaw-orchestrator-db9b97dbd-hb67g","err":{"type":"SyntaxError","message":"Expected ',' or '}' after property value in JSON at position 40","sta
+[fail-malformed] Watcher still alive: list_capabilities returned result
+
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-failures.test.ts[2m > [22mMinikube-live: failure modes for tools, capabilities, and HTTP channel[2m > [22minstall_capability with malformed spec JSON: orchestrator logs error and watcher keeps running[32m 78[2mms[22m[39m
+[90mstdout[2m | e2e/minikube-live-failures.test.ts[2m > [22m[2mMinikube-live: failure modes for tools, capabilities, and HTTP channel[2m > [22m[2mPOST /message with oversized multipart payload returns HTTP 413
+[22m[39m[fail-oversize] HTTP 413 received for oversized payload
+
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-failures.test.ts[2m > [22mMinikube-live: failure modes for tools, capabilities, and HTTP channel[2m > [22mPOST /message with oversized multipart payload returns HTTP 413[32m 144[2mms[22m[39m
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-multi-user.test.ts[2m > [22mMinikube-live: multi-user isolation[2m > [22malice credentials are rejected when used as bob, and bob credentials are rejected as alice[32m 21[2mms[22m[39m
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-multi-user.test.ts[2m > [22mMinikube-live: multi-user isolation[2m > [22meach user gets a separate group-folder row in the channel pod SQLite[33m 1942[2mms[22m[39m
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-multi-user.test.ts[2m > [22mMinikube-live: multi-user isolation[2m > [22malice's conversation history does not appear in bob's, and vice versa[33m 4114[2mms[22m[39m
+ [2m[90m↓[39m[22m [30m[45m minikube-live [49m[39m e2e/minikube-live-multi-user.test.ts[2m > [22mMinikube-live: multi-user isolation[2m > [22mcapability ACL by user (covered by minikube-live-capabilities.test.ts #6 and #8)
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-multi-user.test.ts[2m > [22mMinikube-live: multi-user isolation[2m > [22malice's scheduled task does not appear in bob's task list[32m 84[2mms[22m[39m
+[90mstdout[2m | e2e/minikube-live-concurrent-installs.test.ts[2m > [22m[2mMinikube-live: concurrent capability install scenarios[2m > [22m[2mconcurrent-3-installs: 3 simultaneous install_capability XADDs all produce Deployments within 30 s
+[22m[39mconcurrent-3-installs: all three Deployments resolved in 3278 ms (individual: 69ms, 65ms, 3143ms)
+
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-concurrent-installs.test.ts[2m > [22mMinikube-live: concurrent capability install scenarios[2m > [22mconcurrent-3-installs: 3 simultaneous install_capability XADDs all produce Deployments within 30 s[33m 3440[2mms[22m[39m
+[90mstdout[2m | e2e/minikube-live-concurrent-installs.test.ts[2m > [22m[2mMinikube-live: concurrent capability install scenarios[2m > [22m[2mconcurrent-install-remove: install and remove of unrelated caps complete independently within 30 s
+[22m[39mconcurrent-install-remove: elapsed 169 ms — capA gone=true, capB found=true (in 84 ms)
+
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-concurrent-installs.test.ts[2m > [22mMinikube-live: concurrent capability install scenarios[2m > [22mconcurrent-install-remove: install and remove of unrelated caps complete independently within 30 s[33m 355[2mms[22m[39m
+[90mstdout[2m | e2e/minikube-live-concurrent-installs.test.ts[2m > [22m[2mMinikube-live: concurrent capability install scenarios[2m > [22m[2mconcurrent-same-name-reinstall: rapid re-install of same cap name results in final spec matching second XADD
+[22m[39mconcurrent-same-name-reinstall: final containerPort=3001 (first XADD=3000, second XADD=3001). Last-write-wins: second spec applied.
+
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-concurrent-installs.test.ts[2m > [22mMinikube-live: concurrent capability install scenarios[2m > [22mconcurrent-same-name-reinstall: rapid re-install of same cap name results in final spec matching second XADD[33m 333[2mms[22m[39m
+[90mstdout[2m | e2e/minikube-live-concurrent-installs.test.ts[2m > [22m[2mMinikube-live: concurrent capability install scenarios[2m > [22m[2mconcurrent-5-installs: 5 simultaneous install_capability XADDs all produce Deployments within 60 s
+[22m[39mconcurrent-5-installs: 5/5 Deployments resolved in 3681 ms (per-cap: 73ms, 3213ms, 3217ms, 3185ms, 3173ms)
+
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-concurrent-installs.test.ts[2m > [22mMinikube-live: concurrent capability install scenarios[2m > [22mconcurrent-5-installs: 5 simultaneous install_capability XADDs all produce Deployments within 60 s[33m 4102[2mms[22m[39m
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-http-misc.test.ts[2m > [22mMinikube-live: HTTP-misc (http capability deploy + image attachment)[2m > [22mhttp-capability-deploy: a runtime-installed http capability is reachable from the channel pod[32m 186[2mms[22m[39m
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-http-misc.test.ts[2m > [22mMinikube-live: HTTP-misc (http capability deploy + image attachment)[2m > [22mhttp-channel-image-attachment: multipart image upload writes a file to the groups PVC and emits the [ImageAttachment:] marker[33m 5554[2mms[22m[39m
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-oauth-webchat.test.ts[2m > [22mMinikube-live oauth-webchat: OIDC login flow through helm-deployed channel[2m > [22moauth-webchat channel pod is Running and Ready in kubeclaw-live namespace[32m 59[2mms[22m[39m
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-oauth-webchat.test.ts[2m > [22mMinikube-live oauth-webchat: OIDC login flow through helm-deployed channel[2m > [22mGET /login returns the sign-in page when unauthenticated[32m 3[2mms[22m[39m
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-oauth-webchat.test.ts[2m > [22mMinikube-live oauth-webchat: OIDC login flow through helm-deployed channel[2m > [22mGET / redirects unauthenticated requests to /login[32m 2[2mms[22m[39m
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-oauth-webchat.test.ts[2m > [22mMinikube-live oauth-webchat: OIDC login flow through helm-deployed channel[2m > [22mOAuth flow: /login/start → test-oauth → /callback establishes a session[32m 42[2mms[22m[39m
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-oauth-webchat.test.ts[2m > [22mMinikube-live oauth-webchat: OIDC login flow through helm-deployed channel[2m > [22mPOST /message with session cookie is accepted and triggers message processing[32m 93[2mms[22m[39m
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-oauth-webchat.test.ts[2m > [22mMinikube-live oauth-webchat: OIDC login flow through helm-deployed channel[2m > [22mfirst message auto-registers the user's group in the channel pod's SQLite[33m 1215[2mms[22m[39m
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-oauth-webchat.test.ts[2m > [22mMinikube-live oauth-webchat: OIDC login flow through helm-deployed channel[2m > [22morchestrator pod logs show the oauth-webchat channel pod registered[32m 83[2mms[22m[39m
+[90mstderr[2m | e2e/minikube-live-researcher.test.ts
+[22m[39m[minikube-live-researcher] LLM provider unavailable: POST /chat/completions → HTTP 429: {"error":{"message":"Rate limit exceeded: free-models-per-min. ","code":429,"metadata":{"headers":{"X-RateLimit-Limit":"16","X-RateLimit-Remaining":"0","X-RateLimit-Reset":"1780207140000"},"provider_n
+   Test will be skipped.
+
+ [2m[90m↓[39m[22m [30m[45m minikube-live [49m[39m e2e/minikube-live-researcher.test.ts[2m > [22mResearcher specialist grounds reply in fetched URL (minikube-live)[2m > [22m@Researcher reads a Wikipedia URL and answers from its content
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-irc.test.ts[2m > [22mMinikube-live IRC: channel pod connects to test ircd and processes messages[2m > [22mchannel pod connected to ircd and joined the channel[32m 232[2mms[22m[39m
+ [32m✓[39m [30m[45m minikube-live [49m[39m e2e/minikube-live-irc.test.ts[2m > [22mMinikube-live IRC: channel pod connects to test ircd and processes messages[2m > [22minbound IRC message is stored by the channel pod[33m 310[2mms[22m[39m
+ [2m[90m↓[39m[22m [30m[45m minikube-live [49m[39m e2e/minikube-live-irc.test.ts[2m > [22mMinikube-live IRC: channel pod connects to test ircd and processes messages[2m > [22moutbound IRC message is sent by the channel pod when the LLM produces a reply
+
+[31m⎯⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 1 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[41m[1m FAIL [22m[49m [30m[45m minikube-live [49m[39m e2e/minikube-live-browser.test.ts[2m > [22mMinikube-live: browser/web tool pod spawned via LLM directive[2m > [22mweb_search via channel → tool pod → Brave Search API returns structured results
+[31m[1mAssertionError[22m: SSE stream delivered data but no line contained a Brave Search structured result with a non-empty `snippet` field. The old DuckDuckGo plain-text path would also fail here — verify the Brave API key is injected and the broker mapping is active.: expected false to be true // Object.is equality[39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- true[39m
+[31m+ false[39m
+
+[36m [2m❯[22m e2e/minikube-live-browser.test.ts:[2m461:13[22m[39m
+    [90m459| [39m            'with a non-empty `snippet` field. The old DuckDuckGo plai…
+    [90m460| [39m            'fail here — verify the Brave API key is injected and the …
+    [90m461| [39m          )[33m.[39m[34mtoBe[39m([35mtrue[39m)[33m;[39m
+    [90m   | [39m            [31m^[39m
+    [90m462| [39m        }
+    [90m463| [39m        sse[33m.[39m[34mdispose[39m()[33m;[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[2m | [22m[1m[32m15 passed[39m[22m[2m | [22m[33m1 skipped[39m[90m (17)[39m
+[2m      Tests [22m [1m[31m1 failed[39m[22m[2m | [22m[1m[32m74 passed[39m[22m[2m | [22m[33m2 skipped[39m[2m | [22m[90m1 todo[39m[90m (78)[39m
+[2m   Start at [22m 05:41:31
+[2m   Duration [22m 997.83s[2m (transform 340ms, setup 0ms, import 1.89s, tests 956.67s, environment 3ms)[22m
+

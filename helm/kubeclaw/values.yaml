@@ -514,3 +514,32 @@ dashboards:
   # Set to true to deploy kubeclaw-overview and kubeclaw-llm-detail as ConfigMaps
   # with the grafana_dashboard: "1" label (auto-discovered by the Grafana sidecar).
   enabled: false
+
+# ─── Bootstrap channel configuration (Story 174) ─────────────────────────────
+# bootstrap.channelManifests: per-channel-type npm manifests used by bootstrap Jobs.
+# Each key is a channel type name; each value is an object with:
+#   packageJson:     string — JSON content of package.json for this channel type
+#   packageLockJson: string — JSON content of package-lock.json for this channel type
+#   manifestHash:    string — sha256(canonical(packageJson)+'\n'+canonical(packageLockJson))
+#                            (compute with: node -e "const{createHash}=require('crypto');...")
+#
+# bootstrap.npmRegistry: optional npm registry URL (default: https://registry.npmjs.org)
+# bootstrap.timeoutSeconds: Job activeDeadlineSeconds (default: 900)
+# bootstrap.pvcSize: per-channel runtime PVC size (default: 1Gi)
+# bootstrap.allowedLifecycleScripts: lifecycle script names the orchestrator permits
+#                                    in manifests (default: [] — none allowed)
+bootstrap:
+  npmRegistry: ""
+  timeoutSeconds: 900
+  pvcSize: 1Gi
+  allowedLifecycleScripts: []
+  # channelManifests: {}
+  # Example:
+  #   channelManifests:
+  #     telegram:
+  #       packageJson: |
+  #         {"name":"runtime","dependencies":{"telegraf":"4.16.3"}}
+  #       packageLockJson: |
+  #         {"name":"runtime","lockfileVersion":3,...}
+  #       manifestHash: "abc123..."
+  channelManifests: {}

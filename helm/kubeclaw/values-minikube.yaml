@@ -60,3 +60,17 @@ channelPod:
 # Local dev: skip broker overhead; credentials injected as env vars.
 credentialInjection:
   mode: "off"
+
+# ── Bootstrap channel configuration (Story 174) ────────────────────────────────
+# Baseline manifest for Telegram channel (telegraf 4.16.3).
+# Hash computed as sha256(canonical(packageJson) + '\n' + canonical(packageLockJson)).
+bootstrap:
+  timeoutSeconds: 900
+  pvcSize: 1Gi
+  channelManifests:
+    telegram:
+      packageJson: |
+        {"name":"runtime","version":"1.0.0","dependencies":{"telegraf":"4.16.3"}}
+      packageLockJson: |
+        {"name":"runtime","lockfileVersion":3,"requires":true,"packages":{"":{"name":"runtime","version":"1.0.0","dependencies":{"telegraf":"4.16.3"}}}}
+      manifestHash: "d1b52f26cee92aa02e0f46ec25d3d8ca70ee8abf1835e651f65cadf69edf1ada"

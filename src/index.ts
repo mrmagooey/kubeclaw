@@ -45,10 +45,13 @@ import {
   startTaskRequestWatcher,
   registerSecretDeps,
   registerCapabilityDeps,
+  registerBootstrapDeps,
+  startBootstrapTaskWatcher,
 } from './k8s/ipc-redis.js';
 import { CatalogInformer } from './k8s/catalog.js';
 import { SecretManager } from './k8s/secret-manager.js';
-import { KubeConfig, CoreV1Api } from '@kubernetes/client-node';
+import { KubeConfig, CoreV1Api, AppsV1Api } from '@kubernetes/client-node';
+import { activeBootstraps } from './admin-shell.js';
 import { KUBECLAW_NAMESPACE } from './config.js';
 import { getOutputChannel, getRedisClient } from './k8s/redis-client.js';
 import { jobRunner } from './k8s/job-runner.js';
@@ -354,6 +357,91 @@ async function main(): Promise<void> {
   registerSecretDeps(secretManager, catalogInformer);
   logger.info('CatalogInformer and SecretManager initialised');
 
+  // ── Bootstrap channel IPC deps (Story 174) ───────────────────────────────
+  const appsApi = kc.makeApiClient(AppsV1Api);
+  const channelBaseImage =
+    process.env.KUBECLAW_CHANNEL_BASE_IMAGE || 'kubeclaw-channel-base:latest';
+  const redisForBootstrap = getRedisClient();
+
+  registerBootstrapDeps(
+    {
+      createSecret: async (name: string, data: Record<string, string>) => {
+        // Base64-encode all values for the K8s Secret
+        const b64 = Object.fromEntries(
+          Object.entries(data).map(([k, v]) => [
+            k,
+            Buffer.from(v).toString('base64'),
+          ]),
+        );
+        try {
+          await coreApi.createNamespacedSecret({
+            namespace: KUBECLAW_NAMESPACE,
+            body: {
+              apiVersion: 'v1',
+              kind: 'Secret',
+              metadata: { name, namespace: KUBECLAW_NAMESPACE },
+              data: b64,
+            },
+          });
+        } catch (err: any) {
+          if (err?.statusCode === 409 || err?.body?.code === 409) {
+            // Already exists — patch it
+            await coreApi.patchNamespacedSecret({
+              name,
+              namespace: KUBECLAW_NAMESPACE,
+              body: { data: b64 },
+            });
+          } else {
+            throw err;
+          }
+        }
+      },
+      createDeployment: async (body) => {
+        try {
+          await appsApi.createNamespacedDeployment({
+            namespace: KUBECLAW_NAMESPACE,
+            body,
+          });
+        } catch (err: any) {
+          if (err?.statusCode === 409 || err?.body?.code === 409) {
+            await appsApi.replaceNamespacedDeployment({
+              name: body.metadata!.name!,
+              namespace: KUBECLAW_NAMESPACE,
+              body,
+            });
+          } else {
+            throw err;
+          }
+        }
+      },
+      publishReply: async (replyChannel, payload) => {
+        await redisForBootstrap.publish(replyChannel, JSON.stringify(payload));
+      },
+      publishSse: async (topic, text) => {
+        await redisForBootstrap.publish(topic, text);
+      },
+      getManifestHash: async (channelType: string) => {
+        try {
+          const cm = await coreApi.readNamespacedConfigMap({
+            name: 'kubeclaw-channel-manifests',
+            namespace: KUBECLAW_NAMESPACE,
+          });
+          const raw = cm.data?.[`${channelType}.json`];
+          if (!raw) return null;
+          const parsed = JSON.parse(raw) as { manifestHash?: string };
+          return parsed.manifestHash ?? null;
+        } catch {
+          return null;
+        }
+      },
+      releaseBootstrap: (instanceName: string) => {
+        activeBootstraps.delete(instanceName);
+      },
+    },
+    channelBaseImage,
+    KUBECLAW_NAMESPACE,
+  );
+
   // ── Specialist catalog reconcile ──────────────────────────────────────────
   // On orchestrator startup, merge the Helm baseline with any SQLite overrides
   // and write the result to the kubeclaw-specialists ConfigMap so channel pods
@@ -600,6 +688,7 @@ async function main(): Promise<void> {
   startTaskRequestWatcher({ registerGroup }).catch((err) =>
     logger.error({ err }, 'Task request watcher crashed'),
   );
+  startBootstrapTaskWatcher();
   // Start the unified capabilities subsystem.
   startDiscoveryWatcher();
   startHealthProbes();

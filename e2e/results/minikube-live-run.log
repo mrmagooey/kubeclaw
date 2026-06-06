@@ -1,0 +1,197 @@
+
+> kubeclaw@1.2.10 test:minikube-live
+> vitest run --config vitest.minikube-live.config.ts
+
+[1m[43m DEPRECATED [49m[22m [33m`test.poolOptions` was removed in Vitest 4. All previous `poolOptions` are now top-level options. Please, refer to the migration guide: https://vitest.dev/guide/migration#pool-rework[39m
+
+[1m[46m RUN [49m[22m [36mv4.0.18 [39m[90m/home/peter/projects/kubeclaw[39m
+
+🚀 minikube-live global setup starting...
+
+✅ minikube running with cilium CNI
+🐳 Checking for kubeclaw-agent:latest in minikube docker daemon...
+⚠️  kubeclaw-agent:latest is older than source files in src, container, package.json, tsconfig.json — rebuilding...
+🔨 Building kubeclaw-agent:latest inside minikube docker daemon...
+#0 building with "default" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 2.88kB done
+#1 DONE 0.0s
+
+#2 [internal] load metadata for docker.io/library/node:22-slim
+#2 DONE 1.2s
+
+#3 [internal] load .dockerignore
+#3 transferring context: 2B done
+#3 DONE 0.0s
+
+#4 [ 1/13] FROM docker.io/library/node:22-slim@sha256:7af03b14a13c8cdd38e45058fd957bf00a72bbe17feac43b1c15a689c029c732
+#4 DONE 0.0s
+
+#5 [internal] load build context
+#5 transferring context: 1.73MB 3.8s done
+#5 DONE 3.8s
+
+#6 [ 2/13] RUN apt-get update && apt-get install -y     chromium     fonts-liberation     fonts-noto-cjk     fonts-noto-color-emoji     libgbm1     libnss3     libatk-bridge2.0-0     libgtk-3-0     libx11-xcb1     libxcomposite1     libxdamage1     libxrandr2     libasound2     libpangocairo-1.0-0     libcups2     libdrm2     libxshmfence1     curl     git     && rm -rf /var/lib/apt/lists/*
+#6 CACHED
+
+#7 [ 3/13] RUN npm install -g agent-browser @anthropic-ai/claude-code
+#7 CACHED
+
+#8 [ 4/13] WORKDIR /app
+#8 CACHED
+
+#9 [ 5/13] COPY container/agent-runner/package*.json ./
+#9 CACHED
+
+#10 [ 6/13] RUN npm install
+#10 CACHED
+
+#11 [ 7/13] COPY container/agent-runner/ ./
+#11 DONE 15.9s
+
+#12 [ 8/13] RUN npm run build
+#12 0.468 
+#12 0.468 > kubeclaw-agent-runner@1.0.0 build
+#12 0.468 > tsc
+#12 0.468 
+#12 DONE 4.1s
+
+#13 [ 9/13] RUN mkdir -p /workspace/group /workspace/global /workspace/extra /workspace/ipc/messages /workspace/ipc/tasks /workspace/ipc/input
+#13 DONE 0.3s
+
+#14 [10/13] RUN cat > /app/entrypoint.sh <<'ENTRYPOINT'
+#14 DONE 0.3s
+
+#15 [11/13] RUN chmod +x /app/entrypoint.sh
+#15 DONE 0.4s
+
+#16 [12/13] RUN chown -R node:node /workspace && chmod 777 /home/node
+#16 DONE 0.4s
+
+#17 [13/13] WORKDIR /workspace/group
+#17 DONE 0.2s
+
+#18 exporting to image
+#18 exporting layers
+#18 exporting layers 2.7s done
+#18 writing image sha256:7b8b110e249468411a978757376857f77a811f2a8da6005fb3d623f24336b506 done
+#18 naming to docker.io/library/kubeclaw-agent:latest 0.0s done
+#18 DONE 2.7s
+✅ kubeclaw-agent:latest built
+
+🐳 Checking for kubeclaw-orchestrator:latest in minikube docker daemon...
+⚠️  kubeclaw-orchestrator:latest is older than source files in src, package.json, tsconfig.json, Dockerfile — rebuilding...
+🔨 Building kubeclaw-orchestrator:latest inside minikube docker daemon...
+#0 building with "default" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 1.19kB done
+#1 DONE 0.0s
+
+#2 [internal] load metadata for docker.io/library/node:20-slim
+#2 DONE 0.4s
+
+#3 [internal] load .dockerignore
+#3 transferring context: 2B done
+#3 DONE 0.0s
+
+#4 [1/8] FROM docker.io/library/node:20-slim@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0
+#4 DONE 0.0s
+
+#5 [internal] load build context
+#5 transferring context: 297.01MB 5.1s
+#5 transferring context: 599.73MB 10.1s
+#5 transferring context: 799.01MB 15.1s
+#5 transferring context: 893.48MB 20.1s
+#5 transferring context: 1.05GB 25.1s
+#5 transferring context: 1.19GB 30.2s
+#5 transferring context: 1.33GB 35.3s
+#5 transferring context: 1.57GB 40.4s
+#5 transferring context: 1.80GB 45.5s
+#5 transferring context: 1.98GB 50.5s
+#5 transferring context: 2.08GB 55.5s
+#5 transferring context: 2.26GB 59.7s done
+#5 DONE 60.4s
+
+#6 [2/8] RUN apt-get update && apt-get install -y     curl     git     python3     && rm -rf /var/lib/apt/lists/*
+#6 CACHED
+
+#7 [3/8] WORKDIR /app
+#7 CACHED
+
+#8 [4/8] COPY package*.json ./
+#8 CACHED
+
+#9 [5/8] RUN npm install
+#9 CACHED
+
+#10 [6/8] COPY . .
+#10 DONE 69.7s
+
+#11 [7/8] RUN npm run build
+#11 0.559 
+#11 0.559 > kubeclaw@1.2.10 build
+#11 0.559 > tsc
+#11 0.559 
+#11 DONE 9.1s
+
+#12 [8/8] RUN mkdir -p /app/groups /app/store &&     chown -R 1000:1000 /app/groups /app/store
+#12 DONE 0.6s
+
+#13 exporting to image
+#13 exporting layers
+#13 exporting layers 52.6s done
+#13 writing image sha256:e7e1e5ca4f4c512b4f954f711ec68912e9bf27d5364e218c737a385584dc3bcf done
+#13 naming to docker.io/library/kubeclaw-orchestrator:latest 0.0s done
+#13 DONE 52.7s
+✅ kubeclaw-orchestrator:latest built
+
+🐳 Checking for kubeclaw-test-mcp:latest in minikube docker daemon...
+✅ kubeclaw-test-mcp:latest already present
+
+🐳 Checking for kubeclaw-test-embedding:latest in minikube docker daemon...
+✅ kubeclaw-test-embedding:latest already present
+
+🐳 Checking for kubeclaw-test-ircd:latest in minikube docker daemon...
+✅ kubeclaw-test-ircd:latest already present
+
+🐳 Checking for kubeclaw-test-oauth:latest in minikube docker daemon...
+✅ kubeclaw-test-oauth:latest already present
+
+{"level":30,"time":1780205453693,"pid":1511205,"hostname":"dev-box","msg":"cert-manager already installed — skipping"}
+📦 helm install kubeclaw-live → kubeclaw-live (LLM=https://openrouter.ai/api/v1, model=google/gemma-4-31b-it:free)...
+✅ helm install complete
+
+⏳ Waiting for orchestrator pod Ready...
+⏳ Waiting for redis pod Ready...
+⏳ Waiting for channel pod Ready...
+⏳ Waiting for qdrant pod Ready...
+⏳ Waiting for test embedding pod Ready...
+⏳ Waiting for test ircd pod Ready...
+⏳ Waiting for IRC channel pod Ready...
+⏳ Waiting for test oauth provider pod Ready...
+⏳ Waiting for oauth-webchat channel pod Ready...
+[31mNo test files found, exiting with code 1
+[39m
+[2minclude: [22m[33me2e/minikube-live*.test.ts[39m
+[2mexclude:  [22m[33m**/node_modules/**[2m, [22m**/.git/**[39m
+
+
+[31m⎯⎯⎯⎯⎯⎯[39m[1m[41m Unhandled Error [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+[31m[1mError[22m: pods matching app=kubeclaw-channel-oauth-webchat not Ready within 240000ms
+NAME                                              READY   STATUS    RESTARTS   AGE     IP             NODE       NOMINATED NODE   READINESS GATES
+kubeclaw-channel-oauth-webchat-66cfdd4dcb-29mwc   0/1     Running   0          4m38s   10.244.0.195   minikube   <none>           <none>
+
+[39m
+[36m [2m❯[22m e2e/minikube-live-setup.ts:[2m315:7[22m[39m
+    [90m313| [39m    )[33m;[39m
+    [90m314| [39m    [34mreject[39m(
+    [90m315| [39m      [35mnew[39m [33mError[39m(
+    [90m   | [39m      [31m^[39m
+    [90m316| [39m        `pods matching ${labelSelector} not Ready within ${timeoutMs}m…
+    [90m317| [39m      )[33m,[39m
+
+
+
+

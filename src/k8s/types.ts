@@ -150,7 +150,8 @@ export interface TaskRequest {
     | 'secret.add'
     | 'secret.remove'
     | 'secret.list'
-    | 'catalog.list';
+    | 'catalog.list'
+    | 'commit_channel_config';
   taskId?: string;
   yaml?: string; // deploy_channel: Kubernetes YAML to apply
   channelName?: string; // control_channel: target channel pod name (e.g. 'telegram')
