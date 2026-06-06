@@ -631,3 +631,236 @@ describe('reconcileOrphanedBootstrapsOnStartup (integration)', () => {
     expect(msg.payload.text).toContain('nothing was installed');
   });
 });
+
+// ── Story 181: runUpgrade + processCommitChannelConfig upgrade integration ────
+
+import { runUpgrade } from './bootstrap-runner.js';
+import type { RunUpgradeOpts } from './bootstrap-runner.js';
+
+/**
+ * Build a minimal fake K8s AppsV1 client for the upgrade integration tests.
+ * The Deployment's runtime volume points at `currentPvcName`.
+ */
+function makeFakeAppsV1(currentPvcName: string) {
+  return {
+    readNamespacedDeployment: async () => ({
+      spec: {
+        template: {
+          spec: {
+            volumes: [
+              {
+                name: 'runtime',
+                persistentVolumeClaim: { claimName: currentPvcName },
+              },
+            ],
+          },
+        },
+      },
+    }),
+  } as any;
+}
+
+/**
+ * Build the full fake K8s deps for runUpgrade — extends the base bootstrap
+ * k8sDeps with appsV1 and tracks created PVCs and Jobs.
+ */
+function makeUpgradeK8sDeps(currentPvcName: string): ReturnType<
+  typeof makeFakeK8sDeps
+> & {
+  appsV1: ReturnType<typeof makeFakeAppsV1>;
+} {
+  const base = makeFakeK8sDeps();
+  // Simulate PVC not found (so it gets created)
+  (base.coreV1 as any).readNamespacedPersistentVolumeClaim = async () => {
+    throw new Error('Not Found');
+  };
+  return {
+    ...base,
+    appsV1: makeFakeAppsV1(currentPvcName),
+  };
+}
+
+/**
+ * Build CommitChannelConfigDeps with upgrade-path deps wired in.
+ */
+function makeUpgradeCommitDeps(): ReturnType<typeof makeCommitDeps> & {
+  patchedDeployments: Array<{ instanceName: string; newPvcName: string }>;
+  rolledOutDeployments: string[];
+  scheduledOldPvcDeletions: string[];
+} {
+  const base = makeCommitDeps();
+  const patchedDeployments: Array<{
+    instanceName: string;
+    newPvcName: string;
+  }> = [];
+  const rolledOutDeployments: string[] = [];
+  const scheduledOldPvcDeletions: string[] = [];
+
+  return {
+    ...base,
+    patchedDeployments,
+    rolledOutDeployments,
+    scheduledOldPvcDeletions,
+    deletedPvcs: [] as string[],
+    deleteJob: async () => {},
+    deletePvc: async (name: string) => {
+      (base as any).deletedPvcs ??= [];
+      ((base as any).deletedPvcs as string[]).push(name);
+    },
+    readPvcFiles: async () => ({
+      packageJson: JSON.stringify({ name: 'channel-base', version: '1.0.0' }),
+      packageLockJson: JSON.stringify({ lockfileVersion: 3, packages: {} }),
+    }),
+    recordMismatch: () => {},
+    patchDeployment: async (instanceName: string, newPvcName: string) => {
+      patchedDeployments.push({ instanceName, newPvcName });
+    },
+    waitForRollout: async (deploymentName: string) => {
+      rolledOutDeployments.push(deploymentName);
+    },
+    scheduleOldPvcDeletion: (oldPvcName: string) => {
+      scheduledOldPvcDeletions.push(oldPvcName);
+    },
+  };
+}
+
+describe('Story 181: runUpgrade + processCommitChannelConfig upgrade (integration)', () => {
+  it('happy path: creates versioned PVC, Job, then patched Deployment, waits for rollout, schedules old PVC deletion', async () => {
+    const currentPvcName = 'kubeclaw-channel-tg-upgrade-runtime';
+    const newPvcName = 'kubeclaw-channel-tg-upgrade-runtime-v2';
+    const activeBootstraps = new Map<string, string>();
+    const k8sDeps = makeUpgradeK8sDeps(currentPvcName);
+
+    // ── Phase 1: runUpgrade spawns PVC + Job ─────────────────────────────────
+    const upgradeResult = await runUpgrade({
+      instanceName: 'tg-upgrade',
+      targetManifestHash: 'abc123hash',
+      k8sDeps,
+      namespace: 'kubeclaw-test',
+      channelBaseImage: 'kubeclaw-channel-base:test',
+      activeBootstraps,
+    });
+
+    expect(upgradeResult.alreadyInProgress).toBeUndefined();
+    expect(upgradeResult.newPvcName).toBe(newPvcName);
+    expect(upgradeResult.oldPvcName).toBe(currentPvcName);
+    expect(k8sDeps.createdPvcs).toHaveLength(1);
+    expect(k8sDeps.createdPvcs[0].metadata?.name).toBe(newPvcName);
+    expect(k8sDeps.createdJobs).toHaveLength(1);
+    expect(k8sDeps.createdJobs[0].metadata?.name).toBe(
+      'kubeclaw-bootstrap-tg-upgrade-upgrade',
+    );
+    expect(activeBootstraps.has('tg-upgrade:upgrade')).toBe(true);
+
+    // ── Phase 2: processCommitChannelConfig (upgrade path) ───────────────────
+    const commitDeps = makeUpgradeCommitDeps();
+    const payload: CommitChannelConfigPayload = {
+      type: 'commit_channel_config',
+      bootstrapJobId: upgradeResult.upgradeJobId,
+      channel_type: 'telegram',
+      instance_name: 'tg-upgrade',
+      secret_data: {},
+      upgradeFromPvc: currentPvcName,
+    };
+
+    await processCommitChannelConfig(
+      payload,
+      commitDeps,
+      'kubeclaw-test',
+      'kubeclaw-channel-base:test',
+    );
+
+    // Deployment patched to new PVC name
+    expect(commitDeps.patchedDeployments).toHaveLength(1);
+    expect(commitDeps.patchedDeployments[0]).toEqual({
+      instanceName: 'tg-upgrade',
+      newPvcName: 'kubeclaw-channel-tg-upgrade-runtime',
+    });
+    // Rollout waited
+    expect(commitDeps.rolledOutDeployments).toContain(
+      'kubeclaw-channel-tg-upgrade',
+    );
+    // Old PVC scheduled for deletion
+    expect(commitDeps.scheduledOldPvcDeletions).toContain(currentPvcName);
+    // Release happened
+    expect(commitDeps.releasedInstances).toContain('tg-upgrade');
+    // Reply sent
+    expect(commitDeps.replies).toHaveLength(1);
+    expect(commitDeps.replies[0].payload).toEqual({ ok: true });
+    // SSE published and mentions upgrade
+    expect(commitDeps.sseMessages).toHaveLength(1);
+    expect(commitDeps.sseMessages[0].text).toContain('upgraded');
+  });
+
+  it('MANIFEST_DIVERGENCE on upgrade: deletes new PVC, does NOT patch Deployment, does NOT delete old PVC', async () => {
+    const currentPvcName = 'kubeclaw-channel-tg-mismatch-runtime';
+    const newPvcName = 'kubeclaw-channel-tg-mismatch-runtime-v2';
+    const expectedHash = 'expectedhash000';
+
+    const commitDeps = makeUpgradeCommitDeps();
+
+    // Return a hash that does NOT match expectedHash
+    commitDeps.getManifestHash = async () => expectedHash;
+    commitDeps.readPvcFiles = async () => ({
+      packageJson: JSON.stringify({ name: 'channel-base', version: '99.0.0' }),
+      packageLockJson: JSON.stringify({ lockfileVersion: 3, packages: {} }),
+    });
+
+    // Track PVC deletions separately
+    const deletedPvcs: string[] = [];
+    commitDeps.deletePvc = async (name: string) => {
+      deletedPvcs.push(name);
+    };
+
+    const payload: CommitChannelConfigPayload = {
+      type: 'commit_channel_config',
+      bootstrapJobId: 'upgrade-mismatch-job',
+      channel_type: 'telegram',
+      instance_name: 'tg-mismatch',
+      secret_data: {},
+      upgradeFromPvc: currentPvcName,
+    };
+
+    await processCommitChannelConfig(
+      payload,
+      commitDeps,
+      'kubeclaw-test',
+      'kubeclaw-channel-base:test',
+    );
+
+    // The NEW versioned PVC (nextRuntimePvcName(currentPvcName)) is deleted.
+    // currentPvcName has no version suffix → next is -v2.
+    expect(deletedPvcs).toContain(newPvcName);
+    // OLD PVC is NOT deleted
+    expect(deletedPvcs).not.toContain(currentPvcName);
+    // Deployment is NOT patched
+    expect(commitDeps.patchedDeployments).toHaveLength(0);
+    // Error reply sent
+    expect(commitDeps.replies).toHaveLength(1);
+    expect(commitDeps.replies[0].payload).toMatchObject({ ok: false });
+    // Release happened (retry allowed)
+    expect(commitDeps.releasedInstances).toContain('tg-mismatch');
+  });
+
+  it('concurrent upgrade rejection: runUpgrade returns alreadyInProgress=upgrade when composite key held', async () => {
+    const currentPvcName = 'kubeclaw-channel-tg-concurrent-runtime';
+    const activeBootstraps = new Map<string, string>([
+      ['tg-concurrent:upgrade', 'existing-upgrade-job-id'],
+    ]);
+    const k8sDeps = makeUpgradeK8sDeps(currentPvcName);
+
+    const result = await runUpgrade({
+      instanceName: 'tg-concurrent',
+      targetManifestHash: 'hashvalue',
+      k8sDeps,
+      namespace: 'kubeclaw-test',
+      channelBaseImage: 'kubeclaw-channel-base:test',
+      activeBootstraps,
+    });
+
+    expect(result.alreadyInProgress).toBe('upgrade');
+    // Nothing created
+    expect(k8sDeps.createdPvcs).toHaveLength(0);
+    expect(k8sDeps.createdJobs).toHaveLength(0);
+  });
+});

@@ -24,7 +24,11 @@ import { initDatabase } from './db.js';
 import * as db from './db.js';
 import { logger } from './logger.js';
 import { createLLMClient, DEFAULT_DIRECT_MODEL } from './runtime/llm-client.js';
-import { setupChannel } from './skills/orchestrator/channel-setup.js';
+import {
+  setupChannel,
+  patchRuntimePvc,
+  waitForDeploymentRollout,
+} from './skills/orchestrator/channel-setup.js';
 import { removeChannel } from './skills/orchestrator/channel-remove.js';
 import type { ChannelSetupInput } from './skills/orchestrator/types.js';
 import {
@@ -75,6 +79,7 @@ import {
   registerBootstrapMeta,
   deregisterBootstrapMeta,
   getBootstrapMeta,
+  runUpgrade,
 } from './k8s/bootstrap-runner.js';
 import type {
   BootstrapK8sDeps,
@@ -632,6 +637,37 @@ export const TOOLS: OpenAI.ChatCompletionTool[] = [
       },
     },
   },
+  // Story 181: upgrade_channel
+  {
+    type: 'function',
+    function: {
+      name: 'upgrade_channel',
+      description:
+        'Upgrade a running channel to a new manifest version using blue-green runtime PVC swap. ' +
+        'Creates a new versioned runtime PVC, runs the bootstrap skill against the target manifest, ' +
+        'then atomically patches the Deployment to the new PVC. ' +
+        'On failure (MANIFEST_DIVERGENCE, skill error, or refused credentials), the new PVC is deleted ' +
+        'and the channel continues serving on the old version with zero downtime. ' +
+        'On success, the old PVC is deleted after a grace period (default 5 min). ' +
+        'Returns an upgradeJobId for tracking via the SSE stream.',
+      parameters: {
+        type: 'object',
+        properties: {
+          instance_name: {
+            type: 'string',
+            description:
+              'Channel instance name (lowercase, hyphens only). Must match an existing channel Deployment.',
+          },
+          target_manifest_hash: {
+            type: 'string',
+            description:
+              'SHA-256 hash of the target manifest (from list_channel_manifests). The upgrade will be rejected if the installed packages do not match this hash.',
+          },
+        },
+        required: ['instance_name', 'target_manifest_hash'],
+      },
+    },
+  },
   // Story 180: bootstrap status tools
   {
     type: 'function',
@@ -1178,11 +1214,7 @@ async function handleBootstrapChannelFromSkill(
       },
       activeBootstraps,
       // Story 180: record terminal outcome and deregister metadata
-      recordTerminal: (
-        instName: string,
-        bjId: string,
-        outcome: string,
-      ) => {
+      recordTerminal: (instName: string, bjId: string, outcome: string) => {
         const meta = getBootstrapMeta(instName);
         if (meta) {
           db.recordBootstrapTerminal({
@@ -1191,7 +1223,8 @@ async function handleBootstrapChannelFromSkill(
             instanceName: instName,
             skillName: meta.skillName,
             startedAt: meta.startedAt,
-            outcome: outcome as import('./db.js').BootstrapHistoryRow['outcome'],
+            outcome:
+              outcome as import('./db.js').BootstrapHistoryRow['outcome'],
           });
         }
         deregisterBootstrapMeta(instName);
@@ -1230,6 +1263,176 @@ async function handleBootstrapChannelFromSkill(
       ``,
       `The bootstrap agent will appear on the SSE event stream (/events).`,
       `Respond to its questions via /chat in the admin shell.`,
+    ].join('\n');
+  } catch (err) {
+    return `Error: ${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+
+// ─── Story 181: upgrade_channel handler ──────────────────────────────────────
+
+async function handleUpgradeChannel(input: ToolInput): Promise<string> {
+  const instanceName = input.instance_name as string;
+  const targetManifestHash = input.target_manifest_hash as string;
+
+  if (!instanceName) return 'Error: instance_name is required.';
+  if (!targetManifestHash) return 'Error: target_manifest_hash is required.';
+
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(instanceName) || instanceName.length > 40) {
+    return `Error: instance_name must be lowercase alphanumeric with hyphens only (max 40 chars).`;
+  }
+
+  try {
+    const { BatchV1Api: BatchV1ApiClass } =
+      await import('@kubernetes/client-node');
+    const batchV1 = kc.makeApiClient(BatchV1ApiClass);
+    const k8sDeps = { coreV1, batchV1, appsV1 };
+
+    const channelBaseImage =
+      process.env.KUBECLAW_CHANNEL_BASE_IMAGE || 'kubeclaw-channel-base:latest';
+
+    const result = await runUpgrade({
+      instanceName,
+      targetManifestHash,
+      k8sDeps,
+      namespace: NAMESPACE,
+      channelBaseImage,
+      activeBootstraps,
+      timeoutSeconds: parseInt(
+        process.env.BOOTSTRAP_SKILL_TIMEOUT_SECONDS || '900',
+        10,
+      ),
+      pvcSize: process.env.BOOTSTRAP_PVC_SIZE || '1Gi',
+      redisUrl: process.env.REDIS_URL,
+      redisUsername: process.env.REDIS_BOOTSTRAP_USERNAME,
+      redisAdminPassword: process.env.REDIS_ADMIN_PASSWORD,
+      openaiApiKey: process.env.OPENAI_API_KEY,
+      openaiBaseUrl: process.env.OPENAI_BASE_URL,
+      directLlmModel: process.env.DIRECT_LLM_MODEL,
+    });
+
+    if (result.alreadyInProgress === 'upgrade') {
+      return JSON.stringify({
+        code: 'ALREADY_IN_PROGRESS',
+        reason: `upgrade already active for ${instanceName}`,
+      });
+    }
+    if (result.alreadyInProgress === 'bootstrap') {
+      return JSON.stringify({
+        code: 'ALREADY_IN_PROGRESS',
+        reason: `bootstrap already active for ${instanceName}`,
+      });
+    }
+
+    // Register metadata under composite key so bootstrap_status shows state: "upgrading"
+    const upgradeKey = `${instanceName}:upgrade`;
+    registerBootstrapMeta(upgradeKey, {
+      channelType: 'upgrade',
+      skillName: 'upgrade',
+      startedAt: new Date().toISOString(),
+    });
+
+    const graceSec = parseInt(
+      process.env.UPGRADE_OLD_PVC_GRACE_SECONDS || '300',
+      10,
+    );
+
+    // Build cleanup deps (same pattern as handleBootstrapChannelFromSkill)
+    const cleanupDeps: CleanupBootstrapDeps = {
+      deleteJob: async (name: string) => {
+        try {
+          await batchV1.deleteNamespacedJob({
+            name,
+            namespace: NAMESPACE,
+            gracePeriodSeconds: 0,
+          });
+        } catch (err: unknown) {
+          const status = (err as { response?: { statusCode?: number } })
+            ?.response?.statusCode;
+          if (status === 404) return;
+          throw err;
+        }
+      },
+      deletePvc: async (name: string) => {
+        try {
+          await coreV1.deleteNamespacedPersistentVolumeClaim({
+            name,
+            namespace: NAMESPACE,
+            gracePeriodSeconds: 0,
+          });
+        } catch (err: unknown) {
+          const status = (err as { response?: { statusCode?: number } })
+            ?.response?.statusCode;
+          if (status === 404) return;
+          throw err;
+        }
+      },
+      // Upgrade path never creates a credentials Secret — no-op
+      deleteSecret: async (_name: string) => {},
+      publishSse: async (topic, payload) => {
+        try {
+          await getRedisClient().publish(topic, JSON.stringify(payload));
+        } catch (err) {
+          logger.warn({ topic, err }, 'upgrade cleanup: failed to publish SSE');
+        }
+      },
+      activeBootstraps,
+      recordTerminal: (instKey: string, bjId: string, outcome: string) => {
+        const meta = getBootstrapMeta(instKey);
+        if (meta) {
+          db.recordBootstrapTerminal({
+            bootstrapJobId: bjId,
+            channelType: meta.channelType,
+            instanceName: instKey,
+            skillName: meta.skillName,
+            startedAt: meta.startedAt,
+            outcome:
+              outcome as import('./db.js').BootstrapHistoryRow['outcome'],
+          });
+        }
+        deregisterBootstrapMeta(instKey);
+      },
+    };
+
+    const upgradeJobName = `kubeclaw-bootstrap-${instanceName}-upgrade`;
+    const timeoutSeconds = parseInt(
+      process.env.BOOTSTRAP_SKILL_TIMEOUT_SECONDS || '900',
+      10,
+    );
+
+    // Fire-and-forget: watch the upgrade Job for DeadlineExceeded (Story 175 pattern)
+    waitForBootstrapJobCompletion(
+      upgradeJobName,
+      result.upgradeJobId,
+      upgradeKey,
+      {
+        waitForJob: (name: string, ms: number) =>
+          jobRunner.waitForJobCompletion(name, ms),
+        cleanupDeps,
+        bootstrapTimeoutSeconds: timeoutSeconds,
+      },
+    ).catch((err) => {
+      logger.warn(
+        { upgradeJobName, instanceName, err },
+        'upgrade: waitForBootstrapJobCompletion crashed unexpectedly',
+      );
+    });
+
+    return [
+      `Upgrade started successfully.`,
+      `  upgradeJobId: ${result.upgradeJobId}`,
+      `  Instance: ${instanceName}`,
+      `  Old PVC: ${result.oldPvcName}`,
+      `  New PVC: ${result.newPvcName}`,
+      `  Target hash: ${targetManifestHash}`,
+      ``,
+      `The upgrade agent will appear on the SSE event stream (/events).`,
+      `Old PVC will be deleted ${graceSec}s after successful rollout.`,
+      `On failure, the new PVC is deleted and the channel continues on ${result.oldPvcName}.`,
+      ``,
+      `DURABILITY NOTE: The old PVC grace-period deletion is scheduled via setTimeout.`,
+      `If the orchestrator restarts during the grace window, the deletion is lost.`,
+      `(Follow-on story: persist pending deletions in SQLite for durability.)`,
     ].join('\n');
   } catch (err) {
     return `Error: ${err instanceof Error ? err.message : String(err)}`;
@@ -1636,9 +1839,8 @@ async function handleBootstrapStatus(input: ToolInput): Promise<string> {
   const channelTypeFilter = input.channel_type_filter as string | undefined;
   const includeLogs = (input.include_logs as boolean | undefined) ?? false;
 
-  const { BatchV1Api: BatchV1ApiClass } = await import(
-    '@kubernetes/client-node'
-  );
+  const { BatchV1Api: BatchV1ApiClass } =
+    await import('@kubernetes/client-node');
   const batchV1 = kc.makeApiClient(BatchV1ApiClass);
 
   const deps: BootstrapStatusDeps = {
@@ -1758,6 +1960,8 @@ export async function executeTool(
       return handleUnsetGroupCredential(input);
     case 'bootstrap_channel_from_skill':
       return handleBootstrapChannelFromSkill(input);
+    case 'upgrade_channel':
+      return handleUpgradeChannel(input);
     case 'report_step':
       return handleReportStep(input);
     case 'bootstrap_status':

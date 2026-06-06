@@ -530,3 +530,175 @@ describe('Story 180: recordTerminal wiring in processCommitChannelConfig', () =>
     ).resolves.not.toThrow();
   });
 });
+
+// ── Upgrade path (Story 181) ──────────────────────────────────────────────────
+
+describe('processCommitChannelConfig — upgrade path', () => {
+  function makeUpgradeDeps(
+    overrides: Partial<CommitChannelConfigDeps> = {},
+  ): CommitChannelConfigDeps & {
+    patchedDeployments: Array<{ instanceName: string; newPvcName: string }>;
+    rolledOutDeployments: string[];
+    scheduledOldPvcDeletions: string[];
+  } {
+    const patchedDeployments: Array<{
+      instanceName: string;
+      newPvcName: string;
+    }> = [];
+    const rolledOutDeployments: string[] = [];
+    const scheduledOldPvcDeletions: string[] = [];
+    return {
+      createSecret: vi.fn().mockResolvedValue(undefined),
+      createDeployment: vi.fn().mockResolvedValue(undefined),
+      publishReply: vi.fn().mockResolvedValue(undefined),
+      publishSse: vi.fn().mockResolvedValue(undefined),
+      getManifestHash: vi.fn().mockResolvedValue(null),
+      releaseBootstrap: vi.fn(),
+      readPvcFiles: vi.fn().mockResolvedValue({
+        packageJson: APPROVED_PKG_JSON,
+        packageLockJson: APPROVED_LOCK_JSON,
+      }),
+      deleteJob: vi.fn().mockResolvedValue(undefined),
+      deletePvc: vi.fn().mockResolvedValue(undefined),
+      recordMismatch: vi.fn(),
+      patchDeployment: vi
+        .fn()
+        .mockImplementation(
+          async (instanceName: string, newPvcName: string) => {
+            patchedDeployments.push({ instanceName, newPvcName });
+          },
+        ),
+      waitForRollout: vi
+        .fn()
+        .mockImplementation(async (deploymentName: string) => {
+          rolledOutDeployments.push(deploymentName);
+        }),
+      scheduleOldPvcDeletion: vi
+        .fn()
+        .mockImplementation((oldPvcName: string) => {
+          scheduledOldPvcDeletions.push(oldPvcName);
+        }),
+      patchedDeployments,
+      rolledOutDeployments,
+      scheduledOldPvcDeletions,
+      ...overrides,
+    };
+  }
+
+  const upgradePayload: CommitChannelConfigPayload = {
+    type: 'commit_channel_config',
+    bootstrapJobId: 'upgrade-job-abc',
+    channel_type: 'telegram',
+    instance_name: 'my-telegram',
+    secret_data: { TELEGRAM_BOT_TOKEN: 'bot123:token' },
+    upgradeFromPvc: 'kubeclaw-channel-my-telegram-runtime-v1',
+  };
+
+  it('calls patchDeployment with instanceName and the new PVC name (from pvcName)', async () => {
+    const deps = makeUpgradeDeps();
+    await processCommitChannelConfig(
+      upgradePayload,
+      deps,
+      'kubeclaw-test',
+      'kubeclaw-channel-base:latest',
+    );
+    expect(deps.patchedDeployments).toEqual([
+      {
+        instanceName: 'my-telegram',
+        newPvcName: 'kubeclaw-channel-my-telegram-runtime',
+      },
+    ]);
+  });
+
+  it('calls waitForRollout with the deployment name', async () => {
+    const deps = makeUpgradeDeps();
+    await processCommitChannelConfig(
+      upgradePayload,
+      deps,
+      'kubeclaw-test',
+      'kubeclaw-channel-base:latest',
+    );
+    expect(deps.rolledOutDeployments).toContain('kubeclaw-channel-my-telegram');
+  });
+
+  it('schedules old PVC deletion after rollout succeeds', async () => {
+    const deps = makeUpgradeDeps();
+    await processCommitChannelConfig(
+      upgradePayload,
+      deps,
+      'kubeclaw-test',
+      'kubeclaw-channel-base:latest',
+    );
+    expect(deps.scheduledOldPvcDeletions).toContain(
+      'kubeclaw-channel-my-telegram-runtime-v1',
+    );
+  });
+
+  it('does NOT create a new Deployment (patch only)', async () => {
+    const deps = makeUpgradeDeps();
+    await processCommitChannelConfig(
+      upgradePayload,
+      deps,
+      'kubeclaw-test',
+      'kubeclaw-channel-base:latest',
+    );
+    expect(deps.createDeployment).not.toHaveBeenCalled();
+  });
+
+  it('does NOT create or update the Secret (credentials preserved)', async () => {
+    const deps = makeUpgradeDeps();
+    await processCommitChannelConfig(
+      upgradePayload,
+      deps,
+      'kubeclaw-test',
+      'kubeclaw-channel-base:latest',
+    );
+    expect(deps.createSecret).not.toHaveBeenCalled();
+  });
+
+  it('releases bootstrap on upgrade success', async () => {
+    const deps = makeUpgradeDeps();
+    await processCommitChannelConfig(
+      upgradePayload,
+      deps,
+      'kubeclaw-test',
+      'kubeclaw-channel-base:latest',
+    );
+    expect(deps.releaseBootstrap).toHaveBeenCalledWith('my-telegram');
+  });
+
+  it('publishes SSE success message on upgrade success', async () => {
+    const deps = makeUpgradeDeps();
+    await processCommitChannelConfig(
+      upgradePayload,
+      deps,
+      'kubeclaw-test',
+      'kubeclaw-channel-base:latest',
+    );
+    const sseCall = (
+      deps.publishSse as ReturnType<typeof vi.fn>
+    ).mock.calls.find(([, text]: [string, string]) =>
+      /upgraded|patched|ready/i.test(text),
+    );
+    expect(sseCall).toBeDefined();
+  });
+
+  it('MANIFEST_DIVERGENCE on upgrade: deletes new PVC, does NOT patch Deployment, releases bootstrap', async () => {
+    const deps = makeUpgradeDeps({
+      getManifestHash: vi.fn().mockResolvedValue(APPROVED_HASH),
+      readPvcFiles: vi.fn().mockResolvedValue({
+        packageJson: DEVIATED_PKG_JSON,
+        packageLockJson: DEVIATED_LOCK_JSON,
+      }),
+    });
+    await processCommitChannelConfig(
+      upgradePayload,
+      deps,
+      'kubeclaw-test',
+      'kubeclaw-channel-base:latest',
+    );
+    expect(deps.patchedDeployments).toHaveLength(0);
+    expect(deps.deletePvc).toHaveBeenCalled();
+    expect(deps.releaseBootstrap).toHaveBeenCalledWith('my-telegram');
+  });
+});

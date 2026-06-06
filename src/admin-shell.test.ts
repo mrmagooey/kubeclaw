@@ -178,7 +178,9 @@ vi.mock('./k8s/ipc-redis.js', () => ({
 }));
 
 vi.mock('./k8s/bootstrap-runner.js', () => ({
-  bootstrapChannelFromSkill: vi.fn().mockResolvedValue({ bootstrapJobId: 'test-job-id' }),
+  bootstrapChannelFromSkill: vi
+    .fn()
+    .mockResolvedValue({ bootstrapJobId: 'test-job-id' }),
   waitForBootstrapJobCompletion: vi.fn().mockResolvedValue(undefined),
   bootstrapStatus: vi.fn().mockResolvedValue({ active: [], recent: [] }),
   registerBootstrapMeta: vi.fn(),
@@ -223,6 +225,8 @@ describe('admin-shell TOOLS array', () => {
       'register_bootstrap_skill',
       'remove_bootstrap_skill',
       'bootstrap_channel_from_skill',
+      // Story 181: upgrade channel
+      'upgrade_channel',
       // Story 180: bootstrap status tools
       'report_step',
       'bootstrap_status',
@@ -910,6 +914,35 @@ describe('executeTool', () => {
       const result = await executeTool('remove_specialist', { name: 'R' });
       expect(result).toContain('Changes are live');
       expect(result).not.toContain('next orchestrator restart');
+    });
+  });
+
+  // ── upgrade_channel tool (Story 181) ─────────────────────────────────────────
+  describe('upgrade_channel', () => {
+    it('returns error if instance_name is missing', async () => {
+      const result = await executeTool('upgrade_channel', {
+        target_manifest_hash: 'abc123',
+      });
+      expect(result).toMatch(
+        /instance_name.*required|required.*instance_name/i,
+      );
+    });
+
+    it('returns error if target_manifest_hash is missing', async () => {
+      const result = await executeTool('upgrade_channel', {
+        instance_name: 'my-telegram',
+      });
+      expect(result).toMatch(
+        /target_manifest_hash.*required|required.*target_manifest_hash/i,
+      );
+    });
+
+    it('returns error for invalid instance_name (uppercase)', async () => {
+      const result = await executeTool('upgrade_channel', {
+        instance_name: 'My-Telegram',
+        target_manifest_hash: 'abc123',
+      });
+      expect(result).toMatch(/lowercase|alphanumeric/i);
     });
   });
 });
