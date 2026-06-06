@@ -379,7 +379,7 @@ async function main(): Promise<void> {
   // ── Bootstrap channel IPC deps (Story 174) ───────────────────────────────
   const appsApi = kc.makeApiClient(AppsV1Api);
   const channelBaseImage =
-    process.env.KUBECLAW_CHANNEL_BASE_IMAGE || 'kubeclaw-channel-base:latest';
+    process.env.KUBECLAW_BOOTSTRAP_AGENT_IMAGE || 'kubeclaw-agent:claude';
   const redisForBootstrap = getRedisClient();
 
   registerBootstrapDeps(

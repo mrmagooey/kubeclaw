@@ -202,7 +202,7 @@ describe('bootstrapChannelFromSkill', () => {
       instanceName: 'my-telegram',
       k8sDeps: { coreV1: fakeK8s.coreV1, batchV1: fakeK8s.batchV1 },
       namespace: 'test-ns',
-      channelBaseImage: 'kubeclaw-channel-base:latest',
+      channelBaseImage: 'kubeclaw-agent:claude',
       activeBootstraps: new Map(),
     });
     expect(result.bootstrapJobId).toBeTruthy();
@@ -218,7 +218,7 @@ describe('bootstrapChannelFromSkill', () => {
       instanceName: 'my-telegram',
       k8sDeps: { coreV1: fakeK8s.coreV1, batchV1: fakeK8s.batchV1 },
       namespace: 'test-ns',
-      channelBaseImage: 'kubeclaw-channel-base:latest',
+      channelBaseImage: 'kubeclaw-agent:claude',
       activeBootstraps: new Map(),
     });
     expect(fakeK8s.createdJobs[0].name).toBe('kubeclaw-bootstrap-my-telegram');
@@ -232,7 +232,7 @@ describe('bootstrapChannelFromSkill', () => {
       instanceName: 'my-telegram',
       k8sDeps: { coreV1: fakeK8s.coreV1, batchV1: fakeK8s.batchV1 },
       namespace: 'test-ns',
-      channelBaseImage: 'kubeclaw-channel-base:latest',
+      channelBaseImage: 'kubeclaw-agent:claude',
       activeBootstraps,
     });
     expect(result.alreadyInProgress).toBe(true);
@@ -247,7 +247,7 @@ describe('bootstrapChannelFromSkill', () => {
       instanceName: 'my-telegram',
       k8sDeps: { coreV1: fakeK8s.coreV1, batchV1: fakeK8s.batchV1 },
       namespace: 'test-ns',
-      channelBaseImage: 'kubeclaw-channel-base:latest',
+      channelBaseImage: 'kubeclaw-agent:claude',
       activeBootstraps: new Map(),
     });
     const jobBody = fakeK8s.createdJobs[0].body as {
@@ -272,7 +272,7 @@ describe('bootstrapChannelFromSkill', () => {
       instanceName: 'my-telegram',
       k8sDeps: { coreV1: fakeK8s.coreV1, batchV1: fakeK8s.batchV1 },
       namespace: 'test-ns',
-      channelBaseImage: 'kubeclaw-channel-base:latest',
+      channelBaseImage: 'kubeclaw-agent:claude',
       activeBootstraps: new Map(),
     });
     const jobBody = fakeK8s.createdJobs[0].body as {
@@ -289,7 +289,7 @@ describe('bootstrapChannelFromSkill', () => {
       instanceName: 'my-telegram',
       k8sDeps: { coreV1: fakeK8s.coreV1, batchV1: fakeK8s.batchV1 },
       namespace: 'test-ns',
-      channelBaseImage: 'kubeclaw-channel-base:latest',
+      channelBaseImage: 'kubeclaw-agent:claude',
       activeBootstraps,
     });
     expect(activeBootstraps.get('my-telegram')).toBe(result.bootstrapJobId);
@@ -302,7 +302,7 @@ describe('bootstrapChannelFromSkill', () => {
       instanceName: 'my-telegram',
       k8sDeps: { coreV1: fakeK8s.coreV1, batchV1: fakeK8s.batchV1 },
       namespace: 'test-ns',
-      channelBaseImage: 'kubeclaw-channel-base:latest',
+      channelBaseImage: 'kubeclaw-agent:claude',
       activeBootstraps: new Map(),
       timeoutSeconds: 60,
     });
@@ -319,7 +319,7 @@ describe('bootstrapChannelFromSkill', () => {
       instanceName: 'my-telegram',
       k8sDeps: { coreV1: fakeK8s.coreV1, batchV1: fakeK8s.batchV1 },
       namespace: 'test-ns',
-      channelBaseImage: 'kubeclaw-channel-base:latest',
+      channelBaseImage: 'kubeclaw-agent:claude',
       activeBootstraps: new Map(),
     });
     const jobBody = fakeK8s.createdJobs[0].body as {
@@ -368,7 +368,7 @@ describe('bootstrapChannelFromSkill — Story 182: accessModes wiring', () => {
       instanceName: 'my-telegram',
       k8sDeps: { coreV1: fakeK8s.coreV1, batchV1: fakeK8s.batchV1 },
       namespace: 'test-ns',
-      channelBaseImage: 'kubeclaw-channel-base:latest',
+      channelBaseImage: 'kubeclaw-agent:claude',
       activeBootstraps: new Map(),
     });
     const pvcBody = fakeK8s.createdPvcs[0].body as {
@@ -385,7 +385,7 @@ describe('bootstrapChannelFromSkill — Story 182: accessModes wiring', () => {
       instanceName: 'my-telegram',
       k8sDeps: { coreV1: fakeK8s.coreV1, batchV1: fakeK8s.batchV1 },
       namespace: 'test-ns',
-      channelBaseImage: 'kubeclaw-channel-base:latest',
+      channelBaseImage: 'kubeclaw-agent:claude',
       activeBootstraps: new Map(),
     });
     const pvcBody = fakeK8s.createdPvcs[0].body as {
@@ -402,7 +402,7 @@ describe('bootstrapChannelFromSkill — Story 182: accessModes wiring', () => {
       instanceName: 'my-telegram',
       k8sDeps: { coreV1: fakeK8s.coreV1, batchV1: fakeK8s.batchV1 },
       namespace: 'test-ns',
-      channelBaseImage: 'kubeclaw-channel-base:latest',
+      channelBaseImage: 'kubeclaw-agent:claude',
       activeBootstraps: new Map(),
     });
     const pvcBody = fakeK8s.createdPvcs[0].body as {
@@ -418,7 +418,7 @@ describe('bootstrapChannelFromSkill — Story 182: accessModes wiring', () => {
       instanceName: 'my-telegram',
       k8sDeps: { coreV1: fakeK8s.coreV1, batchV1: fakeK8s.batchV1 },
       namespace: 'test-ns',
-      channelBaseImage: 'kubeclaw-channel-base:latest',
+      channelBaseImage: 'kubeclaw-agent:claude',
       activeBootstraps: new Map(),
     });
     const jobBody = fakeK8s.createdJobs[0].body as {
@@ -454,7 +454,7 @@ describe('bootstrapChannelFromSkill — Story 182: accessModes wiring', () => {
       instanceName: 'my-telegram',
       k8sDeps: { coreV1: fakeK8s.coreV1, batchV1: fakeK8s.batchV1 },
       namespace: 'test-ns',
-      channelBaseImage: 'kubeclaw-channel-base:latest',
+      channelBaseImage: 'kubeclaw-agent:claude',
       activeBootstraps: new Map(),
     });
     const jobBody = fakeK8s.createdJobs[0].body as {
@@ -1373,7 +1373,7 @@ function makeBaseUpgradeOpts(
     targetManifestHash: 'abc123',
     k8sDeps,
     namespace: 'kubeclaw-test',
-    channelBaseImage: 'kubeclaw-channel-base:latest',
+    channelBaseImage: 'kubeclaw-agent:claude',
     activeBootstraps,
   };
 }
@@ -1486,7 +1486,7 @@ describe('bootstrapChannelFromSkill — Story 183: NPM_CONFIG_REGISTRY injection
       instanceName: 'my-telegram',
       k8sDeps: { coreV1: fakeK8s183.coreV1, batchV1: fakeK8s183.batchV1 },
       namespace: 'test-ns',
-      channelBaseImage: 'kubeclaw-channel-base:latest',
+      channelBaseImage: 'kubeclaw-agent:claude',
       activeBootstraps: new Map(),
     });
     const envMap = getBootstrapEnvMap(fakeK8s183);
@@ -1500,7 +1500,7 @@ describe('bootstrapChannelFromSkill — Story 183: NPM_CONFIG_REGISTRY injection
       instanceName: 'my-telegram',
       k8sDeps: { coreV1: fakeK8s183.coreV1, batchV1: fakeK8s183.batchV1 },
       namespace: 'test-ns',
-      channelBaseImage: 'kubeclaw-channel-base:latest',
+      channelBaseImage: 'kubeclaw-agent:claude',
       activeBootstraps: new Map(),
       npmRegistry: 'https://npm.option.corp',
     });
@@ -1515,7 +1515,7 @@ describe('bootstrapChannelFromSkill — Story 183: NPM_CONFIG_REGISTRY injection
       instanceName: 'my-telegram',
       k8sDeps: { coreV1: fakeK8s183.coreV1, batchV1: fakeK8s183.batchV1 },
       namespace: 'test-ns',
-      channelBaseImage: 'kubeclaw-channel-base:latest',
+      channelBaseImage: 'kubeclaw-agent:claude',
       activeBootstraps: new Map(),
     });
     const envMap = getBootstrapEnvMap(fakeK8s183);
@@ -1530,7 +1530,7 @@ describe('bootstrapChannelFromSkill — Story 183: NPM_CONFIG_REGISTRY injection
       instanceName: 'my-telegram',
       k8sDeps: { coreV1: fakeK8s183.coreV1, batchV1: fakeK8s183.batchV1 },
       namespace: 'test-ns',
-      channelBaseImage: 'kubeclaw-channel-base:latest',
+      channelBaseImage: 'kubeclaw-agent:claude',
       activeBootstraps: new Map(),
       npmRegistry: 'https://opt.registry.corp',
     });
@@ -1566,7 +1566,7 @@ describe('bootstrapChannelFromSkill — Story 183: NPM_CONFIG_REGISTRY injection
       targetManifestHash: 'abc123',
       k8sDeps: k8sDepsUpgrade,
       namespace: 'test-ns',
-      channelBaseImage: 'kubeclaw-channel-base:latest',
+      channelBaseImage: 'kubeclaw-agent:claude',
       activeBootstraps: active,
     });
     const jobBody = fakeK8s183.createdJobs[0].body as {

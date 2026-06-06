@@ -12,7 +12,7 @@
  *    a steady-state Deployment that mounts `kubeclaw-channel-tg-upgrade-e2e-runtime`.
  * 2. A new target manifest (different package.json version) must be published to
  *    kubeclaw-channel-manifests as `telegram-v2.json` with a new `manifestHash`.
- * 3. The kubeclaw-channel-base image in minikube must be built from the new manifest.
+ * 3. The kubeclaw-agent image in minikube must be built from the new manifest.
  *
  * Happy path (AC1 + AC2 + AC3 + AC4):
  * 1. Call `upgrade_channel` via admin-shell chat for instance `tg-upgrade-e2e` with

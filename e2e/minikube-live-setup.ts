@@ -966,14 +966,10 @@ export default async function setup() {
     'e2e/fixtures/test-oauth-provider/Dockerfile',
     'e2e/fixtures/test-oauth-provider',
   );
-  // Slim channel-base image — used by bootstrap Jobs (Story 174)
-  await ensureImage(
-    'kubeclaw-channel-base:latest',
-    'container/channel-base/Dockerfile',
-    '.',
-    ['/app/channel-loader.js'],
-    ['container/channel-base'],
-  );
+  // Bootstrap Jobs and steady-state channel pods share the generic agent image
+  // (the main kubeclaw-agent:claude built above). The image's channel-loader.js
+  // dispatches on KUBECLAW_BOOTSTRAP_SKILL / presence of /runtime/channel-entry.js,
+  // so no separate channel-base image is needed.
 
   try {
     await installCertManager();

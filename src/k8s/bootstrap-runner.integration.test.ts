@@ -230,7 +230,7 @@ describe('bootstrapChannelFromSkill (bootstrap-runner integration)', () => {
       instanceName: 'tg-integ',
       k8sDeps,
       namespace: 'kubeclaw-test',
-      channelBaseImage: 'kubeclaw-channel-base:test',
+      channelBaseImage: 'kubeclaw-agent:test',
       activeBootstraps,
     });
 
@@ -247,7 +247,7 @@ describe('bootstrapChannelFromSkill (bootstrap-runner integration)', () => {
       instanceName: 'tg-integ',
       k8sDeps,
       namespace: 'kubeclaw-test',
-      channelBaseImage: 'kubeclaw-channel-base:test',
+      channelBaseImage: 'kubeclaw-agent:test',
       activeBootstraps,
     });
 
@@ -263,7 +263,7 @@ describe('bootstrapChannelFromSkill (bootstrap-runner integration)', () => {
       instanceName: 'tg-integ',
       k8sDeps,
       namespace: 'kubeclaw-test',
-      channelBaseImage: 'kubeclaw-channel-base:test',
+      channelBaseImage: 'kubeclaw-agent:test',
       activeBootstraps,
     });
 
@@ -279,7 +279,7 @@ describe('bootstrapChannelFromSkill (bootstrap-runner integration)', () => {
       instanceName: 'tg-integ',
       k8sDeps,
       namespace: 'kubeclaw-test',
-      channelBaseImage: 'kubeclaw-channel-base:test',
+      channelBaseImage: 'kubeclaw-agent:test',
       activeBootstraps,
     });
 
@@ -297,7 +297,7 @@ describe('bootstrapChannelFromSkill (bootstrap-runner integration)', () => {
       instanceName: 'tg-integ',
       k8sDeps,
       namespace: 'kubeclaw-test',
-      channelBaseImage: 'kubeclaw-channel-base:test',
+      channelBaseImage: 'kubeclaw-agent:test',
       activeBootstraps,
     });
 
@@ -313,7 +313,7 @@ describe('bootstrapChannelFromSkill (bootstrap-runner integration)', () => {
       instanceName: 'tg-integ',
       k8sDeps,
       namespace: 'kubeclaw-test',
-      channelBaseImage: 'kubeclaw-channel-base:test',
+      channelBaseImage: 'kubeclaw-agent:test',
       activeBootstraps,
     });
 
@@ -345,7 +345,7 @@ describe('processCommitChannelConfig (bootstrap commit integration)', () => {
       payload,
       deps,
       'kubeclaw-test',
-      'kubeclaw-channel-base:latest',
+      'kubeclaw-agent:claude',
     );
 
     expect(deps.createdSecrets).toHaveLength(1);
@@ -359,7 +359,7 @@ describe('processCommitChannelConfig (bootstrap commit integration)', () => {
       payload,
       deps,
       'kubeclaw-test',
-      'kubeclaw-channel-base:latest',
+      'kubeclaw-agent:claude',
     );
 
     expect(deps.createdSecrets[0].name).toBe(
@@ -375,7 +375,7 @@ describe('processCommitChannelConfig (bootstrap commit integration)', () => {
       payload,
       deps,
       'kubeclaw-test',
-      'kubeclaw-channel-base:latest',
+      'kubeclaw-agent:claude',
     );
 
     expect(deps.createdSecrets[0].data).toEqual({
@@ -388,7 +388,7 @@ describe('processCommitChannelConfig (bootstrap commit integration)', () => {
       payload,
       deps,
       'kubeclaw-test',
-      'kubeclaw-channel-base:latest',
+      'kubeclaw-agent:claude',
     );
 
     expect(deps.releasedInstances).toContain('tg-integ');
@@ -408,7 +408,7 @@ describe('processCommitChannelConfig (bootstrap commit integration)', () => {
         },
       },
       'kubeclaw-test',
-      'kubeclaw-channel-base:latest',
+      'kubeclaw-agent:claude',
     );
 
     expect(activeBootstraps.has('tg-integ')).toBe(false);
@@ -419,7 +419,7 @@ describe('processCommitChannelConfig (bootstrap commit integration)', () => {
       payload,
       deps,
       'kubeclaw-test',
-      'kubeclaw-channel-base:latest',
+      'kubeclaw-agent:claude',
     );
 
     expect(deps.sseMessages).toHaveLength(1);
@@ -439,7 +439,7 @@ describe('processCommitChannelConfig (bootstrap commit integration)', () => {
       payload,
       failDeps,
       'kubeclaw-test',
-      'kubeclaw-channel-base:latest',
+      'kubeclaw-agent:claude',
     );
 
     expect(deps.createdDeployments).toHaveLength(0);
@@ -737,7 +737,7 @@ describe('Story 181: runUpgrade + processCommitChannelConfig upgrade (integratio
       targetManifestHash: 'abc123hash',
       k8sDeps,
       namespace: 'kubeclaw-test',
-      channelBaseImage: 'kubeclaw-channel-base:test',
+      channelBaseImage: 'kubeclaw-agent:test',
       activeBootstraps,
     });
 
@@ -767,7 +767,7 @@ describe('Story 181: runUpgrade + processCommitChannelConfig upgrade (integratio
       payload,
       commitDeps,
       'kubeclaw-test',
-      'kubeclaw-channel-base:test',
+      'kubeclaw-agent:test',
     );
 
     // Deployment patched to new PVC name
@@ -825,7 +825,7 @@ describe('Story 181: runUpgrade + processCommitChannelConfig upgrade (integratio
       payload,
       commitDeps,
       'kubeclaw-test',
-      'kubeclaw-channel-base:test',
+      'kubeclaw-agent:test',
     );
 
     // The NEW versioned PVC (nextRuntimePvcName(currentPvcName)) is deleted.
@@ -854,7 +854,7 @@ describe('Story 181: runUpgrade + processCommitChannelConfig upgrade (integratio
       targetManifestHash: 'hashvalue',
       k8sDeps,
       namespace: 'kubeclaw-test',
-      channelBaseImage: 'kubeclaw-channel-base:test',
+      channelBaseImage: 'kubeclaw-agent:test',
       activeBootstraps,
     });
 

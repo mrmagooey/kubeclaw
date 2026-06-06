@@ -74,7 +74,7 @@ describe('processCommitChannelConfig', () => {
       validPayload,
       deps,
       'kubeclaw-test',
-      'kubeclaw-channel-base:latest',
+      'kubeclaw-agent:claude',
     );
     expect(deps.createSecret).toHaveBeenCalledWith(
       'kubeclaw-channel-my-telegram-credentials',
@@ -88,7 +88,7 @@ describe('processCommitChannelConfig', () => {
       validPayload,
       deps,
       'kubeclaw-test',
-      'kubeclaw-channel-base:latest',
+      'kubeclaw-agent:claude',
     );
     expect(deps.createDeployment).toHaveBeenCalledOnce();
     const deployment = (deps.createDeployment as ReturnType<typeof vi.fn>).mock
@@ -102,7 +102,7 @@ describe('processCommitChannelConfig', () => {
       validPayload,
       deps,
       'kubeclaw-test',
-      'kubeclaw-channel-base:latest',
+      'kubeclaw-agent:claude',
     );
     const deployment = (deps.createDeployment as ReturnType<typeof vi.fn>).mock
       .calls[0][0];
@@ -121,7 +121,7 @@ describe('processCommitChannelConfig', () => {
       validPayload,
       deps,
       'kubeclaw-test',
-      'kubeclaw-channel-base:latest',
+      'kubeclaw-agent:claude',
     );
     const deployment = (deps.createDeployment as ReturnType<typeof vi.fn>).mock
       .calls[0][0];
@@ -139,7 +139,7 @@ describe('processCommitChannelConfig', () => {
       validPayload,
       deps,
       'kubeclaw-test',
-      'kubeclaw-channel-base:latest',
+      'kubeclaw-agent:claude',
     );
     expect(deps.publishReply).toHaveBeenCalledWith(
       'kubeclaw:bootstrap-reply:job-abc-123',
@@ -153,7 +153,7 @@ describe('processCommitChannelConfig', () => {
       validPayload,
       deps,
       'kubeclaw-test',
-      'kubeclaw-channel-base:latest',
+      'kubeclaw-agent:claude',
     );
     expect(deps.publishSse).toHaveBeenCalledWith(
       'kubeclaw:bootstrap:job-abc-123',
@@ -167,7 +167,7 @@ describe('processCommitChannelConfig', () => {
       validPayload,
       deps,
       'kubeclaw-test',
-      'kubeclaw-channel-base:latest',
+      'kubeclaw-agent:claude',
     );
     expect(deps.releaseBootstrap).toHaveBeenCalledWith('my-telegram');
   });
@@ -180,7 +180,7 @@ describe('processCommitChannelConfig', () => {
       validPayload,
       deps,
       'kubeclaw-test',
-      'kubeclaw-channel-base:latest',
+      'kubeclaw-agent:claude',
     );
     expect(deps.publishReply).toHaveBeenCalledWith(
       'kubeclaw:bootstrap-reply:job-abc-123',
@@ -197,7 +197,7 @@ describe('processCommitChannelConfig', () => {
       validPayload,
       deps,
       'kubeclaw-test',
-      'kubeclaw-channel-base:latest',
+      'kubeclaw-agent:claude',
     );
     expect(deps.createDeployment).not.toHaveBeenCalled();
   });
@@ -208,12 +208,12 @@ describe('processCommitChannelConfig', () => {
       validPayload,
       deps,
       'kubeclaw-test',
-      'my-registry/kubeclaw-channel-base:v2',
+      'my-registry/kubeclaw-agent:v2',
     );
     const deployment = (deps.createDeployment as ReturnType<typeof vi.fn>).mock
       .calls[0][0];
     expect(deployment.spec.template.spec.containers[0].image).toBe(
-      'my-registry/kubeclaw-channel-base:v2',
+      'my-registry/kubeclaw-agent:v2',
     );
   });
 
@@ -223,7 +223,7 @@ describe('processCommitChannelConfig', () => {
       validPayload,
       deps,
       'kubeclaw-test',
-      'kubeclaw-channel-base:latest',
+      'kubeclaw-agent:claude',
     );
     const deployment = (deps.createDeployment as ReturnType<typeof vi.fn>).mock
       .calls[0][0];
@@ -251,7 +251,7 @@ describe('processCommitChannelConfig — manifest hash mismatch (Story 176)', ()
       validPayload,
       deps,
       'kubeclaw-test',
-      'kubeclaw-channel-base:latest',
+      'kubeclaw-agent:claude',
     );
     expect(deps.publishReply).toHaveBeenCalledWith(
       'kubeclaw:bootstrap-reply:job-abc-123',
@@ -279,7 +279,7 @@ describe('processCommitChannelConfig — manifest hash mismatch (Story 176)', ()
       validPayload,
       deps,
       'kubeclaw-test',
-      'kubeclaw-channel-base:latest',
+      'kubeclaw-agent:claude',
     );
     expect(deps.createSecret).not.toHaveBeenCalled();
     expect(deps.createDeployment).not.toHaveBeenCalled();
@@ -297,7 +297,7 @@ describe('processCommitChannelConfig — manifest hash mismatch (Story 176)', ()
       validPayload,
       deps,
       'kubeclaw-test',
-      'kubeclaw-channel-base:latest',
+      'kubeclaw-agent:claude',
     );
     expect(deps.deletePvc).toHaveBeenCalledWith(
       'kubeclaw-channel-my-telegram-runtime',
@@ -319,7 +319,7 @@ describe('processCommitChannelConfig — manifest hash mismatch (Story 176)', ()
       validPayload,
       deps,
       'kubeclaw-test',
-      'kubeclaw-channel-base:latest',
+      'kubeclaw-agent:claude',
     );
     expect(deps.recordMismatch).toHaveBeenCalledWith({
       channel_type: 'telegram',
@@ -338,7 +338,7 @@ describe('processCommitChannelConfig — manifest hash mismatch (Story 176)', ()
       validPayload,
       deps,
       'kubeclaw-test',
-      'kubeclaw-channel-base:latest',
+      'kubeclaw-agent:claude',
     );
     expect(deps.publishSse).toHaveBeenCalledWith(
       'kubeclaw:bootstrap:job-abc-123',
@@ -362,7 +362,7 @@ describe('processCommitChannelConfig — manifest hash mismatch (Story 176)', ()
       validPayload,
       deps,
       'kubeclaw-test',
-      'kubeclaw-channel-base:latest',
+      'kubeclaw-agent:claude',
     );
     expect(deps.releaseBootstrap).toHaveBeenCalledWith('my-telegram');
   });
@@ -379,7 +379,7 @@ describe('processCommitChannelConfig — manifest hash mismatch (Story 176)', ()
       validPayload,
       deps,
       'kubeclaw-test',
-      'kubeclaw-channel-base:latest',
+      'kubeclaw-agent:claude',
     );
     expect(deps.createSecret).toHaveBeenCalled();
     expect(deps.createDeployment).toHaveBeenCalled();
@@ -397,7 +397,7 @@ describe('processCommitChannelConfig — manifest hash mismatch (Story 176)', ()
       validPayload,
       deps,
       'kubeclaw-test',
-      'kubeclaw-channel-base:latest',
+      'kubeclaw-agent:claude',
     );
     expect(deps.readPvcFiles).not.toHaveBeenCalled();
     expect(deps.createSecret).toHaveBeenCalled();
@@ -413,7 +413,7 @@ describe('processCommitChannelConfig — manifest hash mismatch (Story 176)', ()
       validPayload,
       deps,
       'kubeclaw-test',
-      'kubeclaw-channel-base:latest',
+      'kubeclaw-agent:claude',
     );
     expect(deps.publishReply).toHaveBeenCalledWith(
       'kubeclaw:bootstrap-reply:job-abc-123',
@@ -445,7 +445,7 @@ describe('processCommitChannelConfig — manifest hash mismatch (Story 176)', ()
       payload,
       deps,
       'kubeclaw-test',
-      'kubeclaw-channel-base:latest',
+      'kubeclaw-agent:claude',
     );
     // Orchestrator still rejects — TOCTOU window is closed
     expect(deps.createSecret).not.toHaveBeenCalled();
@@ -466,7 +466,7 @@ describe('Story 180: recordTerminal wiring in processCommitChannelConfig', () =>
       validPayload,
       deps,
       'kubeclaw-test',
-      'kubeclaw-channel-base:latest',
+      'kubeclaw-agent:claude',
     );
     expect(recordTerminal).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -491,7 +491,7 @@ describe('Story 180: recordTerminal wiring in processCommitChannelConfig', () =>
       validPayload,
       deps,
       'kubeclaw-test',
-      'kubeclaw-channel-base:latest',
+      'kubeclaw-agent:claude',
     );
     expect(recordTerminal).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -511,7 +511,7 @@ describe('Story 180: recordTerminal wiring in processCommitChannelConfig', () =>
       validPayload,
       deps,
       'kubeclaw-test',
-      'kubeclaw-channel-base:latest',
+      'kubeclaw-agent:claude',
     );
     expect(recordTerminal).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -528,7 +528,7 @@ describe('Story 180: recordTerminal wiring in processCommitChannelConfig', () =>
         validPayload,
         deps,
         'kubeclaw-test',
-        'kubeclaw-channel-base:latest',
+        'kubeclaw-agent:claude',
       ),
     ).resolves.not.toThrow();
   });
@@ -603,7 +603,7 @@ describe('processCommitChannelConfig — upgrade path', () => {
       upgradePayload,
       deps,
       'kubeclaw-test',
-      'kubeclaw-channel-base:latest',
+      'kubeclaw-agent:claude',
     );
     expect(deps.patchedDeployments).toEqual([
       {
@@ -619,7 +619,7 @@ describe('processCommitChannelConfig — upgrade path', () => {
       upgradePayload,
       deps,
       'kubeclaw-test',
-      'kubeclaw-channel-base:latest',
+      'kubeclaw-agent:claude',
     );
     expect(deps.rolledOutDeployments).toContain('kubeclaw-channel-my-telegram');
   });
@@ -630,7 +630,7 @@ describe('processCommitChannelConfig — upgrade path', () => {
       upgradePayload,
       deps,
       'kubeclaw-test',
-      'kubeclaw-channel-base:latest',
+      'kubeclaw-agent:claude',
     );
     expect(deps.scheduledOldPvcDeletions).toContain(
       'kubeclaw-channel-my-telegram-runtime-v1',
@@ -643,7 +643,7 @@ describe('processCommitChannelConfig — upgrade path', () => {
       upgradePayload,
       deps,
       'kubeclaw-test',
-      'kubeclaw-channel-base:latest',
+      'kubeclaw-agent:claude',
     );
     expect(deps.createDeployment).not.toHaveBeenCalled();
   });
@@ -654,7 +654,7 @@ describe('processCommitChannelConfig — upgrade path', () => {
       upgradePayload,
       deps,
       'kubeclaw-test',
-      'kubeclaw-channel-base:latest',
+      'kubeclaw-agent:claude',
     );
     expect(deps.createSecret).not.toHaveBeenCalled();
   });
@@ -665,7 +665,7 @@ describe('processCommitChannelConfig — upgrade path', () => {
       upgradePayload,
       deps,
       'kubeclaw-test',
-      'kubeclaw-channel-base:latest',
+      'kubeclaw-agent:claude',
     );
     expect(deps.releaseBootstrap).toHaveBeenCalledWith('my-telegram');
   });
@@ -676,7 +676,7 @@ describe('processCommitChannelConfig — upgrade path', () => {
       upgradePayload,
       deps,
       'kubeclaw-test',
-      'kubeclaw-channel-base:latest',
+      'kubeclaw-agent:claude',
     );
     const sseCall = (
       deps.publishSse as ReturnType<typeof vi.fn>
@@ -698,7 +698,7 @@ describe('processCommitChannelConfig — upgrade path', () => {
       upgradePayload,
       deps,
       'kubeclaw-test',
-      'kubeclaw-channel-base:latest',
+      'kubeclaw-agent:claude',
     );
     expect(deps.patchedDeployments).toHaveLength(0);
     expect(deps.deletePvc).toHaveBeenCalled();
@@ -781,7 +781,7 @@ describe('processCommitChannelConfig — Story 182: replica cap + RO mount invar
       basePayload,
       deps,
       'test-ns',
-      'kubeclaw-channel-base:latest',
+      'kubeclaw-agent:claude',
     );
     const deploymentBody = (deps.createDeployment as ReturnType<typeof vi.fn>)
       .mock.calls[0][0] as { spec: { replicas: number } };
@@ -796,7 +796,7 @@ describe('processCommitChannelConfig — Story 182: replica cap + RO mount invar
       basePayload,
       deps,
       'test-ns',
-      'kubeclaw-channel-base:latest',
+      'kubeclaw-agent:claude',
     );
     const deploymentBody = (deps.createDeployment as ReturnType<typeof vi.fn>)
       .mock.calls[0][0] as { spec: { replicas: number } };
@@ -811,7 +811,7 @@ describe('processCommitChannelConfig — Story 182: replica cap + RO mount invar
       basePayload,
       deps,
       'test-ns',
-      'kubeclaw-channel-base:latest',
+      'kubeclaw-agent:claude',
     );
     const deploymentBody = (deps.createDeployment as ReturnType<typeof vi.fn>)
       .mock.calls[0][0] as { spec: { replicas: number } };
@@ -824,7 +824,7 @@ describe('processCommitChannelConfig — Story 182: replica cap + RO mount invar
       basePayload,
       deps,
       'test-ns',
-      'kubeclaw-channel-base:latest',
+      'kubeclaw-agent:claude',
     );
     const deploymentBody = (deps.createDeployment as ReturnType<typeof vi.fn>)
       .mock.calls[0][0] as {
@@ -855,7 +855,7 @@ describe('processCommitChannelConfig — Story 182: replica cap + RO mount invar
       basePayload,
       deps,
       'test-ns',
-      'kubeclaw-channel-base:latest',
+      'kubeclaw-agent:claude',
     );
     const deploymentBody = (deps.createDeployment as ReturnType<typeof vi.fn>)
       .mock.calls[0][0] as {

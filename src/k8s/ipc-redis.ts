@@ -121,7 +121,7 @@ export function _resetCapabilityDepsForTest(): void {
 
 // Bootstrap deps — set by registerBootstrapDeps() called from index.ts (Story 174)
 let _bootstrapCommitDeps: CommitChannelConfigDeps | null = null;
-let _channelBaseImage = 'kubeclaw-channel-base:latest';
+let _channelBaseImage = 'kubeclaw-agent:claude';
 let _bootstrapNamespace = process.env.KUBECLAW_NAMESPACE || 'kubeclaw';
 
 // Story 180: in-memory map of most-recent step label per bootstrapJobId.

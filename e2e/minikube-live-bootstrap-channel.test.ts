@@ -185,18 +185,18 @@ describe('Minikube-live: bootstrap channel from skill (Story 174)', () => {
 
   // ── AC1: channel-base image is available in minikube ─────────────────────
 
-  it('kubeclaw-channel-base:latest image is available in minikube docker daemon (AC1)', () => {
+  it('kubeclaw-agent:latest image is available in minikube docker daemon (AC1)', () => {
     const r = spawnSync(
       'bash',
       [
         '-c',
-        'eval $(minikube docker-env) && docker image inspect kubeclaw-channel-base:latest --format "{{.Id}}" 2>/dev/null',
+        'eval $(minikube docker-env) && docker image inspect kubeclaw-agent:latest --format "{{.Id}}" 2>/dev/null',
       ],
       { encoding: 'utf8', timeout: 15_000 },
     );
     expect(
       r.status,
-      'kubeclaw-channel-base:latest not present in minikube',
+      'kubeclaw-agent:latest not present in minikube',
     ).toBe(0);
     expect(r.stdout.trim(), 'Image ID should be non-empty').toBeTruthy();
   });

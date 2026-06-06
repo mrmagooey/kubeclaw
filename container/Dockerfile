@@ -50,16 +50,46 @@ COPY container/agent-runner/ ./
 # Build TypeScript
 RUN npm run build
 
-# Create workspace directories
-RUN mkdir -p /workspace/group /workspace/global /workspace/extra /workspace/ipc/messages /workspace/ipc/tasks /workspace/ipc/input
+# Create workspace directories (agent-runner mode + bootstrap/channel mode)
+# /workspace/group     — agent-runner group workspace
+# /workspace/skills    — bootstrap skill markdown (from ConfigMap, set by bootstrap Job)
+# /workspace/manifests — channel manifests (from ConfigMap, set by bootstrap Job)
+# /runtime             — per-channel runtime PVC mount point (bootstrap writes, steady-state reads)
+RUN mkdir -p /workspace/group /workspace/global /workspace/extra \
+    /workspace/ipc/messages /workspace/ipc/tasks /workspace/ipc/input \
+    /workspace/skills /workspace/manifests /runtime
 
 # Create entrypoint script
-# Docker mode: task JSON is piped to stdin (cat > /tmp/input.json)
-# K8s mode:   task is passed as env vars (KUBECLAW_PROMPT etc.) — build JSON from them
-# Follow-up messages arrive via IPC files in /workspace/ipc/input/
+# Three modes (selected at startup, no separate image needed):
+#
+# 1. Bootstrap mode    — KUBECLAW_BOOTSTRAP_SKILL set
+#                        Runs channel-loader.js bootstrap branch: skill-driven agent loop
+#                        with local_bash + commit_channel_config tools. Installs npm deps
+#                        onto /runtime PVC and writes channel-entry.js.
+#
+# 2. Steady-state mode — /runtime/channel-entry.js exists (post-bootstrap)
+#                        Runs channel-loader.js steady-state branch: imports the
+#                        channel-entry from the read-only PVC mount and hands off.
+#
+# 3. Agent-runner mode — neither of the above
+#                        Existing pi-agent-core agent loop for execute_agent tool jobs
+#                        and per-group agent runs. Reads ContainerInput JSON from
+#                        stdin (Docker) or env vars (K8s).
 RUN cat > /app/entrypoint.sh <<'ENTRYPOINT'
 #!/bin/bash
 set -e
+
+# Mode 1: bootstrap (skill set via env)
+if [ -n "$KUBECLAW_BOOTSTRAP_SKILL" ]; then
+  exec node /app/channel-loader.js
+fi
+
+# Mode 2: steady-state channel (PVC contains channel-entry.js)
+if [ -f "/runtime/channel-entry.js" ]; then
+  exec node /app/channel-loader.js
+fi
+
+# Mode 3: default agent-runner
 if [ -n "$KUBECLAW_PROMPT" ]; then
   # Kubernetes mode: build ContainerInput JSON from env vars
   node -e "
@@ -82,7 +112,7 @@ ENTRYPOINT
 RUN chmod +x /app/entrypoint.sh
 
 # Set ownership to node user (non-root) for writable directories
-RUN chown -R node:node /workspace && chmod 777 /home/node
+RUN chown -R node:node /workspace /runtime && chmod 777 /home/node
 
 # Switch to non-root user (required for --dangerously-skip-permissions)
 USER node
