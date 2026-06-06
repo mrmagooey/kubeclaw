@@ -66,6 +66,22 @@ export interface CommitChannelConfigDeps {
   deletePvc(pvcName: string): Promise<void>;
   /** Increment kubeclaw_bootstrap_manifest_mismatch_total{channel_type} (Story 176) */
   recordMismatch(labels: { channel_type: string }): void;
+  /**
+   * Story 180: Record a terminal bootstrap outcome in bootstrap_history.
+   * Optional for backward compatibility with existing tests that don't inject it.
+   */
+  recordTerminal?(args: {
+    instanceName: string;
+    bootstrapJobId: string;
+    outcome:
+      | 'succeeded'
+      | 'timed-out'
+      | 'manifest-divergence'
+      | 'rejected'
+      | 'error';
+    errorCode?: string;
+    errorMessage?: string;
+  }): void;
 }
 
 // ─── Handler ──────────────────────────────────────────────────────────────────
@@ -201,6 +217,15 @@ export async function processCommitChannelConfig(
         // (f) Release instance name so a retry can reuse it (Story 176 AC5)
         deps.releaseBootstrap(instance_name);
 
+        // (f.5) Story 180: record terminal outcome in bootstrap_history
+        deps.recordTerminal?.({
+          instanceName: instance_name,
+          bootstrapJobId,
+          outcome: 'manifest-divergence',
+          errorCode: 'MANIFEST_DIVERGENCE',
+          errorMessage: `Expected ${expectedHash}, got ${actualHash}`,
+        });
+
         // (g) Return early — no Secret or Deployment created
         return;
       }
@@ -293,6 +318,13 @@ export async function processCommitChannelConfig(
     // 4. Release instance name from active bootstraps
     deps.releaseBootstrap(instance_name);
 
+    // 4.5. Story 180: record terminal outcome in bootstrap_history
+    deps.recordTerminal?.({
+      instanceName: instance_name,
+      bootstrapJobId,
+      outcome: 'succeeded',
+    });
+
     // 5. Reply success to bootstrap pod
     await deps.publishReply(replyChannel, { ok: true });
 
@@ -320,5 +352,13 @@ export async function processCommitChannelConfig(
     await deps
       .publishSse(sseTopic, `Bootstrap failed: ${errorMsg}`)
       .catch((e) => logger.warn({ e }, 'Failed to publish failure SSE'));
+
+    // Story 180: record terminal outcome in bootstrap_history
+    deps.recordTerminal?.({
+      instanceName: instance_name,
+      bootstrapJobId,
+      outcome: 'error',
+      errorMessage: errorMsg,
+    });
   }
 }

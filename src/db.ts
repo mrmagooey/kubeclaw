@@ -226,6 +226,27 @@ function createSchema(database: SqlJsDatabase): void {
     )
   `);
 
+  // Story 180: bootstrap_history — durable record of completed bootstrap operations.
+  // outcome enum: 'succeeded' | 'timed-out' | 'manifest-divergence' | 'rejected' | 'error'
+  database.run(`
+    CREATE TABLE IF NOT EXISTS bootstrap_history (
+      bootstrap_job_id TEXT PRIMARY KEY,
+      channel_type     TEXT NOT NULL,
+      instance_name    TEXT NOT NULL,
+      skill_name       TEXT NOT NULL,
+      manifest_hash    TEXT,
+      started_at       TEXT NOT NULL,
+      completed_at     TEXT NOT NULL,
+      outcome          TEXT NOT NULL,
+      error_code       TEXT,
+      error_message    TEXT
+    )
+  `);
+  database.run(
+    `CREATE INDEX IF NOT EXISTS idx_bootstrap_history_completed_at
+     ON bootstrap_history(completed_at DESC)`,
+  );
+
   database.run(`
     CREATE TABLE IF NOT EXISTS specialist_usage (
       id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2497,6 +2518,130 @@ export function pruneOldToolJobs(retentionDays: number): number {
          AND resolved_at IS NOT NULL
          AND datetime(resolved_at) < datetime('now', '-' || ? || ' days')`,
       [retentionDays],
+    );
+    saveDatabase();
+  }
+
+  return deleted;
+}
+
+// ─── Story 180: bootstrap_history CRUD ───────────────────────────────────────
+
+export interface BootstrapHistoryRow {
+  bootstrap_job_id: string;
+  channel_type: string;
+  instance_name: string;
+  skill_name: string;
+  manifest_hash: string | null;
+  started_at: string;
+  completed_at: string;
+  outcome:
+    | 'succeeded'
+    | 'timed-out'
+    | 'manifest-divergence'
+    | 'rejected'
+    | 'error';
+  error_code: string | null;
+  error_message: string | null;
+}
+
+/**
+ * Upsert a terminal record for a bootstrap operation into bootstrap_history.
+ * Safe to call multiple times — INSERT OR REPLACE overwrites any existing row.
+ */
+export function recordBootstrapTerminal(args: {
+  bootstrapJobId: string;
+  channelType: string;
+  instanceName: string;
+  skillName: string;
+  manifestHash?: string | null;
+  startedAt: string;
+  outcome: BootstrapHistoryRow['outcome'];
+  errorCode?: string | null;
+  errorMessage?: string | null;
+}): void {
+  db.run(
+    `INSERT OR REPLACE INTO bootstrap_history
+       (bootstrap_job_id, channel_type, instance_name, skill_name, manifest_hash,
+        started_at, completed_at, outcome, error_code, error_message)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      args.bootstrapJobId,
+      args.channelType,
+      args.instanceName,
+      args.skillName,
+      args.manifestHash ?? null,
+      args.startedAt,
+      new Date().toISOString(),
+      args.outcome,
+      args.errorCode ?? null,
+      args.errorMessage ?? null,
+    ],
+  );
+  saveDatabase();
+}
+
+/**
+ * Return bootstrap_history rows ordered by completed_at DESC.
+ * @param opts.limit              Optional cap on number of rows returned (undefined = no cap).
+ * @param opts.channelTypeFilter  Optional exact-match filter on channel_type.
+ */
+export function getRecentBootstrapHistory(opts?: {
+  limit?: number;
+  channelTypeFilter?: string;
+}): BootstrapHistoryRow[] {
+  const { limit, channelTypeFilter } = opts ?? {};
+  let sql = `SELECT bootstrap_job_id, channel_type, instance_name, skill_name,
+                    manifest_hash, started_at, completed_at, outcome,
+                    error_code, error_message
+             FROM bootstrap_history`;
+  const params: (string | number)[] = [];
+  if (channelTypeFilter) {
+    sql += ` WHERE channel_type = ?`;
+    params.push(channelTypeFilter);
+  }
+  sql += ` ORDER BY completed_at DESC`;
+  if (limit !== undefined && limit > 0) {
+    sql += ` LIMIT ?`;
+    params.push(limit);
+  }
+  const result = db.exec(sql, params.length > 0 ? params : undefined);
+  if (result.length === 0) return [];
+  return result[0].values.map((row: unknown[]) => ({
+    bootstrap_job_id: row[0] as string,
+    channel_type: row[1] as string,
+    instance_name: row[2] as string,
+    skill_name: row[3] as string,
+    manifest_hash: row[4] as string | null,
+    started_at: row[5] as string,
+    completed_at: row[6] as string,
+    outcome: row[7] as BootstrapHistoryRow['outcome'],
+    error_code: row[8] as string | null,
+    error_message: row[9] as string | null,
+  }));
+}
+
+/**
+ * Delete bootstrap_history rows whose completed_at is older than retentionHours.
+ * Returns the number of rows deleted.
+ * When retentionHours <= 0, returns 0 without deleting anything (infinite retention).
+ */
+export function pruneOldBootstrapHistory(retentionHours: number): number {
+  if (!Number.isFinite(retentionHours) || retentionHours <= 0) return 0;
+
+  const countResult = db.exec(
+    `SELECT COUNT(*) FROM bootstrap_history
+     WHERE datetime(completed_at) < datetime('now', '-' || ? || ' hours')`,
+    [retentionHours],
+  );
+  const deleted =
+    countResult.length > 0 ? (countResult[0].values[0][0] as number) : 0;
+
+  if (deleted > 0) {
+    db.run(
+      `DELETE FROM bootstrap_history
+       WHERE datetime(completed_at) < datetime('now', '-' || ? || ' hours')`,
+      [retentionHours],
     );
     saveDatabase();
   }

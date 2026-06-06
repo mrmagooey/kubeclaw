@@ -452,3 +452,81 @@ describe('processCommitChannelConfig — manifest hash mismatch (Story 176)', ()
     expect(errorObj.code).toBe('MANIFEST_DIVERGENCE');
   });
 });
+
+// ─── Story 180: recordTerminal wiring ────────────────────────────────────────
+
+describe('Story 180: recordTerminal wiring in processCommitChannelConfig', () => {
+  it('calls recordTerminal with outcome "succeeded" on happy path', async () => {
+    const recordTerminal = vi.fn();
+    const deps = makeDeps({ recordTerminal });
+    await processCommitChannelConfig(
+      validPayload,
+      deps,
+      'kubeclaw-test',
+      'kubeclaw-channel-base:latest',
+    );
+    expect(recordTerminal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: 'succeeded',
+        instanceName: 'my-telegram',
+        bootstrapJobId: 'job-abc-123',
+      }),
+    );
+  });
+
+  it('calls recordTerminal with outcome "manifest-divergence" on mismatch', async () => {
+    const recordTerminal = vi.fn();
+    const deps = makeDeps({
+      recordTerminal,
+      getManifestHash: vi.fn().mockResolvedValue(APPROVED_HASH),
+      readPvcFiles: vi.fn().mockResolvedValue({
+        packageJson: DEVIATED_PKG_JSON,
+        packageLockJson: DEVIATED_LOCK_JSON,
+      }),
+    });
+    await processCommitChannelConfig(
+      validPayload,
+      deps,
+      'kubeclaw-test',
+      'kubeclaw-channel-base:latest',
+    );
+    expect(recordTerminal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: 'manifest-divergence',
+        errorCode: 'MANIFEST_DIVERGENCE',
+      }),
+    );
+  });
+
+  it('calls recordTerminal with outcome "error" when createSecret throws', async () => {
+    const recordTerminal = vi.fn();
+    const deps = makeDeps({
+      recordTerminal,
+      createSecret: vi.fn().mockRejectedValue(new Error('K8s 500')),
+    });
+    await processCommitChannelConfig(
+      validPayload,
+      deps,
+      'kubeclaw-test',
+      'kubeclaw-channel-base:latest',
+    );
+    expect(recordTerminal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: 'error',
+        errorMessage: 'K8s 500',
+      }),
+    );
+  });
+
+  it('does not throw when recordTerminal is absent (backward-compat)', async () => {
+    const deps = makeDeps({ recordTerminal: undefined });
+    await expect(
+      processCommitChannelConfig(
+        validPayload,
+        deps,
+        'kubeclaw-test',
+        'kubeclaw-channel-base:latest',
+      ),
+    ).resolves.not.toThrow();
+  });
+});

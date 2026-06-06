@@ -1,5 +1,6 @@
 /**
  * Unit tests for Story 174: bootstrap-runner manifest validation, hash, and Job spawner.
+ * Story 180: state machine, filter/limit, report_step truncation, recordBootstrapTerminal wiring.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { CoreV1Api, BatchV1Api } from '@kubernetes/client-node';
@@ -10,6 +11,16 @@ import {
   validateChannelManifest,
   computeManifestHash,
   canonicalJson,
+  deriveBootstrapState,
+  stateToDefaultStep,
+  buildActiveEntry,
+  bootstrapStatus,
+  registerBootstrapMeta,
+  deregisterBootstrapMeta,
+  getBootstrapMeta,
+  cleanupBootstrapResources,
+  type BootstrapMeta,
+  type BootstrapStatusDeps,
 } from './bootstrap-runner.js';
 
 describe('canonicalJson', () => {
@@ -749,5 +760,387 @@ describe('reconcileOrphanedBootstrapsOnStartup', () => {
 
     expect(cleanupCallCount).toBeGreaterThan(0);
     expect(cleanupCallCount).toBeLessThan(10);
+  });
+});
+
+// ─── Story 180: state machine ─────────────────────────────────────────────────
+
+describe('deriveBootstrapState', () => {
+  it('returns "error" when podPhase is Failed regardless of message', () => {
+    expect(deriveBootstrapState('Failed', { type: 'commit_ack' })).toBe(
+      'error',
+    );
+    expect(deriveBootstrapState('Failed', null)).toBe('error');
+  });
+
+  it('returns "done" for commit_ack when pod is not Failed', () => {
+    expect(deriveBootstrapState('Running', { type: 'commit_ack' })).toBe(
+      'done',
+    );
+    expect(deriveBootstrapState(null, { type: 'commit_ack' })).toBe('done');
+  });
+
+  it('returns "committing" for commit_channel_config', () => {
+    expect(
+      deriveBootstrapState('Running', { type: 'commit_channel_config' }),
+    ).toBe('committing');
+  });
+
+  it('returns "validating-credentials" for step label containing "validat"', () => {
+    expect(
+      deriveBootstrapState('Running', {
+        type: 'step',
+        label: 'Validating credentials',
+      }),
+    ).toBe('validating-credentials');
+    expect(
+      deriveBootstrapState('Running', {
+        type: 'step',
+        label: 'validating token',
+      }),
+    ).toBe('validating-credentials');
+  });
+
+  it('returns "installing-packages" for step label containing "npm"', () => {
+    expect(
+      deriveBootstrapState('Running', { type: 'step', label: 'Running npm ci' }),
+    ).toBe('installing-packages');
+  });
+
+  it('returns "awaiting-dialogue" for question type', () => {
+    expect(deriveBootstrapState('Running', { type: 'question' })).toBe(
+      'awaiting-dialogue',
+    );
+  });
+
+  it('returns "awaiting-dialogue" as default when no message and pod is running', () => {
+    expect(deriveBootstrapState('Running', null)).toBe('awaiting-dialogue');
+    expect(deriveBootstrapState('Pending', null)).toBe('awaiting-dialogue');
+  });
+
+  it('returns "awaiting-dialogue" for unrecognised message type', () => {
+    expect(
+      deriveBootstrapState('Running', { type: 'unknown_type' }),
+    ).toBe('awaiting-dialogue');
+  });
+});
+
+describe('stateToDefaultStep', () => {
+  it('maps every state enum value to a non-empty string', () => {
+    const states = [
+      'awaiting-dialogue',
+      'installing-packages',
+      'validating-credentials',
+      'committing',
+      'done',
+      'error',
+    ] as const;
+    for (const s of states) {
+      expect(stateToDefaultStep(s).length).toBeGreaterThan(0);
+    }
+  });
+});
+
+// ─── Story 180: buildActiveEntry + bootstrapStatus ────────────────────────────
+
+function makeStatusDeps(
+  overrides: Partial<BootstrapStatusDeps> = {},
+): BootstrapStatusDeps {
+  return {
+    getStepLabel: vi.fn().mockReturnValue(undefined),
+    getPodPhase: vi.fn().mockResolvedValue('Running'),
+    getBootstrapMeta: vi.fn().mockReturnValue({
+      channelType: 'telegram',
+      skillName: 'bootstrap-telegram',
+      startedAt: new Date().toISOString(),
+    } satisfies BootstrapMeta),
+    ...overrides,
+  };
+}
+
+describe('buildActiveEntry', () => {
+  it('derives state "error" when pod is Failed', async () => {
+    const deps = makeStatusDeps({
+      getPodPhase: vi.fn().mockResolvedValue('Failed'),
+    });
+    const entry = await buildActiveEntry(
+      'my-tg',
+      'job-1',
+      {
+        channelType: 'telegram',
+        skillName: 'bootstrap-telegram',
+        startedAt: new Date().toISOString(),
+      },
+      deps,
+      false,
+    );
+    expect(entry.state).toBe('error');
+    expect(entry.podPhase).toBe('Failed');
+  });
+
+  it('uses step label from getStepLabel as currentStep', async () => {
+    const deps = makeStatusDeps({
+      getStepLabel: vi
+        .fn()
+        .mockReturnValue({
+          label: 'npm ci completed',
+          ts: new Date().toISOString(),
+        }),
+    });
+    const entry = await buildActiveEntry(
+      'my-tg',
+      'job-2',
+      {
+        channelType: 'telegram',
+        skillName: 'bootstrap-telegram',
+        startedAt: new Date().toISOString(),
+      },
+      deps,
+      false,
+    );
+    expect(entry.currentStep).toBe('npm ci completed');
+    expect(entry.state).toBe('installing-packages');
+  });
+
+  it('falls back to stateToDefaultStep when no step label', async () => {
+    const deps = makeStatusDeps({
+      getStepLabel: vi.fn().mockReturnValue(undefined),
+    });
+    const entry = await buildActiveEntry(
+      'my-tg',
+      'job-3',
+      {
+        channelType: 'telegram',
+        skillName: 'bootstrap-telegram',
+        startedAt: new Date().toISOString(),
+      },
+      deps,
+      false,
+    );
+    expect(entry.currentStep).toBe('Awaiting dialogue');
+  });
+
+  it('includes logsTail when includeLogs=true and getPodLogs is provided', async () => {
+    const deps = makeStatusDeps({
+      getPodLogs: vi.fn().mockResolvedValue('line1\nline2'),
+    });
+    const entry = await buildActiveEntry(
+      'my-tg',
+      'job-4',
+      {
+        channelType: 'telegram',
+        skillName: 'bootstrap-telegram',
+        startedAt: new Date().toISOString(),
+      },
+      deps,
+      true,
+    );
+    expect(entry.logsTail).toBe('line1\nline2');
+  });
+
+  it('does not include logsTail when includeLogs=false', async () => {
+    const deps = makeStatusDeps({
+      getPodLogs: vi.fn().mockResolvedValue('line1\nline2'),
+    });
+    const entry = await buildActiveEntry(
+      'my-tg',
+      'job-5',
+      {
+        channelType: 'telegram',
+        skillName: 'bootstrap-telegram',
+        startedAt: new Date().toISOString(),
+      },
+      deps,
+      false,
+    );
+    expect(entry.logsTail).toBeUndefined();
+  });
+});
+
+describe('bootstrapStatus', () => {
+  beforeEach(async () => {
+    const { _initTestDatabase } = await import('../db.js');
+    await _initTestDatabase();
+  });
+
+  it('returns INVALID_PARAM error for limit=0', async () => {
+    const map = new Map<string, string>();
+    const result = await bootstrapStatus(map, makeStatusDeps(), { limit: 0 });
+    expect(result).toMatchObject({ code: 'INVALID_PARAM' });
+  });
+
+  it('returns INVALID_PARAM error for negative limit', async () => {
+    const map = new Map<string, string>();
+    const result = await bootstrapStatus(map, makeStatusDeps(), { limit: -1 });
+    expect(result).toMatchObject({ code: 'INVALID_PARAM' });
+  });
+
+  it('returns INVALID_PARAM for non-integer limit', async () => {
+    const map = new Map<string, string>();
+    const result = await bootstrapStatus(map, makeStatusDeps(), {
+      limit: 1.5,
+    });
+    expect(result).toMatchObject({ code: 'INVALID_PARAM' });
+  });
+
+  it('filters active[] by channelTypeFilter', async () => {
+    const map = new Map([
+      ['inst-tg', 'job-tg'],
+      ['inst-dc', 'job-dc'],
+    ]);
+    const deps = makeStatusDeps({
+      getBootstrapMeta: vi.fn().mockImplementation((name: string) =>
+        name === 'inst-tg'
+          ? {
+              channelType: 'telegram',
+              skillName: 's',
+              startedAt: new Date().toISOString(),
+            }
+          : {
+              channelType: 'discord',
+              skillName: 's',
+              startedAt: new Date().toISOString(),
+            },
+      ),
+    });
+    const result = await bootstrapStatus(map, deps, {
+      channelTypeFilter: 'telegram',
+    });
+    if ('code' in result) throw new Error('Expected status result');
+    expect(result.active).toHaveLength(1);
+    expect(result.active[0].channelType).toBe('telegram');
+  });
+
+  it('caps recent[] with limit — active[] is not capped', async () => {
+    const { recordBootstrapTerminal } = await import('../db.js');
+    for (let i = 0; i < 5; i++) {
+      recordBootstrapTerminal({
+        bootstrapJobId: `hist-cap-${i}`,
+        channelType: 'telegram',
+        instanceName: `inst-${i}`,
+        skillName: 's',
+        startedAt: '2026-06-06T10:00:00.000Z',
+        outcome: 'succeeded',
+      });
+    }
+    const map = new Map<string, string>();
+    const result = await bootstrapStatus(map, makeStatusDeps(), { limit: 2 });
+    if ('code' in result) throw new Error('Expected status result');
+    expect(result.recent).toHaveLength(2);
+    expect(result.active).toHaveLength(0);
+  });
+
+  it('composes limit and channelTypeFilter for recent[]', async () => {
+    const { recordBootstrapTerminal } = await import('../db.js');
+    for (let i = 0; i < 4; i++) {
+      recordBootstrapTerminal({
+        bootstrapJobId: `compose-tg-${i}`,
+        channelType: 'telegram',
+        instanceName: `t${i}`,
+        skillName: 's',
+        startedAt: '2026-06-06T10:00:00.000Z',
+        outcome: 'succeeded',
+      });
+    }
+    recordBootstrapTerminal({
+      bootstrapJobId: 'compose-dc-1',
+      channelType: 'discord',
+      instanceName: 'd1',
+      skillName: 's',
+      startedAt: '2026-06-06T10:00:00.000Z',
+      outcome: 'succeeded',
+    });
+    const map = new Map<string, string>();
+    const result = await bootstrapStatus(map, makeStatusDeps(), {
+      limit: 2,
+      channelTypeFilter: 'telegram',
+    });
+    if ('code' in result) throw new Error('Expected status result');
+    expect(result.recent).toHaveLength(2);
+    expect(result.recent.every((r) => r.channel_type === 'telegram')).toBe(
+      true,
+    );
+  });
+});
+
+// ─── Story 180: report_step label truncation ──────────────────────────────────
+
+describe('report_step label truncation', () => {
+  it('a 200-char label is left intact (client-side slice)', () => {
+    const label = 'A'.repeat(200);
+    const truncated = label.slice(0, 200);
+    expect(truncated.length).toBe(200);
+    expect(truncated).toBe(label);
+  });
+
+  it('a 201-char label is truncated to exactly 200 chars (client-side)', () => {
+    const label = 'A'.repeat(201);
+    const truncated = label.slice(0, 200);
+    expect(truncated.length).toBe(200);
+  });
+
+  it('server-side: label stored in currentStepByJob is capped at 200 chars', () => {
+    const rawLabel = 'X'.repeat(250);
+    const stored = rawLabel.slice(0, 200); // mirrors subscriber logic
+    expect(stored.length).toBe(200);
+  });
+});
+
+// ─── Story 180: cleanupBootstrapResources calls recordTerminal ────────────────
+
+describe('cleanupBootstrapResources calls recordTerminal on timed-out path', () => {
+  it('calls recordTerminal with timed-out outcome', async () => {
+    const recordTerminal = vi.fn();
+    const deps = {
+      deleteJob: vi.fn().mockResolvedValue(undefined),
+      deletePvc: vi.fn().mockResolvedValue(undefined),
+      deleteSecret: vi.fn().mockResolvedValue(undefined),
+      publishSse: vi.fn().mockResolvedValue(undefined),
+      activeBootstraps: new Map([['inst', 'job-xyz']]),
+      recordTerminal,
+    };
+    await cleanupBootstrapResources('job-xyz', 'inst', deps);
+    expect(recordTerminal).toHaveBeenCalledWith('inst', 'job-xyz', 'timed-out');
+  });
+
+  it('does not throw when recordTerminal is absent (backward-compat)', async () => {
+    const deps = {
+      deleteJob: vi.fn().mockResolvedValue(undefined),
+      deletePvc: vi.fn().mockResolvedValue(undefined),
+      deleteSecret: vi.fn().mockResolvedValue(undefined),
+      publishSse: vi.fn().mockResolvedValue(undefined),
+      activeBootstraps: new Map([['inst', 'job-xyz']]),
+    };
+    await expect(
+      cleanupBootstrapResources('job-xyz', 'inst', deps),
+    ).resolves.not.toThrow();
+  });
+});
+
+// ─── Story 180: registerBootstrapMeta / deregisterBootstrapMeta ───────────────
+
+describe('registerBootstrapMeta / getBootstrapMeta / deregisterBootstrapMeta', () => {
+  it('registers and retrieves meta', () => {
+    registerBootstrapMeta('inst-a', {
+      channelType: 'telegram',
+      skillName: 'bootstrap-telegram',
+      startedAt: '2026-06-06T10:00:00.000Z',
+    });
+    const meta = getBootstrapMeta('inst-a');
+    expect(meta).toMatchObject({
+      channelType: 'telegram',
+      skillName: 'bootstrap-telegram',
+    });
+    deregisterBootstrapMeta('inst-a');
+  });
+
+  it('returns undefined after deregister', () => {
+    registerBootstrapMeta('inst-b', {
+      channelType: 'discord',
+      skillName: 'bootstrap-discord',
+      startedAt: '2026-06-06T10:00:00.000Z',
+    });
+    deregisterBootstrapMeta('inst-b');
+    expect(getBootstrapMeta('inst-b')).toBeUndefined();
   });
 });

@@ -71,11 +71,17 @@ import { onGroupRemoved } from './per-group-capabilities/index.js';
 import {
   bootstrapChannelFromSkill,
   waitForBootstrapJobCompletion,
+  bootstrapStatus,
+  registerBootstrapMeta,
+  deregisterBootstrapMeta,
+  getBootstrapMeta,
 } from './k8s/bootstrap-runner.js';
 import type {
   BootstrapK8sDeps,
   CleanupBootstrapDeps,
+  BootstrapStatusDeps,
 } from './k8s/bootstrap-runner.js';
+import { currentStepByJob } from './k8s/ipc-redis.js';
 import { jobRunner } from './k8s/job-runner.js';
 import { getRedisClient } from './k8s/redis-client.js';
 
@@ -256,6 +262,48 @@ const bootstrapSkillReconciler = new BootstrapSkillReconciler({
 // Guard moved to main() so this module can be imported without side effects.
 
 const MODEL = process.env.ADMIN_SHELL_MODEL || DEFAULT_DIRECT_MODEL;
+
+// ─── Story 180: Bootstrap history GC ─────────────────────────────────────────
+
+export const BOOTSTRAP_HISTORY_RETENTION_HOURS = parseInt(
+  process.env.BOOTSTRAP_HISTORY_RETENTION_HOURS ?? '24',
+  10,
+);
+const BOOTSTRAP_HISTORY_GC_INTERVAL_MS = 60_000; // 60 s
+
+/**
+ * Start a background interval that deletes bootstrap_history rows older than
+ * BOOTSTRAP_HISTORY_RETENTION_HOURS.
+ *
+ * When BOOTSTRAP_HISTORY_RETENTION_HOURS=0 GC is disabled (infinite retention).
+ * Mirrors startToolJobPruneInterval from channel-runner.ts exactly.
+ */
+export function startBootstrapHistoryGcInterval(): void {
+  if (
+    !Number.isFinite(BOOTSTRAP_HISTORY_RETENTION_HOURS) ||
+    BOOTSTRAP_HISTORY_RETENTION_HOURS <= 0
+  ) {
+    logger.info(
+      'bootstrap-history GC disabled (BOOTSTRAP_HISTORY_RETENTION_HOURS=0)',
+    );
+    return;
+  }
+  setInterval(() => {
+    try {
+      const deleted = db.pruneOldBootstrapHistory(
+        BOOTSTRAP_HISTORY_RETENTION_HOURS,
+      );
+      if (deleted > 0) {
+        logger.info(
+          { deleted, retentionHours: BOOTSTRAP_HISTORY_RETENTION_HOURS },
+          'Pruned old bootstrap_history rows',
+        );
+      }
+    } catch (err) {
+      logger.warn({ err }, 'bootstrap-history GC interval iteration failed');
+    }
+  }, BOOTSTRAP_HISTORY_GC_INTERVAL_MS).unref();
+}
 
 // ---- Tool definitions ----
 
@@ -581,6 +629,61 @@ export const TOOLS: OpenAI.ChatCompletionTool[] = [
           },
         },
         required: ['skill_name', 'channel_type', 'instance_name'],
+      },
+    },
+  },
+  // Story 180: bootstrap status tools
+  {
+    type: 'function',
+    function: {
+      name: 'report_step',
+      description:
+        'Publish a human-readable step label to the orchestrator during a bootstrap run. ' +
+        'Call this between major steps (e.g. after npm ci completes, during credential validation) ' +
+        'so operators can see progress via bootstrap_status. ' +
+        'Only callable inside a bootstrap agent loop (requires KUBECLAW_BOOTSTRAP_JOB_ID env var). ' +
+        'Labels longer than 200 characters are automatically truncated.',
+      parameters: {
+        type: 'object',
+        required: ['label'],
+        properties: {
+          label: {
+            type: 'string',
+            description:
+              'Human-readable step label (max 200 chars). E.g. "Running npm ci", "Validating credentials".',
+          },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'bootstrap_status',
+      description:
+        'Return a structured snapshot of all in-progress and recently-completed bootstrap operations. ' +
+        'active[] entries come from the in-memory activeBootstraps map joined with K8s pod-phase reads. ' +
+        'recent[] entries come from the SQLite bootstrap_history table and persist across orchestrator restarts.',
+      parameters: {
+        type: 'object',
+        required: [],
+        properties: {
+          limit: {
+            type: 'number',
+            description:
+              'Optional cap on the number of recent[] entries returned (sorted by completed_at DESC). Must be a positive integer. Does not affect active[].',
+          },
+          channel_type_filter: {
+            type: 'string',
+            description:
+              'Optional exact-match filter: only entries whose channelType equals this string appear in both active[] and recent[].',
+          },
+          include_logs: {
+            type: 'boolean',
+            description:
+              'When true, each active[] entry includes logsTail (last 50 lines of the bootstrap pod stdout). Defaults to false.',
+          },
+        },
       },
     },
   },
@@ -1000,6 +1103,13 @@ async function handleBootstrapChannelFromSkill(
       return `Bootstrap already in progress for instance "${instanceName}" (bootstrapJobId: ${result.bootstrapJobId}). Follow progress via the /events SSE stream.`;
     }
 
+    // Story 180: register bootstrap metadata so bootstrapStatus can return it
+    registerBootstrapMeta(instanceName, {
+      channelType,
+      skillName,
+      startedAt: new Date().toISOString(),
+    });
+
     // ── Fire-and-forget: watch the bootstrap Job for DeadlineExceeded (Story 175) ──
     // Build the cleanup deps inline so waitForBootstrapJobCompletion can delete
     // K8s resources and publish the timeout SSE if the job's activeDeadlineSeconds fires.
@@ -1067,6 +1177,25 @@ async function handleBootstrapChannelFromSkill(
         }
       },
       activeBootstraps,
+      // Story 180: record terminal outcome and deregister metadata
+      recordTerminal: (
+        instName: string,
+        bjId: string,
+        outcome: string,
+      ) => {
+        const meta = getBootstrapMeta(instName);
+        if (meta) {
+          db.recordBootstrapTerminal({
+            bootstrapJobId: bjId,
+            channelType: meta.channelType,
+            instanceName: instName,
+            skillName: meta.skillName,
+            startedAt: meta.startedAt,
+            outcome: outcome as import('./db.js').BootstrapHistoryRow['outcome'],
+          });
+        }
+        deregisterBootstrapMeta(instName);
+      },
     };
 
     const timeoutSeconds = parseInt(
@@ -1473,6 +1602,94 @@ async function handleUnsetGroupCredential(input: ToolInput): Promise<string> {
   }
 }
 
+// ─── Story 180: report_step + bootstrap_status handlers ──────────────────────
+
+async function handleReportStep(input: ToolInput): Promise<string> {
+  const rawLabel = input.label as string | undefined;
+  if (!rawLabel) return 'Error: label is required.';
+
+  // Client-side truncation (max 200 chars)
+  const label = rawLabel.slice(0, 200);
+
+  const bootstrapJobId = process.env.KUBECLAW_BOOTSTRAP_JOB_ID;
+  if (!bootstrapJobId) {
+    return 'Error: report_step can only be called inside a bootstrap agent loop (KUBECLAW_BOOTSTRAP_JOB_ID not set).';
+  }
+
+  const topic = `kubeclaw:bootstrap:${bootstrapJobId}`;
+  const payload = {
+    type: 'step',
+    label,
+    ts: new Date().toISOString(),
+  };
+
+  try {
+    await getRedisClient().publish(topic, JSON.stringify(payload));
+    return `Step reported: "${label}"`;
+  } catch (err) {
+    return `Error publishing step: ${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+
+async function handleBootstrapStatus(input: ToolInput): Promise<string> {
+  const limit = input.limit as number | undefined;
+  const channelTypeFilter = input.channel_type_filter as string | undefined;
+  const includeLogs = (input.include_logs as boolean | undefined) ?? false;
+
+  const { BatchV1Api: BatchV1ApiClass } = await import(
+    '@kubernetes/client-node'
+  );
+  const batchV1 = kc.makeApiClient(BatchV1ApiClass);
+
+  const deps: BootstrapStatusDeps = {
+    getStepLabel: (bjid: string) => currentStepByJob.get(bjid),
+    getPodPhase: async (instanceName: string) => {
+      try {
+        const jobName = `kubeclaw-bootstrap-${instanceName}`;
+        const job = await batchV1.readNamespacedJob({
+          name: jobName,
+          namespace: NAMESPACE,
+        });
+        if (job.status?.succeeded) return 'Succeeded';
+        if (job.status?.failed) return 'Failed';
+        return 'Running';
+      } catch {
+        return null;
+      }
+    },
+    getPodLogs: includeLogs
+      ? async (instanceName: string) => {
+          try {
+            const podList = await coreV1.listNamespacedPod({
+              namespace: NAMESPACE,
+              labelSelector: `kubeclaw-channel=${instanceName},kubeclaw.io/role=bootstrap`,
+            });
+            const pod = podList.items[0];
+            if (!pod?.metadata?.name) return null;
+            const logs = await coreV1.readNamespacedPodLog({
+              name: pod.metadata.name,
+              namespace: NAMESPACE,
+              container: 'bootstrap',
+              tailLines: 50,
+            });
+            return typeof logs === 'string' ? logs : null;
+          } catch {
+            return null;
+          }
+        }
+      : undefined,
+    getBootstrapMeta: (instanceName: string) => getBootstrapMeta(instanceName),
+  };
+
+  const result = await bootstrapStatus(activeBootstraps, deps, {
+    limit,
+    channelTypeFilter,
+    includeLogs,
+  });
+
+  return JSON.stringify(result, null, 2);
+}
+
 // db may be undefined when this module is imported directly (e.g. via kubectl
 // exec node -e) without main() running first. Guard here so executeTool works
 // in both the production path (main → initDatabase) and the test/exec path.
@@ -1541,6 +1758,10 @@ export async function executeTool(
       return handleUnsetGroupCredential(input);
     case 'bootstrap_channel_from_skill':
       return handleBootstrapChannelFromSkill(input);
+    case 'report_step':
+      return handleReportStep(input);
+    case 'bootstrap_status':
+      return handleBootstrapStatus(input);
     default:
       return `Unknown tool: ${name}`;
   }

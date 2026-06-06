@@ -1,5 +1,5 @@
 /**
- * Bootstrap runner — Stories 174, 175.
+ * Bootstrap runner — Stories 174, 175, 180.
  *
  * Responsible for:
  *   - Manifest schema validation (validateChannelManifest)
@@ -7,9 +7,9 @@
  *   - Spawning bootstrap Jobs + runtime PVCs (bootstrapChannelFromSkill)
  *   - Timeout cleanup (cleanupBootstrapResources, waitForBootstrapJobCompletion)
  *   - Orphan reconciliation on startup (reconcileOrphanedBootstrapsOnStartup)
- *
- * Stories 176-184 will extend this file with independent PVC hash verification
- * and further lifecycle management.
+ *   - Story 180: bootstrap_status tool implementation (bootstrapStatus,
+ *     buildActiveEntry, deriveBootstrapState) and bootstrap metadata registry
+ *     (registerBootstrapMeta, deregisterBootstrapMeta, getBootstrapMeta)
  */
 
 import { createHash } from 'node:crypto';
@@ -370,6 +370,16 @@ export interface CleanupBootstrapDeps {
   ): Promise<void>;
   /** Shared in-memory map: instanceName → bootstrapJobId */
   activeBootstraps: Map<string, string>;
+  /**
+   * Story 180: Optional callback to record a terminal bootstrap outcome in SQLite.
+   * Called after the SSE publish. If absent, the terminal record is skipped
+   * (backward-compatible for tests that don't inject this dep).
+   */
+  recordTerminal?(
+    instanceName: string,
+    bootstrapJobId: string,
+    outcome: string,
+  ): void;
 }
 
 /**
@@ -453,6 +463,18 @@ export async function cleanupBootstrapResources(
       { sseTopic, err },
       'cleanupBootstrapResources: failed to publish timeout SSE; continuing',
     );
+  }
+
+  // (d.5) Story 180: record terminal outcome in bootstrap_history — best-effort
+  if (deps.recordTerminal) {
+    try {
+      deps.recordTerminal(instanceName, bootstrapJobId, 'timed-out');
+    } catch (err) {
+      logger.warn(
+        { err },
+        'cleanupBootstrapResources: failed to record terminal; continuing',
+      );
+    }
   }
 
   // (e) Free the instance name — always runs
@@ -640,4 +662,235 @@ export async function reconcileOrphanedBootstrapsOnStartup(
   logger.info(
     'reconcileOrphanedBootstrapsOnStartup: reconciliation pass complete',
   );
+}
+
+// ─── Story 180: Bootstrap status tool ────────────────────────────────────────
+
+export type BootstrapState =
+  | 'awaiting-dialogue'
+  | 'installing-packages'
+  | 'validating-credentials'
+  | 'committing'
+  | 'done'
+  | 'error';
+
+export interface ActiveBootstrapEntry {
+  bootstrapJobId: string;
+  channelType: string;
+  instanceName: string;
+  skillName: string;
+  startedAt: string;
+  elapsedSeconds: number;
+  state: BootstrapState;
+  currentStep: string;
+  podPhase: string | null;
+  logsTail?: string;
+}
+
+export type BootstrapStatusResult = {
+  active: ActiveBootstrapEntry[];
+  recent: import('../db.js').BootstrapHistoryRow[];
+};
+
+/**
+ * Metadata stored per active bootstrap instance.
+ * Registered when bootstrapChannelFromSkill succeeds; freed on terminal event.
+ */
+export interface BootstrapMeta {
+  channelType: string;
+  skillName: string;
+  startedAt: string;
+}
+
+export interface BootstrapStatusDeps {
+  /** Read the most-recent step label for a bootstrapJobId, or undefined */
+  getStepLabel(
+    bootstrapJobId: string,
+  ): { label: string; ts: string } | undefined;
+  /** Read the K8s pod phase for a bootstrap job (returns null if not found) */
+  getPodPhase(instanceName: string): Promise<string | null>;
+  /** Read the last 50 log lines from the bootstrap pod (returns null if not available) */
+  getPodLogs?(instanceName: string): Promise<string | null>;
+  /** Retrieve metadata about an active bootstrap instance */
+  getBootstrapMeta(instanceName: string): BootstrapMeta | undefined;
+}
+
+// In-memory metadata map: instanceName → BootstrapMeta
+const bootstrapMetaMap: Map<string, BootstrapMeta> = new Map();
+
+/**
+ * Register metadata for an active bootstrap so bootstrapStatus can return it.
+ * Called from admin-shell.ts immediately after bootstrapChannelFromSkill returns.
+ */
+export function registerBootstrapMeta(
+  instanceName: string,
+  meta: BootstrapMeta,
+): void {
+  bootstrapMetaMap.set(instanceName, meta);
+}
+
+/**
+ * Remove bootstrap metadata when an instance is released from activeBootstraps.
+ */
+export function deregisterBootstrapMeta(instanceName: string): void {
+  bootstrapMetaMap.delete(instanceName);
+}
+
+/**
+ * Read metadata for an active bootstrap instance.
+ * Used by admin-shell handler and by the terminal-recording callback.
+ */
+export function getBootstrapMeta(instanceName: string): BootstrapMeta | undefined {
+  return bootstrapMetaMap.get(instanceName);
+}
+
+/**
+ * Derive the BootstrapState for an active bootstrap entry.
+ *
+ * State derivation precedence (highest priority first):
+ *   1. podPhase === 'Failed'                                → 'error'
+ *      (pod failure overrides any Redis message)
+ *   2. lastMessage?.type === 'commit_ack'                   → 'done'
+ *   3. lastMessage?.type === 'commit_channel_config'        → 'committing'
+ *   4. lastMessage?.type === 'step' && label has 'validat'  → 'validating-credentials'
+ *   5. lastMessage?.type === 'step' && label has 'npm'      → 'installing-packages'
+ *   6. lastMessage?.type === 'question'                     → 'awaiting-dialogue'
+ *   7. (default)                                            → 'awaiting-dialogue'
+ */
+export function deriveBootstrapState(
+  podPhase: string | null,
+  lastMessage: { type: string; label?: string } | null,
+): BootstrapState {
+  if (podPhase === 'Failed') return 'error';
+  if (!lastMessage) return 'awaiting-dialogue';
+
+  const { type, label = '' } = lastMessage;
+  if (type === 'commit_ack') return 'done';
+  if (type === 'commit_channel_config') return 'committing';
+  if (type === 'step') {
+    if (label.toLowerCase().includes('validat')) return 'validating-credentials';
+    if (label.toLowerCase().includes('npm')) return 'installing-packages';
+  }
+  if (type === 'question') return 'awaiting-dialogue';
+  return 'awaiting-dialogue';
+}
+
+/**
+ * Map a BootstrapState to a human-readable default step label, used when no
+ * report_step label has been published for this bootstrapJobId.
+ */
+export function stateToDefaultStep(state: BootstrapState): string {
+  switch (state) {
+    case 'awaiting-dialogue':
+      return 'Awaiting dialogue';
+    case 'installing-packages':
+      return 'Installing packages';
+    case 'validating-credentials':
+      return 'Validating credentials';
+    case 'committing':
+      return 'Committing channel config';
+    case 'done':
+      return 'Done';
+    case 'error':
+      return 'Error';
+  }
+}
+
+/**
+ * Build an ActiveBootstrapEntry for one active bootstrap job.
+ * Reads pod phase from K8s (via deps) and step label from the in-memory step map.
+ */
+export async function buildActiveEntry(
+  instanceName: string,
+  bootstrapJobId: string,
+  meta: BootstrapMeta,
+  deps: BootstrapStatusDeps,
+  includeLogs: boolean,
+): Promise<ActiveBootstrapEntry> {
+  const podPhase = await deps.getPodPhase(instanceName);
+  const stepInfo = deps.getStepLabel(bootstrapJobId);
+
+  // Build a minimal lastMessage shape for deriveBootstrapState.
+  // We only have the most-recent step label (type='step'); if no step is present,
+  // pass null so the state machine defaults to 'awaiting-dialogue'.
+  const lastMessage: { type: string; label?: string } | null = stepInfo
+    ? { type: 'step', label: stepInfo.label }
+    : null;
+
+  const state = deriveBootstrapState(podPhase, lastMessage);
+  const elapsedSeconds = Math.floor(
+    (Date.now() - new Date(meta.startedAt).getTime()) / 1000,
+  );
+  const currentStep = stepInfo?.label ?? stateToDefaultStep(state);
+
+  const entry: ActiveBootstrapEntry = {
+    bootstrapJobId,
+    channelType: meta.channelType,
+    instanceName,
+    skillName: meta.skillName,
+    startedAt: meta.startedAt,
+    elapsedSeconds,
+    state,
+    currentStep,
+    podPhase,
+  };
+
+  if (includeLogs && deps.getPodLogs) {
+    const logs = await deps.getPodLogs(instanceName);
+    if (logs !== null) entry.logsTail = logs;
+  }
+
+  return entry;
+}
+
+/**
+ * Implementation of the bootstrap_status IPC tool.
+ *
+ * Returns all active bootstraps (from the shared activeBootstraps map) joined
+ * with K8s pod phase, plus recent completed entries from bootstrap_history.
+ *
+ * @param activeBootstraps  The shared instanceName → bootstrapJobId map
+ * @param deps              Injectable K8s + step-map dependencies
+ * @param opts              Optional filter/limit/include_logs parameters
+ */
+export async function bootstrapStatus(
+  activeBootstraps: Map<string, string>,
+  deps: BootstrapStatusDeps,
+  opts?: {
+    limit?: number;
+    channelTypeFilter?: string;
+    includeLogs?: boolean;
+  },
+): Promise<BootstrapStatusResult | { code: string; message: string }> {
+  const { limit, channelTypeFilter, includeLogs = false } = opts ?? {};
+
+  // Validate limit
+  if (limit !== undefined && (!Number.isInteger(limit) || limit <= 0)) {
+    return {
+      code: 'INVALID_PARAM',
+      message: 'limit must be a positive integer',
+    };
+  }
+
+  // Build active[] — parallel K8s reads for each active instance
+  const activeEntries = await Promise.all(
+    [...activeBootstraps.entries()].map(([instanceName, bootstrapJobId]) => {
+      const meta = deps.getBootstrapMeta(instanceName) ?? {
+        channelType: 'unknown',
+        skillName: 'unknown',
+        startedAt: new Date().toISOString(),
+      };
+      return buildActiveEntry(instanceName, bootstrapJobId, meta, deps, includeLogs);
+    }),
+  );
+
+  const filteredActive = channelTypeFilter
+    ? activeEntries.filter((e) => e.channelType === channelTypeFilter)
+    : activeEntries;
+
+  // Build recent[] from SQLite
+  const { getRecentBootstrapHistory } = await import('../db.js');
+  const recent = getRecentBootstrapHistory({ limit, channelTypeFilter });
+
+  return { active: filteredActive, recent };
 }

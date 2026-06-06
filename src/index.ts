@@ -21,6 +21,7 @@ import {
   shutdownAllRunners,
 } from './runtime/index.js';
 import {
+  recordBootstrapTerminal,
   getAllChats,
   getAllRegisteredGroups,
   getAllSessions,
@@ -56,12 +57,19 @@ import {
   AppsV1Api,
   BatchV1Api,
 } from '@kubernetes/client-node';
-import { activeBootstraps } from './admin-shell.js';
+import {
+  activeBootstraps,
+  startBootstrapHistoryGcInterval,
+} from './admin-shell.js';
+import {
+  getBootstrapMeta,
+  deregisterBootstrapMeta,
+  reconcileOrphanedBootstrapsOnStartup,
+} from './k8s/bootstrap-runner.js';
 import { KUBECLAW_NAMESPACE } from './config.js';
 import { getOutputChannel, getRedisClient } from './k8s/redis-client.js';
 import { jobRunner } from './k8s/job-runner.js';
 import { reconcileOrphanedJobsOnStartup } from './k8s/orphan-jobs.js';
-import { reconcileOrphanedBootstrapsOnStartup } from './k8s/bootstrap-runner.js';
 import { findChannel, formatMessages, formatOutbound } from './router.js';
 import {
   isSenderAllowed,
@@ -500,6 +508,32 @@ async function main(): Promise<void> {
       recordMismatch: ({ channel_type }: { channel_type: string }) => {
         orchMetrics.recordBootstrapManifestMismatch({ channel_type });
       },
+      // Story 180: record terminal outcome in bootstrap_history and free meta
+      recordTerminal: (args: {
+        instanceName: string;
+        bootstrapJobId: string;
+        outcome:
+          | 'succeeded'
+          | 'timed-out'
+          | 'manifest-divergence'
+          | 'rejected'
+          | 'error';
+        errorCode?: string;
+        errorMessage?: string;
+      }) => {
+        const meta = getBootstrapMeta(args.instanceName);
+        recordBootstrapTerminal({
+          bootstrapJobId: args.bootstrapJobId,
+          channelType: meta?.channelType ?? 'unknown',
+          instanceName: args.instanceName,
+          skillName: meta?.skillName ?? 'unknown',
+          startedAt: meta?.startedAt ?? new Date().toISOString(),
+          outcome: args.outcome,
+          errorCode: args.errorCode,
+          errorMessage: args.errorMessage,
+        });
+        deregisterBootstrapMeta(args.instanceName);
+      },
     },
     channelBaseImage,
     KUBECLAW_NAMESPACE,
@@ -865,6 +899,7 @@ async function main(): Promise<void> {
     logger.error({ err }, 'Task request watcher crashed'),
   );
   startBootstrapTaskWatcher();
+  startBootstrapHistoryGcInterval(); // Story 180: GC for bootstrap_history
   // Start the unified capabilities subsystem.
   startDiscoveryWatcher();
   startHealthProbes();

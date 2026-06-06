@@ -4,6 +4,9 @@ import {
   _initTestDatabase,
   __resetDbForTest,
   db,
+  recordBootstrapTerminal,
+  getRecentBootstrapHistory,
+  pruneOldBootstrapHistory,
   createTask,
   deleteTask,
   getAllChats,
@@ -3272,5 +3275,206 @@ describe('getConversationHistoryPage (Story 84)', () => {
     const rows = getConversationHistoryPage('gchp-edit');
     expect(rows[0].content).toBe('after');
     expect(rows[0].edited_at).not.toBeNull();
+  });
+});
+
+// ─── Story 180: bootstrap_history ────────────────────────────────────────────
+
+describe('bootstrap_history schema', () => {
+  it('creates the bootstrap_history table', () => {
+    const result = db.exec(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name='bootstrap_history'`,
+    );
+    expect(result.length).toBeGreaterThan(0);
+    expect(result[0].values[0][0]).toBe('bootstrap_history');
+  });
+
+  it('has the expected columns', () => {
+    const result = db.exec(`PRAGMA table_info(bootstrap_history)`);
+    expect(result.length).toBeGreaterThan(0);
+    const colNames = result[0].values.map((r) => r[1] as string);
+    expect(colNames).toEqual(
+      expect.arrayContaining([
+        'bootstrap_job_id',
+        'channel_type',
+        'instance_name',
+        'skill_name',
+        'manifest_hash',
+        'started_at',
+        'completed_at',
+        'outcome',
+        'error_code',
+        'error_message',
+      ]),
+    );
+  });
+});
+
+describe('recordBootstrapTerminal / getRecentBootstrapHistory', () => {
+  it('inserts a row and retrieves it', () => {
+    recordBootstrapTerminal({
+      bootstrapJobId: 'job-001',
+      channelType: 'telegram',
+      instanceName: 'my-tg',
+      skillName: 'bootstrap-telegram',
+      startedAt: '2026-06-06T10:00:00.000Z',
+      outcome: 'succeeded',
+    });
+    const rows = getRecentBootstrapHistory();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].bootstrap_job_id).toBe('job-001');
+    expect(rows[0].outcome).toBe('succeeded');
+    expect(rows[0].error_code).toBeNull();
+  });
+
+  it('INSERT OR REPLACE overwrites existing row', () => {
+    recordBootstrapTerminal({
+      bootstrapJobId: 'job-dup',
+      channelType: 'telegram',
+      instanceName: 'my-tg',
+      skillName: 'bootstrap-telegram',
+      startedAt: '2026-06-06T10:00:00.000Z',
+      outcome: 'error',
+      errorCode: 'FIRST',
+    });
+    recordBootstrapTerminal({
+      bootstrapJobId: 'job-dup',
+      channelType: 'telegram',
+      instanceName: 'my-tg',
+      skillName: 'bootstrap-telegram',
+      startedAt: '2026-06-06T10:00:00.000Z',
+      outcome: 'succeeded',
+    });
+    const rows = getRecentBootstrapHistory();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].outcome).toBe('succeeded');
+    expect(rows[0].error_code).toBeNull();
+  });
+
+  it('stores error_code and error_message', () => {
+    recordBootstrapTerminal({
+      bootstrapJobId: 'job-err',
+      channelType: 'discord',
+      instanceName: 'my-dc',
+      skillName: 'bootstrap-discord',
+      startedAt: '2026-06-06T10:00:00.000Z',
+      outcome: 'manifest-divergence',
+      errorCode: 'MANIFEST_DIVERGENCE',
+      errorMessage: 'hash mismatch',
+    });
+    const rows = getRecentBootstrapHistory();
+    expect(rows[0].error_code).toBe('MANIFEST_DIVERGENCE');
+    expect(rows[0].error_message).toBe('hash mismatch');
+  });
+
+  it('applies channelTypeFilter', () => {
+    recordBootstrapTerminal({
+      bootstrapJobId: 'job-tg',
+      channelType: 'telegram',
+      instanceName: 'a',
+      skillName: 's',
+      startedAt: '2026-06-06T10:00:00.000Z',
+      outcome: 'succeeded',
+    });
+    recordBootstrapTerminal({
+      bootstrapJobId: 'job-dc',
+      channelType: 'discord',
+      instanceName: 'b',
+      skillName: 's',
+      startedAt: '2026-06-06T10:00:00.000Z',
+      outcome: 'succeeded',
+    });
+    const rows = getRecentBootstrapHistory({ channelTypeFilter: 'telegram' });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].channel_type).toBe('telegram');
+  });
+
+  it('applies limit', () => {
+    for (let i = 0; i < 5; i++) {
+      recordBootstrapTerminal({
+        bootstrapJobId: `job-lim-${i}`,
+        channelType: 'telegram',
+        instanceName: `inst-${i}`,
+        skillName: 's',
+        startedAt: '2026-06-06T10:00:00.000Z',
+        outcome: 'succeeded',
+      });
+    }
+    const rows = getRecentBootstrapHistory({ limit: 3 });
+    expect(rows).toHaveLength(3);
+  });
+
+  it('composes limit and channelTypeFilter', () => {
+    for (let i = 0; i < 4; i++) {
+      recordBootstrapTerminal({
+        bootstrapJobId: `job-comp-tg-${i}`,
+        channelType: 'telegram',
+        instanceName: `tg-${i}`,
+        skillName: 's',
+        startedAt: '2026-06-06T10:00:00.000Z',
+        outcome: 'succeeded',
+      });
+    }
+    recordBootstrapTerminal({
+      bootstrapJobId: 'job-comp-dc',
+      channelType: 'discord',
+      instanceName: 'dc-x',
+      skillName: 's',
+      startedAt: '2026-06-06T10:00:00.000Z',
+      outcome: 'succeeded',
+    });
+    const rows = getRecentBootstrapHistory({
+      limit: 2,
+      channelTypeFilter: 'telegram',
+    });
+    expect(rows).toHaveLength(2);
+    expect(rows.every((r) => r.channel_type === 'telegram')).toBe(true);
+  });
+});
+
+describe('pruneOldBootstrapHistory', () => {
+  it('returns 0 when retentionHours <= 0 (infinite retention)', () => {
+    recordBootstrapTerminal({
+      bootstrapJobId: 'job-inf',
+      channelType: 'telegram',
+      instanceName: 'x',
+      skillName: 's',
+      startedAt: '2026-06-06T10:00:00.000Z',
+      outcome: 'succeeded',
+    });
+    expect(pruneOldBootstrapHistory(0)).toBe(0);
+    expect(getRecentBootstrapHistory()).toHaveLength(1);
+  });
+
+  it('prunes rows older than the retention window and leaves newer rows intact', () => {
+    // Insert a row with completed_at set to 2 hours ago by direct SQL
+    db.run(
+      `INSERT OR REPLACE INTO bootstrap_history
+         (bootstrap_job_id, channel_type, instance_name, skill_name,
+          started_at, completed_at, outcome)
+       VALUES (?, ?, ?, ?, ?, datetime('now', '-2 hours'), ?)`,
+      [
+        'job-old',
+        'telegram',
+        'old-inst',
+        'sk',
+        '2026-06-06T08:00:00.000Z',
+        'timed-out',
+      ],
+    );
+    recordBootstrapTerminal({
+      bootstrapJobId: 'job-new',
+      channelType: 'telegram',
+      instanceName: 'new-inst',
+      skillName: 'sk',
+      startedAt: '2026-06-06T10:00:00.000Z',
+      outcome: 'succeeded',
+    });
+
+    const deleted = pruneOldBootstrapHistory(1); // prune older than 1 hour
+    expect(deleted).toBe(1);
+    const remaining = getRecentBootstrapHistory();
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0].bootstrap_job_id).toBe('job-new');
   });
 });

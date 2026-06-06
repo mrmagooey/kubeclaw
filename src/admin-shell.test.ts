@@ -57,6 +57,10 @@ const {
 }));
 
 vi.mock('./db.js', () => ({
+  // `db` is the exported SqlJsDatabase instance; admin-shell.ts checks `db.db`
+  // to decide whether to call initDatabase(). We export a truthy object so the
+  // guard is satisfied and initDatabase() is never called in tests.
+  db: {},
   initDatabase: vi.fn().mockResolvedValue(undefined),
   getAllRegisteredGroups: mockGetAllRegisteredGroups,
   setRegisteredGroup: mockSetRegisteredGroup,
@@ -65,6 +69,10 @@ vi.mock('./db.js', () => ({
   getAllScheduledTasks: mockGetAllScheduledTasks,
   getAllSessions: mockGetAllSessions,
   clearConversationHistory: mockClearConversationHistory,
+  // Story 180
+  pruneOldBootstrapHistory: vi.fn().mockReturnValue(0),
+  recordBootstrapTerminal: vi.fn(),
+  getRecentBootstrapHistory: vi.fn().mockReturnValue([]),
 }));
 
 vi.mock('./skills/orchestrator/specialist-registry.js', () => ({
@@ -163,6 +171,31 @@ vi.mock('./logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn() },
 }));
 
+vi.mock('./k8s/ipc-redis.js', () => ({
+  currentStepByJob: new Map(),
+  startBootstrapTaskWatcher: vi.fn(),
+  registerBootstrapDeps: vi.fn(),
+}));
+
+vi.mock('./k8s/bootstrap-runner.js', () => ({
+  bootstrapChannelFromSkill: vi.fn().mockResolvedValue({ bootstrapJobId: 'test-job-id' }),
+  waitForBootstrapJobCompletion: vi.fn().mockResolvedValue(undefined),
+  bootstrapStatus: vi.fn().mockResolvedValue({ active: [], recent: [] }),
+  registerBootstrapMeta: vi.fn(),
+  deregisterBootstrapMeta: vi.fn(),
+  getBootstrapMeta: vi.fn().mockReturnValue(undefined),
+}));
+
+vi.mock('./k8s/job-runner.js', () => ({
+  jobRunner: { waitForJobCompletion: vi.fn().mockResolvedValue(undefined) },
+}));
+
+vi.mock('./k8s/redis-client.js', () => ({
+  getRedisClient: vi.fn(() => ({
+    publish: vi.fn().mockResolvedValue(1),
+  })),
+}));
+
 // ── Import after mocks ─────────────────────────────────────────────────────
 
 const { executeTool, TOOLS } = await import('./admin-shell.js');
@@ -190,6 +223,9 @@ describe('admin-shell TOOLS array', () => {
       'register_bootstrap_skill',
       'remove_bootstrap_skill',
       'bootstrap_channel_from_skill',
+      // Story 180: bootstrap status tools
+      'report_step',
+      'bootstrap_status',
       'get_orchestrator_status',
       'restart_orchestrator',
       'install_capability',
