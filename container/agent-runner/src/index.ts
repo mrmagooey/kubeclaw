@@ -1182,10 +1182,12 @@ async function runAgentLoop(
 function buildRedisUrlForBootstrap(): string {
   const base = process.env.REDIS_URL || 'redis://kubeclaw-redis:6379';
   const password = process.env.REDIS_ADMIN_PASSWORD;
-  // The bootstrap pod is given REDIS_ADMIN_PASSWORD (the admin ACL user's
-  // password) — so the matching username is "admin". Allow override via
-  // REDIS_USERNAME for non-default deployments.
-  const username = process.env.REDIS_USERNAME || (password ? 'admin' : '');
+  // The bootstrap pod is given REDIS_ADMIN_PASSWORD — despite the name, this
+  // is actually the "orchestrator" ACL user's password (per the chart's
+  // init-acl script: `user orchestrator on >$REDIS_ADMIN_PASSWORD`). Allow
+  // override via REDIS_USERNAME for non-default deployments.
+  const username =
+    process.env.REDIS_USERNAME || (password ? 'orchestrator' : '');
   if (!password) return base;
   if (base.includes('@')) return base;
   const userPart = username ? encodeURIComponent(username) : '';
