@@ -675,8 +675,10 @@ describe('processCommitChannelConfig — upgrade path', () => {
       'kubeclaw-test',
       'kubeclaw-channel-base:latest',
     );
-    const sseCall = (deps.publishSse as ReturnType<typeof vi.fn>).mock.calls.find(
-      ([, text]: [string, string]) => /upgraded|patched|ready/i.test(text),
+    const sseCall = (
+      deps.publishSse as ReturnType<typeof vi.fn>
+    ).mock.calls.find(([, text]: [string, string]) =>
+      /upgraded|patched|ready/i.test(text),
     );
     expect(sseCall).toBeDefined();
   });

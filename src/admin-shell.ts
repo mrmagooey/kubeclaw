@@ -1214,11 +1214,7 @@ async function handleBootstrapChannelFromSkill(
       },
       activeBootstraps,
       // Story 180: record terminal outcome and deregister metadata
-      recordTerminal: (
-        instName: string,
-        bjId: string,
-        outcome: string,
-      ) => {
+      recordTerminal: (instName: string, bjId: string, outcome: string) => {
         const meta = getBootstrapMeta(instName);
         if (meta) {
           db.recordBootstrapTerminal({
@@ -1227,7 +1223,8 @@ async function handleBootstrapChannelFromSkill(
             instanceName: instName,
             skillName: meta.skillName,
             startedAt: meta.startedAt,
-            outcome: outcome as import('./db.js').BootstrapHistoryRow['outcome'],
+            outcome:
+              outcome as import('./db.js').BootstrapHistoryRow['outcome'],
           });
         }
         deregisterBootstrapMeta(instName);
@@ -1286,7 +1283,8 @@ async function handleUpgradeChannel(input: ToolInput): Promise<string> {
   }
 
   try {
-    const { BatchV1Api: BatchV1ApiClass } = await import('@kubernetes/client-node');
+    const { BatchV1Api: BatchV1ApiClass } =
+      await import('@kubernetes/client-node');
     const batchV1 = kc.makeApiClient(BatchV1ApiClass);
     const k8sDeps = { coreV1, batchV1, appsV1 };
 
@@ -1388,7 +1386,8 @@ async function handleUpgradeChannel(input: ToolInput): Promise<string> {
             instanceName: instKey,
             skillName: meta.skillName,
             startedAt: meta.startedAt,
-            outcome: outcome as import('./db.js').BootstrapHistoryRow['outcome'],
+            outcome:
+              outcome as import('./db.js').BootstrapHistoryRow['outcome'],
           });
         }
         deregisterBootstrapMeta(instKey);
@@ -1840,9 +1839,8 @@ async function handleBootstrapStatus(input: ToolInput): Promise<string> {
   const channelTypeFilter = input.channel_type_filter as string | undefined;
   const includeLogs = (input.include_logs as boolean | undefined) ?? false;
 
-  const { BatchV1Api: BatchV1ApiClass } = await import(
-    '@kubernetes/client-node'
-  );
+  const { BatchV1Api: BatchV1ApiClass } =
+    await import('@kubernetes/client-node');
   const batchV1 = kc.makeApiClient(BatchV1ApiClass);
 
   const deps: BootstrapStatusDeps = {

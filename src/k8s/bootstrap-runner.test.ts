@@ -805,7 +805,10 @@ describe('deriveBootstrapState', () => {
 
   it('returns "installing-packages" for step label containing "npm"', () => {
     expect(
-      deriveBootstrapState('Running', { type: 'step', label: 'Running npm ci' }),
+      deriveBootstrapState('Running', {
+        type: 'step',
+        label: 'Running npm ci',
+      }),
     ).toBe('installing-packages');
   });
 
@@ -821,9 +824,9 @@ describe('deriveBootstrapState', () => {
   });
 
   it('returns "awaiting-dialogue" for unrecognised message type', () => {
-    expect(
-      deriveBootstrapState('Running', { type: 'unknown_type' }),
-    ).toBe('awaiting-dialogue');
+    expect(deriveBootstrapState('Running', { type: 'unknown_type' })).toBe(
+      'awaiting-dialogue',
+    );
   });
 });
 
@@ -882,12 +885,10 @@ describe('buildActiveEntry', () => {
 
   it('uses step label from getStepLabel as currentStep', async () => {
     const deps = makeStatusDeps({
-      getStepLabel: vi
-        .fn()
-        .mockReturnValue({
-          label: 'npm ci completed',
-          ts: new Date().toISOString(),
-        }),
+      getStepLabel: vi.fn().mockReturnValue({
+        label: 'npm ci completed',
+        ts: new Date().toISOString(),
+      }),
     });
     const entry = await buildActiveEntry(
       'my-tg',
@@ -1163,7 +1164,9 @@ describe('parseRuntimePvcVersion', () => {
   });
 
   it('returns 99 for -v99', () => {
-    expect(parseRuntimePvcVersion('kubeclaw-channel-my-inst-runtime-v99')).toBe(99);
+    expect(parseRuntimePvcVersion('kubeclaw-channel-my-inst-runtime-v99')).toBe(
+      99,
+    );
   });
 
   it('treats non-numeric suffix as version 1', () => {
@@ -1243,7 +1246,9 @@ describe('runUpgrade — concurrent rejection', () => {
   it('returns alreadyInProgress=upgrade when upgrade lock is held', async () => {
     const active = new Map<string, string>();
     active.set('my-telegram:upgrade', 'existing-upgrade-job');
-    const k8sDeps = makeUpgradeK8sDeps('kubeclaw-channel-my-telegram-runtime-v1');
+    const k8sDeps = makeUpgradeK8sDeps(
+      'kubeclaw-channel-my-telegram-runtime-v1',
+    );
     const result = await runUpgrade(makeBaseUpgradeOpts(k8sDeps, active));
     expect(result.alreadyInProgress).toBe('upgrade');
   });
@@ -1251,20 +1256,26 @@ describe('runUpgrade — concurrent rejection', () => {
   it('returns alreadyInProgress=bootstrap when initial bootstrap lock is held', async () => {
     const active = new Map<string, string>();
     active.set('my-telegram', 'existing-bootstrap-job');
-    const k8sDeps = makeUpgradeK8sDeps('kubeclaw-channel-my-telegram-runtime-v1');
+    const k8sDeps = makeUpgradeK8sDeps(
+      'kubeclaw-channel-my-telegram-runtime-v1',
+    );
     const result = await runUpgrade(makeBaseUpgradeOpts(k8sDeps, active));
     expect(result.alreadyInProgress).toBe('bootstrap');
   });
 
   it('creates new PVC and Job when no lock is held', async () => {
     const active = new Map<string, string>();
-    const k8sDeps = makeUpgradeK8sDeps('kubeclaw-channel-my-telegram-runtime-v1');
+    const k8sDeps = makeUpgradeK8sDeps(
+      'kubeclaw-channel-my-telegram-runtime-v1',
+    );
     const result = await runUpgrade(makeBaseUpgradeOpts(k8sDeps, active));
     expect(result.alreadyInProgress).toBeUndefined();
     expect(result.newPvcName).toBe('kubeclaw-channel-my-telegram-runtime-v2');
     expect(result.oldPvcName).toBe('kubeclaw-channel-my-telegram-runtime-v1');
     expect(active.has('my-telegram:upgrade')).toBe(true);
-    expect(k8sDeps.coreV1.createNamespacedPersistentVolumeClaim).toHaveBeenCalledOnce();
+    expect(
+      k8sDeps.coreV1.createNamespacedPersistentVolumeClaim,
+    ).toHaveBeenCalledOnce();
     expect(k8sDeps.batchV1.createNamespacedJob).toHaveBeenCalledOnce();
   });
 
@@ -1278,14 +1289,18 @@ describe('runUpgrade — concurrent rejection', () => {
 
   it('registers the upgrade key in activeBootstraps on success', async () => {
     const active = new Map<string, string>();
-    const k8sDeps = makeUpgradeK8sDeps('kubeclaw-channel-my-telegram-runtime-v1');
+    const k8sDeps = makeUpgradeK8sDeps(
+      'kubeclaw-channel-my-telegram-runtime-v1',
+    );
     const result = await runUpgrade(makeBaseUpgradeOpts(k8sDeps, active));
     expect(active.get('my-telegram:upgrade')).toBe(result.upgradeJobId);
   });
 
   it('bootstrap Job mounts the new PVC, not the old one', async () => {
     const active = new Map<string, string>();
-    const k8sDeps = makeUpgradeK8sDeps('kubeclaw-channel-my-telegram-runtime-v1');
+    const k8sDeps = makeUpgradeK8sDeps(
+      'kubeclaw-channel-my-telegram-runtime-v1',
+    );
     await runUpgrade(makeBaseUpgradeOpts(k8sDeps, active));
     const jobBody = k8sDeps.batchV1.createNamespacedJob.mock.calls[0][0].body;
     const runtimeVol = jobBody.spec.template.spec.volumes.find(

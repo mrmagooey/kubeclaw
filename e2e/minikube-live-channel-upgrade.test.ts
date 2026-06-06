@@ -50,10 +50,34 @@ const SKIP_REASON =
   'Story 181 e2e deferred: requires minikube + live LLM + bootstrapped channel instance + v2 manifest';
 
 describe('Story 181: upgrade_channel blue-green PVC swap e2e (deferred)', () => {
-  it.skip(SKIP_REASON, 'happy path: upgrade_channel creates versioned PVC and upgrade Job', () => {});
-  it.skip(SKIP_REASON, 'happy path: Deployment is patched to new PVC after commit_channel_config', () => {});
-  it.skip(SKIP_REASON, 'happy path: old PVC is deleted after grace period', () => {});
-  it.skip(SKIP_REASON, 'rollback: MANIFEST_DIVERGENCE deletes new PVC, Deployment retains old PVC', () => {});
-  it.skip(SKIP_REASON, 'rollback: instance upgrade key freed after MANIFEST_DIVERGENCE — retry allowed', () => {});
-  it.skip(SKIP_REASON, 'concurrent: second upgrade_channel for same instance returns ALREADY_IN_PROGRESS', () => {});
+  it.skip(
+    SKIP_REASON,
+    'happy path: upgrade_channel creates versioned PVC and upgrade Job',
+    () => {},
+  );
+  it.skip(
+    SKIP_REASON,
+    'happy path: Deployment is patched to new PVC after commit_channel_config',
+    () => {},
+  );
+  it.skip(
+    SKIP_REASON,
+    'happy path: old PVC is deleted after grace period',
+    () => {},
+  );
+  it.skip(
+    SKIP_REASON,
+    'rollback: MANIFEST_DIVERGENCE deletes new PVC, Deployment retains old PVC',
+    () => {},
+  );
+  it.skip(
+    SKIP_REASON,
+    'rollback: instance upgrade key freed after MANIFEST_DIVERGENCE — retry allowed',
+    () => {},
+  );
+  it.skip(
+    SKIP_REASON,
+    'concurrent: second upgrade_channel for same instance returns ALREADY_IN_PROGRESS',
+    () => {},
+  );
 });

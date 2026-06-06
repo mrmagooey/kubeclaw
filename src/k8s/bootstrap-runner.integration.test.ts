@@ -648,7 +648,10 @@ function makeFakeAppsV1(currentPvcName: string) {
         template: {
           spec: {
             volumes: [
-              { name: 'runtime', persistentVolumeClaim: { claimName: currentPvcName } },
+              {
+                name: 'runtime',
+                persistentVolumeClaim: { claimName: currentPvcName },
+              },
             ],
           },
         },
@@ -661,7 +664,9 @@ function makeFakeAppsV1(currentPvcName: string) {
  * Build the full fake K8s deps for runUpgrade — extends the base bootstrap
  * k8sDeps with appsV1 and tracks created PVCs and Jobs.
  */
-function makeUpgradeK8sDeps(currentPvcName: string): ReturnType<typeof makeFakeK8sDeps> & {
+function makeUpgradeK8sDeps(currentPvcName: string): ReturnType<
+  typeof makeFakeK8sDeps
+> & {
   appsV1: ReturnType<typeof makeFakeAppsV1>;
 } {
   const base = makeFakeK8sDeps();
@@ -684,7 +689,10 @@ function makeUpgradeCommitDeps(): ReturnType<typeof makeCommitDeps> & {
   scheduledOldPvcDeletions: string[];
 } {
   const base = makeCommitDeps();
-  const patchedDeployments: Array<{ instanceName: string; newPvcName: string }> = [];
+  const patchedDeployments: Array<{
+    instanceName: string;
+    newPvcName: string;
+  }> = [];
   const rolledOutDeployments: string[] = [];
   const scheduledOldPvcDeletions: string[] = [];
 
@@ -739,7 +747,9 @@ describe('Story 181: runUpgrade + processCommitChannelConfig upgrade (integratio
     expect(k8sDeps.createdPvcs).toHaveLength(1);
     expect(k8sDeps.createdPvcs[0].metadata?.name).toBe(newPvcName);
     expect(k8sDeps.createdJobs).toHaveLength(1);
-    expect(k8sDeps.createdJobs[0].metadata?.name).toBe('kubeclaw-bootstrap-tg-upgrade-upgrade');
+    expect(k8sDeps.createdJobs[0].metadata?.name).toBe(
+      'kubeclaw-bootstrap-tg-upgrade-upgrade',
+    );
     expect(activeBootstraps.has('tg-upgrade:upgrade')).toBe(true);
 
     // ── Phase 2: processCommitChannelConfig (upgrade path) ───────────────────
@@ -753,7 +763,12 @@ describe('Story 181: runUpgrade + processCommitChannelConfig upgrade (integratio
       upgradeFromPvc: currentPvcName,
     };
 
-    await processCommitChannelConfig(payload, commitDeps, 'kubeclaw-test', 'kubeclaw-channel-base:test');
+    await processCommitChannelConfig(
+      payload,
+      commitDeps,
+      'kubeclaw-test',
+      'kubeclaw-channel-base:test',
+    );
 
     // Deployment patched to new PVC name
     expect(commitDeps.patchedDeployments).toHaveLength(1);
@@ -762,7 +777,9 @@ describe('Story 181: runUpgrade + processCommitChannelConfig upgrade (integratio
       newPvcName: 'kubeclaw-channel-tg-upgrade-runtime',
     });
     // Rollout waited
-    expect(commitDeps.rolledOutDeployments).toContain('kubeclaw-channel-tg-upgrade');
+    expect(commitDeps.rolledOutDeployments).toContain(
+      'kubeclaw-channel-tg-upgrade',
+    );
     // Old PVC scheduled for deletion
     expect(commitDeps.scheduledOldPvcDeletions).toContain(currentPvcName);
     // Release happened
@@ -791,7 +808,9 @@ describe('Story 181: runUpgrade + processCommitChannelConfig upgrade (integratio
 
     // Track PVC deletions separately
     const deletedPvcs: string[] = [];
-    commitDeps.deletePvc = async (name: string) => { deletedPvcs.push(name); };
+    commitDeps.deletePvc = async (name: string) => {
+      deletedPvcs.push(name);
+    };
 
     const payload: CommitChannelConfigPayload = {
       type: 'commit_channel_config',
@@ -802,7 +821,12 @@ describe('Story 181: runUpgrade + processCommitChannelConfig upgrade (integratio
       upgradeFromPvc: currentPvcName,
     };
 
-    await processCommitChannelConfig(payload, commitDeps, 'kubeclaw-test', 'kubeclaw-channel-base:test');
+    await processCommitChannelConfig(
+      payload,
+      commitDeps,
+      'kubeclaw-test',
+      'kubeclaw-channel-base:test',
+    );
 
     // The NEW versioned PVC (nextRuntimePvcName(currentPvcName)) is deleted.
     // currentPvcName has no version suffix → next is -v2.

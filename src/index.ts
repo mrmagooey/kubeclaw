@@ -564,7 +564,10 @@ async function main(): Promise<void> {
               namespace: KUBECLAW_NAMESPACE,
               gracePeriodSeconds: 0,
             });
-            logger.info({ oldPvcName }, 'Upgrade grace period: old PVC deleted');
+            logger.info(
+              { oldPvcName },
+              'Upgrade grace period: old PVC deleted',
+            );
           } catch (err) {
             logger.warn(
               { oldPvcName, err },

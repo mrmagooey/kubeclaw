@@ -178,7 +178,9 @@ vi.mock('./k8s/ipc-redis.js', () => ({
 }));
 
 vi.mock('./k8s/bootstrap-runner.js', () => ({
-  bootstrapChannelFromSkill: vi.fn().mockResolvedValue({ bootstrapJobId: 'test-job-id' }),
+  bootstrapChannelFromSkill: vi
+    .fn()
+    .mockResolvedValue({ bootstrapJobId: 'test-job-id' }),
   waitForBootstrapJobCompletion: vi.fn().mockResolvedValue(undefined),
   bootstrapStatus: vi.fn().mockResolvedValue({ active: [], recent: [] }),
   registerBootstrapMeta: vi.fn(),
@@ -921,7 +923,9 @@ describe('executeTool', () => {
       const result = await executeTool('upgrade_channel', {
         target_manifest_hash: 'abc123',
       });
-      expect(result).toMatch(/instance_name.*required|required.*instance_name/i);
+      expect(result).toMatch(
+        /instance_name.*required|required.*instance_name/i,
+      );
     });
 
     it('returns error if target_manifest_hash is missing', async () => {

@@ -419,7 +419,9 @@ export interface RunUpgradeResult {
  *   - Creates Job `kubeclaw-bootstrap-<instance>-upgrade`
  *   - Registers `<instance>:upgrade` in activeBootstraps
  */
-export async function runUpgrade(opts: RunUpgradeOpts): Promise<RunUpgradeResult> {
+export async function runUpgrade(
+  opts: RunUpgradeOpts,
+): Promise<RunUpgradeResult> {
   const {
     instanceName,
     targetManifestHash,
@@ -436,13 +438,29 @@ export async function runUpgrade(opts: RunUpgradeOpts): Promise<RunUpgradeResult
   // ── Concurrent rejection ────────────────────────────────────────────────────
   if (activeBootstraps.has(upgradeKey)) {
     const existing = activeBootstraps.get(upgradeKey)!;
-    logger.warn({ instanceName, existing }, 'runUpgrade: upgrade already in progress');
-    return { upgradeJobId: existing, newPvcName: '', oldPvcName: '', alreadyInProgress: 'upgrade' };
+    logger.warn(
+      { instanceName, existing },
+      'runUpgrade: upgrade already in progress',
+    );
+    return {
+      upgradeJobId: existing,
+      newPvcName: '',
+      oldPvcName: '',
+      alreadyInProgress: 'upgrade',
+    };
   }
   if (activeBootstraps.has(instanceName)) {
     const existing = activeBootstraps.get(instanceName)!;
-    logger.warn({ instanceName, existing }, 'runUpgrade: initial bootstrap already in progress');
-    return { upgradeJobId: existing, newPvcName: '', oldPvcName: '', alreadyInProgress: 'bootstrap' };
+    logger.warn(
+      { instanceName, existing },
+      'runUpgrade: initial bootstrap already in progress',
+    );
+    return {
+      upgradeJobId: existing,
+      newPvcName: '',
+      oldPvcName: '',
+      alreadyInProgress: 'bootstrap',
+    };
   }
 
   // ── Discover current PVC from Deployment ───────────────────────────────────
@@ -467,7 +485,10 @@ export async function runUpgrade(opts: RunUpgradeOpts): Promise<RunUpgradeResult
       name: newPvcName,
       namespace,
     });
-    logger.info({ newPvcName }, 'runUpgrade: new runtime PVC already exists, reusing');
+    logger.info(
+      { newPvcName },
+      'runUpgrade: new runtime PVC already exists, reusing',
+    );
   } catch {
     await k8sDeps.coreV1.createNamespacedPersistentVolumeClaim({
       namespace,
@@ -497,17 +518,24 @@ export async function runUpgrade(opts: RunUpgradeOpts): Promise<RunUpgradeResult
     { name: 'KUBECLAW_SUPERUSER', value: 'true' },
     { name: 'KUBECLAW_BOOTSTRAP_JOB_ID', value: upgradeJobId },
     { name: 'KUBECLAW_BOOTSTRAP_INSTANCE', value: instanceName },
-    { name: 'KUBECLAW_BOOTSTRAP_TARGET_MANIFEST_HASH', value: targetManifestHash },
+    {
+      name: 'KUBECLAW_BOOTSTRAP_TARGET_MANIFEST_HASH',
+      value: targetManifestHash,
+    },
     { name: 'KUBECLAW_UPGRADE_FROM_PVC', value: currentPvcName },
     {
       name: 'REDIS_URL',
-      value: opts.redisUrl || process.env.REDIS_URL || 'redis://kubeclaw-redis:6379',
+      value:
+        opts.redisUrl || process.env.REDIS_URL || 'redis://kubeclaw-redis:6379',
     },
   ];
   if (opts.redisUsername)
     envVars.push({ name: 'REDIS_USERNAME', value: opts.redisUsername });
   if (opts.redisAdminPassword)
-    envVars.push({ name: 'REDIS_ADMIN_PASSWORD', value: opts.redisAdminPassword });
+    envVars.push({
+      name: 'REDIS_ADMIN_PASSWORD',
+      value: opts.redisAdminPassword,
+    });
   if (opts.openaiApiKey)
     envVars.push({ name: 'OPENAI_API_KEY', value: opts.openaiApiKey });
   if (opts.openaiBaseUrl)
@@ -588,8 +616,14 @@ export async function runUpgrade(opts: RunUpgradeOpts): Promise<RunUpgradeResult
     },
   };
 
-  await k8sDeps.batchV1.createNamespacedJob({ namespace, body: jobBody as any });
-  logger.info({ jobName, upgradeJobId, instanceName }, 'runUpgrade: upgrade Job created');
+  await k8sDeps.batchV1.createNamespacedJob({
+    namespace,
+    body: jobBody as any,
+  });
+  logger.info(
+    { jobName, upgradeJobId, instanceName },
+    'runUpgrade: upgrade Job created',
+  );
 
   activeBootstraps.set(upgradeKey, upgradeJobId);
   return { upgradeJobId, newPvcName, oldPvcName: currentPvcName };
@@ -990,7 +1024,9 @@ export function deregisterBootstrapMeta(instanceName: string): void {
  * Read metadata for an active bootstrap instance.
  * Used by admin-shell handler and by the terminal-recording callback.
  */
-export function getBootstrapMeta(instanceName: string): BootstrapMeta | undefined {
+export function getBootstrapMeta(
+  instanceName: string,
+): BootstrapMeta | undefined {
   return bootstrapMetaMap.get(instanceName);
 }
 
@@ -1018,7 +1054,8 @@ export function deriveBootstrapState(
   if (type === 'commit_ack') return 'done';
   if (type === 'commit_channel_config') return 'committing';
   if (type === 'step') {
-    if (label.toLowerCase().includes('validat')) return 'validating-credentials';
+    if (label.toLowerCase().includes('validat'))
+      return 'validating-credentials';
     if (label.toLowerCase().includes('npm')) return 'installing-packages';
   }
   if (type === 'question') return 'awaiting-dialogue';
@@ -1130,7 +1167,13 @@ export async function bootstrapStatus(
         skillName: 'unknown',
         startedAt: new Date().toISOString(),
       };
-      return buildActiveEntry(instanceName, bootstrapJobId, meta, deps, includeLogs);
+      return buildActiveEntry(
+        instanceName,
+        bootstrapJobId,
+        meta,
+        deps,
+        includeLogs,
+      );
     }),
   );
 
