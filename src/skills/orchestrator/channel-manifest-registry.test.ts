@@ -1,0 +1,263 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import {
+  registerChannelManifest,
+  listChannelManifestOverrides,
+} from './channel-manifest-registry.js';
+import { _initTestDatabase, __resetDbForTest, db } from '../../db.js';
+
+const VALID_PKG = JSON.stringify({
+  name: 'runtime',
+  version: '1.0.0',
+  dependencies: { telegraf: '4.16.3' },
+});
+const VALID_LOCK = JSON.stringify({
+  name: 'runtime',
+  lockfileVersion: 3,
+  packages: {},
+});
+
+describe('channel_manifest_overrides table', () => {
+  beforeEach(async () => {
+    await _initTestDatabase();
+    __resetDbForTest();
+  });
+
+  it('table exists after schema init', () => {
+    const result = db.exec(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name='channel_manifest_overrides'`,
+    );
+    expect(result.length).toBeGreaterThan(0);
+    expect(result[0].values[0][0]).toBe('channel_manifest_overrides');
+  });
+});
+
+describe('registerChannelManifest', () => {
+  beforeEach(async () => {
+    await _initTestDatabase();
+    __resetDbForTest();
+  });
+
+  it('inserts a valid manifest and returns the hash', () => {
+    const r = registerChannelManifest({
+      channel_type: 'telegram',
+      package_json: VALID_PKG,
+      package_lock_json: VALID_LOCK,
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.manifest_hash).toMatch(/^[a-f0-9]{64}$/);
+    expect(r.source).toBe('admin-registered');
+    expect(listChannelManifestOverrides()).toHaveLength(1);
+  });
+
+  it('rejects package_json that is not valid JSON', () => {
+    const r = registerChannelManifest({
+      channel_type: 'telegram',
+      package_json: 'not-json',
+      package_lock_json: VALID_LOCK,
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error).toMatch(/invalid JSON/i);
+  });
+
+  it('rejects package_json missing top-level dependencies', () => {
+    const r = registerChannelManifest({
+      channel_type: 'telegram',
+      package_json: JSON.stringify({ name: 'runtime', version: '1.0.0' }),
+      package_lock_json: VALID_LOCK,
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error).toMatch(/dependencies/i);
+  });
+
+  it('rejects package_json with devDependencies', () => {
+    const r = registerChannelManifest({
+      channel_type: 'telegram',
+      package_json: JSON.stringify({
+        name: 'runtime',
+        dependencies: { telegraf: '4.16.3' },
+        devDependencies: { typescript: '5.0.0' },
+      }),
+      package_lock_json: VALID_LOCK,
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error).toMatch(/devDependencies/i);
+  });
+
+  it('rejects non-allowlisted lifecycle script in package.json scripts', () => {
+    const r = registerChannelManifest({
+      channel_type: 'telegram',
+      package_json: JSON.stringify({
+        name: 'runtime',
+        dependencies: { telegraf: '4.16.3' },
+        scripts: { postinstall: 'echo hi' },
+      }),
+      package_lock_json: VALID_LOCK,
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error).toMatch(/postinstall/i);
+  });
+
+  it('accepts lifecycle script when it is in the allowlist', () => {
+    const r = registerChannelManifest(
+      {
+        channel_type: 'telegram',
+        package_json: JSON.stringify({
+          name: 'runtime',
+          dependencies: { telegraf: '4.16.3' },
+          scripts: { prepare: 'node setup.js' },
+        }),
+        package_lock_json: VALID_LOCK,
+      },
+      ['prepare'],
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('rejects non-allowlisted lifecycle script in lockfile packages', () => {
+    const r = registerChannelManifest({
+      channel_type: 'telegram',
+      package_json: VALID_PKG,
+      package_lock_json: JSON.stringify({
+        name: 'runtime',
+        lockfileVersion: 3,
+        packages: {
+          'node_modules/foo': { scripts: { postinstall: 'echo bad' } },
+        },
+      }),
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error).toMatch(/node_modules\/foo/);
+    expect(r.error).toMatch(/postinstall/);
+  });
+
+  it('rejects lockfile v1/v2 (lockfileVersion !== 3)', () => {
+    const r = registerChannelManifest({
+      channel_type: 'telegram',
+      package_json: VALID_PKG,
+      package_lock_json: JSON.stringify({
+        name: 'runtime',
+        lockfileVersion: 2,
+        packages: {},
+      }),
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error).toMatch(/lockfileVersion/i);
+  });
+
+  it('is idempotent on identical (channel_type, content) — no reconcile on second call', async () => {
+    const reconcile = vi.fn().mockResolvedValue(undefined);
+    const r1 = registerChannelManifest(
+      {
+        channel_type: 'telegram',
+        package_json: VALID_PKG,
+        package_lock_json: VALID_LOCK,
+      },
+      [],
+      reconcile,
+    );
+    expect(r1.ok).toBe(true);
+    // Give the fire-and-forget reconcile a tick to run
+    await Promise.resolve();
+    expect(reconcile).toHaveBeenCalledTimes(1);
+
+    const r2 = registerChannelManifest(
+      {
+        channel_type: 'telegram',
+        package_json: VALID_PKG,
+        package_lock_json: VALID_LOCK,
+      },
+      [],
+      reconcile,
+    );
+    expect(r2.ok).toBe(true);
+    // Same hash — idempotent short-circuit, reconcile NOT called again
+    await Promise.resolve();
+    expect(reconcile).toHaveBeenCalledTimes(1);
+  });
+
+  it('calls reconcile again on same channel_type with different content', async () => {
+    const reconcile = vi.fn().mockResolvedValue(undefined);
+    registerChannelManifest(
+      {
+        channel_type: 'telegram',
+        package_json: VALID_PKG,
+        package_lock_json: VALID_LOCK,
+      },
+      [],
+      reconcile,
+    );
+    await Promise.resolve();
+    expect(reconcile).toHaveBeenCalledTimes(1);
+
+    // Different content for same channel_type → new hash → reconcile
+    const newPkg = JSON.stringify({
+      name: 'runtime',
+      version: '2.0.0',
+      dependencies: { telegraf: '4.16.4' },
+    });
+    registerChannelManifest(
+      {
+        channel_type: 'telegram',
+        package_json: newPkg,
+        package_lock_json: VALID_LOCK,
+      },
+      [],
+      reconcile,
+    );
+    await Promise.resolve();
+    expect(reconcile).toHaveBeenCalledTimes(2);
+  });
+
+  it('triggers reconcile after successful insert', async () => {
+    const reconcile = vi.fn().mockResolvedValue(undefined);
+    registerChannelManifest(
+      {
+        channel_type: 'telegram',
+        package_json: VALID_PKG,
+        package_lock_json: VALID_LOCK,
+      },
+      [],
+      reconcile,
+    );
+    await Promise.resolve();
+    expect(reconcile).toHaveBeenCalledOnce();
+  });
+});
+
+describe('listChannelManifestOverrides', () => {
+  beforeEach(async () => {
+    await _initTestDatabase();
+    __resetDbForTest();
+  });
+
+  it('returns empty array when no overrides registered', () => {
+    expect(listChannelManifestOverrides()).toEqual([]);
+  });
+
+  it('returns all overrides ordered by channel_type', () => {
+    registerChannelManifest({
+      channel_type: 'telegram',
+      package_json: VALID_PKG,
+      package_lock_json: VALID_LOCK,
+    });
+    registerChannelManifest({
+      channel_type: 'slack',
+      package_json: JSON.stringify({
+        name: 'runtime',
+        dependencies: { '@slack/bolt': '3.0.0' },
+      }),
+      package_lock_json: VALID_LOCK,
+    });
+    const list = listChannelManifestOverrides();
+    expect(list).toHaveLength(2);
+    expect(list[0].channel_type).toBe('slack');
+    expect(list[1].channel_type).toBe('telegram');
+  });
+});

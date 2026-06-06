@@ -203,6 +203,18 @@ function createSchema(database: SqlJsDatabase): void {
     )
   `);
 
+  // Story 178: admin-registered channel manifests (runtime write path).
+  database.run(`
+    CREATE TABLE IF NOT EXISTS channel_manifest_overrides (
+      channel_type      TEXT PRIMARY KEY,
+      package_json      TEXT NOT NULL,
+      package_lock_json TEXT NOT NULL,
+      manifest_hash     TEXT NOT NULL,
+      registered_at     TEXT NOT NULL,
+      registered_by     TEXT NOT NULL
+    )
+  `);
+
   database.run(`
     CREATE TABLE IF NOT EXISTS specialist_usage (
       id              INTEGER PRIMARY KEY AUTOINCREMENT,
