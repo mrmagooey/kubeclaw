@@ -279,7 +279,7 @@ describe('FileSidecarJobRunner', () => {
       expect(env).toContainEqual({ name: 'KUBECLAW_TIMEOUT', value: '60000' });
     });
 
-    it('should mount groups and sessions PVCs', () => {
+    it('should mount the groups PVC and not the removed Claude SDK session mount', () => {
       const input: JobInput = {
         groupFolder: 'test-group',
         chatJid: 'test@g.us',
@@ -305,7 +305,16 @@ describe('FileSidecarJobRunner', () => {
 
       const volumes = manifest.spec?.template?.spec?.volumes;
       expect(volumes?.some((v) => v.name === 'groups-pvc')).toBe(true);
-      expect(volumes?.some((v) => v.name === 'sessions-pvc')).toBe(true);
+      // The Claude SDK is gone, so the /home/node/.claude session mount and its
+      // sessions-pvc volume are no longer wired into the sidecar adapter.
+      expect(volumes?.some((v) => v.name === 'sessions-pvc')).toBe(false);
+      const adapterMounts =
+        manifest.spec?.template?.spec?.containers?.flatMap(
+          (c) => c.volumeMounts ?? [],
+        ) ?? [];
+      expect(
+        adapterMounts.some((m) => m.mountPath === '/home/node/.claude'),
+      ).toBe(false);
     });
 
     it('should include project PVC for main group', () => {

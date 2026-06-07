@@ -254,18 +254,12 @@ export class FileSidecarJobRunner {
         : []),
     ];
 
-    // Volumes from PVCs (for groups, sessions)
+    // Volumes from PVCs (for groups)
     const pvcVolumes = [
       {
         name: 'groups-pvc',
         persistentVolumeClaim: {
           claimName: 'kubeclaw-groups',
-        },
-      },
-      {
-        name: 'sessions-pvc',
-        persistentVolumeClaim: {
-          claimName: 'kubeclaw-sessions',
         },
       },
     ];
@@ -290,11 +284,6 @@ export class FileSidecarJobRunner {
         name: 'groups-pvc',
         mountPath: '/workspace/group',
         subPath: input.groupFolder,
-      },
-      {
-        name: 'sessions-pvc',
-        mountPath: '/home/node/.claude',
-        subPath: `${input.groupFolder}/.claude`,
       },
     ];
 

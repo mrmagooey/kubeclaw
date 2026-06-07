@@ -291,8 +291,8 @@ spec:
               mountPath: /workspace/group
               subPathExpr: $(KUBECLAW_GROUP_FOLDER)
             - name: sessions-pvc
-              mountPath: /home/node/.claude
-              subPathExpr: $(KUBECLAW_GROUP_FOLDER)
+              mountPath: /app/src
+              subPathExpr: $(KUBECLAW_GROUP_FOLDER)/agent-runner-src
           resources:
             requests:
               memory: 512Mi
