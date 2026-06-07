@@ -339,7 +339,6 @@ function helmValues(ns: string): string[] {
     '--set', 'credentialInjection.mode=off',
     '--set', 'orchestrator.replicas=1',
     '--set', `secrets.anthropicApiKey=test-key`,
-    '--set', `secrets.claudeCodeOauthToken=test-token`,
     '--set', `redis.password=e2e-upgrade-redis-pass`,
     // HTTP channel users: alice:alicepass
     '--set-string', `secrets.httpChannelUsers=${HTTP_USER}:${HTTP_PASS}`,

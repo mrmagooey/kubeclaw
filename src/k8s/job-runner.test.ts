@@ -323,6 +323,37 @@ describe('JobRunner', () => {
         readOnly: true,
       });
     });
+
+    it('claude provider: injects ANTHROPIC_API_KEY, ANTHROPIC_BASE_URL, ANTHROPIC_MODEL', () => {
+      const spec = makeSpec({ provider: 'claude' });
+      const manifest = jobRunner.generateJobManifest(spec);
+      const envNames = (
+        manifest.spec?.template?.spec?.containers?.[0]?.env ?? []
+      ).map((e) => e.name);
+      expect(envNames).toContain('ANTHROPIC_API_KEY');
+      expect(envNames).toContain('ANTHROPIC_BASE_URL');
+      expect(envNames).toContain('ANTHROPIC_MODEL');
+    });
+
+    it('claude provider: does NOT inject CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_AUTH_TOKEN', () => {
+      const spec = makeSpec({ provider: 'claude' });
+      const manifest = jobRunner.generateJobManifest(spec);
+      const envNames = (
+        manifest.spec?.template?.spec?.containers?.[0]?.env ?? []
+      ).map((e) => e.name);
+      expect(envNames).not.toContain('CLAUDE_CODE_OAUTH_TOKEN');
+      expect(envNames).not.toContain('ANTHROPIC_AUTH_TOKEN');
+    });
+
+    it('claude provider: does NOT mount /home/node/.claude', () => {
+      const spec = makeSpec({ provider: 'claude' });
+      const manifest = jobRunner.generateJobManifest(spec);
+      const volumeMounts =
+        manifest.spec?.template?.spec?.containers?.[0]?.volumeMounts ?? [];
+      expect(
+        volumeMounts.some((m) => m.mountPath === '/home/node/.claude'),
+      ).toBe(false);
+    });
   });
 
   describe('REDIS_URL in generateJobManifest', () => {

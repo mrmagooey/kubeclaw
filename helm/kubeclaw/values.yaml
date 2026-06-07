@@ -72,8 +72,8 @@ storage:
 secrets:
   # Your Anthropic API key (https://console.anthropic.com/) — for channel pods and tool Jobs
   anthropicApiKey: ""
-  # OAuth token for Claude Code (required for channel pods)
-  claudeCodeOauthToken: ""
+  # Optional: Anthropic model id (e.g. claude-opus-4-5). Defaults to claude-sonnet-4-5.
+  anthropicModel: ""
   # OpenAI-compatible API key — for DirectLLMRunner and AdminShell.
   # Works with OpenAI, OpenRouter, Groq, Mistral, Ollama, and any compatible endpoint.
   openaiApiKey: ""
@@ -97,7 +97,7 @@ secrets:
   # Admin HTTP interface password. Auto-generated on first install if left empty.
   adminHttpPassword: ""
   # Set to use an existing Secret instead of creating one from the values above.
-  # The Secret must contain keys: anthropic-api-key, claude-code-oauth-token,
+  # The Secret must contain keys: anthropic-api-key,
   # openai-api-key (optional), openai-base-url (optional), voyage-api-key (optional)
   existingSecret: ""
 

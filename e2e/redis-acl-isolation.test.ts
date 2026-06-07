@@ -259,7 +259,7 @@ describe.skipIf(!clusterReachable)(
       execSync(
         `kubectl -n ${NS} create secret generic kubeclaw-secrets ` +
           `--from-literal=anthropic-api-key=sk-ant-placeholder ` +
-          `--from-literal=claude-code-oauth-token=placeholder ` +
+          `--from-literal=anthropic-model=placeholder ` +
           `--from-literal=openai-api-key=placeholder ` +
           `--from-literal=openai-base-url="" ` +
           `--from-literal=embedding-base-url="" ` +

@@ -163,7 +163,6 @@ function helmInstall(extraArgs: string[]): void {
       '--timeout', '180s',
       '--set', `namespace=${NAMESPACE}`,
       '--set', 'secrets.anthropicApiKey=test-key',
-      '--set', 'secrets.claudeCodeOauthToken=test-token',
       '--set', 'secrets.openaiApiKey=no-key',
       '--set-string', 'secrets.openaiBaseUrl=http://127.0.0.1:9999/v1',
       '--set-string', 'secrets.directLlmModel=dummy-model',

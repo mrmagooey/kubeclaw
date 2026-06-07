@@ -319,8 +319,6 @@ describe.skipIf(shouldSkip)(
           '--set',
           'secrets.anthropicApiKey=placeholder-key',
           '--set',
-          'secrets.claudeCodeOauthToken=placeholder-token',
-          '--set',
           'channels.http.enabled=true',
           '--set',
           'channels.http.type=http',

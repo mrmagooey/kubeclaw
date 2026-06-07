@@ -98,11 +98,7 @@ const OPENROUTER_REFERER =
 const OPENROUTER_TITLE = process.env.OPENROUTER_X_TITLE || 'KubeClaw';
 
 // Secrets to strip from Bash tool subprocess environments
-const SECRET_ENV_VARS = [
-  'OPENROUTER_API_KEY',
-  'ANTHROPIC_API_KEY',
-  'CLAUDE_CODE_OAUTH_TOKEN',
-];
+const SECRET_ENV_VARS = ['OPENROUTER_API_KEY', 'ANTHROPIC_API_KEY'];
 
 class MessageStream {
   private queue: string[] = [];

@@ -145,7 +145,6 @@ beforeAll(async () => {
       '--timeout', '60s',
       '--set', `namespace=${NAMESPACE}`,
       '--set', `secrets.anthropicApiKey=test-key`,
-      '--set', `secrets.claudeCodeOauthToken=test-token`,
       '--set', `redis.password=${TEST_REDIS_PASSWORD}`,
       '--set', 'orchestrator.maxConcurrentJobs=5',
     ],
@@ -240,12 +239,13 @@ describe('namespace', () => {
 // ─── 3. Secrets ───────────────────────────────────────────────────────────────
 
 describe('secrets', () => {
-  it('kubeclaw-secrets contains anthropic-api-key and claude-code-oauth-token', () => {
+  it('kubeclaw-secrets contains anthropic-api-key and anthropic-model', () => {
     const secret = getJson('secret/kubeclaw-secrets') as {
       data: Record<string, string>;
     };
     expect(Object.keys(secret.data)).toContain('anthropic-api-key');
-    expect(Object.keys(secret.data)).toContain('claude-code-oauth-token');
+    expect(Object.keys(secret.data)).toContain('anthropic-model');
+    expect(Object.keys(secret.data)).not.toContain('claude-code-oauth-token');
   });
 
   it('kubeclaw-redis contains admin-password matching install value', () => {

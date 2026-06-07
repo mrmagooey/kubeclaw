@@ -198,8 +198,6 @@ const STRIPPED_WHEN_INJECTED = new Set([
   'OPENAI_API_KEY',
   'OPENROUTER_API_KEY',
   'ANTHROPIC_API_KEY',
-  'ANTHROPIC_AUTH_TOKEN',
-  'CLAUDE_CODE_OAUTH_TOKEN',
   'VOYAGE_API_KEY',
 ]);
 
@@ -830,19 +828,10 @@ export class JobRunner {
             },
           ]
         : []),
-      // Claude-specific credentials (only injected when provider is claude)
+      // Anthropic (claude provider) config — API-key auth via pi-ai's native
+      // anthropic-messages API. Only injected when provider is claude.
       ...(spec.provider === 'claude'
         ? [
-            {
-              name: 'CLAUDE_CODE_OAUTH_TOKEN',
-              valueFrom: {
-                secretKeyRef: {
-                  name: 'kubeclaw-secrets',
-                  key: 'claude-code-oauth-token',
-                  optional: true,
-                },
-              },
-            },
             {
               name: 'ANTHROPIC_API_KEY',
               valueFrom: {
@@ -864,11 +853,11 @@ export class JobRunner {
               },
             },
             {
-              name: 'ANTHROPIC_AUTH_TOKEN',
+              name: 'ANTHROPIC_MODEL',
               valueFrom: {
                 secretKeyRef: {
                   name: 'kubeclaw-secrets',
-                  key: 'anthropic-auth-token',
+                  key: 'anthropic-model',
                   optional: true,
                 },
               },
@@ -895,15 +884,6 @@ export class JobRunner {
         subPath: `${spec.groupFolder}/agent-runner-src`,
       },
     ];
-
-    // Claude SDK stores session state in /home/node/.claude — only mount for claude provider
-    if (spec.provider === 'claude') {
-      volumeMounts.push({
-        name: 'sessions-pvc',
-        mountPath: '/home/node/.claude',
-        subPath: `${spec.groupFolder}/.claude`,
-      });
-    }
 
     // Add main project mount if this is the main group
     if (spec.isMain) {

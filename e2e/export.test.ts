@@ -206,7 +206,6 @@ function helmInstall(): void {
       '--timeout', '180s',
       '--set', `namespace=${NAMESPACE}`,
       '--set', 'secrets.anthropicApiKey=test-key',
-      '--set', 'secrets.claudeCodeOauthToken=test-token',
       '--set', 'channels.http.enabled=true',
       '--set', 'channels.http.type=http',
       '--set', 'channels.http.httpPort=4080',

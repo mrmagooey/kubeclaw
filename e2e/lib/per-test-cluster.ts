@@ -287,7 +287,6 @@ export async function setupTestCluster(
     const setArgs: string[] = [
       `namespace=${opts.namespace}`,
       `secrets.anthropicApiKey=test-key`,
-      `secrets.claudeCodeOauthToken=test-token`,
       `redis.password=${DEFAULT_REDIS_PASSWORD}`,
       `credentialInjection.mode=off`,
     ];

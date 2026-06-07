@@ -262,7 +262,6 @@ describe('Story 7 — live per-group capability idle scale-down', () => {
       '--set', 'credentialInjection.mode=off',
       '--set', 'orchestrator.replicas=1',
       '--set', 'secrets.anthropicApiKey=test-key',
-      '--set', 'secrets.claudeCodeOauthToken=test-token',
       '--set', 'orchestrator.admin.enabled=false',
     ], { timeoutMs: 240_000 });
     console.log('  Helm install complete.');

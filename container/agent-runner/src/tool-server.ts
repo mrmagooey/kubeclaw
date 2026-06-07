@@ -28,7 +28,7 @@ const MAX_TOOL_OUTPUT_BYTES = parseInt(
 const TOOLCALLS_STREAM = `kubeclaw:toolcalls:${agentJobId}:${category}`;
 const TOOLRESULTS_STREAM = `kubeclaw:toolresults:${agentJobId}:${category}`;
 
-const SECRET_ENV_VARS = ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_AUTH_TOKEN', 'OPENROUTER_API_KEY'];
+const SECRET_ENV_VARS = ['ANTHROPIC_API_KEY', 'OPENROUTER_API_KEY'];
 
 function log(msg: string): void {
   console.error(`[tool-server:${category}] ${msg}`);

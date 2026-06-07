@@ -31,7 +31,6 @@ describe('helm chart static checks', () => {
       [
         'template', 'smoke', CHART_DIR,
         '--set', 'secrets.anthropicApiKey=test',
-        '--set', 'secrets.claudeCodeOauthToken=test',
         '--set', 'redis.password=test',
       ],
       { encoding: 'utf8' },
@@ -129,7 +128,6 @@ describe('ClusterRoleBinding name is release-scoped (collision regression)', () 
         '--set', 'credentialInjection.mode=sidecar',
         '--set', 'namespace=kubeclaw',
         '--set', 'secrets.anthropicApiKey=test',
-        '--set', 'secrets.claudeCodeOauthToken=test',
         '--set', 'redis.password=test',
       ],
       { encoding: 'utf8' },
@@ -148,7 +146,6 @@ describe('ClusterRoleBinding name is release-scoped (collision regression)', () 
           '--set', 'credentialInjection.mode=sidecar',
           '--set', 'namespace=kubeclaw',
           '--set', 'secrets.anthropicApiKey=test',
-          '--set', 'secrets.claudeCodeOauthToken=test',
           '--set', 'redis.password=test',
         ],
         { encoding: 'utf8' },
@@ -183,7 +180,6 @@ describe('helm template — namespace isolation (story-165 regression)', () => {
         'template', 'kubeclaw-helm-test', CHART_DIR,
         '--namespace', 'foobar-test',
         '--set', 'secrets.anthropicApiKey=test',
-        '--set', 'secrets.claudeCodeOauthToken=test',
         '--set', 'redis.password=test',
       ],
       { encoding: 'utf8' },
@@ -217,7 +213,6 @@ describe('helm template — namespace isolation (story-165 regression)', () => {
           'template', releaseName, CHART_DIR,
           '--namespace', ns,
           '--set', 'secrets.anthropicApiKey=test',
-          '--set', 'secrets.claudeCodeOauthToken=test',
           '--set', 'redis.password=test',
         ],
         { encoding: 'utf8' },
@@ -542,7 +537,6 @@ describe('helm template — story-182 RWX/RWO replica guardrail', () => {
       [
         'template', 'smoke', CHART_DIR,
         '--set', 'secrets.anthropicApiKey=test',
-        '--set', 'secrets.claudeCodeOauthToken=test',
         '--set', 'redis.password=test',
         ...extraArgs,
       ],
@@ -595,7 +589,6 @@ describe('helm template — story-182 RWX/RWO replica guardrail', () => {
 describe('helm template — bootstrap.npmRegistry (Story 183)', () => {
   const baseArgs = [
     '--set', 'secrets.anthropicApiKey=test',
-    '--set', 'secrets.claudeCodeOauthToken=test',
     '--set', 'redis.password=test',
   ];
 

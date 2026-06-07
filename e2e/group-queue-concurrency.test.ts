@@ -287,7 +287,6 @@ function helmInstall(extraArgs: string[]): void {
       '--set', 'image.tag=e2e-test',
       '--set', 'image.pullPolicy=IfNotPresent',
       '--set', 'secrets.anthropicApiKey=test-key',
-      '--set', 'secrets.claudeCodeOauthToken=test-token',
       '--set', `secrets.openaiApiKey=${LIVE_API_KEY}`,
       '--set-string', `secrets.openaiBaseUrl=${LIVE_BASE_URL}`,
       '--set-string', `secrets.directLlmModel=${LIVE_MODEL}`,

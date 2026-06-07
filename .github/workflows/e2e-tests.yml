@@ -173,7 +173,6 @@ jobs:
           kubectl create secret generic kubeclaw-secrets \
             --namespace=kubeclaw \
             --from-literal=anthropic-api-key=${{ secrets.ANTHROPIC_API_KEY }} \
-            --from-literal=claude-code-oauth-token=${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }} \
             --dry-run=client -o yaml | kubectl apply -f -
 
           kubectl apply -f k8s/30-orchestrator.yaml

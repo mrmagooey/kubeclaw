@@ -170,7 +170,6 @@ beforeAll(async () => {
         '--timeout', '120s',
         '--set', `namespace=${NAMESPACE}`,
         '--set', 'secrets.anthropicApiKey=test-key',
-        '--set', 'secrets.claudeCodeOauthToken=test-token',
         '--set', 'redis.password=e2e-test-pass',
         '--set', 'image.tag=e2e-test',
         '--set', 'image.pullPolicy=Never',

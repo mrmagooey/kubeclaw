@@ -193,7 +193,6 @@ beforeAll(async () => {
       '--timeout', '180s',
       '--set', `namespace=${NAMESPACE}`,
       '--set', 'secrets.anthropicApiKey=test-key-placeholder',
-      '--set', 'secrets.claudeCodeOauthToken=test-token-placeholder',
       '--set', 'secrets.openaiApiKey=test-key-placeholder',
       // Use the image pre-loaded by the build script (tag=e2e-test, loaded via kind load).
       '--set', 'image.tag=e2e-test',

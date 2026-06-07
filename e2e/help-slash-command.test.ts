@@ -299,8 +299,6 @@ describe.skipIf(shouldSkip)(
           `namespace=${NAMESPACE}`,
           '--set',
           'secrets.anthropicApiKey=placeholder-key',
-          '--set',
-          'secrets.claudeCodeOauthToken=placeholder-token',
           // HTTP channel with a single user (alice).
           '--set',
           'channels.http.enabled=true',

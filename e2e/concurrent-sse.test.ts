@@ -308,7 +308,6 @@ describe.skipIf(shouldSkip)(
           // Comma-separated user:pass pairs for two users
           `  httpChannelUsers: "${ALICE_USER}:${ALICE_PASS},${BOB_USER}:${BOB_PASS}"`,
           `  anthropicApiKey: placeholder-key`,
-          `  claudeCodeOauthToken: placeholder-token`,
           `redis:`,
           `  password: e2e-csse-redis-pass`,
           `networkPolicy:`,

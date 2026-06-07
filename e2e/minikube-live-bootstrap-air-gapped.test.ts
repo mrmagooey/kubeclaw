@@ -17,7 +17,6 @@ import { spawnSync } from 'child_process';
 const CHART_DIR = './helm/kubeclaw';
 const BASE_HELM_ARGS = [
   '--set', 'secrets.anthropicApiKey=test',
-  '--set', 'secrets.claudeCodeOauthToken=test',
   '--set', 'redis.password=test',
 ];
 

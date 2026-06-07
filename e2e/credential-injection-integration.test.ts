@@ -27,7 +27,7 @@ const SECRET_PATTERNS = [
 /** Run `helm template` and return the rendered YAML.  Throws on non-zero exit. */
 function helmTemplate(extraArgs: string): string {
   return execSync(
-    `helm template smoke helm/kubeclaw --set namespace=kubeclaw --set secrets.anthropicApiKey=test --set secrets.claudeCodeOauthToken=test --set redis.password=test ${extraArgs}`,
+    `helm template smoke helm/kubeclaw --set namespace=kubeclaw --set secrets.anthropicApiKey=test --set redis.password=test ${extraArgs}`,
     { encoding: 'utf8' },
   );
 }

@@ -323,8 +323,6 @@ async function runSetup(): Promise<void> {
       '--set',
       'secrets.anthropicApiKey=test-key',
       '--set',
-      'secrets.claudeCodeOauthToken=test-token',
-      '--set',
       'redis.password=e2e-hist-redis-pass',
     ],
     { encoding: 'utf8', stdio: 'pipe', timeout: 240_000 },

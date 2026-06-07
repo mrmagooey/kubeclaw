@@ -282,7 +282,6 @@ export default async function setup() {
         '--timeout', '120s',
         '--set', `namespace=${NAMESPACE}`,
         '--set', 'secrets.anthropicApiKey=test-key',
-        '--set', 'secrets.claudeCodeOauthToken=test-token',
         '--set', `redis.password=${E2E_REDIS_PASSWORD}`,
       ],
       { encoding: 'utf8', stdio: 'pipe' },

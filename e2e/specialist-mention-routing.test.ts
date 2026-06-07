@@ -318,7 +318,6 @@ function helmUpgrade(extraArgs: string[]): void {
       '--timeout', '180s',
       '--set', `namespace=${NAMESPACE}`,
       '--set', 'secrets.anthropicApiKey=test-key',
-      '--set', 'secrets.claudeCodeOauthToken=test-token',
       '--set', `secrets.openaiApiKey=${LIVE_API_KEY}`,
       '--set-string', `secrets.openaiBaseUrl=${LIVE_BASE_URL}`,
       '--set-string', `secrets.directLlmModel=${LIVE_MODEL}`,

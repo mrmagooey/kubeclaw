@@ -117,8 +117,8 @@ All configuration is via Helm values. Pass overrides with `--set key=value` or a
 | ------------------------- | ------------------------------ | ------------------------------------------------- |
 | `DEFAULT_LLM_PROVIDER`    | `claude`                       | `claude` or `openrouter`                          |
 | `ANTHROPIC_API_KEY`       | —                              | Anthropic API key (required if using Claude)      |
-| `CLAUDE_CODE_OAUTH_TOKEN` | —                              | Claude Code OAuth token (alternative to API key)  |
 | `ANTHROPIC_BASE_URL`      | —                              | Custom Claude API endpoint (optional)             |
+| `ANTHROPIC_MODEL`         | `claude-sonnet-4-5`            | Anthropic model id (optional)                     |
 | `OPENROUTER_API_KEY`      | —                              | OpenRouter API key (required if using OpenRouter) |
 | `OPENROUTER_MODEL`        | `openai/gpt-4o`                | Model identifier for OpenRouter                   |
 | `OPENROUTER_BASE_URL`     | `https://openrouter.ai/api/v1` | OpenRouter API base URL                           |
@@ -306,17 +306,15 @@ Create a StorageClass pointing at your NFS server, then set the chart values as 
 | ------------------ | ------------------------- | ------------------------ |
 | `kubeclaw-redis`   | `admin-password`          | Redis ACL admin password |
 | `kubeclaw-secrets` | `anthropic-api-key`       | Anthropic API key        |
-| `kubeclaw-secrets` | `claude-code-oauth-token` | Claude Code OAuth token  |
-
-You need at least one of `anthropic-api-key` or `claude-code-oauth-token`.
 
 ### Optional (add to `kubeclaw-secrets`)
 
-| Key                  | Description        |
-| -------------------- | ------------------ |
-| `openrouter-api-key` | OpenRouter API key |
-| `slack-bot-token`    | Slack bot token    |
-| `telegram-bot-token` | Telegram bot token |
+| Key                  | Description                                          |
+| -------------------- | ---------------------------------------------------- |
+| `anthropic-model`    | Anthropic model id (default: `claude-sonnet-4-5`)    |
+| `openrouter-api-key` | OpenRouter API key                                   |
+| `slack-bot-token`    | Slack bot token                                      |
+| `telegram-bot-token` | Telegram bot token                                   |
 
 ---
 

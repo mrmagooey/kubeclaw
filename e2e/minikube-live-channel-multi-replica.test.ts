@@ -78,7 +78,6 @@ describe('Story 182 AC3/AC4: RWO cluster — guardrail + mount invariants', () =
       [
         'template', 'smoke', CHART_DIR,
         '--set', 'secrets.anthropicApiKey=test',
-        '--set', 'secrets.claudeCodeOauthToken=test',
         '--set', 'redis.password=test',
       ],
       { encoding: 'utf8' },
@@ -95,7 +94,6 @@ describe('Story 182 AC3/AC4: RWO cluster — guardrail + mount invariants', () =
       [
         'template', 'smoke', CHART_DIR,
         '--set', 'secrets.anthropicApiKey=test',
-        '--set', 'secrets.claudeCodeOauthToken=test',
         '--set', 'redis.password=test',
       ],
       { encoding: 'utf8' },
