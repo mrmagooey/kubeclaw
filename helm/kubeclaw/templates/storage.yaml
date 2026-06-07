@@ -13,7 +13,8 @@ spec:
     requests:
       storage: {{ .Values.storage.sizes.groups }}
 ---
-# Sessions: per-group Claude Code session state (~/.claude).
+# Sessions: orchestrator<->agent IPC base (KUBECLAW_IPC_BASE=/data/sessions)
+# and per-group registered_groups.db. Named "sessions" for historical reasons.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:

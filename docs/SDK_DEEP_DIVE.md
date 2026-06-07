@@ -965,13 +965,12 @@ Archive location: `groups/{folder}/conversations/{date}-{summary}.md`
 
 ### Secret Handling
 
-Secrets are passed via stdin (same as Claude) and sanitized from Bash tool environments:
+Secrets are passed via stdin and sanitized from Bash tool environments:
 
 ```typescript
 const SECRET_ENV_VARS = [
   'OPENROUTER_API_KEY',
   'ANTHROPIC_API_KEY',
-  'CLAUDE_CODE_OAUTH_TOKEN',
 ];
 
 function sanitizeBashCommand(command: string): string {

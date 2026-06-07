@@ -31,14 +31,14 @@ ciliumNetworkPolicy:
   agent:
     allowedFQDNs:
       - api.anthropic.com      # Anthropic API — required
-      - statsig.anthropic.com  # Claude Code feature flags — required by SDK
+      - statsig.anthropic.com  # Anthropic SDK feature flags — required by SDK
       # Tool-friendly mode: uncomment to allow arbitrary HTTPS for browser/curl/git:
       # - matchPattern: "*"
 
   orchestrator:
     allowedFQDNs:
-      - api.anthropic.com      # Claude Code OAuth / direct API
-      - statsig.anthropic.com  # Claude Code feature flags
+      - api.anthropic.com      # Anthropic API
+      - statsig.anthropic.com  # Anthropic SDK feature flags
       # RAG embedding providers (add whichever you use):
       # - api.openai.com         # rag.provider=openai
       # - api.voyageai.com       # rag.provider=voyage

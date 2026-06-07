@@ -554,7 +554,7 @@ export async function run(args: string[]): Promise<void> {
     ...verifyFields,
     STATUS: allOk ? 'success' : 'degraded',
     HINT: allOk
-      ? 'Run /setup in Claude Code to configure channels and credentials'
+      ? 'Run the /setup command to configure channels and credentials'
       : 'Some checks failed — run: kubectl get pods -n kubeclaw && kubectl get pods -n falco',
   });
 }

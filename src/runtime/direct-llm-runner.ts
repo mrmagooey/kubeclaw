@@ -214,7 +214,7 @@ export const TOOLS: OpenAI.ChatCompletionFunctionTool[] = [
     function: {
       name: 'execute_agent',
       description:
-        'Spawn a full Claude Code agent for complex, multi-step coding tasks: writing or editing code, running tests, installing packages, browsing the codebase. Use when the task requires sustained agentic work beyond a single command.',
+        'Spawn a full coding agent for complex, multi-step coding tasks: writing or editing code, running tests, installing packages, browsing the codebase. Use when the task requires sustained agentic work beyond a single command.',
       parameters: {
         type: 'object',
         properties: {
