@@ -7,6 +7,8 @@ import {
   beforeEach,
   afterEach,
 } from 'vitest';
+import { spawnSync } from 'node:child_process';
+import Redis from 'ioredis';
 import {
   isKubernetesAvailable,
   isRedisAvailable,
@@ -14,6 +16,7 @@ import {
   getNamespace,
   createTestNamespace,
   flushTestKeys,
+  getRedisUrlForTests,
 } from './setup.js';
 
 const NAMESPACE = getNamespace();
@@ -606,124 +609,347 @@ describe('State Persistence Integration', () => {
   });
 
   describe('State Recovery After Redis Restart', () => {
-    it('should recover state from persistence', async () => {
-      if (!redis) {
-        console.warn('⚠️  Redis not available, skipping test');
-        return;
-      }
-      const stateKey = `${NAMESPACE}:persistent:${testGroup}`;
-      const stateData = {
-        groupFolder: testGroup,
-        lastProcessedTimestamp: Date.now(),
-        sessionId: 'recover-session',
+    // ── Helpers ────────────────────────────────────────────────────────────
+
+    /**
+     * Run a kubectl command synchronously. Returns ok/stdout/stderr.
+     * Uses the `kubeclaw` namespace by default (where the regular e2e suite
+     * deploys Redis via global-setup.ts).
+     */
+    function kubectl(
+      args: string[],
+      opts: { timeout?: number } = {},
+    ): { ok: boolean; stdout: string; stderr: string } {
+      const r = spawnSync('kubectl', args, {
+        encoding: 'utf8',
+        stdio: 'pipe',
+        timeout: opts.timeout ?? 30_000,
+      });
+      return {
+        ok: r.status === 0,
+        stdout: r.stdout ?? '',
+        stderr: r.stderr ?? '',
       };
+    }
 
-      await redis.set(stateKey, JSON.stringify(stateData));
+    /**
+     * Delete the Redis pod (by label selector) and wait for a new pod with
+     * a different name to become Ready, or the timeout to expire.
+     *
+     * Returns true on success, false on timeout.
+     *
+     * The delete uses --wait=false so kubectl returns immediately; we then
+     * poll for the new pod ourselves (same pattern as
+     * minikube-live.test.ts:340-363 for the channel pod).
+     */
+    async function restartRedisPod(
+      ns: string,
+      timeoutMs = 120_000,
+    ): Promise<boolean> {
+      // Capture the old pod name so we can wait for a *different* pod to be Ready.
+      const oldPodResult = kubectl([
+        'get', 'pods', '-n', ns,
+        '-l', 'app=kubeclaw-redis',
+        '-o', 'jsonpath={.items[0].metadata.name}',
+      ]);
+      const oldPodName = oldPodResult.stdout.trim();
 
-      const storedState = await redis.get(stateKey);
-      expect(storedState).toBeTruthy();
-
-      const parsed = JSON.parse(storedState!);
-      expect(parsed.groupFolder).toBe(testGroup);
-      expect(parsed.sessionId).toBe('recover-session');
-    }, 10000);
-
-    it('should recover group state from hash', async () => {
-      if (!redis) {
-        console.warn('⚠️  Redis not available, skipping test');
-        return;
-      }
-      const groupHashKey = `${NAMESPACE}:groups:${testGroup}`;
-
-      const groupState: GroupState = {
-        groupFolder: testGroup,
-        name: 'Test Group',
-        triggerPattern: '/test',
-        registeredAt: Date.now(),
-      };
-
-      await redis.hset(groupHashKey, 'metadata', JSON.stringify(groupState));
-
-      const recovered = await redis.hget(groupHashKey, 'metadata');
-      expect(recovered).toBeTruthy();
-
-      const parsed: GroupState = JSON.parse(recovered!);
-      expect(parsed.groupFolder).toBe(testGroup);
-      expect(parsed.name).toBe('Test Group');
-    }, 10000);
-
-    it('should recover session with sorted set scores', async () => {
-      if (!redis) {
-        console.warn('⚠️  Redis not available, skipping test');
-        return;
-      }
-      const sessionScoresKey = `${NAMESPACE}:session-scores:${testGroup}`;
-
-      const sessions = [
-        { sessionId: 'session-x', timestamp: Date.now() - 10000 },
-        { sessionId: 'session-y', timestamp: Date.now() - 5000 },
-        { sessionId: 'session-z', timestamp: Date.now() },
-      ];
-
-      for (const session of sessions) {
-        await redis.zadd(
-          sessionScoresKey,
-          session.timestamp,
-          session.sessionId,
-        );
+      // Trigger the delete without waiting.
+      const del = kubectl([
+        'delete', 'pod', '-n', ns,
+        '-l', 'app=kubeclaw-redis',
+        '--wait=false',
+      ]);
+      if (!del.ok) {
+        console.error(`kubectl delete pod failed: ${del.stderr}`);
+        return false;
       }
 
-      const activeSessions = await redis.zrevrange(sessionScoresKey, 0, -1);
-      expect(activeSessions).toHaveLength(3);
-      expect(activeSessions[0]).toBe('session-z');
-    }, 10000);
-
-    it('should handle state reconstruction from multiple keys', async () => {
-      if (!redis) {
-        console.warn('⚠️  Redis not available, skipping test');
-        return;
+      // Poll for a new pod (different name from oldPodName) with Ready=True.
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        const r = kubectl([
+          'get', 'pods', '-n', ns,
+          '-l', 'app=kubeclaw-redis',
+          '-o', 'jsonpath={range .items[*]}{.metadata.name}{"\\t"}{.status.conditions[?(@.type=="Ready")].status}{"\\n"}{end}',
+        ]);
+        if (r.ok) {
+          const lines = r.stdout.trim().split('\n').filter(Boolean);
+          const newReady = lines.some((line) => {
+            const [name, ready] = line.split('\t');
+            return name && name !== oldPodName && ready === 'True';
+          });
+          if (newReady) return true;
+        }
+        await new Promise((res) => setTimeout(res, 3_000));
       }
-      const baseKey = `${NAMESPACE}:reconstruct:${testGroup}`;
+      return false;
+    }
 
-      await redis.set(
-        `${baseKey}:config`,
-        JSON.stringify({ setting: 'value' }),
-      );
-      await redis.hset(`${baseKey}:cache`, 'key1', 'val1');
-      await redis.zadd(`${baseKey}:history`, Date.now(), 'event1');
-
-      const config = await redis.get(`${baseKey}:config`);
-      const cache = await redis.hgetall(`${baseKey}:cache`);
-      const history = await redis.zrange(`${baseKey}:history`, 0, -1);
-
-      expect(JSON.parse(config!).setting).toBe('value');
-      expect(cache.key1).toBe('val1');
-      expect(history).toContain('event1');
-    }, 10000);
-
-    it('should maintain state consistency after pipeline restore', async () => {
-      if (!redis) {
-        console.warn('⚠️  Redis not available, skipping test');
-        return;
+    /**
+     * Poll the given Redis client with PING until it succeeds or the
+     * timeout elapses.  The port-forward bash loop in global-setup
+     * automatically reconnects to the new pod; ioredis's retryStrategy
+     * handles the brief ECONNREFUSED window.  Returns true when reachable.
+     */
+    async function waitForRedisReachable(
+      client: import('ioredis').Redis,
+      timeoutMs = 60_000,
+    ): Promise<boolean> {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        try {
+          const pong = await client.ping();
+          if (pong === 'PONG') return true;
+        } catch {
+          // ECONNREFUSED / ECONNRESET — port-forward not yet reconnected
+        }
+        await new Promise((res) => setTimeout(res, 500));
       }
-      const key1 = `${NAMESPACE}:pipeline:${testGroup}:a`;
-      const key2 = `${NAMESPACE}:pipeline:${testGroup}:b`;
-      const key3 = `${NAMESPACE}:pipeline:${testGroup}:c`;
+      return false;
+    }
 
-      const pipeline = redis.pipeline();
-      pipeline.set(key1, '1');
-      pipeline.set(key2, '2');
-      pipeline.set(key3, '3');
-      pipeline.get(key1);
-      pipeline.get(key2);
-      pipeline.get(key3);
+    // ── Tests ──────────────────────────────────────────────────────────────
 
-      const results = await pipeline.exec();
+    /**
+     * AC 1 + AC 5 (AOF persistence):
+     * Write several keys across different Redis data types, restart the
+     * Redis pod via `kubectl delete pod`, wait for the replacement pod to
+     * be Ready, wait for the port-forward + ioredis to reconnect, then
+     * assert every key is still readable with its original value.
+     *
+     * AOF (append-only file) is enabled in the chart's Redis config; the
+     * data-volume (PVC) is retained across pod restarts. If AOF were
+     * disabled or the PVC lost, all keys would return nil after restart.
+     */
+    it(
+      'AOF persistence: state survives Redis pod restart',
+      async () => {
+        if (!redis) {
+          console.warn('⚠️  Redis not available, skipping test');
+          return;
+        }
+        if (!isKubernetesAvailable()) {
+          console.warn('⚠️  Kubernetes not available, skipping Redis restart test');
+          return;
+        }
 
-      expect(results).toBeTruthy();
-      expect(results![3][1]).toBe('1');
-      expect(results![4][1]).toBe('2');
-      expect(results![5][1]).toBe('3');
-    }, 10000);
+        const ns = 'kubeclaw';
+
+        // ── 1. Write state (string, hash, sorted-set) before restart ──────
+        const strKey  = `${NAMESPACE}:rst:str:${testGroup}`;
+        const hashKey = `${NAMESPACE}:rst:hash:${testGroup}`;
+        const zsetKey = `${NAMESPACE}:rst:zset:${testGroup}`;
+
+        const strValue = JSON.stringify({
+          sessionId: 'aof-test-session',
+          groupFolder: testGroup,
+          savedAt: Date.now(),
+        });
+        await redis.set(strKey, strValue);
+
+        const groupState: GroupState = {
+          groupFolder: testGroup,
+          name: 'AOF Test Group',
+          triggerPattern: '/aof',
+          registeredAt: Date.now(),
+        };
+        await redis.hset(hashKey, 'metadata', JSON.stringify(groupState));
+        await redis.hset(hashKey, 'counter', '42');
+
+        await redis.zadd(zsetKey, Date.now() - 2000, 'session-a');
+        await redis.zadd(zsetKey, Date.now() - 1000, 'session-b');
+        await redis.zadd(zsetKey, Date.now(),          'session-c');
+
+        // Verify the writes landed before restarting.
+        expect(await redis.get(strKey)).toBe(strValue);
+        expect(await redis.hget(hashKey, 'counter')).toBe('42');
+        expect(await redis.zcard(zsetKey)).toBe(3);
+
+        // ── 2. Restart the Redis pod ───────────────────────────────────────
+        const restarted = await restartRedisPod(ns, 120_000);
+        expect(
+          restarted,
+          'Redis pod did not become Ready within 120 s after kubectl delete pod',
+        ).toBe(true);
+
+        // ── 3. Wait for ioredis to reconnect via the port-forward ──────────
+        // The global-setup port-forward is a plain `kubectl port-forward svc/kubeclaw-redis`
+        // that will reconnect on its own (svc endpoint switches to the new pod).
+        // ioredis's built-in reconnection loop retries the TCP connect.
+        const reconnected = await waitForRedisReachable(redis, 60_000);
+        expect(
+          reconnected,
+          'ioredis did not reconnect to the restarted Redis within 60 s',
+        ).toBe(true);
+
+        // ── 4. Assert all state survived (AOF persistence) ─────────────────
+        const recoveredStr = await redis.get(strKey);
+        expect(recoveredStr, 'string key missing after Redis restart').not.toBeNull();
+        const parsedStr = JSON.parse(recoveredStr!);
+        expect(parsedStr.sessionId).toBe('aof-test-session');
+        expect(parsedStr.groupFolder).toBe(testGroup);
+
+        const recoveredMeta = await redis.hget(hashKey, 'metadata');
+        expect(recoveredMeta, 'hash field "metadata" missing after Redis restart').not.toBeNull();
+        const parsedMeta: GroupState = JSON.parse(recoveredMeta!);
+        expect(parsedMeta.name).toBe('AOF Test Group');
+        expect(parsedMeta.triggerPattern).toBe('/aof');
+
+        const recoveredCounter = await redis.hget(hashKey, 'counter');
+        expect(recoveredCounter, 'hash field "counter" missing after Redis restart').toBe('42');
+
+        const recoveredSessions = await redis.zrevrange(zsetKey, 0, -1);
+        expect(
+          recoveredSessions,
+          'sorted-set missing after Redis restart',
+        ).toHaveLength(3);
+        expect(recoveredSessions[0]).toBe('session-c');
+        expect(recoveredSessions[2]).toBe('session-a');
+      },
+      180_000,
+    );
+
+    /**
+     * AC 3 + AC 4 (ioredis retryStrategy):
+     * Create a fresh ioredis client configured with an explicit retryStrategy
+     * (exponential back-off, mirrors the pattern used by the orchestrator's
+     * ipc-redis.ts). Write a key, restart the Redis pod, confirm the client
+     * automatically reconnects via retryStrategy (without any process
+     * restart), then assert the written key is still readable.
+     *
+     * A separate client is used so we can verify retryStrategy independently
+     * of the shared test client's default config.
+     */
+    it(
+      'ioredis retryStrategy: client reconnects automatically after Redis pod restart',
+      async () => {
+        if (!redis) {
+          console.warn('⚠️  Redis not available, skipping test');
+          return;
+        }
+        if (!isKubernetesAvailable()) {
+          console.warn('⚠️  Kubernetes not available, skipping Redis restart test');
+          return;
+        }
+
+        const ns = 'kubeclaw';
+        const redisUrl = getRedisUrlForTests();
+
+        // Open a dedicated client with an explicit retryStrategy so we can
+        // assert that ioredis's reconnect path (not just the shared client's)
+        // works after a pod restart.
+        const retryClient = new Redis(redisUrl, {
+          connectTimeout: 10_000,
+          maxRetriesPerRequest: null, // no per-request limit — let retryStrategy drive
+          retryStrategy: (times: number) => {
+            // Exponential back-off: 200 ms, 400 ms, … capped at 3 s.
+            // Same formula as orchestrator's ipc-redis.ts retryStrategy.
+            return Math.min(times * 200, 3_000);
+          },
+          reconnectOnError: () => true,
+        });
+
+        try {
+          // ── 1. Verify the client is live before restart ──────────────────
+          await retryClient.ping();
+
+          const retryKey = `${NAMESPACE}:rst:retry:${testGroup}`;
+          const retryValue = JSON.stringify({
+            testName: 'retryStrategy',
+            groupFolder: testGroup,
+            ts: Date.now(),
+          });
+          await retryClient.set(retryKey, retryValue);
+          expect(await retryClient.get(retryKey)).toBe(retryValue);
+
+          // ── 2. Restart the Redis pod ───────────────────────────────────
+          const restarted = await restartRedisPod(ns, 120_000);
+          expect(
+            restarted,
+            'Redis pod did not become Ready within 120 s after kubectl delete pod',
+          ).toBe(true);
+
+          // ── 3. Wait for retryClient to auto-reconnect ──────────────────
+          // retryStrategy drives ioredis to keep retrying. We poll PING
+          // via the same client — once it responds the reconnect succeeded.
+          const reconnected = await waitForRedisReachable(retryClient, 60_000);
+          expect(
+            reconnected,
+            'ioredis retryStrategy client did not reconnect within 60 s',
+          ).toBe(true);
+
+          // ── 4. Key is readable after reconnect (AOF + retryStrategy) ──
+          const recovered = await retryClient.get(retryKey);
+          expect(
+            recovered,
+            'key written before restart is missing after ioredis retryStrategy reconnect',
+          ).toBe(retryValue);
+          const parsedRetry = JSON.parse(recovered!);
+          expect(parsedRetry.testName).toBe('retryStrategy');
+          expect(parsedRetry.groupFolder).toBe(testGroup);
+        } finally {
+          // Clean up the dedicated client; ignore errors during shutdown.
+          try {
+            await retryClient.del(`${NAMESPACE}:rst:retry:${testGroup}`);
+          } catch { /* best-effort */ }
+          retryClient.disconnect();
+        }
+      },
+      180_000,
+    );
+
+    /**
+     * AC 2 (restart timing window):
+     * Measures the wall-clock gap between the pod delete command and the
+     * moment the shared ioredis client successfully responds to PING.
+     * Asserts the reconnect window is within the configured connectTimeout
+     * (120 s), confirming the platform SLA documented in the story.
+     */
+    it(
+      'reconnect window is bounded: Redis reachable within 120 s of pod restart',
+      async () => {
+        if (!redis) {
+          console.warn('⚠️  Redis not available, skipping test');
+          return;
+        }
+        if (!isKubernetesAvailable()) {
+          console.warn('⚠️  Kubernetes not available, skipping Redis restart test');
+          return;
+        }
+
+        const ns = 'kubeclaw';
+        const MAX_RECONNECT_MS = 120_000;
+
+        // Write a canary value we can verify after reconnect.
+        const canaryKey = `${NAMESPACE}:rst:canary:${testGroup}`;
+        await redis.set(canaryKey, 'timing-canary');
+        expect(await redis.get(canaryKey)).toBe('timing-canary');
+
+        const deleteStart = Date.now();
+        const restarted = await restartRedisPod(ns, MAX_RECONNECT_MS);
+        expect(
+          restarted,
+          'Redis pod did not become Ready within 120 s after kubectl delete pod',
+        ).toBe(true);
+
+        const reconnected = await waitForRedisReachable(redis, MAX_RECONNECT_MS);
+        const reconnectMs = Date.now() - deleteStart;
+
+        expect(
+          reconnected,
+          `ioredis did not reconnect within ${MAX_RECONNECT_MS} ms after pod restart`,
+        ).toBe(true);
+        expect(
+          reconnectMs,
+          `reconnect took ${reconnectMs} ms, exceeded ${MAX_RECONNECT_MS} ms bound`,
+        ).toBeLessThan(MAX_RECONNECT_MS);
+
+        // Also verify the canary key survived (AOF).
+        const canary = await redis.get(canaryKey);
+        expect(canary, 'canary key missing after restart').toBe('timing-canary');
+      },
+      180_000,
+    );
   });
 });
