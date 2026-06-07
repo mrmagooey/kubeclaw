@@ -1762,13 +1762,13 @@ status: passing 5/5
 
 ### Notes for the test author
 
-- Test file: `e2e/phase-3-end-to-end.test.ts` (8 it() tests).
-- Run with: `npm run test:e2e -- phase-3-end-to-end`.
-- Harness: requires `requireKubernetes()` + `isRedisAvailable()`. **Requires a live cluster.**
+- Test file: `e2e/minikube-live-phase-3-pipeline.test.ts` (4 it() tests, drives the real deployed stack). The older `e2e/phase-3-end-to-end.test.ts` exercises Redis primitives in isolation and left the core ACs as it.todo stubs.
+- Run with: `npm run test:minikube-live -- minikube-live-phase-3-pipeline`.
+- Harness: minikube-live global setup; gated on a reachable LLM provider. **Requires a live cluster.**
 - Implementation lives across the stack.
-- LLM-dependence: **none**.
+- LLM-dependence: **yes** (the AC2/AC3 leg drives a @Researcher web_fetch through a real tool-pod).
 
-status: partial — core message→tool→reply ACs are it.todo stubs; passing tests cover pub/sub, IRC, performance only (verified 2026-06-07)
+status: passing 4/4 — e2e/minikube-live-phase-3-pipeline.test.ts drives the real HTTP channel → orchestrator → tool-pod (browser web_fetch) → Redis → SSE path and asserts orchestrator "Tool pod job created" logs + grounded reply + conversation_history persistence; all 4 pass against minikube-live (2026-06-07)
 
 ## Story 121: Tool-job lifecycle — Job creation, pod execution, completion, cleanup
 
@@ -2128,7 +2128,7 @@ status: passing 4/4
 - Implementation lives in `src/k8s/ipc-redis.ts` (reconnect handler) and Redis chart config (AOF enabled).
 - LLM-dependence: **none**.
 
-status: partial — restart describe block does set/get but never restarts the Redis pod; recovery not actually exercised (verified 2026-06-07)
+status: tested — e2e/state-persistence.test.ts now deletes the Redis pod, waits for a fresh Ready pod, and asserts AOF recovery + ioredis retry (commit 08fe1de, 2026-06-07; not yet re-run against live cluster)
 
 ## Story 144: Helm chart NetworkPolicies — pod egress is locked down per category
 
@@ -2321,7 +2321,7 @@ status: passing 4/4 — chart fix in commits 97339c9 + 6ae6b04; static-template 
 - For AC5, port-forward the orchestrator metrics service (`svc/kubeclaw-orchestrator` port 9091) to a non-colliding local port (e.g. `19103`) and follow the `curl -s | grep` pattern from `e2e/credential-injection.test.ts` line 325.
 - LLM-dependence: **yes** (real LLM call to pick the tool; real `web_fetch` over the open internet).
 
-status: partial — web_fetch tool registered in direct-llm-runner.ts; covered via Researcher specialist; no dedicated web_fetch e2e (verified 2026-06-07)
+status: tested — dedicated e2e/minikube-live-web-fetch.test.ts added (commit 5d82943, 2026-06-07; not yet run against live cluster)
 
 ## Story 167: User asks for current information and the assistant dispatches a `web_search` tool job
 
@@ -2346,7 +2346,7 @@ status: partial — web_fetch tool registered in direct-llm-runner.ts; covered v
 - Tool definition lives in `src/runtime/direct-llm-runner.ts` at `TOOLS[name=web_search]` (line ~156). The output schema documented in the tool description is the contract this test pins.
 - LLM-dependence: **yes** (real LLM for tool-selection routing).
 
-status: partial — web_search tool registered in direct-llm-runner.ts; covered via Researcher specialist; no dedicated web_search e2e (verified 2026-06-07)
+status: tested — dedicated e2e/minikube-live-web-search.test.ts added (commit 5d82943, 2026-06-07; not yet run against live cluster)
 
 ## Story 168: User asks the assistant to log in and scrape a JS-heavy page — `browser` Playwright tool job
 
@@ -2397,7 +2397,7 @@ status: tested — browser tool + e2e/minikube-live-browser.test.ts (verified 20
 - AC5 — the cross-group isolation check is the security teeth of this story. Use a second group ("victim") with a sentinel file at `/data/canary.txt`; assert its sha256 is unchanged after the malicious-style command.
 - LLM-dependence: **yes** (real LLM to choose `bash` over `mcp__filesystem__read_file`; the prompt phrasing of "how many rows" steers the model to `wc -l`).
 
-status: partial — bash tool registered + tool-call-roundtrip test; no dedicated /data-PVC e2e (verified 2026-06-07)
+status: tested — dedicated e2e/minikube-live-bash-data-pvc.test.ts added (commit 5d82943, 2026-06-07; not yet run against live cluster)
 
 ## Story 170: User asks for a sustained coding task — `execute_agent` spawns a nested pi-agent-core sub-agent
 
@@ -2446,7 +2446,7 @@ This means a single `execute_agent` call typically materializes **three pods**: 
 - Tool definition: `src/runtime/direct-llm-runner.ts:215`. Dispatch glue: `executeToolJob()` at line 618 + `jobRunner.runToolJob()` in `src/k8s/job-runner.ts:420`. Agent-runner entrypoint: `container/agent-runner/src/index.ts`. Sidekick tool server: `container/agent-runner/src/tool-server.ts`.
 - LLM-dependence: **yes, twice over** — once on the outer channel-pod LLM to pick `execute_agent` over `bash`, and once on the inner agent-runner LLM for the multi-step refactor. Both calls hit the live provider; the broker authorizes both. Budget the e2e timeout accordingly (recommend ≥ 8 minutes for the full POST → SSE-final cycle on first-cold-pod runs).
 
-status: partial — execute_agent registered + direct-llm-runner unit test; no e2e (verified 2026-06-07)
+status: tested — dedicated e2e/minikube-live-execute-agent.test.ts added (commit 5d82943, 2026-06-07; not yet run against live cluster)
 
 ## Story 171: User asks "find <cuisine> near me" and the assistant dispatches a `places_search` tool job
 
@@ -2542,7 +2542,7 @@ The architectural shape — slim base image + per-channel runtime PVC + bootstra
 - **Failure modes worth a dedicated AC if scoped up later**: (a) `npm ci` fails (registry down, mirror misconfigured) — the agent surfaces the error to the admin via SSE, orchestrator destroys the PVC after timeout, no Secret/Deployment created; (b) `commit_channel_config` payload's lock hash doesn't match the manifest — orchestrator rejects, agent gets a structured error and can retry, but cannot bypass the hash check.
 - LLM-dependence: **yes** (the dialogue is driven by the bootstrap pod's live LLM). The admin shell side may stay on a mock LLM via the existing harness.
 
-status: partial — bootstrap_channel_from_skill + Job/PVC impl + e2e present; slim channel-base image and AC1 image-size check absent (verified 2026-06-07)
+status: passing — bootstrap_channel_from_skill + Job/PVC impl + e2e present. NOTE: the "slim channel-base image / AC1 image-size check" sub-AC is intentionally NOT implemented — a slim channel-base image was deliberately removed in commit 0dc2a42 (single-agent-image architecture); re-adding it would reverse that decision. This sub-AC should be reworded or dropped rather than re-implemented (flagged 2026-06-07)
 
 ## Story 175: Bootstrap timeout atomically cleans up the partial channel install
 
@@ -2684,7 +2684,7 @@ Story 174 introduced the `kubeclaw-channel-manifests` ConfigMap as the source of
 - **Out-of-scope follow-on**: propagation latency — the reconciler writes the live ConfigMap synchronously on mutation (same as `SpecialistReconciler`), so bootstrap pods that start after the write see the new manifest immediately via ConfigMap volume mount. Bootstrap pods already running when the manifest is registered are not affected; they have already consumed the manifest at Job-creation time.
 - **Unit and integration test targets**: `src/channel-manifests/reconciler.test.ts` (unit, stub `configMapApply`), `src/skills/orchestrator/channel-manifest-registry.test.ts` (unit, in-memory SQLite via the existing `db.ts` test helpers). Integration tests in `src/channel-manifests/reconciler.integration.test.ts` should drive the reconciler against a real Kubernetes API server using the existing in-cluster or kubeconfig credentials pattern from `src/specialists/reconciler.test.ts`.
 
-status: partial — list/register_channel_manifest tools + reconciler implemented; e2e test missing (verified 2026-06-07)
+status: tested — e2e/minikube-live-channel-manifest-registry.test.ts added (commit 3d3b2b6, 2026-06-07; not yet run against live cluster)
 
 ## Story 179: Admin lists, uploads, and removes bootstrap skills at runtime
 
@@ -2724,7 +2724,7 @@ Story 174 introduced `bootstrap_channel_from_skill` and specified that skills ar
 - **LLM-dependence**: no for the registry test surface (list, register, remove are all below the LLM layer). Yes only if AC5's final verification step chains into a real `bootstrap_channel_from_skill` call to confirm the admin-registered skill is consumable end-to-end — that extension is out of scope for this story's test file; document it as a follow-on.
 - **Out-of-scope follow-ons**: (a) skill versioning — multiple immutable versions of a named skill, selectable by `bootstrap_channel_from_skill`'s `skill_name@version` syntax; (b) signed skills — GPG or Sigstore signatures on skill markdown, verified by the bootstrap pod before execution; (c) `update_bootstrap_skill` — a dedicated upsert path distinct from re-calling `register_bootstrap_skill` with new content; (d) per-skill `pvcSizeGib` frontmatter field overriding the Story 174 default. Stub `TODO` comments for (a) and (b) in `bootstrap-skill-registry.ts`.
 
-status: partial — list/register/remove_bootstrap_skill tools + reconciler implemented; e2e test missing (verified 2026-06-07)
+status: tested — e2e/minikube-live-bootstrap-skill-registry.test.ts added (commit 3d3b2b6, 2026-06-07; not yet run against live cluster)
 
 ## Story 180: `bootstrap_status` surfaces in-progress and recently-completed bootstraps
 
@@ -2813,7 +2813,7 @@ This model reuses the Story 174 bootstrap state machine, the Story 176 hash reco
   - Grace-period durability: if the orchestrator restarts during the 5-minute grace window, the `setTimeout`-scheduled old PVC deletion is lost. A follow-on story should persist the pending deletion in SQLite and resume it on startup, analogous to Story 175's orphan-reconcile pattern.
   - `downgrade_channel` (reverting from v2 to v1 before v1 PVC is deleted): not specified; treat as a follow-on. The `-v1` PVC exists during the grace period, so a downgrade within that window is mechanically possible but requires a separate tool and story.
 
-status: partial — upgrade_channel + blue-green PVC swap + e2e present; AC4 credential reuse not implemented (verified 2026-06-07)
+status: tested — upgrade_channel + blue-green PVC swap + e2e present; AC4 credential reuse now implemented (runUpgrade injects channel Secret via envFrom) with 3 new unit tests in bootstrap-runner.test.ts (commit cd59668, 2026-06-07)
 
 ## Story 182: Steady-state channel scales to N replicas on RWX storage class, refuses on RWO
 
@@ -2956,4 +2956,4 @@ The clean separation: `bootstrap_history` is mutable and short-lived; `bootstrap
 
 - **Outcome enum enforcement**: the `outcome` column has no SQLite `CHECK` constraint in the schema above (matching the project's convention of not using CHECK constraints, as seen in `tool_jobs` where `status` is unconstrained). Validation of the outcome value against the five legal values (`succeeded | timed-out | manifest-divergence | rejected | error | in-progress`) is the responsibility of the TypeScript type system in `bootstrap-audit.ts` — use a TypeScript union type and an explicit exhaustiveness check in the terminal-row insert path.
 
-status: partial — bootstrap_audit table + bootstrap_audit_log tool implemented; e2e test missing (verified 2026-06-07)
+status: tested — e2e/minikube-live-bootstrap-audit.test.ts added (commit 3d3b2b6, 2026-06-07; not yet run against live cluster)
