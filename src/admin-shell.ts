@@ -87,7 +87,10 @@ import type {
   CleanupBootstrapDeps,
   BootstrapStatusDeps,
 } from './k8s/bootstrap-runner.js';
-import { currentStepByJob } from './k8s/ipc-redis.js';
+import {
+  currentStepByJob,
+  pendingBootstrapQuestionByJob,
+} from './k8s/ipc-redis.js';
 import { jobRunner } from './k8s/job-runner.js';
 import { getRedisClient } from './k8s/redis-client.js';
 import {
@@ -213,6 +216,21 @@ const channelManifestReconciler = new ChannelManifestReconciler({
     }
   },
 });
+
+/**
+ * Startup reconcile for the live `kubeclaw-channel-manifests` ConfigMap.
+ *
+ * Helm renders that ConfigMap empty (`data: {}`) and the bootstrap Job mounts it
+ * to read each channel type's package.json / package-lock.json. Without a startup
+ * reconcile the ConfigMap stays empty until an admin registers a manifest, so
+ * bootstrap Jobs cannot find their package manifest and stall asking the admin.
+ * This merges the Helm baseline (mounted from the `-baseline` ConfigMap) with any
+ * SQLite admin overrides and writes the result, honouring the "on startup and on
+ * every mutation" contract documented in the ConfigMap template.
+ */
+export async function reconcileChannelManifestsOnStartup(): Promise<void> {
+  await channelManifestReconciler.apply();
+}
 
 const bootstrapSkillReconciler = new BootstrapSkillReconciler({
   baselineLoader: loadBootstrapSkillBaselineFromDisk,
@@ -1293,6 +1311,7 @@ async function handleBootstrapChannelFromSkill(
         }
       },
       activeBootstraps,
+      pendingBootstrapQuestions: pendingBootstrapQuestionByJob,
       // Story 180: record terminal outcome and deregister metadata
       recordTerminal: (instName: string, bjId: string, outcome: string) => {
         const meta = getBootstrapMeta(instName);
@@ -1470,6 +1489,7 @@ async function handleUpgradeChannel(input: ToolInput): Promise<string> {
         }
       },
       activeBootstraps,
+      pendingBootstrapQuestions: pendingBootstrapQuestionByJob,
       recordTerminal: (instKey: string, bjId: string, outcome: string) => {
         const meta = getBootstrapMeta(instKey);
         if (meta) {
@@ -1950,6 +1970,10 @@ async function handleReplyToBootstrap(input: ToolInput): Promise<string> {
       `kubeclaw:bootstrap-admin:${bjid}`,
       JSON.stringify({ text: message }),
     );
+    // Only clear after a successful publish: if the publish throws the pod never
+    // received the reply and is still waiting, so the question must stay pending
+    // (it keeps surfacing in the admin LLM's context so the reply can be retried).
+    pendingBootstrapQuestionByJob.delete(bjid);
     return `Reply forwarded to bootstrap pod for ${instanceName}.`;
   } catch (err) {
     return `Error publishing reply: ${err instanceof Error ? err.message : String(err)}`;
@@ -2146,6 +2170,33 @@ When a channel bootstrap is in progress (started via bootstrap_channel_from_skil
 
 // ---- Shared agentic loop ----
 
+/**
+ * Build a system note listing bootstrap agents currently blocked on an
+ * ask_admin question, so the admin LLM knows what is pending and which
+ * instance_name to pass to reply_to_bootstrap. Reverse-maps activeBootstraps
+ * (instanceName -> bootstrapJobId) against the pending-question map populated by
+ * the bootstrap topic subscriber. Returns null when nothing is pending.
+ */
+export function buildPendingBootstrapNote(): string | null {
+  const lines: string[] = [];
+  for (const [instanceKey, bjid] of activeBootstraps) {
+    const pending = pendingBootstrapQuestionByJob.get(bjid);
+    if (!pending) continue;
+    // Upgrade bootstraps are keyed "<instance>:upgrade"; reply_to_bootstrap
+    // resolves either form, so report the base instance name.
+    const instanceName = instanceKey.replace(/:upgrade$/, '');
+    lines.push(`- instance "${instanceName}" is waiting for: ${pending.text}`);
+  }
+  if (lines.length === 0) return null;
+  return (
+    'A bootstrap agent is blocked waiting for an admin answer. If the user\'s ' +
+    'message answers one of these questions, call reply_to_bootstrap with the ' +
+    "matching instance_name and the user's answer as the message. Do not answer " +
+    'these questions yourself.\n' +
+    lines.join('\n')
+  );
+}
+
 async function runAgenticTurn(
   client: OpenAI,
   history: OpenAI.ChatCompletionMessageParam[],
@@ -2157,9 +2208,15 @@ async function runAgenticTurn(
   let lastToolResult = '';
 
   while (true) {
+    const pendingNote = buildPendingBootstrapNote();
+    const messages: OpenAI.ChatCompletionMessageParam[] = [
+      { role: 'system', content: SYSTEM },
+      ...history,
+    ];
+    if (pendingNote) messages.push({ role: 'system', content: pendingNote });
     const response = await client.chat.completions.create({
       model: MODEL,
-      messages: [{ role: 'system', content: SYSTEM }, ...history],
+      messages,
       tools: TOOLS,
       tool_choice: 'auto',
     });

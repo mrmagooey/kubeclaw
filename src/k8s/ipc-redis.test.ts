@@ -16,21 +16,34 @@ const {
   const mockUnsubscribe = vi.fn().mockResolvedValue(undefined);
   const mockQuit = vi.fn().mockResolvedValue('OK');
 
-  // ref to capture the 'message' event handler registered by startIpcWatcher
+  // ref to capture the 'message'/'pmessage' event handlers registered by the watchers
   const subscriberOnRef: {
     messageHandler: ((ch: string, msg: string) => void) | null;
+    pmessageHandler:
+      | ((pattern: string, ch: string, msg: string) => void)
+      | null;
   } = {
     messageHandler: null,
+    pmessageHandler: null,
   };
 
   const createMockRedis = () => ({
     xadd: mockXadd,
     subscribe: mockSubscribe,
+    psubscribe: vi.fn((_pattern: string, cb?: (err: unknown) => void) => {
+      cb?.(null);
+    }),
     unsubscribe: mockUnsubscribe,
     quit: mockQuit,
     on: vi.fn((event: string, cb: unknown) => {
       if (event === 'message')
         subscriberOnRef.messageHandler = cb as (
+          ch: string,
+          msg: string,
+        ) => void;
+      if (event === 'pmessage')
+        subscriberOnRef.pmessageHandler = cb as (
+          pattern: string,
           ch: string,
           msg: string,
         ) => void;
@@ -111,11 +124,20 @@ vi.mock('./redis-client.js', () => ({
   })),
   getRedisSubscriber: vi.fn(() => ({
     subscribe: mockSubscribe,
+    psubscribe: vi.fn((_pattern: string, cb?: (err: unknown) => void) => {
+      cb?.(null);
+    }),
     unsubscribe: mockUnsubscribe,
     quit: mockQuit,
     on: vi.fn((event: string, cb: unknown) => {
       if (event === 'message')
         subscriberOnRef.messageHandler = cb as (
+          ch: string,
+          msg: string,
+        ) => void;
+      if (event === 'pmessage')
+        subscriberOnRef.pmessageHandler = cb as (
+          pattern: string,
           ch: string,
           msg: string,
         ) => void;
@@ -184,6 +206,9 @@ import {
   startToolPodSpawnWatcher,
   startToolJobSpawnWatcher,
   startTaskRequestWatcher,
+  startBootstrapTaskWatcher,
+  currentStepByJob,
+  pendingBootstrapQuestionByJob,
 } from './ipc-redis.js';
 import type { RegisteredGroup } from '../types.js';
 
@@ -2252,5 +2277,59 @@ describe('secret/catalog IPC handlers via startTaskRequestWatcher', () => {
       'result',
       JSON.stringify({ ok: true }),
     );
+  });
+});
+
+describe('startBootstrapTaskWatcher — bootstrap topic messages', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    subscriberOnRef.pmessageHandler = null;
+    currentStepByJob.clear();
+    pendingBootstrapQuestionByJob.clear();
+  });
+
+  it('records a step label on a { type: "step" } message', () => {
+    startBootstrapTaskWatcher();
+    expect(subscriberOnRef.pmessageHandler).not.toBeNull();
+
+    subscriberOnRef.pmessageHandler!(
+      'kubeclaw:bootstrap:*',
+      'kubeclaw:bootstrap:job-abc',
+      JSON.stringify({ type: 'step', label: 'Installing packages' }),
+    );
+
+    expect(currentStepByJob.get('job-abc')?.label).toBe('Installing packages');
+    expect(pendingBootstrapQuestionByJob.has('job-abc')).toBe(false);
+  });
+
+  it('records an unanswered question on a { type: "question" } message', () => {
+    startBootstrapTaskWatcher();
+
+    subscriberOnRef.pmessageHandler!(
+      'kubeclaw:bootstrap:*',
+      'kubeclaw:bootstrap:job-xyz',
+      JSON.stringify({
+        type: 'question',
+        text: 'Which TCP port should the channel listen on? (1024-65535)',
+      }),
+    );
+
+    expect(pendingBootstrapQuestionByJob.get('job-xyz')?.text).toBe(
+      'Which TCP port should the channel listen on? (1024-65535)',
+    );
+    expect(currentStepByJob.has('job-xyz')).toBe(false);
+  });
+
+  it('ignores agent/progress messages that are neither step nor question', () => {
+    startBootstrapTaskWatcher();
+
+    subscriberOnRef.pmessageHandler!(
+      'kubeclaw:bootstrap:*',
+      'kubeclaw:bootstrap:job-1',
+      JSON.stringify({ type: 'agent', text: 'Bootstrap started' }),
+    );
+
+    expect(currentStepByJob.has('job-1')).toBe(false);
+    expect(pendingBootstrapQuestionByJob.has('job-1')).toBe(false);
   });
 });

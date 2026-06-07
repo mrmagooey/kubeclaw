@@ -173,6 +173,7 @@ vi.mock('./logger.js', () => ({
 
 vi.mock('./k8s/ipc-redis.js', () => ({
   currentStepByJob: new Map(),
+  pendingBootstrapQuestionByJob: new Map(),
   startBootstrapTaskWatcher: vi.fn(),
   registerBootstrapDeps: vi.fn(),
 }));
@@ -200,10 +201,10 @@ vi.mock('./k8s/redis-client.js', () => ({
 
 // ── Import after mocks ─────────────────────────────────────────────────────
 
-const { executeTool, TOOLS, activeBootstraps } = await import(
-  './admin-shell.js'
-);
+const { executeTool, TOOLS, activeBootstraps, buildPendingBootstrapNote } =
+  await import('./admin-shell.js');
 const { getRedisClient } = await import('./k8s/redis-client.js');
+const { pendingBootstrapQuestionByJob } = await import('./k8s/ipc-redis.js');
 
 // ── Tests ───────────────────────────────────────────────────────────────────
 
@@ -957,6 +958,7 @@ describe('executeTool', () => {
 
     beforeEach(() => {
       activeBootstraps.clear();
+      (pendingBootstrapQuestionByJob as Map<string, unknown>).clear();
       publishSpy = vi.fn().mockResolvedValue(1);
       (getRedisClient as ReturnType<typeof vi.fn>).mockReturnValue({
         publish: publishSpy,
@@ -974,6 +976,19 @@ describe('executeTool', () => {
         JSON.stringify({ text: 'Use port 8080.' }),
       );
       expect(result).toMatch(/forwarded.*my-echo/i);
+    });
+
+    it('clears the pending question after forwarding the reply', async () => {
+      activeBootstraps.set('my-echo', 'job-uuid-123');
+      pendingBootstrapQuestionByJob.set('job-uuid-123', {
+        text: 'Which port?',
+        ts: '2026-01-01T00:00:00.000Z',
+      });
+      await executeTool('reply_to_bootstrap', {
+        instance_name: 'my-echo',
+        message: 'Use port 8080.',
+      });
+      expect(pendingBootstrapQuestionByJob.has('job-uuid-123')).toBe(false);
     });
 
     it('resolves the upgrade-keyed bootstrap when no plain instance entry exists', async () => {
@@ -1008,5 +1023,52 @@ describe('executeTool', () => {
       expect(r1).toMatch(/required/i);
       expect(r2).toMatch(/required/i);
     });
+  });
+});
+
+describe('buildPendingBootstrapNote', () => {
+  beforeEach(() => {
+    activeBootstraps.clear();
+    (pendingBootstrapQuestionByJob as Map<string, unknown>).clear();
+  });
+
+  it('returns null when no bootstrap has a pending question', () => {
+    activeBootstraps.set('my-echo', 'job-1');
+    expect(buildPendingBootstrapNote()).toBeNull();
+  });
+
+  it('lists the pending question with its instance name', () => {
+    activeBootstraps.set('my-echo', 'job-1');
+    pendingBootstrapQuestionByJob.set('job-1', {
+      text: 'Which TCP port should the channel listen on?',
+      ts: '2026-01-01T00:00:00.000Z',
+    });
+    const note = buildPendingBootstrapNote();
+    expect(note).toContain('reply_to_bootstrap');
+    expect(note).toContain('"my-echo"');
+    expect(note).toContain('Which TCP port should the channel listen on?');
+  });
+
+  it('strips the :upgrade suffix from upgrade-keyed bootstraps', () => {
+    activeBootstraps.set('my-echo:upgrade', 'job-up');
+    pendingBootstrapQuestionByJob.set('job-up', {
+      text: 'API token?',
+      ts: '2026-01-01T00:00:00.000Z',
+    });
+    const note = buildPendingBootstrapNote();
+    expect(note).toContain('"my-echo"');
+    expect(note).not.toContain(':upgrade');
+  });
+
+  it('omits active bootstraps that have no pending question', () => {
+    activeBootstraps.set('waiting', 'job-w');
+    activeBootstraps.set('quiet', 'job-q');
+    pendingBootstrapQuestionByJob.set('job-w', {
+      text: 'Port?',
+      ts: '2026-01-01T00:00:00.000Z',
+    });
+    const note = buildPendingBootstrapNote();
+    expect(note).toContain('"waiting"');
+    expect(note).not.toContain('"quiet"');
   });
 });

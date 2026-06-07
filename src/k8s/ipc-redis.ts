@@ -132,6 +132,18 @@ export const currentStepByJob: Map<
   { label: string; ts: string }
 > = new Map();
 
+// In-memory map of the most-recent unanswered admin question per bootstrapJobId.
+// Populated by the bootstrap topic subscriber when a { type: "question" } message
+// arrives (published by the bootstrap pod's ask_admin tool), and cleared when the
+// admin forwards a reply via reply_to_bootstrap. The admin shell reads this to
+// surface the pending question into the admin LLM's context so it knows what to
+// forward — without it, ask_admin questions never reach the admin and the
+// bootstrap pod stalls waiting for a reply.
+export const pendingBootstrapQuestionByJob: Map<
+  string,
+  { text: string; ts: string }
+> = new Map();
+
 /**
  * Register bootstrap dependencies used by the commit_channel_config IPC handler.
  * Must be called before startBootstrapTaskWatcher().
@@ -213,6 +225,7 @@ export function startBootstrapTaskWatcher(): void {
           const data = JSON.parse(message) as {
             type?: string;
             label?: string;
+            text?: string;
             ts?: string;
           };
           if (data.type === 'step' && typeof data.label === 'string') {
@@ -222,6 +235,16 @@ export function startBootstrapTaskWatcher(): void {
             logger.debug(
               { bootstrapJobId, label },
               'bootstrap step label recorded',
+            );
+          } else if (data.type === 'question' && typeof data.text === 'string') {
+            const ts = data.ts ?? new Date().toISOString();
+            // Cap length the same way step labels are capped — the text is
+            // embedded verbatim into the admin LLM prompt on every turn.
+            const text = data.text.slice(0, 500);
+            pendingBootstrapQuestionByJob.set(bootstrapJobId, { text, ts });
+            logger.info(
+              { bootstrapJobId },
+              'bootstrap admin question recorded (awaiting reply_to_bootstrap)',
             );
           }
         } catch (err) {

@@ -402,7 +402,11 @@ describe('Minikube-live: bootstrap HTTP-echo channel end-to-end', () => {
     // load-bearing assertion is the Job completing (checked below).
     await postChatAndCollectReply(authHeader, `Use port ${CHANNEL_PORT}.`, 60_000);
 
-    // Wait for the Job to complete.
+    // Wait for the Job to complete. The commit itself is near-instant (AC3
+    // observes the Deployment within seconds), but the bootstrap agent then
+    // runs one more LLM turn to wrap up before the pod exits and the Job flips
+    // to Complete. Against the live OpenRouter model that wrap-up can take a
+    // few minutes, so poll generously (within this it()'s budget below).
     let complete = false;
     for (let i = 0; i < 60; i++) {
       const r = kubectl([
@@ -421,7 +425,7 @@ describe('Minikube-live: bootstrap HTTP-echo channel end-to-end', () => {
       await sleep(3000);
     }
     expect(complete, 'bootstrap Job did not Complete within 180s').toBe(true);
-  }, 270_000);
+  }, 300_000);
 
   // ── AC3+AC4: steady-state Deployment created from agent image ──────────────
 
@@ -470,7 +474,7 @@ describe('Minikube-live: bootstrap HTTP-echo channel end-to-end', () => {
         '-n',
         NAMESPACE,
         '-l',
-        `kubeclaw-channel=${INSTANCE_NAME}`,
+        `kubeclaw.io/role=channel,kubeclaw/channel=${INSTANCE_NAME}`,
         '-o',
         'jsonpath={.items[0].status.conditions[?(@.type=="Ready")].status}',
       ]);
@@ -498,7 +502,7 @@ describe('Minikube-live: bootstrap HTTP-echo channel end-to-end', () => {
       '-n',
       NAMESPACE,
       '-l',
-      `kubeclaw-channel=${INSTANCE_NAME}`,
+      `kubeclaw.io/role=channel,kubeclaw/channel=${INSTANCE_NAME}`,
       '-o',
       'jsonpath={.items[0].metadata.name}',
     ]).stdout.trim();
@@ -519,7 +523,9 @@ describe('Minikube-live: bootstrap HTTP-echo channel end-to-end', () => {
     );
 
     try {
-      // Wait for port-forward to be ready.
+      // Wait for port-forward to be ready and the app to start serving. The
+      // pod may report Ready (containers started) before the Node process has
+      // bound its port, so allow generous startup headroom.
       let reachable = false;
       for (let i = 0; i < 20; i++) {
         try {

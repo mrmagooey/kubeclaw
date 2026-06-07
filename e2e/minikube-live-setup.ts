@@ -468,8 +468,6 @@ async function helmInstall(): Promise<void> {
     '--set',
     `secrets.anthropicApiKey=test-key`,
     '--set',
-    `secrets.claudeCodeOauthToken=test-token`,
-    '--set',
     `secrets.openaiApiKey=${LIVE_API_KEY}`,
     '--set-string',
     `secrets.openaiBaseUrl=${LIVE_BASE_URL}`,
@@ -919,6 +917,16 @@ async function teardownImpl() {
     `pkill -f 'kubectl port-forward.*${KUBECLAW_LIVE_ADMIN_LOCAL_PORT}:9090' || true`,
   ]);
 
+  // Diagnostic escape hatch: KUBECLAW_LIVE_KEEP=1 leaves the namespace and all
+  // resources in place so pod logs can be inspected post-run. Remember to
+  // `helm uninstall` / `kubectl delete ns kubeclaw-live` manually afterward.
+  if (process.env.KUBECLAW_LIVE_KEEP) {
+    console.log(
+      `⚠️  KUBECLAW_LIVE_KEEP set — leaving namespace ${NAMESPACE} intact for inspection.`,
+    );
+    return;
+  }
+
   // Always uninstall — this is our own isolated namespace.
   run('helm', ['uninstall', RELEASE, '--namespace', NAMESPACE], {
     allowFail: true,
@@ -946,6 +954,26 @@ export default async function setup() {
     // Force rebuild when src/, container/, or root build files change.
     ['src', 'container', 'package.json', 'tsconfig.json'],
   );
+  // The bootstrap subsystem and committed channel Deployments deploy the agent
+  // image under the per-provider tag `kubeclaw-agent:claude` (see config.ts
+  // getContainerImage('claude') and admin-shell.ts bootstrap runner). The build
+  // above produces `kubeclaw-agent:latest`, so alias `:claude` to the freshly
+  // built `:latest` on every setup — otherwise bootstrap pods run a stale image.
+  console.log('🏷️  Tagging kubeclaw-agent:latest → kubeclaw-agent:claude...');
+  const retag = spawnSync(
+    'bash',
+    [
+      '-c',
+      'eval $(minikube docker-env) && docker tag kubeclaw-agent:latest kubeclaw-agent:claude',
+    ],
+    { encoding: 'utf8' },
+  );
+  if (retag.status !== 0) {
+    throw new Error(
+      `failed to tag kubeclaw-agent:claude (exit ${retag.status}): ${retag.stderr}`,
+    );
+  }
+  console.log('✅ kubeclaw-agent:claude aliased to latest\n');
   // The orchestrator image is also used by channel pods (different command).
   await ensureImage(
     'kubeclaw-orchestrator:latest',
@@ -975,7 +1003,7 @@ export default async function setup() {
     'e2e/fixtures/test-oauth-provider',
   );
   // Bootstrap Jobs and steady-state channel pods share the generic agent image
-  // (the main kubeclaw-agent:claude built above). The image's channel-loader.js
+  // (kubeclaw-agent:claude, aliased to latest above). The image's channel-loader.js
   // dispatches on KUBECLAW_BOOTSTRAP_SKILL / presence of /runtime/channel-entry.js,
   // so no separate channel-base image is needed.
 

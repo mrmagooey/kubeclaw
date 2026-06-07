@@ -56,10 +56,13 @@ import {
   CoreV1Api,
   AppsV1Api,
   BatchV1Api,
+  Exec,
 } from '@kubernetes/client-node';
+import { readBootstrapPvcFiles } from './k8s/read-bootstrap-pvc-files.js';
 import {
   activeBootstraps,
   startBootstrapHistoryGcInterval,
+  reconcileChannelManifestsOnStartup,
 } from './admin-shell.js';
 import {
   getBootstrapMeta,
@@ -458,33 +461,11 @@ async function main(): Promise<void> {
       },
       // Story 176: independently read package.json + package-lock.json from the
       // runtime PVC by exec-ing into the inspector sidecar (TOCTOU defense).
-      readPvcFiles: async (instanceName: string) => {
-        const { execSync } = await import('node:child_process');
-        // Find the running pod for this bootstrap Job
-        const podListJson = execSync(
-          `kubectl get pods -n ${KUBECLAW_NAMESPACE} ` +
-            `-l kubeclaw-channel=${instanceName},kubeclaw.io/role=bootstrap ` +
-            `--field-selector=status.phase=Running -o json`,
-          { encoding: 'utf8' },
-        );
-        const podList = JSON.parse(podListJson) as {
-          items: Array<{ metadata: { name: string } }>;
-        };
-        if (podList.items.length === 0) {
-          throw new Error(
-            `No running bootstrap pod found for instance ${instanceName}`,
-          );
-        }
-        const podName = podList.items[0].metadata.name;
-        const execFile = (file: string): string =>
-          execSync(
-            `kubectl exec -n ${KUBECLAW_NAMESPACE} ${podName} -c inspector -- cat /runtime-inspect/${file}`,
-            { encoding: 'utf8' },
-          );
-        const packageJson = execFile('package.json');
-        const packageLockJson = execFile('package-lock.json');
-        return { packageJson, packageLockJson };
-      },
+      readPvcFiles: async (instanceName: string) =>
+        readBootstrapPvcFiles(
+          { coreApi, exec: new Exec(kc), namespace: KUBECLAW_NAMESPACE },
+          instanceName,
+        ),
       deleteJob: async (name: string) => {
         try {
           await batchApi.deleteNamespacedJob({
@@ -642,6 +623,20 @@ async function main(): Promise<void> {
       logger.warn(
         { err },
         'Specialist reconcile failed; channel pods will use stale or empty catalog',
+      );
+    }
+
+    // ── Channel-manifest catalog reconcile ────────────────────────────────────
+    // Helm renders kubeclaw-channel-manifests empty; bootstrap Jobs mount it to
+    // read each channel type's package.json. Populate it from the Helm baseline +
+    // SQLite overrides so bootstrap Jobs find their manifest instead of stalling.
+    try {
+      await reconcileChannelManifestsOnStartup();
+      logger.info('Channel-manifests ConfigMap reconciled');
+    } catch (err) {
+      logger.warn(
+        { err },
+        'Channel-manifests reconcile failed; bootstrap Jobs will use stale or empty catalog',
       );
     }
   }

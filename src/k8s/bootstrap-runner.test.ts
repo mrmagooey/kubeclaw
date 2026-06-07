@@ -312,7 +312,7 @@ describe('bootstrapChannelFromSkill', () => {
     expect(jobBody.spec.activeDeadlineSeconds).toBe(60);
   });
 
-  it('bootstrap Job spec includes an inspector sidecar mounting runtime PVC at /runtime-inspect (Story 176)', async () => {
+  it('bootstrap Job spec: inspector is a native sidecar in initContainers (not in containers) — Story 176 / native-sidecar fix', async () => {
     await bootstrapChannelFromSkill({
       skillName: 'bootstrap-telegram',
       channelType: 'telegram',
@@ -331,13 +331,26 @@ describe('bootstrapChannelFromSkill', () => {
               command?: string[];
               volumeMounts?: Array<{ mountPath: string }>;
             }>;
+            initContainers?: Array<{
+              name: string;
+              command?: string[];
+              restartPolicy?: string;
+              volumeMounts?: Array<{ mountPath: string }>;
+            }>;
           };
         };
       };
     };
-    const containers = jobBody.spec.template.spec.containers;
-    const inspector = containers.find((c) => c.name === 'inspector');
+    const { containers, initContainers } = jobBody.spec.template.spec;
+    // inspector must NOT be in containers (it would block Job Completion)
+    expect(containers.find((c) => c.name === 'inspector')).toBeUndefined();
+    // only bootstrap container remains
+    expect(containers).toHaveLength(1);
+    expect(containers[0].name).toBe('bootstrap');
+    // inspector must be a native sidecar in initContainers
+    const inspector = initContainers?.find((c) => c.name === 'inspector');
     expect(inspector).toBeTruthy();
+    expect(inspector?.restartPolicy).toBe('Always');
     expect(inspector?.command).toEqual(['sleep', 'infinity']);
     expect(
       inspector?.volumeMounts?.some((m) => m.mountPath === '/runtime-inspect'),
@@ -429,13 +442,20 @@ describe('bootstrapChannelFromSkill — Story 182: accessModes wiring', () => {
               name: string;
               volumeMounts?: Array<{ name: string; readOnly?: boolean }>;
             }>;
+            initContainers?: Array<{
+              name: string;
+              volumeMounts?: Array<{ name: string; readOnly?: boolean }>;
+            }>;
           };
         };
       };
     };
-    const containers = jobBody.spec.template.spec.containers;
-    // Both bootstrap and inspector containers mount the runtime volume
-    for (const container of containers) {
+    const allContainers = [
+      ...(jobBody.spec.template.spec.containers ?? []),
+      ...(jobBody.spec.template.spec.initContainers ?? []),
+    ];
+    // bootstrap and inspector (native sidecar) must both mount runtime volumes read-write
+    for (const container of allContainers) {
       const runtimeMount = container.volumeMounts?.find(
         (vm) => vm.name === 'runtime',
       );
@@ -465,12 +485,19 @@ describe('bootstrapChannelFromSkill — Story 182: accessModes wiring', () => {
               name: string;
               volumeMounts?: Array<{ name: string; readOnly?: boolean }>;
             }>;
+            initContainers?: Array<{
+              name: string;
+              volumeMounts?: Array<{ name: string; readOnly?: boolean }>;
+            }>;
           };
         };
       };
     };
-    const containers = jobBody.spec.template.spec.containers;
-    for (const container of containers) {
+    const allContainers = [
+      ...(jobBody.spec.template.spec.containers ?? []),
+      ...(jobBody.spec.template.spec.initContainers ?? []),
+    ];
+    for (const container of allContainers) {
       const runtimeMount = container.volumeMounts?.find(
         (vm) => vm.name === 'runtime',
       );
@@ -570,6 +597,23 @@ describe('cleanupBootstrapResources', () => {
     await cleanupBootstrapResources('job-abc', 'my-tg', deps);
 
     expect(deps.activeBootstraps.has('my-tg')).toBe(false);
+  });
+
+  it('clears any pending ask_admin question for the bootstrap job', async () => {
+    const pendingBootstrapQuestions = new Map<
+      string,
+      { text: string; ts: string }
+    >();
+    pendingBootstrapQuestions.set('job-abc', {
+      text: 'Which port?',
+      ts: '2026-01-01T00:00:00.000Z',
+    });
+    const deps = makeCleanupDeps({ pendingBootstrapQuestions });
+    deps.activeBootstraps.set('my-tg', 'job-abc');
+
+    await cleanupBootstrapResources('job-abc', 'my-tg', deps);
+
+    expect(pendingBootstrapQuestions.has('job-abc')).toBe(false);
   });
 
   it('removes instance from activeBootstraps even when all deletes fail', async () => {
@@ -1445,6 +1489,42 @@ describe('runUpgrade — concurrent rejection', () => {
     expect(runtimeVol.persistentVolumeClaim.claimName).toBe(
       'kubeclaw-channel-my-telegram-runtime-v2',
     );
+  });
+
+  it('upgrade Job spec: inspector is a native sidecar in initContainers (not in containers) — native-sidecar fix', async () => {
+    const active = new Map<string, string>();
+    const k8sDeps = makeUpgradeK8sDeps(
+      'kubeclaw-channel-my-telegram-runtime-v1',
+    );
+    await runUpgrade(makeBaseUpgradeOpts(k8sDeps, active));
+    const jobBody = k8sDeps.batchV1.createNamespacedJob.mock.calls[0][0].body as {
+      spec: {
+        template: {
+          spec: {
+            containers: Array<{ name: string }>;
+            initContainers?: Array<{
+              name: string;
+              command?: string[];
+              restartPolicy?: string;
+              volumeMounts?: Array<{ mountPath: string }>;
+            }>;
+          };
+        };
+      };
+    };
+    const { containers, initContainers } = jobBody.spec.template.spec;
+    // inspector must NOT be in containers
+    expect(containers.find((c) => c.name === 'inspector')).toBeUndefined();
+    expect(containers).toHaveLength(1);
+    expect(containers[0].name).toBe('bootstrap');
+    // inspector must be a native sidecar
+    const inspector = initContainers?.find((c) => c.name === 'inspector');
+    expect(inspector).toBeTruthy();
+    expect(inspector?.restartPolicy).toBe('Always');
+    expect(inspector?.command).toEqual(['sleep', 'infinity']);
+    expect(
+      inspector?.volumeMounts?.some((m) => m.mountPath === '/runtime-inspect'),
+    ).toBe(true);
   });
 });
 

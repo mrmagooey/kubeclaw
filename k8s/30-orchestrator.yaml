@@ -34,6 +34,17 @@ rules:
       - pods/log
     verbs:
       - get
+  # Bootstrap commit (Story 176): exec into the inspector sidecar to read
+  # package.json / package-lock.json from the runtime PVC. The @kubernetes/client-node
+  # Exec uses a WebSocket upgrade (HTTP GET), which the apiserver maps to the RBAC
+  # verb "get"; SPDY clients use POST (verb "create"). Grant both so either transport works.
+  - apiGroups:
+      - ''
+    resources:
+      - pods/exec
+    verbs:
+      - get
+      - create
   - apiGroups:
       - ''
     resources:
@@ -151,12 +162,6 @@ spec:
                 secretKeyRef:
                   name: kubeclaw-secrets
                   key: anthropic-api-key
-                  optional: true
-            - name: CLAUDE_CODE_OAUTH_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: kubeclaw-secrets
-                  key: claude-code-oauth-token
                   optional: true
             - name: IRC_SERVER
               value: kubeclaw-irc-mock

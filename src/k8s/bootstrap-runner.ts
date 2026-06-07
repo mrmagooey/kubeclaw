@@ -364,6 +364,23 @@ export async function bootstrapChannelFromSkill(
           serviceAccountName: 'kubeclaw-bootstrap',
           restartPolicy: 'Never',
           automountServiceAccountToken: false,
+          // Story 176: inspector is a native sidecar (initContainer + restartPolicy:Always
+          // since Kubernetes 1.29 GA). K8s keeps it running alongside the main bootstrap
+          // container so the orchestrator can `kubectl exec` into it for TOCTOU defense,
+          // and automatically terminates it when the main container exits — allowing the
+          // Job to reach Complete once the bootstrap agent finishes.
+          initContainers: [
+            {
+              name: 'inspector',
+              image: channelBaseImage,
+              imagePullPolicy: 'IfNotPresent',
+              command: ['sleep', 'infinity'],
+              restartPolicy: 'Always',
+              volumeMounts: [
+                { name: 'runtime', mountPath: '/runtime-inspect' },
+              ],
+            },
+          ],
           containers: [
             {
               name: 'bootstrap',
@@ -374,18 +391,6 @@ export async function bootstrapChannelFromSkill(
                 { name: 'runtime', mountPath: '/runtime' },
                 { name: 'skills', mountPath: '/workspace/skills' },
                 { name: 'manifests', mountPath: '/workspace/manifests' },
-              ],
-            },
-            // Story 176: inspector sidecar — mounts the runtime PVC at /runtime-inspect
-            // and runs `sleep infinity` so the orchestrator can `kubectl exec` into it
-            // to independently read package.json and package-lock.json for TOCTOU defense.
-            {
-              name: 'inspector',
-              image: channelBaseImage,
-              imagePullPolicy: 'IfNotPresent',
-              command: ['sleep', 'infinity'],
-              volumeMounts: [
-                { name: 'runtime', mountPath: '/runtime-inspect' },
               ],
             },
           ],
@@ -648,6 +653,23 @@ export async function runUpgrade(
           serviceAccountName: 'kubeclaw-bootstrap',
           restartPolicy: 'Never',
           automountServiceAccountToken: false,
+          // Story 176: inspector is a native sidecar (initContainer + restartPolicy:Always
+          // since Kubernetes 1.29 GA). K8s keeps it running alongside the main bootstrap
+          // container so the orchestrator can `kubectl exec` into it for TOCTOU defense,
+          // and automatically terminates it when the main container exits — allowing the
+          // Job to reach Complete once the bootstrap agent finishes.
+          initContainers: [
+            {
+              name: 'inspector',
+              image: channelBaseImage,
+              imagePullPolicy: 'IfNotPresent',
+              command: ['sleep', 'infinity'],
+              restartPolicy: 'Always',
+              volumeMounts: [
+                { name: 'runtime', mountPath: '/runtime-inspect' },
+              ],
+            },
+          ],
           containers: [
             {
               name: 'bootstrap',
@@ -658,15 +680,6 @@ export async function runUpgrade(
                 { name: 'runtime', mountPath: '/runtime' },
                 { name: 'skills', mountPath: '/workspace/skills' },
                 { name: 'manifests', mountPath: '/workspace/manifests' },
-              ],
-            },
-            {
-              name: 'inspector',
-              image: channelBaseImage,
-              imagePullPolicy: 'IfNotPresent',
-              command: ['sleep', 'infinity'],
-              volumeMounts: [
-                { name: 'runtime', mountPath: '/runtime-inspect' },
               ],
             },
           ],
@@ -727,6 +740,12 @@ export interface CleanupBootstrapDeps {
   ): Promise<void>;
   /** Shared in-memory map: instanceName → bootstrapJobId */
   activeBootstraps: Map<string, string>;
+  /**
+   * Shared in-memory map: bootstrapJobId → pending ask_admin question. Cleared
+   * here so a bootstrap that times out without an answer does not leave a stale
+   * entry behind. Optional for backward-compatible test injection.
+   */
+  pendingBootstrapQuestions?: Map<string, { text: string; ts: string }>;
   /**
    * Story 180: Optional callback to record a terminal bootstrap outcome in SQLite.
    * Called after the SSE publish. If absent, the terminal record is skipped
@@ -877,6 +896,7 @@ export async function cleanupBootstrapResources(
 
   // (e) Free the instance name — always runs
   deps.activeBootstraps.delete(instanceName);
+  deps.pendingBootstrapQuestions?.delete(bootstrapJobId);
   logger.info(
     { instanceName, bootstrapJobId },
     'cleanupBootstrapResources: instance freed from activeBootstraps',

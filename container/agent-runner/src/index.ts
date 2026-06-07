@@ -33,10 +33,11 @@ import { randomUUID } from 'crypto';
 import { Agent } from '@mariozechner/pi-agent-core';
 import type { AgentTool, AgentEvent, AgentMessage } from '@mariozechner/pi-agent-core';
 import { Type, streamSimple } from '@mariozechner/pi-ai';
-import type { Model, Api } from '@mariozechner/pi-ai';
+import type { Api } from '@mariozechner/pi-ai';
 import { createClient, RedisClientType } from 'redis';
 import { CronExpressionParser } from 'cron-parser';
 import { RedisIPCClient } from './redis/ipc-client.js';
+import { buildModel, getApiKeyForProvider } from './model.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -927,67 +928,6 @@ function buildToolDefinitions(
   return tools;
 }
 
-// ---- Model construction ----
-
-function buildModel(): Model<Api> {
-  const provider = process.env.KUBECLAW_LLM_PROVIDER || 'openai';
-
-  if (provider === 'openrouter') {
-    const modelId = process.env.OPENROUTER_MODEL || 'openai/gpt-4o';
-    return {
-      id: modelId,
-      name: modelId,
-      api: 'openai-completions',
-      provider: 'openrouter',
-      baseUrl: process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1',
-      reasoning: false,
-      input: ['text'],
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-      contextWindow: 128000,
-      maxTokens: 4096,
-    };
-  }
-
-  if (provider === 'ollama') {
-    const modelId = process.env.OLLAMA_MODEL || 'llama3.2';
-    return {
-      id: modelId,
-      name: modelId,
-      api: 'openai-completions',
-      provider: 'ollama',
-      baseUrl: `${process.env.OLLAMA_HOST || 'http://ollama:11434'}/v1`,
-      reasoning: false,
-      input: ['text'],
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-      contextWindow: 128000,
-      maxTokens: 4096,
-    };
-  }
-
-  // Default: OpenAI-compatible
-  const modelId = process.env.OPENAI_MODEL || process.env.DIRECT_LLM_MODEL || 'gpt-4o';
-  return {
-    id: modelId,
-    name: modelId,
-    api: 'openai-completions',
-    provider: 'openai',
-    baseUrl: process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1',
-    reasoning: false,
-    input: ['text'],
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 128000,
-    maxTokens: 4096,
-  };
-}
-
-function getApiKeyForProvider(provider: string): string | undefined {
-  if (provider === 'openrouter') {
-    return process.env.OPENROUTER_API_KEY;
-  }
-  if (provider === 'ollama') return 'ollama';
-  return process.env.OPENAI_API_KEY;
-}
-
 // ---- Agentic loop ----
 
 const MAX_TOOL_ROUNDS = 20;
@@ -1554,7 +1494,10 @@ async function main(): Promise<void> {
     } finally {
       try { await redis.quit(); } catch { /* best effort */ }
     }
-    return;
+    // Explicit exit required: lingering Redis subscriber handles from ask_admin
+    // keep the Node event loop alive after main() returns, preventing the
+    // bootstrap container from terminating and thus blocking the Job from Completing.
+    process.exit(0);
   }
 
   let containerInput: ContainerInput;
