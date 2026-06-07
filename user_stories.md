@@ -352,36 +352,6 @@ status: passing 5/5
 
 status: passing 5/5 against local Gemma-4B (~58 min); 3/5 on OpenRouter Nemotron-3-nano-30b (24 min, AC2/AC3/AC4 — substantive routing — pass; AC1 port-forward flake, AC5 SSE timeout). Fix `6eae125` added `reasoning` fallback to direct-llm-runner.ts so reasoning models work end-to-end; probe accepts content/reasoning/reasoning_content.
 
-## Story 14: User clears conversation history via the `/clear` chat command
-
-**As a** KubeClaw user via the HTTP channel
-**I want** to type `/clear` in chat and have my conversation history wiped immediately
-**So that** I can start a fresh context without any prior turn influencing the assistant's next response — useful after a derailed thread, a sensitive exchange I want expunged, or simply a new topic
-
-### Acceptance criteria
-
-1. A `POST /message` containing `/clear` returns an SSE reply whose text contains the phrase "cleared" (case-insensitive) without invoking the LLM, and the round-trip completes in under 5 seconds.
-2. After `/clear`, a subsequent `POST /message` containing a unique lookup token that was sent *before* the clear returns an SSE reply that does **not** contain that token — confirming the history was purged and is not re-injected as context.
-3. A `POST /message` containing `/clear` when the conversation history is already empty still returns an SSE reply containing "cleared" (graceful no-op, no error stack trace).
-4. The clear is scoped to the issuing user's group: after `alice` sends `/clear`, a subsequent `/search <shared-token>` from `bob` — where `<shared-token>` was in bob's own prior messages — still finds results, confirming alice's clear did not affect bob's history.
-5. After `/clear` the conversation history row count for the group in the SQLite database is zero — verifiable via `kubectl exec` into the channel pod running `sqlite3 /app/groups/http-http-alice/db.sqlite 'SELECT COUNT(*) FROM conversation_history'`.
-
-### Notes for the test author
-
-- The `/clear` command is implemented in `src/runtime/compression-commands.ts` (`isCompactCommand` / `handleCompactCommand`). As of this writing it is **not yet wired** into the channel-runner slash-command dispatch in `src/channel-runner.ts` (the `processGroupMessages` function intercepts `/search`, `/skills`, and `/secret` before the LLM queue but does not yet check `isCompactCommand`). The test author must verify whether the dispatch is present; if not, wire it in following the same pattern as `isSearchCommand` → `handleSearchCommand` around line 1147. The integration point is: detect the command before `formatMessages`, call `handleCompactCommand(group.folder, lastMsg.content, client, model)`, send the returned string via `channel.sendMessage`, and return early without invoking the LLM.
-- `handleCompactCommand` with verb `clear` is synchronous (no LLM call needed) — the `client` and `model` arguments are only used for the `/compact` summarisation path and can be passed as stubs when testing the clear path in unit tests.
-- Install kubeclaw in an isolated namespace (`kubeclaw-e2e-clear`) with `orchestrator.replicas=1` and the HTTP channel enabled. Follow the `beforeAll`/`afterAll` helm install+uninstall pattern from `e2e/credential-broker.test.ts`. Port-forward the HTTP channel Service to a local port (e.g. `14099`): `kubectl port-forward svc/kubeclaw-channel-http -n kubeclaw-e2e-clear 14099:14081`.
-- Create two HTTP users at install time for AC4: `--set-json 'httpChannel.users={"alice":"alicepw","bob":"bobpw"}'`. The group folder for `alice` is `http-http-alice`; for `bob` it is `http-http-bob`.
-- To seed conversation history before AC1: `POST /message` with a unique marker string (e.g. `'story14-before-clear-' + Date.now()`) from `alice`, wait 1 s for the row to be written, then send `/clear`. Assert the SSE reply contains "cleared".
-- For AC2: after the `/clear` in AC1, send a new message containing the unique marker from AC1's seed (not the clear command, a normal message) and wait for an LLM reply — assert the reply does NOT contain the original marker token. (This AC is LLM-dependent; wrap with `it.skipIf(process.env.KUBECLAW_NO_LLM === 'true')`.)
-- For AC3: if history is already empty (e.g. at the very start of a fresh namespace install before any messages), send `/clear` and assert "cleared" in the reply.
-- For AC4: have `bob` send a message containing a distinct shared token (e.g. `'bob-keep-token'`) before `alice` sends `/clear`, then after the clear run `/search bob-keep-token` as `bob` and assert the result contains `bob-keep-token`.
-- For AC5: after `/clear` use `kubectl exec <channel-pod> -n kubeclaw-e2e-clear -- sqlite3 /app/groups/http-http-alice/db.sqlite 'SELECT COUNT(*) FROM conversation_history WHERE group_folder="http-http-alice"'` and assert the output is `0`. The channel pod is found with `kubectl get pod -n kubeclaw-e2e-clear -l kubeclaw-component=channel-http -o jsonpath='{.items[0].metadata.name}'`.
-- To read SSE replies, use the same helper as Stories 11–13 (`GET /events?jid=http:alice` or `GET /stream`). Wait up to 15 s; the `/clear` command is synchronous and returns in under 2 s on kind.
-- LLM-dependence: **LLM-independent** for ACs 1, 3, 4, 5. AC2 is LLM-dependent (checking the assistant does not re-use cleared context) — gate it with `it.skipIf(process.env.KUBECLAW_NO_LLM === 'true')`.
-- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-clear --create-namespace`, `--set namespace=kubeclaw-e2e-clear`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
-
-status: passing 5/5 (required wiring /clear into channel-runner)
 ## Story 15: User sends an image attachment via the HTTP channel
 
 **As a** KubeClaw user via the HTTP channel
@@ -437,33 +407,6 @@ status: passing 5/5
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-compact --create-namespace`, `--set namespace=kubeclaw-e2e-compact`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
 
 status: passing 5/5 (extended channel-runner intercept to cover /compact, /summary, /clear via single isCompactCommand path)
-## Story 17: User discovers available slash commands via /help
-
-**As a** KubeClaw user via the HTTP channel
-**I want** to type `/help` and receive a plain-text list of all slash commands the channel supports
-**So that** I can discover what commands are available without consulting documentation or guessing
-
-### Acceptance criteria
-
-1. A `POST /message` containing `/help` returns HTTP 200 and an SSE reply that lists at least the commands `/search`, `/skills`, `/secret`, `/clear`, `/compact`, and `/summary` — confirming the help text is comprehensive.
-2. A `POST /message` containing `/help` returns a reply that does NOT contain any LLM-generated prose — confirmed by the reply arriving in under 2 seconds and containing no sentences longer than 80 characters (a structural check, not an LLM check).
-3. A `POST /message` containing `/help foobar` (with an ignored argument) returns the same help text as plain `/help` — confirming the command ignores trailing arguments.
-4. A `POST /message` containing `/HELP` (upper-case) does NOT trigger the help intercept and instead falls through to the LLM — confirmed by the reply not matching the known help-text prefix (command matching is case-sensitive).
-5. After `/help`, a subsequent normal message (not a slash command) is processed normally — confirmed by the SSE stream delivering a non-help reply for the follow-up message.
-
-### Notes for the test author
-
-- No `/help` command exists yet. It must be added to `src/channel-runner.ts` following the same intercept pattern used by `/clear` (around line 1179): detect `lastMsg.content.trim() === '/help'` (or `/^\/help(\s|$)/i` — but see AC4, case-sensitive is required so use `/^\/help(\s|$)/`), build a static help string listing all slash commands, call `channel.sendMessage(chatJid, helpText)`, and return early without invoking the LLM.
-- The help text should be a static string constant defined near the other command handlers in `channel-runner.ts`. Recommended format: one command per line, e.g. `  /search <query>  — full-text search over conversation history`. Include: `/search`, `/skills`, `/secret`, `/clear`, `/compact`, `/summary`, `/help`.
-- For AC2: time the round-trip from POST to first SSE event. On a healthy kind cluster the `/help` intercept should reply in well under 2 s; use a 5 s timeout to be safe in CI. Assert the reply text contains the literal string `/search` as a proxy for the structured help format.
-- For AC4: send `/HELP` and wait up to 6 s for an SSE event. The reply MUST NOT start with the known help-text prefix (e.g. must not contain the literal string `Available commands` or `/search` as the first token). Since no LLM is configured in the e2e namespace, the expected outcome is an error reply or timeout — assert that the SSE event body does not match the help text pattern.
-- For AC5: after the `/help` reply is received, POST a second message `ping` and assert the SSE stream delivers a second event that does not contain the help text. In an LLM-free namespace the second reply will be an error, which is fine — just assert it is distinct from the help text.
-- Install kubeclaw in an isolated namespace (`kubeclaw-e2e-help`) with the HTTP channel enabled and a single user `alice`. Follow the `beforeAll`/`afterAll` helm install+uninstall pattern from `e2e/credential-broker.test.ts`. Port-forward the HTTP channel Service to a local port `14102`: `kubectl port-forward svc/kubeclaw-channel-http -n kubeclaw-e2e-help 14102:14081`.
-- SSE reply helper: open a persistent `GET /events?jid=http:alice` connection (or use the `GET /stream` endpoint if present) before sending the POST, collect events, and assert within 5 s.
-- LLM-dependence: **LLM-independent** for ACs 1, 2, 3, and 5. AC4 touches the LLM fallback path — gate it with `it.skipIf(process.env.KUBECLAW_NO_LLM === 'true')` only if the test requires an actual LLM reply to distinguish from the help text; otherwise assert purely on the absence of the help-text prefix (no LLM needed).
-- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-help --create-namespace`, `--set namespace=kubeclaw-e2e-help`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
-
-status: passing 5/5 (new /help command implemented)
 ## Story 18: User browses paginated conversation history via the HTTP channel
 
 **As a** KubeClaw user via the HTTP channel
@@ -536,250 +479,6 @@ status: passing 5/5 (new GET /attachments/raw/<filename> endpoint)
 
 status: passing 5/5 (SSE id: field + Last-Event-ID replay + getOutboundMessagesSince helper)
 
-## Story 21: Concurrent SSE connections receive the same assistant reply
-
-**As a** KubeClaw user via the HTTP channel
-**I want** every browser tab I have open to receive assistant replies simultaneously
-**So that** I never miss a message because I was reading it in one tab while it arrived in another
-
-### Acceptance criteria
-
-1. Two `GET /stream` connections for the same user → both receive identical SSE payloads within 2s.
-2. One closes, the other keeps receiving subsequent replies — no error, no pod crash.
-3. Three connections → all three receive the same payload.
-4. Bob's stream does NOT receive Alice's events — cross-user isolation under concurrent streams.
-5. `GET /stream` without Basic Auth → HTTP 401, no stream opened.
-
-### Notes for the test author
-
-- `src/channels/http.ts` — `sseClients` array + `sendMessage` broadcast loop (~line 531). Already structurally handles multi-client; this story verifies it.
-- Trigger: `/help` slash command (Story 17) — deterministic, LLM-free, <500ms reply.
-- LLM-dependence: **none**.
-- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-csse --create-namespace`, `--set namespace=kubeclaw-e2e-csse`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
-
-status: passing 5/5 (verifies pre-existing broadcast loop in sendMessage)
-
-## Story 22: User deletes a previously uploaded attachment via the HTTP channel
-
-**As a** KubeClaw user via the HTTP channel
-**I want** to permanently delete an attachment I uploaded earlier via `DELETE /attachments/raw/<filename>`
-**So that** I can remove sensitive or unwanted files from the server without pod access
-
-### Acceptance criteria
-
-1. Authenticated DELETE of valid filename → 204; subsequent GET → 404.
-2. No auth → 401, file not deleted.
-3. Nonexistent → 404.
-4. Path traversal → 400, no filesystem mutation.
-5. Alice can't delete Bob's attachment — cross-user → 404.
-
-### Notes for the test author
-
-- Mirror Story 19's GET handler in `src/channels/http.ts` — same path safety + group-folder scoping. `fs.promises.unlink` with ENOENT → 404.
-- LLM-dependence: **none**.
-- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-attach-del --create-namespace`, `--set namespace=kubeclaw-e2e-attach-del`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
-
-status: passing 5/5 (DELETE complements Story 19 GET)
-
-## Story 23: User lists their uploaded attachments via the HTTP channel
-
-**As a** KubeClaw user via the HTTP channel
-**I want** to retrieve a list of my uploaded attachments via `GET /attachments/list`
-**So that** I can see what files I have on the server before downloading or deleting them, without needing pod access
-
-### Acceptance criteria
-
-1. Authenticated `GET /attachments/list` returns 200 with a JSON array of objects, each containing at least `filename` (string) and `size` (bytes, number).
-2. The list is scoped to the authenticated user's group — Alice's request returns only Alice's files, never Bob's.
-3. When the user has no uploaded files the response is 200 with an empty array (`[]`), not a 404.
-4. After uploading a file via `POST /attachments/raw/<filename>`, it appears in the list immediately; after deleting it via `DELETE /attachments/raw/<filename>`, it is absent from the next list response.
-5. Unauthenticated request → 401, no body.
-
-### Notes for the test author
-
-- Handler lives in `src/channels/http.ts` alongside the existing `/attachments/raw` GET and DELETE handlers. Use `fs.promises.readdir` + `fs.promises.stat` over the same per-group attachments folder used by Stories 19 and 22 (derive path via the same `groupFolder` / `attachmentsDir` helper to stay consistent).
-- Response shape: `[{ filename: string, size: number, modifiedAt: string }]` — `modifiedAt` is ISO-8601 from `stat.mtime`. Assert at minimum `filename` and `size` in ACs 1/4.
-- Cross-user isolation (AC 2): same pattern as Story 22 AC 5 — create two Basic Auth users, upload to one, assert the other's list is empty.
-- LLM-dependence: **none**.
-- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-attach-list --create-namespace`, `--set namespace=kubeclaw-e2e-attach-list`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
-
-status: passing 5/5 (new GET /attachments/list completes attachment CRUD)
-
-## Story 24: SSE Stream Keepalive Heartbeat
-
-**As a** KubeClaw user via the HTTP webchat channel
-**I want** the SSE stream to send periodic comment-frame heartbeats
-**So that** load balancers and reverse proxies do not silently drop my idle connection
-
-### Acceptance criteria
-
-1. Fresh authenticated GET /stream → `: ping` comment within 35s with no user activity.
-2. Heartbeat is a comment, not `data:` event; no `id:` field, doesn't bump Last-Event-ID.
-3. Two heartbeats observed within 70s.
-4. Unauthenticated GET → 401 before any heartbeat.
-5. `/help` reply still delivered alongside heartbeats (interval timer not cleared by message events).
-
-### Notes for the test author
-
-- Implementation: `src/channels/http.ts:410-417` — `setInterval(() => res.write(': ping\n\n'), 30_000)`. Already exists; this is a coverage story.
-- LLM-dependence: **none**.
-- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-keepalive --create-namespace`, `--set namespace=kubeclaw-e2e-keepalive`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
-
-status: passing 5/5 (coverage for pre-existing 30s heartbeat)
-
-## Story 25: POST /message returns the stored message ID
-
-**As a** KubeClaw user via the HTTP webchat channel
-**I want** the `POST /message` response to include the assigned message ID
-**So that** I can correlate the SSE reply I receive later with the message that triggered it
-
-### Acceptance criteria
-
-1. Authenticated POST with valid `{"text":"..."}` → 200 with JSON body `{"id":"<msgId>"}`.
-2. Two successive POSTs return distinct IDs.
-3. The returned `id` matches the row in SQLite `messages` table (verifiable via GET /history from Story 18).
-4. Unauthenticated POST → 401, no id in body.
-5. POST with missing/blank text → 400, no id in body.
-
-### Notes for the test author
-
-- `src/channels/http.ts` POST /message handler (~line 423) already computes `msgId` in `handleInbound` (~line 728). Surface it in the JSON response body.
-- LLM-dependence: **none**.
-- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-msg-ack --create-namespace`, `--set namespace=kubeclaw-e2e-msg-ack`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
-
-status: passing 4/5 — AC1/2/4/5 verified. AC3 (id matches /history row) failed: Story 18 /history queries conversation_history table; Story 25 msgId is from messages table — different ID schemes, no cross-story correlation possible without changing /history shape.
-
-## Story 26: User erases their conversation history via REST
-
-**As a** KubeClaw user via the HTTP channel
-**I want** to permanently delete my conversation history via `DELETE /history`
-**So that** I can wipe my chat clean programmatically without going through the chat UI
-
-### Acceptance criteria
-
-1. Authenticated DELETE → 204; subsequent GET /history → empty.
-2. Unauthenticated DELETE → 401, history intact.
-3. Scoped to user — alice deletion doesn't affect bob.
-4. Idempotent — empty history DELETE → 204.
-5. Next message reply has no memory of prior turns (LLM-dependent — gate with skipIf).
-
-### Notes for the test author
-
-- Add `DELETE /history` branch to `src/channels/http.ts` after the existing GET /history. Call `clearConversationHistory(group.folder)` from `src/db.ts`.
-- LLM-dependence: ACs 1-4 independent; AC5 dependent.
-- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-del-history --create-namespace`, `--set namespace=kubeclaw-e2e-del-history`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
-
-status: passing 4/4 + 1 skipped (AC5 LLM-gated)
-
-## Story 27: Empty or whitespace-only POST /message is rejected with 400
-
-**As a** KubeClaw user via the HTTP channel
-**I want** the server to reject blank submissions with 400 Bad Request
-**So that** I get clear feedback when I accidentally send an empty message
-
-### Acceptance criteria
-
-1. `{"text":""}` → 400 + "Missing text", nothing stored.
-2. `{"text":"   "}` → 400 + "Missing text", nothing stored.
-3. `{}` (no text field) → 400 + "Missing text".
-4. Malformed JSON → 400 + "Invalid JSON".
-5. Valid non-empty → 200 + `{id}` (regression guard).
-
-### Notes for the test author
-
-- Behavior at `src/channels/http.ts:520-530` already exists; this is a coverage story.
-- LLM-dependence: **none**.
-- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-empty-msg --create-namespace`, `--set namespace=kubeclaw-e2e-empty-msg`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
-
-status: passing 5/5 (coverage for existing 400 validation)
-
-## Story 28: Unicode and emoji round-trip through POST /message and SSE
-
-**As a** KubeClaw user via the HTTP webchat channel
-**I want** to send and receive messages containing Unicode text, emoji, and multi-byte characters without corruption
-**So that** I can communicate naturally in any language
-
-### Acceptance criteria
-
-1. POST emoji+CJK ("Hello 🌍 こんにちは") → 200; stored content matches input byte-for-byte.
-2. POST Arabic RTL ("مرحبا بالعالم") → 200; stored content matches.
-3. SSE `data:` line carries Unicode payload intact.
-4. 10KB multi-byte string (2500×🔥) → 200; length preserved.
-5. Unauthenticated Unicode POST → 401.
-
-### Notes
-
-- Pure coverage story; `src/channels/http.ts` already decodes UTF-8.
-- LLM-dependence: **none**.
-- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-unicode --create-namespace`, `--set namespace=kubeclaw-e2e-unicode`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
-
-status: passing 5/5 (UTF-8 round-trip coverage)
-
-## Story 29: POST /message rejects wrong Content-Type
-
-**As a** KubeClaw user via the HTTP channel
-**I want** the server to reject POST /message requests with unexpected Content-Type
-**So that** mis-configured clients fail fast with a clear error
-
-### Acceptance criteria
-
-1. text/plain with JSON body → 415.
-2. application/xml → 415.
-3. application/json → 200 + `{id}` (baseline).
-4. multipart/form-data (no image) → 400 (multipart path still reached).
-5. Unauthenticated wrong Content-Type → 401 before CT check.
-
-### Notes
-
-- Add explicit guard in `src/channels/http.ts` POST /message handler (~line 431): if content-type isn't json or multipart, return 415.
-- LLM-dependence: **none**.
-- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-ct-validation --create-namespace`, `--set namespace=kubeclaw-e2e-ct-validation`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
-
-status: implementation 5/5 (verified by agent in its worktree); main test has channel-pod label-selector flake on kind — pod never matches waitForChannelPod predicate. The 415 guard in src/channels/http.ts is in place.
-
-## Story 30: HEAD /attachments/raw returns size and content-type without body
-
-**As a** KubeClaw user via the HTTP channel
-**I want** to HEAD a previously uploaded attachment and get Content-Type + Content-Length without the body
-**So that** I can check size/type before deciding to download
-
-### Acceptance criteria
-
-1. HEAD existing file (authenticated) → 200 + correct Content-Type + Content-Length, empty body.
-2. HEAD nonexistent → 404, no body.
-3. Unauthenticated HEAD → 401, no body.
-4. HEAD with path traversal → 400, no body.
-
-### Notes
-
-- Extend the GET /attachments/raw/<filename> handler in `src/channels/http.ts` to also match HEAD; replace `res.end(fileData)` with `res.end()`.
-- LLM-dependence: **none**.
-- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-head-attach --create-namespace`, `--set namespace=kubeclaw-e2e-head-attach`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
-
-status: passing 4/4 (HEAD extension to GET /attachments/raw handler)
-
-## Story 31: Wrong HTTP method on a known route returns 405 with Allow header
-
-**As a** KubeClaw user via the HTTP channel
-**I want** 405 Method Not Allowed (not 404) when I use an unsupported verb on a real endpoint
-**So that** my client can distinguish "path doesn't exist" from "wrong method"
-
-### Acceptance criteria
-
-1. DELETE /stream → 405 + `Allow: GET`.
-2. PUT /message → 405 + `Allow: POST`.
-3. POST /history → 405 + `Allow: GET, DELETE`.
-4. POST /attachments/list → 405 + `Allow: GET`.
-5. PATCH /nonexistent → 404 (unknown path, no 405 promotion).
-
-### Notes
-
-- Add a `pathMethods` table in `src/channels/http.ts` before the final 404 fallthrough; on path match, emit 405 + `Allow`.
-- LLM-dependence: **none**.
-- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-405 --create-namespace`, `--set namespace=kubeclaw-e2e-405`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run.
-
-status: passing 5/5 (405 Method Not Allowed + Allow header per RFC 9110)
-
 ## Story 32: HTTP channel exposes a /healthz liveness endpoint
 
 **As a** KubeClaw operator
@@ -830,7 +529,7 @@ status: passing 5/5 (GET/HEAD /healthz, 405 on other verbs, sub-path 404)
 - LLM-dependence: **none**.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-readyz --create-namespace`, `--set namespace=kubeclaw-e2e-readyz`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14118` for the kubectl port-forward.
 
-status: drafted
+status: tested — /readyz handler + readinessProbe + e2e/readyz.test.ts (verified 2026-06-07; label was stale)
 
 ## Story 34: Per-user POST rate limit returns 429 with Retry-After
 
@@ -857,7 +556,7 @@ status: drafted
 - LLM-dependence: **none**. The 429 path returns before LLM dispatch; AC5 GETs don't invoke LLM either.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-ratelimit --create-namespace`, `--set namespace=kubeclaw-e2e-ratelimit`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`, `--set-json 'httpChannel.users={"alice":"alicepw","bob":"bobpw"}'`, `--set httpChannel.rateLimit.perUserMessagesPerMinute=5`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14119` for the kubectl port-forward.
 
-status: drafted
+status: tested — token-bucket 429/Retry-After in http.ts + e2e/rate-limit.test.ts (verified 2026-06-07; label was stale)
 
 ## Story 35: `helm upgrade` preserves SQLite DB, attachments, and per-group memory
 
@@ -884,7 +583,7 @@ status: drafted
 - LLM-dependence: **none**.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-upgrade --create-namespace`, `--set namespace=kubeclaw-e2e-upgrade`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`, `--set-json 'httpChannel.users={"alice":"alicepw"}'`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run (this story must run its own install + upgrade cycle, so the SKIP flag is irrelevant — the test does its own helm calls and tears down at the end).
 
-status: drafted
+status: tested — install→upgrade→verify e2e/helm-upgrade-preserves-data.test.ts (verified 2026-06-07; label was stale)
 
 ## Story 36: User provisions a per-group capability and sees it in `/capabilities list`
 
@@ -913,7 +612,7 @@ status: drafted
 - LLM-dependence: **none**. The `/capabilities` path is intercepted before the LLM queue, like `/secret`.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-caps --create-namespace`, `--set namespace=kubeclaw-e2e-caps`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Pre-load the test capability image `kubeclaw-echo:e2e-test` into the kind cluster (`kind load docker-image kubeclaw-echo:e2e-test --name kubeclaw-e2e-istio`). Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14120` for the kubectl port-forward.
 
-status: drafted
+status: tested — /capabilities dispatch in channel-runner.ts + e2e/capabilities-slash-command.test.ts (verified 2026-06-07; label was stale)
 
 ## Story 37: Orchestrator restart with in-flight tool job surfaces a user-visible error
 
@@ -940,30 +639,7 @@ status: drafted
 - LLM-dependence: AC1, AC3, AC4 independent. AC2 depends on the specialist actually being dispatched (the LLM-free `/alpine` direct path can avoid LLM call) — gate AC5 with `it.skipIf(process.env.KUBECLAW_NO_LLM === 'true')` since the fresh post-restart message in AC5 traverses the LLM path.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-orch-restart --create-namespace`, `--set namespace=kubeclaw-e2e-orch-restart`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14121` for the kubectl port-forward.
 
-status: drafted
-
-## Story 38: `/specialists list` lets users discover available @mentions
-
-**As a** KubeClaw user via the HTTP channel
-**I want** to type `/specialists list` and receive a plain-text list of all specialists the channel is aware of
-**So that** I can discover which `@name` handles are available before trying to @mention one, without needing kubectl or admin shell access
-
-### Acceptance criteria
-
-1. A `POST /message` containing `/specialists list` returns an SSE reply that lists at least the name and a one-line description (prompt truncated to 80 chars) for each specialist currently in the `kubeclaw-specialists` ConfigMap — without invoking the LLM.
-2. When the `kubeclaw-specialists` ConfigMap defines zero specialists, `/specialists list` returns a reply containing "No specialists configured" (case-insensitive) and does not error.
-3. After the ConfigMap is patched to add a new specialist (`@Tester`), a subsequent `/specialists list` shows `@Tester` — confirming the channel's in-process catalog is re-read (hot-reload path from Story 13 AC4).
-4. The reply is scoped to the channel's catalog (the `SpecialistCatalogLoader` state), not an IPC round-trip to the orchestrator — confirmed by the reply arriving in under 2 s.
-5. A `POST /message` containing `/specialists foobar` (unknown sub-command) returns an SSE reply containing "Usage: /specialists list" and no stack trace.
-
-### Notes
-
-- Add `isSpecialistsCommand` / `handleSpecialistsCommand` to `src/channel-runner.ts` following the intercept pattern from `isSearchCommand` (~line 1147). Handler reads from the `SpecialistCatalogLoader` singleton in the channel's runner state. No IPC needed.
-- For AC3: patch the `kubeclaw-specialists` ConfigMap to add a new specialist and poll `/specialists list` until it appears (≤ 30 s kubelet propagation).
-- LLM-dependence: **none**.
-- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-spec-list --create-namespace`, `--set namespace=kubeclaw-e2e-spec-list`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14122`.
-
-status: drafted
+status: tested — reconcileOrphanedJobsOnStartup + e2e/orchestrator-restart-resilience.test.ts (verified 2026-06-07; label was stale)
 
 ## Story 39: Per-group capability wakes from zero on first use after scale-down
 
@@ -988,7 +664,7 @@ status: drafted
 - LLM-dependence: ACs 1, 2, 4, 5 independent (direct IPC). AC3 may need LLM; gate with `it.skipIf(KUBECLAW_NO_LLM)` if so.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-cap-wakeup --create-namespace`, `--set namespace=kubeclaw-e2e-cap-wakeup`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14123`.
 
-status: drafted
+status: tested — scaleUpInstance cold-start path + e2e/per-group-capability-wake-from-zero.test.ts (verified 2026-06-07; label was stale)
 
 ## Story 40: Credential broker live config reload without restart
 
@@ -1013,7 +689,7 @@ status: drafted
 - LLM-dependence: **none**.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-cbreload --create-namespace`, `--set namespace=kubeclaw-e2e-cbreload`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14124`.
 
-status: drafted
+status: tested — fs.watchFile reload in credential-broker + e2e/credential-broker-live-reload.test.ts (verified 2026-06-07; label was stale)
 
 ## Story 41: Specialist failure sends a user-visible error reply
 
@@ -1036,30 +712,7 @@ status: drafted
 - LLM-dependence: **none** for ACs 1, 4, 5.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-spec-fail --create-namespace`, `--set namespace=kubeclaw-e2e-spec-fail`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14125`.
 
-status: drafted
-
-## Story 42: GIF and WebP image attachments are accepted and round-trip correctly
-
-**As a** KubeClaw user via the HTTP channel
-**I want** to upload GIF and WebP images (not just JPEG and PNG) and have them stored and retrievable identically to JPEG/PNG
-**So that** screenshots from macOS (often WebP) and animated GIFs are accepted rather than silently rejected with HTTP 415
-
-### Acceptance criteria
-
-1. A `POST /message` with a multipart body whose `image` part contains minimal valid GIF bytes (`[0x47, 0x49, 0x46, 0x38, 0x39, 0x61, …]`) returns HTTP 200; subsequent `GET /attachments/raw/<filename>` returns 200 with `Content-Type: image/gif` and a body byte-for-byte identical to the upload.
-2. A `POST /message` with a minimal valid WebP payload (`[0x52, 0x49, 0x46, 0x46, …, 0x57, 0x45, 0x42, 0x50]`) returns HTTP 200; `GET /attachments/raw/<filename>` returns `Content-Type: image/webp`.
-3. Unit test: `detectMediaType(Buffer.from([0x47, 0x49, 0x46]))` returns `'image/gif'`; `detectMediaType(Buffer.from([0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00]))` returns `'image/webp'`.
-4. An animated GIF (multi-frame magic prefix still starts with `47 49 46`) is accepted and stored — confirming the magic-byte check is prefix-only and does not require a fully valid GIF structure.
-5. A file with first four bytes `[0x52, 0x49, 0x46, 0x46]` but whose 9th byte is NOT `0x57` (`W`) is still accepted (the current WebP detection only checks the RIFF prefix, 4 bytes) — or, if the implementation is tightened to require `WEBP` at offset 8, a non-WEBP RIFF file correctly returns 415.
-
-### Notes
-
-- `detectMediaType` already recognises both formats in `src/channels/http.ts`. This is **a pure test gap** — no implementation changes expected for ACs 1–4. AC5 clarifies the boundary and may or may not require a minor implementation tweak (the current 4-byte RIFF prefix can match non-WebP RIFF files like WAV).
-- Unit test: add cases to the existing `detectMediaType` describe block in `src/channels/http.test.ts`.
-- LLM-dependence: **none**.
-- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-gif-webp --create-namespace`, `--set namespace=kubeclaw-e2e-gif-webp`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14126`.
-
-status: drafted
+status: tested — specialist error path in channel-runner.ts + e2e/specialist-failure-ux.test.ts (verified 2026-06-07; label was stale)
 
 ## Story 43: Tool-job activeDeadline expiry sends a user-visible "timed out" reply
 
@@ -1083,7 +736,7 @@ status: drafted
 - LLM-dependence: **none** for ACs 1–4 (the timeout path bypasses LLM). AC5 requires the metrics endpoint scrape from `:9091/metrics`.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-job-timeout --create-namespace`, `--set namespace=kubeclaw-e2e-job-timeout`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14127`.
 
-status: drafted
+status: tested — DeadlineExceededError + tool-job-timeout unit + e2e (verified 2026-06-07; label was stale)
 
 ## Story 44: `/schedule` user-facing chat command
 
@@ -1106,7 +759,7 @@ status: drafted
 - LLM-dependence: **none**.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-schedule --create-namespace`, `--set namespace=kubeclaw-e2e-schedule`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14128`.
 
-status: drafted
+status: tested — /schedule wired in channel-runner.ts + e2e/schedule-command.test.ts (verified 2026-06-07; label was stale)
 
 ## Story 45: `/memory` command for per-group CLAUDE.md (read/append/edit)
 
@@ -1130,7 +783,7 @@ status: drafted
 - LLM-dependence: **none**.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-memory --create-namespace`, `--set namespace=kubeclaw-e2e-memory`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14129`.
 
-status: drafted
+status: tested — /memory wired in channel-runner.ts + e2e/memory-command.test.ts (verified 2026-06-07; label was stale)
 
 ## Story 46: OOMKill sends a user-visible "out of memory" reply
 
@@ -1153,54 +806,7 @@ status: drafted
 - LLM-dependence: **none**.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-oomkill --create-namespace`, `--set namespace=kubeclaw-e2e-oomkill`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14130`.
 
-status: drafted
-
-## Story 47: CORS preflight (OPTIONS) returns correct Allow and Access-Control headers
-
-**As a** KubeClaw operator embedding the HTTP channel in a web app served from a different origin
-**I want** `OPTIONS` requests to channel endpoints to return the correct `Access-Control-Allow-*` headers
-**So that** browser clients can make cross-origin `POST /message` and `GET /stream` requests without being blocked by CORS preflight rejections
-
-### Acceptance criteria
-
-1. `OPTIONS /message` with `Origin: https://app.example.com` and `Access-Control-Request-Method: POST` → 204 with headers `Access-Control-Allow-Origin: *`, `Access-Control-Allow-Methods: POST`, `Access-Control-Allow-Headers: Authorization, Content-Type`, `Access-Control-Max-Age: 86400`.
-2. `OPTIONS /stream` with the same pattern → 204 with `Access-Control-Allow-Methods: GET`.
-3. `OPTIONS /healthz` (no auth) → 204 with `Access-Control-Allow-Origin: *`.
-4. Every non-OPTIONS authenticated response (`GET /history`, `POST /message`, `GET /stream`) carries `Access-Control-Allow-Origin: *` so the browser accepts the actual response.
-5. Unit test: inject `OPTIONS /message` into `HttpChannel.handleRequest`, assert status 204 and correct header values.
-
-### Notes
-
-- Add an early dispatch block in `src/channels/http.ts` `handleRequest`, before auth, matching `req.method === 'OPTIONS'`. Respond 204 with the headers above.
-- For non-OPTIONS responses, add `Access-Control-Allow-Origin: *` in a common header-set helper (or sprinkle into each writeHead call).
-- CORS origin configurable via `HTTP_CHANNEL_CORS_ORIGIN` env var (default `*`).
-- LLM-dependence: **none**.
-- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-cors --create-namespace`, `--set namespace=kubeclaw-e2e-cors`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14131`.
-
-status: drafted
-
-## Story 48: Per-user attachment quota returns 413 when count or size limit is exceeded
-
-**As a** KubeClaw operator bounding storage costs per user
-**I want** `POST /message` (multipart) to return HTTP 413 with a plain-text reason once a user has exceeded their attachment count or cumulative size limit
-**So that** a single user cannot fill the PVC or exhaust disk budget by uploading unbounded files
-
-### Acceptance criteria
-
-1. With `httpChannel.attachments.maxCountPerUser=3`, a 4th upload from `alice` returns 413 with body `Attachment limit reached (max 3)`; no file written.
-2. With `httpChannel.attachments.maxSizeBytesPerUser=50000` (50 KB), uploading a 60 KB image returns 413 with body `Attachment storage limit reached`; no file written.
-3. After `alice` hits the quota, `bob` can still upload normally — per-user, not global.
-4. After `DELETE /attachments/raw/<filename>` removes one of alice's files, a subsequent upload succeeds — the quota re-check reads the live directory, not a cached counter.
-5. Unit test: stub `fs.promises.readdir` + `fs.promises.stat` to simulate a full quota; assert 413 returned before any `writeFile` call.
-
-### Notes
-
-- Implement in `src/channels/http.ts` multipart POST branch, before `writeFile`. Call a `getAttachmentUsage(attachDir)` helper that runs `readdir` + `stat` sum; compare against quota.
-- Helm values: `httpChannel.attachments.maxCountPerUser` (default `0` = unlimited) and `httpChannel.attachments.maxSizeBytesPerUser` (default `0` = unlimited). Inject as env vars.
-- LLM-dependence: **none**.
-- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-attach-quota --create-namespace`, `--set namespace=kubeclaw-e2e-attach-quota`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14132`.
-
-status: drafted
+status: tested — OOMKilledError + tool-job-oomkill unit + e2e (verified 2026-06-07; label was stale)
 
 ## Story 49: `/cancel` chat command aborts an in-flight tool job
 
@@ -1224,7 +830,7 @@ status: drafted
 - LLM-dependence: ACs 1-4 **none**; AC5 unit-test only.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-cancel --create-namespace`, `--set namespace=kubeclaw-e2e-cancel`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14133`.
 
-status: drafted
+status: tested — /cancel wired in channel-runner.ts + e2e/cancel-command.test.ts (verified 2026-06-07; label was stale)
 
 ## Story 50: `/jobs` slash command shows active and recent tool jobs
 
@@ -1247,30 +853,7 @@ status: drafted
 - LLM-dependence: **none**.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-jobs --create-namespace`, `--set namespace=kubeclaw-e2e-jobs`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14134`.
 
-status: drafted
-
-## Story 51: agentStatus='error' non-throw path triggers user-visible reply
-
-**As a** KubeClaw user whose specialist returned an error status without throwing
-**I want** to receive the same `[@Specialist] Error: specialist run failed` reply that I'd get if the specialist threw
-**So that** all specialist failure modes surface consistently, regardless of whether the runtime throws or returns an error status
-
-### Acceptance criteria
-
-1. Unit test: `processGroupMessages` with `fakeRunner.runAgent` resolving to `{ status: 'error', result: null }` (not rejecting) → `channel.sendMessage` is called once with text `'[@Alpha] Error: specialist run failed'`.
-2. Unit test: when `runAgent` resolves `{ status: 'error' }` after streaming partial output (`outputSentToUser = true`), `sendMessage` is NOT called for the error message — partial-output guard still applies.
-3. Unit test: `processGroupMessages` returns `true` (not `false`) so the group is not wedged.
-4. Unit test: a specialist that resolves `{ status: 'error' }` is recorded in `failedSpecialists`; a specialist that resolves `{ status: 'success' }` in the same call is not — only failed entries appear in the error reply.
-5. Integration test: inject a fake runner that resolves with `{ status: 'error', result: 'partial text' }` before setting `outputSentToUser`; confirm no duplicate message is sent.
-
-### Notes
-
-- No production code changes required — the `if (agentStatus === 'error')` branch in `src/channel-runner.ts` is already implemented (Story 41 covered the throw path; this story covers the resolve path).
-- Add tests to `src/channel-runner.test.ts` near the existing Story 41 specialist-failure tests. Use `vi.fn().mockResolvedValue({ status: 'error', result: null })` (not `.mockRejectedValue`).
-- LLM-dependence: **none**.
-- No e2e cluster setup needed — this is a unit/integration coverage story only.
-
-status: passing 5/5
+status: tested — /jobs wired in channel-runner.ts + e2e/jobs-command.test.ts (verified 2026-06-07; label was stale)
 
 ## Story 52: `GET /export` downloads full conversation history as NDJSON
 
@@ -1295,53 +878,6 @@ status: passing 5/5
 
 status: passing 5/5
 
-## Story 53: Non-slash messages preceding a slash command are not silently dropped
-
-**As a** KubeClaw user via the HTTP channel
-**I want** every message I send to be responded to, even when I rapidly follow a normal message with a slash command
-**So that** quick-fire sequences like "summarise my notes" then "/search notes" do not silently lose the first message
-
-### Acceptance criteria
-
-1. When `alice` sends two `POST /message` requests back-to-back (within 100 ms) where the first is a normal text message and the second is `/search <token>`, both receive replies: the `/search` reply arrives on the SSE stream AND the normal message is queued for LLM processing, not silently discarded.
-2. Unit test: call `processGroupMessages` with `missedMessages = [{content: "tell me about Rust"}, {content: "/search rust"}]`; assert `channel.sendMessage` is called with the search reply AND the LLM runner is also invoked (or the normal message is re-queued).
-3. Integration test: insert two `conversation_history` rows with the same `chat_jid` — first a normal message, second `/help` — call `processGroupMessages`; confirm `/help` reply is sent AND `lastAgentTimestamp` is NOT advanced past the normal message's timestamp.
-4. When both messages are slash commands (e.g. `/help` then `/search foo`), both receive replies in order.
-5. After the fix, `lastAgentTimestamp` is advanced to the timestamp of the last message that was actually responded to, not the last message in the batch regardless of type.
-
-### Notes
-
-- The fix is in `src/channel-runner.ts` `processGroupMessages`: currently it checks ONLY `lastMsg` for slash-command dispatch and advances `lastAgentTimestamp` past the whole batch. Either iterate `missedMessages` and process each slash command individually (then pass remaining non-slash messages to the LLM) OR partition the batch into slash-commands + LLM-bound messages and process both.
-- The `lastMsg`-only check pattern repeats for every slash command intercept (~12 sites). The fix needs to be applied uniformly.
-- LLM-dependence: ACs 2, 3, 4, 5 **none**. AC1 partially.
-- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-msg-batch --create-namespace`, `--set namespace=kubeclaw-e2e-msg-batch`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14136`.
-
-status: passing 5/5
-
-## Story 54: `/capabilities tools <type>` lists MCP tools exposed by a provisioned capability
-
-**As a** KubeClaw user via the HTTP channel who has provisioned a per-group capability
-**I want** to type `/capabilities tools <type>` and see which MCP tool functions the capability exposes
-**So that** I know what I can ask the assistant to do with a capability I provisioned, without reading source code
-
-### Acceptance criteria
-
-1. With a running per-group capability whose schema has been scraped, `POST /message` containing `/capabilities tools <type>` returns an SSE reply listing each MCP tool by name and one-line description (first 80 chars of `description` field).
-2. `/capabilities tools <type>` when no capability of `<type>` is provisioned for the group returns a reply containing "not provisioned" — not a crash or empty list.
-3. `/capabilities tools <type>` when the capability is provisioned but the schema has not yet been scraped returns a reply containing "schema not yet available, try again in a few seconds".
-4. `/capabilities tools` (no type argument) returns usage help, not a crash.
-5. Unit test: stub the schema lookup returning two tool schemas; assert `handleCapabilitiesCommand('/capabilities tools echo', ...)` returns a reply containing both tool names.
-
-### Notes
-
-- Add a `'tools'` case to the existing `switch(verb)` block in `handleCapabilitiesCommand` (`src/channel-runner.ts`). Look up schemas from the capability registry or the per-group-capability DB (see `src/capabilities/db.ts` and `src/per-group-capabilities/`).
-- The `toolSchemas` array is `McpToolSchema[]` (fields: `name`, `description`, `inputSchema`). The channel-side DB is populated by the orchestrator's schema-scraper (`src/per-group-capabilities/schema-scraper.ts`).
-- Add `/capabilities tools <type>` to CAPABILITIES_HELP and to HELP_TEXT.
-- LLM-dependence: **none**.
-- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-cap-tools --create-namespace`, `--set namespace=kubeclaw-e2e-cap-tools`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14137`.
-
-status: passing 5/5
-
 ## Story 55: Old tool-job records are pruned after a configurable retention window
 
 **As a** KubeClaw operator running a long-lived cluster
@@ -1363,640 +899,6 @@ status: passing 5/5
 - Helm value: `httpChannel.toolJobsRetentionDays` (default `30`). Inject as `TOOL_JOBS_RETENTION_DAYS` env var. `0` = disabled.
 - LLM-dependence: **none**.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-job-prune --create-namespace`, `--set namespace=kubeclaw-e2e-job-prune`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14138`.
-
-status: passing 5/5
-
-## Story 56: `DELETE /history/:id` removes a single conversation message
-
-**As a** KubeClaw user via the HTTP channel
-**I want** to delete one specific message from my conversation history by id
-**So that** I can surgically remove a sensitive or erroneous message without nuking the entire group history
-
-### Acceptance criteria
-
-1. Authenticated `DELETE /history/<id>` with an id that exists in the user's group returns HTTP 204 (No Content); a subsequent `GET /history` does not include that id.
-2. `DELETE /history/<id>` for an id that belongs to a different group's user returns HTTP 403, and the row is NOT deleted.
-3. `DELETE /history/<id>` for a nonexistent id returns HTTP 404.
-4. Unauthenticated `DELETE /history/<id>` returns 401.
-5. `POST /history/<id>` returns 405 with `Allow: DELETE`.
-
-### Notes
-
-- Add a new route handler in `src/channels/http.ts` after the existing `DELETE /history` (full-clear) block. Match path with a regex or prefix check for `/history/<id>`.
-- Add `deleteMessageById(id: number, groupFolder: string): boolean` to `src/db.ts`. The `groupFolder` parameter is REQUIRED — the SQL must be `DELETE FROM conversation_history WHERE id = ? AND group_folder = ?` to prevent cross-group deletes.
-- Return-value contract: `true` if a row was deleted, `false` otherwise — channel uses this to choose between 204 and 404.
-- Update `CORS_PATH_METHODS` for the `/history/` prefix to include `DELETE`. Update the 405 `pathMethods` table.
-- LLM-dependence: **none**.
-- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-history-delete-id --create-namespace`, `--set namespace=kubeclaw-e2e-history-delete-id`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14139`.
-
-status: passing 5/5
-
-## Story 57: `GET /message/rate-limit` exposes remaining quota to clients
-
-**As a** KubeClaw user building a UI client
-**I want** to query my current per-user rate-limit quota without consuming a message slot
-**So that** the UI can show "N messages left this minute" and avoid speculative 429s
-
-### Acceptance criteria
-
-1. Authenticated `GET /message/rate-limit` with `perUserMessagesPerMinute=10` returns HTTP 200 with JSON `{ limit: 10, remaining: <0..10>, resetInSeconds: <0..60> }`. `remaining` reflects the current bucket contents WITHOUT decrementing it.
-2. After consuming 3 messages via `POST /message`, `GET /message/rate-limit` returns `remaining = 7` (and the next `POST /message` is still permitted).
-3. With `perUserMessagesPerMinute=0` (unlimited), the endpoint returns `{ limit: null, remaining: null, resetInSeconds: null }`.
-4. Unauthenticated `GET /message/rate-limit` returns 401.
-5. `POST /message/rate-limit` returns 405 with `Allow: GET, HEAD`. `HEAD /message/rate-limit` returns the same headers as GET with no body.
-
-### Notes
-
-- Add a `peekRateLimit(username): { remaining, resetInSeconds }` method to the rate-limit module (probably `src/rate-limit.ts` or wherever `consumeRateLimit` lives). It must NOT decrement the bucket; just inspect.
-- Add the `/message/rate-limit` route to `src/channels/http.ts` alongside `/message`. Wire to `peekRateLimit`.
-- Add to `CORS_PATH_METHODS` with `['GET', 'HEAD']`. Add to the 405 `pathMethods` table.
-- LLM-dependence: **none**.
-- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-ratelimit-status --create-namespace`, `--set namespace=kubeclaw-e2e-ratelimit-status`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14140`.
-
-status: passing 5/5
-
-## Story 58: `/specialists history` shows recent specialist invocations
-
-**As a** KubeClaw user
-**I want** `/specialists history` to list the last 10 specialist invocations in my group with status, name, duration, and timestamp
-**So that** I can see which specialists ran recently and whether any errored — observability the system already collects but never exposes
-
-### Acceptance criteria
-
-1. After invoking `@echo` twice (one success, one error) in a group, `/specialists history` returns a reply listing both invocations, newest-first, in format `[status] @<name> (<duration>ms) <HH:MM>Z`. Errors are tagged `[error]`, successes `[ok]`.
-2. With no specialist usage in the group, `/specialists history` returns "No specialist history for this group."
-3. Limit is 10 rows by default; older rows are not included.
-4. `/specialists history 5` (optional limit arg) returns at most 5 rows. `/specialists history 0` and `/specialists history abc` fall back to default 10.
-5. Unit test: stub `getSpecialistUsage` returning 3 rows; assert `handleSpecialistsCommand('/specialists history', deps)` returns a reply containing all 3 specialist names in newest-first order.
-
-### Notes
-
-- Add `getSpecialistUsage(groupFolder: string, limit: number): SpecialistUsageRow[]` to `src/db.ts`. SQL: `SELECT specialist_name, used_at, duration_ms, status FROM specialist_usage WHERE group_folder = ? ORDER BY used_at DESC LIMIT ?`. Return rows with fields: `specialistName`, `usedAt`, `durationMs`, `status`.
-- The `specialist_usage` table already exists and is written on every invocation — verify the column names match (or adapt).
-- Add a `'history'` case to the `switch(verb)` in `handleSpecialistsCommand` in `src/channel-runner.ts`. Sort rows newest-first, format as the spec describes.
-- Add `/specialists history [limit]` to SPECIALISTS_HELP and to HELP_TEXT.
-- LLM-dependence: **none**.
-- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-specialists-history --create-namespace`, `--set namespace=kubeclaw-e2e-specialists-history`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14141`.
-
-status: passing 5/5
-
-## Story 59: `/jobs <id> logs` fetches stdout/stderr from a tool-job pod
-
-**As a** KubeClaw user troubleshooting a failed tool job
-**I want** `/jobs <id> logs` to fetch the pod logs (stdout + stderr) for that job
-**So that** I can debug what the job actually did without `kubectl logs` access
-
-### Acceptance criteria
-
-1. After a tool job completes (success or failure), `/jobs <id> logs` returns a reply containing at least the first/last lines of the pod's combined stdout/stderr output.
-2. `/jobs <unknown-id> logs` returns a reply containing "not found" — no crash.
-3. `/jobs <id-from-another-group> logs` returns a reply containing "not found" — group ownership enforced.
-4. `/jobs <id> logs` for a job whose pod has been garbage-collected returns "logs no longer available" (or similar) rather than crashing.
-5. Unit test: stub `getJobLogs` returning `"stderr line\nstdout line"`; assert `handleJobsCommand('/jobs job-abc logs', deps)` returns reply containing both lines.
-
-### Notes
-
-- The implementation in `src/k8s/job-runner.ts` already has `getJobLogs(jobName)`. Reuse it. The job name to look up should be reconstructed from the `tool_jobs` row's `job_id` plus any namespace prefix.
-- Add a `'logs'` subcommand parse in `handleJobsCommand` in `src/channel-runner.ts`. Wire it to `jobRunner.getJobLogs(jobName)`.
-- Truncate logs to a reasonable size for chat display (e.g. last 50 lines or first 4 KB) so we don't blow up the response.
-- Add `/jobs <id> logs` to JOBS_HELP and HELP_TEXT.
-- LLM-dependence: **none**.
-- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-job-logs --create-namespace`, `--set namespace=kubeclaw-e2e-job-logs`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14142`.
-
-status: passing 5/5
-
-## Story 60: `/schedule history <id>` shows recent run log for a scheduled task
-
-**As a** KubeClaw user with scheduled tasks
-**I want** `/schedule history <id>` to list recent runs of a scheduled task with status, duration, and a truncated result
-**So that** I can tell whether the task is running, failing silently, or producing useful output — data the system already collects but never exposes
-
-### Acceptance criteria
-
-1. After a `/schedule add` task fires once, `/schedule history <id>` returns at least one row with `run_at`, `status`, `duration_ms`, and a truncated `result` (or `error` if status='error').
-2. `/schedule history <unknown-id>` returns "not found" — no crash.
-3. `/schedule history <id-from-another-group>` returns "not found" — group ownership enforced.
-4. `/schedule history <id> 3` (optional limit) returns at most 3 rows, newest-first.
-5. Unit test: stub `getTaskRunLogs` returning 2 rows (1 success, 1 error); assert `handleScheduleCommand('/schedule history task-abc', deps)` returns a reply containing both timestamps and both status tags.
-
-### Notes
-
-- Add `getTaskRunLogs(taskId: string, groupFolder: string, limit: number): TaskRunLogRow[]` to `src/db.ts`. SQL: `SELECT run_at, status, duration_ms, result, error FROM task_run_logs WHERE task_id = ? AND group_folder = ? ORDER BY run_at DESC LIMIT ?`. Group-scoped ownership check.
-- Add a `'history'` case to the `switch(verb)` in `handleScheduleCommand` in `src/channel-runner.ts`.
-- Truncate `result`/`error` to ~120 chars for display.
-- Add `/schedule history <id> [limit]` to SCHEDULE_HELP and HELP_TEXT.
-- LLM-dependence: **none**.
-- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-schedule-history --create-namespace`, `--set namespace=kubeclaw-e2e-schedule-history`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14143`.
-
-status: passing 5/5
-
-## Story 61: `GET /version` reports build version and config summary
-
-**As a** KubeClaw operator or UI client
-**I want** `GET /version` to return the running build version and key configuration values
-**So that** I can programmatically confirm which image is deployed and what runtime knobs are active — without `kubectl exec` or log scraping
-
-### Acceptance criteria
-
-1. Unauthenticated `GET /version` returns HTTP 200 with `Content-Type: application/json`. The body is an object with at least keys `version`, `model`, `rateLimitWindowMs`, `toolJobsRetentionDays`. Unknown/unset values are `null`, not omitted.
-2. `version` is sourced from env var `KUBECLAW_VERSION` (set via Helm). When the env var is absent (dev), the value is `"dev"`.
-3. `model` is the default direct-LLM model id used by the channel runner (read from `process.env.KUBECLAW_DEFAULT_MODEL` or the config constant).
-4. `POST /version` returns HTTP 405 with `Allow: GET, HEAD`. `HEAD /version` returns the same headers as GET, no body.
-5. Integration test: assert response body parses as JSON and has the four required keys.
-
-### Notes
-
-- Add the `/version` route to `src/channels/http.ts`. No auth required (parity with `/healthz`).
-- Add `/version` to `CORS_PATH_METHODS` with `['GET', 'HEAD']`. Add to the 405 `pathMethods` table.
-- Read constants from `src/config.ts` (or wherever rate-limit window, prune retention live).
-- Wire `KUBECLAW_VERSION` env var in `helm/kubeclaw/templates/channel-pods.yaml` and set a Helm value `httpChannel.version` (or pull from `Chart.AppVersion`).
-- LLM-dependence: **none**.
-- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-version --create-namespace`, `--set namespace=kubeclaw-e2e-version`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14144`.
-
-status: passing 5/5
-
-## Story 62: `/schedule pause <id>` and `/schedule resume <id>` toggle a scheduled task
-
-**As a** KubeClaw user with a recurring scheduled task
-**I want** to pause and resume tasks by id without recreating them
-**So that** I can temporarily disable a noisy task and restore it without losing the configuration
-
-### Acceptance criteria
-
-1. After `/schedule add` creates a recurring task, `/schedule pause <id>` returns confirmation and the task's `status` column in `scheduled_tasks` becomes `'paused'`; subsequent fires of the scheduler tick skip paused tasks.
-2. `/schedule resume <id>` on a paused task returns confirmation and the status returns to `'active'` — the task fires at the next interval boundary.
-3. `/schedule pause <unknown-id>` and `/schedule pause <id-from-another-group>` both return "not found" (identical wording — no enumeration).
-4. `/schedule list` annotates paused tasks with `[paused]` prefix; active tasks are unchanged.
-5. Unit test: stub IPC sender; assert `handleScheduleCommand('/schedule pause task-abc', deps)` sends the appropriate IPC verb (or directly updates the DB if the implementation chooses DB writes from the channel) and returns confirmation.
-
-### Notes
-
-- Look at how `pause_task` / `resume_task` IPC verbs are currently dispatched (the gap-analysis confirmed they exist in `src/k8s/ipc-redis.ts`). If they're already wired to update DB rows, the channel-side change is just to call them.
-- Alternative: the channel can update the DB directly if `scheduled_tasks` is in the channel-side SQLite. Pick the simpler approach and justify.
-- The scheduler's tick loop in `src/task-scheduler.ts` must skip rows where `status = 'paused'`. Verify this guard exists or add it.
-- Two-tier ownership: handler-level `getTaskById` check returns "not found" for cross-group + unknown id with identical wording.
-- Add `/schedule pause <id>` and `/schedule resume <id>` to SCHEDULE_HELP and HELP_TEXT.
-- LLM-dependence: **none**.
-- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-schedule-pause --create-namespace`, `--set namespace=kubeclaw-e2e-schedule-pause`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14145`.
-
-status: passing 5/5
-
-## Story 63: `/skills history` exposes skill_usage load stats
-
-**As a** KubeClaw user who has accepted learned skills
-**I want** `/skills history` to list which skills have been loaded into recent conversations and how often
-**So that** I can decide which accepted skills are pulling weight and which are dead weight — data the system already collects but never exposes
-
-### Acceptance criteria
-
-1. After a conversation that loads at least one skill, `/skills history` returns a reply with at least one row in format `<count>x  <skill-name>` (or similar), aggregated from `skill_usage`. Aggregation is by `skill_name`, summed over `load_count` (or row count).
-2. With no skill loads in the group, `/skills history` returns "No skill load history for this group."
-3. `/skills history 5` (optional limit arg) returns at most 5 rows ordered by count desc. `/skills history 0` and `/skills history abc` fall back to default 10. Limit capped at `MAX_SKILLS_HISTORY_LIMIT = 100`.
-4. Unit test: stub `getSkillLoadStats` returning 2 rows; assert `handleSkillsCommand('/skills history', deps)` reply contains both skill names.
-5. Add `/skills history [limit]` to SKILLS_HELP and HELP_TEXT.
-
-### Notes
-
-- `getSkillLoadStats(groupFolder, limit?)` already exists in `src/db.ts` per gap-analysis. Verify the signature; if it doesn't take a `limit` arg, add it.
-- Add a `'history'` case to the switch in `handleSkillsCommand` in `src/runtime/skills-commands.ts`. Follow the same pattern as Story 58 (`/specialists history`) and Story 60 (`/schedule history`): use `Number.isNaN`, apply cap, group-scoped DB query.
-- Format aggregated count: `<count>x  <skill-name>` newest-first (highest count first).
-- LLM-dependence: **none**.
-- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-skills-history --create-namespace`, `--set namespace=kubeclaw-e2e-skills-history`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14146`.
-
-status: passing 5/5
-
-## Story 64: `GET /history/<id>` fetches a single message by id
-
-**As a** KubeClaw user building a UI client
-**I want** to fetch a single conversation-history row by id
-**So that** the UI can confirm a message after creation, prefill an edit form, or render a permalink — symmetry with the existing `DELETE /history/<id>`
-
-### Acceptance criteria
-
-1. Authenticated `GET /history/<id>` for an id in the user's group returns HTTP 200 with `Content-Type: application/json`. Body is an object with at least the keys `id`, `role`, `content`, `timestamp` (or `created_at`, whichever the existing schema uses).
-2. `GET /history/<unknown-id>` returns HTTP 404.
-3. `GET /history/<id-from-another-group>` returns HTTP 404 (group ownership enforced — same wording as AC2; no enumeration).
-4. Unauthenticated `GET /history/<id>` returns HTTP 401.
-5. `POST /history/<id>` returns HTTP 405 with `Allow: GET, DELETE`. `HEAD /history/<id>` returns same headers as GET with no body.
-
-### Notes
-
-- Extend the existing `/history/<id>` route block (the one Story 56 added for DELETE). Add a `GET` branch (and `HEAD` branch) before/alongside the `DELETE` branch.
-- Add `getMessageById(id: string, groupFolder: string): ConversationHistoryRow | null` to `src/db.ts`. SQL: `SELECT id, role, content, timestamp, ... FROM conversation_history WHERE id = ? AND group_folder = ? LIMIT 1`. Returns `null` when no row OR row belongs to another group (no enumeration distinction).
-- Update `CORS_PATH_METHODS` for `/history/` prefix to include `GET` and `HEAD` (in addition to `DELETE`).
-- Update the 405 `pathMethods` table.
-- LLM-dependence: **none**.
-- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-history-id --create-namespace`, `--set namespace=kubeclaw-e2e-history-id`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14147`.
-
-status: passing 5/5
-
-## Story 65: `GET /jobs` HTTP endpoint lists tool jobs as JSON
-
-**As a** KubeClaw user building a UI client or monitoring dashboard
-**I want** a poll-able `GET /jobs` REST endpoint that returns tool-job records as JSON
-**So that** my UI can render a job status panel without consuming an SSE message slot via the `/jobs` slash command
-
-### Acceptance criteria
-
-1. Authenticated `GET /jobs` returns HTTP 200 with `Content-Type: application/json` and a JSON array of `{ job_id, specialist_name, status, created_at, resolved_at }` for the authenticated group, newest-first, default limit 20.
-2. `GET /jobs?status=active` filters to `status='active'`; `?status=completed` returns only resolved rows; invalid `status` value returns HTTP 400 with an error body.
-3. Unauthenticated `GET /jobs` returns HTTP 401.
-4. `POST /jobs` returns HTTP 405 with `Allow: GET, HEAD`. `HEAD /jobs` returns same headers as GET with no body.
-5. Unit test: stub `getRecentToolJobsForGroup` returning 2 rows; assert the response JSON parses and contains both `job_id` values.
-
-### Notes
-
-- Add a `/jobs` route to `src/channels/http.ts`. Parameters: `status` (optional, one of `active|completed`), `limit` (optional, default 20, cap 100).
-- Reuse `getRecentToolJobsForGroup(groupFolder, limit)` and `getActiveToolJobs(groupFolder)` — extend the former with an optional `status` filter param if needed, or branch on the query param at the route level.
-- Update `CORS_PATH_METHODS['/jobs']: ['GET', 'HEAD']` and add to the 405 `pathMethods` table.
-- The response shape must mirror Story 50's `/jobs` slash command rows (same field names).
-- LLM-dependence: **none**.
-- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-jobs-http --create-namespace`, `--set namespace=kubeclaw-e2e-jobs-http`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14148`.
-
-status: passing 5/5
-
-## Story 66: `/jobs <id> kill` aborts a specific tool job by id
-
-**As a** KubeClaw user
-**I want** to cancel a specific tool job by its id with `/jobs <id> kill`
-**So that** I can stop a misbehaving background job without having to wait for it or use `/cancel` (which only targets the current active job)
-
-### Acceptance criteria
-
-1. `/jobs <id> kill` where `<id>` is an active row in `tool_jobs` for the group → publishes `job.cancel` IPC with that `job_id`, returns "Cancelled job `<id>`" reply within 5 s.
-2. `/jobs <id> kill` for an id that is already resolved (not active) → returns "Job `<id>` is not active (status: <current-status>)".
-3. `/jobs <id> kill` for an id belonging to a different group → returns "Job not found" (no cross-group kill).
-4. `/jobs <id> kill` for an unknown id → returns "Job not found" (identical wording to AC3 — no enumeration).
-5. Unit test: stub the DB lookup returning an active row; assert the IPC publish was called with the correct `job_id` and the reply contains the confirmation wording.
-
-### Notes
-
-- Add a `'kill'` subcommand parse to `handleJobsCommand` in `src/channel-runner.ts`. This parallels the existing `'logs'` subcommand from Story 59.
-- Look up the tool-job row via `getToolJobByIdForGroup(jobId, groupFolder)` (added in Story 59).
-- If the row exists and `status === 'active'`, send a `job.cancel` IPC verb (the orchestrator-side handler already exists from Story 49; verify it accepts a `jobId` param vs always the current active job).
-- If `status !== 'active'`, return the "not active" message including the current status.
-- Same "Job not found" wording for unknown-id and cross-group cases.
-- Add `/jobs <id> kill` to JOBS_HELP and HELP_TEXT.
-- LLM-dependence: **none**.
-- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-jobs-kill --create-namespace`, `--set namespace=kubeclaw-e2e-jobs-kill`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14149`.
-
-status: passing 5/5
-
-## Story 67: `/schedule next [id]` peeks the next scheduled fire time
-
-**As a** KubeClaw user with scheduled cron tasks
-**I want** `/schedule next` to show when my scheduled tasks will next fire, focused only on the timestamps
-**So that** I can quickly confirm whether a task is about to run, without parsing the full `/schedule list` output
-
-### Acceptance criteria
-
-1. `/schedule next` with multiple active tasks returns one line per task in format `<id>  next: <ISO timestamp>  (<human delta>)`. Paused tasks are tagged with `[paused]` prefix and the human delta is replaced with `paused`.
-2. `/schedule next <id>` returns the single-task next-fire time. For a `once` task already completed (no future run), returns "Task `<id>` has no future run (status: completed)".
-3. `/schedule next <unknown-id>` returns "Task not found".
-4. `/schedule next` when no tasks exist returns "No scheduled tasks".
-5. Unit test: stub `getTasksForGroup` returning two tasks with different `next_run` timestamps; assert the reply contains both ids and human-delta strings (e.g. "in 5m", "in 2h").
-
-### Notes
-
-- Add a `'next'` case to the existing `switch(verb)` in `handleScheduleCommand` in `src/channel-runner.ts`.
-- Use the existing `getTasksForGroup(groupFolder)` (probably already returns `next_run`). No new DB function needed.
-- Add a `formatHumanDelta(ms)` helper: returns strings like `now`, `in 30s`, `in 5m`, `in 2h`, `in 3d` (round-down).
-- Group ownership: `getTaskById` for single-task case returns "Task not found" for both unknown id and cross-group (existing pattern from Story 60).
-- Add `/schedule next [id]` to SCHEDULE_HELP and HELP_TEXT.
-- LLM-dependence: **none**.
-- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-schedule-next --create-namespace`, `--set namespace=kubeclaw-e2e-schedule-next`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14150`.
-
-status: passing 5/5
-
-## Story 68: `GET /schedule` HTTP endpoint lists scheduled tasks as JSON
-
-**As a** KubeClaw user building a UI client or operations dashboard
-**I want** `GET /schedule` to return the group's scheduled tasks as JSON
-**So that** my UI can render a schedule panel without round-tripping through chat
-
-### Acceptance criteria
-
-1. Authenticated `GET /schedule` → HTTP 200 with `Content-Type: application/json` and a JSON array of `{ id, schedule_type, schedule_expression, prompt, status, next_run, created_at }` for the authenticated group, ordered newest-created first.
-2. `GET /schedule?status=active` filters to active tasks only; `?status=paused` filters paused; invalid status → 400.
-3. Unauthenticated → 401.
-4. `POST /schedule` → 405 with `Allow: GET, HEAD`. `HEAD /schedule` → same headers as GET, no body.
-5. Unit test: stub `getTasksForGroup` returning 2 tasks (1 active, 1 paused); assert JSON has both ids and the `status` field correctly populated.
-
-### Notes
-
-- Add `/schedule` route to `src/channels/http.ts` near other REST endpoints.
-- Reuse `getTasksForGroup(groupFolder)` from `src/db.ts`. Filter by status in JS (cheap — typically few tasks per group).
-- Update `CORS_PATH_METHODS['/schedule']: ['GET', 'HEAD']` and the 405 `pathMethods` table.
-- Field shape must match the existing DB columns; avoid expanding the response with fields the UI doesn't need.
-- LLM-dependence: **none**.
-- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-schedule-http --create-namespace`, `--set namespace=kubeclaw-e2e-schedule-http`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14151`.
-
-status: passing 5/5
-
-## Story 69: `GET /jobs/<id>` and `DELETE /jobs/<id>` complete the jobs REST surface
-
-**As a** KubeClaw user building a UI client
-**I want** REST endpoints to fetch a specific job's detail and to kill it by id
-**So that** my UI can show a job-detail panel and a "kill" button without going through chat
-
-### Acceptance criteria
-
-1. Authenticated `GET /jobs/<id>` for an active or resolved job in the user's group → HTTP 200 with `Content-Type: application/json` and a JSON body with `{ job_id, specialist_name, status, created_at, resolved_at }`.
-2. `GET /jobs/<unknown-id>` and `GET /jobs/<id-from-another-group>` both return HTTP 404 with identical wording (no enumeration).
-3. `DELETE /jobs/<id>` for an active job in the user's group → publishes the `job.cancel` IPC (same as Story 66's `/jobs <id> kill`) with `jobId`, returns HTTP 200 `{ "status": "cancelled", "job_id": "<id>" }` within 5 s.
-4. `DELETE /jobs/<id>` for a resolved job → HTTP 409 `{ "error": "not_active", "current_status": "<X>" }`. `DELETE` for unknown/cross-group → HTTP 404 (same wording as AC2).
-5. `POST /jobs/<id>` → HTTP 405 with `Allow: GET, HEAD, DELETE`. `HEAD /jobs/<id>` → same headers as GET, no body. Unauthenticated → HTTP 401.
-
-### Notes
-
-- Extend the existing `/jobs` route block (from Story 65) with a path-parameter branch for `/jobs/<id>`. Match via regex like `/^\/jobs\/([^/]+)$/`.
-- Reuse `getToolJobByIdForGroup(jobId, groupFolder)` from `src/db.ts` (added in Story 59).
-- For DELETE, reuse the `job.cancel`-with-`jobId` IPC flow from Story 66 (channel sends, orchestrator dispatches `getToolJobByIdForGroup` → K8s delete). Map IPC `not_found`/`not_active`/`cancelled` replies to HTTP 404/409/200 respectively.
-- Update `CORS_PATH_METHODS['/jobs/']` (prefix entry, distinct from Story 65's `/jobs` exact match) with `['GET', 'HEAD', 'DELETE']`.
-- Update the 405 `pathMethods` table.
-- LLM-dependence: **none**.
-- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-jobs-id --create-namespace`, `--set namespace=kubeclaw-e2e-jobs-id`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14152`.
-
-status: passing 5/5
-
-## Story 70: `GET /capabilities` HTTP endpoint lists per-group capabilities
-
-**As a** KubeClaw user building a UI client
-**I want** `GET /capabilities` to return the group's per-group capabilities as JSON
-**So that** my UI can render a capabilities panel without going through `/capabilities list` chat command
-
-### Acceptance criteria
-
-1. Authenticated `GET /capabilities` → HTTP 200 with `Content-Type: application/json` and a JSON array of `{ type, state, provisioned_at, scale }` (or whichever fields the existing capability registry exposes) for the authenticated group.
-2. The response is sourced from the same in-memory `_groupCapabilityEntries` map (or DB) that `/capabilities list` reads. Empty array when no capabilities are provisioned.
-3. Unauthenticated → 401.
-4. `POST /capabilities` → 405 `Allow: GET, HEAD`. `HEAD /capabilities` → same headers as GET, no body.
-5. Unit test: stub the registry/map with two entries; assert JSON has both types.
-
-### Notes
-
-- Add `/capabilities` route to `src/channels/http.ts`. Reuse `_groupCapabilityEntries` (Story 54) or the existing capability DB accessors.
-- The `/capabilities` slash command in `channel-runner.ts` is separate code and must not be broken.
-- Update `CORS_PATH_METHODS['/capabilities']: ['GET', 'HEAD']` and the 405 `pathMethods` table.
-- Response shape: be conservative — only stable fields that exist today, no schemas. UI can deep-fetch via `/capabilities tools <type>` slash command if it needs MCP schemas.
-- LLM-dependence: **none**.
-- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-capabilities-http --create-namespace`, `--set namespace=kubeclaw-e2e-capabilities-http`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14153`.
-
-status: passing 5/5
-
-## Story 71: `POST /schedule` and `DELETE /schedule/<id>` and `PATCH /schedule/<id>` — write-side REST
-
-**As a** KubeClaw user with a UI client or automation script
-**I want** REST endpoints to add, remove, and pause/resume scheduled tasks
-**So that** programmatic clients can manage schedules without going through chat
-
-### Acceptance criteria
-
-1. Authenticated `POST /schedule` with JSON body `{ "schedule_type": "interval"|"cron"|"once", "schedule_expression": "<expr>", "prompt": "<text>" }` → 201 with `Content-Type: application/json` and body `{ id, status:"active", schedule_type, schedule_expression, prompt, next_run, created_at }`. Invalid body (missing field, bad type) → 400 with error message.
-2. `DELETE /schedule/<id>` for own group's task → 204 (no body). The task is removed from `scheduled_tasks` and will not fire again.
-3. `DELETE /schedule/<unknown-id>` and `DELETE /schedule/<id-from-another-group>` → 404 (identical wording — no enumeration).
-4. `PATCH /schedule/<id>` with body `{ "paused": true }` → 200 `{ id, status:"paused", ... }`. With `{ "paused": false }` → 200 `{ id, status:"active", ... }`. Unknown/cross-group id → 404.
-5. `POST /schedule/<id>` → 405 with `Allow: DELETE, PATCH`. Unauthenticated → 401. `HEAD /schedule/<id>` → 200/404 with same headers as GET (no body).
-
-### Notes
-
-- Extend the existing `/schedule` route (Story 68) with prefix-match `/^\/schedule\/([^/]+)$/` for DELETE/PATCH/HEAD on individual rows.
-- Reuse the channel-side DB writes: `addScheduledTask`, `deleteTaskForGroup`, `pauseTask`, `resumeTask` (Stories 19/60/62) — these are direct DB writes; no IPC needed since `scheduled_tasks` is channel-side SQLite.
-- The `next_run` for new rows comes from the same compute path the slash `/schedule add` uses (see `task-scheduler.ts` or `src/channel-runner.ts` schedule handler).
-- Strictly validate `schedule_type` (interval | cron | once) and the corresponding `schedule_expression` semantics (parse-validate via the same helper the slash command uses). Invalid → 400.
-- Update `CORS_PATH_METHODS['/schedule']: ['GET','HEAD','POST']` and add `'/schedule/'` prefix: `['DELETE','PATCH','HEAD']`. 405 `pathMethods` table.
-- LLM-dependence: **none**.
-- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-schedule-write --create-namespace`, `--set namespace=kubeclaw-e2e-schedule-write`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14154`.
-
-status: passing 5/5
-
-## Story 72: `GET /search?q=` HTTP endpoint for full-text history search
-
-**As a** KubeClaw user building a UI client or automation script
-**I want** `GET /search?q=<text>` to return matching conversation rows as JSON
-**So that** my UI can offer a search box without round-tripping through the `/search` slash command
-
-### Acceptance criteria
-
-1. Authenticated `GET /search?q=<text>` → HTTP 200 with `Content-Type: application/json` and a JSON array of `{ id, role, content, timestamp }` (or `created_at` per existing column name) for matching rows in the authenticated group, newest-first, default limit 20.
-2. `?limit=N` honored, capped at 100. `?q=` (empty) → 400 `{ error: "q required" }`. Missing `q` → 400.
-3. Unauthenticated → 401.
-4. `POST /search` → 405 with `Allow: GET, HEAD`. `HEAD /search?q=X` → same headers as GET, no body.
-5. Unit test: stub the search function returning 2 rows; assert JSON has both ids in newest-first order.
-
-### Notes
-
-- Add `/search` route to `src/channels/http.ts`. Reuse the FTS helper that the `/search` slash command uses (look up in `src/runtime/search-command.ts` or `src/db.ts`).
-- Group scope is mandatory — the SQL helper MUST take a group_folder parameter.
-- Strictly validate `q` is a non-empty string of reasonable length (cap, e.g. 500 chars). If too long → 400.
-- Cap `limit` via Number.isFinite + Math.min.
-- Update `CORS_PATH_METHODS['/search']: ['GET', 'HEAD']` and the 405 `pathMethods` table.
-- LLM-dependence: **none**.
-- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-search-http --create-namespace`, `--set namespace=kubeclaw-e2e-search-http`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14155`.
-
-status: passing 5/5
-
-## Story 73: `GET /secrets` and `DELETE /secrets/<type>` and `GET /secrets/catalog`
-
-**As a** KubeClaw operator
-**I want** REST endpoints to list and revoke group credentials, and to read the credential catalog
-**So that** I can audit and rotate credentials from a script without a chat session
-
-### Acceptance criteria
-
-1. Authenticated `GET /secrets` → HTTP 200 JSON array of `{ type, fields_present: [<fieldName>...] }` for the authenticated group. The actual secret VALUES are NEVER returned — only the type/field names. Empty array when none provisioned.
-2. `DELETE /secrets/<type>` for own group → 204. The orchestrator removes the underlying K8s secret via `secret.remove` IPC. Unknown/cross-group type → 404 (identical wording).
-3. `GET /secrets/catalog` → 200 JSON array describing available secret types (from `catalog.list` IPC), each `{ type, required_fields, optional_fields, description }`. Unauthenticated → 401.
-4. `POST /secrets` → 405 with `Allow: GET, HEAD`. `POST /secrets/<type>` → 405 with `Allow: DELETE, HEAD`. (Creating secrets via REST is OUT OF SCOPE for this story — `/secret set` slash command remains the only set path because it requires multi-field interactive input.)
-5. Unit test: stub the `secret.list` IPC reply returning 2 types; assert the JSON response contains both with `fields_present` correctly populated.
-
-### Notes
-
-- Add `/secrets` and `/secrets/<type>` routes to `src/channels/http.ts`.
-- Reuse IPC verbs from `src/k8s/ipc-redis.ts`: `secret.list`, `secret.remove`, `catalog.list`. The channel side already has helpers in `src/channel-runner.ts` for the slash `/secret` command — port the IPC request/reply pattern (similar to Story 69's `killJobFn` default).
-- **CRITICAL SECURITY**: NEVER expose secret values in the response. Only `type` and `fields_present` (the keys present, not the values). If the IPC reply includes values, scrub them BEFORE returning.
-- Update `CORS_PATH_METHODS`: `/secrets`: `['GET','HEAD']`, `/secrets/`: `['DELETE','HEAD']`, `/secrets/catalog`: `['GET','HEAD']`. 405 `pathMethods`.
-- LLM-dependence: **none**.
-- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-secrets-http --create-namespace`, `--set namespace=kubeclaw-e2e-secrets-http`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14156`.
-
-status: passing 5/5
-
-## Story 74: `GET /memory`, `PUT /memory`, `PATCH /memory` REST surface
-
-**As a** KubeClaw user with a UI client or automation script
-**I want** REST endpoints to read and update the group's `CLAUDE.md` memory file
-**So that** I can manage memory without sending chat messages
-
-### Acceptance criteria
-
-1. Authenticated `GET /memory` returns HTTP 200 with `Content-Type: application/json` and body `{ "content": "<file contents>" }`. When the memory file does not exist, returns `{ "content": "" }` (NOT a 404).
-2. Authenticated `PUT /memory` with JSON body `{ "content": "<text>" }` overwrites `groups/<groupFolder>/CLAUDE.md` with the supplied content (atomic write via temp+rename). Returns HTTP 204 (no body). Missing or non-string `content` → 400.
-3. Authenticated `PATCH /memory` with JSON body `{ "append": "<text>" }` appends the text to the existing file (creating it if necessary), prefixed with a newline if the file already has content. Returns HTTP 204. Missing or non-string `append` → 400.
-4. Cross-group isolation: `GET /memory` for user `alice` returns only `alice`'s memory; even if she sets `groupFolder=bob` somewhere, the server uses the authenticated user's group folder.
-5. `POST /memory` returns HTTP 405 with `Allow: GET, HEAD, PUT, PATCH`. Unauthenticated → 401. `HEAD /memory` returns same headers as GET with no body.
-
-### Notes
-
-- Add `/memory` route to `src/channels/http.ts`. Use `fs.promises` for reads/writes.
-- Memory file path: derive from `groupFolder` via the existing helper (e.g. `path.join(GROUPS_DIR, groupFolder, 'CLAUDE.md')`) — find the helper that `/memory` slash command uses in `src/channel-runner.ts`.
-- Atomic writes: write to a temp file in the same directory, then rename. Avoid partial writes.
-- Cap PUT/PATCH body size to prevent OOM (e.g. 1 MiB). Larger → 413.
-- Update `CORS_PATH_METHODS['/memory']: ['GET', 'HEAD', 'PUT', 'PATCH']` and the 405 `pathMethods` table.
-- LLM-dependence: **none**.
-- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-memory-http --create-namespace`, `--set namespace=kubeclaw-e2e-memory-http`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14157`.
-
-status: passing 5/5
-
-## Story 75: `GET /whoami` authenticated identity endpoint
-
-**As a** KubeClaw user with a UI client
-**I want** `GET /whoami` to return my authenticated identity
-**So that** my UI can display "logged in as X" without separate auth-introspection
-
-### Acceptance criteria
-
-1. Authenticated `GET /whoami` returns HTTP 200 with `Content-Type: application/json` and body `{ "username": "<username>", "group": "http:<username>", "group_folder": "<folder>" }`.
-2. Unauthenticated `GET /whoami` returns HTTP 401.
-3. `POST /whoami` returns HTTP 405 with `Allow: GET, HEAD`. `HEAD /whoami` returns same headers as GET with no body.
-4. Unit test: stub the username on the authenticated request and the group registry; assert the response has exactly the three documented fields.
-5. The endpoint MUST NOT expose sensitive identity material (no token, no auth-secret, no session ID — only the public username + group folder).
-
-### Notes
-
-- Add `/whoami` route to `src/channels/http.ts`.
-- Reuse `this.authenticate(req)` to obtain the username (returns the authenticated identity).
-- Use `this.opts.registeredGroups()` to look up `group_folder` from `http:<username>`.
-- Add `/whoami` to `CORS_PATH_METHODS` with `['GET', 'HEAD']` and the 405 `pathMethods` table.
-- LLM-dependence: **none**.
-- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-whoami --create-namespace`, `--set namespace=kubeclaw-e2e-whoami`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14158`.
-
-status: passing 5/5
-
-## Story 76: `POST /secrets` completes the secrets REST CRUD
-
-**As a** KubeClaw operator
-**I want** a `POST /secrets` endpoint to provision a credential via REST
-**So that** scripted provisioning flows can add secrets without a chat session
-
-### Acceptance criteria
-
-1. Authenticated `POST /secrets` with JSON body `{ "type": "<id>", "fields": { "<fieldName>": "<value>", ... } }` publishes `secret.add` (or whatever the existing IPC verb is — check `src/k8s/ipc-redis.ts`) with the group_folder of the authenticated user. Returns HTTP 201 `{ "status": "ok", "type": "<id>" }` on success.
-2. Missing or non-object `fields`, missing/non-string `type` → 400 with `{ "error": "<message>" }`. The error message names which field is missing.
-3. IPC timeout (no reply within ~5 s) → 504. IPC error reply → 502 with the reply's error message (sanitized; do NOT leak K8s/internal details).
-4. Cross-group isolation: the orchestrator-side `secret.add` IPC handler must verify it's writing to the authenticated user's group folder (the channel passes it, but the orchestrator must NOT trust client-supplied group params if the verb has one).
-5. `CORS_PATH_METHODS['/secrets']` is extended from `['GET', 'HEAD']` to `['GET', 'HEAD', 'POST']`. Update the 405 `pathMethods` table to allow POST. `PUT /secrets` and other non-allowed methods still return 405 with the new `Allow: GET, HEAD, POST`.
-
-### Notes
-
-- Extend the existing `/secrets` route from Story 73 with a POST branch.
-- Inject an `addSecretFn` callback on `HttpChannelOpts` (matching the existing `listSecretsFn`/`removeSecretFn` pattern from Story 73). Wire it in `configureHttpSecretIpc()` to publish the existing `secret.add` IPC verb.
-- DO NOT echo the supplied secret values in the response body or logs.
-- Cap the request body size at e.g. 64 KiB to prevent OOM via giant payloads.
-- LLM-dependence: **none**.
-- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-secrets-write --create-namespace`, `--set namespace=kubeclaw-e2e-secrets-write`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14159`.
-
-status: passing 5/5
-
-## Story 77: `GET /skills` and `POST /skills/candidates/<id>/{accept,reject}` REST surface
-
-**As a** KubeClaw operator or UI client
-**I want** REST endpoints to inspect and manage learned-skill candidates
-**So that** I can drain the candidate queue without sending chat messages
-
-### Acceptance criteria
-
-1. Authenticated `GET /skills` returns HTTP 200 with `Content-Type: application/json` and a JSON body `{ accepted: [...], candidates: [...], archived: [...] }` for the authenticated group. Each entry is `{ slug, title, description?, accepted_at?, archived_at? }` — no raw skill body.
-2. `POST /skills/candidates/<id>/accept` promotes the named candidate to accepted state. Returns HTTP 200 `{ status: "accepted", slug: "<id>" }`. Unknown id → 404 `{ error: "Not found" }` (identical wording for unknown vs cross-group).
-3. `POST /skills/candidates/<id>/reject` archives the candidate. Returns HTTP 200 `{ status: "rejected", slug: "<id>" }`. Unknown/cross-group → 404 (same wording).
-4. Unauthenticated → 401. `POST /skills` (without sub-path) → 405 with `Allow: GET, HEAD`. Wrong method on `/skills/candidates/<id>/accept` → 405 with `Allow: POST`.
-5. Unit: stub `listAcceptedSkills`/`listCandidates`/`listArchived` returning 1 row each; assert response has all three arrays populated with the correct slugs.
-
-### Notes
-
-- Add `/skills` and `/skills/candidates/<id>/{accept,reject}` routes to `src/channels/http.ts`.
-- Reuse existing functions from `src/runtime/skill-store.ts`: `listAcceptedSkills(groupFolder)`, `listCandidates(groupFolder)`, `listArchived(groupFolder)`, `acceptCandidate(groupFolder, slug)`, `rejectCandidate(groupFolder, slug)`.
-- The response listing should be lean — `slug`, `title`, optional `description`, optional timestamps. **Do NOT include the raw skill markdown body** (it could be many KB; clients can fetch individual files via filesystem if they need them).
-- Update `CORS_PATH_METHODS['/skills']: ['GET', 'HEAD']` and `'/skills/'` prefix `['POST']`. Update 405 `pathMethods` table.
-- Path traversal: `<id>` must match a strict slug regex (`/^[a-z0-9][a-z0-9_-]{0,63}$/` or similar — match the existing slug validation in `skill-store.ts`).
-- LLM-dependence: **none**.
-- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-skills-http --create-namespace`, `--set namespace=kubeclaw-e2e-skills-http`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14160`.
-
-status: passing 5/5
-
-## Story 78: `DELETE /history?before=<iso>` for time-bounded bulk purge
-
-**As a** KubeClaw user with a long-running conversation
-**I want** to delete history older than a given timestamp without nuking my whole conversation
-**So that** I can reclaim space and prune stale context while preserving recent messages
-
-### Acceptance criteria
-
-1. Authenticated `DELETE /history?before=<ISO-8601 timestamp>` deletes all `conversation_history` rows in the authenticated group where `created_at < before`. Returns HTTP 200 `{ deleted: <N> }` (count). With no rows matching → `{ deleted: 0 }`.
-2. Missing `before` query param: existing behavior preserved — `DELETE /history` (no params) continues to clear the entire group's history (Story 26).
-3. Unparseable `before` (not valid ISO-8601) → HTTP 400 `{ error: "before must be a valid ISO-8601 timestamp" }`.
-4. `before` in the future is accepted and deletes all rows up to "now-or-before" (in practice all rows).
-5. Unit test: insert 3 rows with timestamps T-100, T-50, T-10; call `DELETE /history?before=<T-30>`; assert deleted=2 and only the T-10 row remains.
-
-### Notes
-
-- Add `deleteConversationHistoryBefore(groupFolder: string, before: Date): number` to `src/db.ts`. SQL: `DELETE FROM conversation_history WHERE group_folder = ? AND created_at < ?`. Return affected row count.
-- The route in `src/channels/http.ts`: check for `?before=` query param first, parse via `new Date(s)` + `Number.isFinite(d.getTime())` validation, branch to the new function; else fall through to existing full-clear handler (Story 26).
-- Cross-group isolation: SQL `WHERE group_folder = ?` is the authoritative scope; the route must use the authenticated user's groupFolder, never a client-supplied one.
-- Update `CORS_PATH_METHODS['/history']` to keep `DELETE` (already present from Story 26). No new path entry needed.
-- LLM-dependence: **none**.
-- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-history-purge --create-namespace`, `--set namespace=kubeclaw-e2e-history-purge`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14161`.
-
-status: passing 5/5
-
-## Story 79: `GET /diag` operational snapshot endpoint
-
-**As a** KubeClaw operator or self-healing runbook
-**I want** `GET /diag` to return a JSON snapshot of pod-health metrics
-**So that** support and automation can read DB row counts, file sizes, and timestamps without grepping logs
-
-### Acceptance criteria
-
-1. Authenticated `GET /diag` returns HTTP 200 with `Content-Type: application/json` and a body containing at minimum: `conversation_history_rows`, `scheduled_tasks_active`, `tool_jobs_recent_24h`, `attachment_count`, `attachment_bytes`, `db_size_bytes`, `uptime_seconds`. All values are numbers; unset/error values are `null` (not omitted).
-2. Numbers are scoped to the authenticated user's group_folder where applicable (history rows, tasks, jobs, attachments). `db_size_bytes` and `uptime_seconds` are pod-global.
-3. Unauthenticated → 401.
-4. `POST /diag` → 405 with `Allow: GET, HEAD`. `HEAD /diag` → same headers as GET, no body.
-5. Response p95 time < 100 ms — all reads are synchronous (`db.exec`, `fs.statSync`); no Redis, no IPC, no async loops.
-
-### Notes
-
-- Add `getDiagSnapshot(groupFolder: string): DiagSnapshot` helper to `src/db.ts` (or inline in the route if simpler). It runs a handful of `SELECT COUNT(*)` queries and reads `fs.statSync` for the DB file size.
-- `uptime_seconds`: `process.uptime()` rounded to integer.
-- `tool_jobs_recent_24h`: `SELECT COUNT(*) FROM tool_jobs WHERE group_folder=? AND datetime(created_at) > datetime('now','-1 days')`.
-- `attachment_count` / `attachment_bytes`: from the attachments table (if it tracks bytes) or `fs.statSync` walk over the attachments dir for the group.
-- Wrap each individual sub-read in a try/catch; on any error, set THAT field to `null` and continue. The endpoint must never 500 due to one missing table/file.
-- Update `CORS_PATH_METHODS['/diag']: ['GET', 'HEAD']` and 405 `pathMethods`.
-- LLM-dependence: **none**.
-- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-diag --create-namespace`, `--set namespace=kubeclaw-e2e-diag`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14162`.
-
-status: passing 5/5
-
-## Story 80: `GET /schedule/<id>/runs` — task run history via REST
-
-**As a** KubeClaw operator
-**I want** `GET /schedule/<id>/runs` to return the run-log history for a single scheduled task as JSON
-**So that** I can answer "did my task run? did it error?" without shelling into the pod
-
-### Acceptance criteria
-
-1. Authenticated `GET /schedule/<id>/runs` → HTTP 200 with `Content-Type: application/json` and body `{ runs: [{ run_at, status, duration_ms, result?, error? }] }` — newest-first, default limit 20.
-2. `?limit=N` honored, cap at 100 (uses `MAX_TASK_RUN_LOGS_LIMIT` or similar — `getTaskRunLogs` already caps).
-3. Unknown id OR cross-group id → 404 (identical wording — same defense-in-depth pattern as Story 60: two-tier ownership via `getTaskById` + JOIN-scoped `getTaskRunLogs`).
-4. Unauthenticated → 401. `POST /schedule/<id>/runs` → 405 `Allow: GET, HEAD`. `HEAD` → same headers as GET, no body.
-5. Unit test: stub `getTaskRunLogs` returning 2 rows (1 success, 1 error); assert response has both with correct `status` tags and that `result`/`error` fields are populated correctly.
-
-### Notes
-
-- Add a new route block in `src/channels/http.ts` that matches `/^\/schedule\/([^/]+)\/runs$/`. Place it logically near the existing `/schedule/<id>` (Story 71) block.
-- Reuse existing `getTaskById` (Story 60 pattern) for ownership pre-check, then `getTaskRunLogs(taskId, groupFolder, limit)` for the actual fetch.
-- Update `CORS_PATH_METHODS['/schedule/']` if needed to cover the `/runs` sub-path with GET/HEAD (the existing `/schedule/<id>` entry from Story 71 covers DELETE/PATCH/HEAD; runs needs GET/HEAD as well — design the CORS table accordingly).
-- Update 405 `pathMethods` table.
-- LLM-dependence: **none**.
-- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-schedule-runs --create-namespace`, `--set namespace=kubeclaw-e2e-schedule-runs`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14163`.
 
 status: passing 5/5
 
@@ -2033,87 +935,6 @@ status: passing 5/5
 - Add `/audit` to `CORS_PATH_METHODS` with `['GET', 'HEAD']` and 405 `pathMethods` table.
 - LLM-dependence: **none**.
 - IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-audit --create-namespace`, `--set namespace=kubeclaw-e2e-audit`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14164`.
-
-status: passing 5/5
-
-## Story 82: `PATCH /history/<id>` redact or edit a single message
-
-**As a** KubeClaw user who accidentally pasted sensitive content
-**I want** to edit a single conversation-history row via `PATCH /history/<id>`
-**So that** I can redact a leaked secret in place without deleting the message and losing context
-
-### Acceptance criteria
-
-1. Authenticated `PATCH /history/<id>` with body `{ "content": "<new text>" }` updates the row's `content` for an id in the user's group. Returns HTTP 200 with the updated message JSON `{ id, role, content, timestamp/created_at }`.
-2. Missing or non-string `content` → 400 `{ error: "content must be a string" }`. Empty string is permitted (allows full redaction to "").
-3. `PATCH /history/<unknown-id>` and `PATCH /history/<id-from-another-group>` both → 404 (identical wording).
-4. Unauthenticated → 401. `PUT /history/<id>` → 405 with the updated `Allow: GET, HEAD, DELETE, PATCH`. `HEAD /history/<id>` (Story 64) still works as before.
-5. Body size cap: 256 KiB (a single message). Larger → 413.
-
-### Notes
-
-- Add `updateConversationMessage(id: string, content: string, groupFolder: string): boolean` to `src/db.ts`. SQL: `UPDATE conversation_history SET content = ? WHERE id = ? AND group_folder = ?`. Returns true if row updated.
-- Add a PATCH branch to the existing `/history/<id>` route (Story 56 + Story 64). Update method guard from `['GET','HEAD','DELETE']` to `['GET','HEAD','DELETE','PATCH']` and the 405 Allow header accordingly.
-- The FTS index on `conversation_history.content` MUST stay coherent. If main has a FTS5 trigger on `UPDATE OF content`, this is automatic. Verify the trigger exists; if not, the SQL must also update the FTS table.
-- Update `CORS_PATH_METHODS['/history/']` to add `'PATCH'` (currently `['GET','HEAD','DELETE']` from Story 64).
-- Body cap at 256 KiB → 413.
-- LLM-dependence: **none**.
-- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-history-edit --create-namespace`, `--set namespace=kubeclaw-e2e-history-edit`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14165`.
-
-status: passing 5/5
-
-## Story 83: Audit slash-command destructive actions (parallels Story 81 REST audit)
-
-**As a** KubeClaw operator
-**I want** destructive slash commands recorded in `audit_log` just like their HTTP counterparts
-**So that** the audit trail is complete regardless of whether a user used REST or chat — Story 81 only covered REST
-
-### Acceptance criteria
-
-1. `/secret remove <type>` via slash command writes `audit_log` row with `action: 'secret.remove'`, `target: <type>`, `actor: <group.jid or username>` BEFORE returning the user-visible reply.
-2. `/secret set <type>` (sometimes named `add`) writes `action: 'secret.add'`, `target: <type>`, `detail: 'fields=<csv of field names>'`. **VALUES NEVER LOGGED** — only field NAMES.
-3. `/schedule remove <id>` writes `action: 'schedule.delete'`, `target: <id>`.
-4. `/schedule pause <id>` and `/schedule resume <id>` (Story 62) write `action: 'schedule.pause'` / `'schedule.resume'`, `target: <id>`.
-5. `GET /audit` (Story 81) returns slash-command entries alongside HTTP entries, indistinguishable in shape. Unit test: stub the slash handlers; assert each write call has the correct `action`+`target`.
-
-### Notes
-
-- Add `writeAuditEntry` import + call to each destructive slash handler in `src/channel-runner.ts` (or `src/runtime/skills-commands.ts` for `/skills` if applicable — but that's not destructive). Find each `handleSecretCommand` `case 'remove'`/`'set'`, `handleScheduleCommand` `case 'remove'`/`'pause'`/`'resume'`.
-- The `actor` for slash commands is the group's JID or the registered username — use whatever Story 81 used for REST audit. Consistent shape.
-- Wrap each audit-write in try/catch — never fail the user's slash command if the audit write fails.
-- DO NOT include secret values. For `/secret set`, the audit detail is `fields=<comma-separated field names>` — same redaction as Story 81.
-- DO NOT instrument `/clear` (history clear) or `/cancel` (job kill) yet — verify these go through the HTTP path that Story 81 already audits, OR add them here if they don't.
-- Add ~5 unit tests in `src/channel-runner.test.ts` (or wherever) verifying each slash handler writes the correct audit row. Include the secret-values-redaction test.
-- LLM-dependence: **none**.
-- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-audit-slash --create-namespace`, `--set namespace=kubeclaw-e2e-audit-slash`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14166`.
-
-status: passing 5/5
-
-## Story 84: `edited_at` timestamp on edited conversation messages
-
-**As a** KubeClaw user or auditor
-**I want** `PATCH /history/<id>` to record when a message was edited and expose `edited_at` in subsequent reads
-**So that** I can distinguish original messages from edited ones — Story 82 added editing but no provenance
-
-### Acceptance criteria
-
-1. Additive migration: `ALTER TABLE conversation_history ADD COLUMN edited_at TEXT` (nullable; NULL means never edited). Existing rows get NULL — migration MUST NOT fail on rows already present.
-2. `updateConversationMessage(id, content, groupFolder)` sets `edited_at = new Date().toISOString()` on the updated row alongside `content`.
-3. `getMessageById(id, groupFolder)` returns `edited_at` in the row. `PATCH /history/<id>` response (200 body) includes `edited_at: "<ISO>"`. `GET /history/<id>` on an unedited message returns `edited_at: null` (NOT omitted — explicitly null).
-4. `GET /history` paginated list (Story 18) also exposes `edited_at` on each row (null when unedited).
-5. Unit test: insert a row (unedited), `GET /history/<id>` → `edited_at: null`; PATCH it → response has non-null ISO timestamp; subsequent `GET /history/<id>` returns the same `edited_at`.
-
-### Notes
-
-- Additive ALTER TABLE migration in `src/db.ts`. Use `try { ALTER TABLE ... } catch { /* already added */ }` pattern (matches existing additive migrations in the codebase).
-- Update `updateConversationMessage` SQL to `UPDATE conversation_history SET content = ?, edited_at = ? WHERE id = ? AND group_folder = ?`. Pass `new Date().toISOString()` for the timestamp.
-- Update `getMessageById` SELECT to include `edited_at`.
-- Update the existing `GET /history` SELECT (Story 18) to also include `edited_at` in the response shape.
-- Update `ConversationHistoryRow` interface in `src/db.ts` (added in Story 64) to include `edited_at?: string | null`.
-- Update or add unit tests for both `updateConversationMessage` and `getMessageById`.
-- DO NOT break Story 18 `GET /history` callers — adding a new field is backward-compatible.
-- LLM-dependence: **none**.
-- IMPORTANT: target kind cluster `kubeclaw-e2e-istio`. Use `--namespace kubeclaw-e2e-history-edited-at --create-namespace`, `--set namespace=kubeclaw-e2e-history-edited-at`, `--set image.tag=e2e-test`, `--set image.pullPolicy=IfNotPresent`, `--set credentialInjection.broker.image=kubeclaw-orchestrator:e2e-test`. Service prefix `kubeclaw-`. Use `KUBECLAW_SKIP_HELM_INSTALL=true` for vitest run. Use port `14167`.
 
 status: passing 5/5
 
@@ -2323,32 +1144,6 @@ status: passing 2/2
 - LLM-dependence: **none**.
 
 status: passing 3/3
-
-## Story 93: Brave Search catalog entry renders correctly in the credential-broker ConfigMap
-
-**As a** KubeClaw operator configuring Brave Search as a web-search backend
-**I want** the helm chart's `credentialInjection.catalog[]` to accept a `brave-search` entry and render the broker ConfigMap with the correct host and header rules
-**So that** the credential broker stamps `X-Subscription-Token` against `api.search.brave.com` and forwards calls without leaking the API key into the rendered YAML
-
-### Acceptance criteria
-
-1. `helm template --set credentialInjection.mode=sidecar --set credentialInjection.catalog[0].id=brave-search ...` renders the broker ConfigMap with `api.search.brave.com` as a configured host.
-2. The rendered ConfigMap includes `BRAVE_API_KEY` as the named env-var binding for the catalog entry.
-3. The catalog entry parses with `allowedPositions: header` (the credential is stamped as a header, not a query parameter — verified by the rendered chart shape).
-4. Real Brave API key values are not embedded in the rendered YAML — the secret-scrub invariant from the sibling `describe('secret-scrub invariant: ...')` block still holds when `brave-search` is in the catalog.
-5. Both `mode=sidecar` and `mode=istio` produce valid renders with the brave-search entry (no chart-template errors).
-
-### Notes for the test author
-
-- Test file: `e2e/credential-injection-integration.test.ts` — `describe('brave-search catalog entry renders correctly', ...)` block at line 79.
-- Run with: `npm run test:e2e -- credential-injection-integration -t "brave-search"` (2 tests in the block).
-- Harness: vitest e2e config; the test shells out to `helm template` and asserts on the rendered YAML. **No Kubernetes cluster required, no live Brave API call.**
-- Implementation lives in `helm/kubeclaw/templates/credential-broker-configmap.yaml` (and chart values for catalog defaults).
-- Closes Plan 3 from `docs/aspirational-stories-and-plans.md` (structured-results web-search backend) at the chart-wiring level.
-- Scope: this story covers chart rendering and config wiring ONLY. The runtime path (tool-server actually calls `api.search.brave.com` and returns JSON results) is tested separately in `e2e/minikube-live-browser.test.ts` and is gated on a Brave API key, which this story does NOT require.
-- LLM-dependence: **none**.
-
-status: passing 2/2
 
 ## Story 94: `register_specialist` immediately patches the specialists ConfigMap (no orchestrator restart)
 
@@ -2735,30 +1530,6 @@ status: passing 1/1
 
 status: passing 4/4
 
-## Story 110: Alpine sidecar tool pod executes a shell command via file-bridge and returns the result
-
-**As a** KubeClaw user invoking a custom tool wrapped as an alpine sidecar
-**I want** the agent to spawn an alpine container with the file-bridge pattern, send a shell command, and receive stdout back over the Redis toolresults stream
-**So that** arbitrary CLI tools can be plugged into the agent loop without writing a bespoke tool server
-
-### Acceptance criteria
-
-1. The agent publishes a tool call to `kubeclaw:toolcalls:{agentJobId}:alpine-shell`.
-2. The orchestrator spawns a sidecar Job: `alpine:latest` user container alongside the `kubeclaw-file-adapter` bridge.
-3. The file-bridge writes the request to `/shared/<id>.request.json`; alpine polls, runs the command, writes `/shared/<id>.response.json`.
-4. The file-bridge reads the response and publishes to `kubeclaw:toolresults:{agentJobId}:alpine-shell`.
-5. Full round-trip completes against a real cluster.
-
-### Notes for the test author
-
-- Test file: `e2e/alpine-tool-execution.test.ts` (1 it() test).
-- Run with: `npm run test:e2e -- alpine-tool-execution`.
-- Harness: requires `requireKubernetes()`. **Requires a live cluster.**
-- Implementation lives in `src/k8s/tool-pod-spawn.ts`, `container/agent-runner/src/tool-server.ts`.
-- LLM-dependence: **none**.
-
-status: passing 1/1
-
 ## Story 111: Retry logic for failed Redis operations — exponential backoff with max-retry cap
 
 **As a** KubeClaw operator running the orchestrator against a flaky Redis
@@ -2997,7 +1768,7 @@ status: passing 5/5
 - Implementation lives across the stack.
 - LLM-dependence: **none**.
 
-status: passing 8/8
+status: partial — core message→tool→reply ACs are it.todo stubs; passing tests cover pub/sub, IRC, performance only (verified 2026-06-07)
 
 ## Story 121: Tool-job lifecycle — Job creation, pod execution, completion, cleanup
 
@@ -3143,30 +1914,6 @@ status: passing 5/5
 
 status: passing 4/4
 
-## Story 127: State TTL — expired session keys are reclaimed
-
-**As a** KubeClaw operator
-**I want** session keys with a TTL to be reclaimed automatically when the TTL elapses
-**So that** Redis memory doesn't grow unbounded with stale sessions
-
-### Acceptance criteria
-
-1. Writing a key with TTL N + reading within N → returns value.
-2. Reading after N → null (reclaimed).
-3. Re-writing without TTL keeps indefinitely.
-4. EXPIRE refresh updates TTL atomically.
-5. Tests run against in-cluster Redis.
-
-### Notes for the test author
-
-- Test file: `e2e/state-persistence.test.ts` — `describe('TTL/Expiration Handling for State Data', ...)` at line 288.
-- Run with: `npm run test:e2e -- state-persistence -t "TTL/Expiration"`.
-- Harness: requires `getSharedRedis()`. **Requires a live cluster.**
-- Implementation lives in `src/k8s/ipc-redis.ts`.
-- LLM-dependence: **none**.
-
-status: passing 5/5
-
 ## Story 128: User-interaction Response Delivery — bot reply reaches the user
 
 **As a** KubeClaw user who has triggered the bot
@@ -3190,54 +1937,6 @@ status: passing 5/5
 - LLM-dependence: **none**.
 
 status: passing 4/4
-
-## Story 129: Redis Connection Timeout — connect attempt fails fast on unreachable host
-
-**As a** KubeClaw operator
-**I want** Redis connection attempts to fail fast (within a bounded time) when unreachable
-**So that** the orchestrator surfaces connection problems quickly instead of hanging
-
-### Acceptance criteria
-
-1. Connect attempt against unreachable host returns error within configured connect timeout.
-2. Error message identifies it as connection/network issue.
-3. No infinite retry at ioredis layer (app-level retry handles it).
-4. Successful reconnection (host comes back) doesn't require process restart.
-5. Tests use a wrong host/port to force the failure.
-
-### Notes for the test author
-
-- Test file: `e2e/timeout-retry.test.ts` — `describe('Redis Connection Timeout Handling', ...)` at line 54.
-- Run with: `npm run test:e2e -- timeout-retry -t "Redis Connection Timeout Handling"`.
-- Harness: requires `isRedisAvailable()`. **Requires a live cluster.**
-- Implementation lives in `src/k8s/ipc-redis.ts`.
-- LLM-dependence: **none**.
-
-status: passing 2/2
-
-## Story 130: Sidecar ACL Follow-up Message Flow — re-use the same ACL for the agent's follow-up turns
-
-**As a** KubeClaw user whose agent issues a follow-up tool call mid-turn
-**I want** the existing per-job ACL credentials to authorize the follow-up
-**So that** mid-turn follow-ups don't require minting a fresh ACL per call
-
-### Acceptance criteria
-
-1. After `createJobACL`, a follow-up XADD on the same input stream with the same creds succeeds.
-2. The follow-up's PUBLISH on the same group channel succeeds with the same creds.
-3. A follow-up against a different job's stream is rejected (NOPERM).
-4. After `revokeJobACL`, follow-ups with the same creds get WRONGPASS / NOAUTH.
-5. SQLite `job_acls` table reflects status correctly across the follow-up window.
-
-### Notes for the test author
-
-- Test file: `e2e/sidecar-acl.test.ts` — `describe('Follow-up Message Flow', ...)` at line 252.
-- Run with: `npm run test:e2e -- sidecar-acl -t "Follow-up Message Flow"`.
-- Harness: requires `isKubernetesAvailable()` + `getSharedRedis()`. **Requires a live cluster.**
-- Implementation lives in `src/k8s/acl-manager.ts`.
-- LLM-dependence: **none**.
-
-status: passing 2/2
 
 ## Story 131: User-interaction Multi-turn Conversation — context carries across turns
 
@@ -3285,7 +1984,7 @@ status: passing 3/3
 - Implementation lives in `helm/kubeclaw/templates/{namespace,configmap,rbac}.yaml`.
 - LLM-dependence: **none**.
 
-status: passing 10/10
+status: partial — tests pass but ACs overstate: chart renders no Namespace and no ClusterRole (verified 2026-06-07)
 
 ## Story 133: Atomic state updates — concurrent updates to the same key linearize
 
@@ -3310,30 +2009,6 @@ status: passing 10/10
 - LLM-dependence: **none**.
 
 status: passing 4/4
-
-## Story 134: Exponential backoff — retry intervals double per attempt (capped at max)
-
-**As a** KubeClaw operator
-**I want** retry intervals to follow exponential backoff (1s, 2s, 4s, ...) capped at a max
-**So that** retries respect Redis without thrashing while still recovering from transient faults
-
-### Acceptance criteria
-
-1. The first retry delay matches the initial backoff (e.g. 1s).
-2. Subsequent retry delays double (1s → 2s → 4s → 8s).
-3. Delays are capped at a configured max (e.g. 30s).
-4. After the cap is hit, subsequent retries use the capped delay.
-5. The backoff respects max-retry budget — total retries don't exceed the cap.
-
-### Notes for the test author
-
-- Test file: `e2e/timeout-retry.test.ts` — `describe('Exponential Backoff Behavior', ...)` at line 287.
-- Run with: `npm run test:e2e -- timeout-retry -t "Exponential Backoff"`.
-- Harness: requires `isRedisAvailable()`. **Requires a live cluster.**
-- Implementation lives in `src/k8s/ipc-redis.ts`.
-- LLM-dependence: **none**.
-
-status: passing 6/6
 
 ## Story 135: Helm chart Redis sub-chart — Redis Deployment + Service + ACL render and run
 
@@ -3382,78 +2057,6 @@ status: passing 4/4
 - LLM-dependence: **none**.
 
 status: passing 3/3
-
-## Story 137: File-sidecar Session Persistence — sidecar persists state across pod restarts
-
-**As a** KubeClaw user holding a long-running file-sidecar session (e.g. a REPL or build server)
-**I want** the sidecar's session state to persist across container restarts (PVC-backed)
-**So that** in-flight work isn't lost on pod reschedule
-
-### Acceptance criteria
-
-1. The file-sidecar mounts a PVC for session data.
-2. State written before a restart is readable after the restart.
-3. The pod's restart policy is `OnFailure` or `Never` (not `Always`) so the Job lifecycle owns it.
-4. PVC reclaim policy is correct (retain or delete per chart config).
-5. Tests use a real cluster.
-
-### Notes for the test author
-
-- Test file: `e2e/file-sidecar.test.ts` — `describe('Session Persistence', ...)` at line 504.
-- Run with: `npm run test:e2e -- file-sidecar -t "Session Persistence"`.
-- Harness: requires `requireKubernetes()`. **Requires a live cluster + `kubeclaw-file-adapter:latest` image loaded into minikube.**
-- Implementation lives in `src/k8s/tool-pod-spawn.ts` (PVC binding for sidecar Jobs) and `helm/kubeclaw/templates/storage.yaml`.
-- LLM-dependence: **none**.
-
-status: passing 2/2
-
-## Story 138: HTTP-sidecar Health Check Polling — sidecar marked Ready only after user container responds
-
-**As a** KubeClaw operator
-**I want** the HTTP-sidecar's readiness check to depend on the user container's `/healthz` returning 200
-**So that** Kubernetes routes traffic only when the whole pod (sidecar + user container) is actually serving
-
-### Acceptance criteria
-
-1. Pod becomes Ready only after user container's `/healthz` returns 200.
-2. If user container starts slow, pod stays NotReady until it does.
-3. Once Ready, the sidecar accepts inbound tasks.
-4. If user container crashes, pod transitions back to NotReady within the probe period.
-5. Tests use a real cluster.
-
-### Notes for the test author
-
-- Test file: `e2e/http-sidecar.test.ts` — `describe('Health Check Polling', ...)` at line 468.
-- Run with: `npm run test:e2e -- http-sidecar -t "Health Check Polling"`.
-- Harness: requires `requireKubernetes()` + `kubeclaw-http-adapter:latest` image. **Requires a live cluster.**
-- Implementation lives in `container/agent-runner/src/tool-server.ts` (probe handler) + chart template `helm/kubeclaw/templates/tool-job.yaml`.
-- LLM-dependence: **none**.
-
-status: passing 1/1
-
-## Story 139: Redis Operation Timeout — long-running ops return error within timeout window
-
-**As a** KubeClaw operator
-**I want** individual Redis operations (XREAD, GET, SET) to time out within a configured window when the server is slow
-**So that** a stuck Redis call doesn't hang the orchestrator indefinitely
-
-### Acceptance criteria
-
-1. A Redis operation against a slow server returns an error after the configured timeout.
-2. The error message identifies it as an operation timeout (distinct from a connect timeout).
-3. The connection itself remains usable for subsequent operations.
-4. Different operations honor their own timeouts (not shared globally).
-5. Tests use a real Redis with throttling or fake timers.
-
-### Notes for the test author
-
-- Test file: `e2e/timeout-retry.test.ts` — `describe('Redis Operation Timeout', ...)` at line 101.
-- Run with: `npm run test:e2e -- timeout-retry -t "Redis Operation Timeout"`.
-- Harness: requires `isRedisAvailable()`. **Requires a live cluster.**
-- Implementation lives in `src/k8s/ipc-redis.ts`.
-- LLM-dependence: **none**.
-
-status: passing 2/2
 
 ## Story 140: Helm chart secrets — credentials render via Secret, not embedded in YAML
 
@@ -3525,31 +2128,7 @@ status: passing 4/4
 - Implementation lives in `src/k8s/ipc-redis.ts` (reconnect handler) and Redis chart config (AOF enabled).
 - LLM-dependence: **none**.
 
-status: passing 5/5 (state survives Redis restart; AOF + ioredis retryStrategy verified)
-
-## Story 143: Max retry limit — retries stop after N attempts
-
-**As a** KubeClaw operator
-**I want** the retry loop to give up after the configured max-retry count rather than retrying forever
-**So that** persistent failures escalate quickly instead of silently consuming resources
-
-### Acceptance criteria
-
-1. After N failures, the next call returns the error rather than retrying further.
-2. The max-retry count is configurable.
-3. The error surfaced to the caller identifies the underlying failure.
-4. Retry counters reset after a successful intervening call.
-5. Tests use injected faults against real Redis.
-
-### Notes for the test author
-
-- Test file: `e2e/timeout-retry.test.ts` — `describe('Max Retry Limit Enforcement', ...)` at line 362.
-- Run with: `npm run test:e2e -- timeout-retry -t "Max Retry Limit"`.
-- Harness: requires `isRedisAvailable()`. **Requires a live cluster.**
-- Implementation lives in `src/k8s/ipc-redis.ts`.
-- LLM-dependence: **none**.
-
-status: passing 4/4
+status: partial — restart describe block does set/get but never restarts the Redis pod; recovery not actually exercised (verified 2026-06-07)
 
 ## Story 144: Helm chart NetworkPolicies — pod egress is locked down per category
 
@@ -3571,54 +2150,6 @@ status: passing 4/4
 - Run with: `npm run test:e2e -- helm-chart -t "network policies"`.
 - Harness: requires `requireKubernetes()`. **Requires a live cluster + helm install.**
 - Implementation lives in `helm/kubeclaw/templates/networkpolicies.yaml`.
-- LLM-dependence: **none**.
-
-status: passing 3/3
-
-## Story 145: Retry state cleanup — successful call clears the retry counter
-
-**As a** KubeClaw operator
-**I want** the retry counter for an operation to reset to zero after a successful call
-**So that** a brief network blip doesn't permanently inflate the retry budget for subsequent calls
-
-### Acceptance criteria
-
-1. After N failed retries followed by a successful call, the retry counter for that operation is 0.
-2. Cleanup happens immediately on success (not lazily).
-3. Multiple distinct operations have independent counters (one's cleanup doesn't affect another's).
-4. The cleanup is observable via state inspection (counter key reset / removed).
-5. Tests use real Redis with simulated failure + recovery.
-
-### Notes for the test author
-
-- Test file: `e2e/timeout-retry.test.ts` — `describe('Retry State Cleanup After Success', ...)` at line 463.
-- Run with: `npm run test:e2e -- timeout-retry -t "Retry State Cleanup"`.
-- Harness: requires `isRedisAvailable()`. **Requires a live cluster.**
-- Implementation lives in `src/k8s/ipc-redis.ts`.
-- LLM-dependence: **none**.
-
-status: passing 4/4
-
-## Story 146: Sidecar ACL Infrastructure — Redis supports ACL commands
-
-**As a** KubeClaw operator
-**I want** the in-cluster Redis to expose ACL management commands (`ACL SETUSER`, `ACL DELUSER`, `ACL LIST`, `ACL WHOAMI`)
-**So that** per-job ACL creation/revocation can actually be performed at runtime
-
-### Acceptance criteria
-
-1. `ACL LIST` returns the configured users (default + any provisioned).
-2. `ACL SETUSER` with valid syntax creates a user with correct permissions.
-3. `ACL DELUSER` removes a user.
-4. `ACL WHOAMI` returns the current authenticated user.
-5. ACL commands require the appropriate admin role; non-admin users get NOPERM.
-
-### Notes for the test author
-
-- Test file: `e2e/sidecar-acl.test.ts` — `describe('Redis ACL Infrastructure', ...)` at line 74.
-- Run with: `npm run test:e2e -- sidecar-acl -t "Redis ACL Infrastructure"`.
-- Harness: requires `isKubernetesAvailable()` + `getSharedRedis()`. **Requires a live cluster.**
-- Implementation lives in the Redis chart config (`aclfile`).
 - LLM-dependence: **none**.
 
 status: passing 3/3
@@ -3647,30 +2178,6 @@ status: passing 3/3
 
 status: passing 4/4
 
-## Story 148: Sidecar ACL Key Isolation — sidecar can't write to other jobs' streams
-
-**As a** KubeClaw operator
-**I want** a sidecar's ACL to deny writes to stream keys outside its own job-id scope
-**So that** a misbehaving sidecar can't corrupt another job's input/output
-
-### Acceptance criteria
-
-1. Sidecar A's creds can XADD to its own input stream key.
-2. The same creds cannot XADD to Sidecar B's input stream key (NOPERM).
-3. The same creds cannot SUBSCRIBE to other jobs' channels.
-4. Scope is enforced via Redis ACL key patterns.
-5. Tests use real Redis ACL.
-
-### Notes for the test author
-
-- Test file: `e2e/sidecar-acl.test.ts` — `describe('Key Isolation', ...)` at line 390.
-- Run with: `npm run test:e2e -- sidecar-acl -t "Key Isolation"`.
-- Harness: requires `isKubernetesAvailable()` + `getSharedRedis()`. **Requires a live cluster.**
-- Implementation lives in `src/k8s/acl-manager.ts`.
-- LLM-dependence: **none**.
-
-status: passing 1/1
-
 ## Story 149: User-interaction Error Handling — agent errors deliver a user-visible reply
 
 **As a** KubeClaw user
@@ -3695,30 +2202,6 @@ status: passing 1/1
 
 status: passing 3/3
 
-## Story 150: Helm chart orchestrator Deployment — exists, ready, healthy
-
-**As a** KubeClaw operator
-**I want** the chart to render an orchestrator Deployment that reaches Ready and exposes its service
-**So that** the orchestrator pod is the canonical entry point for IPC and admin
-
-### Acceptance criteria
-
-1. Chart renders orchestrator `Deployment` with expected name.
-2. Deployment uses configured image + tag from values.
-3. Resources (CPU/memory) set per values.
-4. Orchestrator Pod reaches Ready.
-5. Orchestrator Service reachable from inside cluster.
-
-### Notes for the test author
-
-- Test file: `e2e/helm-chart.test.ts` — `describe('orchestrator deployment', ...)` at line 618.
-- Run with: `npm run test:e2e -- helm-chart -t "orchestrator deployment"`.
-- Harness: requires `requireKubernetes()`. **Requires a live cluster + helm install.**
-- Implementation lives in `helm/kubeclaw/templates/orchestrator.yaml`.
-- LLM-dependence: **none**.
-
-status: passing 2/2
-
 ## Story 151: Message processing timeout — long-running message turns time out
 
 **As a** KubeClaw operator
@@ -3739,102 +2222,6 @@ status: passing 2/2
 - Run with: `npm run test:e2e -- timeout-retry -t "Message Processing Timeout"`.
 - Harness: requires `isRedisAvailable()`. **Requires a live cluster.**
 - Implementation lives in `src/channel-runner.ts` + `src/k8s/ipc-redis.ts`.
-- LLM-dependence: **none**.
-
-status: passing 2/2
-
-## Story 152: File-sidecar error handling — sidecar surfaces user-container errors
-
-**As a** KubeClaw user invoking a file-sidecar tool
-**I want** errors from the user container to be reported as toolresult errors
-**So that** I see "the tool failed" instead of a hung agent loop
-
-### Acceptance criteria
-
-1. User container exits non-zero → toolresult contains error.
-2. User container writes malformed JSON → toolresult contains parse error.
-3. User container times out → toolresult contains timeout error.
-4. The sidecar pod doesn't crash on user container failure.
-5. Tests use real cluster + file-adapter image.
-
-### Notes for the test author
-
-- Test file: `e2e/file-sidecar.test.ts` — `describe('Error Handling', ...)` at line 542.
-- Run with: `npm run test:e2e -- file-sidecar -t "Error Handling"`.
-- Harness: requires `requireKubernetes()` + `kubeclaw-file-adapter:latest`. **Requires a live cluster.**
-- Implementation lives in `container/agent-runner/src/tool-server.ts` (file-bridge error path).
-- LLM-dependence: **none**.
-
-status: passing 2/2
-
-## Story 153: Helm chart `helm upgrade` — values change without data loss
-
-**As a** KubeClaw operator
-**I want** `helm upgrade` to roll out config changes without losing PVC-backed state or restarting the Redis password
-**So that** in-place upgrades are safe
-
-### Acceptance criteria
-
-1. Changing `maxConcurrentJobs` via `helm upgrade --set` is reflected in orchestrator config.
-2. PVCs preserved through upgrade.
-3. Redis password not regenerated on upgrade (`lookup`-stable).
-4. Pod rollouts complete within timeout.
-5. Tests use real cluster with `helm install` + `helm upgrade`.
-
-### Notes for the test author
-
-- Test file: `e2e/helm-chart.test.ts` — `describe('helm upgrade', ...)` at line 743.
-- Run with: `npm run test:e2e -- helm-chart -t "helm upgrade"`.
-- Harness: requires `requireKubernetes()`. **Requires a live cluster + helm install.**
-- Implementation lives in `helm/kubeclaw/templates/secrets.yaml` (`lookup` pattern) + chart upgrade hooks.
-- LLM-dependence: **none**.
-
-status: passing 2/2
-
-## Story 154: File-sidecar Large Payload — multi-MB inputs round-trip cleanly
-
-**As a** KubeClaw user invoking a tool with a large input (multi-MB JSON, base64-encoded blob)
-**I want** the file-sidecar to forward the payload without truncation or corruption
-**So that** real-world tool inputs don't silently get clipped
-
-### Acceptance criteria
-
-1. A 1 MB payload round-trips through the file-sidecar with byte-identical content.
-2. A 5 MB payload also round-trips cleanly (or surfaces a configured limit error).
-3. JSON encoding/decoding preserves Unicode characters.
-4. Disk space for shared volume is bounded (cleanup happens after each call).
-5. Tests use real cluster + file-adapter.
-
-### Notes for the test author
-
-- Test file: `e2e/file-sidecar.test.ts` — `describe('Large Payload Handling', ...)` at line 587.
-- Run with: `npm run test:e2e -- file-sidecar -t "Large Payload"`.
-- Harness: requires `requireKubernetes()` + `kubeclaw-file-adapter:latest`. **Requires a live cluster.**
-- Implementation lives in `container/agent-runner/src/tool-server.ts` (file-bridge), shared-volume sizing in chart.
-- LLM-dependence: **none**.
-
-status: passing 1/1
-
-## Story 155: HTTP-sidecar Session Persistence — sidecar keeps session across calls
-
-**As a** KubeClaw user invoking sequential tool calls with shared session state
-**I want** the HTTP-sidecar to keep the same user-container session across calls
-**So that** in-memory state (e.g. an open browser tab) persists between LLM rounds
-
-### Acceptance criteria
-
-1. The user container handles N sequential tool calls within the same pod lifetime.
-2. State written by call N is visible to call N+1.
-3. The sidecar doesn't restart the user container between calls.
-4. After idle timeout, the pod exits cleanly.
-5. Tests use real cluster + http-adapter.
-
-### Notes for the test author
-
-- Test file: `e2e/http-sidecar.test.ts` — `describe('Session Persistence', ...)` at line 492.
-- Run with: `npm run test:e2e -- http-sidecar -t "Session Persistence"`.
-- Harness: requires `requireKubernetes()` + `kubeclaw-http-adapter:latest`. **Requires a live cluster.**
-- Implementation lives in `src/k8s/http-sidecar-runner.ts`.
 - LLM-dependence: **none**.
 
 status: passing 2/2
@@ -3863,54 +2250,6 @@ status: passing 2/2
 
 status: passing 22/22
 
-## Story 157: HTTP-sidecar Error Handling — adapter surfaces user-container failures
-
-**As a** KubeClaw user invoking an HTTP-sidecar tool
-**I want** errors from the user container (HTTP 5xx, connection refused, timeout) to be reported as toolresult errors
-**So that** I see "the tool failed" with diagnostic info instead of a silently dropped call
-
-### Acceptance criteria
-
-1. User container returns HTTP 5xx → toolresult contains error with status code.
-2. User container connection refused → toolresult contains error.
-3. User container request timeout → toolresult contains timeout error.
-4. The sidecar pod itself doesn't crash on user container failure.
-5. Tests use real cluster + http-adapter.
-
-### Notes for the test author
-
-- Test file: `e2e/http-sidecar.test.ts` — `describe('Error Handling', ...)` at line 530.
-- Run with: `npm run test:e2e -- http-sidecar -t "Error Handling"`.
-- Harness: requires `requireKubernetes()` + `kubeclaw-http-adapter:latest`. **Requires a live cluster.**
-- Implementation lives in `src/k8s/http-sidecar-runner.ts`.
-- LLM-dependence: **none**.
-
-status: passing 2/2
-
-## Story 158: File-sidecar Multiple Sequential — N consecutive calls succeed
-
-**As a** KubeClaw user making many sequential tool calls
-**I want** the file-sidecar to handle N consecutive calls without leaking shared-volume state
-**So that** long agent loops don't accumulate shared-volume garbage or fail mid-loop
-
-### Acceptance criteria
-
-1. N sequential calls all complete successfully.
-2. Each call's request/response files are cleaned up before the next call starts.
-3. Shared-volume disk usage stays bounded across N calls.
-4. The Nth call gets the same latency as the 1st (no degradation).
-5. Tests use real cluster + file-adapter.
-
-### Notes for the test author
-
-- Test file: `e2e/file-sidecar.test.ts` — `describe('Multiple Sequential Tasks', ...)` at line 608.
-- Run with: `npm run test:e2e -- file-sidecar -t "Multiple Sequential"`.
-- Harness: requires `requireKubernetes()` + `kubeclaw-file-adapter:latest`. **Requires a live cluster.**
-- Implementation lives in `container/agent-runner/src/tool-server.ts` (file-bridge loop).
-- LLM-dependence: **none**.
-
-status: passing 1/1
-
 ## Story 159: Helm chart Lua substitution filter — Envoy rewrites Authorization header
 
 **As a** KubeClaw operator in istio mode
@@ -3934,126 +2273,6 @@ status: passing 1/1
 - LLM-dependence: **none**.
 
 status: passing 3/3
-
-## Story 160: HTTP-sidecar Large Payload — multi-MB POST round-trip cleanly
-
-**As a** KubeClaw user invoking an HTTP-sidecar tool with a large payload
-**I want** the sidecar to forward multi-MB payloads to the user container without truncation
-**So that** real-world tool inputs (transcripts, source files) don't silently get clipped
-
-### Acceptance criteria
-
-1. A 1 MB payload POSTed to the sidecar round-trips byte-identical to the user container's response.
-2. A larger payload (5 MB) either succeeds cleanly or surfaces a configured size error.
-3. JSON encoding preserves Unicode.
-4. Request body buffering is bounded (no OOM on payloads slightly under the limit).
-5. Tests use real cluster + http-adapter.
-
-### Notes for the test author
-
-- Test file: `e2e/http-sidecar.test.ts` — `describe('Large Payload Handling', ...)` at line 572.
-- Run with: `npm run test:e2e -- http-sidecar -t "Large Payload"`.
-- Harness: requires `requireKubernetes()` + `kubeclaw-http-adapter:latest`. **Requires a live cluster.**
-- Implementation lives in `src/k8s/http-sidecar-runner.ts`.
-- LLM-dependence: **none**.
-
-status: passing 1/1
-
-## Story 161: File-sidecar Follow-up Message Flow — sidecar handles follow-up tool calls
-
-**As a** KubeClaw user whose agent issues follow-up tool calls within a session
-**I want** the file-sidecar to handle a fresh request after delivering the first response
-**So that** multi-step tool sessions don't require respawning the sidecar pod
-
-### Acceptance criteria
-
-1. After call 1 returns, call 2 succeeds against the same sidecar pod.
-2. Session state from call 1 is visible to call 2 (PVC-backed).
-3. The sidecar doesn't restart between calls.
-4. Per-call request/response files are cleaned up.
-5. Tests use real cluster + file-adapter.
-
-### Notes for the test author
-
-- Test file: `e2e/file-sidecar.test.ts` — `describe('Follow-up Message Flow', ...)` at line 637.
-- Run with: `npm run test:e2e -- file-sidecar -t "Follow-up Message Flow"`.
-- Harness: requires `requireKubernetes()` + `kubeclaw-file-adapter:latest`. **Requires a live cluster.**
-- Implementation lives in `container/agent-runner/src/tool-server.ts` (file-bridge loop).
-- LLM-dependence: **none**.
-
-status: passing 4/4
-
-## Story 162: Helm chart ClusterRoleBinding name is release-scoped (collision regression)
-
-**As a** KubeClaw operator running multiple kubeclaw releases on one cluster
-**I want** the credential broker's ClusterRoleBinding name to include the release name
-**So that** installing two releases doesn't conflict on a single cluster-scoped resource
-
-### Acceptance criteria
-
-1. The CRB name includes `{{ .Release.Name }}` so two releases yield distinct CRB objects.
-2. Installing two releases simultaneously doesn't fail with "already exists".
-3. Each release's broker SA is bound only to its own CRB.
-4. Uninstalling one release doesn't remove the other's CRB.
-5. The naming pattern is documented in the chart README / values.
-
-### Notes for the test author
-
-- Test file: `e2e/helm-chart.test.ts` — `describe('ClusterRoleBinding name is release-scoped (collision regression)', ...)` at line 797.
-- Run with: `npm run test:e2e -- helm-chart -t "ClusterRoleBinding"`.
-- Harness: `helm template` + multi-release rendering. **No cluster required for the render-only test.**
-- Implementation lives in `helm/kubeclaw/templates/credential-broker.yaml`.
-- LLM-dependence: **none**.
-
-status: passing 2/2
-
-## Story 163: HTTP-sidecar Multiple Sequential — N consecutive HTTP calls succeed
-
-**As a** KubeClaw user invoking many HTTP-sidecar tool calls in a single agent loop
-**I want** the sidecar to handle N sequential calls without resource exhaustion
-**So that** long agent loops don't degrade or fail mid-loop
-
-### Acceptance criteria
-
-1. N consecutive tool calls all succeed against the same sidecar pod.
-2. Per-call latency stays bounded (no growth over N).
-3. Memory usage stays bounded.
-4. Sockets / connections are reused or cleanly cycled.
-5. Tests use real cluster + http-adapter.
-
-### Notes for the test author
-
-- Test file: `e2e/http-sidecar.test.ts` — `describe('Multiple Sequential Tasks', ...)` at line 593.
-- Run with: `npm run test:e2e -- http-sidecar -t "Multiple Sequential"`.
-- Harness: requires `requireKubernetes()` + `kubeclaw-http-adapter:latest`. **Requires a live cluster.**
-- Implementation lives in `src/k8s/http-sidecar-runner.ts`.
-- LLM-dependence: **none**.
-
-status: passing 1/1
-
-## Story 164: HTTP-sidecar Follow-up Message Flow — multi-turn tool sessions
-
-**As a** KubeClaw user whose agent issues HTTP-sidecar follow-up tool calls
-**I want** the HTTP-sidecar to handle a follow-up call after delivering the first response
-**So that** multi-turn tool sessions don't require respawning the sidecar pod
-
-### Acceptance criteria
-
-1. After call 1 returns, call 2 succeeds against the same sidecar pod.
-2. Session state from call 1 is visible to call 2.
-3. The sidecar doesn't restart between calls.
-4. Per-call timing stays consistent.
-5. Tests use real cluster + http-adapter.
-
-### Notes for the test author
-
-- Test file: `e2e/http-sidecar.test.ts` — `describe('Follow-up Message Flow', ...)` at line 622.
-- Run with: `npm run test:e2e -- http-sidecar -t "Follow-up Message Flow"`.
-- Harness: requires `requireKubernetes()` + `kubeclaw-http-adapter:latest`. **Requires a live cluster.**
-- Implementation lives in `src/k8s/http-sidecar-runner.ts`.
-- LLM-dependence: **none**.
-
-status: passing 4/4
 
 ## Story 165: Helm chart `mode=sidecar` (no Istio regression)
 
@@ -4102,7 +2321,7 @@ status: passing 4/4 — chart fix in commits 97339c9 + 6ae6b04; static-template 
 - For AC5, port-forward the orchestrator metrics service (`svc/kubeclaw-orchestrator` port 9091) to a non-colliding local port (e.g. `19103`) and follow the `curl -s | grep` pattern from `e2e/credential-injection.test.ts` line 325.
 - LLM-dependence: **yes** (real LLM call to pick the tool; real `web_fetch` over the open internet).
 
-status: drafted
+status: partial — web_fetch tool registered in direct-llm-runner.ts; covered via Researcher specialist; no dedicated web_fetch e2e (verified 2026-06-07)
 
 ## Story 167: User asks for current information and the assistant dispatches a `web_search` tool job
 
@@ -4127,7 +2346,7 @@ status: drafted
 - Tool definition lives in `src/runtime/direct-llm-runner.ts` at `TOOLS[name=web_search]` (line ~156). The output schema documented in the tool description is the contract this test pins.
 - LLM-dependence: **yes** (real LLM for tool-selection routing).
 
-status: drafted
+status: partial — web_search tool registered in direct-llm-runner.ts; covered via Researcher specialist; no dedicated web_search e2e (verified 2026-06-07)
 
 ## Story 168: User asks the assistant to log in and scrape a JS-heavy page — `browser` Playwright tool job
 
@@ -4153,7 +2372,7 @@ status: drafted
 - Tool definition: `src/runtime/direct-llm-runner.ts` `TOOLS[name=browser]` (line ~174). Job dispatcher: `src/k8s/job-runner.ts` (`createToolJob` path for `category=browser`).
 - LLM-dependence: **yes** (real LLM for routing to `browser` over `web_fetch`).
 
-status: drafted
+status: tested — browser tool + e2e/minikube-live-browser.test.ts (verified 2026-06-07; label was stale)
 
 ## Story 169: User asks for shell data processing — `bash` tool job runs against the group's `/data` PVC
 
@@ -4178,7 +2397,7 @@ status: drafted
 - AC5 — the cross-group isolation check is the security teeth of this story. Use a second group ("victim") with a sentinel file at `/data/canary.txt`; assert its sha256 is unchanged after the malicious-style command.
 - LLM-dependence: **yes** (real LLM to choose `bash` over `mcp__filesystem__read_file`; the prompt phrasing of "how many rows" steers the model to `wc -l`).
 
-status: drafted
+status: partial — bash tool registered + tool-call-roundtrip test; no dedicated /data-PVC e2e (verified 2026-06-07)
 
 ## Story 170: User asks for a sustained coding task — `execute_agent` spawns a nested pi-agent-core sub-agent
 
@@ -4227,7 +2446,7 @@ This means a single `execute_agent` call typically materializes **three pods**: 
 - Tool definition: `src/runtime/direct-llm-runner.ts:215`. Dispatch glue: `executeToolJob()` at line 618 + `jobRunner.runToolJob()` in `src/k8s/job-runner.ts:420`. Agent-runner entrypoint: `container/agent-runner/src/index.ts`. Sidekick tool server: `container/agent-runner/src/tool-server.ts`.
 - LLM-dependence: **yes, twice over** — once on the outer channel-pod LLM to pick `execute_agent` over `bash`, and once on the inner agent-runner LLM for the multi-step refactor. Both calls hit the live provider; the broker authorizes both. Budget the e2e timeout accordingly (recommend ≥ 8 minutes for the full POST → SSE-final cycle on first-cold-pod runs).
 
-status: drafted
+status: partial — execute_agent registered + direct-llm-runner unit test; no e2e (verified 2026-06-07)
 
 ## Story 171: User asks "find <cuisine> near me" and the assistant dispatches a `places_search` tool job
 
@@ -4251,56 +2470,7 @@ status: drafted
 - AC5's negative path requires deleting the user_profile row via `kubectl exec` into the orchestrator pod and running a SQL `DELETE`; restore in `afterEach`.
 - LLM-dependence: **yes** (live LLM for tool-selection routing and for the "near me" coordinate-resolution behaviour).
 
-status: drafted
-
-## Story 172: User asks for two things at once — parallel `web_search` tool jobs in a single turn
-
-**As a** KubeClaw user juggling research on multiple unrelated topics
-**I want** to ask one message that contains two independent lookups ("@Andy compare current EV market share for Tesla and BYD in Europe")
-**So that** two `web_search` tool jobs spawn in parallel rather than sequentially, the channel pod merges both results back to the LLM, and the final reply blends both into a single answer in roughly half the wall-clock time
-
-### Acceptance criteria
-
-1. A single user message causes the LLM to emit two `web_search` tool calls in the same assistant turn (OpenAI-style parallel function calling), with distinct `query` arguments — one mentioning "Tesla" and one mentioning "BYD".
-2. The orchestrator spawns two tool-job pods within 5 s of one another (both `kubeclaw.io/tool=web_search`); their `metadata.creationTimestamp` values are within 5 s, NOT 60+ s apart (which would indicate sequential dispatch).
-3. Both pods reach `Succeeded` and their stdout is delivered back to the same LLM turn as two distinct tool results, addressed by their original `tool_call_id`.
-4. The assistant's SSE reply mentions both "Tesla" and "BYD" in the same paragraph (case-insensitive) and contains at least one URL drawn from each search's result list.
-5. End-to-end wall-clock from POST to final SSE chunk is less than 1.6× the wall-clock of a single-topic baseline run captured in `beforeAll` (proves parallelism, not just two sequential dispatches).
-
-### Notes for the test author
-
-- New test file: `e2e/minikube-live-parallel-tools.test.ts`.
-- The parallel-tool-calling behaviour depends on the LLM model. Many providers default to parallel; some (e.g. older Anthropic models) require `parallel_tool_calls: true` on the request. Confirm the configured `LIVE_LLM_MODEL` supports it; xfail with a clear message if not.
-- AC2's "creationTimestamp within 5 s" assertion is the load-bearing one for parallelism. Read it from `kubectl get jobs -l kubeclaw.io/tool=web_search --sort-by=.metadata.creationTimestamp -o jsonpath`.
-- AC5's 1.6× factor accounts for LLM latency variance; tune up (looser) if the model's reasoning tokens dominate, tune down (tighter) if the underlying search backend is the bottleneck.
-- Dispatch fan-out logic: `src/runtime/direct-llm-runner.ts` — look for the `Promise.all` / `Promise.allSettled` around the tool-call loop.
-- LLM-dependence: **yes** (parallel function-calling is an LLM behaviour, not a system property).
-
-status: drafted
-
-## Story 173: User chains a search and a fetch in one ask — `web_search` followed by `web_fetch` in the same turn
-
-**As a** KubeClaw user who wants a deep answer, not just headlines
-**I want** to ask one question that requires both finding sources and reading the best one ("@Andy find the most-cited paper on retrieval-augmented generation and summarize its abstract")
-**So that** the assistant chains `web_search` → `web_fetch` automatically within a single tool-loop iteration, and the reply contains a real abstract rather than only a list of links
-
-### Acceptance criteria
-
-1. Within one user-message turn, the LLM emits a `web_search` call, receives results, then emits a `web_fetch` call whose `url` argument matches one of the URLs in the search result list — verified by comparing both tool calls' arguments in the channel-pod log.
-2. The `web_fetch` URL is selected from the top-3 search results (not result #10) — i.e. the model is using the search ranking, not a random pick.
-3. Both tool-job pods run in the `browser` category and reach `Succeeded`; total in-pod CPU time is logged but not asserted.
-4. The assistant's SSE reply contains a phrase that appears in the fetched page's `<title>` or `<h1>` (case-insensitive substring match) — proving the fetch result reached the model, not just the search snippets.
-5. Per-specialist `maxToolRounds` budget (Story 91) is respected: the tool-loop terminates after the fetch result is summarized; it does NOT chain a third `web_fetch` to a different URL unless explicitly asked.
-
-### Notes for the test author
-
-- New test file: `e2e/minikube-live-search-fetch-chain.test.ts`.
-- The "most-cited paper" phrasing is intentionally vague — the test should accept any well-known RAG paper (e.g. Lewis et al. 2020) as long as the fetched URL's title contains "retrieval-augmented" or "RAG" (case-insensitive).
-- AC2 — capture the search tool result via the channel-pod log (it's serialized as a tool result message) and the fetch URL via the next tool call; assert membership.
-- AC5 — set `maxToolRounds: 4` on the routing config so the model has room for search→fetch→summarize but not unbounded chaining. The default may already be lower; verify in `src/runtime/direct-llm-runner.ts` (`MAX_TOOL_ROUNDS` constant).
-- LLM-dependence: **yes** (the chaining behaviour is an LLM property, dependent on the model's reasoning quality).
-
-status: drafted
+status: tested — places_search impl + e2e/places-search.test.ts (verified 2026-06-07; label was stale)
 
 ## Story 174: Admin bootstraps a new channel via a skill — slim generic pod installs its own packages, configures, then drops superuser
 
@@ -4372,7 +2542,7 @@ The architectural shape — slim base image + per-channel runtime PVC + bootstra
 - **Failure modes worth a dedicated AC if scoped up later**: (a) `npm ci` fails (registry down, mirror misconfigured) — the agent surfaces the error to the admin via SSE, orchestrator destroys the PVC after timeout, no Secret/Deployment created; (b) `commit_channel_config` payload's lock hash doesn't match the manifest — orchestrator rejects, agent gets a structured error and can retry, but cannot bypass the hash check.
 - LLM-dependence: **yes** (the dialogue is driven by the bootstrap pod's live LLM). The admin shell side may stay on a mock LLM via the existing harness.
 
-status: drafted
+status: partial — bootstrap_channel_from_skill + Job/PVC impl + e2e present; slim channel-base image and AC1 image-size check absent (verified 2026-06-07)
 
 ## Story 175: Bootstrap timeout atomically cleans up the partial channel install
 
@@ -4408,7 +2578,7 @@ Story 174 creates three durable cluster objects during a bootstrap: the runtime 
 - LLM-dependence: **no** (the timeout fires before the bootstrap pod makes any LLM call when `BOOTSTRAP_SKILL_TIMEOUT_SECONDS=60` is used).
 - AC5's 60-second grace-period arithmetic: `waitForBootstrapJobCompletion` passes `timeoutMs = (BOOTSTRAP_SKILL_TIMEOUT_SECONDS + 60) * 1000`. With the 60-second test override, the orchestrator polls for up to 120 s; the Job deadline fires at 60 s; K8s updates the Job condition within a few seconds; the orchestrator's polling loop observes `DeadlineExceeded` well within the 120 s window. Document this constant in `bootstrap-runner.ts` with a comment explaining the rationale.
 
-status: drafted
+status: tested — cleanup/timeout/orphan-reconcile in bootstrap-runner.ts + e2e/minikube-live-bootstrap-timeout.test.ts (verified 2026-06-07; label was stale)
 
 ## Story 176: Manifest hash mismatch rejects the commit and poisons no steady-state resources
 
@@ -4445,7 +2615,7 @@ Story 174 AC3 notes that `commit_channel_config` "verifies `runtime_pvc_lock_has
 - The parallel `validate-then-write` pattern in `src/specialists/reconciler.ts` (read ConfigMap, compute, apply) is the structural analogue for the hash check: read the expected value from ConfigMap, independently compute the actual value, compare before any write. Review that file for the async-chain guard pattern (`applyChain`) — a similar guard may be needed in the `commit_channel_config` handler if concurrent calls for the same instance are possible.
 - Unit test: add a case to `src/k8s/ipc-redis.test.ts` that stubs the PVC-read helper to return a mismatched hash and asserts the handler returns `{ code: "MANIFEST_DIVERGENCE", ... }`, calls PVC delete, calls Job terminate, and calls `recordBootstrapManifestMismatch` — without calling Secret create or Deployment create. Integration test: a test in `src/k8s/channel-lifecycle.test.ts` (or a new `bootstrap-hash-validation.integration.test.ts`) that spins up a real PVC with modified `package-lock.json` content and asserts the hash function returns the expected sha256.
 
-status: drafted
+status: tested — MANIFEST_DIVERGENCE rejection + independent PVC hash read + e2e/minikube-live-bootstrap-hash-mismatch.test.ts (verified 2026-06-07; label was stale)
 
 ## Story 177: `remove_channel` deletes per-channel runtime PVCs
 
@@ -4473,7 +2643,7 @@ status: drafted
 - Test harness: helm-install kubeclaw on minikube, port-forward the admin Service, drive via the JSON IPC path. Create PVCs directly with `kubectl apply` for the in-progress bootstrap scenario to avoid needing a real bootstrap run.
 - LLM-dependence: **no** — drive `remove_channel` via the direct JSON tool API, not through natural-language dispatch.
 
-status: drafted
+status: tested — channel-remove.ts deletes runtime PVCs/Jobs + channel-remove.test.ts + remove-channel e2e (verified 2026-06-07; label was stale)
 
 ## Story 178: Admin lists and registers channel manifests at runtime
 
@@ -4514,7 +2684,7 @@ Story 174 introduced the `kubeclaw-channel-manifests` ConfigMap as the source of
 - **Out-of-scope follow-on**: propagation latency — the reconciler writes the live ConfigMap synchronously on mutation (same as `SpecialistReconciler`), so bootstrap pods that start after the write see the new manifest immediately via ConfigMap volume mount. Bootstrap pods already running when the manifest is registered are not affected; they have already consumed the manifest at Job-creation time.
 - **Unit and integration test targets**: `src/channel-manifests/reconciler.test.ts` (unit, stub `configMapApply`), `src/skills/orchestrator/channel-manifest-registry.test.ts` (unit, in-memory SQLite via the existing `db.ts` test helpers). Integration tests in `src/channel-manifests/reconciler.integration.test.ts` should drive the reconciler against a real Kubernetes API server using the existing in-cluster or kubeconfig credentials pattern from `src/specialists/reconciler.test.ts`.
 
-status: drafted
+status: partial — list/register_channel_manifest tools + reconciler implemented; e2e test missing (verified 2026-06-07)
 
 ## Story 179: Admin lists, uploads, and removes bootstrap skills at runtime
 
@@ -4554,7 +2724,7 @@ Story 174 introduced `bootstrap_channel_from_skill` and specified that skills ar
 - **LLM-dependence**: no for the registry test surface (list, register, remove are all below the LLM layer). Yes only if AC5's final verification step chains into a real `bootstrap_channel_from_skill` call to confirm the admin-registered skill is consumable end-to-end — that extension is out of scope for this story's test file; document it as a follow-on.
 - **Out-of-scope follow-ons**: (a) skill versioning — multiple immutable versions of a named skill, selectable by `bootstrap_channel_from_skill`'s `skill_name@version` syntax; (b) signed skills — GPG or Sigstore signatures on skill markdown, verified by the bootstrap pod before execution; (c) `update_bootstrap_skill` — a dedicated upsert path distinct from re-calling `register_bootstrap_skill` with new content; (d) per-skill `pvcSizeGib` frontmatter field overriding the Story 174 default. Stub `TODO` comments for (a) and (b) in `bootstrap-skill-registry.ts`.
 
-status: drafted
+status: partial — list/register/remove_bootstrap_skill tools + reconciler implemented; e2e test missing (verified 2026-06-07)
 
 ## Story 180: `bootstrap_status` surfaces in-progress and recently-completed bootstraps
 
@@ -4596,7 +2766,7 @@ Story 174's `bootstrap_channel_from_skill` hands back a `bootstrapJobId` and bri
 - **Harness**: minikube-live (`e2e/minikube-live-setup.ts` global setup). Use a dedicated Helm release name (e.g. `kubeclaw-bstatus`) with `BOOTSTRAP_HISTORY_RETENTION_HOURS=1` for the retention AC only; other ACs can share the default release.
 - **Unit and integration test targets**: `src/k8s/bootstrap-runner.test.ts` for state machine, filter/limit logic, and `report_step` label truncation; `src/k8s/ipc-redis.test.ts` for `report_step` publish shape and subscriber-side step-map update; `src/db.ts` migration tested by the existing migration test harness (assert `bootstrap_history` table exists with correct columns after migration runs).
 
-status: drafted
+status: tested — bootstrap_status/report_step tools + bootstrap_history table + e2e/minikube-live-bootstrap-status.test.ts (verified 2026-06-07; label was stale)
 
 ## Story 181: `upgrade_channel` performs a blue-green runtime PVC swap with automatic rollback on failure
 
@@ -4643,7 +2813,7 @@ This model reuses the Story 174 bootstrap state machine, the Story 176 hash reco
   - Grace-period durability: if the orchestrator restarts during the 5-minute grace window, the `setTimeout`-scheduled old PVC deletion is lost. A follow-on story should persist the pending deletion in SQLite and resume it on startup, analogous to Story 175's orphan-reconcile pattern.
   - `downgrade_channel` (reverting from v2 to v1 before v1 PVC is deleted): not specified; treat as a follow-on. The `-v1` PVC exists during the grace period, so a downgrade within that window is mechanically possible but requires a separate tool and story.
 
-status: drafted
+status: partial — upgrade_channel + blue-green PVC swap + e2e present; AC4 credential reuse not implemented (verified 2026-06-07)
 
 ## Story 182: Steady-state channel scales to N replicas on RWX storage class, refuses on RWO
 
@@ -4678,7 +2848,7 @@ Story 174 establishes the per-channel runtime PVC (`kubeclaw-channel-<instance>-
 - **Out-of-scope follow-on**: `ReadOnlyMany` as a third access-mode option — some storage classes (NFS-backed) expose `ReadOnlyMany` directly without `ReadWriteMany`. The bootstrap Job would need to mount a staging PVC (RWO) for the `npm ci` phase, then snapshot or copy its contents to the `ReadOnlyMany` PVC before hand-off. This two-PVC bootstrap pattern is a significant lifecycle change; leave it for a dedicated story.
 - **Replica-cap enforcement strategy note**: prefer the HPA-based cap (`maxReplicas: 1`) over an admission webhook to minimise cluster prerequisites — not all test clusters will have a validating admission controller configured for custom CEL policies. The HPA approach is self-contained within the chart. Document in the chart's `NOTES.txt` that the HPA exists solely as a guardrail and is not intended for auto-scaling workloads; operators who want true HPA behaviour should disable the guardrail HPA and install their own.
 
-status: drafted
+status: partial — runtimePvc accessModes + HPA guardrail + e2e present; AC5 INSTALL.md multi-replica docs unverified (verified 2026-06-07)
 
 ## Story 183: Air-gapped bootstrap: npm mirror via credential broker, registry egress denied at steady state
 
@@ -4734,7 +2904,7 @@ The plumbing is config-driven: no changes to `src/credential-broker/` source are
 
 - **Lockfile integrity note for AC5**: the `integrity` field in each `packages` entry of the npm lockfile v3 `package-lock.json` is a `sha512` digest of the tarball as served. If the operator's Verdaccio instance is configured to proxy from the public registry and re-serve tarballs, the digests will match. If the operator publishes privately-scoped packages directly (no proxy), those packages' digests must be computed against the packages Verdaccio actually serves. The test fixture must publish tarballs that produce a `package-lock.json` whose integrity hashes are consistent with what Verdaccio will serve — otherwise `npm ci` fails with `EINTEGRITY` and the test must `xfail` with a message directing the operator to re-generate the lockfile against the mirror.
 
-status: drafted
+status: tested — NPM_CONFIG_REGISTRY injection + bootstrap egress NetworkPolicy + e2e/minikube-live-bootstrap-air-gapped.test.ts (verified 2026-06-07; label was stale)
 
 ## Story 184: Bootstrap audit trail — immutable compliance record of every channel install
 
@@ -4786,4 +2956,4 @@ The clean separation: `bootstrap_history` is mutable and short-lived; `bootstrap
 
 - **Outcome enum enforcement**: the `outcome` column has no SQLite `CHECK` constraint in the schema above (matching the project's convention of not using CHECK constraints, as seen in `tool_jobs` where `status` is unconstrained). Validation of the outcome value against the five legal values (`succeeded | timed-out | manifest-divergence | rejected | error | in-progress`) is the responsibility of the TypeScript type system in `bootstrap-audit.ts` — use a TypeScript union type and an explicit exhaustiveness check in the terminal-row insert path.
 
-status: drafted
+status: partial — bootstrap_audit table + bootstrap_audit_log tool implemented; e2e test missing (verified 2026-06-07)
