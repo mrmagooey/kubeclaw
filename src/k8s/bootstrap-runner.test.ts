@@ -1661,3 +1661,173 @@ describe('bootstrapChannelFromSkill — Story 183: NPM_CONFIG_REGISTRY injection
     expect(envMap['NPM_CONFIG_REGISTRY']).toBe('https://npm.internal.corp');
   });
 });
+
+// ─── Story 181 AC4: credential reuse — upgrade Job references existing Secret ─
+
+function makeUpgradeK8sDepsForAC4() {
+  const createdJobs: Array<{ name: string; body: unknown }> = [];
+  return {
+    coreV1: {
+      readNamespacedPersistentVolumeClaim: vi
+        .fn()
+        .mockRejectedValue({ statusCode: 404 }),
+      createNamespacedPersistentVolumeClaim: vi.fn().mockResolvedValue({}),
+    } as unknown as CoreV1Api,
+    batchV1: {
+      createNamespacedJob: vi
+        .fn()
+        .mockImplementation(
+          ({ body }: { body: { metadata: { name: string } } }) => {
+            createdJobs.push({ name: body.metadata.name, body });
+            return Promise.resolve({});
+          },
+        ),
+    } as unknown as BatchV1Api,
+    appsV1: {
+      readNamespacedDeployment: vi.fn().mockResolvedValue({
+        spec: {
+          template: {
+            spec: {
+              volumes: [
+                {
+                  name: 'runtime',
+                  persistentVolumeClaim: {
+                    claimName: 'kubeclaw-channel-my-tg-runtime-v1',
+                  },
+                },
+              ],
+            },
+          },
+        },
+      }),
+    } as any,
+    createdJobs,
+  };
+}
+
+describe('runUpgrade — Story 181 AC4: credential reuse', () => {
+  it('upgrade Job bootstrap container has envFrom secretRef pointing at existing channel Secret', async () => {
+    const k8sDeps = makeUpgradeK8sDepsForAC4();
+    const active = new Map<string, string>();
+
+    await runUpgrade({
+      instanceName: 'my-tg',
+      targetManifestHash: 'hash123',
+      k8sDeps,
+      namespace: 'test-ns',
+      channelBaseImage: 'kubeclaw-agent:claude',
+      activeBootstraps: active,
+    });
+
+    const jobBody = k8sDeps.createdJobs[0].body as {
+      spec: {
+        template: {
+          spec: {
+            containers: Array<{
+              name: string;
+              envFrom?: Array<{ secretRef: { name: string; optional?: boolean } }>;
+            }>;
+          };
+        };
+      };
+    };
+    const bootstrapContainer = jobBody.spec.template.spec.containers.find(
+      (c) => c.name === 'bootstrap',
+    );
+    expect(bootstrapContainer).toBeTruthy();
+    expect(bootstrapContainer?.envFrom).toBeDefined();
+    expect(bootstrapContainer?.envFrom).toHaveLength(1);
+    expect(bootstrapContainer?.envFrom?.[0].secretRef.name).toBe(
+      'kubeclaw-channel-my-tg-credentials',
+    );
+    // optional:true so the Job is not blocked when Secret doesn't yet exist
+    expect(bootstrapContainer?.envFrom?.[0].secretRef.optional).toBe(true);
+  });
+
+  it('upgrade Job does NOT inject envFrom when injectCredentialSecret=false', async () => {
+    const k8sDeps = makeUpgradeK8sDepsForAC4();
+    const active = new Map<string, string>();
+
+    await runUpgrade({
+      instanceName: 'my-tg',
+      targetManifestHash: 'hash123',
+      k8sDeps,
+      namespace: 'test-ns',
+      channelBaseImage: 'kubeclaw-agent:claude',
+      activeBootstraps: active,
+      injectCredentialSecret: false,
+    });
+
+    const jobBody = k8sDeps.createdJobs[0].body as {
+      spec: {
+        template: {
+          spec: {
+            containers: Array<{
+              name: string;
+              envFrom?: unknown[];
+            }>;
+          };
+        };
+      };
+    };
+    const bootstrapContainer = jobBody.spec.template.spec.containers.find(
+      (c) => c.name === 'bootstrap',
+    );
+    // No envFrom (or empty)
+    expect(
+      !bootstrapContainer?.envFrom || bootstrapContainer.envFrom.length === 0,
+    ).toBe(true);
+  });
+
+  it('credential Secret name is derived from the instance name', async () => {
+    const k8sDeps = makeUpgradeK8sDepsForAC4();
+    // Override to return a different PVC name
+    (k8sDeps.appsV1 as any).readNamespacedDeployment = vi
+      .fn()
+      .mockResolvedValue({
+        spec: {
+          template: {
+            spec: {
+              volumes: [
+                {
+                  name: 'runtime',
+                  persistentVolumeClaim: {
+                    claimName: 'kubeclaw-channel-prod-bot-runtime',
+                  },
+                },
+              ],
+            },
+          },
+        },
+      });
+    const active = new Map<string, string>();
+
+    await runUpgrade({
+      instanceName: 'prod-bot',
+      targetManifestHash: 'hash456',
+      k8sDeps,
+      namespace: 'test-ns',
+      channelBaseImage: 'kubeclaw-agent:claude',
+      activeBootstraps: active,
+    });
+
+    const jobBody = k8sDeps.createdJobs[0].body as {
+      spec: {
+        template: {
+          spec: {
+            containers: Array<{
+              name: string;
+              envFrom?: Array<{ secretRef: { name: string } }>;
+            }>;
+          };
+        };
+      };
+    };
+    const bootstrapContainer = jobBody.spec.template.spec.containers.find(
+      (c) => c.name === 'bootstrap',
+    );
+    expect(bootstrapContainer?.envFrom?.[0].secretRef.name).toBe(
+      'kubeclaw-channel-prod-bot-credentials',
+    );
+  });
+});

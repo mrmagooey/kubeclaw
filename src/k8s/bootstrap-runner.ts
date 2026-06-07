@@ -469,6 +469,20 @@ export interface RunUpgradeOpts {
   directLlmModel?: string;
   /** Story 183: optional npm mirror registry URL. See BootstrapChannelFromSkillOpts.npmRegistry. */
   npmRegistry?: string;
+  /**
+   * Story 181 AC4: credential reuse.
+   *
+   * When true (the default), the upgrade Job's bootstrap container sources the
+   * existing channel Secret `kubeclaw-channel-<instance>-credentials` as
+   * `envFrom: [{ secretRef }]`.  The skill validates the credentials with
+   * `local_bash` and, if they pass, calls `commit_channel_config` immediately
+   * without prompting the admin for already-known fields.
+   *
+   * Set to false only in tests that pre-date the Secret or when the Secret is
+   * known not to exist (first-ever bootstrap, though that path uses
+   * bootstrapChannelFromSkill, not runUpgrade).
+   */
+  injectCredentialSecret?: boolean;
 }
 
 export interface RunUpgradeResult {
@@ -621,6 +635,16 @@ export async function runUpgrade(
     envVars.push({ name: 'NPM_CONFIG_REGISTRY', value: upgradeNpmRegistry });
   }
 
+  // Story 181 AC4: credential reuse.
+  // Source the existing channel Secret so the skill can validate credentials
+  // and skip the interactive admin dialogue for already-known fields.
+  // `injectCredentialSecret` defaults to true (opt-out rather than opt-in).
+  const credentialSecretName = `kubeclaw-channel-${instanceName}-credentials`;
+  const injectCredentialSecret = opts.injectCredentialSecret !== false;
+  const bootstrapEnvFrom = injectCredentialSecret
+    ? [{ secretRef: { name: credentialSecretName, optional: true } }]
+    : [];
+
   // ── Create upgrade bootstrap Job ────────────────────────────────────────────
   const jobBody = {
     apiVersion: 'batch/v1',
@@ -676,6 +700,13 @@ export async function runUpgrade(
               image: channelBaseImage,
               imagePullPolicy: 'IfNotPresent',
               env: envVars,
+              // Story 181 AC4: source existing credentials from the channel
+              // Secret so the skill can reuse them without admin interaction.
+              // `optional: true` ensures the Job is not blocked if the Secret
+              // does not yet exist (guard against first-ever upgrade edge case).
+              ...(bootstrapEnvFrom.length > 0
+                ? { envFrom: bootstrapEnvFrom }
+                : {}),
               volumeMounts: [
                 { name: 'runtime', mountPath: '/runtime' },
                 { name: 'skills', mountPath: '/workspace/skills' },
@@ -707,7 +738,7 @@ export async function runUpgrade(
     body: jobBody as any,
   });
   logger.info(
-    { jobName, upgradeJobId, instanceName },
+    { jobName, upgradeJobId, instanceName, credentialSecretName, injectCredentialSecret },
     'runUpgrade: upgrade Job created',
   );
 
