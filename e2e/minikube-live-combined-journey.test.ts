@@ -94,12 +94,16 @@ async function pollStream(
   redis: Redis,
   stream: string,
   timeoutMs: number,
+  sinceMs: number,
 ): Promise<Record<string, string>> {
   const deadline = Date.now() + timeoutMs;
   return new Promise((resolve, reject) => {
     const check = async () => {
       try {
-        const entries = await redis.xrange(stream, '-', '+');
+        // Read only entries with an ID at/after sinceMs. Redis stream IDs are
+        // "<ms>-<seq>", so "<sinceMs>-0" is an inclusive lower bound; this
+        // rejects stale entries left over from a previous run on the same id.
+        const entries = await redis.xrange(stream, `${sinceMs}-0`, '+');
         if (entries.length > 0) {
           const [, fields] = entries[entries.length - 1];
           const obj: Record<string, string> = {};
@@ -134,6 +138,7 @@ async function waitForPodReady(label: string, timeoutMs: number): Promise<boolea
 describe('Minikube-live: combined journey across one agent channel', () => {
   let provisioned = false;
   let redis: Redis | null = null;
+  let capabilityInstalled = false;
 
   beforeAll(async () => {
     for (let i = 0; i < 10; i++) {
@@ -169,7 +174,8 @@ describe('Minikube-live: combined journey across one agent channel', () => {
   }, 120_000);
 
   afterAll(async () => {
-    if (redis) {
+    if (!redis) return;
+    if (capabilityInstalled) {
       try {
         await redis.xadd(
           'kubeclaw:task-requests', '*',
@@ -179,8 +185,8 @@ describe('Minikube-live: combined journey across one agent channel', () => {
           'name', JOURNEY_CAP_NAME,
         );
       } catch { /* best-effort */ }
-      try { await redis.quit(); } catch { /* ignore */ }
     }
+    try { await redis.quit(); } catch { /* ignore */ }
   });
 
   it('Stage 0: channel pod is Ready and runs the orchestrator image', async () => {
@@ -214,6 +220,7 @@ describe('Minikube-live: combined journey across one agent channel', () => {
       'isMain', 'true',
       'spec', JSON.stringify(spec),
     );
+    capabilityInstalled = true;
 
     const ready = await waitForPodReady(CAP_LABEL, 240_000);
     expect(ready, `capability pod (${CAP_LABEL}) not Ready within 240 s`).toBe(true);
@@ -222,12 +229,24 @@ describe('Minikube-live: combined journey across one agent channel', () => {
     expect(svc.ok, `Service ${CAP_SERVICE} not found: ${svc.stderr}`).toBe(true);
     expect(svc.stdout.trim()).toBe(CAP_SERVICE);
 
-    await new Promise((r) => setTimeout(r, 5000));
-
-    const logs = kubectl(['logs', '-n', NAMESPACE, 'deployment/kubeclaw-channel-http', '--tail=2000']);
-    expect(logs.ok, `kubectl logs failed: ${logs.stderr}`).toBe(true);
-    expect(logs.stdout, 'channel logs should mention capabilities_update or the capability name')
-      .toMatch(/capabilities_update|Connected to MCP server|journey-test-mcp/i);
+    // Poll the channel logs until they reflect the capability connection rather
+    // than sleeping a fixed interval — the connect happens asynchronously after
+    // the pod is Ready and can take a few seconds.
+    const logPattern = /capabilities_update|Connected to MCP server|journey-test-mcp/i;
+    const logDeadline = Date.now() + 60_000;
+    let logsMatched = false;
+    let lastLogs = '';
+    while (Date.now() < logDeadline) {
+      const logs = kubectl(['logs', '-n', NAMESPACE, 'deployment/kubeclaw-channel-http', '--tail=2000']);
+      if (logs.ok) {
+        lastLogs = logs.stdout;
+        if (logPattern.test(logs.stdout)) { logsMatched = true; break; }
+      } else {
+        lastLogs = `kubectl logs failed: ${logs.stderr}`;
+      }
+      await new Promise((r) => setTimeout(r, 3000));
+    }
+    expect(logsMatched, `channel logs never mentioned the capability within 60 s:\n${lastLogs.slice(-500)}`).toBe(true);
   }, 300_000);
 
   it('Stage 2: execute_agent bypass spawns a kubeclaw-agent Job and returns a result', async () => {
@@ -267,7 +286,7 @@ describe('Minikube-live: combined journey across one agent channel', () => {
     expect(agentImage, 'agent image must be the consolidated :latest tag').toMatch(/kubeclaw-agent:latest$/);
     expect(agentImage, 'retired per-provider tag must not be used').not.toMatch(/kubeclaw-agent:(claude|openrouter)/);
 
-    const result = await pollStream(redis!, resultStream, 300_000);
+    const result = await pollStream(redis!, resultStream, 300_000, startMs);
     expect.soft(result.result ?? '', 'agent-job result field must be non-empty').toBeTruthy();
     console.log(`Stage 2: result (first 200): ${(result.result ?? '').slice(0, 200)}`);
   }, 600_000);
