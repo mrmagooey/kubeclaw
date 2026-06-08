@@ -954,26 +954,6 @@ export default async function setup() {
     // Force rebuild when src/, container/, or root build files change.
     ['src', 'container', 'package.json', 'tsconfig.json'],
   );
-  // The bootstrap subsystem and committed channel Deployments deploy the agent
-  // image under the per-provider tag `kubeclaw-agent:claude` (see config.ts
-  // getContainerImage('claude') and admin-shell.ts bootstrap runner). The build
-  // above produces `kubeclaw-agent:latest`, so alias `:claude` to the freshly
-  // built `:latest` on every setup — otherwise bootstrap pods run a stale image.
-  console.log('🏷️  Tagging kubeclaw-agent:latest → kubeclaw-agent:claude...');
-  const retag = spawnSync(
-    'bash',
-    [
-      '-c',
-      'eval $(minikube docker-env) && docker tag kubeclaw-agent:latest kubeclaw-agent:claude',
-    ],
-    { encoding: 'utf8' },
-  );
-  if (retag.status !== 0) {
-    throw new Error(
-      `failed to tag kubeclaw-agent:claude (exit ${retag.status}): ${retag.stderr}`,
-    );
-  }
-  console.log('✅ kubeclaw-agent:claude aliased to latest\n');
   // The orchestrator image is also used by channel pods (different command).
   await ensureImage(
     'kubeclaw-orchestrator:latest',
@@ -1003,8 +983,8 @@ export default async function setup() {
     'e2e/fixtures/test-oauth-provider',
   );
   // Bootstrap Jobs and steady-state channel pods share the generic agent image
-  // (kubeclaw-agent:claude, aliased to latest above). The image's channel-loader.js
-  // dispatches on KUBECLAW_BOOTSTRAP_SKILL / presence of /runtime/channel-entry.js,
+  // (kubeclaw-agent:latest). The image's channel-loader.js dispatches on
+  // KUBECLAW_BOOTSTRAP_SKILL / presence of /runtime/channel-entry.js,
   // so no separate channel-base image is needed.
 
   try {

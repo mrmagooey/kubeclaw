@@ -352,13 +352,14 @@ async function buildAndPushImages(
 ): Promise<boolean> {
   try {
     // Determine which build script flag to use
-    // Use --all when pushing to registry (full build), --claude-only for minimal local deployment
-    const buildFlag = registry ? '--all' : '--claude-only';
+    // Use --all when pushing to registry (full build); no flag builds just the
+    // agent image (kubeclaw-agent:latest) for minimal local deployment.
+    const buildFlag = registry ? '--all' : '';
     logger.info({ buildFlag }, 'Building container images via build script');
 
     // Run the build script from project root
     execSync(
-      `${path.join(projectRoot, 'container', 'build.sh')} ${buildFlag}`,
+      `${path.join(projectRoot, 'container', 'build.sh')} ${buildFlag}`.trim(),
       {
         cwd: projectRoot,
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -380,9 +381,9 @@ async function buildAndPushImages(
         return false;
       }
 
-      // Tag and push Claude agent
-      const localTag = 'kubeclaw-agent:claude';
-      const remoteTag = `${registry}/kubeclaw-agent:claude`;
+      // Tag and push agent image
+      const localTag = 'kubeclaw-agent:latest';
+      const remoteTag = `${registry}/kubeclaw-agent:latest`;
 
       try {
         execSync(`docker tag ${localTag} ${remoteTag}`, {
@@ -399,10 +400,6 @@ async function buildAndPushImages(
 
       // Tag and push other images if they exist
       const imagesToPush = [
-        {
-          local: 'kubeclaw-agent:openrouter',
-          remote: 'kubeclaw-agent:openrouter',
-        },
         {
           local: 'kubeclaw-file-adapter:latest',
           remote: 'kubeclaw-file-adapter:latest',

@@ -22,34 +22,61 @@ describe('getContainerImage', () => {
 
   beforeEach(() => {
     process.env = { ...originalEnv };
-    delete process.env.CLAUDE_CONTAINER_IMAGE;
-    delete process.env.OPENROUTER_CONTAINER_IMAGE;
+    delete process.env.KUBECLAW_CONTAINER_IMAGE;
+    delete process.env.KUBECLAW_CONTAINER_IMAGE_CLAUDE;
+    delete process.env.KUBECLAW_CONTAINER_IMAGE_OPENROUTER;
+    delete process.env.KUBECLAW_CONTAINER_IMAGE_OPENAI;
+    delete process.env.KUBECLAW_CONTAINER_IMAGE_OLLAMA;
   });
 
   afterEach(() => {
     process.env = originalEnv;
   });
 
-  it('returns claude image for claude provider', () => {
+  it('returns kubeclaw-agent:latest for claude provider', () => {
     const result = getContainerImage('claude');
-    expect(result).toBe('kubeclaw-agent:claude');
+    expect(result).toBe('kubeclaw-agent:latest');
   });
 
-  it('returns openrouter image for openrouter provider', () => {
+  it('returns kubeclaw-agent:latest for openrouter provider', () => {
     const result = getContainerImage('openrouter');
-    expect(result).toBe('kubeclaw-agent:openrouter');
+    expect(result).toBe('kubeclaw-agent:latest');
   });
 
-  it('uses env override for claude provider', () => {
-    process.env.CLAUDE_CONTAINER_IMAGE = 'custom-claude:latest';
+  it('returns kubeclaw-agent:latest for openai provider', () => {
+    const result = getContainerImage('openai');
+    expect(result).toBe('kubeclaw-agent:latest');
+  });
+
+  it('returns kubeclaw-agent:latest for ollama provider', () => {
+    const result = getContainerImage('ollama');
+    expect(result).toBe('kubeclaw-agent:latest');
+  });
+
+  it('uses per-provider env override via KUBECLAW_CONTAINER_IMAGE_<PROVIDER>', () => {
+    process.env.KUBECLAW_CONTAINER_IMAGE_CLAUDE = 'custom-claude:latest';
     const result = getContainerImage('claude');
     expect(result).toBe('custom-claude:latest');
   });
 
-  it('uses env override for openrouter provider', () => {
-    process.env.OPENROUTER_CONTAINER_IMAGE = 'custom-openrouter:latest';
+  it('uses global env override via KUBECLAW_CONTAINER_IMAGE', () => {
+    process.env.KUBECLAW_CONTAINER_IMAGE = 'my-registry/kubeclaw-agent:v2';
     const result = getContainerImage('openrouter');
-    expect(result).toBe('custom-openrouter:latest');
+    expect(result).toBe('my-registry/kubeclaw-agent:v2');
+  });
+
+  it('per-provider override takes precedence over global override', () => {
+    process.env.KUBECLAW_CONTAINER_IMAGE = 'my-registry/kubeclaw-agent:v2';
+    process.env.KUBECLAW_CONTAINER_IMAGE_CLAUDE = 'custom-claude:latest';
+    const result = getContainerImage('claude');
+    expect(result).toBe('custom-claude:latest');
+  });
+
+  it('falls through to default when an override is set but empty', () => {
+    process.env.KUBECLAW_CONTAINER_IMAGE_CLAUDE = '';
+    process.env.KUBECLAW_CONTAINER_IMAGE = '';
+    const result = getContainerImage('claude');
+    expect(result).toBe('kubeclaw-agent:latest');
   });
 });
 

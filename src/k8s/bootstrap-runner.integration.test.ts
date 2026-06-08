@@ -345,7 +345,7 @@ describe('processCommitChannelConfig (bootstrap commit integration)', () => {
       payload,
       deps,
       'kubeclaw-test',
-      'kubeclaw-agent:claude',
+      'kubeclaw-agent:latest',
     );
 
     expect(deps.createdSecrets).toHaveLength(1);
@@ -359,7 +359,7 @@ describe('processCommitChannelConfig (bootstrap commit integration)', () => {
       payload,
       deps,
       'kubeclaw-test',
-      'kubeclaw-agent:claude',
+      'kubeclaw-agent:latest',
     );
 
     expect(deps.createdSecrets[0].name).toBe(
@@ -375,7 +375,7 @@ describe('processCommitChannelConfig (bootstrap commit integration)', () => {
       payload,
       deps,
       'kubeclaw-test',
-      'kubeclaw-agent:claude',
+      'kubeclaw-agent:latest',
     );
 
     expect(deps.createdSecrets[0].data).toEqual({
@@ -388,7 +388,7 @@ describe('processCommitChannelConfig (bootstrap commit integration)', () => {
       payload,
       deps,
       'kubeclaw-test',
-      'kubeclaw-agent:claude',
+      'kubeclaw-agent:latest',
     );
 
     expect(deps.releasedInstances).toContain('tg-integ');
@@ -408,7 +408,7 @@ describe('processCommitChannelConfig (bootstrap commit integration)', () => {
         },
       },
       'kubeclaw-test',
-      'kubeclaw-agent:claude',
+      'kubeclaw-agent:latest',
     );
 
     expect(activeBootstraps.has('tg-integ')).toBe(false);
@@ -419,7 +419,7 @@ describe('processCommitChannelConfig (bootstrap commit integration)', () => {
       payload,
       deps,
       'kubeclaw-test',
-      'kubeclaw-agent:claude',
+      'kubeclaw-agent:latest',
     );
 
     expect(deps.sseMessages).toHaveLength(1);
@@ -439,7 +439,7 @@ describe('processCommitChannelConfig (bootstrap commit integration)', () => {
       payload,
       failDeps,
       'kubeclaw-test',
-      'kubeclaw-agent:claude',
+      'kubeclaw-agent:latest',
     );
 
     expect(deps.createdDeployments).toHaveLength(0);

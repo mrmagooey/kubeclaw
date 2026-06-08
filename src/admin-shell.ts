@@ -1200,7 +1200,7 @@ async function handleBootstrapChannelFromSkill(
     const k8sDeps: BootstrapK8sDeps = { coreV1, batchV1 };
 
     const channelBaseImage =
-      process.env.KUBECLAW_BOOTSTRAP_AGENT_IMAGE || 'kubeclaw-agent:claude';
+      process.env.KUBECLAW_BOOTSTRAP_AGENT_IMAGE || 'kubeclaw-agent:latest';
 
     const result = await bootstrapChannelFromSkill({
       skillName,
@@ -1401,7 +1401,7 @@ async function handleUpgradeChannel(input: ToolInput): Promise<string> {
     const k8sDeps = { coreV1, batchV1, appsV1 };
 
     const channelBaseImage =
-      process.env.KUBECLAW_BOOTSTRAP_AGENT_IMAGE || 'kubeclaw-agent:claude';
+      process.env.KUBECLAW_BOOTSTRAP_AGENT_IMAGE || 'kubeclaw-agent:latest';
 
     const result = await runUpgrade({
       instanceName,

@@ -30,12 +30,7 @@ vi.mock('../config.js', () => ({
   CREDENTIAL_SIDECAR_IMAGE: 'envoyproxy/envoy:v1.31-latest',
   CREDENTIAL_SIDECAR_PORT: 8443,
   assertToolImageAllowed: vi.fn(),
-  getContainerImage: vi.fn((provider: string) => {
-    if (provider === 'openrouter') {
-      return 'kubeclaw-agent:openrouter';
-    }
-    return 'kubeclaw-agent:claude';
-  }),
+  getContainerImage: vi.fn(() => 'kubeclaw-agent:latest'),
   getInjectionMode: vi.fn(() => {
     const raw = process.env.CREDENTIAL_INJECTION_MODE;
     if (raw === 'sidecar' || raw === 'istio') return raw;
@@ -204,7 +199,7 @@ describe('JobRunner', () => {
       expect(manifest.metadata?.name).toBe('test-job');
       expect(manifest.metadata?.namespace).toBe('kubeclaw');
       expect(manifest.spec?.template?.spec?.containers?.[0]?.image).toBe(
-        'kubeclaw-agent:claude',
+        'kubeclaw-agent:latest',
       );
       expect(manifest.spec?.template?.spec?.restartPolicy).toBe('Never');
     });
@@ -264,7 +259,7 @@ describe('JobRunner', () => {
       expect(volumes.some((v) => v.name === 'project-pvc')).toBe(true);
     });
 
-    it('should use openrouter image when provider is openrouter', () => {
+    it('should use kubeclaw-agent:latest image when provider is openrouter', () => {
       const spec = {
         name: 'test-job',
         groupFolder: 'test-group',
@@ -277,7 +272,7 @@ describe('JobRunner', () => {
 
       const manifest = jobRunner.generateJobManifest(spec);
       expect(manifest.spec?.template?.spec?.containers?.[0]?.image).toBe(
-        'kubeclaw-agent:openrouter',
+        'kubeclaw-agent:latest',
       );
     });
 

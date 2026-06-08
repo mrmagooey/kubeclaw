@@ -694,27 +694,7 @@ The OpenRouter implementation provides equivalent functionality to Claude but th
 
 ## Container Structure
 
-```
-container/
-├── Dockerfile.openrouter          # Multi-stage build for OpenRouter agent
-└── agent-runner-openrouter/
-    ├── package.json               # OpenAI SDK + MCP dependencies
-    ├── tsconfig.json
-    └── src/
-        ├── index.ts               # Main entry point (manual agent loop)
-        └── ipc-mcp-stdio.ts       # MCP server for tool handling
-```
-
-## Key Differences from Claude Runner
-
-| Aspect                 | Claude Runner                    | OpenRouter Runner               |
-| ---------------------- | -------------------------------- | ------------------------------- |
-| **SDK**                | `@anthropic-ai/claude-agent-sdk` | `openai`                        |
-| **Agent Loop**         | SDK-managed recursive `EZ()`     | Manual while loop in `index.ts` |
-| **Tool System**        | Built into SDK                   | MCP (Model Context Protocol)    |
-| **Response Format**    | Custom SDK events                | OpenAI chat completions         |
-| **Session Management** | SDK-managed                      | Custom SQLite-backed            |
-| **Streaming**          | Partial message streaming        | Response-level streaming        |
+All LLM providers share the single canonical agent image built from `container/Dockerfile` using the `container/agent-runner/` source. There is no separate per-provider image.
 
 ## The Manual Conversation Loop
 
@@ -994,15 +974,21 @@ const allowedTools = containerInput.allowedTools || [
 The orchestrator determines which provider to use per group:
 
 ```typescript
-// src/container-runner.ts
+// src/config.ts
 function getGroupProvider(group: RegisteredGroup): LLMProvider {
-  return group.llmProvider || DEFAULT_LLM_PROVIDER; // 'claude' or 'openrouter'
+  return group.llmProvider || DEFAULT_LLM_PROVIDER;
 }
 
-function getContainerImage(provider: LLMProvider): string {
-  return provider === 'openrouter'
-    ? 'kubeclaw-agent:openrouter'
-    : 'kubeclaw-agent:claude';
+// All known providers share the same multi-provider agent image.
+// Override per-provider with KUBECLAW_CONTAINER_IMAGE_<PROVIDER>, or
+// globally with KUBECLAW_CONTAINER_IMAGE.
+export function getContainerImage(provider: LLMProvider): string {
+  const envKey = `KUBECLAW_CONTAINER_IMAGE_${provider.toUpperCase().replace(/[^A-Z0-9]/g, '_')}`;
+  return (
+    process.env[envKey] ??
+    process.env.KUBECLAW_CONTAINER_IMAGE ??
+    'kubeclaw-agent:latest'
+  );
 }
 ```
 

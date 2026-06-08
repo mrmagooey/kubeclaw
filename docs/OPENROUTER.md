@@ -56,9 +56,6 @@ OPENROUTER_HTTP_REFERER=https://yourdomain.com
 # Optional: App title (shown in OpenRouter dashboard)
 OPENROUTER_X_TITLE=My KubeClaw Instance
 
-# Optional: Container image for OpenRouter agents
-OPENROUTER_CONTAINER_IMAGE=kubeclaw-agent:openrouter
-
 # Optional: Default LLM provider for all groups
 DEFAULT_LLM_PROVIDER=openrouter
 ```
@@ -180,13 +177,13 @@ OPENROUTER_MODEL=openai/gpt-4o-mini npm run dev
 
 #### Container Fails to Start
 
-**Cause**: OpenRouter container image not built.
+**Cause**: The `kubeclaw-agent:latest` image has not been built.
 
 **Solution**:
 
 ```bash
-# Build the OpenRouter container
-./container/build.sh openrouter
+# Build the agent image (supports all providers including OpenRouter)
+./container/build.sh
 ```
 
 ### Network Timeouts

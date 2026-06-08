@@ -66,16 +66,12 @@ OPENROUTER_MODEL=openai/gpt-4o
 DEFAULT_LLM_PROVIDER=openrouter
 ```
 
-### Step 2: Build OpenRouter Container
+### Step 2: Build the Agent Container
+
+The canonical `kubeclaw-agent:latest` image supports all providers including OpenRouter. If you haven't built it yet:
 
 ```bash
-./container/build.sh openrouter
-```
-
-Or if using Docker directly:
-
-```bash
-docker build -t kubeclaw-agent:openrouter -f container/Dockerfile.openrouter .
+./container/build.sh
 ```
 
 ### Step 3: Test the Setup
@@ -300,16 +296,6 @@ sqlite3 store/messages.db "UPDATE registered_groups SET llm_provider = 'openrout
 1. Reduce `MAX_CONCURRENT_CONTAINERS`
 2. Upgrade OpenRouter plan
 3. Switch some groups back to Claude
-
-### Container Image Issues
-
-**Error**: `Error: No such image: kubeclaw-agent:openrouter`
-
-**Fix**:
-
-```bash
-./container/build.sh openrouter
-```
 
 ## Best Practices
 

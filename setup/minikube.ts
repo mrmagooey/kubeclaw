@@ -289,10 +289,10 @@ function getMinikubeDockerEnv(profile: string): Record<string, string> {
 async function buildImages(projectRoot: string, dockerEnv: Record<string, string>): Promise<void> {
   const mergedEnv = { ...process.env, ...dockerEnv };
 
-  // Build agent image(s) via build.sh
+  // Build agent image via build.sh (no flag builds just kubeclaw-agent:latest)
   const buildScript = path.join(projectRoot, 'container', 'build.sh');
   logger.info('Building kubeclaw-agent image inside minikube daemon');
-  const agentResult = spawnSync(buildScript, ['--claude-only'], {
+  const agentResult = spawnSync(buildScript, [], {
     cwd: projectRoot,
     env: mergedEnv,
     stdio: 'inherit',

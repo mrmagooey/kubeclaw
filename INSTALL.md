@@ -199,11 +199,11 @@ These control the resource requests/limits for each tool Job pod.
 
 | Variable                     | Default                     | Description                                   |
 | ---------------------------- | --------------------------- | --------------------------------------------- |
-| `CONTAINER_TIMEOUT`          | `1800000`                   | Max agent runtime in ms (30 min)              |
-| `CONTAINER_MAX_OUTPUT_SIZE`  | `10485760`                  | Max agent output in bytes (10 MB)             |
-| `IDLE_TIMEOUT`               | `1800000`                   | Idle timeout after last result in ms (30 min) |
-| `CLAUDE_CONTAINER_IMAGE`     | `kubeclaw-agent:claude`     | Image for Claude-backed agents                |
-| `OPENROUTER_CONTAINER_IMAGE` | `kubeclaw-agent:openrouter` | Image for OpenRouter-backed agents            |
+| `CONTAINER_TIMEOUT`                        | `1800000`               | Max agent runtime in ms (30 min)                                            |
+| `CONTAINER_MAX_OUTPUT_SIZE`                | `10485760`              | Max agent output in bytes (10 MB)                                           |
+| `IDLE_TIMEOUT`                             | `1800000`               | Idle timeout after last result in ms (30 min)                               |
+| `KUBECLAW_CONTAINER_IMAGE`                 | `kubeclaw-agent:latest` | Global agent image override (all providers)                                 |
+| `KUBECLAW_CONTAINER_IMAGE_<PROVIDER>`      | *(unset)*               | Per-provider image override, e.g. `KUBECLAW_CONTAINER_IMAGE_CLAUDE`. Takes precedence over the global override. |
 
 ### Channel Integrations
 

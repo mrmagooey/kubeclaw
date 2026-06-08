@@ -116,23 +116,16 @@ export const defaultLLMConfig: LLMConfig = {
 };
 
 // Container image selection based on LLM provider.
-// Built-in providers map to known images; unknown providers look for a
-// KUBECLAW_CONTAINER_IMAGE_<PROVIDER> env var and fall back to the claude image.
+// All known providers share the same multi-provider agent image.
+// Override per-provider with KUBECLAW_CONTAINER_IMAGE_<PROVIDER>, or
+// globally with KUBECLAW_CONTAINER_IMAGE.
 export function getContainerImage(provider: LLMProvider): string {
-  if (provider === 'openrouter')
-    return (
-      process.env.OPENROUTER_CONTAINER_IMAGE || 'kubeclaw-agent:openrouter'
-    );
-  if (provider === 'claude')
-    return process.env.CLAUDE_CONTAINER_IMAGE || 'kubeclaw-agent:claude';
-  if (provider === 'openai')
-    return process.env.OPENAI_CONTAINER_IMAGE || 'kubeclaw-agent:latest';
-  if (provider === 'ollama')
-    return process.env.OLLAMA_CONTAINER_IMAGE || 'kubeclaw-agent:latest';
   const envKey = `KUBECLAW_CONTAINER_IMAGE_${provider.toUpperCase().replace(/[^A-Z0-9]/g, '_')}`;
+  // Use `||` (not `??`) so a blank env var falls through rather than yielding an
+  // empty image name that would fail k8s pod-spec validation.
   return (
-    process.env[envKey] ??
-    process.env.KUBECLAW_CONTAINER_IMAGE ??
+    process.env[envKey] ||
+    process.env.KUBECLAW_CONTAINER_IMAGE ||
     'kubeclaw-agent:latest'
   );
 }

@@ -20,7 +20,7 @@
  *   AC1: bootstrap Job created with KUBECLAW_BOOTSTRAP_SKILL=bootstrap-http-echo
  *   AC2: bootstrap pod completes (Job condition Complete=True)
  *   AC3: commit_channel_config succeeds (no MANIFEST_DIVERGENCE rejection)
- *   AC4: steady-state Deployment created with kubeclaw-agent:claude image,
+ *   AC4: steady-state Deployment created with kubeclaw-agent:latest image,
  *        runtime PVC mounted read-only at /runtime, no KUBECLAW_SUPERUSER env
  *   AC5: HTTP GET / against the channel pod returns 200 with a JSON body
  *        containing the channel instance name
@@ -460,7 +460,7 @@ describe('Minikube-live: bootstrap HTTP-echo channel end-to-end', () => {
     // AC4: the Deployment uses the generic agent image (NOT a per-channel
     // image), the runtime PVC is mounted read-only, and KUBECLAW_SUPERUSER
     // is not set on the container.
-    expect(deployYaml).toContain('kubeclaw-agent:claude');
+    expect(deployYaml).toContain('kubeclaw-agent:latest');
     expect(deployYaml).toContain('readOnly: true');
     expect(deployYaml).not.toContain('KUBECLAW_SUPERUSER');
     expect(deployYaml).not.toContain('KUBECLAW_BOOTSTRAP_SKILL');
