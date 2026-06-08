@@ -183,12 +183,15 @@ describe('Minikube-live: combined journey across one agent channel', () => {
     }
   });
 
-  it('Stage 0: channel pod is Ready and runs kubeclaw-agent:latest', async () => {
+  it('Stage 0: channel pod is Ready and runs the orchestrator image', async () => {
     expect(provisioned, 'globalSetup port-forward not live').toBe(true);
 
     const ready = await waitForPodReady(CHANNEL_LABEL, 120_000);
     expect(ready, `channel pod (${CHANNEL_LABEL}) not Ready within 120 s`).toBe(true);
 
+    // Channel pods run the orchestrator image (helm channel-pods.yaml), NOT the
+    // agent image. The kubeclaw-agent:latest consolidation invariant is asserted
+    // on the spawned agent Job in Stage 2, where an agent pod actually exists.
     const img = kubectl([
       'get', 'pods', '-n', NAMESPACE, '-l', CHANNEL_LABEL,
       '-o', 'jsonpath={.items[0].spec.containers[?(@.name=="channel")].image}',
@@ -196,8 +199,7 @@ describe('Minikube-live: combined journey across one agent channel', () => {
     expect(img.ok, `kubectl get image failed: ${img.stderr}`).toBe(true);
     const image = img.stdout.trim();
     console.log(`channel container image: ${image}`);
-    expect(image, 'channel image must be the consolidated :latest tag').toMatch(/kubeclaw-agent:latest$/);
-    expect(image, 'stale per-provider image tag must not be used').not.toMatch(/kubeclaw-agent:(claude|openrouter)/);
+    expect(image, 'channel image should be the orchestrator image').toMatch(/kubeclaw-orchestrator:/);
   }, 150_000);
 
   it('Stage 1: capability installs and the channel connects to it', async () => {
@@ -250,6 +252,20 @@ describe('Minikube-live: combined journey across one agent channel', () => {
     const jobName = await waitForJob(AGENT_LABEL, 240_000, startMs);
     expect(jobName, `No kubeclaw-agent Job (${AGENT_LABEL}) appeared within 240 s`).not.toBeNull();
     console.log(`Stage 2: kubeclaw-agent Job appeared: ${jobName}`);
+
+    // Consolidation invariant: the "agent" container in the spawned Job's pod
+    // template runs kubeclaw-agent:latest, never the retired :claude/:openrouter
+    // tags. Read from the Job object (persists via ttlSecondsAfterFinished), not
+    // the pod — the pod carries only app=kubeclaw-agent (no group label, see
+    // job-runner.ts JOB_LABELS) and is GC'd seconds after a trivial echo finishes.
+    const agentImgRes = kubectl([
+      'get', 'job', jobName!, '-n', NAMESPACE,
+      '-o', 'jsonpath={.spec.template.spec.containers[?(@.name=="agent")].image}',
+    ]);
+    const agentImage = agentImgRes.stdout.trim();
+    console.log(`Stage 2: agent container image: ${agentImage || '(not capturable)'}`);
+    expect(agentImage, 'agent image must be the consolidated :latest tag').toMatch(/kubeclaw-agent:latest$/);
+    expect(agentImage, 'retired per-provider tag must not be used').not.toMatch(/kubeclaw-agent:(claude|openrouter)/);
 
     const result = await pollStream(redis!, resultStream, 300_000);
     expect.soft(result.result ?? '', 'agent-job result field must be non-empty').toBeTruthy();
