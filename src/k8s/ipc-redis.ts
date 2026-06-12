@@ -452,7 +452,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
         );
       }
     }
-    setTimeout(checkNewGroups, 1000);
+    setTimeout(checkNewGroups, 1000); // 1s group-subscription poll
   };
 
   checkNewGroups();

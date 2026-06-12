@@ -133,7 +133,6 @@ vi.mock('./job-runner.js', () => ({
 }));
 
 vi.mock('../config.js', () => ({
-  SIDECAR_POLL_INTERVAL: 1000,
   TIMEZONE: 'UTC',
   CONTAINER_TIMEOUT: 1800000,
   IDLE_TIMEOUT: 1800000,
