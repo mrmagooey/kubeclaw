@@ -62,6 +62,7 @@ import {
   getOutputChannel,
   closeRedisConnections,
 } from './redis-client.js';
+import { getACLManager } from './acl-manager.js';
 import type { OrchestratorMetrics } from '../metrics/orchestrator.js';
 import { resolveToolJob } from '../db.js';
 
@@ -1734,15 +1735,33 @@ export class JobRunner {
     const jobName = `kubeclaw-stool-${agentSuffix}-${safeTool}`;
 
     const timeoutSeconds = Math.floor(spec.timeout / 1000);
-    // Sidecar tool pods use the 'tool-server' ACL user, which has XREAD on
-    // kubeclaw:toolcalls:* and XADD on kubeclaw:toolresults:* — the two
-    // operations the bridge performs.  The 'adapter' user (previously used
-    // here) only has read-only access to kubeclaw:input:* and cannot read
-    // toolcalls or write toolresults, causing the bridge to fail silently.
+    // Prefer a per-job ACL user scoped to exactly this job's two streams
+    // (ported from the legacy adapter security model). Fall back to the
+    // shared 'tool-server' user if minting fails (e.g. Redis < 7), matching
+    // the legacy runners' degrade-gracefully behavior.
+    let redisUsername = 'tool-server';
+    let redisPassword =
+      REDIS_TOOL_SERVER_PASSWORD || process.env.REDIS_ADMIN_PASSWORD;
+    try {
+      const creds = await getACLManager().createToolPodACL(
+        jobName,
+        spec.agentJobId,
+        spec.toolName,
+        spec.groupFolder,
+        timeoutSeconds + 900, // outlive the pod by 15 min; sweep revokes after
+      );
+      redisUsername = creds.username;
+      redisPassword = creds.password;
+    } catch (err) {
+      logger.warn(
+        { jobName, err },
+        'Per-job ACL minting failed; falling back to shared tool-server Redis user',
+      );
+    }
     const redisUrl = buildRedisUrl(
       process.env.REDIS_URL || 'redis://kubeclaw-redis:6379',
-      'tool-server',
-      REDIS_TOOL_SERVER_PASSWORD || process.env.REDIS_ADMIN_PASSWORD,
+      redisUsername,
+      redisPassword,
     );
 
     const bridgeEnv = [
