@@ -157,6 +157,81 @@ export class RedisACLManager {
   }
 
   /**
+   * Create an ACL user for a sidecar tool pod's bridge container.
+   *
+   * Scope (per-tool-call bridge, NOT the legacy adapter scope):
+   *   - read-only on  kubeclaw:toolcalls:{agentJobId}:{toolName}
+   *   - write-only on kubeclaw:toolresults:{agentJobId}:{toolName}
+   *   - no pub/sub channels, no other keys
+   *
+   * Returns the plaintext credentials for embedding in the pod's REDIS_URL.
+   * The encrypted copy is persisted in job_acls keyed by `jobKey` so the
+   * periodic sweep can revoke it after expiry.
+   */
+  async createToolPodACL(
+    podJobName: string,
+    agentJobId: string,
+    toolName: string,
+    groupFolder: string,
+    ttlSeconds: number = 3600,
+  ): Promise<{ username: string; password: string }> {
+    await this.verifyRedisVersion();
+
+    // Suffix avoids job_acls PK collisions if the same job name recurs.
+    const jobKey = `${podJobName}-${Date.now().toString(36)}`;
+    const username = `stool-${podJobName}`;
+    const password = this.generatePassword();
+    const encryptedPassword = this.encryptPassword(password);
+
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + ttlSeconds * 1000);
+
+    const acl: JobACL = {
+      jobId: jobKey,
+      groupFolder,
+      username,
+      password: encryptedPassword,
+      createdAt: now.toISOString(),
+      expiresAt: expiresAt.toISOString(),
+      status: 'active',
+    };
+
+    const redis = await this.ensureConnection();
+
+    const aclRules = [
+      `%R~kubeclaw:toolcalls:${agentJobId}:${toolName}`,
+      `%W~kubeclaw:toolresults:${agentJobId}:${toolName}`,
+      'resetchannels',
+      '+xread',
+      '+xadd',
+      '+ping',
+      '+reset',
+      '+quit',
+      // node-redis v4 may send CLIENT SETINFO/SETNAME on connect
+      '+client|setinfo',
+      '+client|setname',
+    ];
+
+    try {
+      await redis.acl('SETUSER', username, 'on', `>${password}`, ...aclRules);
+      storeJobACL(acl);
+      logger.info(
+        { podJobName, username, agentJobId, toolName },
+        'Created per-job ACL user for sidecar tool pod',
+      );
+      return { username, password };
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      logger.error(
+        { podJobName, error: errorMessage },
+        'Failed to create tool pod ACL user',
+      );
+      throw new Error(`Failed to create tool pod ACL user: ${errorMessage}`);
+    }
+  }
+
+  /**
    * Get credentials for a job
    * @returns Username and decrypted password, or null if not found
    */
@@ -355,4 +430,29 @@ export function getACLManager(): RedisACLManager {
 
 export function resetACLManager(): void {
   aclManagerInstance = null;
+}
+
+let sweepTimer: NodeJS.Timeout | null = null;
+
+/**
+ * Periodically revoke expired ACL users. Sidecar tool pods are cleaned up by
+ * idle timeout / activeDeadlineSeconds with no orchestrator-side completion
+ * hook, so their per-job ACLs are revoked by TTL expiry via this sweep.
+ */
+export function startAclCleanupSweep(intervalMs: number = 600_000): void {
+  if (sweepTimer) return;
+  sweepTimer = setInterval(() => {
+    getACLManager()
+      .cleanupExpired()
+      .catch((err) => logger.warn({ err }, 'ACL cleanup sweep failed'));
+  }, intervalMs);
+  sweepTimer.unref();
+  logger.info({ intervalMs }, 'ACL cleanup sweep started');
+}
+
+export function stopAclCleanupSweep(): void {
+  if (sweepTimer) {
+    clearInterval(sweepTimer);
+    sweepTimer = null;
+  }
 }

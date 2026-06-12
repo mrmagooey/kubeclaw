@@ -429,6 +429,54 @@ describe('RedisACLManager', () => {
     });
   });
 
+  describe('createToolPodACL', () => {
+    beforeEach(() => {
+      mockInfo.mockResolvedValue('redis_version:7.2.0');
+      mockAcl.mockResolvedValue('OK');
+    });
+
+    it('creates a user scoped to exactly the job toolcalls/toolresults streams', async () => {
+      const creds = await manager.createToolPodACL(
+        'kubeclaw-stool-abc123-mytool',
+        'direct-1717-agent',
+        'mytool',
+        'my-group',
+        3600,
+      );
+
+      expect(creds.username).toMatch(/^stool-kubeclaw-stool-abc123-mytool/);
+      expect(creds.password).toBeTruthy();
+
+      const aclArgs = mockAcl.mock.calls.find((c) => c[0] === 'SETUSER')!;
+      const argStrings = aclArgs.map(String);
+      expect(argStrings).toContain(
+        '%R~kubeclaw:toolcalls:direct-1717-agent:mytool',
+      );
+      expect(argStrings).toContain(
+        '%W~kubeclaw:toolresults:direct-1717-agent:mytool',
+      );
+      expect(argStrings).toContain('+xread');
+      expect(argStrings).toContain('+xadd');
+      // No pub/sub, no cross-key access
+      expect(argStrings).toContain('resetchannels');
+      expect(argStrings.join(' ')).not.toContain('~kubeclaw:input');
+    });
+
+    it('persists the ACL so credentials can be retrieved and revoked', async () => {
+      const creds = await manager.createToolPodACL(
+        'kubeclaw-stool-def456-othertool',
+        'agent-2',
+        'othertool',
+        'my-group',
+        60,
+      );
+      const stored = getJobACLByGroup('my-group');
+      expect(stored).toBeTruthy();
+      expect(stored!.username).toBe(creds.username);
+      expect(stored!.status).toBe('active');
+    });
+  });
+
   describe('Singleton Pattern', () => {
     it('should return the same instance from getACLManager', () => {
       const manager1 = getACLManager();
