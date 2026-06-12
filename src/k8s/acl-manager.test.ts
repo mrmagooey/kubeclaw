@@ -9,6 +9,8 @@ import {
   RedisACLManager,
   getACLManager,
   resetACLManager,
+  startAclCleanupSweep,
+  stopAclCleanupSweep,
 } from './acl-manager.js';
 import {
   _initTestDatabase,
@@ -460,6 +462,10 @@ describe('RedisACLManager', () => {
       // No pub/sub, no cross-key access
       expect(argStrings).toContain('resetchannels');
       expect(argStrings.join(' ')).not.toContain('~kubeclaw:input');
+      // resetkeys must come BEFORE the %R~/%W~ grants
+      expect(argStrings.indexOf('resetkeys')).toBeLessThan(
+        argStrings.indexOf('%R~kubeclaw:toolcalls:direct-1717-agent:mytool'),
+      );
     });
 
     it('persists the ACL so credentials can be retrieved and revoked', async () => {
@@ -474,6 +480,14 @@ describe('RedisACLManager', () => {
       expect(stored).toBeTruthy();
       expect(stored!.username).toBe(creds.username);
       expect(stored!.status).toBe('active');
+    });
+
+    it('throws when SETUSER is rejected', async () => {
+      mockAcl.mockRejectedValueOnce(new Error('NOPERM'));
+
+      await expect(
+        manager.createToolPodACL('kubeclaw-stool-xyz-tool', 'agent-x', 'tool', 'g', 60),
+      ).rejects.toThrow('Failed to create tool pod ACL user');
     });
   });
 
@@ -608,6 +622,7 @@ describe('JobACL Database Functions (Integration)', () => {
     });
   });
 
+
   describe('revokeJobACL', () => {
     it('should mark ACL as revoked', () => {
       const acl: JobACL = {
@@ -690,5 +705,32 @@ describe('JobACL Database Functions (Integration)', () => {
       const revokedIds = cleanupExpiredACLs();
       expect(revokedIds).not.toContain('test-job-already-revoked');
     });
+  });
+});
+
+describe('ACL cleanup sweep', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    stopAclCleanupSweep();
+    vi.useRealTimers();
+  });
+
+  it('is idempotent — second start does not create a second timer', () => {
+    const spy = vi.spyOn(global, 'setInterval');
+    startAclCleanupSweep(1000);
+    startAclCleanupSweep(1000);
+    expect(spy).toHaveBeenCalledTimes(1);
+    spy.mockRestore();
+  });
+
+  it('can be stopped and restarted', () => {
+    const spy = vi.spyOn(global, 'setInterval');
+    startAclCleanupSweep(1000);
+    stopAclCleanupSweep();
+    startAclCleanupSweep(1000);
+    expect(spy).toHaveBeenCalledTimes(2);
+    spy.mockRestore();
   });
 });

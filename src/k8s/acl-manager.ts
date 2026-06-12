@@ -199,6 +199,9 @@ export class RedisACLManager {
     const redis = await this.ensureConnection();
 
     const aclRules = [
+      // SETUSER on an existing user APPENDS rules; resetkeys drops any key
+      // grants from a previous user with the same name (no-op for new users).
+      'resetkeys',
       `%R~kubeclaw:toolcalls:${agentJobId}:${toolName}`,
       `%W~kubeclaw:toolresults:${agentJobId}:${toolName}`,
       'resetchannels',
@@ -314,6 +317,8 @@ export class RedisACLManager {
       const acl = getJobACL(jobId);
       if (acl && acl.status === 'revoked') {
         try {
+          // ACL DELUSER is a no-op (returns 0, no error) if the user is already
+          // gone — safe when multiple job_acls rows share one username.
           await redis.acl('DELUSER', acl.username);
           logger.debug(
             { jobId, username: acl.username },
