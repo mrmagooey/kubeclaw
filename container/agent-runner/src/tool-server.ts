@@ -30,6 +30,15 @@ const TOOLRESULTS_STREAM = `kubeclaw:toolresults:${agentJobId}:${category}`;
 
 const SECRET_ENV_VARS = ['ANTHROPIC_API_KEY', 'OPENROUTER_API_KEY'];
 
+/**
+ * Exponential reconnect backoff (ported from the legacy adapters):
+ * min(2^retries * 100ms, 10s), giving up after 10 retries.
+ */
+export function reconnectStrategy(retries: number): number | Error {
+  if (retries > 10) return new Error('Redis reconnect retries exhausted');
+  return Math.min(Math.pow(2, retries) * 100, 10_000);
+}
+
 function log(msg: string): void {
   console.error(`[tool-server:${category}] ${msg}`);
 }
@@ -204,7 +213,10 @@ async function toolTask(input: Record<string, unknown>): Promise<string> {
 let taskRedis: RedisClientType | null = null;
 async function getRedisForTask(): Promise<RedisClientType> {
   if (!taskRedis) {
-    taskRedis = createClient({ url: redisUrl }) as RedisClientType;
+    taskRedis = createClient({
+      url: redisUrl,
+      socket: { reconnectStrategy },
+    }) as RedisClientType;
     await taskRedis.connect();
   }
   return taskRedis;
@@ -356,7 +368,10 @@ async function main(): Promise<void> {
 
   log(`Starting. agentJobId=${agentJobId} category=${category} toolMode=${toolMode ?? 'none'}`);
 
-  const redis = createClient({ url: redisUrl }) as RedisClientType;
+  const redis = createClient({
+    url: redisUrl,
+    socket: { reconnectStrategy },
+  }) as RedisClientType;
   redis.on('error', (err) => log(`Redis error: ${err.message}`));
   await redis.connect();
   log('Connected to Redis');
