@@ -68,7 +68,7 @@ const RETRY_MAX_ATTEMPTS = 3;
  * fetch with the legacy http-adapter's retry discipline:
  * - per-attempt timeout (AbortSignal)
  * - 4xx → ToolClientError, no retry (the request itself is wrong)
- * - 5xx / network error / timeout → exponential backoff (base, 2x, 4x), 3 attempts
+ * - 5xx / network error / timeout → exponential backoff (base×1 → base×2), 3 attempts max
  */
 export async function fetchWithRetry(
   url: string,
@@ -99,6 +99,54 @@ export async function fetchWithRetry(
     }
   }
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
+const READY_TIMEOUT_MS = parseInt(
+  process.env.KUBECLAW_TOOL_READY_TIMEOUT || '30000',
+  10,
+);
+const READY_INTERVAL_MS = parseInt(
+  process.env.KUBECLAW_TOOL_READY_INTERVAL_MS || '1000',
+  10,
+);
+const toolHealthPath = process.env.KUBECLAW_TOOL_HEALTH_PATH || '/';
+
+/**
+ * Poll the user container until it accepts an HTTP connection (ported from
+ * the legacy adapter's waitForHealthy). ANY HTTP response — including 404 —
+ * counts as ready: the contract is "the port is listening", because arbitrary
+ * images may not expose a real health endpoint. Connection errors mean
+ * not-ready; keep polling until the deadline.
+ */
+export async function waitForToolReady(): Promise<void> {
+  const url = `http://localhost:${toolPort}${toolHealthPath}`;
+  const deadline = Date.now() + READY_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    try {
+      await fetch(url, { signal: AbortSignal.timeout(2000) });
+      log(`User container ready (${url})`);
+      return;
+    } catch {
+      await new Promise((r) => setTimeout(r, READY_INTERVAL_MS));
+    }
+  }
+  throw new Error(`User container not ready after ${READY_TIMEOUT_MS}ms (${url})`);
+}
+
+let readyPromise: Promise<void> | null = null;
+
+/** Memoized readiness gate — applies to http-bridge and acp-bridge only. */
+function ensureToolReady(): Promise<void> {
+  if (toolMode !== 'http-bridge' && toolMode !== 'acp-bridge') {
+    return Promise.resolve();
+  }
+  if (!readyPromise) {
+    readyPromise = waitForToolReady().catch((err) => {
+      readyPromise = null; // a later call may try again
+      throw err;
+    });
+  }
+  return readyPromise;
 }
 
 // --- Execution tools ---
@@ -283,6 +331,7 @@ async function getRedisForTask(): Promise<RedisClientType> {
 // --- Bridge modes ---
 
 async function executeToolBridgeHttp(tool: string, input: Record<string, unknown>): Promise<unknown> {
+  await ensureToolReady();
   const res = await fetchWithRetry(`http://localhost:${toolPort}/invoke`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -319,6 +368,7 @@ async function executeToolBridgeAcp(
   tool: string,
   input: Record<string, unknown>,
 ): Promise<unknown> {
+  await ensureToolReady();
   const acpBaseUrl = `http://localhost:${toolPort}`;
   const agentName = acpAgentName || tool;
 

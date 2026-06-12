@@ -32,7 +32,12 @@ vi.mock('redis', () => {
   return { createClient: vi.fn(() => mockRedis) };
 });
 
-import { reconnectStrategy, fetchWithRetry, ToolClientError } from '../container/agent-runner/src/tool-server.js';
+import {
+  reconnectStrategy,
+  fetchWithRetry,
+  waitForToolReady,
+  ToolClientError,
+} from '../container/agent-runner/src/tool-server.js';
 
 describe('reconnectStrategy', () => {
   it('backs off exponentially from 100ms', () => {
@@ -59,9 +64,9 @@ describe('fetchWithRetry', () => {
   });
 
   it('returns the response on first success', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response('{"result":"ok"}', { status: 200 }),
-    );
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response('{"result":"ok"}', { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
 
     const res = await fetchWithRetry('http://localhost:9999/invoke', {
@@ -72,9 +77,9 @@ describe('fetchWithRetry', () => {
   });
 
   it('fails fast on 4xx without retrying', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response('bad request', { status: 400 }),
-    );
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response('bad request', { status: 400 }));
     vi.stubGlobal('fetch', fetchMock);
 
     await expect(
@@ -106,5 +111,53 @@ describe('fetchWithRetry', () => {
       fetchWithRetry('http://localhost:9999/invoke', { method: 'POST' }),
     ).rejects.toThrow('ECONNREFUSED');
     expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('throws the last 5xx error after exhausting all attempts', async () => {
+    const fetchMock = vi.fn().mockImplementation(() =>
+      Promise.resolve(new Response('down', { status: 503 })),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      fetchWithRetry('http://localhost:9999/invoke', { method: 'POST' }),
+    ).rejects.toThrow('Tool HTTP 503');
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe('waitForToolReady', () => {
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('resolves as soon as the user container answers (any status)', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('nf', { status: 404 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(waitForToolReady()).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('polls through connection errors until the container is up', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('ECONNREFUSED'))
+      .mockRejectedValueOnce(new Error('ECONNREFUSED'))
+      .mockResolvedValueOnce(new Response('ok', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(waitForToolReady()).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('throws when the deadline passes with no response', async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new Error('ECONNREFUSED'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(waitForToolReady()).rejects.toThrow(/not ready after/);
   });
 });
