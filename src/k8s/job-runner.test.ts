@@ -1579,7 +1579,9 @@ describe('JobRunner', () => {
 
       const call = mockBatchApi.createNamespacedJob.mock.calls.at(-1)![0];
       const podSpec = call.body.spec.template.spec;
-      const userTool = podSpec.containers.find((c: any) => c.name === 'user-tool');
+      const userTool = podSpec.containers.find(
+        (c: any) => c.name === 'user-tool',
+      );
       const bridge = podSpec.containers.find(
         (c: any) => c.name === 'kubeclaw-tool-bridge',
       );
@@ -1590,7 +1592,9 @@ describe('JobRunner', () => {
         readOnly: true,
       });
       // Bridge does NOT get the wrapper, but both share /shared
-      expect(bridge.volumeMounts.map((m: any) => m.name)).not.toContain('tool-wrapper');
+      expect(bridge.volumeMounts.map((m: any) => m.name)).not.toContain(
+        'tool-wrapper',
+      );
       expect(bridge.volumeMounts.map((m: any) => m.name)).toContain('shared');
       expect(userTool.volumeMounts.map((m: any) => m.name)).toContain('shared');
 
@@ -1606,6 +1610,20 @@ describe('JobRunner', () => {
 
     it('does not mount the wrapper for http-bridge pods', async () => {
       await jobRunner.createSidecarToolPodJob(baseSpec);
+      const call = mockBatchApi.createNamespacedJob.mock.calls.at(-1)![0];
+      const volumes = call.body.spec.template.spec.volumes ?? [];
+      expect(volumes.map((v: any) => v.name)).not.toContain('tool-wrapper');
+    });
+
+    it('does not mount the wrapper for acp-bridge pods', async () => {
+      await jobRunner.createSidecarToolPodJob({
+        ...baseSpec,
+        toolSpec: {
+          ...baseSpec.toolSpec,
+          pattern: 'acp' as const,
+          acpAgentName: 'my-agent',
+        },
+      });
       const call = mockBatchApi.createNamespacedJob.mock.calls.at(-1)![0];
       const volumes = call.body.spec.template.spec.volumes ?? [];
       expect(volumes.map((v: any) => v.name)).not.toContain('tool-wrapper');

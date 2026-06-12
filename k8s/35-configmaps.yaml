@@ -225,7 +225,10 @@ metadata:
 data:
   tool-wrapper.sh: |
     #!/bin/sh
+    # No set -e: a single-request failure must not terminate the polling loop.
     SHARED_DIR="${KUBECLAW_SHARED_DIR:-/shared}"
+    # Note: KUBECLAW_POLL_INTERVAL controls only this wrapper's scan rate; the
+    # bridge container polls for response files on its own fixed schedule.
     POLL_INTERVAL="${KUBECLAW_POLL_INTERVAL:-1}"
 
     log() { echo "[tool-wrapper] $*" >&2; }
@@ -241,12 +244,22 @@ data:
         [ -f "$req" ] || continue
         id=$(basename "$req" .request.json)
         log "Processing request $id"
-        if out=$(jq -c '.input' < "$req" | "$@" 2>&1); then
-          printf '{"result": %s}' "$(printf '%s' "$out" | jq -Rs '.')" \
-            > "$SHARED_DIR/$id.response.json"
+        if ! input_json=$(jq -c '.input' < "$req" 2>&1); then
+          log "Malformed request $id: $input_json"
+          tmpfile=$(mktemp "$SHARED_DIR/$id.response.XXXXXX")
+          printf '{"error": %s}' "$(printf 'malformed request: %s' "$input_json" | jq -Rs '.')" > "$tmpfile"
+          mv "$tmpfile" "$SHARED_DIR/$id.response.json"
+          rm -f "$req"
+          continue
+        fi
+        if out=$(printf '%s' "$input_json" | "$@" 2>&1); then
+          tmpfile=$(mktemp "$SHARED_DIR/$id.response.XXXXXX")
+          printf '{"result": %s}' "$(printf '%s' "$out" | jq -Rs '.')" > "$tmpfile"
+          mv "$tmpfile" "$SHARED_DIR/$id.response.json"
         else
-          printf '{"error": %s}' "$(printf '%s' "$out" | jq -Rs '.')" \
-            > "$SHARED_DIR/$id.response.json"
+          tmpfile=$(mktemp "$SHARED_DIR/$id.response.XXXXXX")
+          printf '{"error": %s}' "$(printf '%s' "$out" | jq -Rs '.')" > "$tmpfile"
+          mv "$tmpfile" "$SHARED_DIR/$id.response.json"
         fi
         rm -f "$req"
       done
