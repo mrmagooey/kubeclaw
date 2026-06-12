@@ -50,6 +50,7 @@ import {
   startBootstrapTaskWatcher,
 } from './k8s/ipc-redis.js';
 import { CatalogInformer } from './k8s/catalog.js';
+import { startAclCleanupSweep } from './k8s/acl-manager.js';
 import { SecretManager } from './k8s/secret-manager.js';
 import {
   KubeConfig,
@@ -927,6 +928,7 @@ async function main(): Promise<void> {
     metrics: orchMetrics,
   };
   startRedisIpcWatcher(ipcDeps);
+  startAclCleanupSweep();
   startToolPodSpawnWatcher().catch((err) =>
     logger.error({ err }, 'Tool pod spawn watcher crashed'),
   );

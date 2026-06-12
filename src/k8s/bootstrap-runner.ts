@@ -738,7 +738,13 @@ export async function runUpgrade(
     body: jobBody as any,
   });
   logger.info(
-    { jobName, upgradeJobId, instanceName, credentialSecretName, injectCredentialSecret },
+    {
+      jobName,
+      upgradeJobId,
+      instanceName,
+      credentialSecretName,
+      injectCredentialSecret,
+    },
     'runUpgrade: upgrade Job created',
   );
 

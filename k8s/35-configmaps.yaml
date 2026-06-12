@@ -1,212 +1,65 @@
 # KubeClaw ConfigMaps
-# Contains scripts that are mounted into agent sidecar containers.
+# Contains scripts that are mounted into tool pod containers.
 #
-# kubeclaw-runner-wrapper  — used by sidecar-job-runner (mounts at /scripts)
-# kubeclaw-wrapper-script  — used by file-sidecar-runner (mounts at /workspace/runner-wrapper.sh)
+# kubeclaw-tool-wrapper  — used by sidecar tool pods (mounts at /kubeclaw/tool-wrapper.sh)
 #
-# Both hold the same runner-wrapper.sh script, which polls /workspace/input/
-# for task files, runs the user command, and writes results to /workspace/output/.
+# The tool-wrapper.sh script watches /shared for {requestId}.request.json files
+# written by the kubeclaw-tool-bridge container, pipes the request's .input JSON
+# to the wrapped command's stdin, and writes stdout to {requestId}.response.json.
 #
 # Apply with:
 #   kubectl apply -f k8s/35-configmaps.yaml
+# File-bridge tool wrapper. Lets a stock image (sh + jq required) serve
+# file-bridge ToolSpecs with zero custom code:
+#   command: ["/bin/sh", "/kubeclaw/tool-wrapper.sh", "your-command", "arg1"]
+# The wrapper watches /shared for {requestId}.request.json written by the
+# kubeclaw-tool-bridge container, pipes the request's .input JSON to the
+# wrapped command's stdin, and writes stdout to {requestId}.response.json.
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: kubeclaw-runner-wrapper
+  name: kubeclaw-tool-wrapper
   namespace: kubeclaw
 data:
-  runner-wrapper.sh: |
+  tool-wrapper.sh: |
     #!/bin/sh
-    # Runner wrapper script for user container
-    # This script is mounted into the user container via ConfigMap
-    # It watches /workspace/input/ for task files, runs the user command, and writes results
-
-    set -e
-
-    INPUT_DIR="${KUBECLAW_INPUT_DIR:-/workspace/input}"
-    OUTPUT_DIR="${KUBECLAW_OUTPUT_DIR:-/workspace/output}"
+    # No set -e: a single-request failure must not terminate the polling loop.
+    SHARED_DIR="${KUBECLAW_SHARED_DIR:-/shared}"
+    # Note: KUBECLAW_POLL_INTERVAL controls only this wrapper's scan rate; the
+    # bridge container polls for response files on its own fixed schedule.
     POLL_INTERVAL="${KUBECLAW_POLL_INTERVAL:-1}"
 
-    log() {
-        echo "[runner-wrapper] $*" >&2
-    }
+    log() { echo "[tool-wrapper] $*" >&2; }
 
-    log "Runner wrapper starting..."
-    log "Input dir: $INPUT_DIR"
-    log "Output dir: $OUTPUT_DIR"
-    log "Poll interval: ${POLL_INTERVAL}s"
+    if [ "$#" -eq 0 ]; then
+      log "Usage: tool-wrapper.sh <command> [args...]"
+      exit 1
+    fi
 
-    # Ensure directories exist
-    mkdir -p "$INPUT_DIR"
-    mkdir -p "$OUTPUT_DIR"
-
-    # Function to process a task file
-    process_task() {
-        local task_file="$1"
-        log "Processing task: $task_file"
-
-        # Read the prompt from the task file
-        local prompt
-        prompt=$(cat "$task_file" | jq -r '.prompt // empty')
-
-        if [ -z "$prompt" ]; then
-            log "No prompt found in task file"
-            write_error "No prompt in task file"
-            return 1
-        fi
-
-        log "Running user command with prompt: ${prompt:0:100}..."
-
-        # Run the user's command with the prompt
-        # User command is passed via environment variable KUBECLAW_USER_COMMAND
-        if [ -n "$KUBECLAW_USER_COMMAND" ]; then
-            local result
-            if result=$(eval "$KUBECLAW_USER_COMMAND" <<< "$prompt" 2>&1); then
-                log "Command executed successfully"
-                write_output "$result"
-            else
-                log "Command failed: $result"
-                write_error "$result"
-            fi
-        else
-            log "No KUBECLAW_USER_COMMAND set, echoing prompt"
-            write_output "$prompt"
-        fi
-    }
-
-    # Function to write output
-    write_output() {
-        local result="$1"
-        log "Writing output (${#result} chars)"
-
-        cat > "$OUTPUT_DIR/result.json" << EOF
-    {
-        "status": "success",
-        "result": $(echo "$result" | jq -Rs '.')
-    }
-    EOF
-    }
-
-    # Function to write error
-    write_error() {
-        local error="$1"
-        log "Writing error: $error"
-
-        cat > "$OUTPUT_DIR/result.json" << EOF
-    {
-        "status": "error",
-        "error": $(echo "$error" | jq -Rs '.')
-    }
-    EOF
-    }
-
-    # Main loop
-    log "Starting main loop..."
+    log "Watching $SHARED_DIR (command: $*)"
     while true; do
-        for task_file in "$INPUT_DIR"/task*.json; do
-            if [ -f "$task_file" ]; then
-                process_task "$task_file"
-                rm -f "$task_file"
-                sleep "$POLL_INTERVAL"
-            fi
-        done
-        sleep "$POLL_INTERVAL"
-    done
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: kubeclaw-wrapper-script
-  namespace: kubeclaw
-data:
-  runner-wrapper.sh: |
-    #!/bin/sh
-    # Runner wrapper script for user container
-    # This script is mounted into the user container via ConfigMap
-    # It watches /workspace/input/ for task files, runs the user command, and writes results
-
-    set -e
-
-    INPUT_DIR="${KUBECLAW_INPUT_DIR:-/workspace/input}"
-    OUTPUT_DIR="${KUBECLAW_OUTPUT_DIR:-/workspace/output}"
-    POLL_INTERVAL="${KUBECLAW_POLL_INTERVAL:-1}"
-
-    log() {
-        echo "[runner-wrapper] $*" >&2
-    }
-
-    log "Runner wrapper starting..."
-    log "Input dir: $INPUT_DIR"
-    log "Output dir: $OUTPUT_DIR"
-    log "Poll interval: ${POLL_INTERVAL}s"
-
-    # Ensure directories exist
-    mkdir -p "$INPUT_DIR"
-    mkdir -p "$OUTPUT_DIR"
-
-    # Function to process a task file
-    process_task() {
-        local task_file="$1"
-        log "Processing task: $task_file"
-
-        local prompt
-        prompt=$(cat "$task_file" | jq -r '.prompt // empty')
-
-        if [ -z "$prompt" ]; then
-            log "No prompt found in task file"
-            write_error "No prompt in task file"
-            return 1
+      for req in "$SHARED_DIR"/*.request.json; do
+        [ -f "$req" ] || continue
+        id=$(basename "$req" .request.json)
+        log "Processing request $id"
+        if ! input_json=$(jq -c '.input' < "$req" 2>&1); then
+          log "Malformed request $id: $input_json"
+          tmpfile=$(mktemp "$SHARED_DIR/$id.response.XXXXXX")
+          printf '{"error": %s}' "$(printf 'malformed request: %s' "$input_json" | jq -Rs '.')" > "$tmpfile"
+          mv "$tmpfile" "$SHARED_DIR/$id.response.json"
+          rm -f "$req"
+          continue
         fi
-
-        log "Running user command with prompt: ${prompt:0:100}..."
-
-        if [ -n "$KUBECLAW_USER_COMMAND" ]; then
-            local result
-            if result=$(eval "$KUBECLAW_USER_COMMAND" <<< "$prompt" 2>&1); then
-                log "Command executed successfully"
-                write_output "$result"
-            else
-                log "Command failed: $result"
-                write_error "$result"
-            fi
+        if out=$(printf '%s' "$input_json" | "$@" 2>&1); then
+          tmpfile=$(mktemp "$SHARED_DIR/$id.response.XXXXXX")
+          printf '{"result": %s}' "$(printf '%s' "$out" | jq -Rs '.')" > "$tmpfile"
+          mv "$tmpfile" "$SHARED_DIR/$id.response.json"
         else
-            log "No KUBECLAW_USER_COMMAND set, echoing prompt"
-            write_output "$prompt"
+          tmpfile=$(mktemp "$SHARED_DIR/$id.response.XXXXXX")
+          printf '{"error": %s}' "$(printf '%s' "$out" | jq -Rs '.')" > "$tmpfile"
+          mv "$tmpfile" "$SHARED_DIR/$id.response.json"
         fi
-    }
-
-    write_output() {
-        local result="$1"
-        log "Writing output (${#result} chars)"
-
-        cat > "$OUTPUT_DIR/result.json" << EOF
-    {
-        "status": "success",
-        "result": $(echo "$result" | jq -Rs '.')
-    }
-    EOF
-    }
-
-    write_error() {
-        local error="$1"
-        log "Writing error: $error"
-
-        cat > "$OUTPUT_DIR/result.json" << EOF
-    {
-        "status": "error",
-        "error": $(echo "$error" | jq -Rs '.')
-    }
-    EOF
-    }
-
-    log "Starting main loop..."
-    while true; do
-        for task_file in "$INPUT_DIR"/task*.json; do
-            if [ -f "$task_file" ]; then
-                process_task "$task_file"
-                rm -f "$task_file"
-                sleep "$POLL_INTERVAL"
-            fi
-        done
-        sleep "$POLL_INTERVAL"
+        rm -f "$req"
+      done
+      sleep "$POLL_INTERVAL"
     done

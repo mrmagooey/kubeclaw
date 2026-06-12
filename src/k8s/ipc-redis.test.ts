@@ -75,7 +75,6 @@ vi.mock('ioredis', () => ({
 }));
 
 vi.mock('../config.js', () => ({
-  SIDECAR_FILE_POLL_INTERVAL: 1000,
   TIMEZONE: 'UTC',
   CONTAINER_TIMEOUT: 1800000,
   IDLE_TIMEOUT: 1800000,
@@ -1642,6 +1641,57 @@ describe('startToolPodSpawnWatcher', () => {
       }),
     );
     expect(jobRunner.createToolPodJob).not.toHaveBeenCalled();
+  });
+
+  it('forwards toolHealthPath from the spawn stream into ToolSpec.healthPath', async () => {
+    const { jobRunner } = await import('./job-runner.js');
+    startIpcWatcher(createMockDeps());
+
+    let callCount = 0;
+    mockXread.mockImplementation(async () => {
+      if (callCount++ === 0) {
+        return [
+          [
+            'kubeclaw:spawn-tool-pod',
+            [
+              [
+                '1-0',
+                [
+                  'agentJobId',
+                  'j-sidecar',
+                  'groupFolder',
+                  'my-group',
+                  'category',
+                  'home_control',
+                  'timeout',
+                  '60000',
+                  'channel',
+                  'telegram',
+                  'toolImage',
+                  'my-ha:latest',
+                  'toolPattern',
+                  'http',
+                  'toolPort',
+                  '8080',
+                  'toolHealthPath',
+                  '/status',
+                ],
+              ],
+            ],
+          ],
+        ];
+      }
+      await stopIpcWatcher();
+      return null;
+    });
+
+    await startToolPodSpawnWatcher();
+
+    expect(jobRunner.createSidecarToolPodJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toolSpec: expect.objectContaining({ healthPath: '/status' }),
+      }),
+    );
   });
 
   it('falls through to createToolPodJob when no toolImage field', async () => {

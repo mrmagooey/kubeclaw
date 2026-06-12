@@ -539,6 +539,8 @@ async function executeToolViaK8s(
           spawnFields.push('toolAcpAgentName', customSpec.acpAgentName);
         if (customSpec.acpMode)
           spawnFields.push('toolAcpMode', customSpec.acpMode);
+        if (customSpec.healthPath)
+          spawnFields.push('toolHealthPath', customSpec.healthPath);
       }
       if (maxToolOutputBytes !== undefined) {
         spawnFields.push('maxToolOutputBytes', String(maxToolOutputBytes));

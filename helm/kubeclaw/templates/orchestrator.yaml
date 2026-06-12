@@ -153,11 +153,11 @@ spec:
                 secretKeyRef:
                   name: kubeclaw-redis
                   key: tool-server-password
-            - name: REDIS_ADAPTER_PASSWORD
+            - name: ACL_ENCRYPTION_KEY
               valueFrom:
                 secretKeyRef:
                   name: kubeclaw-redis
-                  key: adapter-password
+                  key: acl-encryption-key
             - name: KUBECLAW_MODE
               value: orchestrator
             - name: KUBECLAW_RUNTIME

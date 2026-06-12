@@ -1,124 +1,55 @@
 ---
-# Runner wrapper used by sidecar-job-runner (mounted at /scripts).
+# File-bridge tool wrapper. Lets a stock image (sh + jq required) serve
+# file-bridge ToolSpecs with zero custom code:
+#   command: ["/bin/sh", "/kubeclaw/tool-wrapper.sh", "your-command", "arg1"]
+# The wrapper watches /shared for {requestId}.request.json written by the
+# kubeclaw-tool-bridge container, pipes the request's .input JSON to the
+# wrapped command's stdin, and writes stdout to {requestId}.response.json.
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: kubeclaw-runner-wrapper
+  name: kubeclaw-tool-wrapper
   namespace: {{ include "kubeclaw.namespace" . }}
 data:
-  runner-wrapper.sh: |
+  tool-wrapper.sh: |
     #!/bin/sh
-    set -e
-
-    INPUT_DIR="${KUBECLAW_INPUT_DIR:-/workspace/input}"
-    OUTPUT_DIR="${KUBECLAW_OUTPUT_DIR:-/workspace/output}"
+    # No set -e: a single-request failure must not terminate the polling loop.
+    SHARED_DIR="${KUBECLAW_SHARED_DIR:-/shared}"
+    # Note: KUBECLAW_POLL_INTERVAL controls only this wrapper's scan rate; the
+    # bridge container polls for response files on its own fixed schedule.
     POLL_INTERVAL="${KUBECLAW_POLL_INTERVAL:-1}"
 
-    log() { echo "[runner-wrapper] $*" >&2; }
+    log() { echo "[tool-wrapper] $*" >&2; }
 
-    log "Runner wrapper starting. Input: $INPUT_DIR Output: $OUTPUT_DIR"
-    mkdir -p "$INPUT_DIR" "$OUTPUT_DIR"
+    if [ "$#" -eq 0 ]; then
+      log "Usage: tool-wrapper.sh <command> [args...]"
+      exit 1
+    fi
 
-    process_task() {
-      local task_file="$1"
-      log "Processing task: $task_file"
-      local prompt
-      prompt=$(cat "$task_file" | jq -r '.prompt // empty')
-      if [ -z "$prompt" ]; then
-        log "No prompt found in task file"
-        write_error "No prompt in task file"
-        return 1
-      fi
-      if [ -n "$KUBECLAW_USER_COMMAND" ]; then
-        local result
-        if result=$(echo "$prompt" | eval "$KUBECLAW_USER_COMMAND" 2>&1); then
-          write_output "$result"
-        else
-          write_error "$result"
-        fi
-      else
-        write_output "$prompt"
-      fi
-    }
-
-    write_output() {
-      cat > "$OUTPUT_DIR/result.json" <<EOF
-    {"status":"success","result":$(echo "$1" | jq -Rs '.')}
-    EOF
-    }
-
-    write_error() {
-      cat > "$OUTPUT_DIR/result.json" <<EOF
-    {"status":"error","error":$(echo "$1" | jq -Rs '.')}
-    EOF
-    }
-
+    log "Watching $SHARED_DIR (command: $*)"
     while true; do
-      for task_file in "$INPUT_DIR"/task*.json; do
-        if [ -f "$task_file" ]; then
-          process_task "$task_file"
-          rm -f "$task_file"
+      for req in "$SHARED_DIR"/*.request.json; do
+        [ -f "$req" ] || continue
+        id=$(basename "$req" .request.json)
+        log "Processing request $id"
+        if ! input_json=$(jq -c '.input' < "$req" 2>&1); then
+          log "Malformed request $id: $input_json"
+          tmpfile=$(mktemp "$SHARED_DIR/$id.response.XXXXXX")
+          printf '{"error": %s}' "$(printf 'malformed request: %s' "$input_json" | jq -Rs '.')" > "$tmpfile"
+          mv "$tmpfile" "$SHARED_DIR/$id.response.json"
+          rm -f "$req"
+          continue
         fi
-      done
-      sleep "$POLL_INTERVAL"
-    done
----
-# Same script, mounted by file-sidecar-runner (at /workspace/runner-wrapper.sh).
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: kubeclaw-wrapper-script
-  namespace: {{ include "kubeclaw.namespace" . }}
-data:
-  runner-wrapper.sh: |
-    #!/bin/sh
-    set -e
-
-    INPUT_DIR="${KUBECLAW_INPUT_DIR:-/workspace/input}"
-    OUTPUT_DIR="${KUBECLAW_OUTPUT_DIR:-/workspace/output}"
-    POLL_INTERVAL="${KUBECLAW_POLL_INTERVAL:-1}"
-
-    log() { echo "[runner-wrapper] $*" >&2; }
-
-    log "Runner wrapper starting. Input: $INPUT_DIR Output: $OUTPUT_DIR"
-    mkdir -p "$INPUT_DIR" "$OUTPUT_DIR"
-
-    process_task() {
-      local task_file="$1"
-      log "Processing task: $task_file"
-      local prompt
-      prompt=$(cat "$task_file" | jq -r '.prompt // empty')
-      if [ -z "$prompt" ]; then
-        write_error "No prompt in task file"
-        return 1
-      fi
-      if [ -n "$KUBECLAW_USER_COMMAND" ]; then
-        local result
-        if result=$(echo "$prompt" | eval "$KUBECLAW_USER_COMMAND" 2>&1); then
-          write_output "$result"
+        if out=$(printf '%s' "$input_json" | "$@" 2>&1); then
+          tmpfile=$(mktemp "$SHARED_DIR/$id.response.XXXXXX")
+          printf '{"result": %s}' "$(printf '%s' "$out" | jq -Rs '.')" > "$tmpfile"
+          mv "$tmpfile" "$SHARED_DIR/$id.response.json"
         else
-          write_error "$result"
+          tmpfile=$(mktemp "$SHARED_DIR/$id.response.XXXXXX")
+          printf '{"error": %s}' "$(printf '%s' "$out" | jq -Rs '.')" > "$tmpfile"
+          mv "$tmpfile" "$SHARED_DIR/$id.response.json"
         fi
-      else
-        write_output "$prompt"
-      fi
-    }
-
-    write_output() {
-      cat > "$OUTPUT_DIR/result.json" <<EOF
-    {"status":"success","result":$(echo "$1" | jq -Rs '.')}
-    EOF
-    }
-
-    write_error() {
-      cat > "$OUTPUT_DIR/result.json" <<EOF
-    {"status":"error","error":$(echo "$1" | jq -Rs '.')}
-    EOF
-    }
-
-    while true; do
-      for task_file in "$INPUT_DIR"/task*.json; do
-        [ -f "$task_file" ] && process_task "$task_file" && rm -f "$task_file"
+        rm -f "$req"
       done
       sleep "$POLL_INTERVAL"
     done

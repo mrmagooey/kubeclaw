@@ -65,50 +65,6 @@ export interface ToolJobSpec {
   groupPlaceholders?: Record<string, Record<string, string>>;
 }
 
-export interface SidecarJobSpec extends ToolJobSpec {
-  userImage: string;
-  userCommand?: string[];
-  userArgs?: string[];
-  filePollInterval?: number;
-  memoryRequest?: string;
-  memoryLimit?: string;
-  cpuRequest?: string;
-  cpuLimit?: string;
-  credentials?: SidecarCredentials;
-  userImagePullPolicy?: 'Always' | 'IfNotPresent' | 'Never';
-}
-
-export interface SidecarCredentials {
-  username: string;
-  password: string;
-}
-
-export interface SidecarHttpJobSpec extends ToolJobSpec {
-  userImage: string;
-  userPort?: number; // default: 8080
-  healthEndpoint?: string; // default: /agent/health
-  memoryRequest?: string;
-  memoryLimit?: string;
-  cpuRequest?: string;
-  cpuLimit?: string;
-  credentials?: SidecarCredentials;
-  userImagePullPolicy?: 'Always' | 'IfNotPresent' | 'Never';
-}
-
-export interface SidecarFileJobSpec extends ToolJobSpec {
-  userImage: string;
-  userCommand?: string[];
-  userArgs?: string[];
-  filePollInterval?: number; // default: 1000ms
-  memoryRequest?: string;
-  memoryLimit?: string;
-  cpuRequest?: string;
-  cpuLimit?: string;
-  secrets?: Record<string, string>;
-  credentials?: SidecarCredentials;
-  userImagePullPolicy?: 'Always' | 'IfNotPresent' | 'Never';
-}
-
 export interface RedisConfig {
   url: string;
   maxRetriesPerRequest: number | null;

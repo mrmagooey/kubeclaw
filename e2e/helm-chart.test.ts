@@ -329,20 +329,13 @@ describe('persistent volume claims', () => {
 // ─── 6. ConfigMaps ────────────────────────────────────────────────────────────
 
 describe('configmaps', () => {
-  it('kubeclaw-runner-wrapper has runner-wrapper.sh', () => {
-    const cm = getJson('configmap/kubeclaw-runner-wrapper') as {
+  it('kubeclaw-tool-wrapper has tool-wrapper.sh', () => {
+    const cm = getJson('configmap/kubeclaw-tool-wrapper') as {
       data: Record<string, string>;
     };
-    expect(cm.data['runner-wrapper.sh']).toBeDefined();
-    expect(cm.data['runner-wrapper.sh']).toContain('INPUT_DIR');
-    expect(cm.data['runner-wrapper.sh']).toContain('OUTPUT_DIR');
-  });
-
-  it('kubeclaw-wrapper-script has runner-wrapper.sh', () => {
-    const cm = getJson('configmap/kubeclaw-wrapper-script') as {
-      data: Record<string, string>;
-    };
-    expect(cm.data['runner-wrapper.sh']).toBeDefined();
+    expect(cm.data['tool-wrapper.sh']).toBeDefined();
+    expect(cm.data['tool-wrapper.sh']).toContain('SHARED_DIR');
+    expect(cm.data['tool-wrapper.sh']).toContain('request.json');
   });
 });
 

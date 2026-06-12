@@ -9,6 +9,8 @@ import {
   RedisACLManager,
   getACLManager,
   resetACLManager,
+  startAclCleanupSweep,
+  stopAclCleanupSweep,
 } from './acl-manager.js';
 import {
   _initTestDatabase,
@@ -429,6 +431,91 @@ describe('RedisACLManager', () => {
     });
   });
 
+  describe('createToolPodACL', () => {
+    beforeEach(() => {
+      mockInfo.mockResolvedValue('redis_version:7.2.0');
+      mockAcl.mockResolvedValue('OK');
+    });
+
+    it('creates a user scoped to exactly the job toolcalls/toolresults streams', async () => {
+      const creds = await manager.createToolPodACL(
+        'kubeclaw-stool-abc123-mytool',
+        'direct-1717-agent',
+        'mytool',
+        'my-group',
+        3600,
+      );
+
+      expect(creds.username).toMatch(/^stool-kubeclaw-stool-abc123-mytool/);
+      expect(creds.password).toBeTruthy();
+
+      const aclArgs = mockAcl.mock.calls.find((c) => c[0] === 'SETUSER')!;
+      const argStrings = aclArgs.map(String);
+      expect(argStrings).toContain(
+        '%R~kubeclaw:toolcalls:direct-1717-agent:mytool',
+      );
+      expect(argStrings).toContain(
+        '%W~kubeclaw:toolresults:direct-1717-agent:mytool',
+      );
+      expect(argStrings).toContain('+xread');
+      expect(argStrings).toContain('+xadd');
+      // No pub/sub, no cross-key access
+      expect(argStrings).toContain('resetchannels');
+      expect(argStrings.join(' ')).not.toContain('~kubeclaw:input');
+      // resetkeys must come BEFORE the %R~/%W~ grants
+      expect(argStrings.indexOf('resetkeys')).toBeLessThan(
+        argStrings.indexOf('%R~kubeclaw:toolcalls:direct-1717-agent:mytool'),
+      );
+    });
+
+    it('persists the ACL so credentials can be retrieved and revoked', async () => {
+      const creds = await manager.createToolPodACL(
+        'kubeclaw-stool-def456-othertool',
+        'agent-2',
+        'othertool',
+        'my-group',
+        60,
+      );
+      const stored = getJobACLByGroup('my-group');
+      expect(stored).toBeTruthy();
+      expect(stored!.username).toBe(creds.username);
+      expect(stored!.status).toBe('active');
+    });
+
+    it('throws when SETUSER is rejected', async () => {
+      mockAcl.mockRejectedValueOnce(new Error('NOPERM'));
+
+      await expect(
+        manager.createToolPodACL(
+          'kubeclaw-stool-xyz-tool',
+          'agent-x',
+          'tool',
+          'g',
+          60,
+        ),
+      ).rejects.toThrow('Failed to create tool pod ACL user');
+    });
+
+    it('caps the username at 64 characters', async () => {
+      const longPodName = `kubeclaw-stool-abcd1234-${'x'.repeat(35)}`;
+      const creds = await manager.createToolPodACL(
+        longPodName,
+        'agent-long',
+        'x'.repeat(35),
+        'my-group',
+        60,
+      );
+      expect(creds.username.length).toBeLessThanOrEqual(64);
+      expect(creds.username.startsWith('stool-kubeclaw-stool-abcd1234-')).toBe(
+        true,
+      );
+
+      // The SETUSER call must use the same truncated name
+      const aclArgs = mockAcl.mock.calls.find((c) => c[0] === 'SETUSER')!;
+      expect(aclArgs[1]).toBe(creds.username);
+    });
+  });
+
   describe('Singleton Pattern', () => {
     it('should return the same instance from getACLManager', () => {
       const manager1 = getACLManager();
@@ -642,5 +729,32 @@ describe('JobACL Database Functions (Integration)', () => {
       const revokedIds = cleanupExpiredACLs();
       expect(revokedIds).not.toContain('test-job-already-revoked');
     });
+  });
+});
+
+describe('ACL cleanup sweep', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    stopAclCleanupSweep();
+    vi.useRealTimers();
+  });
+
+  it('is idempotent — second start does not create a second timer', () => {
+    const spy = vi.spyOn(global, 'setInterval');
+    startAclCleanupSweep(1000);
+    startAclCleanupSweep(1000);
+    expect(spy).toHaveBeenCalledTimes(1);
+    spy.mockRestore();
+  });
+
+  it('can be stopped and restarted', () => {
+    const spy = vi.spyOn(global, 'setInterval');
+    startAclCleanupSweep(1000);
+    stopAclCleanupSweep();
+    startAclCleanupSweep(1000);
+    expect(spy).toHaveBeenCalledTimes(2);
+    spy.mockRestore();
   });
 });

@@ -11,20 +11,10 @@ CONTAINER_RUNTIME="${CONTAINER_RUNTIME:-docker}"
 
 # Parse command line arguments
 BUILD_AGENT=true
-BUILD_FILE_ADAPTER=false
-BUILD_HTTP_ADAPTER=false
 BUILD_BROWSER=false
 BUILD_ORCHESTRATOR=false
 while [[ $# -gt 0 ]]; do
   case $1 in
-    --file-adapter)
-      BUILD_FILE_ADAPTER=true
-      shift
-      ;;
-    --http-adapter)
-      BUILD_HTTP_ADAPTER=true
-      shift
-      ;;
     --browser)
       BUILD_BROWSER=true
       shift
@@ -35,15 +25,13 @@ while [[ $# -gt 0 ]]; do
       ;;
     --all)
       BUILD_AGENT=true
-      BUILD_FILE_ADAPTER=true
-      BUILD_HTTP_ADAPTER=true
       BUILD_BROWSER=true
       BUILD_ORCHESTRATOR=true
       shift
       ;;
     *)
       echo "Unknown option: $1"
-      echo "Usage: $0 [--file-adapter|--http-adapter|--browser|--orchestrator|--all]"
+      echo "Usage: $0 [--browser|--orchestrator|--all]"
       exit 1
       ;;
   esac
@@ -59,32 +47,6 @@ if [ "$BUILD_AGENT" = true ]; then
   echo "Image: kubeclaw-agent:latest"
   ${CONTAINER_RUNTIME} build --network=host -f container/Dockerfile -t kubeclaw-agent:latest .
   echo "Agent build complete!"
-  echo ""
-fi
-
-# Build File Adapter
-if [ "$BUILD_FILE_ADAPTER" = true ]; then
-  echo "Building File Adapter..."
-  echo "Image: kubeclaw-file-adapter:latest"
-  if [ -d "container/file-adapter" ]; then
-    ${CONTAINER_RUNTIME} build --network=host -f container/file-adapter/Dockerfile -t kubeclaw-file-adapter:latest container/file-adapter
-    echo "File adapter build complete!"
-  else
-    echo "WARNING: file-adapter directory not found, skipping file adapter build"
-  fi
-  echo ""
-fi
-
-# Build HTTP Adapter
-if [ "$BUILD_HTTP_ADAPTER" = true ]; then
-  echo "Building HTTP Adapter..."
-  echo "Image: kubeclaw-http-adapter:latest"
-  if [ -d "container/http-adapter" ]; then
-    ${CONTAINER_RUNTIME} build --network=host -f container/http-adapter/Dockerfile -t kubeclaw-http-adapter:latest container/http-adapter
-    echo "HTTP adapter build complete!"
-  else
-    echo "WARNING: http-adapter directory not found, skipping HTTP adapter build"
-  fi
   echo ""
 fi
 
@@ -121,12 +83,6 @@ echo "Build complete!"
 
 if [ "$BUILD_AGENT" = true ]; then
   echo "  Agent image: kubeclaw-agent:latest"
-fi
-if [ "$BUILD_FILE_ADAPTER" = true ] && [ -d "container/file-adapter" ]; then
-  echo "  File adapter image: kubeclaw-file-adapter:latest"
-fi
-if [ "$BUILD_HTTP_ADAPTER" = true ] && [ -d "container/http-adapter" ]; then
-  echo "  HTTP adapter image: kubeclaw-http-adapter:latest"
 fi
 if [ "$BUILD_BROWSER" = true ] && [ -d "container/browser" ]; then
   echo "  Browser sidecar image: kubeclaw-browser-sidecar:latest"

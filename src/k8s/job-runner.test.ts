@@ -26,7 +26,6 @@ vi.mock('../config.js', () => ({
   TOOL_JOB_CPU_LIMIT: '2000m',
   REDIS_AGENT_PASSWORD: '',
   REDIS_TOOL_SERVER_PASSWORD: '',
-  REDIS_ADAPTER_PASSWORD: '',
   CREDENTIAL_SIDECAR_IMAGE: 'envoyproxy/envoy:v1.31-latest',
   CREDENTIAL_SIDECAR_PORT: 8443,
   assertToolImageAllowed: vi.fn(),
@@ -49,6 +48,17 @@ vi.mock('../logger.js', () => ({
     warn: vi.fn(),
     error: vi.fn(),
   },
+}));
+
+// Mock ACL manager
+const { mockCreateToolPodACL } = vi.hoisted(() => ({
+  mockCreateToolPodACL: vi.fn(),
+}));
+
+vi.mock('./acl-manager.js', () => ({
+  getACLManager: vi.fn(() => ({
+    createToolPodACL: mockCreateToolPodACL,
+  })),
 }));
 
 // Mock Redis client
@@ -1350,6 +1360,10 @@ describe('JobRunner', () => {
     beforeEach(() => {
       vi.clearAllMocks();
       mockBatchApi.createNamespacedJob.mockResolvedValue({});
+      mockCreateToolPodACL.mockResolvedValue({
+        username: 'stool-default',
+        password: 'default-pass',
+      });
     });
 
     const baseSpec = {
@@ -1441,11 +1455,13 @@ describe('JobRunner', () => {
       expect(jobName).toContain('stool');
     });
 
-    it('bridge container REDIS_URL uses tool-server ACL user, not adapter', async () => {
+    it("falls back to the 'tool-server' ACL user (regression: previously used the 'adapter' user, which cannot read toolcalls)", async () => {
       // Regression: createSidecarToolPodJob previously authenticated as the
       // 'adapter' ACL user, which only has read-only access to kubeclaw:input:*.
       // The bridge needs XREAD on kubeclaw:toolcalls:* and XADD on
       // kubeclaw:toolresults:* — both granted only to 'tool-server'.
+      // When per-job ACL minting fails, the fallback must use 'tool-server'.
+      mockCreateToolPodACL.mockRejectedValueOnce(new Error('redis 6, no ACLs'));
       process.env.REDIS_ADMIN_PASSWORD = 'testpass';
       process.env.REDIS_URL = 'redis://kubeclaw-redis:6379';
 
@@ -1461,7 +1477,75 @@ describe('JobRunner', () => {
       expect(redisUrl).not.toContain('adapter');
     });
 
-    it('bridge container REDIS_URL uses tool-server when REDIS_TOOL_SERVER_PASSWORD is set', async () => {
+    it('passes KUBECLAW_TOOL_HEALTH_PATH to the bridge when ToolSpec.healthPath is set', async () => {
+      await jobRunner.createSidecarToolPodJob({
+        ...baseSpec,
+        toolSpec: { ...baseSpec.toolSpec, healthPath: '/healthz' },
+      });
+
+      const call = mockBatchApi.createNamespacedJob.mock.calls.at(-1)![0];
+      const bridge = call.body.spec.template.spec.containers.find(
+        (c: any) => c.name === 'kubeclaw-tool-bridge',
+      );
+      expect(bridge.env).toContainEqual({
+        name: 'KUBECLAW_TOOL_HEALTH_PATH',
+        value: '/healthz',
+      });
+    });
+
+    it('omits KUBECLAW_TOOL_HEALTH_PATH when ToolSpec.healthPath is absent', async () => {
+      await jobRunner.createSidecarToolPodJob(baseSpec);
+
+      const call = mockBatchApi.createNamespacedJob.mock.calls.at(-1)![0];
+      const bridge = call.body.spec.template.spec.containers.find(
+        (c: any) => c.name === 'kubeclaw-tool-bridge',
+      );
+      expect(bridge.env.map((e: any) => e.name)).not.toContain(
+        'KUBECLAW_TOOL_HEALTH_PATH',
+      );
+    });
+
+    it('embeds per-job ACL credentials in the bridge REDIS_URL', async () => {
+      mockCreateToolPodACL.mockResolvedValueOnce({
+        username: 'stool-test-user',
+        password: 'p4ss',
+      });
+
+      await jobRunner.createSidecarToolPodJob(baseSpec);
+
+      expect(mockCreateToolPodACL).toHaveBeenCalledWith(
+        expect.stringMatching(/^kubeclaw-stool-/),
+        baseSpec.agentJobId,
+        baseSpec.toolName,
+        baseSpec.groupFolder,
+        expect.any(Number),
+      );
+
+      const call = mockBatchApi.createNamespacedJob.mock.calls.at(-1)![0];
+      const bridge = call.body.spec.template.spec.containers.find(
+        (c: any) => c.name === 'kubeclaw-tool-bridge',
+      );
+      const redisEnv = bridge.env.find((e: any) => e.name === 'REDIS_URL');
+      expect(redisEnv.value).toContain('stool-test-user:p4ss@');
+    });
+
+    it('falls back to the shared tool-server user when ACL minting fails', async () => {
+      mockCreateToolPodACL.mockRejectedValueOnce(new Error('redis 6, no ACLs'));
+
+      await jobRunner.createSidecarToolPodJob(baseSpec);
+
+      const call = mockBatchApi.createNamespacedJob.mock.calls.at(-1)![0];
+      expect(call).toBeTruthy(); // job still created
+      const bridge = call.body.spec.template.spec.containers.find(
+        (c: any) => c.name === 'kubeclaw-tool-bridge',
+      );
+      const redisEnv = bridge.env.find((e: any) => e.name === 'REDIS_URL');
+      expect(redisEnv.value).not.toContain('stool-');
+    });
+
+    it('bridge container REDIS_URL uses tool-server when REDIS_TOOL_SERVER_PASSWORD is set (fallback: no password → plain URL)', async () => {
+      // Force fallback path so we test the shared-user credential assembly.
+      mockCreateToolPodACL.mockRejectedValueOnce(new Error('minting disabled'));
       delete process.env.REDIS_ADMIN_PASSWORD;
       process.env.REDIS_URL = 'redis://kubeclaw-redis:6379';
 
@@ -1483,6 +1567,65 @@ describe('JobRunner', () => {
       expect(redisUrl).toBe('redis://kubeclaw-redis:6379');
       // And critically: the URL must not embed 'adapter'
       expect(redisUrl).not.toContain('adapter');
+    });
+
+    it('mounts the tool-wrapper ConfigMap into the user container for file-bridge pods', async () => {
+      const fileSpec = {
+        ...baseSpec,
+        toolSpec: { ...baseSpec.toolSpec, pattern: 'file' as const },
+      };
+      await jobRunner.createSidecarToolPodJob(fileSpec);
+
+      const call = mockBatchApi.createNamespacedJob.mock.calls.at(-1)![0];
+      const podSpec = call.body.spec.template.spec;
+      const userTool = podSpec.containers.find(
+        (c: any) => c.name === 'user-tool',
+      );
+      const bridge = podSpec.containers.find(
+        (c: any) => c.name === 'kubeclaw-tool-bridge',
+      );
+
+      expect(userTool.volumeMounts).toContainEqual({
+        name: 'tool-wrapper',
+        mountPath: '/kubeclaw',
+        readOnly: true,
+      });
+      // Bridge does NOT get the wrapper, but both share /shared
+      expect(bridge.volumeMounts.map((m: any) => m.name)).not.toContain(
+        'tool-wrapper',
+      );
+      expect(bridge.volumeMounts.map((m: any) => m.name)).toContain('shared');
+      expect(userTool.volumeMounts.map((m: any) => m.name)).toContain('shared');
+
+      expect(podSpec.volumes).toContainEqual({
+        name: 'tool-wrapper',
+        configMap: {
+          name: 'kubeclaw-tool-wrapper',
+          defaultMode: 0o755,
+          optional: true,
+        },
+      });
+    });
+
+    it('does not mount the wrapper for http-bridge pods', async () => {
+      await jobRunner.createSidecarToolPodJob(baseSpec);
+      const call = mockBatchApi.createNamespacedJob.mock.calls.at(-1)![0];
+      const volumes = call.body.spec.template.spec.volumes ?? [];
+      expect(volumes.map((v: any) => v.name)).not.toContain('tool-wrapper');
+    });
+
+    it('does not mount the wrapper for acp-bridge pods', async () => {
+      await jobRunner.createSidecarToolPodJob({
+        ...baseSpec,
+        toolSpec: {
+          ...baseSpec.toolSpec,
+          pattern: 'acp' as const,
+          acpAgentName: 'my-agent',
+        },
+      });
+      const call = mockBatchApi.createNamespacedJob.mock.calls.at(-1)![0];
+      const volumes = call.body.spec.template.spec.volumes ?? [];
+      expect(volumes.map((v: any) => v.name)).not.toContain('tool-wrapper');
     });
   });
 

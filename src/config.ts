@@ -226,7 +226,6 @@ export const REDIS_USERNAME = process.env.REDIS_USERNAME || '';
 export const REDIS_AGENT_PASSWORD = process.env.REDIS_AGENT_PASSWORD || '';
 export const REDIS_TOOL_SERVER_PASSWORD =
   process.env.REDIS_TOOL_SERVER_PASSWORD || '';
-export const REDIS_ADAPTER_PASSWORD = process.env.REDIS_ADAPTER_PASSWORD || '';
 export const ACL_ENCRYPTION_KEY = process.env.ACL_ENCRYPTION_KEY || '';
 
 // --- Tool Image Allowlist ---
@@ -278,23 +277,6 @@ export const TOOL_JOB_MEMORY_REQUEST =
 export const TOOL_JOB_MEMORY_LIMIT = process.env.TOOL_JOB_MEMORY_LIMIT || '4Gi';
 export const TOOL_JOB_CPU_REQUEST = process.env.TOOL_JOB_CPU_REQUEST || '250m';
 export const TOOL_JOB_CPU_LIMIT = process.env.TOOL_JOB_CPU_LIMIT || '2000m';
-
-// --- Sidecar HTTP Adapter Configuration ---
-export const SIDECAR_HTTP_ADAPTER_IMAGE =
-  process.env.SIDECAR_HTTP_ADAPTER_IMAGE || 'kubeclaw-http-adapter:latest';
-export const SIDECAR_HTTP_REQUEST_TIMEOUT = 300000; // Fixed 5min
-export const SIDECAR_HTTP_MAX_RETRIES = 3;
-export const SIDECAR_HTTP_RETRY_DELAY = 1000; // Initial delay 1s
-export const SIDECAR_HTTP_HEALTH_POLL_INTERVAL = 1000; // 1 second
-export const SIDECAR_HTTP_HEALTH_POLL_TIMEOUT = 30000; // 30 seconds
-
-// --- File Sidecar Configuration ---
-export const SIDECAR_FILE_ADAPTER_IMAGE =
-  process.env.SIDECAR_FILE_ADAPTER_IMAGE || 'kubeclaw-file-adapter:latest';
-export const SIDECAR_FILE_POLL_INTERVAL = parseInt(
-  process.env.SIDECAR_FILE_POLL_INTERVAL || '1000',
-  10,
-);
 
 // --- Browser Sidecar Configuration ---
 export const BROWSER_SIDECAR_IMAGE =

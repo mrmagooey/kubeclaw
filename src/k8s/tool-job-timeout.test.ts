@@ -48,7 +48,6 @@ vi.mock('../config.js', () => ({
   TOOL_JOB_CPU_LIMIT: '2000m',
   REDIS_AGENT_PASSWORD: '',
   REDIS_TOOL_SERVER_PASSWORD: '',
-  REDIS_ADAPTER_PASSWORD: '',
   CREDENTIAL_SIDECAR_IMAGE: 'envoyproxy/envoy:v1.31-latest',
   CREDENTIAL_SIDECAR_PORT: 8443,
   BROWSER_SIDECAR_IMAGE: 'browsers:latest',

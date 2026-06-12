@@ -35,7 +35,6 @@ import {
   assertToolImageAllowed,
   REDIS_AGENT_PASSWORD,
   REDIS_TOOL_SERVER_PASSWORD,
-  REDIS_ADAPTER_PASSWORD,
   getInjectionMode,
   getAuditOnly,
   CREDENTIAL_SIDECAR_IMAGE,
@@ -62,6 +61,7 @@ import {
   getOutputChannel,
   closeRedisConnections,
 } from './redis-client.js';
+import { getACLManager } from './acl-manager.js';
 import type { OrchestratorMetrics } from '../metrics/orchestrator.js';
 import { resolveToolJob } from '../db.js';
 
@@ -1734,15 +1734,33 @@ export class JobRunner {
     const jobName = `kubeclaw-stool-${agentSuffix}-${safeTool}`;
 
     const timeoutSeconds = Math.floor(spec.timeout / 1000);
-    // Sidecar tool pods use the 'tool-server' ACL user, which has XREAD on
-    // kubeclaw:toolcalls:* and XADD on kubeclaw:toolresults:* — the two
-    // operations the bridge performs.  The 'adapter' user (previously used
-    // here) only has read-only access to kubeclaw:input:* and cannot read
-    // toolcalls or write toolresults, causing the bridge to fail silently.
+    // Prefer a per-job ACL user scoped to exactly this job's two streams
+    // (ported from the legacy adapter security model). Fall back to the
+    // shared 'tool-server' user if minting fails (e.g. Redis < 7), matching
+    // the legacy runners' degrade-gracefully behavior.
+    let redisUsername = 'tool-server';
+    let redisPassword =
+      REDIS_TOOL_SERVER_PASSWORD || process.env.REDIS_ADMIN_PASSWORD;
+    try {
+      const creds = await getACLManager().createToolPodACL(
+        jobName,
+        spec.agentJobId,
+        spec.toolName,
+        spec.groupFolder,
+        timeoutSeconds + 900, // outlive the pod by 15 min; sweep revokes after
+      );
+      redisUsername = creds.username;
+      redisPassword = creds.password;
+    } catch (err) {
+      logger.warn(
+        { jobName, err },
+        'Per-job ACL minting failed; falling back to shared tool-server Redis user',
+      );
+    }
     const redisUrl = buildRedisUrl(
       process.env.REDIS_URL || 'redis://kubeclaw-redis:6379',
-      'tool-server',
-      REDIS_TOOL_SERVER_PASSWORD || process.env.REDIS_ADMIN_PASSWORD,
+      redisUsername,
+      redisPassword,
     );
 
     const bridgeEnv = [
@@ -1766,14 +1784,46 @@ export class JobRunner {
       );
     }
 
+    if (toolSpec.healthPath) {
+      bridgeEnv.push({
+        name: 'KUBECLAW_TOOL_HEALTH_PATH',
+        value: toolSpec.healthPath,
+      });
+    }
+
     const userEnv = [{ name: 'PORT', value: String(port) }];
 
-    const volumeMounts: Array<{ name: string; mountPath: string }> = [];
+    const bridgeMounts: Array<{
+      name: string;
+      mountPath: string;
+      readOnly?: boolean;
+    }> = [];
+    const userMounts: Array<{
+      name: string;
+      mountPath: string;
+      readOnly?: boolean;
+    }> = [];
     const volumes: Array<any> = [];
 
     if (isFileBridge) {
-      volumeMounts.push({ name: 'shared', mountPath: '/shared' });
+      bridgeMounts.push({ name: 'shared', mountPath: '/shared' });
+      userMounts.push({ name: 'shared', mountPath: '/shared' });
+      // Optional wrapper script: lets stock images (sh + jq) serve file-bridge
+      // tools via command: ["/bin/sh", "/kubeclaw/tool-wrapper.sh", "<cmd>"]
+      userMounts.push({
+        name: 'tool-wrapper',
+        mountPath: '/kubeclaw',
+        readOnly: true,
+      });
       volumes.push({ name: 'shared', emptyDir: {} });
+      volumes.push({
+        name: 'tool-wrapper',
+        configMap: {
+          name: 'kubeclaw-tool-wrapper',
+          defaultMode: 0o755,
+          optional: true,
+        },
+      });
     }
 
     const job: V1Job = {
@@ -1804,7 +1854,7 @@ export class JobRunner {
                 imagePullPolicy: 'IfNotPresent',
                 command: ['node', '/app/dist/tool-server.js'],
                 env: bridgeEnv,
-                volumeMounts,
+                volumeMounts: bridgeMounts,
                 resources: {
                   requests: { memory: '64Mi', cpu: '50m' },
                   limits: { memory: '128Mi', cpu: '200m' },
@@ -1816,7 +1866,7 @@ export class JobRunner {
                 imagePullPolicy: toolSpec.pullPolicy ?? 'IfNotPresent',
                 ...(toolSpec.command ? { command: toolSpec.command } : {}),
                 env: userEnv,
-                volumeMounts,
+                volumeMounts: userMounts,
                 resources: {
                   requests: {
                     memory: toolSpec.memoryRequest ?? TOOL_JOB_MEMORY_REQUEST,
