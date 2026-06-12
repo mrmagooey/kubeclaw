@@ -1461,6 +1461,34 @@ describe('JobRunner', () => {
       expect(redisUrl).not.toContain('adapter');
     });
 
+    it('passes KUBECLAW_TOOL_HEALTH_PATH to the bridge when ToolSpec.healthPath is set', async () => {
+      await jobRunner.createSidecarToolPodJob({
+        ...baseSpec,
+        toolSpec: { ...baseSpec.toolSpec, healthPath: '/healthz' },
+      });
+
+      const call = mockBatchApi.createNamespacedJob.mock.calls.at(-1)![0];
+      const bridge = call.body.spec.template.spec.containers.find(
+        (c: any) => c.name === 'kubeclaw-tool-bridge',
+      );
+      expect(bridge.env).toContainEqual({
+        name: 'KUBECLAW_TOOL_HEALTH_PATH',
+        value: '/healthz',
+      });
+    });
+
+    it('omits KUBECLAW_TOOL_HEALTH_PATH when ToolSpec.healthPath is absent', async () => {
+      await jobRunner.createSidecarToolPodJob(baseSpec);
+
+      const call = mockBatchApi.createNamespacedJob.mock.calls.at(-1)![0];
+      const bridge = call.body.spec.template.spec.containers.find(
+        (c: any) => c.name === 'kubeclaw-tool-bridge',
+      );
+      expect(bridge.env.map((e: any) => e.name)).not.toContain(
+        'KUBECLAW_TOOL_HEALTH_PATH',
+      );
+    });
+
     it('bridge container REDIS_URL uses tool-server when REDIS_TOOL_SERVER_PASSWORD is set', async () => {
       delete process.env.REDIS_ADMIN_PASSWORD;
       process.env.REDIS_URL = 'redis://kubeclaw-redis:6379';

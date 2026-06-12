@@ -127,10 +127,8 @@ let _bootstrapNamespace = process.env.KUBECLAW_NAMESPACE || 'kubeclaw';
 // Story 180: in-memory map of most-recent step label per bootstrapJobId.
 // Updated by the bootstrap topic subscriber when a { type: "step" } message arrives.
 // Exported so bootstrap-runner.ts can read it when building active entries.
-export const currentStepByJob: Map<
-  string,
-  { label: string; ts: string }
-> = new Map();
+export const currentStepByJob: Map<string, { label: string; ts: string }> =
+  new Map();
 
 // In-memory map of the most-recent unanswered admin question per bootstrapJobId.
 // Populated by the bootstrap topic subscriber when a { type: "question" } message
@@ -236,7 +234,10 @@ export function startBootstrapTaskWatcher(): void {
               { bootstrapJobId, label },
               'bootstrap step label recorded',
             );
-          } else if (data.type === 'question' && typeof data.text === 'string') {
+          } else if (
+            data.type === 'question' &&
+            typeof data.text === 'string'
+          ) {
             const ts = data.ts ?? new Date().toISOString();
             // Cap length the same way step labels are capped — the text is
             // embedded verbatim into the admin LLM prompt on every turn.
@@ -1055,6 +1056,9 @@ export async function startToolPodSpawnWatcher(): Promise<void> {
                     : {}),
                   ...(obj.toolAcpMode
                     ? { acpMode: obj.toolAcpMode as 'sync' | 'async' }
+                    : {}),
+                  ...(obj.toolHealthPath
+                    ? { healthPath: obj.toolHealthPath }
                     : {}),
                 },
                 timeout: timeoutMs,

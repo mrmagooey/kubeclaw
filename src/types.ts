@@ -73,6 +73,8 @@ export interface ToolSpec {
   memoryLimit?: string;
   cpuRequest?: string;
   cpuLimit?: string;
+  /** Optional readiness-probe path on the user container (default "/"; any HTTP response counts as ready). */
+  healthPath?: string;
   // ACP-specific (only when pattern = 'acp')
   acpAgentName?: string; // Agent name on multi-agent ACP servers (defaults to tool name)
   acpMode?: 'sync' | 'async'; // ACP execution mode (default: sync)

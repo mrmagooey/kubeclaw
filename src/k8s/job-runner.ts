@@ -1766,6 +1766,13 @@ export class JobRunner {
       );
     }
 
+    if (toolSpec.healthPath) {
+      bridgeEnv.push({
+        name: 'KUBECLAW_TOOL_HEALTH_PATH',
+        value: toolSpec.healthPath,
+      });
+    }
+
     const userEnv = [{ name: 'PORT', value: String(port) }];
 
     const volumeMounts: Array<{ name: string; mountPath: string }> = [];
