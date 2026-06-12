@@ -486,8 +486,31 @@ describe('RedisACLManager', () => {
       mockAcl.mockRejectedValueOnce(new Error('NOPERM'));
 
       await expect(
-        manager.createToolPodACL('kubeclaw-stool-xyz-tool', 'agent-x', 'tool', 'g', 60),
+        manager.createToolPodACL(
+          'kubeclaw-stool-xyz-tool',
+          'agent-x',
+          'tool',
+          'g',
+          60,
+        ),
       ).rejects.toThrow('Failed to create tool pod ACL user');
+    });
+
+    it('caps the username at 64 characters', async () => {
+      const longPodName = `kubeclaw-stool-abcd1234-${'x'.repeat(35)}`;
+      const creds = await manager.createToolPodACL(
+        longPodName,
+        'agent-long',
+        'x'.repeat(35),
+        'my-group',
+        60,
+      );
+      expect(creds.username.length).toBeLessThanOrEqual(64);
+      expect(creds.username.startsWith('stool-kubeclaw-stool-abcd1234-')).toBe(true);
+
+      // The SETUSER call must use the same truncated name
+      const aclArgs = mockAcl.mock.calls.find((c) => c[0] === 'SETUSER')!;
+      expect(aclArgs[1]).toBe(creds.username);
     });
   });
 
@@ -621,7 +644,6 @@ describe('JobACL Database Functions (Integration)', () => {
       expect(retrieved).toBeUndefined();
     });
   });
-
 
   describe('revokeJobACL', () => {
     it('should mark ACL as revoked', () => {

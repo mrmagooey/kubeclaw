@@ -179,7 +179,11 @@ export class RedisACLManager {
 
     // Suffix avoids job_acls PK collisions if the same job name recurs.
     const jobKey = `${podJobName}-${Date.now().toString(36)}`;
-    const username = `stool-${podJobName}`;
+    // Cap at 64 chars — conservative bound for Redis ACL usernames; worst-case
+    // jobName ('kubeclaw-stool-' + 8 + '-' + 35) would otherwise yield 65.
+    // Truncation collisions are safe: resetkeys + password rotation in SETUSER
+    // mean a colliding mint invalidates the old creds and re-scopes the user.
+    const username = `stool-${podJobName}`.slice(0, 64);
     const password = this.generatePassword();
     const encryptedPassword = this.encryptPassword(password);
 
@@ -315,7 +319,11 @@ export class RedisACLManager {
 
     for (const jobId of expiredJobIds) {
       const acl = getJobACL(jobId);
-      if (acl && acl.status === 'revoked') {
+      if (!acl) {
+        logger.warn({ jobId }, 'Expired ACL row not found; DELUSER skipped');
+        continue;
+      }
+      if (acl.status === 'revoked') {
         try {
           // ACL DELUSER is a no-op (returns 0, no error) if the user is already
           // gone — safe when multiple job_acls rows share one username.
