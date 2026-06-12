@@ -278,7 +278,6 @@ export const TOOL_JOB_MEMORY_LIMIT = process.env.TOOL_JOB_MEMORY_LIMIT || '4Gi';
 export const TOOL_JOB_CPU_REQUEST = process.env.TOOL_JOB_CPU_REQUEST || '250m';
 export const TOOL_JOB_CPU_LIMIT = process.env.TOOL_JOB_CPU_LIMIT || '2000m';
 
-
 // --- Browser Sidecar Configuration ---
 export const BROWSER_SIDECAR_IMAGE =
   process.env.BROWSER_SIDECAR_IMAGE || 'kubeclaw-browser-sidecar:latest';
