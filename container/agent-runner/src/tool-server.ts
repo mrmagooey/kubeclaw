@@ -43,6 +43,64 @@ function log(msg: string): void {
   console.error(`[tool-server:${category}] ${msg}`);
 }
 
+/** Unrecoverable client error (HTTP 4xx) — do not retry. */
+export class ToolClientError extends Error {
+  constructor(
+    public readonly status: number,
+    body: string,
+  ) {
+    super(`Tool HTTP ${status}: ${body}`);
+    this.name = 'ToolClientError';
+  }
+}
+
+const REQUEST_TIMEOUT_MS = parseInt(
+  process.env.KUBECLAW_TOOL_REQUEST_TIMEOUT || '30000',
+  10,
+);
+const RETRY_BASE_MS = parseInt(
+  process.env.KUBECLAW_TOOL_RETRY_BASE_MS || '1000',
+  10,
+);
+const RETRY_MAX_ATTEMPTS = 3;
+
+/**
+ * fetch with the legacy http-adapter's retry discipline:
+ * - per-attempt timeout (AbortSignal)
+ * - 4xx → ToolClientError, no retry (the request itself is wrong)
+ * - 5xx / network error / timeout → exponential backoff (base, 2x, 4x), 3 attempts
+ */
+export async function fetchWithRetry(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number = REQUEST_TIMEOUT_MS,
+): Promise<Response> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < RETRY_MAX_ATTEMPTS; attempt++) {
+    if (attempt > 0) {
+      const delay = RETRY_BASE_MS * Math.pow(2, attempt - 1);
+      log(`Retrying ${url} in ${delay}ms (attempt ${attempt + 1}/${RETRY_MAX_ATTEMPTS})`);
+      await new Promise((r) => setTimeout(r, delay));
+    }
+    try {
+      const res = await fetch(url, {
+        ...init,
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      if (res.ok) return res;
+      const body = await res.text();
+      if (res.status >= 400 && res.status < 500) {
+        throw new ToolClientError(res.status, body);
+      }
+      lastError = new Error(`Tool HTTP ${res.status}: ${body}`);
+    } catch (err) {
+      if (err instanceof ToolClientError) throw err;
+      lastError = err;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
 // --- Execution tools ---
 
 async function toolBash(input: { command: string; timeout?: number }): Promise<string> {
@@ -225,12 +283,11 @@ async function getRedisForTask(): Promise<RedisClientType> {
 // --- Bridge modes ---
 
 async function executeToolBridgeHttp(tool: string, input: Record<string, unknown>): Promise<unknown> {
-  const res = await fetch(`http://localhost:${toolPort}/invoke`, {
+  const res = await fetchWithRetry(`http://localhost:${toolPort}/invoke`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ tool, input }),
   });
-  if (!res.ok) throw new Error(`Bridge HTTP error: ${res.status} ${await res.text()}`);
   const data = await res.json() as { result?: unknown; error?: string };
   if (data.error) throw new Error(data.error);
   return data.result ?? null;
@@ -273,23 +330,24 @@ async function executeToolBridgeAcp(
   }];
 
   if (acpMode === 'sync') {
-    const res = await fetch(`${acpBaseUrl}/runs`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ agent_name: agentName, input: acpInput, mode: 'synchronous' }),
-      signal: AbortSignal.timeout(idleTimeout),
-    });
-    if (!res.ok) throw new Error(`ACP error: ${res.status} ${await res.text()}`);
+    const res = await fetchWithRetry(
+      `${acpBaseUrl}/runs`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agent_name: agentName, input: acpInput, mode: 'synchronous' }),
+      },
+      idleTimeout,
+    );
     return extractACPResult(await res.json());
   }
 
   // Async: POST /runs returns run_id, poll for result
-  const createRes = await fetch(`${acpBaseUrl}/runs`, {
+  const createRes = await fetchWithRetry(`${acpBaseUrl}/runs`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ agent_name: agentName, input: acpInput }),
   });
-  if (!createRes.ok) throw new Error(`ACP error: ${createRes.status} ${await createRes.text()}`);
   const run = await createRes.json() as { run_id: string; status: string };
 
   // Poll with exponential backoff

@@ -24,17 +24,15 @@ vi.mock('redis', () => {
     on: vi.fn(),
     connect: vi.fn().mockResolvedValue(undefined),
     disconnect: vi.fn().mockResolvedValue(undefined),
-    // Intentionally omit xRead so main()'s stream loop errors immediately
-    // (same pattern as src/tool-server.test.ts) — prevents infinite spin under vitest.
+    // Intentionally omit xRead: main()'s xRead call throws TypeError, which its
+    // catch block absorbs with a 1s sleep; assertions complete before this matters.
     xAdd: vi.fn().mockResolvedValue(undefined),
     quit: vi.fn().mockResolvedValue(undefined),
   };
   return { createClient: vi.fn(() => mockRedis) };
 });
 
-import {
-  reconnectStrategy,
-} from '../container/agent-runner/src/tool-server.js';
+import { reconnectStrategy, fetchWithRetry, ToolClientError } from '../container/agent-runner/src/tool-server.js';
 
 describe('reconnectStrategy', () => {
   it('backs off exponentially from 100ms', () => {
@@ -49,5 +47,64 @@ describe('reconnectStrategy', () => {
 
   it('gives up with an Error after 10 retries', () => {
     expect(reconnectStrategy(11)).toBeInstanceOf(Error);
+  });
+});
+
+describe('fetchWithRetry', () => {
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('returns the response on first success', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response('{"result":"ok"}', { status: 200 }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = await fetchWithRetry('http://localhost:9999/invoke', {
+      method: 'POST',
+    });
+    expect(res.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails fast on 4xx without retrying', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response('bad request', { status: 400 }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      fetchWithRetry('http://localhost:9999/invoke', { method: 'POST' }),
+    ).rejects.toBeInstanceOf(ToolClientError);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries 5xx and succeeds on a later attempt', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response('boom', { status: 500 }))
+      .mockResolvedValueOnce(new Response('boom', { status: 502 }))
+      .mockResolvedValueOnce(new Response('{"result":"ok"}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = await fetchWithRetry('http://localhost:9999/invoke', {
+      method: 'POST',
+    });
+    expect(res.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('retries network errors and throws after 3 attempts', async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new Error('ECONNREFUSED'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      fetchWithRetry('http://localhost:9999/invoke', { method: 'POST' }),
+    ).rejects.toThrow('ECONNREFUSED');
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 });
