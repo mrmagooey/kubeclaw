@@ -119,6 +119,8 @@ Backoff formula: `delay = KUBECLAW_TOOL_RETRY_BASE_MS × 2^(attempt-1)`
 
 Maximum 3 attempts total. `KUBECLAW_TOOL_RETRY_BASE_MS` default: `1000` ms.
 
+These are read from the bridge container's environment; the Job manifest does not currently stamp them, so changing them requires baking new ENV defaults into the agent image — per-ToolSpec or Helm-level overrides are not yet supported (except `healthPath`, which is per-ToolSpec).
+
 ## Redis authentication
 
 The bridge authenticates to Redis using per-job ACL credentials injected via `REDIS_URL` (the URL contains the username and password). The credentials are minted by the orchestrator before the pod is created; see [docs/SIDECAR_ACL.md](./SIDECAR_ACL.md) for ACL minting details.

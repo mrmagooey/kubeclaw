@@ -323,6 +323,9 @@ export class RedisACLManager {
         logger.warn({ jobId }, 'Expired ACL row not found; DELUSER skipped');
         continue;
       }
+      // cleanupExpiredACLs() marks rows 'revoked' before returning them, so
+      // this guard is a defensive invariant check, not a reachable branch —
+      // do not "simplify" it away without revisiting the db function.
       if (acl.status === 'revoked') {
         try {
           // ACL DELUSER is a no-op (returns 0, no error) if the user is already

@@ -407,6 +407,9 @@ async function executeToolBridgeAcp(
     await new Promise(r => setTimeout(r, delay));
     delay = Math.min(delay * 1.5, 5000);
 
+    // Intentionally plain fetch (no fetchWithRetry): the poll loop itself is
+    // the retry mechanism, and retrying poll GETs would mis-handle terminal
+    // states (e.g. a 404 after run cleanup would be retried as if transient).
     const pollRes = await fetch(`${acpBaseUrl}/runs/${run.run_id}`);
     if (!pollRes.ok) throw new Error(`ACP poll error: ${pollRes.status}`);
     const state = await pollRes.json() as { status: string; output?: unknown };

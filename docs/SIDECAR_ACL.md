@@ -256,6 +256,10 @@ kubectl logs deployment/kubeclaw-orchestrator -n kubeclaw --tail=200 | grep -i a
 sqlite3 store/messages.db "SELECT job_id, username, expires_at FROM job_acls WHERE status = 'active' AND expires_at < datetime('now');"
 ```
 
+## Known Limitations
+
+Dynamic `stool-*` ACL users are created in Redis memory only and are never written to the aclfile via `ACL SAVE`. A Redis restart drops all of them, so any in-flight tool pods will fail authentication after the restart; those pods are bounded by their Job's `activeDeadlineSeconds` and will terminate on their own. The cleanup sweep handles the SQLite side safely because `ACL DELUSER` on a missing user is a no-op (Redis returns 0, no error).
+
 ## See Also
 
 - [docs/TOOL_BRIDGE.md](./TOOL_BRIDGE.md) — IPC patterns (http/file/acp), readiness gate, retry policy, and ToolSpec reference for sidecar tool pods
