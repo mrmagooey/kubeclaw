@@ -737,7 +737,8 @@ export const TOOLS: OpenAI.ChatCompletionTool[] = [
           },
           message: {
             type: 'string',
-            description: "The admin's reply text to forward to the bootstrap pod.",
+            description:
+              "The admin's reply text to forward to the bootstrap pod.",
           },
         },
       },
@@ -2189,7 +2190,7 @@ export function buildPendingBootstrapNote(): string | null {
   }
   if (lines.length === 0) return null;
   return (
-    'A bootstrap agent is blocked waiting for an admin answer. If the user\'s ' +
+    "A bootstrap agent is blocked waiting for an admin answer. If the user's " +
     'message answers one of these questions, call reply_to_bootstrap with the ' +
     "matching instance_name and the user's answer as the message. Do not answer " +
     'these questions yourself.\n' +

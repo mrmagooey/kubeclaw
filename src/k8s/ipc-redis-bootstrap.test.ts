@@ -843,7 +843,9 @@ describe('processCommitChannelConfig — Story 182: replica cap + RO mount invar
       (c) => c.name === 'channel',
     );
     expect(channel).toBeDefined();
-    const runtimeMount = channel!.volumeMounts?.find((vm) => vm.name === 'runtime');
+    const runtimeMount = channel!.volumeMounts?.find(
+      (vm) => vm.name === 'runtime',
+    );
     expect(runtimeMount).toBeDefined();
     expect(runtimeMount!.readOnly).toBe(true);
   });
@@ -873,7 +875,9 @@ describe('processCommitChannelConfig — Story 182: replica cap + RO mount invar
     const channel = deploymentBody.spec.template.spec.containers.find(
       (c) => c.name === 'channel',
     );
-    const runtimeMount = channel!.volumeMounts?.find((vm) => vm.name === 'runtime');
+    const runtimeMount = channel!.volumeMounts?.find(
+      (vm) => vm.name === 'runtime',
+    );
     expect(runtimeMount!.readOnly).toBe(true);
   });
 });

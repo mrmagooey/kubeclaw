@@ -4,7 +4,7 @@
  * Four-tier pod model:
  *   Orchestrator  — manages pod lifecycles, mediates discovery
  *   Channel pods  — own LLM conversations via DirectLLMRunner
- *   Capability    — sidecar runners (file / HTTP) for custom containers
+ *   Capability    — long-lived features (memory, MCP)
  *   Tool jobs     — short-lived specialist K8s jobs (NOT full agent conversations)
  *
  * The MessageRunner interface is the shared contract across all tiers.
@@ -94,8 +94,6 @@ export interface RunAgentOverrides {
  * In the four-tier model:
  *   - DirectLLMRunner implements this for channel pods (primary path)
  *   - KubernetesToolJobRunner implements this for orchestrator-spawned tool jobs
- *   - FileSidecarToolJobRunner / HttpSidecarToolJobRunner implement this for
- *     custom container sidecars
  *
  * @alias AgentRunner — kept as a backwards-compatible re-export
  */
@@ -140,8 +138,8 @@ export interface MessageRunner {
   configureGroupMcpTemplates?(templates: GroupMcpEntry[]): Promise<void>;
 
   /**
-   * Send a follow-up message to an active sidecar job.
-   * Implemented by FileSidecarToolJobRunner and HttpSidecarToolJobRunner.
+   * Send a follow-up message to an active job.
+   * Optional: implemented by runners that can route follow-up messages to a live job.
    */
   sendFollowUpMessage?(groupFolder: string, text: string): Promise<boolean>;
 }

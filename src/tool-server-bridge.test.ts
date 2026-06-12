@@ -114,9 +114,11 @@ describe('fetchWithRetry', () => {
   });
 
   it('throws the last 5xx error after exhausting all attempts', async () => {
-    const fetchMock = vi.fn().mockImplementation(() =>
-      Promise.resolve(new Response('down', { status: 503 })),
-    );
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(() =>
+        Promise.resolve(new Response('down', { status: 503 })),
+      );
     vi.stubGlobal('fetch', fetchMock);
 
     await expect(
@@ -135,7 +137,9 @@ describe('waitForToolReady', () => {
   });
 
   it('resolves as soon as the user container answers (any status)', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response('nf', { status: 404 }));
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response('nf', { status: 404 }));
     vi.stubGlobal('fetch', fetchMock);
 
     await expect(waitForToolReady()).resolves.toBeUndefined();

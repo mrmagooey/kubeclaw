@@ -37,14 +37,6 @@ vi.mock('./k8s/ipc-redis.js', () => ({
   startIpcWatcher: vi.fn(),
   startControlChannelWatcher: vi.fn(),
 }));
-vi.mock('./k8s/file-sidecar-runner.js', () => ({
-  FileSidecarJobRunner: vi.fn(),
-  fileSidecarRunner: { createJob: vi.fn(), deleteJob: vi.fn() },
-}));
-vi.mock('./k8s/http-sidecar-runner.js', () => ({
-  HttpSidecarJobRunner: vi.fn(),
-  httpSidecarRunner: { createJob: vi.fn(), deleteJob: vi.fn() },
-}));
 vi.mock('./k8s/acl-manager.js', () => ({
   getACLManager: vi.fn().mockReturnValue({}),
   RedisACLManager: vi.fn(),

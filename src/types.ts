@@ -83,25 +83,14 @@ export interface ToolSpec {
 /**
  * Orchestrator configuration for runners in this group.
  *
- * **Runner selection rule** (checked in order):
- * - `userImage` + `userPort` set → `HttpSidecarToolJobRunner` (user container exposes HTTP API)
- * - `userImage` set alone → `FileSidecarToolJobRunner` (user container reads/writes files)
- * - `direct: true` → `DirectLLMRunner` (in-process LLM, no K8s job — primary path for channel pods)
- * - none of the above → `KubernetesToolJobRunner` (short-lived tool jobs / scheduled tasks / legacy fallback)
+ * **Runner selection rule:**
+ * - `direct: true` → `DirectLLMRunner` (in-process LLM — primary path for channel pods)
+ * - otherwise      → `KubernetesToolJobRunner` (short-lived tool jobs / scheduled tasks)
  */
 export interface ContainerConfig {
   additionalMounts?: AdditionalMount[];
   timeout?: number; // Default: 300000 (5 minutes)
   tools?: ToolSpec[]; // Custom tool containers spawned on demand as sidecar tool pods
-  // File sidecar configuration
-  /** Container image for sidecar mode. Used with userPort for HTTP sidecar, or alone for file-based sidecar. */
-  userImage?: string;
-  userCommand?: string[]; // Command to run in user container
-  userArgs?: string[]; // Arguments for user container command
-  filePollInterval?: number; // Poll interval in ms (default: 1000)
-  /** HTTP sidecar: port the user container listens on. When set with userImage, triggers HttpSidecarToolJobRunner. */
-  userPort?: number;
-  healthEndpoint?: string; // HTTP sidecar: health check path (default /agent/health)
   memoryRequest?: string; // K8s memory request (e.g., "512Mi")
   memoryLimit?: string; // K8s memory limit (e.g., "4Gi")
   cpuRequest?: string; // K8s CPU request (e.g., "250m")

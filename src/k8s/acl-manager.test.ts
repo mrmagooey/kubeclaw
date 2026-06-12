@@ -506,7 +506,9 @@ describe('RedisACLManager', () => {
         60,
       );
       expect(creds.username.length).toBeLessThanOrEqual(64);
-      expect(creds.username.startsWith('stool-kubeclaw-stool-abcd1234-')).toBe(true);
+      expect(creds.username.startsWith('stool-kubeclaw-stool-abcd1234-')).toBe(
+        true,
+      );
 
       // The SETUSER call must use the same truncated name
       const aclArgs = mockAcl.mock.calls.find((c) => c[0] === 'SETUSER')!;

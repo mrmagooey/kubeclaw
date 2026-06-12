@@ -55,7 +55,9 @@ vi.mock('./k8s/ipc-redis.js', () => ({
 }));
 
 vi.mock('./k8s/bootstrap-runner.js', () => ({
-  bootstrapChannelFromSkill: vi.fn().mockResolvedValue({ bootstrapJobId: 'test-job-id' }),
+  bootstrapChannelFromSkill: vi
+    .fn()
+    .mockResolvedValue({ bootstrapJobId: 'test-job-id' }),
   waitForBootstrapJobCompletion: vi.fn().mockResolvedValue(undefined),
   bootstrapStatus: vi.fn().mockResolvedValue({ active: [], recent: [] }),
   registerBootstrapMeta: vi.fn(),
@@ -77,7 +79,9 @@ vi.mock('@kubernetes/client-node', () => {
   class MockKubeConfig {
     loadFromCluster() {}
     loadFromDefault() {}
-    makeApiClient() { return {}; }
+    makeApiClient() {
+      return {};
+    }
   }
   return {
     KubeConfig: MockKubeConfig,
@@ -101,13 +105,19 @@ vi.mock('./skills/orchestrator/specialist-registry.js', () => ({
 }));
 
 vi.mock('./skills/orchestrator/channel-manifest-registry.js', () => ({
-  registerChannelManifest: vi.fn().mockReturnValue({ ok: true, manifest_hash: 'abc', source: 'admin-registered' }),
+  registerChannelManifest: vi.fn().mockReturnValue({
+    ok: true,
+    manifest_hash: 'abc',
+    source: 'admin-registered',
+  }),
   listChannelManifestOverrides: vi.fn().mockReturnValue([]),
 }));
 
 vi.mock('./channel-manifests/reconciler.js', () => ({
   ChannelManifestReconciler: class {
-    apply() { return Promise.resolve(); }
+    apply() {
+      return Promise.resolve();
+    }
   },
   loadBaselineFromDisk: vi.fn().mockReturnValue([]),
   mergeManifests: vi.fn().mockReturnValue([]),

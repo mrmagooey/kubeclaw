@@ -17,7 +17,10 @@ function podList(names: string[]) {
  * same ordering the real client-node Exec uses (status before close).
  */
 function fakeExec(
-  files: Record<string, { stdout?: string; stderr?: string; status?: V1Status }>,
+  files: Record<
+    string,
+    { stdout?: string; stderr?: string; status?: V1Status }
+  >,
 ) {
   const calls: Array<{ container: string; command: string[] }> = [];
   const exec = vi.fn(
@@ -55,7 +58,11 @@ function fakeExec(
 
 describe('readBootstrapPvcFiles', () => {
   it('reads package.json and package-lock.json from the inspector sidecar', async () => {
-    const coreApi = { listNamespacedPod: vi.fn().mockResolvedValue(podList(['bootstrap-pod-1'])) };
+    const coreApi = {
+      listNamespacedPod: vi
+        .fn()
+        .mockResolvedValue(podList(['bootstrap-pod-1'])),
+    };
     const { exec, calls } = fakeExec({
       'package.json': { stdout: '{"name":"runtime"}' },
       'package-lock.json': { stdout: '{"lockfileVersion":3}' },
@@ -88,7 +95,9 @@ describe('readBootstrapPvcFiles', () => {
   });
 
   it('throws when no running bootstrap pod exists', async () => {
-    const coreApi = { listNamespacedPod: vi.fn().mockResolvedValue(podList([])) };
+    const coreApi = {
+      listNamespacedPod: vi.fn().mockResolvedValue(podList([])),
+    };
     const { exec } = fakeExec({});
     await expect(
       readBootstrapPvcFiles(
@@ -100,11 +109,18 @@ describe('readBootstrapPvcFiles', () => {
   });
 
   it('rejects when the exec reports a Failure status', async () => {
-    const coreApi = { listNamespacedPod: vi.fn().mockResolvedValue(podList(['bootstrap-pod-1'])) };
+    const coreApi = {
+      listNamespacedPod: vi
+        .fn()
+        .mockResolvedValue(podList(['bootstrap-pod-1'])),
+    };
     const { exec } = fakeExec({
       'package.json': {
         stderr: 'cat: /runtime-inspect/package.json: No such file or directory',
-        status: { status: 'Failure', message: 'command terminated with non-zero exit code' } as V1Status,
+        status: {
+          status: 'Failure',
+          message: 'command terminated with non-zero exit code',
+        } as V1Status,
       },
     });
     await expect(

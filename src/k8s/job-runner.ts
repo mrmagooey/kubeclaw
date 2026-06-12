@@ -1794,8 +1794,16 @@ export class JobRunner {
 
     const userEnv = [{ name: 'PORT', value: String(port) }];
 
-    const bridgeMounts: Array<{ name: string; mountPath: string; readOnly?: boolean }> = [];
-    const userMounts: Array<{ name: string; mountPath: string; readOnly?: boolean }> = [];
+    const bridgeMounts: Array<{
+      name: string;
+      mountPath: string;
+      readOnly?: boolean;
+    }> = [];
+    const userMounts: Array<{
+      name: string;
+      mountPath: string;
+      readOnly?: boolean;
+    }> = [];
     const volumes: Array<any> = [];
 
     if (isFileBridge) {
@@ -1803,7 +1811,11 @@ export class JobRunner {
       userMounts.push({ name: 'shared', mountPath: '/shared' });
       // Optional wrapper script: lets stock images (sh + jq) serve file-bridge
       // tools via command: ["/bin/sh", "/kubeclaw/tool-wrapper.sh", "<cmd>"]
-      userMounts.push({ name: 'tool-wrapper', mountPath: '/kubeclaw', readOnly: true });
+      userMounts.push({
+        name: 'tool-wrapper',
+        mountPath: '/kubeclaw',
+        readOnly: true,
+      });
       volumes.push({ name: 'shared', emptyDir: {} });
       volumes.push({
         name: 'tool-wrapper',

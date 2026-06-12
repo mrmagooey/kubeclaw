@@ -408,7 +408,8 @@ describe('bootstrapChannelFromSkill — Story 182: accessModes wiring', () => {
   });
 
   it('PVC handles comma-separated accessModes list', async () => {
-    process.env.BOOTSTRAP_RUNTIME_PVC_ACCESS_MODES = 'ReadWriteMany,ReadWriteOnce';
+    process.env.BOOTSTRAP_RUNTIME_PVC_ACCESS_MODES =
+      'ReadWriteMany,ReadWriteOnce';
     await bootstrapChannelFromSkill({
       skillName: 'bootstrap-telegram',
       channelType: 'telegram',
@@ -421,7 +422,10 @@ describe('bootstrapChannelFromSkill — Story 182: accessModes wiring', () => {
     const pvcBody = fakeK8s.createdPvcs[0].body as {
       body: { spec: { accessModes: string[] } };
     };
-    expect(pvcBody.spec.accessModes).toEqual(['ReadWriteMany', 'ReadWriteOnce']);
+    expect(pvcBody.spec.accessModes).toEqual([
+      'ReadWriteMany',
+      'ReadWriteOnce',
+    ]);
   });
 
   it('Bootstrap Job mounts runtime PVC read-write (readOnly absent or false) — AC4 invariant', async () => {
@@ -1497,7 +1501,8 @@ describe('runUpgrade — concurrent rejection', () => {
       'kubeclaw-channel-my-telegram-runtime-v1',
     );
     await runUpgrade(makeBaseUpgradeOpts(k8sDeps, active));
-    const jobBody = k8sDeps.batchV1.createNamespacedJob.mock.calls[0][0].body as {
+    const jobBody = k8sDeps.batchV1.createNamespacedJob.mock.calls[0][0]
+      .body as {
       spec: {
         template: {
           spec: {
@@ -1631,7 +1636,9 @@ describe('bootstrapChannelFromSkill — Story 183: NPM_CONFIG_REGISTRY injection
                 volumes: [
                   {
                     name: 'runtime',
-                    persistentVolumeClaim: { claimName: 'kubeclaw-channel-my-telegram-runtime' },
+                    persistentVolumeClaim: {
+                      claimName: 'kubeclaw-channel-my-telegram-runtime',
+                    },
                   },
                 ],
               },
@@ -1725,7 +1732,9 @@ describe('runUpgrade — Story 181 AC4: credential reuse', () => {
           spec: {
             containers: Array<{
               name: string;
-              envFrom?: Array<{ secretRef: { name: string; optional?: boolean } }>;
+              envFrom?: Array<{
+                secretRef: { name: string; optional?: boolean };
+              }>;
             }>;
           };
         };
