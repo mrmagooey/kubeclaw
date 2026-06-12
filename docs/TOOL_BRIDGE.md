@@ -61,16 +61,21 @@ The bridge polls for the response file on a 500 ms schedule and deletes it after
 
 ### ACP pattern
 
-The bridge POSTs to `http://localhost:{port}/runs` with a JSON body:
+The bridge POSTs to `http://localhost:{port}/runs` with a JSON body. The exact body depends on the sub-mode:
 
-```json
-{ "agent_name": "<acpAgentName>", "input": { ... }, "mode": "<sync|async>" }
-```
+- **sync** (`ToolSpec.acpMode: sync`, default): includes `"mode": "synchronous"` — single POST; the pod idle timeout serves as the per-request timeout. Use this for long-running agents where a fixed timeout would be too short.
 
-Two sub-modes are available, set via `ToolSpec.acpMode` (default: `sync`):
+  ```json
+  { "agent_name": "<acpAgentName>", "input": { ... }, "mode": "synchronous" }
+  ```
 
-- **sync** (`mode: synchronous`): single POST; the pod idle timeout serves as the per-request timeout. Use this for long-running agents where a fixed timeout would be too short.
-- **async** (`mode: async`): the initial POST returns a `run_id`; the bridge then polls `GET /runs/{run_id}` with exponential backoff (500 ms base, factor 1.5, cap 5 s) until completion or the pod idle timeout is reached.
+- **async** (`ToolSpec.acpMode: async`): the `mode` field is **omitted** (ACP's default is async) — the initial POST returns a `run_id`; the bridge then polls `GET /runs/{run_id}` with exponential backoff (500 ms base, factor 1.5, cap 5 s) until completion or the pod idle timeout is reached.
+
+  ```json
+  { "agent_name": "<acpAgentName>", "input": { ... } }
+  ```
+
+Two sub-modes are available, set via `ToolSpec.acpMode` (default: `sync`).
 
 `ToolSpec.acpAgentName` sets the `agent_name` field (default: the tool name).
 
@@ -128,7 +133,7 @@ The wrapper shell script (`tool-wrapper.sh`) runs in the `user-tool` container a
 
 1. Watches `/shared` for `{requestId}.request.json` files
 2. Extracts `.input` from the request JSON using `jq -c '.input'` and pipes it to the wrapped command's stdin
-3. Captures stdout and writes `{"result": ...}` or `{"error": ...}` atomically (mktemp + mv) to `{requestId}.response.json`
+3. Captures stdout and writes `{"result": ...}` or `{"error": ...}` atomically (mktemp + mv) to `{requestId}.response.json`. When using `tool-wrapper.sh`, the `result` value is always a JSON **string** containing the wrapped command's raw stdout (the wrapper JSON-stringifies it via `jq -Rs`); a custom user container writing response files directly may use any JSON value for `result`.
 4. Handles malformed requests (jq parse failure) by writing an error response and continuing
 5. Deletes the request file after processing
 
