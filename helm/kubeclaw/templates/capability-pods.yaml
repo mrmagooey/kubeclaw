@@ -38,12 +38,12 @@ spec:
             - name: REDIS_URL
               value: redis://kubeclaw-redis:6379
             - name: REDIS_USERNAME
-              value: adapter
+              value: channel
             - name: REDIS_ADMIN_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: kubeclaw-redis
-                  key: adapter-password
+                  key: channel-password
             - name: KUBECLAW_CAPABILITY
               value: {{ $name }}
             {{- range $k, $v := $cfg.env }}

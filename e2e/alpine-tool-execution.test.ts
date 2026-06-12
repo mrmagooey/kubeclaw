@@ -7,12 +7,12 @@
  * Flow:
  *   1. Publish a tool call to kubeclaw:toolcalls:{agentJobId}:alpine-shell
  *   2. Spawn a sidecar tool pod: alpine:latest with file-bridge, custom shell command
- *   3. The file-bridge (kubeclaw-file-adapter) writes request files to /shared/
+ *   3. The tool-bridge container writes request files to /shared/
  *   4. Alpine polls /shared/*.request.json, extracts the command, runs it, writes response
- *   5. The file-bridge reads the response and publishes to toolresults stream
+ *   5. The tool-bridge reads the response and publishes to toolresults stream
  *   6. Assert the result contains "hello"
  *
- * Requires: orchestrator running in cluster, kubeclaw-file-adapter image available.
+ * Requires: orchestrator running in cluster, kubeclaw-tool-bridge image available.
  */
 import { describe, it, expect, beforeAll } from 'vitest';
 import { spawnSync } from 'child_process';

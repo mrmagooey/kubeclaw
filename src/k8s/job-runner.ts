@@ -35,7 +35,6 @@ import {
   assertToolImageAllowed,
   REDIS_AGENT_PASSWORD,
   REDIS_TOOL_SERVER_PASSWORD,
-  REDIS_ADAPTER_PASSWORD,
   getInjectionMode,
   getAuditOnly,
   CREDENTIAL_SIDECAR_IMAGE,

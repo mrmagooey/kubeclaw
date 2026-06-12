@@ -5,7 +5,7 @@
 import { CronExpressionParser } from 'cron-parser';
 import { Redis } from 'ioredis';
 
-import { SIDECAR_FILE_POLL_INTERVAL, TIMEZONE } from '../config.js';
+import { TIMEZONE } from '../config.js';
 import { AvailableGroup } from '../runtime/types.js';
 import type { CatalogInformer } from './catalog.js';
 import type { SecretManager } from './secret-manager.js';
@@ -452,7 +452,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
         );
       }
     }
-    setTimeout(checkNewGroups, SIDECAR_FILE_POLL_INTERVAL);
+    setTimeout(checkNewGroups, 1000);
   };
 
   checkNewGroups();

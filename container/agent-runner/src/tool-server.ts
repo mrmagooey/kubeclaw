@@ -65,7 +65,7 @@ const RETRY_BASE_MS = parseInt(
 const RETRY_MAX_ATTEMPTS = 3;
 
 /**
- * fetch with the legacy http-adapter's retry discipline:
+ * fetch with retry discipline:
  * - per-attempt timeout (AbortSignal)
  * - 4xx → ToolClientError, no retry (the request itself is wrong)
  * - 5xx / network error / timeout → exponential backoff (base×1 → base×2), 3 attempts max

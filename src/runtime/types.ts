@@ -136,7 +136,6 @@ export interface MessageRunner {
    * Implemented by DirectLLMRunner; not available on other runners.
    */
   configureGroupMcpTemplates?(templates: GroupMcpEntry[]): Promise<void>;
-
 }
 
 /**
