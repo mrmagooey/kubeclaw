@@ -8,10 +8,7 @@ import path from 'path';
 
 // ---- Hoisted shared mocks -------------------------------------------------
 
-const {
-  mockJobRunToolJob,
-  mockJobCleanup,
-} = vi.hoisted(() => {
+const { mockJobRunToolJob, mockJobCleanup } = vi.hoisted(() => {
   return {
     mockJobRunToolJob: vi.fn().mockResolvedValue({
       status: 'success',
@@ -41,11 +38,6 @@ vi.mock('./direct-llm-runner.js', () => ({
     writeGroupsSnapshot = vi.fn();
     shutdown = vi.fn().mockResolvedValue(undefined);
   },
-}));
-
-vi.mock('../k8s/acl-manager.js', () => ({
-  getACLManager: vi.fn(() => ({})),
-  RedisACLManager: class {},
 }));
 
 vi.mock('../config.js', () => ({
@@ -91,7 +83,8 @@ describe('runtime/index', () => {
 
   describe('getRunnerForGroup', () => {
     it('returns direct LLM runner when direct is set', async () => {
-      const { getRunnerForGroup, getDirectLLMRunner } = await import('./index.js');
+      const { getRunnerForGroup, getDirectLLMRunner } =
+        await import('./index.js');
       const group = {
         name: 'test-group',
         folder: 'test-group',
@@ -104,7 +97,8 @@ describe('runtime/index', () => {
     });
 
     it('returns kubernetes runner when no containerConfig is set', async () => {
-      const { getRunnerForGroup, getToolJobRunner } = await import('./index.js');
+      const { getRunnerForGroup, getToolJobRunner } =
+        await import('./index.js');
       const group = {
         name: 'test-group',
         folder: 'test-group',
@@ -116,7 +110,8 @@ describe('runtime/index', () => {
     });
 
     it('routes groups with legacy userImage config to the K8s tool-job runner', async () => {
-      const { getRunnerForGroup, getToolJobRunner } = await import('./index.js');
+      const { getRunnerForGroup, getToolJobRunner } =
+        await import('./index.js');
       const group = {
         name: 'test-group',
         folder: 'test-group',
@@ -129,16 +124,37 @@ describe('runtime/index', () => {
     });
 
     it('routes groups with legacy userImage+userPort config to the K8s tool-job runner', async () => {
-      const { getRunnerForGroup, getToolJobRunner } = await import('./index.js');
+      const { getRunnerForGroup, getToolJobRunner } =
+        await import('./index.js');
       const group = {
         name: 'test-group',
         folder: 'test-group',
         trigger: '',
         added_at: new Date().toISOString(),
-        containerConfig: { userImage: 'my-image:latest', userPort: 8080 } as any,
+        containerConfig: {
+          userImage: 'my-image:latest',
+          userPort: 8080,
+        } as any,
       };
       const runner = getRunnerForGroup(group);
       expect(runner).toBe(getToolJobRunner());
+    });
+
+    it('warns when routing a group with a persisted legacy userImage config', async () => {
+      const { getRunnerForGroup } = await import('./index.js');
+      const { logger } = await import('../logger.js');
+      const group = {
+        name: 'test-group',
+        folder: 'test-group',
+        trigger: '',
+        added_at: new Date().toISOString(),
+        containerConfig: { userImage: 'ghost/image:1' } as any,
+      };
+      getRunnerForGroup(group);
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ group: group.name }),
+        expect.stringContaining('no longer supported'),
+      );
     });
 
     it('reuses the same runner instance on repeated calls (singleton)', async () => {
@@ -274,11 +290,8 @@ describe('runtime/index', () => {
 
   describe('shutdownAllRunners - comprehensive', () => {
     it('shuts down both runner types when active', async () => {
-      const {
-        getToolJobRunner,
-        getDirectLLMRunner,
-        shutdownAllRunners,
-      } = await import('./index.js');
+      const { getToolJobRunner, getDirectLLMRunner, shutdownAllRunners } =
+        await import('./index.js');
 
       getToolJobRunner();
       getDirectLLMRunner();

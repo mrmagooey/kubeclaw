@@ -137,11 +137,6 @@ export interface MessageRunner {
    */
   configureGroupMcpTemplates?(templates: GroupMcpEntry[]): Promise<void>;
 
-  /**
-   * Send a follow-up message to an active job.
-   * Optional: implemented by runners that can route follow-up messages to a live job.
-   */
-  sendFollowUpMessage?(groupFolder: string, text: string): Promise<boolean>;
 }
 
 /**

@@ -202,7 +202,14 @@ export function getDirectLLMRunner(): DirectLLMRunner {
  *   neither → KubernetesToolJobRunner  (short-lived tool jobs / scheduled tasks)
  */
 export function getRunnerForGroup(group: RegisteredGroup): MessageRunner {
-  const { direct } = group.containerConfig ?? {};
+  const config = group.containerConfig ?? {};
+  if ('userImage' in config) {
+    logger.warn(
+      { group: group.name },
+      'containerConfig.userImage is no longer supported (legacy sidecar runners were removed); routing to the K8s tool-job runner',
+    );
+  }
+  const { direct } = config as { direct?: boolean };
   if (direct) {
     logger.debug({ group: group.name }, 'Using direct LLM runner');
     return getDirectLLMRunner();
@@ -231,10 +238,7 @@ export const getAgentRunner = getToolJobRunner;
  * Shut down all active runner instances.
  */
 export async function shutdownAllRunners(): Promise<void> {
-  await Promise.all([
-    k8sRunner?.shutdown(),
-    directLLMRunner?.shutdown(),
-  ]);
+  await Promise.all([k8sRunner?.shutdown(), directLLMRunner?.shutdown()]);
   k8sRunner = directLLMRunner = null;
 }
 
@@ -251,5 +255,3 @@ export function resetRunners(): void {
  */
 export const resetAgentRunner = resetRunners;
 
-// Re-export ACL manager for orchestrator integration
-export { getACLManager, RedisACLManager } from '../k8s/acl-manager.js';
