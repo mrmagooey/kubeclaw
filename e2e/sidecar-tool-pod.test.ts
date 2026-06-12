@@ -277,6 +277,145 @@ describe('Sidecar Tool Pod — http-bridge mode', () => {
   }, 20000);
 });
 
+// ---- Readiness gate tests ---------------------------------------------------
+
+describe('Sidecar Tool Pod — readiness gate', () => {
+  let bridge: ChildProcess | null = null;
+  let server: Server | null = null;
+
+  afterAll(async () => {
+    bridge?.kill();
+    await new Promise<void>((r) => (server ? server.close(() => r()) : r()));
+  });
+
+  it('waits for a slow-starting user container instead of failing', async () => {
+    const agentJobId = `ready-test-${Date.now()}`;
+    const toolName = 'slowtool';
+    const port = 19181;
+    const redis = getSharedRedis();
+    if (!redis) throw new Error('Redis not available');
+
+    // Write the tool call BEFORE the server exists (mirrors pod startup race)
+    const requestId = `req-${Date.now()}`;
+    await redis.xadd(
+      `kubeclaw:toolcalls:${agentJobId}:${toolName}`,
+      '*',
+      'requestId', requestId,
+      'tool', toolName,
+      'input', JSON.stringify({ q: 'hello' }),
+    );
+
+    bridge = spawn('node', [TOOL_SERVER_BIN], {
+      env: {
+        ...process.env,
+        KUBECLAW_TOOL_JOB_ID: agentJobId,
+        KUBECLAW_CATEGORY: toolName,
+        KUBECLAW_TOOL_MODE: 'http-bridge',
+        KUBECLAW_TOOL_PORT: String(port),
+        REDIS_URL: getRedisUrlForTests(),
+        IDLE_TIMEOUT: '20000',
+        KUBECLAW_TOOL_READY_TIMEOUT: '10000',
+        KUBECLAW_TOOL_READY_INTERVAL_MS: '200',
+      },
+      stdio: ['ignore', 'inherit', 'inherit'],
+    });
+
+    // Start the "user container" only after 2s
+    await new Promise((r) => setTimeout(r, 2000));
+    server = createServer((req: IncomingMessage, res: ServerResponse) => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ result: 'late but ready' }));
+    });
+    await new Promise<void>((r) => server!.listen(port, r));
+
+    const out = await waitForToolResult(agentJobId, toolName, requestId, 15000);
+    expect(out.error).toBeNull();
+    expect(out.result).toContain('late but ready');
+  }, 30_000);
+});
+
+// ---- Retry discipline tests --------------------------------------------------
+
+describe('Sidecar Tool Pod — retry discipline', () => {
+  let bridge: ChildProcess | null = null;
+  let server: Server | null = null;
+  let hits = 0;
+
+  afterAll(async () => {
+    bridge?.kill();
+    await new Promise<void>((r) => (server ? server.close(() => r()) : r()));
+  });
+
+  it('retries 5xx then succeeds; fails fast on 4xx', async () => {
+    const agentJobId = `retry-test-${Date.now()}`;
+    const toolName = 'flakytool';
+    const port = 19182;
+    const redis = getSharedRedis();
+    if (!redis) throw new Error('Redis not available');
+
+    server = createServer((req: IncomingMessage, res: ServerResponse) => {
+      // The bridge probes readiness with GET / — skip hit counting and body
+      // parsing for non-POST requests so the hit counter stays clean.
+      if (req.method !== 'POST') {
+        res.writeHead(200).end('ok');
+        return;
+      }
+      hits++;
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', () => {
+        const { input } = JSON.parse(body);
+        if (input.mode === 'flaky' && hits <= 2) {
+          res.writeHead(500).end('transient');
+        } else if (input.mode === 'badrequest') {
+          res.writeHead(400).end('nope');
+        } else {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ result: `ok after ${hits} hits` }));
+        }
+      });
+    });
+    await new Promise<void>((r) => server!.listen(port, r));
+
+    bridge = spawn('node', [TOOL_SERVER_BIN], {
+      env: {
+        ...process.env,
+        KUBECLAW_TOOL_JOB_ID: agentJobId,
+        KUBECLAW_CATEGORY: toolName,
+        KUBECLAW_TOOL_MODE: 'http-bridge',
+        KUBECLAW_TOOL_PORT: String(port),
+        REDIS_URL: getRedisUrlForTests(),
+        IDLE_TIMEOUT: '30000',
+        KUBECLAW_TOOL_RETRY_BASE_MS: '100',
+      },
+      stdio: ['ignore', 'inherit', 'inherit'],
+    });
+
+    // 5xx twice → third attempt succeeds
+    const flakyReq = `req-flaky-${Date.now()}`;
+    await redis.xadd(
+      `kubeclaw:toolcalls:${agentJobId}:${toolName}`, '*',
+      'requestId', flakyReq, 'tool', toolName,
+      'input', JSON.stringify({ mode: 'flaky' }),
+    );
+    const flakyOut = await waitForToolResult(agentJobId, toolName, flakyReq, 15000);
+    expect(flakyOut.error).toBeNull();
+    expect(flakyOut.result).toContain('ok after 3 hits');
+
+    // 4xx → exactly one additional hit, error result
+    const hitsBefore = hits;
+    const badReq = `req-bad-${Date.now()}`;
+    await redis.xadd(
+      `kubeclaw:toolcalls:${agentJobId}:${toolName}`, '*',
+      'requestId', badReq, 'tool', toolName,
+      'input', JSON.stringify({ mode: 'badrequest' }),
+    );
+    const badOut = await waitForToolResult(agentJobId, toolName, badReq, 15000);
+    expect(badOut.error).toContain('Tool HTTP 400');
+    expect(hits).toBe(hitsBefore + 1);
+  }, 40_000);
+});
+
 // ---- File bridge tests -------------------------------------------------------
 
 describe('Sidecar Tool Pod — file-bridge mode', () => {

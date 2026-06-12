@@ -13,6 +13,7 @@ import {
   isKubernetesAvailable,
   getSharedRedis,
   getNamespace,
+  getRedisUrlForTests,
 } from './setup.js';
 
 const NAMESPACE = getNamespace();
@@ -385,6 +386,88 @@ describe('Sidecar ACL E2E Tests', () => {
         }
       },
     );
+  });
+
+  describe('Tool pod ACLs (createToolPodACL)', () => {
+    // Track created ACL username for cleanup
+    let createdUsername: string | null = null;
+
+    afterAll(async () => {
+      // Best-effort cleanup of the stool-* ACL user created during this describe
+      if (createdUsername && redis) {
+        try {
+          await redis.acl('DELUSER', createdUsername);
+        } catch {
+          // ignore — user may already be gone
+        }
+      }
+    });
+
+    it('scopes the user to exactly its own toolcalls/toolresults streams', async () => {
+      if (!redis) return;
+
+      const { getACLManager, resetACLManager } = await import('../src/k8s/acl-manager.js');
+
+      // Reset any cached singleton so a fresh manager is created below.
+      resetACLManager();
+      const manager = getACLManager();
+
+      // RedisACLManager.ensureConnection() reads REDIS_ADMIN_PASSWORD and
+      // REDIS_USERNAME from src/config.ts module-level constants, which are
+      // captured at first import. In the e2e environment REDIS_URL carries the
+      // admin credentials (e.g. redis://orchestrator:pwd@host:port) but
+      // REDIS_ADMIN_PASSWORD is not set separately. Inject the already-connected
+      // shared admin Redis directly so the manager skips ensureConnection.
+      (manager as any).redis = redis;
+      (manager as any).initialized = true;
+
+      const creds = await manager.createToolPodACL(
+        'kubeclaw-stool-e2e-mytool',
+        'agent-e2e-1',
+        'mytool',
+        'e2e-group',
+        120,
+      );
+
+      createdUsername = creds.username;
+
+      const { Redis } = await import('ioredis');
+      const redisUrlForManager = getRedisUrlForTests();
+      const url = new URL(redisUrlForManager);
+      const client = new Redis({
+        host: url.hostname,
+        port: parseInt(url.port || '6379', 10),
+        username: creds.username,
+        password: creds.password,
+        maxRetriesPerRequest: 1,
+        lazyConnect: true,
+      });
+      await client.connect();
+
+      try {
+        // Allowed: write own toolresults stream
+        await expect(
+          client.xadd('kubeclaw:toolresults:agent-e2e-1:mytool', '*', 'k', 'v'),
+        ).resolves.toBeTruthy();
+
+        // Denied: another agent job's stream
+        await expect(
+          client.xadd('kubeclaw:toolresults:other-agent:mytool', '*', 'k', 'v'),
+        ).rejects.toThrow(/NOPERM/i);
+
+        // Denied: writing the toolcalls stream (read-only)
+        await expect(
+          client.xadd('kubeclaw:toolcalls:agent-e2e-1:mytool', '*', 'k', 'v'),
+        ).rejects.toThrow(/NOPERM/i);
+
+        // Denied: pub/sub
+        await expect(
+          client.publish('kubeclaw:messages:e2e-group', 'hi'),
+        ).rejects.toThrow(/NOPERM/i);
+      } finally {
+        client.disconnect();
+      }
+    });
   });
 
   describe('Key Isolation', () => {
