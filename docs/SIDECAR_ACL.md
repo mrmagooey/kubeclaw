@@ -1,15 +1,10 @@
-# Redis ACL-Based Sidecar Follow-Up Implementation
+# Redis ACL-Based Sidecar Tool Pod Security
 
-This document describes the Redis ACL-based implementation for bidirectional communication with sidecar containers in Kubernetes mode, enabling follow-up message support.
+This document describes the Redis ACL implementation that protects per-tool-call bridge containers (sidecar tool pods) in Kubernetes mode.
 
 ## Overview
 
-The ACL-based sidecar system allows KubeClaw to:
-
-1. **Run arbitrary containers** via file-based or HTTP-based sidecar patterns
-2. **Send follow-up messages** to active sidecar jobs
-3. **Receive responses** through Redis Pub/Sub and Streams
-4. **Maintain security** via Redis ACL (Access Control Lists) with per-job credentials
+Each sidecar tool pod is a two-container Kubernetes Job: `kubeclaw-tool-bridge` (running `tool-server.js`) and `user-tool` (an arbitrary container). The bridge reads tool calls from a Redis stream and writes results back to a separate stream. To prevent any one pod from reading another pod's streams or performing administrative operations, the orchestrator mints a per-job Redis ACL user at pod creation time and revokes it after the pod's TTL expires.
 
 ## Architecture
 
@@ -19,50 +14,44 @@ The ACL-based sidecar system allows KubeClaw to:
 │                                                                             │
 │  ┌─────────────────────────────────────────────────────────────────────┐   │
 │  │                    RedisACLManager                                    │   │
-│  │  - Creates per-job ACL users                                          │   │
+│  │  - createToolPodACL(): mints stool-{podJobName} user                  │   │
 │  │  - Encrypts credentials (AES-256-GCM)                                │   │
-│  │  - Stores in SQLite                                                   │   │
-│  │  - Revokes on job completion                                         │   │
+│  │  - Stores in SQLite job_acls                                         │   │
+│  │  - startAclCleanupSweep(): 10-min periodic sweep revokes expired     │   │
 │  └────────────────────────┬────────────────────────────────────────────┘   │
-│                           │                                                 │
-│                           │ Creates ACL                                     │
+│                           │ createToolPodACL() called by                    │
 │                           ▼                                                 │
 │  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │                    SidecarToolJobRunner                                │   │
-│  │  - FileSidecarToolJobRunner (file-based IPC)                         │   │
-│  │  - HttpSidecarToolJobRunner (HTTP-based)                             │   │
-│  │  - Manages active jobs and routing                                   │   │
+│  │                    JobRunner.createSidecarToolPodJob()                │   │
+│  │  - Mints per-job ACL (fallback: shared tool-server user)             │   │
+│  │  - Injects credentials into bridge container env                     │   │
 │  └────────────────────────┬────────────────────────────────────────────┘   │
-│                           │                                                 │
+│                           │ Creates K8s Job                                 │
 └───────────────────────────┼─────────────────────────────────────────────────┘
-                            │ Creates K8s Job
                             ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                           Kubernetes Job                                    │
+│                    Kubernetes Job (sidecar tool pod)                        │
 │                                                                             │
-│  ┌──────────────────────────────┐  ┌──────────────────────────────────┐    │
-│  │  kubeclaw-file-adapter       │  │  user-agent                      │    │
-│  │  (or http-adapter)           │  │  (arbitrary container)           │    │
-│  │                              │  │                                  │    │
-│  │  - Reads input from stdin    │  │  - Reads from /workspace/input   │    │
-│  │  - Polls for output files    │  │  - Writes to /workspace/output   │    │
-│  │  - Connects to Redis         │  │    (file mode)                   │    │
-│  │    with ACL credentials      │  │  - Or exposes HTTP API           │    │
-│  │  - Listens for follow-ups    │  │    (http mode)                   │    │
-│  │    via Redis Streams         │  │                                  │    │
-│  │  - Sends output via          │  │                                  │    │
-│  │    Redis Pub/Sub             │  │                                  │    │
-│  └──────────┬───────────────────┘  └──────────────────────────────────┘    │
+│  ┌────────────────────────────┐  ┌──────────────────────────────────────┐  │
+│  │  kubeclaw-tool-bridge      │  │  user-tool                           │  │
+│  │  (tool-server.js)          │  │  (arbitrary container)               │  │
+│  │                            │  │                                      │  │
+│  │  - Reads tool calls from   │  │  - http: exposes POST /invoke        │  │
+│  │    toolcalls stream        │  │  - file: reads/writes /shared        │  │
+│  │  - Writes results to       │  │  - acp: exposes /runs endpoint       │  │
+│  │    toolresults stream      │  │                                      │  │
+│  │  - Authenticates via       │  │                                      │  │
+│  │    per-job ACL credentials │  │                                      │  │
+│  └──────────┬─────────────────┘  └──────────────────────────────────────┘  │
 │             │                                                               │
-│             │ Redis ACL Connection                                          │
+│             │ Redis ACL Connection (stool-{podJobName})                     │
 │             ▼                                                               │
 │  ┌─────────────────────────────────────────────────────────────────────┐   │
 │  │                    Redis 7+ (StatefulSet)                             │   │
-│  │  - Per-job ACL users (~kubeclaw:*:${jobId})                          │   │
-│  │  - Key-pattern restricted                                             │   │
-│  │  - Admin commands blocked                                             │   │
-│  │  - Input streams: kubeclaw:input:${jobId}                            │   │
-│  │  - Output channels: kubeclaw:output:${jobId}                         │   │
+│  │  - Per-job users: stool-{podJobName} (capped 64 chars)               │   │
+│  │  - Read-only: kubeclaw:toolcalls:{agentJobId}:{toolName}             │   │
+│  │  - Write-only: kubeclaw:toolresults:{agentJobId}:{toolName}          │   │
+│  │  - No pub/sub channel access; no cross-job keys                      │   │
 │  └─────────────────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -73,22 +62,10 @@ The ACL-based sidecar system allows KubeClaw to:
 
 The `RedisACLManager` handles:
 
-- **ACL Creation**: Creates Redis ACL users with job-specific key patterns
+- **ACL Creation**: Mints Redis ACL users scoped to a single tool pod's streams via `createToolPodACL()`
 - **Password Encryption**: AES-256-GCM encryption for passwords at rest
 - **Credential Storage**: Persists encrypted credentials in SQLite
-- **Cleanup**: Revokes ACLs on job completion or expiration
-
-```typescript
-// Creating ACL for a job
-await aclManager.createJobACL(jobId, groupFolder, ttlSeconds);
-
-// Retrieving credentials
-const credentials = aclManager.getJobCredentials(jobId);
-// Returns: { username: 'sidecar-${jobId}', password: 'decrypted-password' }
-
-// Revoking ACL
-await aclManager.revokeJobACL(jobId);
-```
+- **Cleanup**: Periodic sweep revokes ACLs after their TTL expires
 
 ### 2. Database Schema (`src/db.ts`)
 
@@ -106,82 +83,80 @@ CREATE TABLE job_acls (
 );
 ```
 
-### 3. Sidecar Adapters
-
-#### File Adapter (`container/file-adapter/`)
-
-For containers that communicate via files:
-
-- **Input**: Task written to `/workspace/input/task.json`
-- **Output**: Result read from `/workspace/output/result.json`
-- **Redis**: Connects with ACL credentials for follow-up support
-
-```typescript
-// Environment variables expected:
-REDIS_URL=redis://kubeclaw-redis:6379
-REDIS_USERNAME=sidecar-${jobId}
-REDIS_PASSWORD=${decryptedPassword}
-KUBECLAW_JOB_ID=${jobId}
-```
-
-#### HTTP Adapter (`container/http-adapter/`)
-
-For containers exposing HTTP REST APIs:
-
-- **Health Check**: Polls `GET /agent/health`
-- **Task**: Posts to `POST /agent/task`
-- **Redis**: Connects with ACL credentials for follow-up support
-
-### 4. Runtime Integration (`src/runtime/index.ts`)
-
-The runtime factory manages sidecar lifecycles:
-
-```typescript
-// File sidecar runner
-const fileRunner = new FileSidecarToolJobRunner();
-fileRunner.setSendMessageHandler(async (groupFolder, text) => {
-  // Route follow-up to active sidecar via Redis
-});
-
-// HTTP sidecar runner
-const httpRunner = new HttpSidecarToolJobRunner();
-```
+The storage key in `job_acls` uses the format `{podJobName}-{Date.now().toString(36)}` to avoid primary-key collisions on recycled pod names.
 
 ## Security Model
 
 ### ACL Rules
 
-Each sidecar gets an ACL user with these restrictions:
+Each tool pod bridge container gets an ACL user minted with these exact rules:
 
-```redis
-ACL SETUSER sidecar-${jobId} on >${password} \
-  ~kubeclaw:*:${jobId} \      # Can only access own keys
-  +@read +@write +@stream +@pubsub \  # Basic operations
-  -@admin -@dangerous          # No admin commands
 ```
+resetkeys
+%R~kubeclaw:toolcalls:{agentJobId}:{toolName}
+%W~kubeclaw:toolresults:{agentJobId}:{toolName}
+resetchannels
++xread
++xadd
++ping
++reset
++quit
++client|setinfo
++client|setname
+```
+
+`resetkeys` at the head of the rule list drops any leftover key grants from a previous user with the same name, making the rules safe for username collisions on recycled pod names.
 
 ### Key Isolation
 
-- Sidecar A **cannot** access keys of Sidecar B
-- Keys follow pattern: `kubeclaw:{type}:{jobId}`
-- Input stream: `kubeclaw:input:${jobId}`
-- Output channel: `kubeclaw:output:${jobId}`
+- The tool pod bridge can only read from `kubeclaw:toolcalls:{agentJobId}:{toolName}` (read-only key pattern `%R~`)
+- The tool pod bridge can only write to `kubeclaw:toolresults:{agentJobId}:{toolName}` (write-only key pattern `%W~`)
+- No other key patterns are accessible
+- No pub/sub channel access (`resetchannels` with no channel grants)
 
-### Command Restrictions
+### ACL Username Format
 
-Sidecars **cannot** run:
+- Format: `stool-{podJobName}`, capped at 64 characters
+- `SETUSER` on an existing username with the same name appends rules; `resetkeys` at the start of the rule list drops any leftover key grants — safe for collisions on recycled names
 
-- `FLUSHDB`, `FLUSHALL` - Database clearing
-- `CONFIG` - Configuration changes
-- `ACL` - ACL manipulation
-- `DEBUG`, `SHUTDOWN`, `SAVE` - Administrative commands
+### Fallback Behavior
+
+If ACL minting fails (e.g., Redis version older than 7), `createSidecarToolPodJob()` falls back to the shared `tool-server` user and logs a warning. The pod will still be created, but without per-job isolation.
 
 ### Password Security
 
 - Passwords generated with `crypto.randomBytes(32)` (256-bit entropy)
 - Encrypted at rest using AES-256-GCM
-- Encryption key derived from `ACL_ENCRYPTION_KEY` env var
-- Warning logged if encryption key not set (development mode)
+- Encryption key from `ACL_ENCRYPTION_KEY` env var
+- `ACL_ENCRYPTION_KEY` is shipped in the `kubeclaw-redis` Helm Secret as key `acl-encryption-key` and injected into the orchestrator pod as env var `ACL_ENCRYPTION_KEY`
+
+## TTL and Lifecycle
+
+- TTL = pod's `activeDeadlineSeconds` + 900 seconds (15-minute outlive buffer)
+- Revocation: `startAclCleanupSweep()` runs on a 10-minute interval (started in `src/index.ts`) and calls `DELUSER` for any ACL whose `expires_at` has passed
+- There is no completion hook; pods are cleaned up by idle timeout or `activeDeadlineSeconds` expiry
+
+## Job Lifecycle Flow
+
+```
+1. Channel requests a tool pod for tool {toolName} on agentJob {agentJobId}
+   ↓
+2. JobRunner.createSidecarToolPodJob() calls createToolPodACL()
+   ↓
+3. ACL user stool-{podJobName} minted with exactly two stream patterns
+   ↓
+4. Credentials injected into bridge container's REDIS_URL
+   ↓
+5. K8s Job created; bridge container connects to Redis as stool-{podJobName}
+   ↓
+6. Bridge reads tool calls from kubeclaw:toolcalls:{agentJobId}:{toolName}
+   ↓
+7. Bridge forwards to user-tool (http/file/acp); writes result to toolresults
+   ↓
+8. Pod terminates via idle timeout or activeDeadlineSeconds (no completion hook)
+   ↓
+9. startAclCleanupSweep() (10-min interval) revokes expired ACL via DELUSER
+```
 
 ## Configuration
 
@@ -192,8 +167,8 @@ Sidecars **cannot** run:
 REDIS_URL=redis://kubeclaw-redis:6379
 REDIS_ADMIN_PASSWORD=your-secure-password
 
-# ACL encryption (32+ bytes recommended)
-ACL_ENCRYPTION_KEY=your-encryption-key-here!!!
+# ACL encryption key (from kubeclaw-redis secret, key acl-encryption-key)
+ACL_ENCRYPTION_KEY=your-encryption-key-here
 ```
 
 ### Kubernetes Manifests
@@ -210,65 +185,22 @@ containers:
       - --requirepass $(REDIS_ADMIN_PASSWORD)
 ```
 
-### Secrets Template
+### Secrets
 
-Create Redis secret:
+The `kubeclaw-redis` Helm Secret holds two keys: `admin-password` and `acl-encryption-key`. Both are injected into the orchestrator pod as environment variables.
 
 ```bash
 kubectl create secret generic kubeclaw-redis \
   --from-literal=admin-password=$(openssl rand -base64 32) \
+  --from-literal=acl-encryption-key=$(openssl rand -base64 32) \
   -n kubeclaw
-```
-
-## Flow: Follow-Up Message
-
-```
-1. User sends message in group
-   ↓
-2. Orchestrator detects active sidecar for group
-   ↓
-3. Orchestrator retrieves ACL credentials from DB
-   ↓
-4. Orchestrator publishes to Redis Stream:
-      XADD kubeclaw:input:${jobId} * type followup prompt "..."
-   ↓
-5. Sidecar adapter (in Job) receives via XREAD
-   ↓
-6. Sidecar processes follow-up via file IPC or HTTP
-   ↓
-7. Sidecar publishes response via Redis Pub/Sub:
-      PUBLISH kubeclaw:output:${jobId} {...}
-   ↓
-8. Orchestrator receives and routes to channel
-```
-
-## Flow: Job Lifecycle
-
-```
-1. Runtime creates ACL: createJobACL(jobId, groupFolder)
-   ↓
-2. Runtime creates K8s Job with ACL env vars
-   ↓
-3. Sidecar adapter connects to Redis with ACL credentials
-   ↓
-4. Sidecar processes initial task
-   ↓
-5. Sidecar enters follow-up listening mode (XREAD on input stream)
-   ↓
-6. [Optional] Multiple follow-up messages exchanged
-   ↓
-7. Job completes or times out
-   ↓
-8. Runtime revokes ACL: revokeJobACL(jobId)
-   ↓
-9. ACL user deleted from Redis, marked revoked in DB
 ```
 
 ## Requirements
 
-- **Redis 7+** - ACL support required
-- **Kubernetes** - For sidecar job management
-- **ACL_ENCRYPTION_KEY** - For secure credential storage
+- **Redis 7+** — ACL support required; older versions fall back to shared `tool-server` user with a warning
+- **Kubernetes** — For sidecar job management
+- **ACL_ENCRYPTION_KEY** — For secure credential storage
 
 ## Testing
 
@@ -277,17 +209,11 @@ Run ACL-specific tests:
 ```bash
 # Unit tests
 npm test -- src/k8s/acl-manager.test.ts
-
-# Security tests
-npm test -- e2e/sidecar-security.test.ts
-
-# Integration tests
-npm test -- e2e/sidecar-acl.test.ts
 ```
 
 ## Troubleshooting
 
-### "Redis version not supported"
+### "Redis version not supported" or fallback warning in logs
 
 Ensure Redis 7+ is running:
 
@@ -296,39 +222,36 @@ redis-cli INFO server | grep redis_version
 # Should show 7.x.x
 ```
 
+If the orchestrator logs warn about falling back to the shared `tool-server` user, the Redis version is below 7 or ACL commands are restricted.
+
 ### "NOAUTH Authentication required"
 
-Check `REDIS_ADMIN_PASSWORD` is set correctly and matches the Redis secret.
+Check that `REDIS_ADMIN_PASSWORD` is set correctly and matches the value in the `kubeclaw-redis` secret.
 
-### Sidecar cannot connect to Redis
+### Bridge container cannot connect to Redis
 
-Verify ACL was created:
-
-```bash
-kubectl exec -it kubeclaw-redis-0 -- redis-cli ACL LIST
-```
-
-### Credentials not found
-
-Check ACL status in database:
+Verify the ACL was created:
 
 ```bash
-sqlite3 store/messages.db "SELECT * FROM job_acls WHERE job_id = '...';"
+kubectl exec -it kubeclaw-redis-0 -- redis-cli ACL LIST | grep stool-
 ```
 
-## Migration from Non-ACL Setup
+### Credentials not found in database
 
-If upgrading from a non-ACL setup:
+Check ACL status in the SQLite database:
 
-1. Ensure Redis 7+ is deployed
-2. Set `REDIS_ADMIN_PASSWORD` and `ACL_ENCRYPTION_KEY`
-3. Restart orchestrator
-4. New jobs will use ACL automatically
-5. Existing jobs without ACL will continue to work (backward compatible)
+```bash
+sqlite3 store/messages.db "SELECT job_id, username, status, expires_at FROM job_acls ORDER BY created_at DESC LIMIT 20;"
+```
 
-## Future Improvements
+### ACL not being revoked after pod terminates
 
-- [ ] Automatic ACL credential rotation
-- [ ] mTLS for Redis connections
-- [ ] Audit logging for ACL operations
-- [ ] Support for Redis Sentinel/Cluster
+The cleanup sweep runs every 10 minutes. If ACLs are accumulating past their `expires_at`:
+
+```bash
+# Check sweep is running (look for aclCleanupSweep log entries)
+kubectl logs deployment/kubeclaw-orchestrator -n kubeclaw --tail=200 | grep -i acl
+
+# Manually inspect expired but active ACLs
+sqlite3 store/messages.db "SELECT job_id, username, expires_at FROM job_acls WHERE status = 'active' AND expires_at < datetime('now');"
+```
