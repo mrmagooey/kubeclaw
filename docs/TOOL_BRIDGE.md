@@ -4,7 +4,9 @@
 
 Each sidecar tool pod is a two-container Kubernetes Job: `kubeclaw-tool-bridge` (running `tool-server.js`) and `user-tool` (an arbitrary container supplied by the tool author). The bridge is the only container that touches Redis; `user-tool` never sees Redis credentials.
 
-The bridge reads tool calls from the stream `kubeclaw:toolcalls:{agentJobId}:{toolName}` and writes results to `kubeclaw:toolresults:{agentJobId}:{toolName}`. Between those two stream operations, the bridge forwards the call to `user-tool` using one of three IPC patterns, selected by `ToolSpec.pattern`.
+The bridge reads tool calls from the stream `kubeclaw:toolcalls:{agentJobId}:{toolName}` (the `{toolName}` segment is passed to the bridge container as `KUBECLAW_CATEGORY`) and writes results to `kubeclaw:toolresults:{agentJobId}:{toolName}`. Between those two stream operations, the bridge forwards the call to `user-tool` using one of three IPC patterns, selected by `ToolSpec.pattern`.
+
+Regardless of pattern, the user container receives a single injected env var, `PORT`, set to the value of `ToolSpec.port` (default `8080`).
 
 ## The Three Patterns
 
@@ -23,7 +25,7 @@ The bridge POSTs to `http://localhost:{port}/invoke` with a JSON body:
 { "error": "human-readable message" }
 ```
 
-The port is set by `ToolSpec.port` (default `8080`). The bridge also injects the `PORT` environment variable into the `user-tool` container set to the same value, so the container does not need to hard-code it.
+The port is set by `ToolSpec.port` (default `8080`).
 
 ### File pattern
 
@@ -152,12 +154,12 @@ tools:
   - name: word_count
     description: Count words in the input text
     parameters: { type: object, properties: { text: { type: string } } }
-    image: alpine:latest        # must also be in TOOL_IMAGE_ALLOWLIST in production
+    image: your-registry/yourtool-with-jq:latest  # must also be in TOOL_IMAGE_ALLOWLIST in production
     pattern: file
     command: ["/bin/sh", "/kubeclaw/tool-wrapper.sh", "wc", "-w"]
 ```
 
-**Note**: `alpine:latest` does not include `jq`, which `tool-wrapper.sh` requires to parse `.input` from the request JSON. Use an image that includes `jq`, such as a `ghcr.io/jqlang/jq:latest` derivative, or add `jq` via a minimal Dockerfile:
+**Image requirement**: `tool-wrapper.sh` requires `jq` to parse `.input` from the request JSON. `alpine:latest` does not include `jq` and will not work as-is. Use an image that already ships `jq` (e.g. `badouralix/curl-jq:latest`), or build a thin wrapper:
 
 ```dockerfile
 FROM alpine:latest

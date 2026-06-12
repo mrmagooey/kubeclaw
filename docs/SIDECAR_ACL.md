@@ -83,7 +83,7 @@ CREATE TABLE job_acls (
 );
 ```
 
-The storage key in `job_acls` uses the format `{podJobName}-{Date.now().toString(36)}` to avoid primary-key collisions on recycled pod names.
+The SQLite `job_id` primary key (not the ACL username) uses the format `{podJobName}-{Date.now().toString(36)}` to avoid primary-key collisions on recycled pod names. The ACL username is the distinct value `stool-{podJobName}` (see [ACL Username Format](#acl-username-format)).
 
 ## Security Model
 
@@ -255,3 +255,7 @@ kubectl logs deployment/kubeclaw-orchestrator -n kubeclaw --tail=200 | grep -i a
 # Manually inspect expired but active ACLs
 sqlite3 store/messages.db "SELECT job_id, username, expires_at FROM job_acls WHERE status = 'active' AND expires_at < datetime('now');"
 ```
+
+## See Also
+
+- [docs/TOOL_BRIDGE.md](./TOOL_BRIDGE.md) — IPC patterns (http/file/acp), readiness gate, retry policy, and ToolSpec reference for sidecar tool pods
