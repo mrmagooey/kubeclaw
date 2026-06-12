@@ -1569,6 +1569,47 @@ describe('JobRunner', () => {
       // And critically: the URL must not embed 'adapter'
       expect(redisUrl).not.toContain('adapter');
     });
+
+    it('mounts the tool-wrapper ConfigMap into the user container for file-bridge pods', async () => {
+      const fileSpec = {
+        ...baseSpec,
+        toolSpec: { ...baseSpec.toolSpec, pattern: 'file' as const },
+      };
+      await jobRunner.createSidecarToolPodJob(fileSpec);
+
+      const call = mockBatchApi.createNamespacedJob.mock.calls.at(-1)![0];
+      const podSpec = call.body.spec.template.spec;
+      const userTool = podSpec.containers.find((c: any) => c.name === 'user-tool');
+      const bridge = podSpec.containers.find(
+        (c: any) => c.name === 'kubeclaw-tool-bridge',
+      );
+
+      expect(userTool.volumeMounts).toContainEqual({
+        name: 'tool-wrapper',
+        mountPath: '/kubeclaw',
+        readOnly: true,
+      });
+      // Bridge does NOT get the wrapper, but both share /shared
+      expect(bridge.volumeMounts.map((m: any) => m.name)).not.toContain('tool-wrapper');
+      expect(bridge.volumeMounts.map((m: any) => m.name)).toContain('shared');
+      expect(userTool.volumeMounts.map((m: any) => m.name)).toContain('shared');
+
+      expect(podSpec.volumes).toContainEqual({
+        name: 'tool-wrapper',
+        configMap: {
+          name: 'kubeclaw-tool-wrapper',
+          defaultMode: 0o755,
+          optional: true,
+        },
+      });
+    });
+
+    it('does not mount the wrapper for http-bridge pods', async () => {
+      await jobRunner.createSidecarToolPodJob(baseSpec);
+      const call = mockBatchApi.createNamespacedJob.mock.calls.at(-1)![0];
+      const volumes = call.body.spec.template.spec.volumes ?? [];
+      expect(volumes.map((v: any) => v.name)).not.toContain('tool-wrapper');
+    });
   });
 
   // Shared fixture for credential injection tests

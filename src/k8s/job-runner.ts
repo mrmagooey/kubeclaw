@@ -1794,12 +1794,25 @@ export class JobRunner {
 
     const userEnv = [{ name: 'PORT', value: String(port) }];
 
-    const volumeMounts: Array<{ name: string; mountPath: string }> = [];
+    const bridgeMounts: Array<{ name: string; mountPath: string; readOnly?: boolean }> = [];
+    const userMounts: Array<{ name: string; mountPath: string; readOnly?: boolean }> = [];
     const volumes: Array<any> = [];
 
     if (isFileBridge) {
-      volumeMounts.push({ name: 'shared', mountPath: '/shared' });
+      bridgeMounts.push({ name: 'shared', mountPath: '/shared' });
+      userMounts.push({ name: 'shared', mountPath: '/shared' });
+      // Optional wrapper script: lets stock images (sh + jq) serve file-bridge
+      // tools via command: ["/bin/sh", "/kubeclaw/tool-wrapper.sh", "<cmd>"]
+      userMounts.push({ name: 'tool-wrapper', mountPath: '/kubeclaw', readOnly: true });
       volumes.push({ name: 'shared', emptyDir: {} });
+      volumes.push({
+        name: 'tool-wrapper',
+        configMap: {
+          name: 'kubeclaw-tool-wrapper',
+          defaultMode: 0o755,
+          optional: true,
+        },
+      });
     }
 
     const job: V1Job = {
@@ -1830,7 +1843,7 @@ export class JobRunner {
                 imagePullPolicy: 'IfNotPresent',
                 command: ['node', '/app/dist/tool-server.js'],
                 env: bridgeEnv,
-                volumeMounts,
+                volumeMounts: bridgeMounts,
                 resources: {
                   requests: { memory: '64Mi', cpu: '50m' },
                   limits: { memory: '128Mi', cpu: '200m' },
@@ -1842,7 +1855,7 @@ export class JobRunner {
                 imagePullPolicy: toolSpec.pullPolicy ?? 'IfNotPresent',
                 ...(toolSpec.command ? { command: toolSpec.command } : {}),
                 env: userEnv,
-                volumeMounts,
+                volumeMounts: userMounts,
                 resources: {
                   requests: {
                     memory: toolSpec.memoryRequest ?? TOOL_JOB_MEMORY_REQUEST,
