@@ -404,7 +404,10 @@ describe('Sidecar ACL E2E Tests', () => {
     });
 
     it('scopes the user to exactly its own toolcalls/toolresults streams', async () => {
-      if (!redis) return;
+      if (!redis) {
+        console.warn('[sidecar-acl] Redis unavailable — Tool pod ACL test skipped');
+        return;
+      }
 
       const { getACLManager, resetACLManager } = await import('../src/k8s/acl-manager.js');
 
@@ -466,6 +469,7 @@ describe('Sidecar ACL E2E Tests', () => {
         ).rejects.toThrow(/NOPERM/i);
       } finally {
         client.disconnect();
+        await redis.del('kubeclaw:toolresults:agent-e2e-1:mytool');
       }
     });
   });

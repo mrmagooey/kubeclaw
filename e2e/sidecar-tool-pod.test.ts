@@ -13,7 +13,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawn, execSync, ChildProcess } from 'child_process';
-import { createServer, IncomingMessage, ServerResponse, Server } from 'http';
+import { createServer, IncomingMessage, ServerResponse, Server, AddressInfo } from 'http';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -141,17 +141,30 @@ function waitForExit(proc: ChildProcess, timeoutMs = 5000): Promise<number | nul
 }
 
 // Cleanup Redis streams after tests
-async function cleanupStreams(agentJobId: string): Promise<void> {
+async function cleanupStreams(agentJobId: string, toolName: string): Promise<void> {
   const redis = getSharedRedis();
   if (!redis) return;
   try {
     await redis.del(
-      `kubeclaw:toolcalls:${agentJobId}:*`,
-      `kubeclaw:toolresults:${agentJobId}:*`,
+      `kubeclaw:toolcalls:${agentJobId}:${toolName}`,
+      `kubeclaw:toolresults:${agentJobId}:${toolName}`,
     );
   } catch {
-    // best-effort
+    /* best-effort */
   }
+}
+
+// Reserve an ephemeral port by briefly binding to 0 and capturing the assigned port.
+// Accepts the tiny theoretical reuse race — acceptable in single-process CI.
+async function reserveEphemeralPort(): Promise<number> {
+  return await new Promise((resolve, reject) => {
+    const probe = createServer();
+    probe.once('error', reject);
+    probe.listen(0, () => {
+      const port = (probe.address() as AddressInfo).port;
+      probe.close(() => resolve(port));
+    });
+  });
 }
 
 // ---- HTTP bridge tests -------------------------------------------------------
@@ -230,7 +243,7 @@ describe('Sidecar Tool Pod — http-bridge mode', () => {
     } finally {
       toolServerProc?.kill();
       toolServerProc = null;
-      await cleanupStreams(agentJobId);
+      await cleanupStreams(agentJobId, toolName);
     }
   }, 20000);
 
@@ -271,7 +284,7 @@ describe('Sidecar Tool Pod — http-bridge mode', () => {
         proc.kill();
       }
     } finally {
-      await cleanupStreams(agentJobId);
+      await cleanupStreams(agentJobId, toolName);
       await new Promise<void>((resolve) => errorServer.close(() => resolve()));
     }
   }, 20000);
@@ -291,7 +304,7 @@ describe('Sidecar Tool Pod — readiness gate', () => {
   it('waits for a slow-starting user container instead of failing', async () => {
     const agentJobId = `ready-test-${Date.now()}`;
     const toolName = 'slowtool';
-    const port = 19181;
+    const port = await reserveEphemeralPort();
     const redis = getSharedRedis();
     if (!redis) throw new Error('Redis not available');
 
@@ -320,17 +333,21 @@ describe('Sidecar Tool Pod — readiness gate', () => {
       stdio: ['ignore', 'inherit', 'inherit'],
     });
 
-    // Start the "user container" only after 2s
-    await new Promise((r) => setTimeout(r, 2000));
-    server = createServer((req: IncomingMessage, res: ServerResponse) => {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ result: 'late but ready' }));
-    });
-    await new Promise<void>((r) => server!.listen(port, r));
+    try {
+      // Start the "user container" only after 2s
+      await new Promise((r) => setTimeout(r, 2000));
+      server = createServer((req: IncomingMessage, res: ServerResponse) => {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ result: 'late but ready' }));
+      });
+      await new Promise<void>((r) => server!.listen(port, r));
 
-    const out = await waitForToolResult(agentJobId, toolName, requestId, 15000);
-    expect(out.error).toBeNull();
-    expect(out.result).toContain('late but ready');
+      const out = await waitForToolResult(agentJobId, toolName, requestId, 15000);
+      expect(out.error).toBeNull();
+      expect(out.result).toContain('late but ready');
+    } finally {
+      await cleanupStreams(agentJobId, toolName);
+    }
   }, 30_000);
 });
 
@@ -347,9 +364,9 @@ describe('Sidecar Tool Pod — retry discipline', () => {
   });
 
   it('retries 5xx then succeeds; fails fast on 4xx', async () => {
+    hits = 0;
     const agentJobId = `retry-test-${Date.now()}`;
     const toolName = 'flakytool';
-    const port = 19182;
     const redis = getSharedRedis();
     if (!redis) throw new Error('Redis not available');
 
@@ -375,7 +392,9 @@ describe('Sidecar Tool Pod — retry discipline', () => {
         }
       });
     });
-    await new Promise<void>((r) => server!.listen(port, r));
+    const port: number = await new Promise((resolve) => {
+      server!.listen(0, () => resolve((server!.address() as AddressInfo).port));
+    });
 
     bridge = spawn('node', [TOOL_SERVER_BIN], {
       env: {
@@ -391,28 +410,32 @@ describe('Sidecar Tool Pod — retry discipline', () => {
       stdio: ['ignore', 'inherit', 'inherit'],
     });
 
-    // 5xx twice → third attempt succeeds
-    const flakyReq = `req-flaky-${Date.now()}`;
-    await redis.xadd(
-      `kubeclaw:toolcalls:${agentJobId}:${toolName}`, '*',
-      'requestId', flakyReq, 'tool', toolName,
-      'input', JSON.stringify({ mode: 'flaky' }),
-    );
-    const flakyOut = await waitForToolResult(agentJobId, toolName, flakyReq, 15000);
-    expect(flakyOut.error).toBeNull();
-    expect(flakyOut.result).toContain('ok after 3 hits');
+    try {
+      // 5xx twice → third attempt succeeds
+      const flakyReq = `req-flaky-${Date.now()}`;
+      await redis.xadd(
+        `kubeclaw:toolcalls:${agentJobId}:${toolName}`, '*',
+        'requestId', flakyReq, 'tool', toolName,
+        'input', JSON.stringify({ mode: 'flaky' }),
+      );
+      const flakyOut = await waitForToolResult(agentJobId, toolName, flakyReq, 15000);
+      expect(flakyOut.error).toBeNull();
+      expect(flakyOut.result).toContain('ok after 3 hits');
 
-    // 4xx → exactly one additional hit, error result
-    const hitsBefore = hits;
-    const badReq = `req-bad-${Date.now()}`;
-    await redis.xadd(
-      `kubeclaw:toolcalls:${agentJobId}:${toolName}`, '*',
-      'requestId', badReq, 'tool', toolName,
-      'input', JSON.stringify({ mode: 'badrequest' }),
-    );
-    const badOut = await waitForToolResult(agentJobId, toolName, badReq, 15000);
-    expect(badOut.error).toContain('Tool HTTP 400');
-    expect(hits).toBe(hitsBefore + 1);
+      // 4xx → exactly one additional hit, error result
+      const hitsBefore = hits;
+      const badReq = `req-bad-${Date.now()}`;
+      await redis.xadd(
+        `kubeclaw:toolcalls:${agentJobId}:${toolName}`, '*',
+        'requestId', badReq, 'tool', toolName,
+        'input', JSON.stringify({ mode: 'badrequest' }),
+      );
+      const badOut = await waitForToolResult(agentJobId, toolName, badReq, 15000);
+      expect(badOut.error).toContain('Tool HTTP 400');
+      expect(hits).toBe(hitsBefore + 1);
+    } finally {
+      await cleanupStreams(agentJobId, toolName);
+    }
   }, 40_000);
 });
 
@@ -504,7 +527,7 @@ describe('Sidecar Tool Pod — file-bridge mode', () => {
       }
       toolServerProc?.kill();
       toolServerProc = null;
-      await cleanupStreams(agentJobId);
+      await cleanupStreams(agentJobId, toolName);
     }
   }, 20000);
 });
