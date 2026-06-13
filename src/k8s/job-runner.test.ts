@@ -1505,6 +1505,34 @@ describe('JobRunner', () => {
       );
     });
 
+    it('stamps KUBECLAW_TOOL_REQUEST_MAPPING when toolSpec.requestMapping is set', async () => {
+      const mapping = { method: 'GET', path: '/weather/{city}' };
+      await jobRunner.createSidecarToolPodJob({
+        ...baseSpec,
+        toolSpec: { ...baseSpec.toolSpec, pattern: 'http' as const, requestMapping: mapping },
+      });
+      const call = mockBatchApi.createNamespacedJob.mock.calls.at(-1)![0];
+      const bridge = call.body.spec.template.spec.containers.find(
+        (c: any) => c.name === 'kubeclaw-tool-bridge',
+      );
+      const env = bridge.env.find(
+        (e: any) => e.name === 'KUBECLAW_TOOL_REQUEST_MAPPING',
+      );
+      expect(env).toBeTruthy();
+      expect(JSON.parse(env.value)).toEqual(mapping);
+    });
+
+    it('omits KUBECLAW_TOOL_REQUEST_MAPPING when requestMapping is absent', async () => {
+      await jobRunner.createSidecarToolPodJob(baseSpec);
+      const call = mockBatchApi.createNamespacedJob.mock.calls.at(-1)![0];
+      const bridge = call.body.spec.template.spec.containers.find(
+        (c: any) => c.name === 'kubeclaw-tool-bridge',
+      );
+      expect(bridge.env.map((e: any) => e.name)).not.toContain(
+        'KUBECLAW_TOOL_REQUEST_MAPPING',
+      );
+    });
+
     it('embeds per-job ACL credentials in the bridge REDIS_URL', async () => {
       mockCreateToolPodACL.mockResolvedValueOnce({
         username: 'stool-test-user',
