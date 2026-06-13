@@ -49,6 +49,16 @@ import {
   loadBaselineFromDisk,
 } from './specialists/reconciler.js';
 import {
+  registerTool,
+  editTool,
+  removeTool,
+  listToolOverrides,
+} from './skills/orchestrator/tool-registry.js';
+import {
+  ToolReconciler,
+  loadBaselineFromDisk as loadToolBaselineFromDisk,
+} from './tools/reconciler.js';
+import {
   registerChannelManifest,
   listChannelManifestOverrides,
 } from './skills/orchestrator/channel-manifest-registry.js';
@@ -143,6 +153,44 @@ const specialistReconciler = new SpecialistReconciler({
     if (resourceVersion !== undefined) {
       await coreV1.replaceNamespacedConfigMap({
         name: 'kubeclaw-specialists',
+        namespace: NAMESPACE,
+        body,
+      });
+    } else {
+      await coreV1.createNamespacedConfigMap({ namespace: NAMESPACE, body });
+    }
+  },
+});
+
+const toolReconciler = new ToolReconciler({
+  baselineLoader: loadToolBaselineFromDisk,
+  configMapApply: async (rendered: string) => {
+    const data: Record<string, string> = { 'tools.json': rendered };
+    let resourceVersion: string | undefined;
+    try {
+      const existing = await coreV1.readNamespacedConfigMap({
+        name: 'kubeclaw-tools',
+        namespace: NAMESPACE,
+      });
+      resourceVersion = existing.metadata?.resourceVersion;
+    } catch (err: unknown) {
+      const status = (err as { response?: { statusCode?: number } })?.response
+        ?.statusCode;
+      if (status !== 404) throw err;
+    }
+    const body = {
+      apiVersion: 'v1',
+      kind: 'ConfigMap',
+      metadata: {
+        name: 'kubeclaw-tools',
+        namespace: NAMESPACE,
+        ...(resourceVersion ? { resourceVersion } : {}),
+      },
+      data,
+    };
+    if (resourceVersion !== undefined) {
+      await coreV1.replaceNamespacedConfigMap({
+        name: 'kubeclaw-tools',
         namespace: NAMESPACE,
         body,
       });
@@ -998,6 +1046,103 @@ export const TOOLS: OpenAI.ChatCompletionTool[] = [
   {
     type: 'function',
     function: {
+      name: 'register_tool',
+      description:
+        'Register a tool container in the tool catalog (tool_overrides SQLite table). The tool is merged into the catalog immediately and channel pods see it within ~30s. The orchestrator resolves its image at spawn time.',
+      parameters: {
+        type: 'object',
+        required: ['name', 'description', 'parameters', 'image', 'pattern'],
+        properties: {
+          name: {
+            type: 'string',
+            description:
+              'Tool name the LLM calls (letters, digits, hyphens, underscores; must start with a letter). Must not collide with a built-in (bash, web_search, web_fetch, browser, places_search).',
+          },
+          description: { type: 'string', description: 'What the tool does (shown to the LLM).' },
+          parameters: {
+            type: 'object',
+            description: 'JSON Schema for the tool arguments.',
+          },
+          image: { type: 'string', description: 'Container image for the tool.' },
+          pattern: {
+            type: 'string',
+            enum: ['http', 'file', 'acp'],
+            description: 'Bridge pattern the tool container speaks.',
+          },
+          port: { type: 'number', description: 'Port the container listens on (http/acp; default 8080).' },
+          command: { type: 'array', items: { type: 'string' }, description: 'Entrypoint override.' },
+          healthPath: { type: 'string', description: 'Readiness path (must begin with /).' },
+          pullPolicy: { type: 'string', enum: ['Always', 'IfNotPresent', 'Never'] },
+          channels: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Channels this tool is visible to. Omit for all channels.',
+          },
+          acpAgentName: { type: 'string' },
+          acpMode: { type: 'string', enum: ['sync', 'async'] },
+          memoryRequest: { type: 'string' },
+          memoryLimit: { type: 'string' },
+          cpuRequest: { type: 'string' },
+          cpuLimit: { type: 'string' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'edit_tool',
+      description:
+        'Update fields on an existing tool override. Only provided fields change. Propagates to channel pods within ~30s.',
+      parameters: {
+        type: 'object',
+        required: ['name'],
+        properties: {
+          name: { type: 'string', description: 'Name of the tool to edit.' },
+          description: { type: 'string' },
+          parameters: { type: 'object' },
+          image: { type: 'string' },
+          pattern: { type: 'string', enum: ['http', 'file', 'acp'] },
+          port: { type: 'number' },
+          command: { type: 'array', items: { type: 'string' } },
+          healthPath: { type: 'string' },
+          pullPolicy: { type: 'string', enum: ['Always', 'IfNotPresent', 'Never'] },
+          channels: { type: 'array', items: { type: 'string' } },
+          acpAgentName: { type: 'string' },
+          acpMode: { type: 'string', enum: ['sync', 'async'] },
+          memoryRequest: { type: 'string' },
+          memoryLimit: { type: 'string' },
+          cpuRequest: { type: 'string' },
+          cpuLimit: { type: 'string' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'remove_tool',
+      description:
+        'Remove a tool override from the catalog. Excluded immediately; channel pods update within ~30s.',
+      parameters: {
+        type: 'object',
+        required: ['name'],
+        properties: { name: { type: 'string', description: 'Name of the tool to remove.' } },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_tools',
+      description:
+        'List all tool overrides in the catalog (admin-shell managed entries; does not include Helm baseline tools).',
+      parameters: { type: 'object', properties: {}, required: [] },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'set_group_credential',
       description:
         'Set an env-var credential on a per-(group, capability) K8s Secret. The Secret is mounted as envFrom into the per-group MCP capability Deployment. Takes effect on the next reconcile or pod restart.',
@@ -1724,6 +1869,74 @@ function handleListSpecialists(): string {
     .join('\n\n');
 }
 
+// ---- Tool catalog handlers ----
+
+function handleRegisterTool(input: ToolInput): string {
+  const spec = {
+    name: input.name as string,
+    description: input.description as string,
+    parameters: input.parameters as Record<string, unknown>,
+    image: input.image as string,
+    pattern: input.pattern as 'http' | 'file' | 'acp',
+    ...(input.port !== undefined && { port: input.port as number }),
+    ...(input.command !== undefined && { command: input.command as string[] }),
+    ...(input.healthPath !== undefined && { healthPath: input.healthPath as string }),
+    ...(input.pullPolicy !== undefined && {
+      pullPolicy: input.pullPolicy as 'Always' | 'IfNotPresent' | 'Never',
+    }),
+    ...(input.channels !== undefined && { channels: input.channels as string[] }),
+    ...(input.acpAgentName !== undefined && { acpAgentName: input.acpAgentName as string }),
+    ...(input.acpMode !== undefined && { acpMode: input.acpMode as 'sync' | 'async' }),
+    ...(input.memoryRequest !== undefined && { memoryRequest: input.memoryRequest as string }),
+    ...(input.memoryLimit !== undefined && { memoryLimit: input.memoryLimit as string }),
+    ...(input.cpuRequest !== undefined && { cpuRequest: input.cpuRequest as string }),
+    ...(input.cpuLimit !== undefined && { cpuLimit: input.cpuLimit as string }),
+  };
+  const result = registerTool(spec, toolReconciler.apply.bind(toolReconciler));
+  if (!result.ok) return `Error: ${result.error}`;
+  return `Registered tool "${spec.name}". Changes are live; channel pods will see the updated catalog within ~30s.`;
+}
+
+function handleEditTool(input: ToolInput): string {
+  const name = input.name as string;
+  if (!name) return 'Error: name is required.';
+  const patch: Record<string, unknown> = {};
+  for (const f of [
+    'description', 'parameters', 'image', 'pattern', 'port', 'command',
+    'healthPath', 'pullPolicy', 'channels', 'acpAgentName', 'acpMode',
+    'memoryRequest', 'memoryLimit', 'cpuRequest', 'cpuLimit',
+  ]) {
+    if (input[f] !== undefined) patch[f] = input[f];
+  }
+  const result = editTool({ name, patch }, toolReconciler.apply.bind(toolReconciler));
+  if (!result.ok) return `Error: ${result.error}`;
+  return `Updated tool "${name}". Changes are live; channel pods will see the updated catalog within ~30s.`;
+}
+
+function handleRemoveTool(input: ToolInput): string {
+  const name = input.name as string;
+  if (!name) return 'Error: name is required.';
+  const result = removeTool({ name }, toolReconciler.apply.bind(toolReconciler));
+  if (!result.ok) return `Error: ${result.error}`;
+  return `Removed tool override "${name}". Changes are live; channel pods will see the updated catalog within ~30s.`;
+}
+
+function handleListTools(): string {
+  const tools = listToolOverrides();
+  if (tools.length === 0)
+    return 'No tool overrides registered. (Helm baseline tools are not shown here.)';
+  return tools
+    .map((t) =>
+      [
+        `Name: ${t.name}`,
+        `  Image: ${t.image}  (${t.pattern})`,
+        `  Desc: ${t.description.slice(0, 80)}${t.description.length > 80 ? '…' : ''}`,
+        `  Channels: ${t.channels?.length ? t.channels.join(', ') : 'all'}`,
+      ].join('\n'),
+    )
+    .join('\n\n');
+}
+
 // ---- Channel manifest tool handlers ----
 
 function handleListChannelManifests(): string {
@@ -2110,6 +2323,14 @@ export async function executeTool(
       return handleRemoveSpecialist(input);
     case 'list_specialists':
       return handleListSpecialists();
+    case 'register_tool':
+      return handleRegisterTool(input);
+    case 'edit_tool':
+      return handleEditTool(input);
+    case 'remove_tool':
+      return handleRemoveTool(input);
+    case 'list_tools':
+      return handleListTools();
     case 'list_channel_manifests':
       return handleListChannelManifests();
     case 'register_channel_manifest':
