@@ -334,8 +334,9 @@ describe('configmaps', () => {
       data: Record<string, string>;
     };
     expect(cm.data['tool-wrapper.sh']).toBeDefined();
-    expect(cm.data['tool-wrapper.sh']).toContain('SHARED_DIR');
-    expect(cm.data['tool-wrapper.sh']).toContain('request.json');
+    expect(cm.data['tool-wrapper.sh']).toContain('INPUT_DIR');
+    expect(cm.data['tool-wrapper.sh']).toContain('KUBECLAW_TOOL_RUN');
+    expect(cm.data['tool-wrapper.sh']).toContain('mktemp');
   });
 });
 
