@@ -482,7 +482,11 @@ export function buildCatalogToolDefs(
 ): OpenAI.ChatCompletionTool[] {
   return tools.map((t) => ({
     type: 'function' as const,
-    function: { name: t.name, description: t.description, parameters: t.parameters },
+    function: {
+      name: t.name,
+      description: t.description,
+      parameters: t.parameters,
+    },
   }));
 }
 
@@ -504,6 +508,16 @@ async function executeToolViaK8s(
 
   const callsStream = getToolCallsStream(toolJobId, category);
   const resultsStream = getToolResultsStream(toolJobId, category);
+
+  // In direct (orchestrator) mode, resolve the catalog spec up front so an
+  // unknown tool fails before we write an orphaned tool-call stream entry.
+  const directSpec =
+    KUBECLAW_MODE !== 'channel' && isCustomTool
+      ? resolveToolByName(toolName)
+      : undefined;
+  if (KUBECLAW_MODE !== 'channel' && isCustomTool && !directSpec) {
+    return `Tool error: unknown tool ${toolName}`;
+  }
 
   // Write call BEFORE spawning pod so the pod picks it up with lastId='0-0'
   await redis.xadd(
@@ -543,16 +557,12 @@ async function executeToolViaK8s(
         'DirectLLMRunner: requested tool pod from orchestrator',
       );
     } else {
-      const spec = isCustomTool ? resolveToolByName(toolName) : undefined;
-      if (isCustomTool && !spec) {
-        return `Tool error: unknown tool ${toolName}`;
-      }
-      if (spec) {
+      if (directSpec) {
         await jobRunner.createSidecarToolPodJob({
           agentJobId: toolJobId,
           groupFolder,
           toolName,
-          toolSpec: spec,
+          toolSpec: directSpec,
           timeout: TOOL_TIMEOUT_MS,
         });
         logger.debug(
@@ -1061,6 +1071,11 @@ export class DirectLLMRunner implements MessageRunner {
   private localTools: Map<string, LocalTool> = new Map();
   private channelMetrics: ChannelMetrics | null = null;
   // Tool catalog source (injected by channel-runner; defaults to empty).
+  // NOTE: in channel pods this is injected from the mounted ConfigMap loader.
+  // In the orchestrator (direct-mode scheduled tasks) it must be injected from
+  // the in-process merged catalog (baseline + SQLite) so seam-1 tool *definitions*
+  // match seam-2 resolution — wired in src/index.ts (Task 10). Until injected,
+  // direct-mode runs see an empty catalog in the LLM tool list.
   private toolCatalog: { getForChannel: (channel: string) => ToolSpec[] } = {
     getForChannel: () => [],
   };

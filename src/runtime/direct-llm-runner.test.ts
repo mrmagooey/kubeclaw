@@ -120,17 +120,37 @@ vi.mock('./tools/propose-skill.js', () => ({
   }),
 }));
 
+const mockResolveToolByName = vi.hoisted(() => vi.fn());
+
+vi.mock('../tools/reconciler.js', () => ({
+  resolveToolByName: mockResolveToolByName,
+  mergeCatalog: vi.fn().mockReturnValue([]),
+  renderCatalog: vi.fn().mockReturnValue(''),
+  loadBaselineFromDisk: vi.fn().mockReturnValue([]),
+  ToolReconciler: class {},
+}));
+
 // ---- Tests ----------------------------------------------------------------
 
 import { buildCatalogToolDefs } from './direct-llm-runner.js';
 
 it('maps ToolSpecs to function tool defs', () => {
   const defs = buildCatalogToolDefs([
-    { name: 'weather', description: 'd', parameters: { type: 'object' }, image: 'i:1', pattern: 'http' },
+    {
+      name: 'weather',
+      description: 'd',
+      parameters: { type: 'object' },
+      image: 'i:1',
+      pattern: 'http',
+    },
   ]);
   expect(defs[0]).toEqual({
     type: 'function',
-    function: { name: 'weather', description: 'd', parameters: { type: 'object' } },
+    function: {
+      name: 'weather',
+      description: 'd',
+      parameters: { type: 'object' },
+    },
   });
 });
 
@@ -1347,5 +1367,177 @@ describe('recommendation pattern — integration', () => {
     expect(
       userMsgs.some((m: any) => m.content?.includes('cheaper options')),
     ).toBe(true);
+  });
+});
+
+describe('DirectLLMRunner — direct-mode custom-tool dispatch (Fix 1 + Fix 2)', () => {
+  const baseGroup = {
+    name: 'test-group',
+    folder: 'test-group',
+    trigger: '',
+    added_at: new Date().toISOString(),
+  };
+
+  const baseInput = {
+    groupFolder: 'test-group',
+    chatJid: 'user@test',
+    isMain: true,
+    prompt: 'Hello!',
+    sessionId: undefined,
+    assistantName: 'TestBot',
+    secrets: undefined,
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // Default: xread returns null (no result), xadd succeeds
+    mockRedisInstance.xread.mockResolvedValue(null);
+    mockRedisInstance.xadd.mockResolvedValue('1-0');
+    // Default: resolveToolByName returns undefined (unknown tool)
+    mockResolveToolByName.mockReturnValue(undefined);
+  });
+
+  it('unknown custom tool in direct mode returns error string without writing to the calls stream', async () => {
+    // LLM returns a call to an unknown catalog tool
+    mockCreate.mockResolvedValueOnce({
+      choices: [
+        {
+          message: {
+            role: 'assistant',
+            content: null,
+            tool_calls: [
+              {
+                id: 'call-unknown-1',
+                type: 'function',
+                function: {
+                  name: 'nonexistent_tool',
+                  arguments: '{}',
+                },
+              },
+            ],
+          },
+        },
+      ],
+    });
+    // Final answer after tool result is fed back
+    mockCreate.mockResolvedValueOnce({
+      choices: [
+        {
+          message: {
+            role: 'assistant',
+            content: 'Sorry, that tool is not available.',
+            tool_calls: [],
+          },
+        },
+      ],
+    });
+
+    // resolveToolByName returns undefined — unknown tool
+    mockResolveToolByName.mockReturnValue(undefined);
+
+    const { DirectLLMRunner } = await import('./direct-llm-runner.js');
+    const { jobRunner } = await import('../k8s/job-runner.js');
+
+    const runner = new DirectLLMRunner();
+    // Register the tool so the LLM can call it (catalog tool not in TOOL_CATEGORY)
+    const result = await runner.runAgent(baseGroup, baseInput);
+
+    // Run should still complete (error fed back as tool result)
+    expect(result.status).toBe('success');
+
+    // Neither spawn method should have been called
+    expect(jobRunner.createSidecarToolPodJob).not.toHaveBeenCalled();
+    expect(jobRunner.createToolPodJob).not.toHaveBeenCalled();
+
+    // The calls stream xadd must NOT have been called for the tool call (Fix 1)
+    // xadd may be called for other streams (e.g. spawn), but not for tool-calls:*
+    const xaddCalls = mockRedisInstance.xadd.mock.calls as unknown[][];
+    const toolCallsStreamWrites = xaddCalls.filter(
+      (c) => typeof c[0] === 'string' && (c[0] as string).startsWith('tool-calls:'),
+    );
+    expect(toolCallsStreamWrites).toHaveLength(0);
+  });
+
+  it('resolved custom tool in direct mode calls createSidecarToolPodJob (not createToolPodJob)', async () => {
+    const fakeSpec = {
+      name: 'home_control',
+      description: 'Control smart home devices',
+      parameters: { type: 'object', properties: { command: { type: 'string' } }, required: ['command'] },
+      image: 'home-control:latest',
+      pattern: 'http' as const,
+      port: 8080,
+    };
+
+    // resolveToolByName returns our spec
+    mockResolveToolByName.mockReturnValue(fakeSpec);
+
+    // LLM calls the custom tool
+    mockCreate.mockResolvedValueOnce({
+      choices: [
+        {
+          message: {
+            role: 'assistant',
+            content: null,
+            tool_calls: [
+              {
+                id: 'call-custom-1',
+                type: 'function',
+                function: {
+                  name: 'home_control',
+                  arguments: '{"command":"turn_on_lights"}',
+                },
+              },
+            ],
+          },
+        },
+      ],
+    });
+    // Final answer after tool result
+    mockCreate.mockResolvedValueOnce({
+      choices: [
+        {
+          message: {
+            role: 'assistant',
+            content: 'Lights turned on.',
+            tool_calls: [],
+          },
+        },
+      ],
+    });
+
+    // Capture requestId so xread can return a matching result
+    let capturedRequestId: string | undefined;
+    mockRedisInstance.xadd.mockImplementation((...args: unknown[]) => {
+      const fields = args.slice(2) as string[];
+      const idx = fields.indexOf('requestId');
+      if (idx >= 0) capturedRequestId = fields[idx + 1];
+      return Promise.resolve('1-0');
+    });
+    mockRedisInstance.xread.mockImplementation(async () => {
+      if (!capturedRequestId) return null;
+      return [
+        [
+          'stream',
+          [['1-0', ['requestId', capturedRequestId, 'result', '"done"']]],
+        ],
+      ];
+    });
+
+    const { DirectLLMRunner } = await import('./direct-llm-runner.js');
+    const { jobRunner } = await import('../k8s/job-runner.js');
+
+    const runner = new DirectLLMRunner();
+    const result = await runner.runAgent(baseGroup, baseInput);
+
+    expect(result.status).toBe('success');
+
+    // Sidecar pod should have been spawned for the custom tool
+    expect(jobRunner.createSidecarToolPodJob).toHaveBeenCalledOnce();
+    const sidecarCall = (jobRunner.createSidecarToolPodJob as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(sidecarCall.toolName).toBe('home_control');
+    expect(sidecarCall.toolSpec).toEqual(fakeSpec);
+
+    // Generic tool pod must NOT have been spawned
+    expect(jobRunner.createToolPodJob).not.toHaveBeenCalled();
   });
 });
