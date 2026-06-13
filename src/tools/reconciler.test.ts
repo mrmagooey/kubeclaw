@@ -64,17 +64,17 @@ describe('ToolReconciler', () => {
   });
 
   it('rolls back generation when apply fails', async () => {
-    const r = new ToolReconciler({
-      baselineLoader: () => [],
-      configMapApply: vi
-        .fn()
-        .mockRejectedValueOnce(new Error('boom'))
-        .mockResolvedValueOnce(undefined),
-    });
+    const apply = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('boom'))
+      .mockResolvedValueOnce(undefined);
+    const r = new ToolReconciler({ baselineLoader: () => [], configMapApply: apply });
     await expect(r.apply()).rejects.toThrow('boom');
     await r.apply(); // succeeds
-    // second apply must be generation 1, proving the failed one did not bump
-    // (asserted indirectly: no throw + the mock's 2nd call received gen 1)
+    // First call attempted generation 1 (then rolled back); the successful
+    // second call must ALSO be generation 1 — proving the failure didn't bump it.
+    expect(JSON.parse(apply.mock.calls[0][0] as string).generation).toBe(1);
+    expect(JSON.parse(apply.mock.calls[1][0] as string).generation).toBe(1);
   });
 });
 
