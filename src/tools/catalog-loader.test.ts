@@ -43,17 +43,24 @@ describe('ToolCatalogLoader', () => {
   it('filters by channel ACL (empty channels = all)', () => {
     dir = mkdtempSync(join(tmpdir(), 'toolcat-'));
     const p = join(dir, 'tools.json');
-    writeFileSync(p, wire([t('all'), t('tg', ['telegram']), t('web', ['http'])]));
+    writeFileSync(
+      p,
+      wire([t('all'), t('tg', ['telegram']), t('web', ['http'])]),
+    );
     loader = new ToolCatalogLoader(p);
     loader.start();
-    expect(loader.getForChannel('telegram').map((x) => x.name).sort()).toEqual([
-      'all',
-      'tg',
-    ]);
-    expect(loader.getForChannel('http').map((x) => x.name).sort()).toEqual([
-      'all',
-      'web',
-    ]);
+    expect(
+      loader
+        .getForChannel('telegram')
+        .map((x) => x.name)
+        .sort(),
+    ).toEqual(['all', 'tg']);
+    expect(
+      loader
+        .getForChannel('http')
+        .map((x) => x.name)
+        .sort(),
+    ).toEqual(['all', 'web']);
   });
 
   it('keeps the stale cache when the file becomes invalid', () => {

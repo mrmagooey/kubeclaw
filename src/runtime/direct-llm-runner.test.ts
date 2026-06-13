@@ -1453,7 +1453,8 @@ describe('DirectLLMRunner — direct-mode custom-tool dispatch (Fix 1 + Fix 2)',
     // xadd may be called for other streams (e.g. spawn), but not for tool-calls:*
     const xaddCalls = mockRedisInstance.xadd.mock.calls as unknown[][];
     const toolCallsStreamWrites = xaddCalls.filter(
-      (c) => typeof c[0] === 'string' && (c[0] as string).startsWith('tool-calls:'),
+      (c) =>
+        typeof c[0] === 'string' && (c[0] as string).startsWith('tool-calls:'),
     );
     expect(toolCallsStreamWrites).toHaveLength(0);
   });
@@ -1462,7 +1463,11 @@ describe('DirectLLMRunner — direct-mode custom-tool dispatch (Fix 1 + Fix 2)',
     const fakeSpec = {
       name: 'home_control',
       description: 'Control smart home devices',
-      parameters: { type: 'object', properties: { command: { type: 'string' } }, required: ['command'] },
+      parameters: {
+        type: 'object',
+        properties: { command: { type: 'string' } },
+        required: ['command'],
+      },
       image: 'home-control:latest',
       pattern: 'http' as const,
       port: 8080,
@@ -1533,7 +1538,9 @@ describe('DirectLLMRunner — direct-mode custom-tool dispatch (Fix 1 + Fix 2)',
 
     // Sidecar pod should have been spawned for the custom tool
     expect(jobRunner.createSidecarToolPodJob).toHaveBeenCalledOnce();
-    const sidecarCall = (jobRunner.createSidecarToolPodJob as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    const sidecarCall = (
+      jobRunner.createSidecarToolPodJob as ReturnType<typeof vi.fn>
+    ).mock.calls[0][0];
     expect(sidecarCall.toolName).toBe('home_control');
     expect(sidecarCall.toolSpec).toEqual(fakeSpec);
 

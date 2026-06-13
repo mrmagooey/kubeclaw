@@ -34,7 +34,10 @@ export class ToolCatalogLoader {
     try {
       json = readFileSync(this.path, 'utf-8');
     } catch (err) {
-      logger.warn({ err, path: this.path }, 'tool catalog read failed; keeping cache');
+      logger.warn(
+        { err, path: this.path },
+        'tool catalog read failed; keeping cache',
+      );
       return;
     }
     const r = parseToolCatalog(json);
@@ -45,7 +48,10 @@ export class ToolCatalogLoader {
       );
       return;
     }
-    if (r.generation === this.generation && this.cache.length === r.tools.length)
+    if (
+      r.generation === this.generation &&
+      this.cache.length === r.tools.length
+    )
       return;
     this.cache = r.tools;
     this.generation = r.generation;

@@ -1058,25 +1058,46 @@ export const TOOLS: OpenAI.ChatCompletionTool[] = [
             description:
               'Tool name the LLM calls (letters, digits, hyphens, underscores; must start with a letter). Must not collide with a built-in (bash, web_search, web_fetch, browser, places_search).',
           },
-          description: { type: 'string', description: 'What the tool does (shown to the LLM).' },
+          description: {
+            type: 'string',
+            description: 'What the tool does (shown to the LLM).',
+          },
           parameters: {
             type: 'object',
             description: 'JSON Schema for the tool arguments.',
           },
-          image: { type: 'string', description: 'Container image for the tool.' },
+          image: {
+            type: 'string',
+            description: 'Container image for the tool.',
+          },
           pattern: {
             type: 'string',
             enum: ['http', 'file', 'acp'],
             description: 'Bridge pattern the tool container speaks.',
           },
-          port: { type: 'number', description: 'Port the container listens on (http/acp; default 8080).' },
-          command: { type: 'array', items: { type: 'string' }, description: 'Entrypoint override.' },
-          healthPath: { type: 'string', description: 'Readiness path (must begin with /).' },
-          pullPolicy: { type: 'string', enum: ['Always', 'IfNotPresent', 'Never'] },
+          port: {
+            type: 'number',
+            description:
+              'Port the container listens on (http/acp; default 8080).',
+          },
+          command: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Entrypoint override.',
+          },
+          healthPath: {
+            type: 'string',
+            description: 'Readiness path (must begin with /).',
+          },
+          pullPolicy: {
+            type: 'string',
+            enum: ['Always', 'IfNotPresent', 'Never'],
+          },
           channels: {
             type: 'array',
             items: { type: 'string' },
-            description: 'Channels this tool is visible to. Omit for all channels.',
+            description:
+              'Channels this tool is visible to. Omit for all channels.',
           },
           acpAgentName: { type: 'string' },
           acpMode: { type: 'string', enum: ['sync', 'async'] },
@@ -1106,7 +1127,10 @@ export const TOOLS: OpenAI.ChatCompletionTool[] = [
           port: { type: 'number' },
           command: { type: 'array', items: { type: 'string' } },
           healthPath: { type: 'string' },
-          pullPolicy: { type: 'string', enum: ['Always', 'IfNotPresent', 'Never'] },
+          pullPolicy: {
+            type: 'string',
+            enum: ['Always', 'IfNotPresent', 'Never'],
+          },
           channels: { type: 'array', items: { type: 'string' } },
           acpAgentName: { type: 'string' },
           acpMode: { type: 'string', enum: ['sync', 'async'] },
@@ -1127,7 +1151,9 @@ export const TOOLS: OpenAI.ChatCompletionTool[] = [
       parameters: {
         type: 'object',
         required: ['name'],
-        properties: { name: { type: 'string', description: 'Name of the tool to remove.' } },
+        properties: {
+          name: { type: 'string', description: 'Name of the tool to remove.' },
+        },
       },
     },
   },
@@ -1880,16 +1906,30 @@ function handleRegisterTool(input: ToolInput): string {
     pattern: input.pattern as 'http' | 'file' | 'acp',
     ...(input.port !== undefined && { port: input.port as number }),
     ...(input.command !== undefined && { command: input.command as string[] }),
-    ...(input.healthPath !== undefined && { healthPath: input.healthPath as string }),
+    ...(input.healthPath !== undefined && {
+      healthPath: input.healthPath as string,
+    }),
     ...(input.pullPolicy !== undefined && {
       pullPolicy: input.pullPolicy as 'Always' | 'IfNotPresent' | 'Never',
     }),
-    ...(input.channels !== undefined && { channels: input.channels as string[] }),
-    ...(input.acpAgentName !== undefined && { acpAgentName: input.acpAgentName as string }),
-    ...(input.acpMode !== undefined && { acpMode: input.acpMode as 'sync' | 'async' }),
-    ...(input.memoryRequest !== undefined && { memoryRequest: input.memoryRequest as string }),
-    ...(input.memoryLimit !== undefined && { memoryLimit: input.memoryLimit as string }),
-    ...(input.cpuRequest !== undefined && { cpuRequest: input.cpuRequest as string }),
+    ...(input.channels !== undefined && {
+      channels: input.channels as string[],
+    }),
+    ...(input.acpAgentName !== undefined && {
+      acpAgentName: input.acpAgentName as string,
+    }),
+    ...(input.acpMode !== undefined && {
+      acpMode: input.acpMode as 'sync' | 'async',
+    }),
+    ...(input.memoryRequest !== undefined && {
+      memoryRequest: input.memoryRequest as string,
+    }),
+    ...(input.memoryLimit !== undefined && {
+      memoryLimit: input.memoryLimit as string,
+    }),
+    ...(input.cpuRequest !== undefined && {
+      cpuRequest: input.cpuRequest as string,
+    }),
     ...(input.cpuLimit !== undefined && { cpuLimit: input.cpuLimit as string }),
   };
   const result = registerTool(spec, toolReconciler.apply.bind(toolReconciler));
@@ -1902,13 +1942,28 @@ function handleEditTool(input: ToolInput): string {
   if (!name) return 'Error: name is required.';
   const patch: Record<string, unknown> = {};
   for (const f of [
-    'description', 'parameters', 'image', 'pattern', 'port', 'command',
-    'healthPath', 'pullPolicy', 'channels', 'acpAgentName', 'acpMode',
-    'memoryRequest', 'memoryLimit', 'cpuRequest', 'cpuLimit',
+    'description',
+    'parameters',
+    'image',
+    'pattern',
+    'port',
+    'command',
+    'healthPath',
+    'pullPolicy',
+    'channels',
+    'acpAgentName',
+    'acpMode',
+    'memoryRequest',
+    'memoryLimit',
+    'cpuRequest',
+    'cpuLimit',
   ]) {
     if (input[f] !== undefined) patch[f] = input[f];
   }
-  const result = editTool({ name, patch }, toolReconciler.apply.bind(toolReconciler));
+  const result = editTool(
+    { name, patch },
+    toolReconciler.apply.bind(toolReconciler),
+  );
   if (!result.ok) return `Error: ${result.error}`;
   return `Updated tool "${name}". Changes are live; channel pods will see the updated catalog within ~30s.`;
 }
@@ -1916,7 +1971,10 @@ function handleEditTool(input: ToolInput): string {
 function handleRemoveTool(input: ToolInput): string {
   const name = input.name as string;
   if (!name) return 'Error: name is required.';
-  const result = removeTool({ name }, toolReconciler.apply.bind(toolReconciler));
+  const result = removeTool(
+    { name },
+    toolReconciler.apply.bind(toolReconciler),
+  );
   if (!result.ok) return `Error: ${result.error}`;
   return `Removed tool override "${name}". Changes are live; channel pods will see the updated catalog within ~30s.`;
 }

@@ -47,7 +47,10 @@ describe('tool-registry', () => {
 
   it('rejects an edit that produces an invalid spec', () => {
     registerTool(base);
-    const r = editTool({ name: 'weather', patch: { pattern: 'grpc' as never } });
+    const r = editTool({
+      name: 'weather',
+      patch: { pattern: 'grpc' as never },
+    });
     expect(r.ok).toBe(false);
   });
 
