@@ -18,6 +18,7 @@ import {
   AvailableGroup,
   getToolJobRunner,
   getRunnerForGroup,
+  getDirectLLMRunner,
   shutdownAllRunners,
 } from './runtime/index.js';
 import {
@@ -102,6 +103,12 @@ import {
   SpecialistReconciler,
   loadBaselineFromDisk,
 } from './specialists/reconciler.js';
+import {
+  ToolReconciler,
+  loadBaselineFromDisk as loadToolBaselineFromDisk,
+  mergeCatalog,
+} from './tools/reconciler.js';
+import { listToolOverrides } from './skills/orchestrator/tool-registry.js';
 import { setSpecialistResolutionCallback } from './specialists.js';
 import {
   RealPerGroupK8sClient,
@@ -626,6 +633,67 @@ async function main(): Promise<void> {
         'Specialist reconcile failed; channel pods will use stale or empty catalog',
       );
     }
+
+    // ── Tool catalog reconcile ────────────────────────────────────────────────
+    const toolReconciler = new ToolReconciler({
+      baselineLoader: loadToolBaselineFromDisk,
+      configMapApply: async (rendered: string) => {
+        const data: Record<string, string> = { 'tools.json': rendered };
+        let resourceVersion: string | undefined;
+        try {
+          const existing = await coreApi.readNamespacedConfigMap({
+            name: 'kubeclaw-tools',
+            namespace: KUBECLAW_NAMESPACE,
+          });
+          resourceVersion = existing.metadata?.resourceVersion;
+        } catch (err: unknown) {
+          const status = (err as { response?: { statusCode?: number } })
+            ?.response?.statusCode;
+          if (status !== 404) throw err;
+        }
+        const body = {
+          apiVersion: 'v1',
+          kind: 'ConfigMap',
+          metadata: {
+            name: 'kubeclaw-tools',
+            namespace: KUBECLAW_NAMESPACE,
+            ...(resourceVersion ? { resourceVersion } : {}),
+          },
+          data,
+        };
+        if (resourceVersion !== undefined) {
+          await coreApi.replaceNamespacedConfigMap({
+            name: 'kubeclaw-tools',
+            namespace: KUBECLAW_NAMESPACE,
+            body,
+          });
+        } else {
+          await coreApi.createNamespacedConfigMap({
+            namespace: KUBECLAW_NAMESPACE,
+            body,
+          });
+        }
+      },
+    });
+    try {
+      await toolReconciler.apply();
+      logger.info('Tools ConfigMap reconciled');
+    } catch (err) {
+      logger.warn(
+        { err },
+        'Tool reconcile failed; channel pods will use stale or empty catalog',
+      );
+    }
+
+    // Inject the in-process merged catalog into the orchestrator's DirectLLMRunner
+    // so direct-mode scheduled tasks see catalog tools in their LLM tool list
+    // (seam-1), matching the orchestrator's name-resolution at spawn (seam-2).
+    getDirectLLMRunner().setToolCatalog({
+      getForChannel: (channel: string) =>
+        mergeCatalog(loadToolBaselineFromDisk(), listToolOverrides()).filter(
+          (t) => !t.channels?.length || t.channels.includes(channel),
+        ),
+    });
 
     // ── Channel-manifest catalog reconcile ────────────────────────────────────
     // Helm renders kubeclaw-channel-manifests empty; bootstrap Jobs mount it to

@@ -290,6 +290,9 @@ spec:
             - name: specialists-baseline
               mountPath: /etc/kubeclaw/specialists-baseline
               readOnly: true
+            - name: tools-baseline
+              mountPath: /etc/kubeclaw/tools-baseline
+              readOnly: true
             - name: channel-manifests-baseline
               mountPath: /etc/kubeclaw/channel-manifests-baseline
               readOnly: true
@@ -311,6 +314,10 @@ spec:
         - name: specialists-baseline
           configMap:
             name: kubeclaw-specialists-baseline
+            optional: true
+        - name: tools-baseline
+          configMap:
+            name: kubeclaw-tools-baseline
             optional: true
         - name: channel-manifests-baseline
           configMap:

@@ -60,25 +60,8 @@ export interface AllowedRoot {
   description?: string;
 }
 
-export interface ToolSpec {
-  name: string;
-  description: string;
-  parameters: Record<string, unknown>; // JSON Schema object
-  image: string;
-  pattern: 'http' | 'file' | 'acp';
-  port?: number; // http/acp: port the user container listens on (default 8080)
-  command?: string[]; // optional entrypoint override for user container
-  pullPolicy?: 'Always' | 'IfNotPresent' | 'Never';
-  memoryRequest?: string;
-  memoryLimit?: string;
-  cpuRequest?: string;
-  cpuLimit?: string;
-  /** Optional readiness-probe path on the user container (default "/"; must begin with "/"; any HTTP response counts as ready). */
-  healthPath?: string;
-  // ACP-specific (only when pattern = 'acp')
-  acpAgentName?: string; // Agent name on multi-agent ACP servers (defaults to tool name)
-  acpMode?: 'sync' | 'async'; // ACP execution mode (default: sync)
-}
+import type { ToolSpec } from './tools/types.js';
+export type { ToolSpec } from './tools/types.js';
 
 /**
  * Orchestrator configuration for runners in this group.
@@ -90,7 +73,6 @@ export interface ToolSpec {
 export interface ContainerConfig {
   additionalMounts?: AdditionalMount[];
   timeout?: number; // Default: 300000 (5 minutes)
-  tools?: ToolSpec[]; // Custom tool containers spawned on demand as sidecar tool pods
   memoryRequest?: string; // K8s memory request (e.g., "512Mi")
   memoryLimit?: string; // K8s memory limit (e.g., "4Gi")
   cpuRequest?: string; // K8s CPU request (e.g., "250m")

@@ -491,6 +491,11 @@ specialists:
 #     llmProvider: claude
 #     tools: [mcp:fetch]
 
+# Global tool catalog. Empty by default — register tools via the admin shell
+# (register_tool) or add entries here. Each entry is a ToolSpec; an optional
+# `channels:` list scopes the tool to specific channels (omit = all channels).
+tools: []
+
 # Prometheus metrics scraping. Requires prometheus-operator in the cluster.
 metrics:
   # Port on which each tier exposes /metrics. Must match METRICS_PORT env var.

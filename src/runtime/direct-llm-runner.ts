@@ -56,6 +56,7 @@ import {
 import { loadSkills } from './skill-loader.js';
 import { proposeSkill, DupCheckFn } from './tools/propose-skill.js';
 import { makeSetReminderTool } from './tools/set-reminder.js';
+import { resolveToolByName } from '../tools/reconciler.js';
 
 const DEFAULT_SYSTEM_PROMPT =
   'You are a helpful assistant. Be concise and direct in your responses. ' +
@@ -474,6 +475,21 @@ const TOOL_CATEGORY: Record<string, 'browser' | 'execution'> = {
   places_search: 'browser',
 };
 
+// ---- Catalog tool definitions ----
+
+export function buildCatalogToolDefs(
+  tools: ToolSpec[],
+): OpenAI.ChatCompletionTool[] {
+  return tools.map((t) => ({
+    type: 'function' as const,
+    function: {
+      name: t.name,
+      description: t.description,
+      parameters: t.parameters,
+    },
+  }));
+}
+
 // ---- K8s tool pod dispatch ----
 
 async function executeToolViaK8s(
@@ -482,7 +498,6 @@ async function executeToolViaK8s(
   toolName: string,
   args: Record<string, unknown>,
   spawnedCategories: Set<string>,
-  group?: RegisteredGroup,
   maxToolOutputBytes?: number,
 ): Promise<string> {
   const isCustomTool = !TOOL_CATEGORY[toolName];
@@ -493,6 +508,16 @@ async function executeToolViaK8s(
 
   const callsStream = getToolCallsStream(toolJobId, category);
   const resultsStream = getToolResultsStream(toolJobId, category);
+
+  // In direct (orchestrator) mode, resolve the catalog spec up front so an
+  // unknown tool fails before we write an orphaned tool-call stream entry.
+  const directSpec =
+    KUBECLAW_MODE !== 'channel' && isCustomTool
+      ? resolveToolByName(toolName)
+      : undefined;
+  if (KUBECLAW_MODE !== 'channel' && isCustomTool && !directSpec) {
+    return `Tool error: unknown tool ${toolName}`;
+  }
 
   // Write call BEFORE spawning pod so the pod picks it up with lastId='0-0'
   await redis.xadd(
@@ -509,9 +534,6 @@ async function executeToolViaK8s(
   // Spawn pod once per category per runAgent() invocation
   if (!spawnedCategories.has(category)) {
     spawnedCategories.add(category);
-    const customSpec = isCustomTool
-      ? (group?.containerConfig?.tools ?? []).find((t) => t.name === toolName)
-      : undefined;
 
     if (KUBECLAW_MODE === 'channel') {
       const spawnFields: string[] = [
@@ -526,22 +548,6 @@ async function executeToolViaK8s(
         'channel',
         KUBECLAW_CHANNEL,
       ];
-      if (customSpec) {
-        spawnFields.push(
-          'toolImage',
-          customSpec.image,
-          'toolPattern',
-          customSpec.pattern,
-          'toolPort',
-          String(customSpec.port ?? 8080),
-        );
-        if (customSpec.acpAgentName)
-          spawnFields.push('toolAcpAgentName', customSpec.acpAgentName);
-        if (customSpec.acpMode)
-          spawnFields.push('toolAcpMode', customSpec.acpMode);
-        if (customSpec.healthPath)
-          spawnFields.push('toolHealthPath', customSpec.healthPath);
-      }
       if (maxToolOutputBytes !== undefined) {
         spawnFields.push('maxToolOutputBytes', String(maxToolOutputBytes));
       }
@@ -550,30 +556,32 @@ async function executeToolViaK8s(
         { toolJobId, category },
         'DirectLLMRunner: requested tool pod from orchestrator',
       );
-    } else if (customSpec) {
-      await jobRunner.createSidecarToolPodJob({
-        agentJobId: toolJobId,
-        groupFolder,
-        toolName,
-        toolSpec: customSpec,
-        timeout: TOOL_TIMEOUT_MS,
-      });
-      logger.debug(
-        { toolJobId, toolName },
-        'DirectLLMRunner: spawned sidecar tool pod',
-      );
     } else {
-      await jobRunner.createToolPodJob({
-        agentJobId: toolJobId,
-        groupFolder,
-        category: category as 'browser' | 'execution',
-        timeout: TOOL_TIMEOUT_MS,
-        maxToolOutputBytes,
-      });
-      logger.debug(
-        { toolJobId, category },
-        'DirectLLMRunner: spawned tool pod',
-      );
+      if (directSpec) {
+        await jobRunner.createSidecarToolPodJob({
+          agentJobId: toolJobId,
+          groupFolder,
+          toolName,
+          toolSpec: directSpec,
+          timeout: TOOL_TIMEOUT_MS,
+        });
+        logger.debug(
+          { toolJobId, toolName },
+          'DirectLLMRunner: spawned sidecar tool pod',
+        );
+      } else {
+        await jobRunner.createToolPodJob({
+          agentJobId: toolJobId,
+          groupFolder,
+          category: category as 'browser' | 'execution',
+          timeout: TOOL_TIMEOUT_MS,
+          maxToolOutputBytes,
+        });
+        logger.debug(
+          { toolJobId, category },
+          'DirectLLMRunner: spawned tool pod',
+        );
+      }
     }
   }
 
@@ -1062,6 +1070,19 @@ export class DirectLLMRunner implements MessageRunner {
   /** Channel-resident tools intercepted locally (no K8s pod spawned). */
   private localTools: Map<string, LocalTool> = new Map();
   private channelMetrics: ChannelMetrics | null = null;
+  // Tool catalog source (injected by channel-runner; defaults to empty).
+  // NOTE: in channel pods this is injected from the mounted ConfigMap loader.
+  // In the orchestrator (direct-mode scheduled tasks) it must be injected from
+  // the in-process merged catalog (baseline + SQLite) so seam-1 tool *definitions*
+  // match seam-2 resolution — wired in src/index.ts (Task 10). Until injected,
+  // direct-mode runs see an empty catalog in the LLM tool list.
+  private toolCatalog: { getForChannel: (channel: string) => ToolSpec[] } = {
+    getForChannel: () => [],
+  };
+
+  setToolCatalog(c: { getForChannel: (channel: string) => ToolSpec[] }): void {
+    this.toolCatalog = c;
+  }
 
   constructor(client?: OpenAI) {
     this.client = client ?? createLLMClient();
@@ -1253,16 +1274,9 @@ export class DirectLLMRunner implements MessageRunner {
     const toolJobId = `direct-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
     const spawnedCategories = new Set<string>();
 
-    const customToolDefs: OpenAI.ChatCompletionTool[] = (
-      group.containerConfig?.tools ?? []
-    ).map((t: ToolSpec) => ({
-      type: 'function' as const,
-      function: {
-        name: t.name,
-        description: t.description,
-        parameters: t.parameters,
-      },
-    }));
+    const customToolDefs = buildCatalogToolDefs(
+      this.toolCatalog.getForChannel(KUBECLAW_CHANNEL),
+    );
     const mcpTools = this.mcpManager?.getTools() ?? [];
     const localToolDefs = [...this.localTools.values()].map((lt) => lt.def);
     const allTools = [
@@ -1485,7 +1499,6 @@ export class DirectLLMRunner implements MessageRunner {
                 call.function.name,
                 args,
                 spawnedCategories,
-                group,
                 overrides.maxToolOutputBytes,
               );
             }

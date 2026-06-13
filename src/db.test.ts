@@ -3280,6 +3280,16 @@ describe('getConversationHistoryPage (Story 84)', () => {
 
 // ─── Story 180: bootstrap_history ────────────────────────────────────────────
 
+describe('tool_overrides schema', () => {
+  it('creates the tool_overrides table', () => {
+    const rows = db.exec(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='tool_overrides'",
+    );
+    expect(rows.length).toBe(1);
+    expect(rows[0].values.length).toBe(1);
+  });
+});
+
 describe('bootstrap_history schema', () => {
   it('creates the bootstrap_history table', () => {
     const result = db.exec(

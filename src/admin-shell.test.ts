@@ -27,6 +27,10 @@ const {
   mockReadNamespacedConfigMap,
   mockReplaceNamespacedConfigMap,
   mockCreateNamespacedConfigMap,
+  mockRegisterTool,
+  mockEditTool,
+  mockRemoveTool,
+  mockListToolOverrides,
 } = vi.hoisted(() => ({
   mockGetAllRegisteredGroups: vi.fn().mockReturnValue({}),
   mockSetRegisteredGroup: vi.fn(),
@@ -49,6 +53,10 @@ const {
   mockEditSpecialist: vi.fn().mockReturnValue({ ok: true }),
   mockRemoveSpecialist: vi.fn().mockReturnValue({ ok: true }),
   mockListSpecialistOverrides: vi.fn().mockReturnValue([]),
+  mockRegisterTool: vi.fn().mockReturnValue({ ok: true }),
+  mockEditTool: vi.fn().mockReturnValue({ ok: true }),
+  mockRemoveTool: vi.fn().mockReturnValue({ ok: true }),
+  mockListToolOverrides: vi.fn().mockReturnValue([]),
   mockReadNamespacedConfigMap: vi
     .fn()
     .mockResolvedValue({ metadata: { resourceVersion: '1' } }),
@@ -80,6 +88,22 @@ vi.mock('./skills/orchestrator/specialist-registry.js', () => ({
   editSpecialist: mockEditSpecialist,
   removeSpecialist: mockRemoveSpecialist,
   listSpecialistOverrides: mockListSpecialistOverrides,
+}));
+
+vi.mock('./skills/orchestrator/tool-registry.js', () => ({
+  registerTool: mockRegisterTool,
+  editTool: mockEditTool,
+  removeTool: mockRemoveTool,
+  listToolOverrides: mockListToolOverrides,
+}));
+
+vi.mock('./tools/reconciler.js', () => ({
+  ToolReconciler: class {
+    apply() {
+      return Promise.resolve();
+    }
+  },
+  loadBaselineFromDisk: vi.fn().mockReturnValue([]),
 }));
 
 vi.mock('./skills/orchestrator/channel-manifest-registry.js', () => ({
@@ -247,6 +271,10 @@ describe('admin-shell TOOLS array', () => {
       'edit_specialist',
       'remove_specialist',
       'list_specialists',
+      'register_tool',
+      'edit_tool',
+      'remove_tool',
+      'list_tools',
       'set_group_credential',
       'unset_group_credential',
     ]);
@@ -921,6 +949,211 @@ describe('executeTool', () => {
       const result = await executeTool('remove_specialist', { name: 'R' });
       expect(result).toContain('Changes are live');
       expect(result).not.toContain('next orchestrator restart');
+    });
+  });
+
+  // ── register_tool ─────────────────────────────────────────────────────────
+
+  describe('register_tool', () => {
+    it('calls registerTool and returns confirmation', async () => {
+      mockRegisterTool.mockReturnValue({ ok: true });
+      const result = await executeTool('register_tool', {
+        name: 'weather',
+        description: 'Get weather data',
+        parameters: { type: 'object', properties: {} },
+        image: 'ghcr.io/example/weather:1',
+        pattern: 'http',
+      });
+      expect(mockRegisterTool).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: 'weather',
+          image: 'ghcr.io/example/weather:1',
+          pattern: 'http',
+        }),
+        expect.any(Function),
+      );
+      expect(result).toContain('weather');
+      expect(result).toContain('Changes are live');
+    });
+
+    it('returns error when registerTool fails validation', async () => {
+      mockRegisterTool.mockReturnValue({
+        ok: false,
+        error: 'tool already registered: weather',
+      });
+      const result = await executeTool('register_tool', {
+        name: 'weather',
+        description: 'dup',
+        parameters: {},
+        image: 'img:1',
+        pattern: 'http',
+      });
+      expect(result).toContain('Error');
+      expect(result).toContain('already registered');
+    });
+
+    it('tool definition has required fields', () => {
+      const tool = TOOLS.find((t) => t.function.name === 'register_tool');
+      expect(tool).toBeDefined();
+      expect(tool!.function.parameters?.required).toEqual(
+        expect.arrayContaining([
+          'name',
+          'description',
+          'parameters',
+          'image',
+          'pattern',
+        ]),
+      );
+    });
+
+    it('passes optional fields through to registerTool', async () => {
+      mockRegisterTool.mockReturnValue({ ok: true });
+      await executeTool('register_tool', {
+        name: 'weather',
+        description: 'Get weather data',
+        parameters: { type: 'object', properties: {} },
+        image: 'ghcr.io/example/weather:1',
+        pattern: 'http',
+        port: 9000,
+        channels: ['telegram'],
+        healthPath: '/healthz',
+        pullPolicy: 'Always',
+      });
+      expect(mockRegisterTool).toHaveBeenCalledWith(
+        expect.objectContaining({
+          port: 9000,
+          channels: ['telegram'],
+          healthPath: '/healthz',
+          pullPolicy: 'Always',
+        }),
+        expect.any(Function),
+      );
+    });
+  });
+
+  // ── edit_tool ──────────────────────────────────────────────────────────────
+
+  describe('edit_tool', () => {
+    it('calls editTool with name and patch', async () => {
+      mockEditTool.mockReturnValue({ ok: true });
+      const result = await executeTool('edit_tool', {
+        name: 'weather',
+        image: 'ghcr.io/example/weather:2',
+      });
+      expect(mockEditTool).toHaveBeenCalledWith(
+        {
+          name: 'weather',
+          patch: expect.objectContaining({
+            image: 'ghcr.io/example/weather:2',
+          }),
+        },
+        expect.any(Function),
+      );
+      expect(result).toContain('weather');
+      expect(result).toContain('Changes are live');
+    });
+
+    it('returns error when tool does not exist', async () => {
+      mockEditTool.mockReturnValue({
+        ok: false,
+        error: 'no override registered: weather',
+      });
+      const result = await executeTool('edit_tool', {
+        name: 'weather',
+        image: 'new:1',
+      });
+      expect(result).toContain('Error');
+      expect(result).toContain('no override registered');
+    });
+
+    it('returns error when name is missing', async () => {
+      const result = await executeTool('edit_tool', {});
+      expect(result).toContain('Error');
+      expect(mockEditTool).not.toHaveBeenCalled();
+    });
+
+    it('patch does not contain name', async () => {
+      mockEditTool.mockReturnValue({ ok: true });
+      await executeTool('edit_tool', {
+        name: 'weather',
+        image: 'ghcr.io/example/weather:3',
+      });
+      const call = mockEditTool.mock.calls[0][0];
+      expect(call.patch).toHaveProperty('image', 'ghcr.io/example/weather:3');
+      expect(call.patch).not.toHaveProperty('name');
+    });
+  });
+
+  // ── remove_tool ────────────────────────────────────────────────────────────
+
+  describe('remove_tool', () => {
+    it('calls removeTool and returns confirmation', async () => {
+      mockRemoveTool.mockReturnValue({ ok: true });
+      const result = await executeTool('remove_tool', { name: 'weather' });
+      expect(mockRemoveTool).toHaveBeenCalledWith(
+        { name: 'weather' },
+        expect.any(Function),
+      );
+      expect(result).toContain('weather');
+      expect(result).toContain('Changes are live');
+    });
+
+    it('returns error when tool does not exist', async () => {
+      mockRemoveTool.mockReturnValue({
+        ok: false,
+        error: 'no such override: weather',
+      });
+      const result = await executeTool('remove_tool', { name: 'weather' });
+      expect(result).toContain('Error');
+      expect(result).toContain('no such override');
+    });
+
+    it('returns error when name is missing', async () => {
+      const result = await executeTool('remove_tool', {});
+      expect(result).toContain('Error');
+      expect(mockRemoveTool).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── list_tools ─────────────────────────────────────────────────────────────
+
+  describe('list_tools', () => {
+    it('returns empty message when no overrides', async () => {
+      mockListToolOverrides.mockReturnValue([]);
+      const result = await executeTool('list_tools', {});
+      expect(result).toContain('No tool overrides registered');
+    });
+
+    it('returns formatted list when overrides present', async () => {
+      mockListToolOverrides.mockReturnValue([
+        {
+          name: 'weather',
+          description: 'Get weather data',
+          parameters: {},
+          image: 'ghcr.io/example/weather:1',
+          pattern: 'http',
+          channels: ['telegram'],
+        },
+      ]);
+      const result = await executeTool('list_tools', {});
+      expect(result).toContain('Name: weather');
+      expect(result).toContain('ghcr.io/example/weather:1');
+      expect(result).toContain('telegram');
+    });
+
+    it('shows "all" for a tool with no channels field', async () => {
+      mockListToolOverrides.mockReturnValue([
+        {
+          name: 'calc',
+          description: 'Calculator',
+          parameters: {},
+          image: 'ghcr.io/example/calc:1',
+          pattern: 'http',
+        },
+      ]);
+      const result = await executeTool('list_tools', {});
+      expect(result).toContain('Name: calc');
+      expect(result).toContain('all');
     });
   });
 

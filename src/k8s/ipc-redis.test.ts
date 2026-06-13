@@ -1585,9 +1585,19 @@ describe('startToolPodSpawnWatcher', () => {
     expect(mockXread).not.toHaveBeenCalled();
   });
 
-  it('routes to createSidecarToolPodJob when toolImage field is present', async () => {
+  it('resolves a catalog tool by name and spawns a sidecar pod', async () => {
     const { jobRunner } = await import('./job-runner.js');
     startIpcWatcher(createMockDeps());
+
+    const toolSpec = {
+      name: 'home_control',
+      description: 'Control smart home devices',
+      parameters: { type: 'object', properties: {} },
+      image: 'my-ha:latest',
+      pattern: 'http' as const,
+      port: 8080,
+    };
+    const resolveTool = vi.fn().mockReturnValue(toolSpec);
 
     let callCount = 0;
     mockXread.mockImplementation(async () => {
@@ -1609,12 +1619,6 @@ describe('startToolPodSpawnWatcher', () => {
                   '60000',
                   'channel',
                   'telegram',
-                  'toolImage',
-                  'my-ha:latest',
-                  'toolPattern',
-                  'http',
-                  'toolPort',
-                  '8080',
                 ],
               ],
             ],
@@ -1625,8 +1629,9 @@ describe('startToolPodSpawnWatcher', () => {
       return null;
     });
 
-    await startToolPodSpawnWatcher();
+    await startToolPodSpawnWatcher(resolveTool);
 
+    expect(resolveTool).toHaveBeenCalledWith('home_control');
     expect(jobRunner.createSidecarToolPodJob).toHaveBeenCalledWith(
       expect.objectContaining({
         agentJobId: 'j-sidecar',
@@ -1635,17 +1640,34 @@ describe('startToolPodSpawnWatcher', () => {
         toolSpec: expect.objectContaining({
           image: 'my-ha:latest',
           pattern: 'http',
-          port: 8080,
         }),
         timeout: 60000,
       }),
     );
     expect(jobRunner.createToolPodJob).not.toHaveBeenCalled();
+    // No error written
+    expect(mockXadd).not.toHaveBeenCalledWith(
+      expect.stringContaining('toolresults'),
+      '*',
+      'error',
+      expect.any(String),
+    );
   });
 
-  it('forwards toolHealthPath from the spawn stream into ToolSpec.healthPath', async () => {
+  it('rejects a tool not scoped to the requesting channel', async () => {
     const { jobRunner } = await import('./job-runner.js');
     startIpcWatcher(createMockDeps());
+
+    // Spec with channels: ['other'] — not 'telegram'
+    const toolSpec = {
+      name: 'home_control',
+      description: 'Control smart home',
+      parameters: {},
+      image: 'my-ha:latest',
+      pattern: 'http' as const,
+      channels: ['other'],
+    };
+    const resolveTool = vi.fn().mockReturnValue(toolSpec);
 
     let callCount = 0;
     mockXread.mockImplementation(async () => {
@@ -1658,23 +1680,15 @@ describe('startToolPodSpawnWatcher', () => {
                 '1-0',
                 [
                   'agentJobId',
-                  'j-sidecar',
+                  'j-acl',
                   'groupFolder',
-                  'my-group',
+                  'g',
                   'category',
                   'home_control',
                   'timeout',
                   '60000',
                   'channel',
                   'telegram',
-                  'toolImage',
-                  'my-ha:latest',
-                  'toolPattern',
-                  'http',
-                  'toolPort',
-                  '8080',
-                  'toolHealthPath',
-                  '/status',
                 ],
               ],
             ],
@@ -1685,16 +1699,135 @@ describe('startToolPodSpawnWatcher', () => {
       return null;
     });
 
-    await startToolPodSpawnWatcher();
+    await startToolPodSpawnWatcher(resolveTool);
 
-    expect(jobRunner.createSidecarToolPodJob).toHaveBeenCalledWith(
-      expect.objectContaining({
-        toolSpec: expect.objectContaining({ healthPath: '/status' }),
-      }),
+    expect(jobRunner.createSidecarToolPodJob).not.toHaveBeenCalled();
+    expect(jobRunner.createToolPodJob).not.toHaveBeenCalled();
+    // An error result must be written to the tool-results stream
+    expect(mockXadd).toHaveBeenCalledWith(
+      'kubeclaw:toolresults:j-acl:home_control',
+      '*',
+      'error',
+      'Tool home_control is not available on this channel',
     );
   });
 
-  it('falls through to createToolPodJob when no toolImage field', async () => {
+  it('spawns a catalog tool with channels: [] on any channel (allow-all path)', async () => {
+    // A tool spec with channels: [] (or no channels field) must be available on
+    // every channel. The ACL check is `!spec.channels?.length` — an empty array
+    // is falsy for `.length`, so the guard is skipped and the pod IS spawned.
+    const { jobRunner } = await import('./job-runner.js');
+    startIpcWatcher(createMockDeps());
+
+    const toolSpec = {
+      name: 'any_channel_tool',
+      description: 'Available on all channels',
+      parameters: { type: 'object', properties: {} },
+      image: 'my-tool:latest',
+      pattern: 'http' as const,
+      port: 9000,
+      channels: [], // empty array → allow-all
+    };
+    const resolveTool = vi.fn().mockReturnValue(toolSpec);
+
+    let callCount = 0;
+    mockXread.mockImplementation(async () => {
+      if (callCount++ === 0) {
+        return [
+          [
+            'kubeclaw:spawn-tool-pod',
+            [
+              [
+                '1-0',
+                [
+                  'agentJobId',
+                  'j-empty-channels',
+                  'groupFolder',
+                  'my-group',
+                  'category',
+                  'any_channel_tool',
+                  'timeout',
+                  '60000',
+                  'channel',
+                  'some-channel',
+                ],
+              ],
+            ],
+          ],
+        ];
+      }
+      await stopIpcWatcher();
+      return null;
+    });
+
+    await startToolPodSpawnWatcher(resolveTool);
+
+    // Pod must be spawned
+    expect(jobRunner.createSidecarToolPodJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentJobId: 'j-empty-channels',
+        toolName: 'any_channel_tool',
+      }),
+    );
+    // No error must be written
+    expect(mockXadd).not.toHaveBeenCalledWith(
+      expect.stringContaining('toolresults'),
+      '*',
+      'error',
+      expect.any(String),
+    );
+  });
+
+  it('writes an error result when the tool name is unknown', async () => {
+    const { jobRunner } = await import('./job-runner.js');
+    startIpcWatcher(createMockDeps());
+
+    const resolveTool = vi.fn().mockReturnValue(undefined);
+
+    let callCount = 0;
+    mockXread.mockImplementation(async () => {
+      if (callCount++ === 0) {
+        return [
+          [
+            'kubeclaw:spawn-tool-pod',
+            [
+              [
+                '1-0',
+                [
+                  'agentJobId',
+                  'j-unknown',
+                  'groupFolder',
+                  'g',
+                  'category',
+                  'nonexistent_tool',
+                  'timeout',
+                  '60000',
+                  'channel',
+                  'telegram',
+                ],
+              ],
+            ],
+          ],
+        ];
+      }
+      await stopIpcWatcher();
+      return null;
+    });
+
+    await startToolPodSpawnWatcher(resolveTool);
+
+    expect(jobRunner.createSidecarToolPodJob).not.toHaveBeenCalled();
+    expect(jobRunner.createToolPodJob).not.toHaveBeenCalled();
+    // An error result must be written to the tool-results stream
+    expect(mockXadd).toHaveBeenCalledWith(
+      'kubeclaw:toolresults:j-unknown:nonexistent_tool',
+      '*',
+      'error',
+      'Unknown tool: nonexistent_tool',
+    );
+  });
+
+  it('routes to createToolPodJob for built-in execution category', async () => {
     const { jobRunner } = await import('./job-runner.js');
     startIpcWatcher(createMockDeps());
 

@@ -212,6 +212,9 @@ spec:
             - name: specialists-catalog
               mountPath: /etc/kubeclaw/specialists
               readOnly: true
+            - name: tools-catalog
+              mountPath: /etc/kubeclaw/tools
+              readOnly: true
           resources:
             {{- toYaml $.Values.channelPod.resources | nindent 12 }}
         {{- if eq $.Values.credentialInjection.mode "sidecar" }}
@@ -230,6 +233,9 @@ spec:
         - name: specialists-catalog
           configMap:
             name: kubeclaw-specialists
+        - name: tools-catalog
+          configMap:
+            name: kubeclaw-tools
         {{- if eq $.Values.credentialInjection.mode "sidecar" }}
         {{- include "kubeclaw.credentialSidecarVolumes" $ | nindent 8 }}
         {{- end }}

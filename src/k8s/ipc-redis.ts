@@ -48,6 +48,8 @@ import {
 // Task 12 will clean up the remaining IPC specialist-dispatch path.
 import type { OrchestratorMetrics } from '../metrics/orchestrator.js';
 import type { PerGroupK8sClient } from '../per-group-capabilities/k8s-client.js';
+import { resolveToolByName } from '../tools/reconciler.js';
+import type { ToolSpec } from '../tools/types.js';
 import {
   provisionCapability,
   listGroupCapabilities,
@@ -273,6 +275,8 @@ function channelPvcNames(channel: string): {
 
 // Track tool pod jobs per tool job for cleanup
 const toolPodsByAgent = new Map<string, Set<string>>();
+
+const BUILTIN_CATEGORIES = new Set(['execution', 'browser']);
 
 /**
  * Active K8s agent-job names keyed by groupFolder.
@@ -957,6 +961,26 @@ export async function sendCloseSignal(jobId: string): Promise<void> {
 }
 
 /**
+ * Write a diagnostic error entry to the tool-results stream for a spawn that
+ * was rejected before any pod was created (unknown tool name, channel-ACL
+ * mismatch). NOTE: the channel-side reader matches results by requestId, which
+ * the spawn stream does not currently carry — so this entry surfaces the reason
+ * in orchestrator logs/diagnostics, but the waiting channel call still ends via
+ * its own TOOL_TIMEOUT rather than seeing this message. Threading requestId
+ * through the spawn stream for exact matching is a documented future enhancement
+ * (see docs/superpowers/plans/2026-06-13-tool-catalog.md, Task 8 / Out of scope).
+ */
+async function writeToolError(
+  agentJobId: string,
+  category: string,
+  message: string,
+): Promise<void> {
+  const client = getRedisClient();
+  const stream = `kubeclaw:toolresults:${agentJobId}:${category}`;
+  await client.xadd(stream, '*', 'error', message);
+}
+
+/**
  * Watch the kubeclaw:spawn-tool-pod stream and create K8s tool pod jobs on
  * behalf of channel pods, which have no K8s RBAC.
  * Called by the orchestrator at startup.
@@ -971,7 +995,10 @@ async function resolveStreamTip(redis: Redis, stream: string): Promise<string> {
   return entries.length > 0 ? entries[0][0] : '0-0';
 }
 
-export async function startToolPodSpawnWatcher(): Promise<void> {
+export async function startToolPodSpawnWatcher(
+  resolveTool: (name: string) => ToolSpec | undefined = (n) =>
+    resolveToolByName(n),
+): Promise<void> {
   // Each blocking-XREAD watcher needs its own dedicated connection.
   // Multiple watchers sharing one connection serialize behind each other's
   // BLOCK timeout; a fresh connection per watcher lets them run concurrently.
@@ -1006,17 +1033,7 @@ export async function startToolPodSpawnWatcher(): Promise<void> {
           for (let i = 0; i < fields.length; i += 2)
             obj[fields[i]] = fields[i + 1];
 
-          const {
-            agentJobId,
-            groupFolder,
-            category,
-            timeout,
-            channel,
-            toolImage,
-            toolPattern,
-            toolPort,
-            toolCommand,
-          } = obj;
+          const { agentJobId, groupFolder, category, timeout, channel } = obj;
           if (!agentJobId || !groupFolder || !category) continue;
 
           const { groupsPvc, sessionsPvc } = channelPvcNames(channel ?? '');
@@ -1025,51 +1042,8 @@ export async function startToolPodSpawnWatcher(): Promise<void> {
             ? Number(obj.maxToolOutputBytes)
             : undefined;
 
-          let parsedCommand: string[] | undefined;
-          if (toolCommand) {
-            try {
-              parsedCommand = JSON.parse(toolCommand) as string[];
-            } catch {
-              logger.warn(
-                { agentJobId, toolCommand },
-                'Failed to parse toolCommand JSON, ignoring',
-              );
-            }
-          }
-
           try {
-            if (toolImage) {
-              await jobRunner.createSidecarToolPodJob({
-                agentJobId,
-                groupFolder,
-                toolName: category,
-                toolSpec: {
-                  name: category,
-                  description: '',
-                  parameters: {},
-                  image: toolImage,
-                  pattern: (toolPattern as 'http' | 'file' | 'acp') || 'http',
-                  port: toolPort ? Number(toolPort) : 8080,
-                  ...(parsedCommand ? { command: parsedCommand } : {}),
-                  ...(obj.toolAcpAgentName
-                    ? { acpAgentName: obj.toolAcpAgentName }
-                    : {}),
-                  ...(obj.toolAcpMode
-                    ? { acpMode: obj.toolAcpMode as 'sync' | 'async' }
-                    : {}),
-                  ...(obj.toolHealthPath
-                    ? { healthPath: obj.toolHealthPath }
-                    : {}),
-                },
-                timeout: timeoutMs,
-                groupsPvc,
-                sessionsPvc,
-              });
-              logger.debug(
-                { agentJobId, category, toolImage },
-                'Spawned sidecar tool pod for channel pod',
-              );
-            } else {
+            if (BUILTIN_CATEGORIES.has(category)) {
               await jobRunner.createToolPodJob({
                 agentJobId,
                 groupFolder,
@@ -1083,7 +1057,54 @@ export async function startToolPodSpawnWatcher(): Promise<void> {
               });
               logger.debug(
                 { agentJobId, category },
-                'Spawned tool pod for channel pod',
+                'Spawned built-in tool pod',
+              );
+            } else {
+              // Catalog tool: orchestrator resolves the spec by name and
+              // re-checks the channel ACL. The channel only sent the name.
+              const spec = resolveTool(category);
+              if (!spec) {
+                await writeToolError(
+                  agentJobId,
+                  category,
+                  `Unknown tool: ${category}`,
+                );
+                logger.warn(
+                  { agentJobId, category },
+                  'Unknown catalog tool; dropped spawn',
+                );
+                continue;
+              }
+              if (
+                spec.channels?.length &&
+                !spec.channels.includes(channel ?? '')
+              ) {
+                await writeToolError(
+                  agentJobId,
+                  category,
+                  `Tool ${category} is not available on this channel`,
+                );
+                logger.warn(
+                  { agentJobId, category, channel },
+                  'Catalog tool not scoped to channel; rejected',
+                );
+                continue;
+              }
+              // maxToolOutputBytes is not forwarded to catalog sidecar tools —
+              // output sizing for the tool-bridge path is out of scope here
+              // (tracked under spawn-path hardening, not the catalog work).
+              await jobRunner.createSidecarToolPodJob({
+                agentJobId,
+                groupFolder,
+                toolName: category,
+                toolSpec: spec,
+                timeout: timeoutMs,
+                groupsPvc,
+                sessionsPvc,
+              });
+              logger.debug(
+                { agentJobId, category, image: spec.image },
+                'Resolved + spawned catalog sidecar tool pod',
               );
             }
           } catch (err) {
