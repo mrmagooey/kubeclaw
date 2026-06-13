@@ -53,9 +53,16 @@ const NAMESPACE = process.env.NAMESPACE || 'kubeclaw';
 // jobRunner reads KUBECLAW_NAMESPACE from config.ts at module-load time.
 // Set it here (before any dynamic import) so jobs land in the right namespace.
 // The minikube-live config has no env{} block, so we must self-seed it.
+// Capture prior value so we can restore it in afterAll (avoids env leaking to sibling test files).
+const _prevKubeclawNamespace = process.env.KUBECLAW_NAMESPACE;
 if (!process.env.KUBECLAW_NAMESPACE) {
   process.env.KUBECLAW_NAMESPACE = NAMESPACE;
 }
+
+// config.ts reads TOOL_GROUP_MOUNT_ALLOWLIST once at import time as a module-level constant,
+// so it must be set before the first dynamic import of job-runner (which transitively imports config).
+// Setting it here at module top ensures the cached constant is seeded correctly regardless of test order.
+process.env.TOOL_GROUP_MOUNT_ALLOWLIST = 'alpine:latest';
 
 // ── Cluster-gate helpers ──────────────────────────────────────────────────────
 
@@ -172,6 +179,8 @@ describe('Minikube-live: bash catalog tool — file-bridge + mounts manifest ass
     for (const jobName of createdJobs) {
       await deleteJobIfExists(jobName);
     }
+    if (_prevKubeclawNamespace === undefined) delete process.env.KUBECLAW_NAMESPACE;
+    else process.env.KUBECLAW_NAMESPACE = _prevKubeclawNamespace;
   });
 
   // ── 1. file + scratch ────────────────────────────────────────────────────────
@@ -181,11 +190,6 @@ describe('Minikube-live: bash catalog tool — file-bridge + mounts manifest ass
     async (ctx) => {
       if (!orchestratorRunning) return ctx.skip();
 
-      // Set the group mount allowlist in process env so assertGroupMountAllowed
-      // passes for alpine:latest. (scratch does not call assertGroupMountAllowed,
-      // but assertToolImageAllowed passes when the list is empty anyway.)
-      process.env.TOOL_GROUP_MOUNT_ALLOWLIST = 'alpine:latest';
-
       const { jobRunner } = await import('../src/k8s/job-runner.js');
 
       const agentJobId = `e2e-bash-scratch-${Date.now()}`;
@@ -194,29 +198,25 @@ describe('Minikube-live: bash catalog tool — file-bridge + mounts manifest ass
       const runTemplate = 'sh -c "$(cat "$INPUT_DIR/command")"';
 
       let jobName: string;
-      try {
-        jobName = await jobRunner.createSidecarToolPodJob({
-          agentJobId,
-          groupFolder,
-          toolName,
-          toolSpec: {
-            name: toolName,
-            description: 'Run a bash command (scratch workspace)',
-            parameters: {
-              type: 'object',
-              properties: { command: { type: 'string' } },
-            },
-            image: 'alpine:latest',
-            pattern: 'file',
-            mount: 'scratch',
-            run: runTemplate,
+      jobName = await jobRunner.createSidecarToolPodJob({
+        agentJobId,
+        groupFolder,
+        toolName,
+        toolSpec: {
+          name: toolName,
+          description: 'Run a bash command (scratch workspace)',
+          parameters: {
+            type: 'object',
+            properties: { command: { type: 'string' } },
           },
-          timeout: 60_000,
-        });
-      } finally {
-        delete process.env.TOOL_GROUP_MOUNT_ALLOWLIST;
-      }
-      createdJobs.push(jobName!);
+          image: 'alpine:latest',
+          pattern: 'file',
+          mount: 'scratch',
+          run: runTemplate,
+        },
+        timeout: 60_000,
+      });
+      createdJobs.push(jobName);
 
       const job = await pollForJob(
         `app=kubeclaw-sidecar-tool,kubeclaw/agent-job=${agentJobId}`,
@@ -269,7 +269,7 @@ describe('Minikube-live: bash catalog tool — file-bridge + mounts manifest ass
         'kubeclaw-tool-bridge must not have the work volume mounted (security boundary)',
       ).toBeUndefined();
 
-      console.log(`bash file+scratch job created: ${jobName!}`);
+      console.log(`bash file+scratch job created: ${jobName}`);
     },
     90_000,
   );
@@ -281,9 +281,6 @@ describe('Minikube-live: bash catalog tool — file-bridge + mounts manifest ass
     async (ctx) => {
       if (!orchestratorRunning) return ctx.skip();
 
-      // alpine:latest must be in the group mount allowlist for this test.
-      process.env.TOOL_GROUP_MOUNT_ALLOWLIST = 'alpine:latest';
-
       const { jobRunner } = await import('../src/k8s/job-runner.js');
 
       const agentJobId = `e2e-bash-group-${Date.now()}`;
@@ -292,30 +289,26 @@ describe('Minikube-live: bash catalog tool — file-bridge + mounts manifest ass
       const runTemplate = 'sh -c "$(cat "$INPUT_DIR/command")"';
 
       let jobName: string;
-      try {
-        jobName = await jobRunner.createSidecarToolPodJob({
-          agentJobId,
-          groupFolder,
-          toolName,
-          toolSpec: {
-            name: toolName,
-            description: 'Run a bash command with persistent group workspace',
-            parameters: {
-              type: 'object',
-              properties: { command: { type: 'string' } },
-            },
-            image: 'alpine:latest',
-            pattern: 'file',
-            mount: 'group',
-            run: runTemplate,
+      jobName = await jobRunner.createSidecarToolPodJob({
+        agentJobId,
+        groupFolder,
+        toolName,
+        toolSpec: {
+          name: toolName,
+          description: 'Run a bash command with persistent group workspace',
+          parameters: {
+            type: 'object',
+            properties: { command: { type: 'string' } },
           },
-          timeout: 60_000,
-          groupsPvc: 'kubeclaw-groups',
-        });
-      } finally {
-        delete process.env.TOOL_GROUP_MOUNT_ALLOWLIST;
-      }
-      createdJobs.push(jobName!);
+          image: 'alpine:latest',
+          pattern: 'file',
+          mount: 'group',
+          run: runTemplate,
+        },
+        timeout: 60_000,
+        groupsPvc: 'kubeclaw-groups',
+      });
+      createdJobs.push(jobName);
 
       const job = await pollForJob(
         `app=kubeclaw-sidecar-tool,kubeclaw/agent-job=${agentJobId}`,
@@ -364,7 +357,7 @@ describe('Minikube-live: bash catalog tool — file-bridge + mounts manifest ass
         'kubeclaw-tool-bridge must not have the work volume mounted (security boundary)',
       ).toBeUndefined();
 
-      console.log(`bash_persist file+group job created: ${jobName!}`);
+      console.log(`bash_persist file+group job created: ${jobName}`);
     },
     90_000,
   );
