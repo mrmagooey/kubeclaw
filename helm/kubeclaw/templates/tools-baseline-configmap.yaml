@@ -1,0 +1,36 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kubeclaw-tools-baseline
+  namespace: {{ include "kubeclaw.namespace" . }}
+  labels:
+    app: kubeclaw
+    component: tools-baseline
+data:
+  tools.json: |-
+    {
+      "version": 1,
+      "generation": 0,
+      "tools": {{ toJson (default (list) .Values.tools) }}
+    }
+---
+# kubeclaw-tools: the live merged catalog written by the orchestrator
+# reconciler on startup. This Helm-managed copy serves as the initial state
+# (baseline only; SQLite overrides are applied by the orchestrator at runtime).
+# Channel pods mount this ConfigMap at /etc/kubeclaw/tools and hot-reload
+# it via fs.watch when kubelet propagates orchestrator updates.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kubeclaw-tools
+  namespace: {{ include "kubeclaw.namespace" . }}
+  labels:
+    app: kubeclaw
+    component: tools-catalog
+data:
+  tools.json: |-
+    {
+      "version": 1,
+      "generation": 0,
+      "tools": {{ toJson (default (list) .Values.tools) }}
+    }
