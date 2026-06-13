@@ -26,10 +26,8 @@ data:
         [ -d "$d" ] || continue
         id=$(basename "$d")
         export INPUT_DIR="$d/input"
-        out=$(cd "$WORKDIR" && sh -c "$KUBECLAW_TOOL_RUN" 2>/tmp/.tool_err); rc=$?
         t=$(mktemp -d "$S/.resp.$id.XXXXXX")
-        printf '%s' "$out" > "$t/response"
-        cat /tmp/.tool_err 2>/dev/null > "$t/stderr" || : > "$t/stderr"
+        (cd "$WORKDIR" && sh -c "$KUBECLAW_TOOL_RUN") >"$t/response" 2>"$t/stderr"; rc=$?
         printf '%s' "$rc" > "$t/exit_code"
         mv "$t" "$S/resp/$id"
         rm -rf "$d"
