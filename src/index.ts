@@ -102,6 +102,10 @@ import {
   SpecialistReconciler,
   loadBaselineFromDisk,
 } from './specialists/reconciler.js';
+import {
+  ToolReconciler,
+  loadBaselineFromDisk as loadToolBaselineFromDisk,
+} from './tools/reconciler.js';
 import { setSpecialistResolutionCallback } from './specialists.js';
 import {
   RealPerGroupK8sClient,
@@ -624,6 +628,57 @@ async function main(): Promise<void> {
       logger.warn(
         { err },
         'Specialist reconcile failed; channel pods will use stale or empty catalog',
+      );
+    }
+
+    // ── Tool catalog reconcile ────────────────────────────────────────────────
+    const toolReconciler = new ToolReconciler({
+      baselineLoader: loadToolBaselineFromDisk,
+      configMapApply: async (rendered: string) => {
+        const data: Record<string, string> = { 'tools.json': rendered };
+        let resourceVersion: string | undefined;
+        try {
+          const existing = await coreApi.readNamespacedConfigMap({
+            name: 'kubeclaw-tools',
+            namespace: KUBECLAW_NAMESPACE,
+          });
+          resourceVersion = existing.metadata?.resourceVersion;
+        } catch (err: unknown) {
+          const status = (err as { response?: { statusCode?: number } })
+            ?.response?.statusCode;
+          if (status !== 404) throw err;
+        }
+        const body = {
+          apiVersion: 'v1',
+          kind: 'ConfigMap',
+          metadata: {
+            name: 'kubeclaw-tools',
+            namespace: KUBECLAW_NAMESPACE,
+            ...(resourceVersion ? { resourceVersion } : {}),
+          },
+          data,
+        };
+        if (resourceVersion !== undefined) {
+          await coreApi.replaceNamespacedConfigMap({
+            name: 'kubeclaw-tools',
+            namespace: KUBECLAW_NAMESPACE,
+            body,
+          });
+        } else {
+          await coreApi.createNamespacedConfigMap({
+            namespace: KUBECLAW_NAMESPACE,
+            body,
+          });
+        }
+      },
+    });
+    try {
+      await toolReconciler.apply();
+      logger.info('Tools ConfigMap reconciled');
+    } catch (err) {
+      logger.warn(
+        { err },
+        'Tool reconcile failed; channel pods will use stale or empty catalog',
       );
     }
 
