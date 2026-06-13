@@ -328,6 +328,113 @@ async function getRedisForTask(): Promise<RedisClientType> {
   return taskRedis;
 }
 
+// --- Request-mapping helpers ---
+
+interface RequestMapping {
+  method: string;
+  path: string;
+  query?: Record<string, string>;
+  headers?: Record<string, string>;
+  body?: unknown;
+  responsePath?: string;
+}
+
+interface MappedRequest {
+  url: string;
+  method: string;
+  headers: Record<string, string>;
+  body?: string;
+}
+
+const TOKEN_RE = /\{([A-Za-z_][A-Za-z0-9_]*)\}/g;
+
+/** Resolve "{field}" tokens in a string against input; throws on a missing field. */
+function substituteString(
+  template: string,
+  input: Record<string, unknown>,
+): string {
+  return template.replace(TOKEN_RE, (_m, field: string) => {
+    if (!(field in input)) {
+      throw new Error(`request mapping references missing field "${field}"`);
+    }
+    const v = input[field];
+    return typeof v === 'string' ? v : JSON.stringify(v);
+  });
+}
+
+/** Substitute tokens inside a JSON body template. A string leaf exactly equal to
+ *  "{field}" is replaced with the field's value preserving its JSON type; a leaf
+ *  embedding a token in a larger string is string-interpolated. */
+function substituteBody(node: unknown, input: Record<string, unknown>): unknown {
+  if (typeof node === 'string') {
+    const exact = node.match(/^\{([A-Za-z_][A-Za-z0-9_]*)\}$/);
+    if (exact) {
+      const field = exact[1];
+      if (!(field in input)) {
+        throw new Error(`request mapping references missing field "${field}"`);
+      }
+      return input[field]; // preserve JSON type
+    }
+    return substituteString(node, input);
+  }
+  if (Array.isArray(node)) return node.map((n) => substituteBody(n, input));
+  if (node && typeof node === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(node)) out[k] = substituteBody(v, input);
+    return out;
+  }
+  return node;
+}
+
+export function buildMappedRequest(
+  mapping: RequestMapping,
+  input: Record<string, unknown>,
+  port: number,
+): MappedRequest {
+  const path = substituteString(mapping.path, input);
+  const url = new URL(`http://localhost:${port}${path}`);
+  if (mapping.query) {
+    for (const [k, tmpl] of Object.entries(mapping.query)) {
+      url.searchParams.set(k, substituteString(tmpl, input));
+    }
+  }
+  const headers: Record<string, string> = { Accept: 'application/json' };
+  if (mapping.headers) {
+    for (const [k, tmpl] of Object.entries(mapping.headers)) {
+      // strip CR/LF to prevent header injection
+      headers[k] = substituteString(tmpl, input).replace(/[\r\n]/g, '');
+    }
+  }
+  let body: string | undefined;
+  if (mapping.body !== undefined) {
+    body = JSON.stringify(substituteBody(mapping.body, input));
+    headers['Content-Type'] = 'application/json';
+  }
+  return { url: url.toString(), method: mapping.method, headers, body };
+}
+
+export function extractResponsePath(bodyText: string, responsePath: string): string {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(bodyText);
+  } catch {
+    throw new Error(
+      `responsePath "${responsePath}" requested but response body is not JSON: ${bodyText.slice(0, 120)}`,
+    );
+  }
+  let cur: unknown = parsed;
+  for (const seg of responsePath.split('.')) {
+    if (cur && typeof cur === 'object' && seg in (cur as Record<string, unknown>)) {
+      cur = (cur as Record<string, unknown>)[seg];
+    } else {
+      throw new Error(
+        `responsePath "${responsePath}" not found in response: ${bodyText.slice(0, 120)}`,
+      );
+    }
+  }
+  return typeof cur === 'string' ? cur : JSON.stringify(cur);
+}
+
 // --- Bridge modes ---
 
 async function executeToolBridgeHttp(tool: string, input: Record<string, unknown>): Promise<unknown> {
