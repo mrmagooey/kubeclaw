@@ -59,7 +59,7 @@ const NAME_RE = /^[A-Za-z][A-Za-z0-9_-]*$/;
 
 // Reserved names a catalog tool may not use:
 //  - the static built-in tool names (TOOL_SERVER_NAME keys in direct-llm-runner.ts:
-//    web_fetch, web_search, browser, bash, places_search), and
+//    web_fetch, web_search, browser, places_search), and
 //  - the built-in spawn categories (BUILTIN_CATEGORIES in k8s/ipc-redis.ts:
 //    execution, browser) — a catalog tool named after a category would be
 //    silently routed to a legacy tool pod instead of its own image.
@@ -229,14 +229,20 @@ export function validateTool(t: unknown): ValidationResult {
     const r = validateRequestMapping(obj.requestMapping);
     if (!r.ok) return r;
   }
-  if (obj.mount !== undefined && !['none', 'scratch', 'group'].includes(obj.mount as string)) {
+  if (
+    obj.mount !== undefined &&
+    !['none', 'scratch', 'group'].includes(obj.mount as string)
+  ) {
     return { ok: false, error: 'mount must be one of none|scratch|group' };
   }
   if (obj.mountReadOnly !== undefined) {
     if (typeof obj.mountReadOnly !== 'boolean')
       return { ok: false, error: 'mountReadOnly must be a boolean' };
     if (obj.mount !== 'group')
-      return { ok: false, error: 'mountReadOnly is only valid with mount: group' };
+      return {
+        ok: false,
+        error: 'mountReadOnly is only valid with mount: group',
+      };
   }
   if (obj.run !== undefined) {
     if (obj.pattern !== 'file')
@@ -245,12 +251,17 @@ export function validateTool(t: unknown): ValidationResult {
       return { ok: false, error: 'run must be a non-empty string' };
   }
   // Parameter property names become request filenames — guard against traversal.
-  if (obj.parameters && typeof obj.parameters === 'object') {
+  // This constraint is filesystem-safety only; http/acp tools use JSON keys where
+  // hyphens and dots are legitimate JSON Schema identifiers.
+  if (obj.pattern === 'file' && obj.parameters && typeof obj.parameters === 'object') {
     const props = (obj.parameters as { properties?: unknown }).properties;
     if (props && typeof props === 'object') {
       for (const key of Object.keys(props as Record<string, unknown>)) {
         if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
-          return { ok: false, error: `parameter property name not allowed: ${JSON.stringify(key)}` };
+          return {
+            ok: false,
+            error: `parameter property name not allowed: ${JSON.stringify(key)}`,
+          };
         }
       }
     }
