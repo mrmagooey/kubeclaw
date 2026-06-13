@@ -1803,8 +1803,8 @@ export class JobRunner {
       bridgeEnv.push({
         name: 'KUBECLAW_TOOL_FIELDS',
         value: Object.keys(
-          ((toolSpec.parameters as { properties?: Record<string, unknown> })
-            ?.properties) ?? {},
+          (toolSpec.parameters as { properties?: Record<string, unknown> })
+            ?.properties ?? {},
         ).join(','),
       });
     }

@@ -180,14 +180,19 @@ describe('assertGroupMountAllowed', () => {
     process.env.TOOL_GROUP_MOUNT_ALLOWLIST = '';
     vi.resetModules();
     const { assertGroupMountAllowed } = await import('./config.js');
-    expect(() => assertGroupMountAllowed('alpine:latest')).toThrow(/not permitted to mount the group filesystem/);
+    expect(() => assertGroupMountAllowed('alpine:latest')).toThrow(
+      /not permitted to mount the group filesystem/,
+    );
   });
   it('allows an image matching a pattern', async () => {
-    process.env.TOOL_GROUP_MOUNT_ALLOWLIST = 'alpine:*,registry.example.com/exec:*';
+    process.env.TOOL_GROUP_MOUNT_ALLOWLIST =
+      'alpine:*,registry.example.com/exec:*';
     vi.resetModules();
     const { assertGroupMountAllowed } = await import('./config.js');
     expect(() => assertGroupMountAllowed('alpine:latest')).not.toThrow();
-    expect(() => assertGroupMountAllowed('registry.example.com/exec:1')).not.toThrow();
+    expect(() =>
+      assertGroupMountAllowed('registry.example.com/exec:1'),
+    ).not.toThrow();
   });
   it('denies an image not matching any pattern', async () => {
     process.env.TOOL_GROUP_MOUNT_ALLOWLIST = 'alpine:*';

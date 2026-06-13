@@ -282,7 +282,13 @@ describe('validateTool — mount + run', () => {
   });
   it('does not apply the file-bridge param-name guard to http tools', () => {
     expect(
-      validateTool({ ...base, parameters: { type: 'object', properties: { 'first-name': { type: 'string' } } } }).ok,
+      validateTool({
+        ...base,
+        parameters: {
+          type: 'object',
+          properties: { 'first-name': { type: 'string' } },
+        },
+      }).ok,
     ).toBe(true);
   });
 });

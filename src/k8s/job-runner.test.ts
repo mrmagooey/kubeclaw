@@ -1688,7 +1688,9 @@ describe('JobRunner', () => {
       const userEnvMap = Object.fromEntries(
         user.env.map((e: any) => [e.name, e.value]),
       );
-      expect(userEnvMap.KUBECLAW_TOOL_RUN).toBe('sh -c "$(cat "$INPUT_DIR/command")"');
+      expect(userEnvMap.KUBECLAW_TOOL_RUN).toBe(
+        'sh -c "$(cat "$INPUT_DIR/command")"',
+      );
       expect(userEnvMap.WORKDIR).toBe('/work');
       // KUBECLAW_TOOL_FIELDS must NOT be on user-tool (the bridge reads it, not the wrapper)
       expect(userEnvMap.KUBECLAW_TOOL_FIELDS).toBeUndefined();

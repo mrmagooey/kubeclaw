@@ -253,7 +253,11 @@ export function validateTool(t: unknown): ValidationResult {
   // Parameter property names become request filenames — guard against traversal.
   // This constraint is filesystem-safety only; http/acp tools use JSON keys where
   // hyphens and dots are legitimate JSON Schema identifiers.
-  if (obj.pattern === 'file' && obj.parameters && typeof obj.parameters === 'object') {
+  if (
+    obj.pattern === 'file' &&
+    obj.parameters &&
+    typeof obj.parameters === 'object'
+  ) {
     const props = (obj.parameters as { properties?: unknown }).properties;
     if (props && typeof props === 'object') {
       for (const key of Object.keys(props as Record<string, unknown>)) {
