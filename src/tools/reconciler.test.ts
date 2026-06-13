@@ -68,7 +68,10 @@ describe('ToolReconciler', () => {
       .fn()
       .mockRejectedValueOnce(new Error('boom'))
       .mockResolvedValueOnce(undefined);
-    const r = new ToolReconciler({ baselineLoader: () => [], configMapApply: apply });
+    const r = new ToolReconciler({
+      baselineLoader: () => [],
+      configMapApply: apply,
+    });
     await expect(r.apply()).rejects.toThrow('boom');
     await r.apply(); // succeeds
     // First call attempted generation 1 (then rolled back); the successful
@@ -97,5 +100,51 @@ describe('resolveToolByName', () => {
 
   it('returns undefined for an unknown name', () => {
     expect(resolveToolByName('nope', () => [])).toBeUndefined();
+  });
+});
+
+// ── Orchestrator adapter channel-ACL filter ──────────────────────────────────
+// Mirrors the predicate used by the orchestrator's DirectLLMRunner adapter:
+//   mergeCatalog(baseline, overrides).filter(
+//     (t) => !t.channels?.length || t.channels.includes(channel),
+//   )
+// Verifies: all-channels tools are included, channel-scoped tools matching the
+// channel are included, and channel-scoped tools for other channels are excluded.
+describe('orchestrator DirectLLMRunner channel-ACL filter', () => {
+  it('returns all-channels and matching-channel tools, excludes others', () => {
+    const allChannels = t('all-channels'); // no channels field → everyone
+    const forSlack = t('slack-only', { channels: ['slack'] });
+    const forTelegram = t('telegram-only', { channels: ['telegram'] });
+    const multi = t('multi', { channels: ['slack', 'telegram'] });
+
+    const merged = mergeCatalog(
+      [allChannels, forSlack, forTelegram, multi],
+      [],
+    );
+
+    const channel = 'slack';
+    const visible = merged.filter(
+      (tool) => !tool.channels?.length || tool.channels.includes(channel),
+    );
+
+    expect(visible.map((x) => x.name).sort()).toEqual([
+      'all-channels',
+      'multi',
+      'slack-only',
+    ]);
+  });
+
+  it('returns only all-channels tools for an empty-string channel (orchestrator scheduled tasks)', () => {
+    const allChannels = t('all-channels');
+    const forSlack = t('slack-only', { channels: ['slack'] });
+
+    const merged = mergeCatalog([allChannels, forSlack], []);
+
+    const channel = '';
+    const visible = merged.filter(
+      (tool) => !tool.channels?.length || tool.channels.includes(channel),
+    );
+
+    expect(visible.map((x) => x.name)).toEqual(['all-channels']);
   });
 });

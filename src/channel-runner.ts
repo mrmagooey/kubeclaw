@@ -81,6 +81,7 @@ import {
 } from './sender-allowlist.js';
 import { detectMentionedSpecialists } from './specialists.js';
 import { SpecialistCatalogLoader } from './specialists/catalog-loader.js';
+import { ToolCatalogLoader } from './tools/catalog-loader.js';
 import type { RunAgentOverrides } from './runtime/types.js';
 import { resetRagProvider } from './rag/provider.js';
 import {
@@ -551,6 +552,9 @@ const queue = new GroupQueue();
 // In tests this is replaced via _setSpecialistCatalogForTesting.
 let specialistCatalog: Pick<SpecialistCatalogLoader, 'getAll'> =
   new SpecialistCatalogLoader('/etc/kubeclaw/specialists/specialists.json');
+
+// Tool catalog — loaded from ConfigMap at startup; hot-reloaded via fs.watch.
+const toolCatalog = new ToolCatalogLoader('/etc/kubeclaw/tools/tools.json');
 
 function loadState(): void {
   lastTimestamp = getRouterState('last_timestamp') || '';
@@ -3274,6 +3278,8 @@ export function _setSpecialistCatalogForTesting(
 async function main(): Promise<void> {
   // Start the specialist catalog watcher before the message loop.
   (specialistCatalog as SpecialistCatalogLoader).start?.();
+  toolCatalog.start();
+  getDirectLLMRunner().setToolCatalog(toolCatalog);
   startHealthServer();
 
   const channelMetricsRegistry = new Registry();

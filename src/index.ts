@@ -18,6 +18,7 @@ import {
   AvailableGroup,
   getToolJobRunner,
   getRunnerForGroup,
+  getDirectLLMRunner,
   shutdownAllRunners,
 } from './runtime/index.js';
 import {
@@ -105,7 +106,9 @@ import {
 import {
   ToolReconciler,
   loadBaselineFromDisk as loadToolBaselineFromDisk,
+  mergeCatalog,
 } from './tools/reconciler.js';
+import { listToolOverrides } from './skills/orchestrator/tool-registry.js';
 import { setSpecialistResolutionCallback } from './specialists.js';
 import {
   RealPerGroupK8sClient,
@@ -681,6 +684,16 @@ async function main(): Promise<void> {
         'Tool reconcile failed; channel pods will use stale or empty catalog',
       );
     }
+
+    // Inject the in-process merged catalog into the orchestrator's DirectLLMRunner
+    // so direct-mode scheduled tasks see catalog tools in their LLM tool list
+    // (seam-1), matching the orchestrator's name-resolution at spawn (seam-2).
+    getDirectLLMRunner().setToolCatalog({
+      getForChannel: (channel: string) =>
+        mergeCatalog(loadToolBaselineFromDisk(), listToolOverrides()).filter(
+          (t) => !t.channels?.length || t.channels.includes(channel),
+        ),
+    });
 
     // ── Channel-manifest catalog reconcile ────────────────────────────────────
     // Helm renders kubeclaw-channel-manifests empty; bootstrap Jobs mount it to
