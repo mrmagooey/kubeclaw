@@ -109,13 +109,14 @@ The bridge deletes the response directory after reading. Timeout (idle timeout r
 
 #### The KubeClaw wrapper (`tool-wrapper.sh`)
 
-When `ToolSpec.run` is set (file pattern only), there is no need to write custom bridge code. The orchestrator sets the user-tool container's command to `/bin/sh /kubeclaw/tool-wrapper.sh` and injects three env vars:
+When `ToolSpec.run` is set (file pattern only), there is no need to write custom bridge code. The orchestrator sets the user-tool container's command to `/bin/sh /kubeclaw/tool-wrapper.sh` and injects two env vars into the **user-tool** container:
 
-| Variable | Content |
-|---|---|
-| `KUBECLAW_TOOL_RUN` | The `run` string from the ToolSpec — executed verbatim as `sh -c "$KUBECLAW_TOOL_RUN"` |
-| `KUBECLAW_TOOL_FIELDS` | Comma-separated declared parameter names |
-| `WORKDIR` | Working directory (see Mounts below) |
+| Variable | Container | Content |
+|---|---|---|
+| `KUBECLAW_TOOL_RUN` | user-tool | The `run` string from the ToolSpec — executed verbatim as `sh -c "$KUBECLAW_TOOL_RUN"` |
+| `WORKDIR` | user-tool | Working directory (see Mounts below) |
+
+`KUBECLAW_TOOL_FIELDS` (comma-separated declared parameter names) is injected into the **`kubeclaw-tool-bridge`** container — the bridge reads it at startup to know which declared input fields to write into `/shared/req/{id}/input/`. It is not present on the user-tool container.
 
 The wrapper runs in a `while true` loop, scanning `/shared/req/*/`:
 

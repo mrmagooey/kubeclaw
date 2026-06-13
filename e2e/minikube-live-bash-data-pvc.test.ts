@@ -245,13 +245,21 @@ describe('Minikube-live: bash catalog tool — file-bridge + mounts manifest ass
       // scratch: no subPath (plain emptyDir)
       expect(workMount!.subPath).toBeUndefined();
 
-      // env assertions
+      // env assertions: user-tool has KUBECLAW_TOOL_RUN and WORKDIR; bridge has KUBECLAW_TOOL_FIELDS
       const userEnvMap = Object.fromEntries(
         (userTool.env ?? []).map((e) => [e.name, e.value ?? '']),
       );
       expect(userEnvMap.KUBECLAW_TOOL_RUN).toBe(runTemplate);
       expect(userEnvMap.WORKDIR).toBe('/work');
-      expect(userEnvMap.KUBECLAW_TOOL_FIELDS).toBe('command');
+      // KUBECLAW_TOOL_FIELDS belongs on the bridge (it reads it), not user-tool
+      expect(userEnvMap.KUBECLAW_TOOL_FIELDS).toBeUndefined();
+
+      // bridge must have KUBECLAW_TOOL_FIELDS
+      const bridge = containers.find((c) => c.name === 'kubeclaw-tool-bridge')!;
+      const bridgeEnvMap = Object.fromEntries(
+        (bridge.env ?? []).map((e) => [e.name, e.value ?? '']),
+      );
+      expect(bridgeEnvMap.KUBECLAW_TOOL_FIELDS).toBe('command');
 
       // ── volume assertions ────────────────────────────────────────────────────
       const volumes = job.spec.template.spec.volumes ?? [];
@@ -262,7 +270,6 @@ describe('Minikube-live: bash catalog tool — file-bridge + mounts manifest ass
       expect(workVol!.persistentVolumeClaim).toBeUndefined();
 
       // ── security boundary: bridge must NOT have the 'work' volume mounted ────
-      const bridge = containers.find((c) => c.name === 'kubeclaw-tool-bridge')!;
       const bridgeWorkMount = bridge.volumeMounts?.find((m) => m.name === 'work');
       expect(
         bridgeWorkMount,
@@ -341,16 +348,23 @@ describe('Minikube-live: bash catalog tool — file-bridge + mounts manifest ass
       // group → no emptyDir
       expect(workVol!.emptyDir).toBeUndefined();
 
-      // ── env: WORKDIR=/work, run template and fields ──────────────────────────
+      // ── env: WORKDIR=/work, run template on user-tool; KUBECLAW_TOOL_FIELDS on bridge ──
       const userEnvMap = Object.fromEntries(
         (userTool.env ?? []).map((e) => [e.name, e.value ?? '']),
       );
       expect(userEnvMap.KUBECLAW_TOOL_RUN).toBe(runTemplate);
       expect(userEnvMap.WORKDIR).toBe('/work');
-      expect(userEnvMap.KUBECLAW_TOOL_FIELDS).toBe('command');
+      // KUBECLAW_TOOL_FIELDS belongs on the bridge (it reads it), not user-tool
+      expect(userEnvMap.KUBECLAW_TOOL_FIELDS).toBeUndefined();
+
+      // bridge must have KUBECLAW_TOOL_FIELDS
+      const bridge = containers.find((c) => c.name === 'kubeclaw-tool-bridge')!;
+      const bridgeEnvMap = Object.fromEntries(
+        (bridge.env ?? []).map((e) => [e.name, e.value ?? '']),
+      );
+      expect(bridgeEnvMap.KUBECLAW_TOOL_FIELDS).toBe('command');
 
       // ── security boundary: bridge must NOT have the 'work' volume mounted ────
-      const bridge = containers.find((c) => c.name === 'kubeclaw-tool-bridge')!;
       const bridgeWorkMount = bridge.volumeMounts?.find((m) => m.name === 'work');
       expect(
         bridgeWorkMount,

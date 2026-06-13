@@ -1799,6 +1799,16 @@ export class JobRunner {
       });
     }
 
+    if (isFileBridge && toolSpec.run) {
+      bridgeEnv.push({
+        name: 'KUBECLAW_TOOL_FIELDS',
+        value: Object.keys(
+          ((toolSpec.parameters as { properties?: Record<string, unknown> })
+            ?.properties) ?? {},
+        ).join(','),
+      });
+    }
+
     const bridgeMounts: Array<{
       name: string;
       mountPath: string;
@@ -1840,7 +1850,9 @@ export class JobRunner {
         workEnv = [{ name: 'WORKDIR', value: '/work' }];
       } else if (mount === 'group') {
         if (!spec.groupFolder) {
-          throw new Error('groupFolder must be set for a group-mounted tool (refusing to mount the group PVC root)');
+          throw new Error(
+            'groupFolder must be set for a group-mounted tool (refusing to mount the group PVC root)',
+          );
         }
         assertGroupMountAllowed(toolSpec.image); // throws if not allowlisted
         userMounts.push({
@@ -1861,21 +1873,10 @@ export class JobRunner {
       }
     }
 
-    const declaredFieldNames = Object.keys(
-      (toolSpec.parameters as { properties?: Record<string, unknown> })
-        ?.properties ?? {},
-    );
     const userEnv = [
       { name: 'PORT', value: String(port) },
       ...(isFileBridge && toolSpec.run
-        ? [
-            { name: 'KUBECLAW_TOOL_RUN', value: toolSpec.run },
-            {
-              name: 'KUBECLAW_TOOL_FIELDS',
-              value: declaredFieldNames.join(','),
-            },
-            ...workEnv,
-          ]
+        ? [{ name: 'KUBECLAW_TOOL_RUN', value: toolSpec.run }, ...workEnv]
         : []),
     ];
 

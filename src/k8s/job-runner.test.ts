@@ -1685,12 +1685,22 @@ describe('JobRunner', () => {
         (c: any) => c.name === 'user-tool',
       );
       expect(user.command).toEqual(['/bin/sh', '/kubeclaw/tool-wrapper.sh']);
-      const env = Object.fromEntries(
+      const userEnvMap = Object.fromEntries(
         user.env.map((e: any) => [e.name, e.value]),
       );
-      expect(env.KUBECLAW_TOOL_RUN).toBe('sh -c "$(cat "$INPUT_DIR/command")"');
-      expect(env.WORKDIR).toBe('/work');
-      expect(env.KUBECLAW_TOOL_FIELDS).toBe('command');
+      expect(userEnvMap.KUBECLAW_TOOL_RUN).toBe('sh -c "$(cat "$INPUT_DIR/command")"');
+      expect(userEnvMap.WORKDIR).toBe('/work');
+      // KUBECLAW_TOOL_FIELDS must NOT be on user-tool (the bridge reads it, not the wrapper)
+      expect(userEnvMap.KUBECLAW_TOOL_FIELDS).toBeUndefined();
+
+      // bridge must have KUBECLAW_TOOL_FIELDS (tool-server.ts reads it to write input files)
+      const bridge = call.body.spec.template.spec.containers.find(
+        (c: any) => c.name === 'kubeclaw-tool-bridge',
+      );
+      const bridgeEnvMap = Object.fromEntries(
+        bridge.env.map((e: any) => [e.name, e.value]),
+      );
+      expect(bridgeEnvMap.KUBECLAW_TOOL_FIELDS).toBe('command');
     });
 
     it('mount: scratch adds a work emptyDir at /work on the user container', async () => {
@@ -1725,14 +1735,18 @@ describe('JobRunner', () => {
         name: 'work',
         persistentVolumeClaim: { claimName: 'kubeclaw-groups' },
       });
-      const bridge = podSpec.containers.find((c: any) => c.name === 'kubeclaw-tool-bridge');
+      const bridge = podSpec.containers.find(
+        (c: any) => c.name === 'kubeclaw-tool-bridge',
+      );
       expect(bridge.volumeMounts.map((m: any) => m.name)).not.toContain('work');
     });
 
     it('mount: group throws when groupFolder is empty', async () => {
       const spec = fileSpec('group');
       (spec as any).groupFolder = '';
-      await expect(jobRunner.createSidecarToolPodJob(spec)).rejects.toThrow(/groupFolder must be set/);
+      await expect(jobRunner.createSidecarToolPodJob(spec)).rejects.toThrow(
+        /groupFolder must be set/,
+      );
     });
 
     it('mount: group honors mountReadOnly', async () => {
