@@ -29,6 +29,7 @@ vi.mock('../config.js', () => ({
   CREDENTIAL_SIDECAR_IMAGE: 'envoyproxy/envoy:v1.31-latest',
   CREDENTIAL_SIDECAR_PORT: 8443,
   assertToolImageAllowed: vi.fn(),
+  assertGroupMountAllowed: vi.fn(),
   getContainerImage: vi.fn(() => 'kubeclaw-agent:latest'),
   getInjectionMode: vi.fn(() => {
     const raw = process.env.CREDENTIAL_INJECTION_MODE;
@@ -132,6 +133,7 @@ vi.mock('@kubernetes/client-node', () => {
 // Now import after mocks are set up
 import { JobRunner, buildJobName } from './job-runner.js';
 import * as configModule from '../config.js';
+import { assertGroupMountAllowed } from '../config.js';
 
 function makeSpec(overrides: Partial<ToolJobSpec> = {}): ToolJobSpec {
   return {
@@ -1658,6 +1660,63 @@ describe('JobRunner', () => {
       const call = mockBatchApi.createNamespacedJob.mock.calls.at(-1)![0];
       const volumes = call.body.spec.template.spec.volumes ?? [];
       expect(volumes.map((v: any) => v.name)).not.toContain('tool-wrapper');
+    });
+
+    const fileSpec = (mount?: string, extra: Record<string, unknown> = {}) => ({
+      ...baseSpec,
+      toolSpec: {
+        ...baseSpec.toolSpec,
+        pattern: 'file' as const,
+        image: 'alpine:latest',
+        run: 'sh -c "$(cat "$INPUT_DIR/command")"',
+        parameters: { type: 'object', properties: { command: { type: 'string' } } },
+        ...(mount ? { mount } : {}),
+        ...extra,
+      },
+    });
+
+    it('sets the user-tool command to the wrapper and passes run + fields env', async () => {
+      await jobRunner.createSidecarToolPodJob(fileSpec('scratch'));
+      const call = mockBatchApi.createNamespacedJob.mock.calls.at(-1)![0];
+      const user = call.body.spec.template.spec.containers.find((c: any) => c.name === 'user-tool');
+      expect(user.command).toEqual(['/bin/sh', '/kubeclaw/tool-wrapper.sh']);
+      const env = Object.fromEntries(user.env.map((e: any) => [e.name, e.value]));
+      expect(env.KUBECLAW_TOOL_RUN).toBe('sh -c "$(cat "$INPUT_DIR/command")"');
+      expect(env.WORKDIR).toBe('/work');
+      expect(env.KUBECLAW_TOOL_FIELDS).toBe('command');
+    });
+
+    it('mount: scratch adds a work emptyDir at /work on the user container', async () => {
+      await jobRunner.createSidecarToolPodJob(fileSpec('scratch'));
+      const call = mockBatchApi.createNamespacedJob.mock.calls.at(-1)![0];
+      const podSpec = call.body.spec.template.spec;
+      const user = podSpec.containers.find((c: any) => c.name === 'user-tool');
+      expect(user.volumeMounts).toContainEqual({ name: 'work', mountPath: '/work' });
+      expect(podSpec.volumes).toContainEqual({ name: 'work', emptyDir: {} });
+      const bridge = podSpec.containers.find((c: any) => c.name === 'kubeclaw-tool-bridge');
+      expect(bridge.volumeMounts.map((m: any) => m.name)).not.toContain('work');
+    });
+
+    it('mount: group mounts the group PVC subPath at /work (RW) and checks the allowlist', async () => {
+      await jobRunner.createSidecarToolPodJob(fileSpec('group'));
+      expect(assertGroupMountAllowed).toHaveBeenCalledWith('alpine:latest');
+      const call = mockBatchApi.createNamespacedJob.mock.calls.at(-1)![0];
+      const podSpec = call.body.spec.template.spec;
+      const user = podSpec.containers.find((c: any) => c.name === 'user-tool');
+      expect(user.volumeMounts).toContainEqual({ name: 'work', mountPath: '/work', subPath: baseSpec.groupFolder, readOnly: false });
+      expect(podSpec.volumes).toContainEqual({ name: 'work', persistentVolumeClaim: { claimName: 'kubeclaw-groups' } });
+    });
+
+    it('mount: group honors mountReadOnly', async () => {
+      await jobRunner.createSidecarToolPodJob(fileSpec('group', { mountReadOnly: true }));
+      const call = mockBatchApi.createNamespacedJob.mock.calls.at(-1)![0];
+      const user = call.body.spec.template.spec.containers.find((c: any) => c.name === 'user-tool');
+      expect(user.volumeMounts.find((m: any) => m.name === 'work').readOnly).toBe(true);
+    });
+
+    it('mount: group throws when the image is not allowlisted', async () => {
+      (assertGroupMountAllowed as any).mockImplementationOnce(() => { throw new Error('not permitted'); });
+      await expect(jobRunner.createSidecarToolPodJob(fileSpec('group'))).rejects.toThrow('not permitted');
     });
   });
 

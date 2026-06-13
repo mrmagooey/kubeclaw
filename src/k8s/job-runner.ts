@@ -33,6 +33,7 @@ import {
   BROWSER_SIDECAR_CPU_REQUEST,
   BROWSER_SIDECAR_CPU_LIMIT,
   assertToolImageAllowed,
+  assertGroupMountAllowed,
   REDIS_AGENT_PASSWORD,
   REDIS_TOOL_SERVER_PASSWORD,
   getInjectionMode,
@@ -1798,8 +1799,6 @@ export class JobRunner {
       });
     }
 
-    const userEnv = [{ name: 'PORT', value: String(port) }];
-
     const bridgeMounts: Array<{
       name: string;
       mountPath: string;
@@ -1809,9 +1808,11 @@ export class JobRunner {
       name: string;
       mountPath: string;
       readOnly?: boolean;
+      subPath?: string;
     }> = [];
     const volumes: Array<any> = [];
 
+    let workEnv: { name: string; value: string }[] = [];
     if (isFileBridge) {
       bridgeMounts.push({ name: 'shared', mountPath: '/shared' });
       userMounts.push({ name: 'shared', mountPath: '/shared' });
@@ -1831,7 +1832,43 @@ export class JobRunner {
           optional: true,
         },
       });
+
+      const mount = toolSpec.mount ?? 'none';
+      if (mount === 'scratch') {
+        userMounts.push({ name: 'work', mountPath: '/work' });
+        volumes.push({ name: 'work', emptyDir: {} });
+        workEnv = [{ name: 'WORKDIR', value: '/work' }];
+      } else if (mount === 'group') {
+        assertGroupMountAllowed(toolSpec.image); // throws if not allowlisted
+        userMounts.push({
+          name: 'work',
+          mountPath: '/work',
+          subPath: spec.groupFolder,
+          readOnly: toolSpec.mountReadOnly ?? false,
+        } as any);
+        volumes.push({
+          name: 'work',
+          persistentVolumeClaim: { claimName: spec.groupsPvc ?? 'kubeclaw-groups' },
+        });
+        workEnv = [{ name: 'WORKDIR', value: '/work' }];
+      } else {
+        workEnv = [{ name: 'WORKDIR', value: '/tmp' }];
+      }
     }
+
+    const declaredFieldNames = Object.keys(
+      ((toolSpec.parameters as { properties?: Record<string, unknown> })?.properties) ?? {},
+    );
+    const userEnv = [
+      { name: 'PORT', value: String(port) },
+      ...(isFileBridge && toolSpec.run
+        ? [
+            { name: 'KUBECLAW_TOOL_RUN', value: toolSpec.run },
+            { name: 'KUBECLAW_TOOL_FIELDS', value: declaredFieldNames.join(',') },
+            ...workEnv,
+          ]
+        : []),
+    ];
 
     const job: V1Job = {
       apiVersion: 'batch/v1',
@@ -1871,7 +1908,11 @@ export class JobRunner {
                 name: 'user-tool',
                 image: toolSpec.image,
                 imagePullPolicy: toolSpec.pullPolicy ?? 'IfNotPresent',
-                ...(toolSpec.command ? { command: toolSpec.command } : {}),
+                ...(isFileBridge && toolSpec.run
+                  ? { command: ['/bin/sh', '/kubeclaw/tool-wrapper.sh'] }
+                  : toolSpec.command
+                    ? { command: toolSpec.command }
+                    : {}),
                 env: userEnv,
                 volumeMounts: userMounts,
                 resources: {
