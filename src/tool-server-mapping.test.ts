@@ -56,7 +56,11 @@ describe('buildMappedRequest', () => {
 
   it('substitutes header tokens and strips newlines', () => {
     const r = buildMappedRequest(
-      { method: 'GET', path: '/x', headers: { 'X-City': '{city}', Accept: 'application/json' } },
+      {
+        method: 'GET',
+        path: '/x',
+        headers: { 'X-City': '{city}', Accept: 'application/json' },
+      },
       { city: 'NYC\r\nX-Injected: evil' },
       8080,
     );
@@ -66,7 +70,11 @@ describe('buildMappedRequest', () => {
 
   it('preserves JSON type for a body leaf that is exactly "{field}"', () => {
     const r = buildMappedRequest(
-      { method: 'POST', path: '/q', body: { n: '{count}', label: 'x', nested: { v: '{flag}' } } },
+      {
+        method: 'POST',
+        path: '/q',
+        body: { n: '{count}', label: 'x', nested: { v: '{flag}' } },
+      },
       { count: 42, flag: true },
       8080,
     );
@@ -102,7 +110,9 @@ describe('extractResponsePath', () => {
   });
 
   it('extracts a nested field', () => {
-    expect(extractResponsePath('{"current":{"temp_c":21.5}}', 'current.temp_c')).toBe('21.5');
+    expect(
+      extractResponsePath('{"current":{"temp_c":21.5}}', 'current.temp_c'),
+    ).toBe('21.5');
   });
 
   it('returns a JSON string for an extracted object/array subtree', () => {
@@ -110,10 +120,18 @@ describe('extractResponsePath', () => {
   });
 
   it('throws when the path is not found', () => {
-    expect(() => extractResponsePath('{"a":1}', 'b.c')).toThrow(/responsePath "b.c"/);
+    expect(() => extractResponsePath('{"a":1}', 'b.c')).toThrow(
+      /responsePath "b.c"/,
+    );
   });
 
   it('throws when the body is not JSON', () => {
     expect(() => extractResponsePath('not json', 'a')).toThrow(/not JSON/);
+  });
+
+  it('throws on an inherited-property path segment (no prototype traversal)', () => {
+    expect(() => extractResponsePath('{"a":1}', '__proto__.constructor')).toThrow(
+      /responsePath "__proto__\.constructor"/,
+    );
   });
 });

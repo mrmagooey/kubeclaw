@@ -424,7 +424,11 @@ export function extractResponsePath(bodyText: string, responsePath: string): str
   }
   let cur: unknown = parsed;
   for (const seg of responsePath.split('.')) {
-    if (cur && typeof cur === 'object' && seg in (cur as Record<string, unknown>)) {
+    if (
+      cur &&
+      typeof cur === 'object' &&
+      Object.prototype.hasOwnProperty.call(cur, seg)
+    ) {
       cur = (cur as Record<string, unknown>)[seg];
     } else {
       throw new Error(
