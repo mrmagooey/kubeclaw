@@ -103,6 +103,24 @@ describe('buildMappedRequest', () => {
     const r = buildMappedRequest({ method: 'GET', path: '/x' }, {}, 8080);
     expect(r.headers['Accept']).toBe('application/json');
   });
+
+  it('URL-encodes a path token value, neutralizing slashes/traversal', () => {
+    const r = buildMappedRequest(
+      { method: 'GET', path: '/weather/{city}' },
+      { city: '../admin' },
+      8080,
+    );
+    expect(r.url).toBe('http://localhost:8080/weather/..%2Fadmin');
+  });
+
+  it('encodes a slash inside a path token value', () => {
+    const r = buildMappedRequest(
+      { method: 'GET', path: '/x/{id}' },
+      { id: 'a/b' },
+      8080,
+    );
+    expect(r.url).toBe('http://localhost:8080/x/a%2Fb');
+  });
 });
 
 describe('extractResponsePath', () => {

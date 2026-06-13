@@ -362,6 +362,22 @@ function substituteString(
   });
 }
 
+/** Like substituteString but URL-encodes each substituted token value, for use
+ *  in URL path segments. Prevents a field value containing "/" or ".." from
+ *  altering the request path (path-traversal / endpoint redirection). */
+function substitutePathTokens(
+  template: string,
+  input: Record<string, unknown>,
+): string {
+  return template.replace(TOKEN_RE, (_m, field: string) => {
+    if (!(field in input)) {
+      throw new Error(`request mapping references missing field "${field}"`);
+    }
+    const v = input[field];
+    return encodeURIComponent(typeof v === 'string' ? v : JSON.stringify(v));
+  });
+}
+
 /** Substitute tokens inside a JSON body template. A string leaf exactly equal to
  *  "{field}" is replaced with the field's value preserving its JSON type; a leaf
  *  embedding a token in a larger string is string-interpolated. */
@@ -391,7 +407,7 @@ export function buildMappedRequest(
   input: Record<string, unknown>,
   port: number,
 ): MappedRequest {
-  const path = substituteString(mapping.path, input);
+  const path = substitutePathTokens(mapping.path, input);
   const url = new URL(`http://localhost:${port}${path}`);
   if (mapping.query) {
     for (const [k, tmpl] of Object.entries(mapping.query)) {
