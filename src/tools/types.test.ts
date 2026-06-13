@@ -36,7 +36,6 @@ describe('validateTool', () => {
 
   it('rejects a name that collides with a static built-in', () => {
     for (const n of [
-      'bash',
       'web_search',
       'web_fetch',
       'browser',
@@ -207,6 +206,51 @@ describe('validateTool — requestMapping', () => {
         requestMapping: { method: 'GET', path: '/x', responsePath: '' },
       }).ok,
     ).toBe(false);
+  });
+});
+
+describe('validateTool — mount + run', () => {
+  const fileBase = {
+    name: 'bash',
+    description: 'Run a shell command',
+    parameters: { type: 'object', properties: { command: { type: 'string' } }, required: ['command'] },
+    image: 'alpine:latest',
+    pattern: 'file' as const,
+  };
+
+  it('accepts mount: scratch with a run template', () => {
+    expect(validateTool({ ...fileBase, mount: 'scratch', run: 'sh -c "$(cat "$INPUT_DIR/command")"' })).toEqual({ ok: true });
+  });
+  it('accepts mount: group + mountReadOnly', () => {
+    expect(validateTool({ ...fileBase, mount: 'group', mountReadOnly: true, run: 'cat x' })).toEqual({ ok: true });
+  });
+  it('defaults are fine when mount/run absent on a file tool', () => {
+    expect(validateTool(fileBase)).toEqual({ ok: true });
+  });
+  it('rejects an unknown mount value', () => {
+    expect(validateTool({ ...fileBase, mount: 'host' }).ok).toBe(false);
+  });
+  it('rejects mountReadOnly without mount: group', () => {
+    expect(validateTool({ ...fileBase, mount: 'scratch', mountReadOnly: true }).ok).toBe(false);
+  });
+  it('rejects a non-boolean mountReadOnly', () => {
+    expect(validateTool({ ...fileBase, mount: 'group', mountReadOnly: 'yes' }).ok).toBe(false);
+  });
+  it('rejects run on a non-file pattern', () => {
+    expect(validateTool({ ...base, run: 'sh -c x' }).ok).toBe(false); // base is pattern: http
+  });
+  it('rejects an empty run', () => {
+    expect(validateTool({ ...fileBase, run: '' }).ok).toBe(false);
+  });
+  it('rejects a parameter property name with unsafe chars', () => {
+    expect(
+      validateTool({ ...fileBase, parameters: { type: 'object', properties: { '../evil': { type: 'string' } } } }).ok,
+    ).toBe(false);
+  });
+  it('accepts safe parameter property names', () => {
+    expect(
+      validateTool({ ...fileBase, parameters: { type: 'object', properties: { file_path: { type: 'string' }, n2: {} } } }).ok,
+    ).toBe(true);
   });
 });
 

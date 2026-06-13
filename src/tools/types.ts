@@ -33,6 +33,13 @@ export interface ToolSpec {
   /** Optional per-tool HTTP request mapping (pattern 'http' only). When set, the
    *  bridge builds the real request from this instead of POSTing /invoke. */
   requestMapping?: RequestMapping;
+  /** Filesystem the tool's container gets (file pattern). Default 'none'. */
+  mount?: 'none' | 'scratch' | 'group';
+  /** Only with mount: 'group'. Default false (read-write). */
+  mountReadOnly?: boolean;
+  /** Per-request shell command template run by the wrapper in the user-tool
+   *  container; references fields as "$(cat "$INPUT_DIR/<field>")". pattern 'file' only. */
+  run?: string;
   // ACP-specific (only when pattern = 'acp')
   acpAgentName?: string;
   acpMode?: 'sync' | 'async';
@@ -60,7 +67,6 @@ const RESERVED_NAMES = new Set([
   'web_fetch',
   'web_search',
   'browser',
-  'bash',
   'places_search',
   'execution',
 ]);
@@ -80,6 +86,9 @@ const ALLOWED_KEYS = new Set([
   'cpuLimit',
   'healthPath',
   'requestMapping',
+  'mount',
+  'mountReadOnly',
+  'run',
   'acpAgentName',
   'acpMode',
   'channels',
@@ -219,6 +228,32 @@ export function validateTool(t: unknown): ValidationResult {
       };
     const r = validateRequestMapping(obj.requestMapping);
     if (!r.ok) return r;
+  }
+  if (obj.mount !== undefined && !['none', 'scratch', 'group'].includes(obj.mount as string)) {
+    return { ok: false, error: 'mount must be one of none|scratch|group' };
+  }
+  if (obj.mountReadOnly !== undefined) {
+    if (typeof obj.mountReadOnly !== 'boolean')
+      return { ok: false, error: 'mountReadOnly must be a boolean' };
+    if (obj.mount !== 'group')
+      return { ok: false, error: 'mountReadOnly is only valid with mount: group' };
+  }
+  if (obj.run !== undefined) {
+    if (obj.pattern !== 'file')
+      return { ok: false, error: 'run is only allowed when pattern is "file"' };
+    if (typeof obj.run !== 'string' || obj.run.length === 0)
+      return { ok: false, error: 'run must be a non-empty string' };
+  }
+  // Parameter property names become request filenames — guard against traversal.
+  if (obj.parameters && typeof obj.parameters === 'object') {
+    const props = (obj.parameters as { properties?: unknown }).properties;
+    if (props && typeof props === 'object') {
+      for (const key of Object.keys(props as Record<string, unknown>)) {
+        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+          return { ok: false, error: `parameter property name not allowed: ${JSON.stringify(key)}` };
+        }
+      }
+    }
   }
   if (obj.acpAgentName !== undefined && typeof obj.acpAgentName !== 'string') {
     return { ok: false, error: 'acpAgentName must be a string' };
