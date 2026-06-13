@@ -1040,7 +1040,10 @@ describe('executeTool', () => {
       await executeTool('register_tool', {
         name: 'weather',
         description: 'Weather',
-        parameters: { type: 'object', properties: { city: { type: 'string' } } },
+        parameters: {
+          type: 'object',
+          properties: { city: { type: 'string' } },
+        },
         image: 'ghcr.io/example/weather:1',
         pattern: 'http',
         requestMapping: mapping,

@@ -1509,7 +1509,11 @@ describe('JobRunner', () => {
       const mapping = { method: 'GET', path: '/weather/{city}' };
       await jobRunner.createSidecarToolPodJob({
         ...baseSpec,
-        toolSpec: { ...baseSpec.toolSpec, pattern: 'http' as const, requestMapping: mapping },
+        toolSpec: {
+          ...baseSpec.toolSpec,
+          pattern: 'http' as const,
+          requestMapping: mapping,
+        },
       });
       const call = mockBatchApi.createNamespacedJob.mock.calls.at(-1)![0];
       const bridge = call.body.spec.template.spec.containers.find(

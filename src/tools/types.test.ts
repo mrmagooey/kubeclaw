@@ -124,49 +124,79 @@ describe('validateTool — requestMapping', () => {
 
   it('rejects requestMapping on a file-pattern tool', () => {
     expect(
-      validateTool({ ...base, pattern: 'file', requestMapping: { method: 'GET', path: '/x' } }).ok,
+      validateTool({
+        ...base,
+        pattern: 'file',
+        requestMapping: { method: 'GET', path: '/x' },
+      }).ok,
     ).toBe(false);
   });
 
   it('rejects requestMapping on an acp-pattern tool', () => {
     expect(
-      validateTool({ ...base, pattern: 'acp', requestMapping: { method: 'GET', path: '/x' } }).ok,
+      validateTool({
+        ...base,
+        pattern: 'acp',
+        requestMapping: { method: 'GET', path: '/x' },
+      }).ok,
     ).toBe(false);
   });
 
   it('rejects an invalid method', () => {
-    expect(validateTool({ ...base, requestMapping: { method: 'FETCH', path: '/x' } }).ok).toBe(false);
+    expect(
+      validateTool({ ...base, requestMapping: { method: 'FETCH', path: '/x' } })
+        .ok,
+    ).toBe(false);
   });
 
   it('rejects a path without a leading slash', () => {
-    expect(validateTool({ ...base, requestMapping: { method: 'GET', path: 'weather' } }).ok).toBe(false);
+    expect(
+      validateTool({
+        ...base,
+        requestMapping: { method: 'GET', path: 'weather' },
+      }).ok,
+    ).toBe(false);
   });
 
   it('rejects a missing method', () => {
-    expect(validateTool({ ...base, requestMapping: { path: '/x' } }).ok).toBe(false);
+    expect(validateTool({ ...base, requestMapping: { path: '/x' } }).ok).toBe(
+      false,
+    );
   });
 
   it('rejects non-string query values', () => {
     expect(
-      validateTool({ ...base, requestMapping: { method: 'GET', path: '/x', query: { n: 5 } } }).ok,
+      validateTool({
+        ...base,
+        requestMapping: { method: 'GET', path: '/x', query: { n: 5 } },
+      }).ok,
     ).toBe(false);
   });
 
   it('rejects non-string header values', () => {
     expect(
-      validateTool({ ...base, requestMapping: { method: 'GET', path: '/x', headers: { A: 1 } } }).ok,
+      validateTool({
+        ...base,
+        requestMapping: { method: 'GET', path: '/x', headers: { A: 1 } },
+      }).ok,
     ).toBe(false);
   });
 
   it('rejects a non-string responsePath', () => {
     expect(
-      validateTool({ ...base, requestMapping: { method: 'GET', path: '/x', responsePath: 5 } }).ok,
+      validateTool({
+        ...base,
+        requestMapping: { method: 'GET', path: '/x', responsePath: 5 },
+      }).ok,
     ).toBe(false);
   });
 
   it('rejects an unknown requestMapping key', () => {
     expect(
-      validateTool({ ...base, requestMapping: { method: 'GET', path: '/x', bogus: 1 } }).ok,
+      validateTool({
+        ...base,
+        requestMapping: { method: 'GET', path: '/x', bogus: 1 },
+      }).ok,
     ).toBe(false);
   });
 });

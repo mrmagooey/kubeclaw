@@ -1964,7 +1964,8 @@ function handleRegisterTool(input: ToolInput): string {
     }),
     ...(input.cpuLimit !== undefined && { cpuLimit: input.cpuLimit as string }),
     ...(input.requestMapping !== undefined && {
-      requestMapping: input.requestMapping as import('./tools/types.js').RequestMapping,
+      requestMapping:
+        input.requestMapping as import('./tools/types.js').RequestMapping,
     }),
   };
   const result = registerTool(spec, toolReconciler.apply.bind(toolReconciler));

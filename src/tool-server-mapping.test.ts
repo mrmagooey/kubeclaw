@@ -170,7 +170,10 @@ describe('executeToolBridgeHttp — mapped mode', () => {
     });
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => new Response('{"current":{"temp_c":21.5}}', { status: 200 })),
+      vi.fn(
+        async () =>
+          new Response('{"current":{"temp_c":21.5}}', { status: 200 }),
+      ),
     );
     const out = await executeToolBridgeHttp('weather', {});
     expect(out).toBe('21.5');

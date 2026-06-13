@@ -105,16 +105,29 @@ function validateRequestMapping(m: unknown): ValidationResult {
       return { ok: false, error: `unknown requestMapping field: ${k}` };
   }
   if (typeof obj.method !== 'string' || !HTTP_METHODS.has(obj.method))
-    return { ok: false, error: 'requestMapping.method must be one of GET|POST|PUT|PATCH|DELETE' };
+    return {
+      ok: false,
+      error: 'requestMapping.method must be one of GET|POST|PUT|PATCH|DELETE',
+    };
   if (typeof obj.path !== 'string' || !obj.path.startsWith('/'))
-    return { ok: false, error: 'requestMapping.path must be a string beginning with "/"' };
+    return {
+      ok: false,
+      error: 'requestMapping.path must be a string beginning with "/"',
+    };
   for (const f of ['query', 'headers'] as const) {
     if (obj[f] !== undefined) {
-      if (typeof obj[f] !== 'object' || obj[f] === null || Array.isArray(obj[f]))
+      if (
+        typeof obj[f] !== 'object' ||
+        obj[f] === null ||
+        Array.isArray(obj[f])
+      )
         return { ok: false, error: `requestMapping.${f} must be an object` };
       for (const v of Object.values(obj[f] as Record<string, unknown>)) {
         if (typeof v !== 'string')
-          return { ok: false, error: `requestMapping.${f} values must be strings` };
+          return {
+            ok: false,
+            error: `requestMapping.${f} values must be strings`,
+          };
       }
     }
   }
@@ -194,7 +207,10 @@ export function validateTool(t: unknown): ValidationResult {
   }
   if (obj.requestMapping !== undefined) {
     if (obj.pattern !== 'http')
-      return { ok: false, error: 'requestMapping is only allowed when pattern is "http"' };
+      return {
+        ok: false,
+        error: 'requestMapping is only allowed when pattern is "http"',
+      };
     const r = validateRequestMapping(obj.requestMapping);
     if (!r.ok) return r;
   }
