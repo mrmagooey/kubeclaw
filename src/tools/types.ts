@@ -135,7 +135,10 @@ function validateRequestMapping(m: unknown): ValidationResult {
     obj.responsePath !== undefined &&
     (typeof obj.responsePath !== 'string' || obj.responsePath.length === 0)
   )
-    return { ok: false, error: 'requestMapping.responsePath must be a non-empty string' };
+    return {
+      ok: false,
+      error: 'requestMapping.responsePath must be a non-empty string',
+    };
   return { ok: true };
 }
 

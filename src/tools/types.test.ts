@@ -202,7 +202,10 @@ describe('validateTool — requestMapping', () => {
 
   it('rejects an empty responsePath', () => {
     expect(
-      validateTool({ ...base, requestMapping: { method: 'GET', path: '/x', responsePath: '' } }).ok,
+      validateTool({
+        ...base,
+        requestMapping: { method: 'GET', path: '/x', responsePath: '' },
+      }).ok,
     ).toBe(false);
   });
 });
