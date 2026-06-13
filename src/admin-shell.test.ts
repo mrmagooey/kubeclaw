@@ -996,7 +996,37 @@ describe('executeTool', () => {
       const tool = TOOLS.find((t) => t.function.name === 'register_tool');
       expect(tool).toBeDefined();
       expect(tool!.function.parameters?.required).toEqual(
-        expect.arrayContaining(['name', 'description', 'parameters', 'image', 'pattern']),
+        expect.arrayContaining([
+          'name',
+          'description',
+          'parameters',
+          'image',
+          'pattern',
+        ]),
+      );
+    });
+
+    it('passes optional fields through to registerTool', async () => {
+      mockRegisterTool.mockReturnValue({ ok: true });
+      await executeTool('register_tool', {
+        name: 'weather',
+        description: 'Get weather data',
+        parameters: { type: 'object', properties: {} },
+        image: 'ghcr.io/example/weather:1',
+        pattern: 'http',
+        port: 9000,
+        channels: ['telegram'],
+        healthPath: '/healthz',
+        pullPolicy: 'Always',
+      });
+      expect(mockRegisterTool).toHaveBeenCalledWith(
+        expect.objectContaining({
+          port: 9000,
+          channels: ['telegram'],
+          healthPath: '/healthz',
+          pullPolicy: 'Always',
+        }),
+        expect.any(Function),
       );
     });
   });
@@ -1013,7 +1043,9 @@ describe('executeTool', () => {
       expect(mockEditTool).toHaveBeenCalledWith(
         {
           name: 'weather',
-          patch: expect.objectContaining({ image: 'ghcr.io/example/weather:2' }),
+          patch: expect.objectContaining({
+            image: 'ghcr.io/example/weather:2',
+          }),
         },
         expect.any(Function),
       );
@@ -1038,6 +1070,17 @@ describe('executeTool', () => {
       const result = await executeTool('edit_tool', {});
       expect(result).toContain('Error');
       expect(mockEditTool).not.toHaveBeenCalled();
+    });
+
+    it('patch does not contain name', async () => {
+      mockEditTool.mockReturnValue({ ok: true });
+      await executeTool('edit_tool', {
+        name: 'weather',
+        image: 'ghcr.io/example/weather:3',
+      });
+      const call = mockEditTool.mock.calls[0][0];
+      expect(call.patch).toHaveProperty('image', 'ghcr.io/example/weather:3');
+      expect(call.patch).not.toHaveProperty('name');
     });
   });
 
@@ -1096,6 +1139,21 @@ describe('executeTool', () => {
       expect(result).toContain('Name: weather');
       expect(result).toContain('ghcr.io/example/weather:1');
       expect(result).toContain('telegram');
+    });
+
+    it('shows "all" for a tool with no channels field', async () => {
+      mockListToolOverrides.mockReturnValue([
+        {
+          name: 'calc',
+          description: 'Calculator',
+          parameters: {},
+          image: 'ghcr.io/example/calc:1',
+          pattern: 'http',
+        },
+      ]);
+      const result = await executeTool('list_tools', {});
+      expect(result).toContain('Name: calc');
+      expect(result).toContain('all');
     });
   });
 
