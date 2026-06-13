@@ -85,37 +85,71 @@ A call with `{ city: "London", units: "metric" }` sends `GET http://localhost:80
 
 ### File pattern
 
-The bridge writes a request file to the `/shared` emptyDir volume (mounted by both containers):
+The bridge and user-tool share a `/shared` emptyDir volume. The bridge writes per-field input files for each declared parameter and polls for a response directory written atomically by `user-tool`.
 
+#### Per-field request protocol
+
+For each incoming tool call the bridge builds a request directory under `/shared/req/{requestId}/input/`. One file is written per **declared** parameter field (fields not present in the call are skipped; undeclared fields are dropped). File content is the field value — plain text for string values, JSON-serialized for all other types. The directory is published atomically by renaming a hidden staging directory into place (`/shared/.req.{id}.tmp` → `/shared/req/{id}`).
+
+`user-tool` must write a response atomically (mktemp + mv) to `/shared/resp/{requestId}/`. The response directory must contain three files:
+
+| File | Content |
+|---|---|
+| `exit_code` | Exit status as a decimal string (e.g. `0`) |
+| `response` | Stdout (may be absent; treated as empty) |
+| `stderr` | Stderr (may be absent; treated as empty) |
+
+The bridge polls for the response directory on a 500 ms schedule. When it appears:
+- Exit code `0` → returns the contents of `response`, truncated to `KUBECLAW_MAX_TOOL_OUTPUT_BYTES` (default 50 kB).
+- Any other exit code → returns an error: `exit {code}: {stderr}` (stderr truncated to the same cap).
+
+The bridge deletes the response directory after reading. Timeout (idle timeout reached before response appears) → `File bridge timeout`.
+
+**Declared fields and traversal guard.** The bridge knows which fields to write via `KUBECLAW_TOOL_FIELDS` (comma-separated list of property names, derived from `ToolSpec.parameters.properties`). For file-pattern tools, `validateTool` enforces that every parameter property name matches `[A-Za-z_][A-Za-z0-9_]*`, preventing filename traversal via field names.
+
+#### The KubeClaw wrapper (`tool-wrapper.sh`)
+
+When `ToolSpec.run` is set (file pattern only), there is no need to write custom bridge code. The orchestrator sets the user-tool container's command to `/bin/sh /kubeclaw/tool-wrapper.sh` and injects three env vars:
+
+| Variable | Content |
+|---|---|
+| `KUBECLAW_TOOL_RUN` | The `run` string from the ToolSpec — executed verbatim as `sh -c "$KUBECLAW_TOOL_RUN"` |
+| `KUBECLAW_TOOL_FIELDS` | Comma-separated declared parameter names |
+| `WORKDIR` | Working directory (see Mounts below) |
+
+The wrapper runs in a `while true` loop, scanning `/shared/req/*/`:
+
+1. For each request directory found, exports `INPUT_DIR` pointing at its `input/` subdirectory.
+2. Runs `(cd "$WORKDIR" && sh -c "$KUBECLAW_TOOL_RUN")`, capturing stdout to `response` and stderr to `stderr`.
+3. Records the exit code in `exit_code`.
+4. Publishes the response directory atomically (mktemp + mv) to `/shared/resp/{id}/`.
+5. Deletes the request directory.
+
+Output is captured byte-for-exact (no subshell `$()` newline stripping). The wrapper uses only `sh` — no `jq` or other external dependencies.
+
+`KUBECLAW_POLL_INTERVAL` (default `1` second) controls the wrapper's scan interval. This is independent of the bridge's 500 ms response poll.
+
+Within `$KUBECLAW_TOOL_RUN`, individual fields are accessed as:
+
+```sh
+$(cat "$INPUT_DIR/<fieldname>")
 ```
-/shared/{requestId}.request.json
-```
 
-Request file format:
+#### Mounts
 
-```json
-{ "requestId": "...", "tool": "<toolName>", "input": { ... } }
-```
+File-pattern tools can optionally receive a writable working directory via `ToolSpec.mount`:
 
-`user-tool` must write a response atomically (mktemp + mv) to:
+| `mount` value | `WORKDIR` | Volume type | Notes |
+|---|---|---|---|
+| `none` (default) | `/tmp` | — | No persistent storage |
+| `scratch` | `/work` | emptyDir | Ephemeral; lives only for the duration of the job |
+| `group` | `/work` | Group PVC (`kubeclaw-groups`), subPath = groupFolder | Persistent; scoped to the calling group |
 
-```
-/shared/{requestId}.response.json
-```
+The `group` mount is gated by **`TOOL_GROUP_MOUNT_ALLOWLIST`** (default-deny). This is separate from `TOOL_IMAGE_ALLOWLIST`. When the allowlist is empty, no image may use `mount: group`. The Helm default ships `alpine:*`, enabling the stock `bash_persist` tool. The group PVC is **never** mounted on the bridge container — only on user-tool.
 
-Response file format:
+`mountReadOnly: true` (boolean, only valid with `mount: group`) mounts the group PVC read-only. Default is read-write.
 
-```json
-{ "result": ... }
-```
-
-or
-
-```json
-{ "error": "human-readable message" }
-```
-
-The bridge polls for the response file on a 500 ms schedule and deletes it after reading. `/shared` is an emptyDir mounted by both containers.
+All mount types apply only to the `file` pattern.
 
 ### ACP pattern
 
@@ -183,45 +217,39 @@ The bridge authenticates to Redis using per-job ACL credentials injected via `RE
 
 If the bridge loses its Redis connection, it reconnects with exponential backoff: `min(2^retries × 100 ms, 10 s)`, giving up after 10 retries.
 
-## Zero-Dockerfile onboarding with the file-bridge wrapper
+## Worked example: `bash` and `bash_persist`
 
-The file pattern requires no custom bridge code. Any image that can read JSON from stdin and write JSON to stdout can be wrapped using the `kubeclaw-tool-wrapper` ConfigMap, which is mounted read-only into the `user-tool` container at `/kubeclaw`.
-
-### How the wrapper works
-
-The wrapper shell script (`tool-wrapper.sh`) runs in the `user-tool` container and handles the file-bridge protocol:
-
-1. Watches `/shared` for `{requestId}.request.json` files
-2. Extracts `.input` from the request JSON using `jq -c '.input'` and pipes it to the wrapped command's stdin
-3. Captures stdout and writes `{"result": ...}` or `{"error": ...}` atomically (mktemp + mv) to `{requestId}.response.json`. When using `tool-wrapper.sh`, the `result` value is always a JSON **string** containing the wrapped command's raw stdout (the wrapper JSON-stringifies it via `jq -Rs`); a custom user container writing response files directly may use any JSON value for `result`.
-4. Handles malformed requests (jq parse failure) by writing an error response and continuing
-5. Deletes the request file after processing
-
-Wrapper environment variables:
-
-| Variable | Default | Purpose |
-|---|---|---|
-| `KUBECLAW_SHARED_DIR` | `/shared` | Directory to watch for request files |
-| `KUBECLAW_POLL_INTERVAL` | `1` | Wrapper scan interval in seconds (independent of the bridge's 500 ms response poll) |
-
-### Example ToolSpec
+The Helm baseline catalog ships two tools that illustrate the `run` + mount model using stock `alpine:latest` — no custom image required.
 
 ```yaml
-# ToolSpec example: stock image, file bridge, zero custom code
 tools:
-  - name: word_count
-    description: Count words in the input text
-    parameters: { type: object, properties: { text: { type: string } } }
-    image: your-registry/yourtool-with-jq:latest  # must also be in TOOL_IMAGE_ALLOWLIST in production
+  - name: bash
+    description: Run a shell command in an ephemeral sandbox (no persistent changes; returns the command output).
+    parameters:
+      type: object
+      properties:
+        command: { type: string }
+      required: [command]
+    image: alpine:latest
     pattern: file
-    command: ["/bin/sh", "/kubeclaw/tool-wrapper.sh", "wc", "-w"]
+    mount: scratch
+    run: 'sh -c "$(cat "$INPUT_DIR/command")"'
+
+  - name: bash_persist
+    description: Run a shell command against the group's persistent files. Changes are saved to the group filesystem.
+    parameters:
+      type: object
+      properties:
+        command: { type: string }
+      required: [command]
+    image: alpine:latest
+    pattern: file
+    mount: group
+    run: 'sh -c "$(cat "$INPUT_DIR/command")"'
 ```
 
-**Image requirement**: `tool-wrapper.sh` requires `jq` to parse `.input` from the request JSON. `alpine:latest` does not include `jq` and will not work as-is. Use an image that already ships `jq` (e.g. `badouralix/curl-jq:latest`), or build a thin wrapper:
+**`bash`** uses `mount: scratch`: the user-tool container gets an emptyDir at `/work`. The working directory is reset to empty on every job; nothing persists between calls.
 
-```dockerfile
-FROM alpine:latest
-RUN apk add --no-cache jq
-```
+**`bash_persist`** uses `mount: group`: the calling group's PVC subPath is mounted read-write at `/work`. Shell commands can read and write files that persist across calls. This requires `alpine:*` (or the specific image) in `TOOL_GROUP_MOUNT_ALLOWLIST`; the Helm default ships `"alpine:*"` so this works out of the box.
 
-The `image` field must also be present in `TOOL_IMAGE_ALLOWLIST` in production deployments.
+In both tools, the `run` string reads the `command` field from `$INPUT_DIR/command` and passes it to `sh -c`. The wrapper runs this command with `cd "$WORKDIR" && sh -c "$(cat "$INPUT_DIR/command")"`, captures stdout/stderr, and publishes the result.
