@@ -97,6 +97,80 @@ describe('validateTool', () => {
   });
 });
 
+describe('validateTool — requestMapping', () => {
+  const mapped = {
+    ...base,
+    requestMapping: {
+      method: 'GET' as const,
+      path: '/weather/{city}',
+      query: { units: '{units}' },
+      headers: { Accept: 'application/json' },
+      responsePath: 'current.temp_c',
+    },
+  };
+
+  it('accepts a valid http requestMapping', () => {
+    expect(validateTool(mapped)).toEqual({ ok: true });
+  });
+
+  it('accepts a POST mapping with a body', () => {
+    expect(
+      validateTool({
+        ...base,
+        requestMapping: { method: 'POST', path: '/q', body: { q: '{query}' } },
+      }),
+    ).toEqual({ ok: true });
+  });
+
+  it('rejects requestMapping on a file-pattern tool', () => {
+    expect(
+      validateTool({ ...base, pattern: 'file', requestMapping: { method: 'GET', path: '/x' } }).ok,
+    ).toBe(false);
+  });
+
+  it('rejects requestMapping on an acp-pattern tool', () => {
+    expect(
+      validateTool({ ...base, pattern: 'acp', requestMapping: { method: 'GET', path: '/x' } }).ok,
+    ).toBe(false);
+  });
+
+  it('rejects an invalid method', () => {
+    expect(validateTool({ ...base, requestMapping: { method: 'FETCH', path: '/x' } }).ok).toBe(false);
+  });
+
+  it('rejects a path without a leading slash', () => {
+    expect(validateTool({ ...base, requestMapping: { method: 'GET', path: 'weather' } }).ok).toBe(false);
+  });
+
+  it('rejects a missing method', () => {
+    expect(validateTool({ ...base, requestMapping: { path: '/x' } }).ok).toBe(false);
+  });
+
+  it('rejects non-string query values', () => {
+    expect(
+      validateTool({ ...base, requestMapping: { method: 'GET', path: '/x', query: { n: 5 } } }).ok,
+    ).toBe(false);
+  });
+
+  it('rejects non-string header values', () => {
+    expect(
+      validateTool({ ...base, requestMapping: { method: 'GET', path: '/x', headers: { A: 1 } } }).ok,
+    ).toBe(false);
+  });
+
+  it('rejects a non-string responsePath', () => {
+    expect(
+      validateTool({ ...base, requestMapping: { method: 'GET', path: '/x', responsePath: 5 } }).ok,
+    ).toBe(false);
+  });
+
+  it('rejects an unknown requestMapping key', () => {
+    expect(
+      validateTool({ ...base, requestMapping: { method: 'GET', path: '/x', bogus: 1 } }).ok,
+    ).toBe(false);
+  });
+});
+
 describe('parseToolCatalog', () => {
   it('parses a valid wire object', () => {
     const json = JSON.stringify({ version: 1, generation: 3, tools: [base] });

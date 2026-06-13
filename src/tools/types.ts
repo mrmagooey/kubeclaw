@@ -1,6 +1,20 @@
 // Tool catalog types — the catalog entry IS a ToolSpec plus a per-channel ACL.
 // Modeled on src/specialists/types.ts.
 
+export interface RequestMapping {
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+  /** URL path on the user-tool container; {field} tokens are URL-encoded. Must begin with "/". */
+  path: string;
+  /** Query params; values are literals or "{field}" (URL-encoded). */
+  query?: Record<string, string>;
+  /** Headers; values are literals or "{field}" (raw string, newlines stripped). */
+  headers?: Record<string, string>;
+  /** JSON body template; string leaves equal to "{field}" preserve the field's JSON type. Omit for GET/DELETE. */
+  body?: unknown;
+  /** Optional dot-path to extract from a JSON response, e.g. "current.temp_c". */
+  responsePath?: string;
+}
+
 export interface ToolSpec {
   name: string;
   description: string;
@@ -16,6 +30,9 @@ export interface ToolSpec {
   cpuLimit?: string;
   /** Optional readiness-probe path on the user container (default "/"; must begin with "/"; any HTTP response counts as ready). */
   healthPath?: string;
+  /** Optional per-tool HTTP request mapping (pattern 'http' only). When set, the
+   *  bridge builds the real request from this instead of POSTing /invoke. */
+  requestMapping?: RequestMapping;
   // ACP-specific (only when pattern = 'acp')
   acpAgentName?: string;
   acpMode?: 'sync' | 'async';
@@ -62,11 +79,49 @@ const ALLOWED_KEYS = new Set([
   'cpuRequest',
   'cpuLimit',
   'healthPath',
+  'requestMapping',
   'acpAgentName',
   'acpMode',
   'channels',
 ]);
 const PATTERNS = new Set(['http', 'file', 'acp']);
+
+const HTTP_METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']);
+const ALLOWED_MAPPING_KEYS = new Set([
+  'method',
+  'path',
+  'query',
+  'headers',
+  'body',
+  'responsePath',
+]);
+
+function validateRequestMapping(m: unknown): ValidationResult {
+  if (typeof m !== 'object' || m === null)
+    return { ok: false, error: 'requestMapping must be an object' };
+  const obj = m as Record<string, unknown>;
+  for (const k of Object.keys(obj)) {
+    if (!ALLOWED_MAPPING_KEYS.has(k))
+      return { ok: false, error: `unknown requestMapping field: ${k}` };
+  }
+  if (typeof obj.method !== 'string' || !HTTP_METHODS.has(obj.method))
+    return { ok: false, error: 'requestMapping.method must be one of GET|POST|PUT|PATCH|DELETE' };
+  if (typeof obj.path !== 'string' || !obj.path.startsWith('/'))
+    return { ok: false, error: 'requestMapping.path must be a string beginning with "/"' };
+  for (const f of ['query', 'headers'] as const) {
+    if (obj[f] !== undefined) {
+      if (typeof obj[f] !== 'object' || obj[f] === null || Array.isArray(obj[f]))
+        return { ok: false, error: `requestMapping.${f} must be an object` };
+      for (const v of Object.values(obj[f] as Record<string, unknown>)) {
+        if (typeof v !== 'string')
+          return { ok: false, error: `requestMapping.${f} values must be strings` };
+      }
+    }
+  }
+  if (obj.responsePath !== undefined && typeof obj.responsePath !== 'string')
+    return { ok: false, error: 'requestMapping.responsePath must be a string' };
+  return { ok: true };
+}
 
 export function validateTool(t: unknown): ValidationResult {
   if (typeof t !== 'object' || t === null)
@@ -136,6 +191,12 @@ export function validateTool(t: unknown): ValidationResult {
         error: 'healthPath must be a string beginning with "/"',
       };
     }
+  }
+  if (obj.requestMapping !== undefined) {
+    if (obj.pattern !== 'http')
+      return { ok: false, error: 'requestMapping is only allowed when pattern is "http"' };
+    const r = validateRequestMapping(obj.requestMapping);
+    if (!r.ok) return r;
   }
   if (obj.acpAgentName !== undefined && typeof obj.acpAgentName !== 'string') {
     return { ok: false, error: 'acpAgentName must be a string' };
