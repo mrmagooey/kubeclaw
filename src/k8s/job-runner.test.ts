@@ -1669,7 +1669,10 @@ describe('JobRunner', () => {
         pattern: 'file' as const,
         image: 'alpine:latest',
         run: 'sh -c "$(cat "$INPUT_DIR/command")"',
-        parameters: { type: 'object', properties: { command: { type: 'string' } } },
+        parameters: {
+          type: 'object',
+          properties: { command: { type: 'string' } },
+        },
         ...(mount ? { mount } : {}),
         ...extra,
       },
@@ -1678,9 +1681,13 @@ describe('JobRunner', () => {
     it('sets the user-tool command to the wrapper and passes run + fields env', async () => {
       await jobRunner.createSidecarToolPodJob(fileSpec('scratch'));
       const call = mockBatchApi.createNamespacedJob.mock.calls.at(-1)![0];
-      const user = call.body.spec.template.spec.containers.find((c: any) => c.name === 'user-tool');
+      const user = call.body.spec.template.spec.containers.find(
+        (c: any) => c.name === 'user-tool',
+      );
       expect(user.command).toEqual(['/bin/sh', '/kubeclaw/tool-wrapper.sh']);
-      const env = Object.fromEntries(user.env.map((e: any) => [e.name, e.value]));
+      const env = Object.fromEntries(
+        user.env.map((e: any) => [e.name, e.value]),
+      );
       expect(env.KUBECLAW_TOOL_RUN).toBe('sh -c "$(cat "$INPUT_DIR/command")"');
       expect(env.WORKDIR).toBe('/work');
       expect(env.KUBECLAW_TOOL_FIELDS).toBe('command');
@@ -1691,9 +1698,14 @@ describe('JobRunner', () => {
       const call = mockBatchApi.createNamespacedJob.mock.calls.at(-1)![0];
       const podSpec = call.body.spec.template.spec;
       const user = podSpec.containers.find((c: any) => c.name === 'user-tool');
-      expect(user.volumeMounts).toContainEqual({ name: 'work', mountPath: '/work' });
+      expect(user.volumeMounts).toContainEqual({
+        name: 'work',
+        mountPath: '/work',
+      });
       expect(podSpec.volumes).toContainEqual({ name: 'work', emptyDir: {} });
-      const bridge = podSpec.containers.find((c: any) => c.name === 'kubeclaw-tool-bridge');
+      const bridge = podSpec.containers.find(
+        (c: any) => c.name === 'kubeclaw-tool-bridge',
+      );
       expect(bridge.volumeMounts.map((m: any) => m.name)).not.toContain('work');
     });
 
@@ -1703,20 +1715,46 @@ describe('JobRunner', () => {
       const call = mockBatchApi.createNamespacedJob.mock.calls.at(-1)![0];
       const podSpec = call.body.spec.template.spec;
       const user = podSpec.containers.find((c: any) => c.name === 'user-tool');
-      expect(user.volumeMounts).toContainEqual({ name: 'work', mountPath: '/work', subPath: baseSpec.groupFolder, readOnly: false });
-      expect(podSpec.volumes).toContainEqual({ name: 'work', persistentVolumeClaim: { claimName: 'kubeclaw-groups' } });
+      expect(user.volumeMounts).toContainEqual({
+        name: 'work',
+        mountPath: '/work',
+        subPath: baseSpec.groupFolder,
+        readOnly: false,
+      });
+      expect(podSpec.volumes).toContainEqual({
+        name: 'work',
+        persistentVolumeClaim: { claimName: 'kubeclaw-groups' },
+      });
+      const bridge = podSpec.containers.find((c: any) => c.name === 'kubeclaw-tool-bridge');
+      expect(bridge.volumeMounts.map((m: any) => m.name)).not.toContain('work');
+    });
+
+    it('mount: group throws when groupFolder is empty', async () => {
+      const spec = fileSpec('group');
+      (spec as any).groupFolder = '';
+      await expect(jobRunner.createSidecarToolPodJob(spec)).rejects.toThrow(/groupFolder must be set/);
     });
 
     it('mount: group honors mountReadOnly', async () => {
-      await jobRunner.createSidecarToolPodJob(fileSpec('group', { mountReadOnly: true }));
+      await jobRunner.createSidecarToolPodJob(
+        fileSpec('group', { mountReadOnly: true }),
+      );
       const call = mockBatchApi.createNamespacedJob.mock.calls.at(-1)![0];
-      const user = call.body.spec.template.spec.containers.find((c: any) => c.name === 'user-tool');
-      expect(user.volumeMounts.find((m: any) => m.name === 'work').readOnly).toBe(true);
+      const user = call.body.spec.template.spec.containers.find(
+        (c: any) => c.name === 'user-tool',
+      );
+      expect(
+        user.volumeMounts.find((m: any) => m.name === 'work').readOnly,
+      ).toBe(true);
     });
 
     it('mount: group throws when the image is not allowlisted', async () => {
-      (assertGroupMountAllowed as any).mockImplementationOnce(() => { throw new Error('not permitted'); });
-      await expect(jobRunner.createSidecarToolPodJob(fileSpec('group'))).rejects.toThrow('not permitted');
+      (assertGroupMountAllowed as any).mockImplementationOnce(() => {
+        throw new Error('not permitted');
+      });
+      await expect(
+        jobRunner.createSidecarToolPodJob(fileSpec('group')),
+      ).rejects.toThrow('not permitted');
     });
   });
 

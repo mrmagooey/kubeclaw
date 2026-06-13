@@ -1839,16 +1839,21 @@ export class JobRunner {
         volumes.push({ name: 'work', emptyDir: {} });
         workEnv = [{ name: 'WORKDIR', value: '/work' }];
       } else if (mount === 'group') {
+        if (!spec.groupFolder) {
+          throw new Error('groupFolder must be set for a group-mounted tool (refusing to mount the group PVC root)');
+        }
         assertGroupMountAllowed(toolSpec.image); // throws if not allowlisted
         userMounts.push({
           name: 'work',
           mountPath: '/work',
           subPath: spec.groupFolder,
           readOnly: toolSpec.mountReadOnly ?? false,
-        } as any);
+        });
         volumes.push({
           name: 'work',
-          persistentVolumeClaim: { claimName: spec.groupsPvc ?? 'kubeclaw-groups' },
+          persistentVolumeClaim: {
+            claimName: spec.groupsPvc ?? 'kubeclaw-groups',
+          },
         });
         workEnv = [{ name: 'WORKDIR', value: '/work' }];
       } else {
@@ -1857,14 +1862,18 @@ export class JobRunner {
     }
 
     const declaredFieldNames = Object.keys(
-      ((toolSpec.parameters as { properties?: Record<string, unknown> })?.properties) ?? {},
+      (toolSpec.parameters as { properties?: Record<string, unknown> })
+        ?.properties ?? {},
     );
     const userEnv = [
       { name: 'PORT', value: String(port) },
       ...(isFileBridge && toolSpec.run
         ? [
             { name: 'KUBECLAW_TOOL_RUN', value: toolSpec.run },
-            { name: 'KUBECLAW_TOOL_FIELDS', value: declaredFieldNames.join(',') },
+            {
+              name: 'KUBECLAW_TOOL_FIELDS',
+              value: declaredFieldNames.join(','),
+            },
             ...workEnv,
           ]
         : []),
