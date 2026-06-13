@@ -35,7 +35,13 @@ describe('validateTool', () => {
   });
 
   it('rejects a name that collides with a static built-in', () => {
-    for (const n of ['bash', 'web_search', 'web_fetch', 'browser', 'places_search']) {
+    for (const n of [
+      'bash',
+      'web_search',
+      'web_fetch',
+      'browser',
+      'places_search',
+    ]) {
       expect(validateTool({ ...base, name: n }).ok).toBe(false);
     }
   });
@@ -51,6 +57,39 @@ describe('validateTool', () => {
 
   it('rejects channels that are not strings', () => {
     expect(validateTool({ ...base, channels: [1, 2] }).ok).toBe(false);
+  });
+
+  it('rejects a healthPath without a leading slash', () => {
+    expect(validateTool({ ...base, healthPath: 'noslash' }).ok).toBe(false);
+  });
+
+  it('accepts a healthPath with a leading slash', () => {
+    expect(validateTool({ ...base, healthPath: '/healthz' }).ok).toBe(true);
+  });
+
+  it('accepts empty channels (all channels)', () => {
+    expect(validateTool({ ...base, channels: [] }).ok).toBe(true);
+  });
+
+  it('rejects port 0 and out-of-range ports', () => {
+    expect(validateTool({ ...base, port: 0 }).ok).toBe(false);
+    expect(validateTool({ ...base, port: 70000 }).ok).toBe(false);
+  });
+
+  it('accepts a valid port', () => {
+    expect(validateTool({ ...base, port: 8080 }).ok).toBe(true);
+  });
+
+  it('rejects an invalid pullPolicy', () => {
+    expect(validateTool({ ...base, pullPolicy: 'Sometimes' }).ok).toBe(false);
+  });
+
+  it('rejects an invalid acpMode', () => {
+    expect(validateTool({ ...base, acpMode: 'streaming' }).ok).toBe(false);
+  });
+
+  it('rejects non-string command elements', () => {
+    expect(validateTool({ ...base, command: ['ok', 5] }).ok).toBe(false);
   });
 });
 

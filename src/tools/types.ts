@@ -68,7 +68,8 @@ export function validateTool(t: unknown): ValidationResult {
     return { ok: false, error: 'tool must be an object' };
   const obj = t as Record<string, unknown>;
   for (const k of Object.keys(obj)) {
-    if (!ALLOWED_KEYS.has(k)) return { ok: false, error: `unknown field: ${k}` };
+    if (!ALLOWED_KEYS.has(k))
+      return { ok: false, error: `unknown field: ${k}` };
   }
   if (typeof obj.name !== 'string' || !NAME_RE.test(obj.name)) {
     return { ok: false, error: `invalid name: ${JSON.stringify(obj.name)}` };
@@ -91,12 +92,19 @@ export function validateTool(t: unknown): ValidationResult {
   if (typeof obj.pattern !== 'string' || !PATTERNS.has(obj.pattern)) {
     return { ok: false, error: 'pattern must be one of http|file|acp' };
   }
-  if (obj.port !== undefined && (typeof obj.port !== 'number' || !Number.isInteger(obj.port))) {
-    return { ok: false, error: 'port must be an integer' };
+  if (
+    obj.port !== undefined &&
+    (typeof obj.port !== 'number' ||
+      !Number.isInteger(obj.port) ||
+      obj.port < 1 ||
+      obj.port > 65535)
+  ) {
+    return { ok: false, error: 'port must be an integer in 1..65535' };
   }
   if (
     obj.command !== undefined &&
-    (!Array.isArray(obj.command) || obj.command.some((c) => typeof c !== 'string'))
+    (!Array.isArray(obj.command) ||
+      obj.command.some((c) => typeof c !== 'string'))
   ) {
     return { ok: false, error: 'command must be string[]' };
   }
@@ -106,25 +114,37 @@ export function validateTool(t: unknown): ValidationResult {
   ) {
     return { ok: false, error: 'pullPolicy must be Always|IfNotPresent|Never' };
   }
-  for (const f of ['memoryRequest', 'memoryLimit', 'cpuRequest', 'cpuLimit'] as const) {
+  for (const f of [
+    'memoryRequest',
+    'memoryLimit',
+    'cpuRequest',
+    'cpuLimit',
+  ] as const) {
     if (obj[f] !== undefined && typeof obj[f] !== 'string') {
       return { ok: false, error: `${f} must be a string` };
     }
   }
   if (obj.healthPath !== undefined) {
     if (typeof obj.healthPath !== 'string' || !obj.healthPath.startsWith('/')) {
-      return { ok: false, error: 'healthPath must be a string beginning with "/"' };
+      return {
+        ok: false,
+        error: 'healthPath must be a string beginning with "/"',
+      };
     }
   }
   if (obj.acpAgentName !== undefined && typeof obj.acpAgentName !== 'string') {
     return { ok: false, error: 'acpAgentName must be a string' };
   }
-  if (obj.acpMode !== undefined && !['sync', 'async'].includes(obj.acpMode as string)) {
+  if (
+    obj.acpMode !== undefined &&
+    !['sync', 'async'].includes(obj.acpMode as string)
+  ) {
     return { ok: false, error: 'acpMode must be sync|async' };
   }
   if (
     obj.channels !== undefined &&
-    (!Array.isArray(obj.channels) || obj.channels.some((c) => typeof c !== 'string'))
+    (!Array.isArray(obj.channels) ||
+      obj.channels.some((c) => typeof c !== 'string'))
   ) {
     return { ok: false, error: 'channels must be string[]' };
   }
@@ -159,5 +179,9 @@ export function parseToolCatalog(json: string): ParseResult {
     if (seen.has(name)) return { ok: false, error: `duplicate name: ${name}` };
     seen.add(name);
   }
-  return { ok: true, tools: obj.tools as ToolSpec[], generation: obj.generation };
+  return {
+    ok: true,
+    tools: obj.tools as ToolSpec[],
+    generation: obj.generation,
+  };
 }
