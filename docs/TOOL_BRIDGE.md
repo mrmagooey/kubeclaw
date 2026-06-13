@@ -27,6 +27,62 @@ The bridge POSTs to `http://localhost:{port}/invoke` with a JSON body:
 
 The port is set by `ToolSpec.port` (default `8080`).
 
+#### Request mapping
+
+Without `requestMapping` the default `/invoke` contract described above is unchanged — this is backward compatible and remains the correct choice when the user-tool container is written for KubeClaw.
+
+When `ToolSpec.requestMapping` is set, the bridge builds the real HTTP request to the co-located container (`http://localhost:{port}`) from the mapping instead of POSTing `/invoke`. The request always targets the localhost sidecar container; the container is responsible for its own upstream credentials and egress.
+
+**Schema** (`requestMapping` fields):
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `method` | `GET\|POST\|PUT\|PATCH\|DELETE` | yes | |
+| `path` | string | yes | Must begin with `/`; `{field}` tokens are URL-encoded |
+| `query` | `Record<string, string>` | no | Values are literals or `{field}` (URL-encoded) |
+| `headers` | `Record<string, string>` | no | Values are literals or `{field}`; CR/LF stripped to prevent header injection |
+| `body` | JSON template | no | Omit for GET/DELETE; see substitution rules below |
+| `responsePath` | string | no | Dot-separated path into a JSON response, e.g. `current.temp_c` |
+
+**Substitution rules:**
+
+- A `{field}` token is looked up in the tool-call input by name. Referencing a field that is not present in the input fails the call with an error message identifying the missing field.
+- In `path` and `query`, the substituted value is URL-encoded by the built-in `URL` / `URLSearchParams` APIs. Non-string values are JSON-stringified before encoding.
+- In `headers`, CR and LF characters are stripped from substituted values (header injection prevention); `Accept: application/json` is added automatically.
+- In `body`, a string leaf that is exactly `"{field}"` (no surrounding text) has its field's raw JSON type preserved — a numeric field remains a number, a boolean remains a boolean, an object/array remains structured. A string leaf that embeds a token inside other text (e.g. `"hello {name}"`) is string-interpolated: the field value is coerced to string. Non-string body nodes (numbers, booleans, objects, arrays) are copied as-is.
+
+**Response handling:**
+
+- Without `responsePath`: the raw response body is returned as the tool result, truncated to the output cap (`KUBECLAW_MAX_TOOL_OUTPUT_BYTES`, default 50 kB).
+- With `responsePath`: the bridge parses the body as JSON and walks the dot-separated keys. A string leaf is returned as-is; an object or array subtree is JSON-stringified. If the body is not valid JSON or any key in the path is absent, the call fails.
+- Non-2xx responses become a tool error (`Tool HTTP {status}: {body}`) via the existing `fetchWithRetry` retry discipline (4xx fail-fast; 5xx retry up to 3 attempts).
+
+**Example:**
+
+```yaml
+# A stock weather REST image, driven via request mapping (no /invoke needed):
+tools:
+  - name: weather
+    description: Current weather for a city
+    parameters:
+      type: object
+      properties:
+        city: { type: string }
+        units: { type: string }
+      required: [city]
+    image: ghcr.io/example/weather-api:1      # must also be in TOOL_IMAGE_ALLOWLIST
+    pattern: http
+    port: 8080
+    requestMapping:
+      method: GET
+      path: /v1/weather/{city}
+      query:
+        units: "{units}"
+      responsePath: current.summary
+```
+
+A call with `{ city: "London", units: "metric" }` sends `GET http://localhost:8080/v1/weather/London?units=metric` to the co-located container and returns the value at `current.summary` in the JSON response. The container image must be present in `TOOL_IMAGE_ALLOWLIST` in production deployments.
+
 ### File pattern
 
 The bridge writes a request file to the `/shared` emptyDir volume (mounted by both containers):

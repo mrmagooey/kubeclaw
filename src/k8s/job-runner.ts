@@ -1791,6 +1791,13 @@ export class JobRunner {
       });
     }
 
+    if (toolSpec.requestMapping) {
+      bridgeEnv.push({
+        name: 'KUBECLAW_TOOL_REQUEST_MAPPING',
+        value: JSON.stringify(toolSpec.requestMapping),
+      });
+    }
+
     const userEnv = [{ name: 'PORT', value: String(port) }];
 
     const bridgeMounts: Array<{

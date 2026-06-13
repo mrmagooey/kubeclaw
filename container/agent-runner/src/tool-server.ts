@@ -328,16 +328,171 @@ async function getRedisForTask(): Promise<RedisClientType> {
   return taskRedis;
 }
 
+// --- Request-mapping helpers ---
+
+interface RequestMapping {
+  method: string;
+  path: string;
+  query?: Record<string, string>;
+  headers?: Record<string, string>;
+  body?: unknown;
+  responsePath?: string;
+}
+
+interface MappedRequest {
+  url: string;
+  method: string;
+  headers: Record<string, string>;
+  body?: string;
+}
+
+const TOKEN_RE = /\{([A-Za-z_][A-Za-z0-9_]*)\}/g;
+
+/** Resolve "{field}" tokens in a string against input; throws on a missing field. */
+function substituteString(
+  template: string,
+  input: Record<string, unknown>,
+): string {
+  return template.replace(TOKEN_RE, (_m, field: string) => {
+    if (!(field in input)) {
+      throw new Error(`request mapping references missing field "${field}"`);
+    }
+    const v = input[field];
+    return typeof v === 'string' ? v : JSON.stringify(v);
+  });
+}
+
+/** Like substituteString but URL-encodes each substituted token value, for use
+ *  in URL path segments. Prevents a field value containing "/" or ".." from
+ *  altering the request path (path-traversal / endpoint redirection). */
+function substitutePathTokens(
+  template: string,
+  input: Record<string, unknown>,
+): string {
+  return template.replace(TOKEN_RE, (_m, field: string) => {
+    if (!(field in input)) {
+      throw new Error(`request mapping references missing field "${field}"`);
+    }
+    const v = input[field];
+    return encodeURIComponent(typeof v === 'string' ? v : JSON.stringify(v));
+  });
+}
+
+/** Substitute tokens inside a JSON body template. A string leaf exactly equal to
+ *  "{field}" is replaced with the field's value preserving its JSON type; a leaf
+ *  embedding a token in a larger string is string-interpolated. */
+function substituteBody(node: unknown, input: Record<string, unknown>): unknown {
+  if (typeof node === 'string') {
+    const exact = node.match(/^\{([A-Za-z_][A-Za-z0-9_]*)\}$/);
+    if (exact) {
+      const field = exact[1];
+      if (!(field in input)) {
+        throw new Error(`request mapping references missing field "${field}"`);
+      }
+      return input[field]; // preserve JSON type
+    }
+    return substituteString(node, input);
+  }
+  if (Array.isArray(node)) return node.map((n) => substituteBody(n, input));
+  if (node && typeof node === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(node)) out[k] = substituteBody(v, input);
+    return out;
+  }
+  return node;
+}
+
+export function buildMappedRequest(
+  mapping: RequestMapping,
+  input: Record<string, unknown>,
+  port: number,
+): MappedRequest {
+  const path = substitutePathTokens(mapping.path, input);
+  const url = new URL(`http://localhost:${port}${path}`);
+  if (mapping.query) {
+    for (const [k, tmpl] of Object.entries(mapping.query)) {
+      url.searchParams.set(k, substituteString(tmpl, input));
+    }
+  }
+  const headers: Record<string, string> = { Accept: 'application/json' };
+  if (mapping.headers) {
+    for (const [k, tmpl] of Object.entries(mapping.headers)) {
+      // strip CR/LF to prevent header injection
+      headers[k] = substituteString(tmpl, input).replace(/[\r\n]/g, '');
+    }
+  }
+  let body: string | undefined;
+  if (mapping.body !== undefined) {
+    body = JSON.stringify(substituteBody(mapping.body, input));
+    headers['Content-Type'] = 'application/json';
+  }
+  return { url: url.toString(), method: mapping.method, headers, body };
+}
+
+export function extractResponsePath(bodyText: string, responsePath: string): string {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(bodyText);
+  } catch {
+    throw new Error(
+      `responsePath "${responsePath}" requested but response body is not JSON: ${bodyText.slice(0, 120)}`,
+    );
+  }
+  let cur: unknown = parsed;
+  for (const seg of responsePath.split('.')) {
+    if (
+      cur &&
+      typeof cur === 'object' &&
+      Object.prototype.hasOwnProperty.call(cur, seg)
+    ) {
+      cur = (cur as Record<string, unknown>)[seg];
+    } else {
+      throw new Error(
+        `responsePath "${responsePath}" not found in response: ${bodyText.slice(0, 120)}`,
+      );
+    }
+  }
+  return typeof cur === 'string' ? cur : JSON.stringify(cur);
+}
+
 // --- Bridge modes ---
 
-async function executeToolBridgeHttp(tool: string, input: Record<string, unknown>): Promise<unknown> {
+export async function executeToolBridgeHttp(
+  tool: string,
+  input: Record<string, unknown>,
+): Promise<unknown> {
   await ensureToolReady();
+
+  const rawRequestMapping = process.env.KUBECLAW_TOOL_REQUEST_MAPPING;
+  if (rawRequestMapping) {
+    let mapping: RequestMapping;
+    try {
+      mapping = JSON.parse(rawRequestMapping) as RequestMapping;
+    } catch (err) {
+      throw new Error(
+        `invalid KUBECLAW_TOOL_REQUEST_MAPPING: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    const req = buildMappedRequest(mapping, input, toolPort);
+    const res = await fetchWithRetry(req.url, {
+      method: req.method,
+      headers: req.headers,
+      ...(req.body !== undefined ? { body: req.body } : {}),
+    });
+    const text = await res.text();
+    const shaped = mapping.responsePath
+      ? extractResponsePath(text, mapping.responsePath)
+      : text;
+    return shaped.slice(0, MAX_TOOL_OUTPUT_BYTES);
+  }
+
+  // Default contract: POST /invoke with {tool, input}
   const res = await fetchWithRetry(`http://localhost:${toolPort}/invoke`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ tool, input }),
   });
-  const data = await res.json() as { result?: unknown; error?: string };
+  const data = (await res.json()) as { result?: unknown; error?: string };
   if (data.error) throw new Error(data.error);
   return data.result ?? null;
 }

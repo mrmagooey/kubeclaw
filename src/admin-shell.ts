@@ -1105,6 +1105,22 @@ export const TOOLS: OpenAI.ChatCompletionTool[] = [
           memoryLimit: { type: 'string' },
           cpuRequest: { type: 'string' },
           cpuLimit: { type: 'string' },
+          requestMapping: {
+            type: 'object',
+            description:
+              'Optional HTTP request mapping (pattern "http" only): how to build the real request to the tool container. Fields: method, path ("/x/{field}"), query, headers, body, responsePath.',
+            properties: {
+              method: {
+                type: 'string',
+                enum: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
+              },
+              path: { type: 'string' },
+              query: { type: 'object' },
+              headers: { type: 'object' },
+              body: {},
+              responsePath: { type: 'string' },
+            },
+          },
         },
       },
     },
@@ -1138,6 +1154,22 @@ export const TOOLS: OpenAI.ChatCompletionTool[] = [
           memoryLimit: { type: 'string' },
           cpuRequest: { type: 'string' },
           cpuLimit: { type: 'string' },
+          requestMapping: {
+            type: 'object',
+            description:
+              'Optional HTTP request mapping (pattern "http" only): how to build the real request to the tool container. Fields: method, path ("/x/{field}"), query, headers, body, responsePath.',
+            properties: {
+              method: {
+                type: 'string',
+                enum: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
+              },
+              path: { type: 'string' },
+              query: { type: 'object' },
+              headers: { type: 'object' },
+              body: {},
+              responsePath: { type: 'string' },
+            },
+          },
         },
       },
     },
@@ -1931,6 +1963,10 @@ function handleRegisterTool(input: ToolInput): string {
       cpuRequest: input.cpuRequest as string,
     }),
     ...(input.cpuLimit !== undefined && { cpuLimit: input.cpuLimit as string }),
+    ...(input.requestMapping !== undefined && {
+      requestMapping:
+        input.requestMapping as import('./tools/types.js').RequestMapping,
+    }),
   };
   const result = registerTool(spec, toolReconciler.apply.bind(toolReconciler));
   if (!result.ok) return `Error: ${result.error}`;
@@ -1957,6 +1993,7 @@ function handleEditTool(input: ToolInput): string {
     'memoryLimit',
     'cpuRequest',
     'cpuLimit',
+    'requestMapping',
   ]) {
     if (input[f] !== undefined) patch[f] = input[f];
   }
