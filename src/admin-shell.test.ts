@@ -1029,6 +1029,27 @@ describe('executeTool', () => {
         expect.any(Function),
       );
     });
+
+    it('passes requestMapping through to registerTool', async () => {
+      const mapping = {
+        method: 'GET',
+        path: '/weather/{city}',
+        responsePath: 'temp',
+      };
+      mockRegisterTool.mockReturnValue({ ok: true });
+      await executeTool('register_tool', {
+        name: 'weather',
+        description: 'Weather',
+        parameters: { type: 'object', properties: { city: { type: 'string' } } },
+        image: 'ghcr.io/example/weather:1',
+        pattern: 'http',
+        requestMapping: mapping,
+      });
+      expect(mockRegisterTool).toHaveBeenCalledWith(
+        expect.objectContaining({ requestMapping: mapping }),
+        expect.any(Function),
+      );
+    });
   });
 
   // ── edit_tool ──────────────────────────────────────────────────────────────
