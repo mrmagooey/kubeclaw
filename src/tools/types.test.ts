@@ -46,6 +46,10 @@ describe('validateTool', () => {
     }
   });
 
+  it('rejects the reserved built-in spawn category name "execution"', () => {
+    expect(validateTool({ ...base, name: 'execution' }).ok).toBe(false);
+  });
+
   it('requires image', () => {
     const { image, ...noImage } = base;
     expect(validateTool(noImage).ok).toBe(false);

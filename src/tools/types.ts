@@ -33,14 +33,19 @@ export type ValidationResult = { ok: true } | { ok: false; error: string };
 
 const NAME_RE = /^[A-Za-z][A-Za-z0-9_-]*$/;
 
-// Reserved: static built-in tool names (TOOL_SERVER_NAME keys in
-// direct-llm-runner.ts). A catalog tool may not shadow or be shadowed by one.
+// Reserved names a catalog tool may not use:
+//  - the static built-in tool names (TOOL_SERVER_NAME keys in direct-llm-runner.ts:
+//    web_fetch, web_search, browser, bash, places_search), and
+//  - the built-in spawn categories (BUILTIN_CATEGORIES in k8s/ipc-redis.ts:
+//    execution, browser) — a catalog tool named after a category would be
+//    silently routed to a legacy tool pod instead of its own image.
 const RESERVED_NAMES = new Set([
   'web_fetch',
   'web_search',
   'browser',
   'bash',
   'places_search',
+  'execution',
 ]);
 
 const ALLOWED_KEYS = new Set([
