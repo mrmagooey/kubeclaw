@@ -441,14 +441,42 @@ export function extractResponsePath(bodyText: string, responsePath: string): str
 
 // --- Bridge modes ---
 
-async function executeToolBridgeHttp(tool: string, input: Record<string, unknown>): Promise<unknown> {
+export async function executeToolBridgeHttp(
+  tool: string,
+  input: Record<string, unknown>,
+): Promise<unknown> {
   await ensureToolReady();
+
+  const rawRequestMapping = process.env.KUBECLAW_TOOL_REQUEST_MAPPING;
+  if (rawRequestMapping) {
+    let mapping: RequestMapping;
+    try {
+      mapping = JSON.parse(rawRequestMapping) as RequestMapping;
+    } catch (err) {
+      throw new Error(
+        `invalid KUBECLAW_TOOL_REQUEST_MAPPING: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    const req = buildMappedRequest(mapping, input, toolPort);
+    const res = await fetchWithRetry(req.url, {
+      method: req.method,
+      headers: req.headers,
+      ...(req.body !== undefined ? { body: req.body } : {}),
+    });
+    const text = await res.text();
+    const shaped = mapping.responsePath
+      ? extractResponsePath(text, mapping.responsePath)
+      : text;
+    return shaped.slice(0, MAX_TOOL_OUTPUT_BYTES);
+  }
+
+  // Default contract: POST /invoke with {tool, input}
   const res = await fetchWithRetry(`http://localhost:${toolPort}/invoke`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ tool, input }),
   });
-  const data = await res.json() as { result?: unknown; error?: string };
+  const data = (await res.json()) as { result?: unknown; error?: string };
   if (data.error) throw new Error(data.error);
   return data.result ?? null;
 }

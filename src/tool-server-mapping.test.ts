@@ -3,7 +3,7 @@
  * Mirrors src/tool-server-bridge.test.ts: env set via vi.hoisted, redis mocked,
  * before importing the module (it reads env at load and starts main()).
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.hoisted(() => {
   process.env.KUBECLAW_TOOL_JOB_ID = 'test-job-id';
@@ -27,6 +27,7 @@ vi.mock('redis', () => {
 import {
   buildMappedRequest,
   extractResponsePath,
+  executeToolBridgeHttp,
 } from '../container/agent-runner/src/tool-server.js';
 
 describe('buildMappedRequest', () => {
@@ -130,8 +131,58 @@ describe('extractResponsePath', () => {
   });
 
   it('throws on an inherited-property path segment (no prototype traversal)', () => {
-    expect(() => extractResponsePath('{"a":1}', '__proto__.constructor')).toThrow(
-      /responsePath "__proto__\.constructor"/,
+    expect(() =>
+      extractResponsePath('{"a":1}', '__proto__.constructor'),
+    ).toThrow(/responsePath "__proto__\.constructor"/);
+  });
+});
+
+describe('executeToolBridgeHttp — mapped mode', () => {
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+    delete process.env.KUBECLAW_TOOL_REQUEST_MAPPING;
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    delete process.env.KUBECLAW_TOOL_REQUEST_MAPPING;
+  });
+
+  it('builds a GET from the mapping and returns the raw body when no responsePath', async () => {
+    process.env.KUBECLAW_TOOL_REQUEST_MAPPING = JSON.stringify({
+      method: 'GET',
+      path: '/weather/{city}',
+    });
+    const fetchMock = vi.fn(async (url: string) => {
+      expect(url).toBe('http://localhost:8080/weather/NYC');
+      return new Response('{"temp":21}', { status: 200 });
+    });
+    // ready probe also calls fetch; make the probe (path '/') succeed too:
+    vi.stubGlobal('fetch', fetchMock);
+    const out = await executeToolBridgeHttp('weather', { city: 'NYC' });
+    expect(out).toBe('{"temp":21}');
+  });
+
+  it('extracts responsePath when set', async () => {
+    process.env.KUBECLAW_TOOL_REQUEST_MAPPING = JSON.stringify({
+      method: 'GET',
+      path: '/w',
+      responsePath: 'current.temp_c',
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('{"current":{"temp_c":21.5}}', { status: 200 })),
     );
+    const out = await executeToolBridgeHttp('weather', {});
+    expect(out).toBe('21.5');
+  });
+
+  it('still uses /invoke when no mapping env is set', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      expect(url).toBe('http://localhost:8080/invoke');
+      return new Response('{"result":"ok"}', { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const out = await executeToolBridgeHttp('weather', { city: 'NYC' });
+    expect(out).toBe('ok');
   });
 });
