@@ -531,3 +531,253 @@ describe('Sidecar Tool Pod — file-bridge mode', () => {
     }
   }, 20000);
 });
+
+// ---- Request-mapping integration tests --------------------------------------
+
+describe('Sidecar Tool Pod — request mapping', () => {
+  it('GET path+query: bridge sends correct URL and returns raw body', async () => {
+    const redis = getSharedRedis();
+    if (!redis) throw new Error('Redis not available');
+
+    const agentJobId = `e2e-rm-get-${Date.now()}`;
+    const toolName = 'weather_tool';
+    const requestId = `req-rm-get-${Date.now()}`;
+    let server: Server | null = null;
+    let proc: ChildProcess | null = null;
+
+    try {
+      let receivedUrl: string | null = null;
+
+      server = createServer((req: IncomingMessage, res: ServerResponse) => {
+        // Readiness probe: any GET that isn't our mapped path — answer 200 silently
+        if (req.method === 'GET' && req.url && req.url.startsWith('/weather/')) {
+          receivedUrl = req.url;
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end('{"temp":21}');
+        } else {
+          res.writeHead(200).end('ok');
+        }
+      });
+
+      const port: number = await new Promise((resolve) =>
+        server!.listen(0, '127.0.0.1', () =>
+          resolve((server!.address() as AddressInfo).port),
+        ),
+      );
+
+      const mapping = { method: 'GET', path: '/weather/{city}', query: { units: '{units}' } };
+
+      await pushToolCall(agentJobId, toolName, requestId, toolName, { city: 'NYC', units: 'metric' });
+
+      proc = spawnToolServer({
+        KUBECLAW_TOOL_JOB_ID: agentJobId,
+        KUBECLAW_CATEGORY: toolName,
+        KUBECLAW_TOOL_MODE: 'http-bridge',
+        KUBECLAW_TOOL_PORT: String(port),
+        KUBECLAW_TOOL_REQUEST_MAPPING: JSON.stringify(mapping),
+        IDLE_TIMEOUT: '10000',
+        REDIS_URL: getRedisUrlForTests(),
+      });
+
+      const { result, error } = await waitForToolResult(agentJobId, toolName, requestId, 15000);
+
+      expect(error).toBeNull();
+      expect(result).not.toBeNull();
+
+      // Assert the received URL had the correct path + query (order-independent)
+      expect(receivedUrl).not.toBeNull();
+      const u = new URL(`http://localhost${receivedUrl}`);
+      expect(u.pathname).toBe('/weather/NYC');
+      expect(u.searchParams.get('units')).toBe('metric');
+
+      // The main loop JSON.stringifies the returned value, so result holds
+      // the double-encoded string. Parse once to get the raw body string.
+      expect(JSON.parse(result!)).toBe('{"temp":21}');
+    } finally {
+      proc?.kill();
+      await cleanupStreams(agentJobId, toolName);
+      await new Promise<void>((r) => (server ? server!.close(() => r()) : r()));
+    }
+  }, 25000);
+
+  it('POST JSON body: numeric type preserved in body, result returned', async () => {
+    const redis = getSharedRedis();
+    if (!redis) throw new Error('Redis not available');
+
+    const agentJobId = `e2e-rm-post-${Date.now()}`;
+    const toolName = 'search_tool';
+    const requestId = `req-rm-post-${Date.now()}`;
+    let server: Server | null = null;
+    let proc: ChildProcess | null = null;
+
+    try {
+      let bodyAssertionError: string | null = null;
+
+      server = createServer((req: IncomingMessage, res: ServerResponse) => {
+        if (req.method === 'POST' && req.url === '/q') {
+          let raw = '';
+          req.on('data', (chunk) => (raw += chunk));
+          req.on('end', () => {
+            try {
+              const body = JSON.parse(raw) as { count: unknown; q: unknown };
+              if (typeof body.count !== 'number' || body.count !== 3) {
+                bodyAssertionError = `expected count to be number 3, got ${typeof body.count} ${body.count}`;
+              }
+              if (body.q !== 'rain') {
+                bodyAssertionError = `expected q to be "rain", got ${body.q}`;
+              }
+            } catch (err) {
+              bodyAssertionError = `JSON parse error: ${err}`;
+            }
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end('{"ok":true}');
+          });
+        } else {
+          // Readiness probe or any other request
+          res.writeHead(200).end('ok');
+        }
+      });
+
+      const port: number = await new Promise((resolve) =>
+        server!.listen(0, '127.0.0.1', () =>
+          resolve((server!.address() as AddressInfo).port),
+        ),
+      );
+
+      const mapping = { method: 'POST', path: '/q', body: { count: '{count}', q: '{query}' } };
+
+      await pushToolCall(agentJobId, toolName, requestId, toolName, { count: 3, query: 'rain' });
+
+      proc = spawnToolServer({
+        KUBECLAW_TOOL_JOB_ID: agentJobId,
+        KUBECLAW_CATEGORY: toolName,
+        KUBECLAW_TOOL_MODE: 'http-bridge',
+        KUBECLAW_TOOL_PORT: String(port),
+        KUBECLAW_TOOL_REQUEST_MAPPING: JSON.stringify(mapping),
+        IDLE_TIMEOUT: '10000',
+        REDIS_URL: getRedisUrlForTests(),
+      });
+
+      const { result, error } = await waitForToolResult(agentJobId, toolName, requestId, 15000);
+
+      expect(error).toBeNull();
+      expect(bodyAssertionError).toBeNull();
+      expect(result).not.toBeNull();
+      // The main loop JSON.stringifies the returned value; parse twice to get
+      // the actual object (first parse → raw body string; second → object).
+      const rawBody = JSON.parse(result!) as string;
+      const parsed = JSON.parse(rawBody) as { ok: boolean };
+      expect(parsed.ok).toBe(true);
+    } finally {
+      proc?.kill();
+      await cleanupStreams(agentJobId, toolName);
+      await new Promise<void>((r) => (server ? server!.close(() => r()) : r()));
+    }
+  }, 25000);
+
+  it('responsePath: extracts nested field from JSON response', async () => {
+    const redis = getSharedRedis();
+    if (!redis) throw new Error('Redis not available');
+
+    const agentJobId = `e2e-rm-rp-${Date.now()}`;
+    const toolName = 'weather_rp_tool';
+    const requestId = `req-rm-rp-${Date.now()}`;
+    let server: Server | null = null;
+    let proc: ChildProcess | null = null;
+
+    try {
+      server = createServer((req: IncomingMessage, res: ServerResponse) => {
+        if (req.method === 'GET' && req.url === '/w') {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end('{"current":{"temp_c":21.5}}');
+        } else {
+          // Readiness probe or other requests
+          res.writeHead(200).end('ok');
+        }
+      });
+
+      const port: number = await new Promise((resolve) =>
+        server!.listen(0, '127.0.0.1', () =>
+          resolve((server!.address() as AddressInfo).port),
+        ),
+      );
+
+      const mapping = { method: 'GET', path: '/w', responsePath: 'current.temp_c' };
+
+      await pushToolCall(agentJobId, toolName, requestId, toolName, {});
+
+      proc = spawnToolServer({
+        KUBECLAW_TOOL_JOB_ID: agentJobId,
+        KUBECLAW_CATEGORY: toolName,
+        KUBECLAW_TOOL_MODE: 'http-bridge',
+        KUBECLAW_TOOL_PORT: String(port),
+        KUBECLAW_TOOL_REQUEST_MAPPING: JSON.stringify(mapping),
+        IDLE_TIMEOUT: '10000',
+        REDIS_URL: getRedisUrlForTests(),
+      });
+
+      const { result, error } = await waitForToolResult(agentJobId, toolName, requestId, 15000);
+
+      expect(error).toBeNull();
+      expect(result).not.toBeNull();
+      // extractResponsePath returns a string; result is JSON.stringified by the main loop
+      // The extracted value is 21.5 (number) → JSON.stringify(21.5) → "21.5"
+      expect(JSON.parse(result!)).toBe('21.5');
+    } finally {
+      proc?.kill();
+      await cleanupStreams(agentJobId, toolName);
+      await new Promise<void>((r) => (server ? server!.close(() => r()) : r()));
+    }
+  }, 25000);
+
+  it('404 response: tool result carries error containing "Tool HTTP 404"', async () => {
+    const redis = getSharedRedis();
+    if (!redis) throw new Error('Redis not available');
+
+    const agentJobId = `e2e-rm-404-${Date.now()}`;
+    const toolName = 'missing_tool';
+    const requestId = `req-rm-404-${Date.now()}`;
+    let server: Server | null = null;
+    let proc: ChildProcess | null = null;
+
+    try {
+      server = createServer((req: IncomingMessage, res: ServerResponse) => {
+        if (req.method === 'GET' && req.url === '/missing') {
+          res.writeHead(404).end('not found');
+        } else {
+          // Readiness probe (GET /) — answer 200 so the bridge passes the gate
+          res.writeHead(200).end('ok');
+        }
+      });
+
+      const port: number = await new Promise((resolve) =>
+        server!.listen(0, '127.0.0.1', () =>
+          resolve((server!.address() as AddressInfo).port),
+        ),
+      );
+
+      const mapping = { method: 'GET', path: '/missing' };
+
+      await pushToolCall(agentJobId, toolName, requestId, toolName, {});
+
+      proc = spawnToolServer({
+        KUBECLAW_TOOL_JOB_ID: agentJobId,
+        KUBECLAW_CATEGORY: toolName,
+        KUBECLAW_TOOL_MODE: 'http-bridge',
+        KUBECLAW_TOOL_PORT: String(port),
+        KUBECLAW_TOOL_REQUEST_MAPPING: JSON.stringify(mapping),
+        IDLE_TIMEOUT: '10000',
+        REDIS_URL: getRedisUrlForTests(),
+      });
+
+      const { error } = await waitForToolResult(agentJobId, toolName, requestId, 15000);
+
+      expect(error).not.toBeNull();
+      expect(error).toContain('Tool HTTP 404');
+    } finally {
+      proc?.kill();
+      await cleanupStreams(agentJobId, toolName);
+      await new Promise<void>((r) => (server ? server!.close(() => r()) : r()));
+    }
+  }, 25000);
+});
