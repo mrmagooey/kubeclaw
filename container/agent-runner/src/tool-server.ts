@@ -525,14 +525,20 @@ export async function executeToolBridgeFile(
   const deadline = Date.now() + idleTimeout;
   while (Date.now() < deadline) {
     if (fs.existsSync(respDir)) {
-      const exit = fs.readFileSync(path.join(respDir, 'exit_code'), 'utf-8').trim();
-      const stdout = fs.existsSync(path.join(respDir, 'response'))
-        ? fs.readFileSync(path.join(respDir, 'response'), 'utf-8')
-        : '';
-      const stderr = fs.existsSync(path.join(respDir, 'stderr'))
-        ? fs.readFileSync(path.join(respDir, 'stderr'), 'utf-8')
-        : '';
-      fs.rmSync(respDir, { recursive: true, force: true });
+      let exit = '';
+      let stdout = '';
+      let stderr = '';
+      try {
+        exit = fs.readFileSync(path.join(respDir, 'exit_code'), 'utf-8').trim();
+        stdout = fs.existsSync(path.join(respDir, 'response'))
+          ? fs.readFileSync(path.join(respDir, 'response'), 'utf-8')
+          : '';
+        stderr = fs.existsSync(path.join(respDir, 'stderr'))
+          ? fs.readFileSync(path.join(respDir, 'stderr'), 'utf-8')
+          : '';
+      } finally {
+        fs.rmSync(respDir, { recursive: true, force: true });
+      }
       if (exit !== '0') {
         throw new Error(`exit ${exit}: ${stderr.slice(0, MAX_TOOL_OUTPUT_BYTES)}`);
       }
