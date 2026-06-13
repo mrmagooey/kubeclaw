@@ -191,28 +191,6 @@ export const TOOLS: OpenAI.ChatCompletionFunctionTool[] = [
   {
     type: 'function',
     function: {
-      name: 'bash',
-      description:
-        'Run a bash command in an isolated container. Use for scripts, data processing, file operations, or anything requiring a shell.',
-      parameters: {
-        type: 'object',
-        properties: {
-          command: {
-            type: 'string',
-            description: 'The bash command to execute',
-          },
-          timeout: {
-            type: 'number',
-            description: 'Timeout in seconds (default 30)',
-          },
-        },
-        required: ['command'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
       name: 'execute_agent',
       description:
         'Spawn a full coding agent for complex, multi-step coding tasks: writing or editing code, running tests, installing packages, browsing the codebase. Use when the task requires sustained agentic work beyond a single command.',
@@ -462,7 +440,6 @@ const TOOL_SERVER_NAME: Record<string, string> = {
   web_fetch: 'webFetch',
   web_search: 'webSearch',
   browser: 'agentBrowser',
-  bash: 'bash',
   places_search: 'placesSearch',
 };
 
@@ -471,7 +448,6 @@ const TOOL_CATEGORY: Record<string, 'browser' | 'execution'> = {
   web_fetch: 'browser',
   web_search: 'browser',
   browser: 'browser',
-  bash: 'execution',
   places_search: 'browser',
 };
 

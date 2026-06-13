@@ -435,7 +435,6 @@ describe('DirectLLMRunner', () => {
     const toolNames = callArgs.tools.map((t: any) => t.function.name);
     expect(toolNames).toContain('home_control');
     // Built-in tools still included
-    expect(toolNames).toContain('bash');
     expect(toolNames).toContain('web_fetch');
   });
 
@@ -572,7 +571,6 @@ describe('DirectLLMRunner', () => {
     // Only the allowlisted tool is advertised
     expect(toolNames).toEqual(['web_search']);
     // Other built-in tools are not included
-    expect(toolNames).not.toContain('bash');
     expect(toolNames).not.toContain('web_fetch');
     expect(toolNames).not.toContain('execute_agent');
   });
