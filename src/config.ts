@@ -271,6 +271,29 @@ export function assertToolImageAllowed(image: string): void {
   }
 }
 
+// --- Group-mount Image Allowlist (default-DENY) ---
+// Images permitted to mount the group PVC into their tool container.
+// Unlike TOOL_IMAGE_ALLOWLIST (permits all when empty), this permits NOTHING
+// when empty — group-filesystem access is opt-in per image.
+export const TOOL_GROUP_MOUNT_ALLOWLIST: string[] = (
+  process.env.TOOL_GROUP_MOUNT_ALLOWLIST || ''
+)
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+export function assertGroupMountAllowed(image: string): void {
+  const allowed = TOOL_GROUP_MOUNT_ALLOWLIST.some((pattern) =>
+    imageMatchesPattern(image, pattern),
+  );
+  if (!allowed) {
+    throw new Error(
+      `Tool image '${image}' is not permitted to mount the group filesystem. ` +
+        `Add it to TOOL_GROUP_MOUNT_ALLOWLIST. Permitted patterns: ${TOOL_GROUP_MOUNT_ALLOWLIST.join(', ') || '(none)'}`,
+    );
+  }
+}
+
 // --- Tool Job Resource Limits (Kubernetes) ---
 export const TOOL_JOB_MEMORY_REQUEST =
   process.env.TOOL_JOB_MEMORY_REQUEST || '512Mi';
