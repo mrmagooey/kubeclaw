@@ -172,6 +172,10 @@ spec:
             - name: TOOL_IMAGE_ALLOWLIST
               value: {{ .Values.orchestrator.toolImageAllowlist | quote }}
             {{- end }}
+            {{- if .Values.orchestrator.toolGroupMountAllowlist }}
+            - name: TOOL_GROUP_MOUNT_ALLOWLIST
+              value: {{ .Values.orchestrator.toolGroupMountAllowlist | quote }}
+            {{- end }}
             {{- if .Values.mcpServers }}
             - name: MCP_SERVERS_VALUES
               value: {{ .Values.mcpServers | toJson | quote }}

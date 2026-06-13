@@ -31,6 +31,9 @@ orchestrator:
   # Supports '*' wildcards, e.g. "kubeclaw-*:*,registry.example.com/*".
   # Empty (default) permits any image — set this in production to lock down tool containers.
   toolImageAllowlist: ""
+  # Images permitted to mount the group PVC into their tool container.
+  # Default-deny: empty allows nothing. alpine:* enables the bash_persist tool.
+  toolGroupMountAllowlist: "alpine:*"
   resources:
     requests:
       memory: 256Mi
@@ -494,7 +497,29 @@ specialists:
 # Global tool catalog. Empty by default — register tools via the admin shell
 # (register_tool) or add entries here. Each entry is a ToolSpec; an optional
 # `channels:` list scopes the tool to specific channels (omit = all channels).
-tools: []
+tools:
+  - name: bash
+    description: Run a shell command in an ephemeral sandbox (no persistent changes; returns the command output).
+    parameters:
+      type: object
+      properties:
+        command: { type: string }
+      required: [command]
+    image: alpine:latest
+    pattern: file
+    mount: scratch
+    run: 'sh -c "$(cat "$INPUT_DIR/command")"'
+  - name: bash_persist
+    description: Run a shell command against the group's persistent files. Changes are saved to the group filesystem.
+    parameters:
+      type: object
+      properties:
+        command: { type: string }
+      required: [command]
+    image: alpine:latest
+    pattern: file
+    mount: group
+    run: 'sh -c "$(cat "$INPUT_DIR/command")"'
 
 # Prometheus metrics scraping. Requires prometheus-operator in the cluster.
 metrics:
