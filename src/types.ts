@@ -73,7 +73,6 @@ export type { ToolSpec } from './tools/types.js';
 export interface ContainerConfig {
   additionalMounts?: AdditionalMount[];
   timeout?: number; // Default: 300000 (5 minutes)
-  tools?: ToolSpec[]; // Custom tool containers spawned on demand as sidecar tool pods
   memoryRequest?: string; // K8s memory request (e.g., "512Mi")
   memoryLimit?: string; // K8s memory limit (e.g., "4Gi")
   cpuRequest?: string; // K8s CPU request (e.g., "250m")
