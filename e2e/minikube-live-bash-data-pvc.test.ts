@@ -1,68 +1,63 @@
 /**
- * Minikube-live e2e: Story 169 — bash tool job runs against the group's /data PVC.
+ * Minikube-live e2e: bash / bash_persist catalog tools — file-bridge + mounts.
  *
- * The globalSetup at e2e/minikube-live-setup.ts has helm-installed kubeclaw
- * into namespace `kubeclaw-live` and port-forwarded:
- *   svc/kubeclaw-channel-http → localhost:14081
- *   svc/kubeclaw-redis        → localhost:16381
+ * Prior version (Story 169) tested the old execution-category dispatch path
+ * (app=kubeclaw-tool-pod, category=execution, tool-server.js) which is being
+ * replaced by the file-bridge + catalog form introduced in feat/tool-mounts-bash.
+ * Those execution-category assertions have been removed and replaced here.
  *
  * Test strategy
  * ─────────────
- * This test uses the Redis bypass (same pattern as minikube-live-tool-pods.test.ts)
- * to avoid LLM non-determinism when asserting the execution-category dispatch path.
- * The bypass writes a bash tool call directly to the spawn-tool-pod + toolcalls
- * Redis streams, then asserts the tool pod runs and returns the correct output.
+ * The deployed orchestrator may predate this branch's changes, so we call
+ * jobRunner.createSidecarToolPodJob() DIRECTLY against the live cluster API
+ * (the same pattern used by the requestMapping test in tool-pod-spawn.test.ts).
+ * This creates a real K8s Job whose spec we read back and assert against,
+ * without depending on the in-cluster watcher or LLM.
  *
  * Two sub-tests:
  *
- * 1. bash-execution-pod: verifies the execution-category tool pod spawns,
- *    the pod logs contain "Executing tool=bash", and the result stream carries
- *    a non-error response. Uses a simple `echo` command so no PVC seeding is
- *    required — the echo output is deterministic.
+ * 1. file+scratch: bash tool (mount: 'scratch')
+ *    - Job label: app=kubeclaw-sidecar-tool
+ *    - Containers: kubeclaw-tool-bridge + user-tool (image alpine:latest)
+ *    - user-tool command: ['/bin/sh', '/kubeclaw/tool-wrapper.sh']
+ *    - user-tool has a 'work' emptyDir volume mounted at /work
+ *    - user-tool env: KUBECLAW_TOOL_RUN, WORKDIR=/work, KUBECLAW_TOOL_FIELDS=command
+ *    - kubeclaw-tool-bridge does NOT have the 'work' volume mounted (security boundary)
  *
- * 2. bash-security-context: verifies the spawned execution tool pod's
- *    securityContext includes runAsNonRoot and that the serviceAccount token
- *    is not auto-mounted (Story 169 AC3). Asserts via kubectl get pod -o json.
+ * 2. file+group: bash_persist tool (mount: 'group')
+ *    - user-tool has a 'work' PVC (kubeclaw-groups) mounted at /work
+ *      with subPath == groupFolder
+ *    - kubeclaw-tool-bridge does NOT have the 'work' volume mounted
  *
- * Why no PVC seed via filesystem MCP?
- *   The filesystem MCP is a separate capability pod not deployed by the standard
- *   helm values-minikube.yaml; seeding /data/sales.csv would require a dedicated
- *   capability install step. The echo-based test covers the full tool dispatch
- *   path (bash → execution category → spawn-tool-pod → tool-server → result
- *   stream) without depending on PVC content.
+ * Why no PVC write/read round-trip?
+ *   A full Redis+LLM round trip to verify bash_persist data persistence would
+ *   require the deployed orchestrator to understand the new catalog tool format,
+ *   which it may not (predates this branch). The manifest-level assertions here
+ *   plus the Task-8 integration test (tool-catalog-spawn.test.ts) cover the
+ *   behavioral path. This test confirms the real K8s Job spec produced by the
+ *   new createSidecarToolPodJob code is correct.
  *
- * Hard assertions:
- *   - A pod labelled app=kubeclaw-tool-pod appears within 90 s.
- *   - Pod logs contain "Executing tool=bash".
- *   - Result stream entry contains the expected output string.
- *   - Pod securityContext.runAsNonRoot is true (AC3).
- *   - Pod does NOT have automountServiceAccountToken: true (AC3).
+ * Cluster gate
+ * ────────────
+ * If the orchestrator pod is not running/ready, all tests skip cleanly.
+ * The test does NOT require the orchestrator to be on this branch — it calls
+ * jobRunner directly, so the deployed orchestrator version does not matter.
  *
- * ACs not fully coverable:
- *   AC1 (LLM emits bash tool call) — this test uses the Redis bypass; the
- *       LLM-driven path is exercised by the LLM-directive variant in
- *       minikube-live-tool-pods.test.ts. Marked informational.
- *   AC4 (SSE reply contains numeric answer) — requires seeding /data/sales.csv
- *       which needs the filesystem MCP; out-of-scope. Covered by the result
- *       stream assertion instead.
- *   AC5 (cross-group PVC isolation) — requires two groups with separate PVC
- *       subPaths, which is outside the scope of the bash dispatch path itself.
- *       The PVC sub-path logic is unit-tested in e2e/tool-job.test.ts.
- *
- * Run: npm run test:minikube-live -- minikube-live-bash-data-pvc
+ * Run: npx vitest run e2e/minikube-live-bash-data-pvc.test.ts --config vitest.e2e.config.ts
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import Redis from 'ioredis';
-import {
-  KUBECLAW_LIVE_HTTP_LOCAL_PORT,
-  KUBECLAW_LIVE_REDIS_LOCAL_PORT,
-} from './minikube-live-setup.js';
 
-const NAMESPACE = 'kubeclaw-live';
-const HTTP_URL = `http://127.0.0.1:${KUBECLAW_LIVE_HTTP_LOCAL_PORT}`;
+const NAMESPACE = process.env.NAMESPACE || 'kubeclaw';
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// jobRunner reads KUBECLAW_NAMESPACE from config.ts at module-load time.
+// Set it here (before any dynamic import) so jobs land in the right namespace.
+// The minikube-live config has no env{} block, so we must self-seed it.
+if (!process.env.KUBECLAW_NAMESPACE) {
+  process.env.KUBECLAW_NAMESPACE = NAMESPACE;
+}
+
+// ── Cluster-gate helpers ──────────────────────────────────────────────────────
 
 function kubectl(
   args: string[],
@@ -76,274 +71,301 @@ function kubectl(
   return { ok: r.status === 0, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
 }
 
-async function waitForToolPod(
-  labelSelector: string,
-  timeoutMs: number,
-  sinceMs: number,
-): Promise<string | null> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const r = kubectl([
-      'get', 'pods', '-n', NAMESPACE, '-l', labelSelector,
-      '--sort-by=.metadata.creationTimestamp',
-      '-o', 'jsonpath={range .items[*]}{.metadata.name}{"\\t"}{.metadata.creationTimestamp}{"\\n"}{end}',
-    ]);
-    if (r.ok && r.stdout.trim()) {
-      const podLines = r.stdout.trim().split('\n').reverse();
-      for (const podLine of podLines) {
-        const [name, ts] = podLine.split('\t');
-        if (!name || !ts) continue;
-        if (Date.parse(ts) + 2000 >= sinceMs) return name;
-      }
-    }
-    await new Promise((res) => setTimeout(res, 3000));
+function isOrchestratorReady(): boolean {
+  const result = kubectl([
+    'get', 'pods', '-n', NAMESPACE,
+    '-l', 'app=kubeclaw-orchestrator',
+    '-o', 'json',
+  ]);
+  if (!result.ok) return false;
+  try {
+    const pods = JSON.parse(result.stdout) as {
+      items: Array<{
+        status: { phase: string; containerStatuses?: Array<{ ready: boolean }> };
+      }>;
+    };
+    if (pods.items.length === 0) return false;
+    const pod = pods.items[0];
+    return (
+      pod.status.phase === 'Running' &&
+      (pod.status.containerStatuses?.every((c) => c.ready) ?? false)
+    );
+  } catch {
+    return false;
   }
-  return null;
 }
 
-async function waitForPodLog(
-  podName: string,
-  substring: string,
-  timeoutMs: number,
-): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const r = kubectl(['logs', '-n', NAMESPACE, podName, '--all-containers=true'], { timeout: 10_000 });
-    if (r.stdout.includes(substring)) return true;
-    await new Promise((res) => setTimeout(res, 2000));
-  }
-  return false;
+// ── K8s Job type (minimal shape for assertions) ───────────────────────────────
+
+interface K8sContainer {
+  name: string;
+  image: string;
+  command?: string[];
+  env?: Array<{ name: string; value?: string }>;
+  volumeMounts?: Array<{ name: string; mountPath: string; subPath?: string }>;
 }
 
-/**
- * Poll a Redis stream for an entry whose "requestId" field matches `requestId`.
- */
-async function pollToolResult(
-  redis: Redis,
-  stream: string,
-  requestId: string,
-  timeoutMs: number,
-): Promise<Record<string, string>> {
+interface K8sJob {
+  metadata: { name: string; labels?: Record<string, string> };
+  spec: {
+    template: {
+      spec: {
+        containers: K8sContainer[];
+        volumes?: Array<{
+          name: string;
+          emptyDir?: Record<string, unknown>;
+          persistentVolumeClaim?: { claimName: string };
+        }>;
+      };
+    };
+  };
+}
+
+function pollForJob(labelSelector: string, timeoutMs = 60_000): Promise<K8sJob> {
   const deadline = Date.now() + timeoutMs;
   return new Promise((resolve, reject) => {
-    const check = async () => {
-      try {
-        const entries = await redis.xrange(stream, '-', '+');
-        for (const [, fields] of entries) {
-          const obj: Record<string, string> = {};
-          for (let i = 0; i < fields.length; i += 2) obj[fields[i]] = fields[i + 1];
-          if (obj.requestId === requestId) return resolve(obj);
-        }
-      } catch { /* stream may not exist yet */ }
-      if (Date.now() >= deadline) {
-        return reject(new Error(`Timed out waiting for tool result on ${stream} (requestId=${requestId})`));
+    const check = () => {
+      const result = kubectl(
+        ['get', 'jobs', '-n', NAMESPACE, '-l', labelSelector, '-o', 'json'],
+        { timeout: 15_000 },
+      );
+      if (result.ok) {
+        const items = (JSON.parse(result.stdout) as { items: K8sJob[] }).items;
+        if (items.length > 0) return resolve(items[0]);
       }
-      setTimeout(check, 2000);
+      if (Date.now() >= deadline) {
+        return reject(
+          new Error(`Timed out waiting for job with label ${labelSelector}`),
+        );
+      }
+      setTimeout(check, 3000);
     };
-    void check();
+    check();
   });
+}
+
+async function deleteJobIfExists(jobName: string): Promise<void> {
+  kubectl([
+    'delete', 'job', '-n', NAMESPACE, jobName,
+    '--ignore-not-found=true',
+  ]);
 }
 
 // ── Suite ─────────────────────────────────────────────────────────────────────
 
-describe('Minikube-live: Story 169 — bash tool job dispatched via Redis bypass', () => {
-  let provisioned = false;
-  let redis: Redis | null = null;
+describe('Minikube-live: bash catalog tool — file-bridge + mounts manifest assertions', () => {
+  let orchestratorRunning = false;
 
-  beforeAll(async () => {
-    // 1. Verify port-forward is live.
-    for (let i = 0; i < 10; i++) {
-      try {
-        const res = await fetch(`${HTTP_URL}/`, { signal: AbortSignal.timeout(2000) });
-        if (res.status > 0) { provisioned = true; break; }
-      } catch { /* retry */ }
-      await new Promise((r) => setTimeout(r, 1000));
-    }
-    if (!provisioned) {
-      console.warn(`Port-forward to ${HTTP_URL} not reachable — globalSetup may have failed.`);
-      return;
-    }
+  // Jobs created during tests; cleaned up in afterAll.
+  const createdJobs: string[] = [];
 
-    // 2. Connect to Redis using the orchestrator ACL password.
-    const pwd = kubectl([
-      'get', 'secret', '-n', NAMESPACE, 'kubeclaw-redis',
-      '-o', 'jsonpath={.data.admin-password}',
-    ]);
-    if (!pwd.ok || !pwd.stdout) {
-      throw new Error(`Failed to read redis admin-password: ${pwd.stderr}`);
-    }
-    const password = Buffer.from(pwd.stdout, 'base64').toString('utf8');
-    redis = new Redis(
-      `redis://orchestrator:${password}@127.0.0.1:${KUBECLAW_LIVE_REDIS_LOCAL_PORT}`,
-      {
-        maxRetriesPerRequest: 20,
-        connectTimeout: 15_000,
-        retryStrategy: (times: number) => Math.min(times * 200, 2_000),
-        reconnectOnError: () => true,
-      },
-    );
-    await redis.ping();
-  }, 120_000);
-
-  afterAll(async () => {
-    if (redis) {
-      try { await redis.quit(); } catch { /* ignore */ }
+  beforeAll(() => {
+    orchestratorRunning = isOrchestratorReady();
+    if (!orchestratorRunning) {
+      console.warn(
+        `[minikube-live-bash-data-pvc] Orchestrator not ready in namespace ${NAMESPACE} — all tests will skip`,
+      );
     }
   });
 
-  // ── 1. bash → execution-category tool pod spawn and result ───────────────
+  afterAll(async () => {
+    for (const jobName of createdJobs) {
+      await deleteJobIfExists(jobName);
+    }
+  });
+
+  // ── 1. file + scratch ────────────────────────────────────────────────────────
 
   it(
-    'bash tool call → execution-category tool pod spawns and returns stdout (Story 169 AC2)',
-    async () => {
-      expect(provisioned, 'globalSetup port-forward not live').toBe(true);
-      expect(redis, 'Redis client not initialised').not.toBeNull();
+    'bash (file+scratch): job has two containers, wrapper command, work emptyDir on user-tool only',
+    async (ctx) => {
+      if (!orchestratorRunning) return ctx.skip();
 
-      const rand = Math.random().toString(36).slice(2, 8);
-      const agentJobId = `direct-test-bash-169-${Date.now()}-${rand}`;
-      const requestId = `${agentJobId}-req`;
-      const category = 'execution';
+      // Set the group mount allowlist in process env so assertGroupMountAllowed
+      // passes for alpine:latest. (scratch does not call assertGroupMountAllowed,
+      // but assertToolImageAllowed passes when the list is empty anyway.)
+      process.env.TOOL_GROUP_MOUNT_ALLOWLIST = 'alpine:latest';
 
-      // Stream keys follow src/k8s/redis-client.ts conventions:
-      //   getToolCallsStream(agentJobId, category)  → kubeclaw:toolcalls:<id>:<cat>
-      //   getToolResultsStream(agentJobId, category) → kubeclaw:toolresults:<id>:<cat>
-      const toolCallsStream = `kubeclaw:toolcalls:${agentJobId}:${category}`;
-      const toolResultsStream = `kubeclaw:toolresults:${agentJobId}:${category}`;
+      const { jobRunner } = await import('../src/k8s/job-runner.js');
 
-      // Write the bash tool call BEFORE spawning the pod so tool-server picks
-      // it up at lastId='0-0' (same ordering as alpine-tool-execution.test.ts).
-      // The marker string is distinctive enough to confirm this test's result.
-      const marker = `kubeclaw-bash-story169-${rand}`;
-      await redis!.xadd(
-        toolCallsStream,
-        '*',
-        'requestId', requestId,
-        'tool', 'bash',
-        'input', JSON.stringify({ command: `echo ${marker}` }),
+      const agentJobId = `e2e-bash-scratch-${Date.now()}`;
+      const groupFolder = `e2e-bash-scratch-${Date.now()}`;
+      const toolName = 'bash';
+      const runTemplate = 'sh -c "$(cat "$INPUT_DIR/command")"';
+
+      let jobName: string;
+      try {
+        jobName = await jobRunner.createSidecarToolPodJob({
+          agentJobId,
+          groupFolder,
+          toolName,
+          toolSpec: {
+            name: toolName,
+            description: 'Run a bash command (scratch workspace)',
+            parameters: {
+              type: 'object',
+              properties: { command: { type: 'string' } },
+            },
+            image: 'alpine:latest',
+            pattern: 'file',
+            mount: 'scratch',
+            run: runTemplate,
+          },
+          timeout: 60_000,
+        });
+      } finally {
+        delete process.env.TOOL_GROUP_MOUNT_ALLOWLIST;
+      }
+      createdJobs.push(jobName!);
+
+      const job = await pollForJob(
+        `app=kubeclaw-sidecar-tool,kubeclaw/agent-job=${agentJobId}`,
+        60_000,
       );
 
-      const testStartMs = Date.now();
+      // ── container count + names ──────────────────────────────────────────────
+      const containers = job.spec.template.spec.containers;
+      expect(containers).toHaveLength(2);
+      const names = containers.map((c) => c.name);
+      expect(names).toContain('kubeclaw-tool-bridge');
+      expect(names).toContain('user-tool');
 
-      // Spawn the execution-category tool pod via the orchestrator's
-      // spawn-tool-pod stream (getSpawnToolPodStream() = 'kubeclaw:spawn-tool-pod').
-      await redis!.xadd(
-        'kubeclaw:spawn-tool-pod',
-        '*',
-        'agentJobId', agentJobId,
-        'groupFolder', 'http-http-alice',
-        'category', category,
-        'timeout', '120000',
-        'channel', 'http',
+      // ── user-tool assertions ─────────────────────────────────────────────────
+      const userTool = containers.find((c) => c.name === 'user-tool')!;
+      expect(userTool).toBeDefined();
+      expect(userTool.image).toBe('alpine:latest');
+
+      // Command must be the wrapper script (not the toolSpec.run shell command directly)
+      expect(userTool.command).toEqual(['/bin/sh', '/kubeclaw/tool-wrapper.sh']);
+
+      // user-tool must have 'work' emptyDir mounted at /work
+      const workMount = userTool.volumeMounts?.find((m) => m.name === 'work');
+      expect(workMount).toBeDefined();
+      expect(workMount!.mountPath).toBe('/work');
+      // scratch: no subPath (plain emptyDir)
+      expect(workMount!.subPath).toBeUndefined();
+
+      // env assertions
+      const userEnvMap = Object.fromEntries(
+        (userTool.env ?? []).map((e) => [e.name, e.value ?? '']),
       );
+      expect(userEnvMap.KUBECLAW_TOOL_RUN).toBe(runTemplate);
+      expect(userEnvMap.WORKDIR).toBe('/work');
+      expect(userEnvMap.KUBECLAW_TOOL_FIELDS).toBe('command');
 
-      // AC2: a pod with app=kubeclaw-tool-pod must appear within 90 s.
-      const podName = await waitForToolPod('app=kubeclaw-tool-pod', 90_000, testStartMs);
+      // ── volume assertions ────────────────────────────────────────────────────
+      const volumes = job.spec.template.spec.volumes ?? [];
+      const workVol = volumes.find((v) => v.name === 'work');
+      expect(workVol).toBeDefined();
+      expect(workVol!.emptyDir).toBeDefined();
+      // scratch → no PVC
+      expect(workVol!.persistentVolumeClaim).toBeUndefined();
+
+      // ── security boundary: bridge must NOT have the 'work' volume mounted ────
+      const bridge = containers.find((c) => c.name === 'kubeclaw-tool-bridge')!;
+      const bridgeWorkMount = bridge.volumeMounts?.find((m) => m.name === 'work');
       expect(
-        podName,
-        `No execution tool pod appeared within 90 s for agentJobId=${agentJobId} (Story 169 AC2)`,
-      ).not.toBeNull();
-      console.log(`bash tool pod appeared: ${podName}`);
+        bridgeWorkMount,
+        'kubeclaw-tool-bridge must not have the work volume mounted (security boundary)',
+      ).toBeUndefined();
 
-      // AC2 proxy: pod logs must contain "Executing tool=bash".
-      // tool-server.ts emits: `Executing tool=bash requestId=...`
-      const logFound = await waitForPodLog(podName!, 'Executing tool=bash', 90_000);
-      expect(
-        logFound,
-        `Pod ${podName} logs did not contain "Executing tool=bash" within 90 s`,
-      ).toBe(true);
-
-      // AC4 proxy: result stream must carry the marker in its result field.
-      const result = await pollToolResult(redis!, toolResultsStream, requestId, 60_000);
-      expect(result.requestId, 'result entry missing requestId').toBe(requestId);
-      expect(result.result ?? '', `bash result must contain marker "${marker}"`).toContain(marker);
-      console.log(`bash result: ${(result.result ?? '').trim()}`);
+      console.log(`bash file+scratch job created: ${jobName!}`);
     },
-    300_000,
+    90_000,
   );
 
-  // ── 2. execution tool pod: securityContext assertions (Story 169 AC3) ──────
+  // ── 2. file + group ──────────────────────────────────────────────────────────
 
   it(
-    'execution-category tool pod runs as non-root with no SA token mount (Story 169 AC3)',
-    async () => {
-      expect(provisioned, 'globalSetup port-forward not live').toBe(true);
-      expect(redis, 'Redis client not initialised').not.toBeNull();
+    'bash_persist (file+group): user-tool has group PVC at /work with subPath; bridge has no work mount',
+    async (ctx) => {
+      if (!orchestratorRunning) return ctx.skip();
 
-      const rand = Math.random().toString(36).slice(2, 8);
-      const agentJobId = `direct-test-bash-sec-169-${Date.now()}-${rand}`;
-      const requestId = `${agentJobId}-req`;
-      const category = 'execution';
+      // alpine:latest must be in the group mount allowlist for this test.
+      process.env.TOOL_GROUP_MOUNT_ALLOWLIST = 'alpine:latest';
 
-      const toolCallsStream = `kubeclaw:toolcalls:${agentJobId}:${category}`;
+      const { jobRunner } = await import('../src/k8s/job-runner.js');
 
-      // Write a trivial bash call so the pod starts promptly.
-      await redis!.xadd(
-        toolCallsStream,
-        '*',
-        'requestId', requestId,
-        'tool', 'bash',
-        'input', JSON.stringify({ command: 'id' }),
+      const agentJobId = `e2e-bash-group-${Date.now()}`;
+      const groupFolder = `e2e-bash-group-${Date.now()}`;
+      const toolName = 'bash_persist';
+      const runTemplate = 'sh -c "$(cat "$INPUT_DIR/command")"';
+
+      let jobName: string;
+      try {
+        jobName = await jobRunner.createSidecarToolPodJob({
+          agentJobId,
+          groupFolder,
+          toolName,
+          toolSpec: {
+            name: toolName,
+            description: 'Run a bash command with persistent group workspace',
+            parameters: {
+              type: 'object',
+              properties: { command: { type: 'string' } },
+            },
+            image: 'alpine:latest',
+            pattern: 'file',
+            mount: 'group',
+            run: runTemplate,
+          },
+          timeout: 60_000,
+          groupsPvc: 'kubeclaw-groups',
+        });
+      } finally {
+        delete process.env.TOOL_GROUP_MOUNT_ALLOWLIST;
+      }
+      createdJobs.push(jobName!);
+
+      const job = await pollForJob(
+        `app=kubeclaw-sidecar-tool,kubeclaw/agent-job=${agentJobId}`,
+        60_000,
       );
 
-      const testStartMs = Date.now();
+      const containers = job.spec.template.spec.containers;
+      expect(containers).toHaveLength(2);
 
-      await redis!.xadd(
-        'kubeclaw:spawn-tool-pod',
-        '*',
-        'agentJobId', agentJobId,
-        'groupFolder', 'http-http-alice',
-        'category', category,
-        'timeout', '120000',
-        'channel', 'http',
+      // ── user-tool: group PVC mounted at /work with subPath == groupFolder ────
+      const userTool = containers.find((c) => c.name === 'user-tool')!;
+      expect(userTool).toBeDefined();
+      expect(userTool.image).toBe('alpine:latest');
+
+      const workMount = userTool.volumeMounts?.find((m) => m.name === 'work');
+      expect(workMount).toBeDefined();
+      expect(workMount!.mountPath).toBe('/work');
+      // group mount: subPath must be the groupFolder
+      expect(workMount!.subPath).toBe(groupFolder);
+
+      // ── volume: must be a PVC (kubeclaw-groups), not emptyDir ────────────────
+      const volumes = job.spec.template.spec.volumes ?? [];
+      const workVol = volumes.find((v) => v.name === 'work');
+      expect(workVol).toBeDefined();
+      expect(
+        workVol!.persistentVolumeClaim,
+        'work volume must be a PVC for group mount',
+      ).toBeDefined();
+      expect(workVol!.persistentVolumeClaim!.claimName).toBe('kubeclaw-groups');
+      // group → no emptyDir
+      expect(workVol!.emptyDir).toBeUndefined();
+
+      // ── env: WORKDIR=/work, run template and fields ──────────────────────────
+      const userEnvMap = Object.fromEntries(
+        (userTool.env ?? []).map((e) => [e.name, e.value ?? '']),
       );
+      expect(userEnvMap.KUBECLAW_TOOL_RUN).toBe(runTemplate);
+      expect(userEnvMap.WORKDIR).toBe('/work');
+      expect(userEnvMap.KUBECLAW_TOOL_FIELDS).toBe('command');
 
-      const podName = await waitForToolPod('app=kubeclaw-tool-pod', 90_000, testStartMs);
+      // ── security boundary: bridge must NOT have the 'work' volume mounted ────
+      const bridge = containers.find((c) => c.name === 'kubeclaw-tool-bridge')!;
+      const bridgeWorkMount = bridge.volumeMounts?.find((m) => m.name === 'work');
       expect(
-        podName,
-        `No execution tool pod appeared within 90 s for AC3 security check (agentJobId=${agentJobId})`,
-      ).not.toBeNull();
-      console.log(`Security-context check pod: ${podName}`);
+        bridgeWorkMount,
+        'kubeclaw-tool-bridge must not have the work volume mounted (security boundary)',
+      ).toBeUndefined();
 
-      // Wait for the pod to be visible in the API (it may be Pending/Running).
-      // We don't require it to succeed — we only need the spec to inspect.
-      await new Promise((r) => setTimeout(r, 3000));
-
-      // AC3a: runAsNonRoot must be true in the pod-level or container-level securityContext.
-      // The chart template kubeclaw.toolJobSecurityContext sets this at the pod level
-      // (k8s/40-agent-job-template.yaml: spec.securityContext.runAsNonRoot: true).
-      const secCtx = kubectl([
-        'get', 'pod', '-n', NAMESPACE, podName!,
-        '-o', 'jsonpath={.spec.securityContext.runAsNonRoot}',
-      ]);
-      // Also check per-container securityContext in case the pod-level is absent.
-      const containerSecCtx = kubectl([
-        'get', 'pod', '-n', NAMESPACE, podName!,
-        '-o', 'jsonpath={.spec.containers[0].securityContext.runAsNonRoot}',
-      ]);
-      const runAsNonRoot =
-        secCtx.stdout.trim() === 'true' || containerSecCtx.stdout.trim() === 'true';
-      expect(
-        runAsNonRoot,
-        `Pod ${podName} must have runAsNonRoot=true at pod or container level (Story 169 AC3)`,
-      ).toBe(true);
-
-      // AC3b: automountServiceAccountToken must NOT be true (either absent or explicitly false).
-      const saMount = kubectl([
-        'get', 'pod', '-n', NAMESPACE, podName!,
-        '-o', 'jsonpath={.spec.automountServiceAccountToken}',
-      ]);
-      // An empty string means the field is absent (defaults to false in K8s ≥1.24
-      // when the ServiceAccount also has it disabled). "false" is the explicit opt-out.
-      const tokenMountValue = saMount.stdout.trim();
-      expect(
-        tokenMountValue === 'false' || tokenMountValue === '',
-        `Pod ${podName} must not have automountServiceAccountToken=true; got "${tokenMountValue}" (Story 169 AC3)`,
-      ).toBe(true);
-
-      console.log(
-        `Security context: runAsNonRoot=${runAsNonRoot}, automountServiceAccountToken="${tokenMountValue}"`,
-      );
+      console.log(`bash_persist file+group job created: ${jobName!}`);
     },
-    300_000,
+    90_000,
   );
 });
