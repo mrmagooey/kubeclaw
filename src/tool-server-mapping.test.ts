@@ -4,6 +4,9 @@
  * before importing the module (it reads env at load and starts main()).
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, renameSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 
 vi.hoisted(() => {
   process.env.KUBECLAW_TOOL_JOB_ID = 'test-job-id';
@@ -28,6 +31,7 @@ import {
   buildMappedRequest,
   extractResponsePath,
   executeToolBridgeHttp,
+  executeToolBridgeFile,
 } from '../container/agent-runner/src/tool-server.js';
 
 describe('buildMappedRequest', () => {
@@ -205,5 +209,45 @@ describe('executeToolBridgeHttp — mapped mode', () => {
     vi.stubGlobal('fetch', fetchMock);
     const out = await executeToolBridgeHttp('weather', { city: 'NYC' });
     expect(out).toBe('ok');
+  });
+});
+
+describe('executeToolBridgeFile — per-field protocol', () => {
+  afterEach(() => {
+    delete process.env.KUBECLAW_SHARED_DIR;
+  });
+
+  it('writes declared fields and returns stdout on exit 0', async () => {
+    const shared = mkdtempSync(join(tmpdir(), 'fb-'));
+    process.env.KUBECLAW_SHARED_DIR = shared;
+    const call = executeToolBridgeFile('bash', { command: 'echo hi', bogus: 'x' }, 'r1', ['command']);
+    const reqInput = join(shared, 'req', 'r1', 'input');
+    for (let i = 0; i < 50 && !existsSync(reqInput); i++) await new Promise((r) => setTimeout(r, 20));
+    expect(readdirSync(reqInput).sort()).toEqual(['command']); // bogus dropped
+    expect(readFileSync(join(reqInput, 'command'), 'utf-8')).toBe('echo hi');
+    const tmp = join(shared, '.resp.r1.tmp'); mkdirSync(tmp, { recursive: true });
+    writeFileSync(join(tmp, 'response'), 'hi\n');
+    writeFileSync(join(tmp, 'stderr'), '');
+    writeFileSync(join(tmp, 'exit_code'), '0');
+    mkdirSync(join(shared, 'resp'), { recursive: true });
+    renameSync(tmp, join(shared, 'resp', 'r1'));
+    const result = await call;
+    expect(result).toBe('hi\n');
+    rmSync(shared, { recursive: true, force: true });
+  });
+
+  it('returns an error containing stderr on non-zero exit', async () => {
+    const shared = mkdtempSync(join(tmpdir(), 'fb-'));
+    process.env.KUBECLAW_SHARED_DIR = shared;
+    const call = executeToolBridgeFile('bash', { command: 'boom' }, 'r2', ['command']);
+    for (let i = 0; i < 50 && !existsSync(join(shared, 'req', 'r2')); i++) await new Promise((r) => setTimeout(r, 20));
+    const tmp = join(shared, '.resp.r2.tmp'); mkdirSync(tmp, { recursive: true });
+    writeFileSync(join(tmp, 'response'), '');
+    writeFileSync(join(tmp, 'stderr'), 'command not found');
+    writeFileSync(join(tmp, 'exit_code'), '127');
+    mkdirSync(join(shared, 'resp'), { recursive: true });
+    renameSync(tmp, join(shared, 'resp', 'r2'));
+    await expect(call).rejects.toThrow(/127.*command not found|command not found/);
+    rmSync(shared, { recursive: true, force: true });
   });
 });

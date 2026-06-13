@@ -24,6 +24,8 @@ const MAX_TOOL_OUTPUT_BYTES = parseInt(
   process.env.KUBECLAW_MAX_TOOL_OUTPUT_BYTES || '50000',
   10,
 );
+const declaredFields = (process.env.KUBECLAW_TOOL_FIELDS || '')
+  .split(',').map((s) => s.trim()).filter(Boolean);
 
 const TOOLCALLS_STREAM = `kubeclaw:toolcalls:${agentJobId}:${category}`;
 const TOOLRESULTS_STREAM = `kubeclaw:toolresults:${agentJobId}:${category}`;
@@ -497,17 +499,44 @@ export async function executeToolBridgeHttp(
   return data.result ?? null;
 }
 
-async function executeToolBridgeFile(tool: string, input: Record<string, unknown>, requestId: string): Promise<unknown> {
-  const reqPath = path.join(SHARED_DIR, `${requestId}.request.json`);
-  const resPath = path.join(SHARED_DIR, `${requestId}.response.json`);
-  fs.writeFileSync(reqPath, JSON.stringify({ requestId, tool, input }));
+export async function executeToolBridgeFile(
+  tool: string,
+  input: Record<string, unknown>,
+  requestId: string,
+  declaredFields: string[],
+): Promise<unknown> {
+  const sharedDir = process.env.KUBECLAW_SHARED_DIR || SHARED_DIR;
+  const reqDir = path.join(sharedDir, 'req', requestId);
+  const respDir = path.join(sharedDir, 'resp', requestId);
+
+  // Build the request under a hidden temp dir, then atomically rename into place.
+  const tmpReq = path.join(sharedDir, `.req.${requestId}.tmp`);
+  const tmpInput = path.join(tmpReq, 'input');
+  fs.mkdirSync(tmpInput, { recursive: true });
+  for (const field of declaredFields) {
+    if (!(field in input)) continue; // omit fields the call didn't provide
+    const v = input[field];
+    const text = typeof v === 'string' ? v : JSON.stringify(v);
+    fs.writeFileSync(path.join(tmpInput, field), text);
+  }
+  fs.mkdirSync(path.join(sharedDir, 'req'), { recursive: true });
+  fs.renameSync(tmpReq, reqDir); // atomic publish
+
   const deadline = Date.now() + idleTimeout;
   while (Date.now() < deadline) {
-    if (fs.existsSync(resPath)) {
-      const data = JSON.parse(fs.readFileSync(resPath, 'utf-8')) as { result?: unknown; error?: string };
-      fs.unlinkSync(resPath);
-      if (data.error) throw new Error(data.error);
-      return data.result ?? null;
+    if (fs.existsSync(respDir)) {
+      const exit = fs.readFileSync(path.join(respDir, 'exit_code'), 'utf-8').trim();
+      const stdout = fs.existsSync(path.join(respDir, 'response'))
+        ? fs.readFileSync(path.join(respDir, 'response'), 'utf-8')
+        : '';
+      const stderr = fs.existsSync(path.join(respDir, 'stderr'))
+        ? fs.readFileSync(path.join(respDir, 'stderr'), 'utf-8')
+        : '';
+      fs.rmSync(respDir, { recursive: true, force: true });
+      if (exit !== '0') {
+        throw new Error(`exit ${exit}: ${stderr.slice(0, MAX_TOOL_OUTPUT_BYTES)}`);
+      }
+      return stdout.slice(0, MAX_TOOL_OUTPUT_BYTES);
     }
     await new Promise((r) => setTimeout(r, 500));
   }
@@ -597,7 +626,7 @@ function extractACPResult(response: any): string {
 async function executeTool(tool: string, input: Record<string, unknown>, requestId: string): Promise<unknown> {
   if (toolMode === 'acp-bridge') return executeToolBridgeAcp(tool, input);
   if (toolMode === 'http-bridge') return executeToolBridgeHttp(tool, input);
-  if (toolMode === 'file-bridge') return executeToolBridgeFile(tool, input, requestId);
+  if (toolMode === 'file-bridge') return executeToolBridgeFile(tool, input, requestId, declaredFields);
   return executeToolLocal(tool, input);
 }
 
