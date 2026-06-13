@@ -276,6 +276,8 @@ function channelPvcNames(channel: string): {
 // Track tool pod jobs per tool job for cleanup
 const toolPodsByAgent = new Map<string, Set<string>>();
 
+const BUILTIN_CATEGORIES = new Set(['execution', 'browser']);
+
 /**
  * Active K8s agent-job names keyed by groupFolder.
  * Populated by startToolJobSpawnWatcher when onProcess fires (i.e. the K8s Job
@@ -959,8 +961,14 @@ export async function sendCloseSignal(jobId: string): Promise<void> {
 }
 
 /**
- * Write an error result to the tool-results stream so the channel side sees a
- * failure instead of timing out waiting for a tool pod that was never spawned.
+ * Write a diagnostic error entry to the tool-results stream for a spawn that
+ * was rejected before any pod was created (unknown tool name, channel-ACL
+ * mismatch). NOTE: the channel-side reader matches results by requestId, which
+ * the spawn stream does not currently carry — so this entry surfaces the reason
+ * in orchestrator logs/diagnostics, but the waiting channel call still ends via
+ * its own TOOL_TIMEOUT rather than seeing this message. Threading requestId
+ * through the spawn stream for exact matching is a documented future enhancement
+ * (see docs/superpowers/plans/2026-06-13-tool-catalog.md, Task 8 / Out of scope).
  */
 async function writeToolError(
   agentJobId: string,
@@ -1034,7 +1042,6 @@ export async function startToolPodSpawnWatcher(
             ? Number(obj.maxToolOutputBytes)
             : undefined;
 
-          const BUILTIN_CATEGORIES = new Set(['execution', 'browser']);
           try {
             if (BUILTIN_CATEGORIES.has(category)) {
               await jobRunner.createToolPodJob({
@@ -1083,6 +1090,9 @@ export async function startToolPodSpawnWatcher(
                 );
                 continue;
               }
+              // maxToolOutputBytes is not forwarded to catalog sidecar tools —
+              // output sizing for the tool-bridge path is out of scope here
+              // (tracked under spawn-path hardening, not the catalog work).
               await jobRunner.createSidecarToolPodJob({
                 agentJobId,
                 groupFolder,

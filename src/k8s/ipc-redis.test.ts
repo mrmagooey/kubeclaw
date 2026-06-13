@@ -1712,6 +1712,72 @@ describe('startToolPodSpawnWatcher', () => {
     );
   });
 
+  it('spawns a catalog tool with channels: [] on any channel (allow-all path)', async () => {
+    // A tool spec with channels: [] (or no channels field) must be available on
+    // every channel. The ACL check is `!spec.channels?.length` — an empty array
+    // is falsy for `.length`, so the guard is skipped and the pod IS spawned.
+    const { jobRunner } = await import('./job-runner.js');
+    startIpcWatcher(createMockDeps());
+
+    const toolSpec = {
+      name: 'any_channel_tool',
+      description: 'Available on all channels',
+      parameters: { type: 'object', properties: {} },
+      image: 'my-tool:latest',
+      pattern: 'http' as const,
+      port: 9000,
+      channels: [], // empty array → allow-all
+    };
+    const resolveTool = vi.fn().mockReturnValue(toolSpec);
+
+    let callCount = 0;
+    mockXread.mockImplementation(async () => {
+      if (callCount++ === 0) {
+        return [
+          [
+            'kubeclaw:spawn-tool-pod',
+            [
+              [
+                '1-0',
+                [
+                  'agentJobId',
+                  'j-empty-channels',
+                  'groupFolder',
+                  'my-group',
+                  'category',
+                  'any_channel_tool',
+                  'timeout',
+                  '60000',
+                  'channel',
+                  'some-channel',
+                ],
+              ],
+            ],
+          ],
+        ];
+      }
+      await stopIpcWatcher();
+      return null;
+    });
+
+    await startToolPodSpawnWatcher(resolveTool);
+
+    // Pod must be spawned
+    expect(jobRunner.createSidecarToolPodJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentJobId: 'j-empty-channels',
+        toolName: 'any_channel_tool',
+      }),
+    );
+    // No error must be written
+    expect(mockXadd).not.toHaveBeenCalledWith(
+      expect.stringContaining('toolresults'),
+      '*',
+      'error',
+      expect.any(String),
+    );
+  });
+
   it('writes an error result when the tool name is unknown', async () => {
     const { jobRunner } = await import('./job-runner.js');
     startIpcWatcher(createMockDeps());
