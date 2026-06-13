@@ -199,6 +199,12 @@ describe('validateTool — requestMapping', () => {
       }).ok,
     ).toBe(false);
   });
+
+  it('rejects an empty responsePath', () => {
+    expect(
+      validateTool({ ...base, requestMapping: { method: 'GET', path: '/x', responsePath: '' } }).ok,
+    ).toBe(false);
+  });
 });
 
 describe('parseToolCatalog', () => {
