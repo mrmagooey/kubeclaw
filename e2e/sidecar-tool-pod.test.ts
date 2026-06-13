@@ -439,97 +439,326 @@ describe('Sidecar Tool Pod — retry discipline', () => {
   }, 40_000);
 });
 
-// ---- File bridge tests -------------------------------------------------------
+// ---- File bridge tests (jq-free per-field protocol) -------------------------
+//
+// These tests replaced the old request.json/response.json protocol tests.
+// The old "file-bridge mode" describe block used startFileUserTool() which
+// polled for *.request.json files and wrote *.response.json — that was the
+// pre-migration protocol. It is fully removed here.
+//
+// The new protocol (per-field file bridge):
+//   Bridge writes /shared/req/{id}/input/<field> (one file per declared field),
+//   atomically renames the temp req dir into /shared/req/{id}, then polls
+//   /shared/resp/{id} for response/stderr/exit_code files.
+//   The wrapper watches /shared/req/*/, exports INPUT_DIR=$d/input, runs
+//   KUBECLAW_TOOL_RUN in WORKDIR, and writes the response atomically.
 
-describe('Sidecar Tool Pod — file-bridge mode', () => {
+describe('Sidecar Tool Pod — file-bridge mode (jq-free per-field protocol)', () => {
   let sharedDir: string;
-  let watcherInterval: ReturnType<typeof setInterval> | null = null;
+  let wrapperScriptPath: string;
   let toolServerProc: ChildProcess | null = null;
+  let wrapperProc: ChildProcess | null = null;
+
+  /**
+   * Read the canonical wrapper script from k8s/35-configmaps.yaml and write
+   * a copy with the only modification being the shared-dir root rewritten from
+   * S=/shared to S=<tempShared>. The protocol logic (INPUT_DIR, KUBECLAW_TOOL_RUN,
+   * mktemp, mv "$t") is identical to what runs in production.
+   */
+  function prepareWrapperScript(tempShared: string): string {
+    const configmapsPath = path.resolve(process.cwd(), 'k8s/35-configmaps.yaml');
+    const yaml = fs.readFileSync(configmapsPath, 'utf-8');
+
+    // Extract the script body: everything after "tool-wrapper.sh: |" up to
+    // the next top-level YAML key or end of file. Each line of the block
+    // scalar is indented by 4 spaces.
+    const blockStart = yaml.indexOf('  tool-wrapper.sh: |\n');
+    if (blockStart === -1) throw new Error('tool-wrapper.sh block not found in k8s/35-configmaps.yaml');
+    const afterMarker = yaml.slice(blockStart + '  tool-wrapper.sh: |\n'.length);
+
+    // Collect indented lines (4-space indent for the ConfigMap block scalar)
+    const lines: string[] = [];
+    for (const line of afterMarker.split('\n')) {
+      if (line.startsWith('    ') || line === '') {
+        lines.push(line.startsWith('    ') ? line.slice(4) : '');
+      } else {
+        break; // end of block scalar
+      }
+    }
+    const scriptBody = lines.join('\n');
+
+    // Sanity-check: assert key protocol lines are present so a future refactor
+    // of the wrapper doesn't silently make this test meaningless.
+    expect(scriptBody).toContain('INPUT_DIR');
+    expect(scriptBody).toContain('KUBECLAW_TOOL_RUN');
+    expect(scriptBody).toContain('mktemp');
+    expect(scriptBody).toContain('mv "$t"');
+
+    // The ONLY modification: rewrite the shared-dir root from the hardcoded
+    // /shared to the test's temp dir. This is a path concern (the production
+    // script targets the in-pod /shared mount); all protocol logic is unchanged.
+    const modified = scriptBody.replace('S=/shared', `S=${tempShared}`);
+
+    const scriptFile = path.join(tempShared, 'tool-wrapper.sh');
+    fs.writeFileSync(scriptFile, modified, { mode: 0o755 });
+    return scriptFile;
+  }
+
+  /** Spawn the wrapper script as a background sh process. */
+  function spawnWrapper(
+    scriptPath: string,
+    workdir: string,
+    toolRun: string,
+    pollInterval = '1',
+  ): ChildProcess {
+    return spawn('sh', [scriptPath], {
+      env: {
+        ...process.env,
+        WORKDIR: workdir,
+        KUBECLAW_TOOL_RUN: toolRun,
+        KUBECLAW_POLL_INTERVAL: pollInterval,
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+  }
 
   beforeAll(() => {
-    sharedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kubeclaw-stool-e2e-'));
+    sharedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kubeclaw-fb-e2e-'));
+    wrapperScriptPath = prepareWrapperScript(sharedDir);
   });
 
   afterAll(() => {
-    if (watcherInterval) clearInterval(watcherInterval);
     toolServerProc?.kill();
+    wrapperProc?.kill();
     fs.rmSync(sharedDir, { recursive: true, force: true });
   });
 
-  // Simulate the "user tool" container: polls for request files and writes responses
-  function startFileUserTool(
-    dir: string,
-    handler: (tool: string, input: unknown) => unknown,
-  ): ReturnType<typeof setInterval> {
-    return setInterval(() => {
-      try {
-        const files = fs.readdirSync(dir).filter((f) => f.endsWith('.request.json'));
-        for (const file of files) {
-          const reqPath = path.join(dir, file);
-          const resPath = path.join(dir, file.replace('.request.json', '.response.json'));
-          if (fs.existsSync(resPath)) continue; // already answered
-          try {
-            const req = JSON.parse(fs.readFileSync(reqPath, 'utf-8'));
-            const result = handler(req.tool, req.input);
-            fs.writeFileSync(resPath, JSON.stringify({ result }));
-          } catch (err) {
-            const req = JSON.parse(fs.readFileSync(reqPath, 'utf-8'));
-            fs.writeFileSync(
-              path.join(dir, file.replace('.request.json', '.response.json')),
-              JSON.stringify({ error: String(err) }),
-            );
-          }
-        }
-      } catch {
-        // dir may not exist yet during shutdown
-      }
-    }, 100);
-  }
-
-  it('forwards a tool call via shared files and returns the result', async () => {
+  it('scratch bash: echo hello via command field → result is "hello\\n"', async () => {
     const redis = getSharedRedis();
     if (!redis) {
       console.warn('Redis not available — skipping file-bridge test');
       return;
     }
 
-    const agentJobId = `e2e-stool-file-${Date.now()}`;
-    const toolName = 'file_tool';
-    const requestId = `req-file-${Date.now()}`;
+    const scratchDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kubeclaw-fb-scratch-'));
+    const agentJobId = `e2e-fb-hello-${Date.now()}`;
+    const toolName = 'bash_tool';
+    const requestId = `req-fb-hello-${Date.now()}`;
 
-    // Start the file-based "user tool"
-    watcherInterval = startFileUserTool(sharedDir, (tool, input) => {
-      return `file_echo:${tool}:${JSON.stringify(input)}`;
-    });
+    // KUBECLAW_TOOL_RUN reads the command from the INPUT_DIR/command file and
+    // executes it via sh. The wrapper sets INPUT_DIR before running TOOL_RUN.
+    const toolRun = 'sh -c "$(cat "$INPUT_DIR/command")"';
 
     try {
-      await pushToolCall(agentJobId, toolName, requestId, 'file_tool', { data: 'world' });
+      await pushToolCall(agentJobId, toolName, requestId, toolName, { command: 'echo hello' });
 
       toolServerProc = spawnToolServer({
         KUBECLAW_TOOL_JOB_ID: agentJobId,
         KUBECLAW_CATEGORY: toolName,
         KUBECLAW_TOOL_MODE: 'file-bridge',
         KUBECLAW_SHARED_DIR: sharedDir,
-        IDLE_TIMEOUT: '10000',
+        KUBECLAW_TOOL_FIELDS: 'command',
+        IDLE_TIMEOUT: '15000',
         REDIS_URL: getRedisUrlForTests(),
       });
 
-      const { result, error } = await waitForToolResult(agentJobId, toolName, requestId);
+      wrapperProc = spawnWrapper(wrapperScriptPath, scratchDir, toolRun);
+
+      const { result, error } = await waitForToolResult(agentJobId, toolName, requestId, 15000);
 
       expect(error).toBeNull();
       expect(result).not.toBeNull();
-      const parsed = JSON.parse(result!);
-      expect(parsed).toContain('file_echo:file_tool:');
+      // result is JSON.stringified by the main loop; parse once to get the raw stdout string.
+      // The wrapper preserves the trailing newline from echo.
+      expect(JSON.parse(result!)).toBe('hello\n');
     } finally {
-      if (watcherInterval) {
-        clearInterval(watcherInterval);
-        watcherInterval = null;
-      }
       toolServerProc?.kill();
       toolServerProc = null;
+      wrapperProc?.kill();
+      wrapperProc = null;
+      fs.rmSync(scratchDir, { recursive: true, force: true });
       await cleanupStreams(agentJobId, toolName);
     }
-  }, 20000);
+  }, 25000);
+
+  it('non-zero exit: "exit 3" → error contains "exit 3"', async () => {
+    const redis = getSharedRedis();
+    if (!redis) {
+      console.warn('Redis not available — skipping file-bridge test');
+      return;
+    }
+
+    const scratchDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kubeclaw-fb-exit-'));
+    const agentJobId = `e2e-fb-exit-${Date.now()}`;
+    const toolName = 'exit_tool';
+    const requestId = `req-fb-exit-${Date.now()}`;
+    const toolRun = 'sh -c "$(cat "$INPUT_DIR/command")"';
+
+    try {
+      await pushToolCall(agentJobId, toolName, requestId, toolName, { command: 'exit 3' });
+
+      toolServerProc = spawnToolServer({
+        KUBECLAW_TOOL_JOB_ID: agentJobId,
+        KUBECLAW_CATEGORY: toolName,
+        KUBECLAW_TOOL_MODE: 'file-bridge',
+        KUBECLAW_SHARED_DIR: sharedDir,
+        KUBECLAW_TOOL_FIELDS: 'command',
+        IDLE_TIMEOUT: '15000',
+        REDIS_URL: getRedisUrlForTests(),
+      });
+
+      wrapperProc = spawnWrapper(wrapperScriptPath, scratchDir, toolRun);
+
+      const { result, error } = await waitForToolResult(agentJobId, toolName, requestId, 15000);
+
+      // Bridge converts non-zero exit to an error: "exit {code}: {stderr}"
+      expect(error).not.toBeNull();
+      expect(error).toContain('exit 3');
+    } finally {
+      toolServerProc?.kill();
+      toolServerProc = null;
+      wrapperProc?.kill();
+      wrapperProc = null;
+      fs.rmSync(scratchDir, { recursive: true, force: true });
+      await cleanupStreams(agentJobId, toolName);
+    }
+  }, 25000);
+
+  it('persistence semantics: write file then read it back via same WORKDIR', async () => {
+    const redis = getSharedRedis();
+    if (!redis) {
+      console.warn('Redis not available — skipping file-bridge test');
+      return;
+    }
+
+    // Use a dedicated shared dir for this test to avoid collisions with parallel tests.
+    const testSharedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kubeclaw-fb-persist-'));
+    const persistScriptPath = prepareWrapperScript(testSharedDir);
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kubeclaw-fb-workdir-'));
+    const agentJobId = `e2e-fb-persist-${Date.now()}`;
+    const toolName = 'persist_tool';
+    const toolRun = 'sh -c "$(cat "$INPUT_DIR/command")"';
+
+    const req1 = `req-fb-write-${Date.now()}`;
+    const req2 = `req-fb-read-${Date.now()}`;
+
+    let localToolServer: ChildProcess | null = null;
+    let localWrapper: ChildProcess | null = null;
+
+    try {
+      // Call 1: write a file into WORKDIR
+      await pushToolCall(agentJobId, toolName, req1, toolName, { command: 'echo data > f.txt' });
+
+      localToolServer = spawnToolServer({
+        KUBECLAW_TOOL_JOB_ID: agentJobId,
+        KUBECLAW_CATEGORY: toolName,
+        KUBECLAW_TOOL_MODE: 'file-bridge',
+        KUBECLAW_SHARED_DIR: testSharedDir,
+        KUBECLAW_TOOL_FIELDS: 'command',
+        IDLE_TIMEOUT: '30000',
+        REDIS_URL: getRedisUrlForTests(),
+      });
+
+      localWrapper = spawnWrapper(persistScriptPath, workDir, toolRun);
+
+      const write = await waitForToolResult(agentJobId, toolName, req1, 15000);
+      expect(write.error).toBeNull();
+
+      // Call 2: read back the file — must see the data written by call 1.
+      // Same bridge and wrapper are still running (same WORKDIR = same "group PVC").
+      await pushToolCall(agentJobId, toolName, req2, toolName, { command: 'cat f.txt' });
+
+      const read = await waitForToolResult(agentJobId, toolName, req2, 15000);
+      expect(read.error).toBeNull();
+      expect(read.result).not.toBeNull();
+      // echo data > f.txt writes "data\n"; cat f.txt reproduces it.
+      expect(JSON.parse(read.result!)).toBe('data\n');
+    } finally {
+      localToolServer?.kill();
+      localWrapper?.kill();
+      fs.rmSync(testSharedDir, { recursive: true, force: true });
+      fs.rmSync(workDir, { recursive: true, force: true });
+      await cleanupStreams(agentJobId, toolName);
+    }
+  }, 40000);
+
+  it('declared-fields guard: undeclared field is not written to input dir', async () => {
+    const redis = getSharedRedis();
+    if (!redis) {
+      console.warn('Redis not available — skipping file-bridge test');
+      return;
+    }
+
+    // Strategy: drive the bridge only (no wrapper running) to atomically publish the req
+    // dir, then inspect its input/ directory before the wrapper could consume it.
+    // We achieve determinism by NOT starting the wrapper during the inspection window,
+    // then manually writing a synthetic response so the bridge can complete.
+    const testSharedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kubeclaw-fb-fields-'));
+    const scratchDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kubeclaw-fb-fields-work-'));
+    const agentJobId = `e2e-fb-fields-${Date.now()}`;
+    const toolName = 'fields_tool';
+    const requestId = `req-fb-fields-${Date.now()}`;
+
+    let localToolServer: ChildProcess | null = null;
+
+    try {
+      // Push a call that includes an undeclared field ("evil") alongside the
+      // declared "command" field. KUBECLAW_TOOL_FIELDS=command means the bridge
+      // must write only the "command" file into input/.
+      await pushToolCall(agentJobId, toolName, requestId, toolName, {
+        command: 'echo x',
+        evil: 'y',  // undeclared — must NOT appear as a file
+      });
+
+      localToolServer = spawnToolServer({
+        KUBECLAW_TOOL_JOB_ID: agentJobId,
+        KUBECLAW_CATEGORY: toolName,
+        KUBECLAW_TOOL_MODE: 'file-bridge',
+        KUBECLAW_SHARED_DIR: testSharedDir,
+        KUBECLAW_TOOL_FIELDS: 'command',  // only "command" is declared
+        IDLE_TIMEOUT: '15000',
+        REDIS_URL: getRedisUrlForTests(),
+      });
+
+      // Poll until the bridge has published /shared/req/{requestId}/input/
+      const reqInputDir = path.join(testSharedDir, 'req', requestId, 'input');
+      const deadline = Date.now() + 10000;
+      while (!fs.existsSync(reqInputDir) && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      if (!fs.existsSync(reqInputDir)) {
+        throw new Error(`Bridge did not publish req dir at ${reqInputDir} within 10s`);
+      }
+
+      // Assert: only "command" file present, "evil" absent.
+      const inputFiles = fs.readdirSync(reqInputDir);
+      expect(inputFiles).toContain('command');
+      expect(inputFiles).not.toContain('evil');
+
+      // Manually synthesise a response so the bridge can complete cleanly
+      // (prevents the bridge from hanging in the idle timer and logging errors).
+      const respDir = path.join(testSharedDir, 'resp', requestId);
+      const tmpResp = path.join(testSharedDir, `.resp.${requestId}.tmp`);
+      fs.mkdirSync(tmpResp, { recursive: true });
+      fs.writeFileSync(path.join(tmpResp, 'response'), 'x\n');
+      fs.writeFileSync(path.join(tmpResp, 'stderr'), '');
+      fs.writeFileSync(path.join(tmpResp, 'exit_code'), '0');
+      fs.mkdirSync(path.join(testSharedDir, 'resp'), { recursive: true });
+      fs.renameSync(tmpResp, respDir);
+      // Also remove the req dir so the (absent) wrapper wouldn't try to process it
+      fs.rmSync(path.join(testSharedDir, 'req', requestId), { recursive: true, force: true });
+
+      // Wait for the bridge to pick up the synthetic response and publish the result
+      const { result, error } = await waitForToolResult(agentJobId, toolName, requestId, 10000);
+      expect(error).toBeNull();
+      expect(JSON.parse(result!)).toBe('x\n');
+    } finally {
+      localToolServer?.kill();
+      fs.rmSync(testSharedDir, { recursive: true, force: true });
+      fs.rmSync(scratchDir, { recursive: true, force: true });
+      await cleanupStreams(agentJobId, toolName);
+    }
+  }, 25000);
 });
 
 // ---- Request-mapping integration tests --------------------------------------
