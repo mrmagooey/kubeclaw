@@ -7,6 +7,8 @@
  *   - Standard category (no toolImage) → single-container job (app=kubeclaw-tool-pod)
  *   - Sidecar (toolImage present) → two-container job (app=kubeclaw-sidecar-tool)
  *     with kubeclaw-tool-bridge + user-tool containers
+ *   - Sidecar with requestMapping → bridge container carries KUBECLAW_TOOL_REQUEST_MAPPING
+ *     (direct jobRunner call — the branch's createSidecarToolPodJob stamps the env)
  *
  * Requires: orchestrator running in cluster (same prerequisite as orchestrator.test.ts).
  * The global-setup ensures minikube + helm chart are up before tests run.
@@ -205,5 +207,63 @@ describe('Tool Pod Spawn Watcher', () => {
     expect(bridgeEnv.KUBECLAW_TOOL_MODE).toBe('file-bridge');
 
     console.log(`✅ File-bridge sidecar job created with shared volume: ${job.metadata.name}`);
+  }, 90000);
+
+  it('sidecar spawn with requestMapping stamps KUBECLAW_TOOL_REQUEST_MAPPING on bridge container', async (ctx) => {
+    // This test exercises the createSidecarToolPodJob path directly (not via the
+    // deployed orchestrator's spawn watcher) because KUBECLAW_TOOL_REQUEST_MAPPING
+    // is a new env var introduced in feat/http-request-mapping and the cluster's
+    // current orchestrator predates it. Calling jobRunner directly creates a real
+    // K8s Job in the same namespace and lets us read the bridge container's env
+    // from the cluster to confirm the mapping is stamped correctly.
+    if (!orchestratorRunning) ctx.skip();
+
+    const { jobRunner } = await import('../src/k8s/job-runner.js');
+
+    const requestMapping = {
+      method: 'GET' as const,
+      path: '/weather/{city}',
+      responsePath: 'temp',
+    };
+
+    const agentJobId = `e2e-tpspawn-rm-${Date.now()}`;
+    const groupFolder = `spawn-rm-${Date.now()}`;
+    const toolName = 'weather-lookup';
+
+    await jobRunner.createSidecarToolPodJob({
+      agentJobId,
+      groupFolder,
+      toolName,
+      toolSpec: {
+        name: toolName,
+        description: 'Weather lookup tool with HTTP request mapping',
+        parameters: { type: 'object', properties: {} },
+        image: 'alpine:latest',
+        pattern: 'http',
+        port: 8080,
+        requestMapping,
+      },
+      timeout: 60000,
+    });
+
+    const job = await pollForJob(
+      `app=kubeclaw-sidecar-tool,kubeclaw/agent-job=${agentJobId}`,
+    );
+
+    const containers = job.spec.template.spec.containers;
+    expect(containers).toHaveLength(2);
+
+    const bridge = containers.find((c) => c.name === 'kubeclaw-tool-bridge')!;
+    expect(bridge).toBeDefined();
+
+    const bridgeEnv = Object.fromEntries(
+      (bridge.env ?? []).map((e) => [e.name, e.value ?? '']),
+    );
+    expect(bridgeEnv.KUBECLAW_TOOL_MODE).toBe('http-bridge');
+    expect(bridgeEnv.KUBECLAW_TOOL_JOB_ID).toBe(agentJobId);
+    expect(bridgeEnv.KUBECLAW_TOOL_REQUEST_MAPPING).toBeDefined();
+    expect(JSON.parse(bridgeEnv.KUBECLAW_TOOL_REQUEST_MAPPING)).toEqual(requestMapping);
+
+    console.log(`✅ Request-mapping sidecar job created: ${job.metadata.name}`);
   }, 90000);
 });
