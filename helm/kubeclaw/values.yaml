@@ -530,7 +530,7 @@ tools:
     image: curlimages/curl:latest
     pattern: file
     mount: none
-    run: 'curl -sSL -A "Mozilla/5.0 KubeClaw/1.0" "$(cat "$INPUT_DIR/url")"'
+    run: 'curl -sSL -A "Mozilla/5.0 KubeClaw/1.0" -- "$(cat "$INPUT_DIR/url")"'
   - name: web_search
     description: Search the web via the Brave Search API. Returns the raw Brave JSON response (up to 10 results).
     parameters:
