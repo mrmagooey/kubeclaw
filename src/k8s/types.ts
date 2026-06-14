@@ -125,7 +125,7 @@ export interface TaskRequest {
   requiresTrigger?: boolean;
   containerConfig?: Record<string, unknown>;
   // Tool pod request fields
-  category?: 'execution' | 'browser';
+  category?: 'execution' | 'browser' | 'places';
   agentJobId?: string;
   // Capability fields
   spec?: string; // JSON-stringified CapabilitySpec for install_capability
@@ -167,7 +167,7 @@ export type IpcResponse =
 export interface ToolPodJobSpec {
   agentJobId: string;
   groupFolder: string;
-  category: 'execution' | 'browser';
+  category: 'execution' | 'browser' | 'places';
   timeout: number;
   provider?: string; // inherit parent agent's provider for image selection
   groupsPvc?: string; // defaults to 'kubeclaw-groups'

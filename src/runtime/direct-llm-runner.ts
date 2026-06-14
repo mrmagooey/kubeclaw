@@ -2,7 +2,7 @@
  * DirectLLMRunner — calls an OpenAI-compatible API directly inside the
  * orchestrator process or a channel pod. No Kubernetes Job is spawned for
  * chat. Conversation history is persisted in SQLite per group. When the LLM
- * calls a tool, execution is delegated to a K8s tool pod (browser / execution
+ * calls a tool, execution is delegated to a K8s tool pod (places / execution
  * categories) or a full K8s tool job (execute_agent).
  *
  * Configure via environment variables (see src/runtime/llm-client.ts).
@@ -136,25 +136,6 @@ export function shouldCompress(
 // ---- Tool definitions ----
 
 export const TOOLS: OpenAI.ChatCompletionFunctionTool[] = [
-  {
-    type: 'function',
-    function: {
-      name: 'browser',
-      description:
-        'Control a real web browser (Playwright). Use for JavaScript-heavy pages, filling forms, clicking, or any interaction that plain fetching cannot handle.',
-      parameters: {
-        type: 'object',
-        properties: {
-          command: {
-            type: 'string',
-            description:
-              'Natural language instruction for what to do in the browser',
-          },
-        },
-        required: ['command'],
-      },
-    },
-  },
   {
     type: 'function',
     function: {
@@ -404,14 +385,12 @@ const STATIC_TOOL_NAMES: ReadonlySet<string> = new Set(
 
 // Translate LLM-facing tool names to the names the tool server expects
 const TOOL_SERVER_NAME: Record<string, string> = {
-  browser: 'agentBrowser',
   places_search: 'placesSearch',
 };
 
 // Map LLM tool name → tool pod category
-const TOOL_CATEGORY: Record<string, 'browser' | 'execution'> = {
-  browser: 'browser',
-  places_search: 'browser',
+const TOOL_CATEGORY: Record<string, 'browser' | 'execution' | 'places'> = {
+  places_search: 'places',
 };
 
 // ---- Catalog tool definitions ----
@@ -512,7 +491,7 @@ async function executeToolViaK8s(
         await jobRunner.createToolPodJob({
           agentJobId: toolJobId,
           groupFolder,
-          category: category as 'browser' | 'execution',
+          category: category as 'browser' | 'execution' | 'places',
           timeout: TOOL_TIMEOUT_MS,
           maxToolOutputBytes,
         });

@@ -64,12 +64,12 @@ const NAME_RE = /^[A-Za-z][A-Za-z0-9_-]*$/;
 
 // Reserved names a catalog tool may not use:
 //  - the remaining static built-in tool names (TOOL_SERVER_NAME keys in direct-llm-runner.ts:
-//    browser, places_search), and
+//    places_search), and
 //  - the built-in spawn categories (BUILTIN_CATEGORIES in k8s/ipc-redis.ts:
-//    execution, browser) — a catalog tool named after a category would be
+//    execution, places) — a catalog tool named after a category would be
 //    silently routed to a legacy tool pod instead of its own image.
-// Note: web_fetch and web_search are now catalog tools and are no longer reserved.
-const RESERVED_NAMES = new Set(['browser', 'places_search', 'execution']);
+// Note: web_fetch, web_search, and browser are now catalog tools and are no longer reserved.
+const RESERVED_NAMES = new Set(['places_search', 'execution']);
 
 const ALLOWED_KEYS = new Set([
   'name',
@@ -181,8 +181,14 @@ export function validateTool(t: unknown): ValidationResult {
   if (typeof obj.pattern !== 'string' || !PATTERNS.has(obj.pattern)) {
     return { ok: false, error: 'pattern must be one of http|file|acp|cdp' };
   }
-  if (obj.pattern === 'cdp' && (obj.port === undefined || typeof obj.port !== 'number')) {
-    return { ok: false, error: 'cdp pattern requires a numeric port (the CDP port)' };
+  if (
+    obj.pattern === 'cdp' &&
+    (obj.port === undefined || typeof obj.port !== 'number')
+  ) {
+    return {
+      ok: false,
+      error: 'cdp pattern requires a numeric port (the CDP port)',
+    };
   }
   if (
     obj.port !== undefined &&

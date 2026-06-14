@@ -276,7 +276,7 @@ function channelPvcNames(channel: string): {
 // Track tool pod jobs per tool job for cleanup
 const toolPodsByAgent = new Map<string, Set<string>>();
 
-const BUILTIN_CATEGORIES = new Set(['execution', 'browser']);
+const BUILTIN_CATEGORIES = new Set(['execution', 'places']);
 
 /**
  * Active K8s agent-job names keyed by groupFolder.
@@ -1047,7 +1047,7 @@ export async function startToolPodSpawnWatcher(
               await jobRunner.createToolPodJob({
                 agentJobId,
                 groupFolder,
-                category: category as 'browser' | 'execution',
+                category: category as 'browser' | 'execution' | 'places',
                 timeout: timeoutMs,
                 groupsPvc,
                 sessionsPvc,

@@ -1557,7 +1557,7 @@ describe('startToolPodSpawnWatcher', () => {
                   'groupFolder',
                   'g',
                   'category',
-                  'browser',
+                  'places',
                   'timeout',
                   '30000',
                 ],

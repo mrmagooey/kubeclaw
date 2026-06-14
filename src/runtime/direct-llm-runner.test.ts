@@ -434,8 +434,8 @@ describe('DirectLLMRunner', () => {
     const callArgs = mockCreate.mock.calls[0][0];
     const toolNames = callArgs.tools.map((t: any) => t.function.name);
     expect(toolNames).toContain('home_control');
-    // Built-in tools still included (browser remains a static built-in)
-    expect(toolNames).toContain('browser');
+    // Built-in tools still included (places_search remains a static built-in)
+    expect(toolNames).toContain('places_search');
   });
 
   it('runAgent uses reasoning_content as fallback when content is null (thinking models)', async () => {
@@ -563,15 +563,15 @@ describe('DirectLLMRunner', () => {
     const runner = new DirectLLMRunner();
 
     await runner.runAgent(baseGroup, baseInput, undefined, undefined, {
-      toolFilter: new Set(['browser']),
+      toolFilter: new Set(['places_search']),
     });
 
     const callArgs = mockCreate.mock.calls[0][0];
     const toolNames = callArgs.tools.map((t: any) => t.function.name);
     // Only the allowlisted tool is advertised
-    expect(toolNames).toEqual(['browser']);
+    expect(toolNames).toEqual(['places_search']);
     // Other built-in tools are not included
-    expect(toolNames).not.toContain('places_search');
+    expect(toolNames).not.toContain('browser');
     expect(toolNames).not.toContain('execute_agent');
   });
 
@@ -1168,9 +1168,9 @@ describe('TOOLS — places_search registration', () => {
     expect(tool!.function.parameters.required).toContain('query');
   });
 
-  it('places_search is mapped to browser category in TOOL_CATEGORY', async () => {
+  it('places_search is mapped to places category in TOOL_CATEGORY', async () => {
     const { __testing__ } = await import('./direct-llm-runner.js');
-    expect(__testing__.toolCategoryForTest('places_search')).toBe('browser');
+    expect(__testing__.toolCategoryForTest('places_search')).toBe('places');
   });
 
   it('places_search is mapped to placesSearch in TOOL_SERVER_NAME', async () => {
@@ -1251,7 +1251,7 @@ describe('recommendation pattern — integration', () => {
     expect(mockCreate).toHaveBeenCalledTimes(2);
   });
 
-  it('places_search tool call routes via K8s browser pod (TOOL_CATEGORY=browser)', async () => {
+  it('places_search tool call routes via K8s places pod (TOOL_CATEGORY=places)', async () => {
     mockCreate
       .mockResolvedValueOnce({
         choices: [
@@ -1332,7 +1332,7 @@ describe('recommendation pattern — integration', () => {
     expect(jobRunner.createToolPodJob).toHaveBeenCalled();
     const podJobCall = (jobRunner.createToolPodJob as ReturnType<typeof vi.fn>)
       .mock.calls[0][0];
-    expect(podJobCall.category).toBe('browser');
+    expect(podJobCall.category).toBe('places');
   });
 
   it('second runAgent call on same groupFolder receives recommendation contract in system prompt', async () => {
