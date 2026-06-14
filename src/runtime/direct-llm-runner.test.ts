@@ -434,8 +434,8 @@ describe('DirectLLMRunner', () => {
     const callArgs = mockCreate.mock.calls[0][0];
     const toolNames = callArgs.tools.map((t: any) => t.function.name);
     expect(toolNames).toContain('home_control');
-    // Built-in tools still included
-    expect(toolNames).toContain('web_fetch');
+    // Built-in tools still included (browser remains a static built-in)
+    expect(toolNames).toContain('browser');
   });
 
   it('runAgent uses reasoning_content as fallback when content is null (thinking models)', async () => {
@@ -563,15 +563,15 @@ describe('DirectLLMRunner', () => {
     const runner = new DirectLLMRunner();
 
     await runner.runAgent(baseGroup, baseInput, undefined, undefined, {
-      toolFilter: new Set(['web_search']),
+      toolFilter: new Set(['browser']),
     });
 
     const callArgs = mockCreate.mock.calls[0][0];
     const toolNames = callArgs.tools.map((t: any) => t.function.name);
     // Only the allowlisted tool is advertised
-    expect(toolNames).toEqual(['web_search']);
+    expect(toolNames).toEqual(['browser']);
     // Other built-in tools are not included
-    expect(toolNames).not.toContain('web_fetch');
+    expect(toolNames).not.toContain('places_search');
     expect(toolNames).not.toContain('execute_agent');
   });
 

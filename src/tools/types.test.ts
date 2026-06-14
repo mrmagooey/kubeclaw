@@ -35,8 +35,15 @@ describe('validateTool', () => {
   });
 
   it('rejects a name that collides with a static built-in', () => {
-    for (const n of ['web_search', 'web_fetch', 'browser', 'places_search']) {
+    // web_fetch and web_search are now catalog tools and are no longer reserved
+    for (const n of ['browser', 'places_search']) {
       expect(validateTool({ ...base, name: n }).ok).toBe(false);
+    }
+  });
+
+  it('allows web_fetch and web_search as catalog tool names (no longer static built-ins)', () => {
+    for (const n of ['web_fetch', 'web_search']) {
+      expect(validateTool({ ...base, name: n }).ok).toBe(true);
     }
   });
 
@@ -295,13 +302,17 @@ describe('validateTool — mount + run', () => {
 
 describe('validateTool — credentials', () => {
   it('accepts a credentials string array', () => {
-    expect(validateTool({ ...base, credentials: ['brave-search'] })).toEqual({ ok: true });
+    expect(validateTool({ ...base, credentials: ['brave-search'] })).toEqual({
+      ok: true,
+    });
   });
   it('accepts an absent credentials field', () => {
     expect(validateTool(base)).toEqual({ ok: true });
   });
   it('rejects a non-array credentials', () => {
-    expect(validateTool({ ...base, credentials: 'brave-search' }).ok).toBe(false);
+    expect(validateTool({ ...base, credentials: 'brave-search' }).ok).toBe(
+      false,
+    );
   });
   it('rejects a non-string element', () => {
     expect(validateTool({ ...base, credentials: ['ok', 123] }).ok).toBe(false);

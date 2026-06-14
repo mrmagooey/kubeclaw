@@ -63,14 +63,13 @@ export type ValidationResult = { ok: true } | { ok: false; error: string };
 const NAME_RE = /^[A-Za-z][A-Za-z0-9_-]*$/;
 
 // Reserved names a catalog tool may not use:
-//  - the static built-in tool names (TOOL_SERVER_NAME keys in direct-llm-runner.ts:
-//    web_fetch, web_search, browser, places_search), and
+//  - the remaining static built-in tool names (TOOL_SERVER_NAME keys in direct-llm-runner.ts:
+//    browser, places_search), and
 //  - the built-in spawn categories (BUILTIN_CATEGORIES in k8s/ipc-redis.ts:
 //    execution, browser) — a catalog tool named after a category would be
 //    silently routed to a legacy tool pod instead of its own image.
+// Note: web_fetch and web_search are now catalog tools and are no longer reserved.
 const RESERVED_NAMES = new Set([
-  'web_fetch',
-  'web_search',
   'browser',
   'places_search',
   'execution',
@@ -298,7 +297,10 @@ export function validateTool(t: unknown): ValidationResult {
     }
     for (const c of obj.credentials) {
       if (typeof c !== 'string' || c.length === 0) {
-        return { ok: false, error: 'each credentials entry must be a non-empty string' };
+        return {
+          ok: false,
+          error: 'each credentials entry must be a non-empty string',
+        };
       }
     }
   }

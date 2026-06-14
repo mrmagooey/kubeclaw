@@ -486,8 +486,8 @@ describe('DirectLLMRunner — maxToolOutputBytes pod env injection', () => {
                   id: 'c1',
                   type: 'function',
                   function: {
-                    name: 'web_fetch',
-                    arguments: '{"url":"http://example.com"}',
+                    name: 'browser',
+                    arguments: '{"command":"go to http://example.com"}',
                   },
                 },
               ],

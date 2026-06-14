@@ -139,39 +139,6 @@ export const TOOLS: OpenAI.ChatCompletionFunctionTool[] = [
   {
     type: 'function',
     function: {
-      name: 'web_fetch',
-      description:
-        'Fetch the content of a URL. Use when the user asks to visit a website or read a specific page.',
-      parameters: {
-        type: 'object',
-        properties: {
-          url: { type: 'string', description: 'The URL to fetch' },
-        },
-        required: ['url'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'web_search',
-      description:
-        'Search the web for a query. Returns a JSON array of up to 10 results, each with ' +
-        'fields: title (string), url (string), snippet (string — the most relevant excerpt), ' +
-        'published (ISO date string, optional), source (hostname, optional). ' +
-        'Use when the user asks to look something up or find current information.',
-      parameters: {
-        type: 'object',
-        properties: {
-          query: { type: 'string', description: 'The search query' },
-        },
-        required: ['query'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
       name: 'browser',
       description:
         'Control a real web browser (Playwright). Use for JavaScript-heavy pages, filling forms, clicking, or any interaction that plain fetching cannot handle.',
@@ -437,16 +404,12 @@ const STATIC_TOOL_NAMES: ReadonlySet<string> = new Set(
 
 // Translate LLM-facing tool names to the names the tool server expects
 const TOOL_SERVER_NAME: Record<string, string> = {
-  web_fetch: 'webFetch',
-  web_search: 'webSearch',
   browser: 'agentBrowser',
   places_search: 'placesSearch',
 };
 
 // Map LLM tool name → tool pod category
 const TOOL_CATEGORY: Record<string, 'browser' | 'execution'> = {
-  web_fetch: 'browser',
-  web_search: 'browser',
   browser: 'browser',
   places_search: 'browser',
 };
