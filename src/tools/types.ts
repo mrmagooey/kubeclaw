@@ -311,7 +311,8 @@ export function validateTool(t: unknown): ValidationResult {
     if (obj.pattern === 'cdp' && obj.credentials.length > 0) {
       return {
         ok: false,
-        error: 'credentials is not supported for pattern "cdp" (no user-tool container to inject into)',
+        error:
+          'credentials is not supported for pattern "cdp" (no user-tool container to inject into)',
       };
     }
   }
