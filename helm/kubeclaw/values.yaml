@@ -543,6 +543,27 @@ tools:
     mount: none
     credentials: [brave-search]
     run: 'curl -sS -G -H "X-Subscription-Token: $BRAVE_API_KEY" --data-urlencode "q=$(cat "$INPUT_DIR/query")" --data-urlencode "count=10" "https://api.search.brave.com/res/v1/web/search"'
+  - name: browser
+    description: Drive a real web browser (Chromium). Call snapshot to see the page (it returns the interactive elements with refs and the visible text), then click/type using a ref. Actions persist within a session.
+    parameters:
+      type: object
+      properties:
+        action: { type: string, enum: [navigate, snapshot, click, type, press, back, wait] }
+        url:    { type: string }
+        ref:    { type: string }
+        text:   { type: string }
+        submit: { type: boolean }
+        key:    { type: string }
+        for:    { type: string }
+      required: [action]
+    image: chromedp/headless-shell:latest
+    pattern: cdp
+    port: 9222
+    memoryRequest: 256Mi
+    memoryLimit: 1Gi
+    cpuRequest: 100m
+    cpuLimit: "1"
+    timeout: 600000
 
 # Prometheus metrics scraping. Requires prometheus-operator in the cluster.
 metrics:
