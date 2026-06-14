@@ -1,5 +1,5 @@
 /**
- * Minikube-live e2e: web_search (credentials → sidecar) + web_fetch (no credentials).
+ * Cluster-self-gated manifest test: web_search (credentials → sidecar) + web_fetch (no credentials).
  *
  * Test strategy
  * ─────────────
@@ -30,7 +30,7 @@
  * jobRunner directly, so the deployed orchestrator version does not matter.
  * Jobs only need to CREATE successfully; we assert the manifest, not a running pod.
  *
- * Run: npx vitest run e2e/minikube-live-web-tools.test.ts --config vitest.e2e.config.ts
+ * Run: npx vitest run e2e/web-tools-manifest.test.ts --config vitest.e2e.config.ts
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawnSync } from 'node:child_process';
@@ -156,7 +156,7 @@ async function deleteJobIfExists(jobName: string): Promise<void> {
 
 // ── Suite ─────────────────────────────────────────────────────────────────────
 
-describe('Minikube-live: web_search credential-injection + web_fetch plain manifest assertions', () => {
+describe('web_search credential-injection + web_fetch plain manifest assertions', () => {
   let orchestratorRunning = false;
 
   // Jobs created during tests; cleaned up in afterAll.
@@ -166,7 +166,7 @@ describe('Minikube-live: web_search credential-injection + web_fetch plain manif
     orchestratorRunning = isOrchestratorReady();
     if (!orchestratorRunning) {
       console.warn(
-        `[minikube-live-web-tools] Orchestrator not ready in namespace ${NAMESPACE} — all tests will skip`,
+        `[web-tools-manifest] Orchestrator not ready in namespace ${NAMESPACE} — all tests will skip`,
       );
     }
   });
