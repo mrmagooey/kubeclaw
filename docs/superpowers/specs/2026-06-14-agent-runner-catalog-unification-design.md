@@ -57,7 +57,33 @@ Bootstrap (Mode 1) stays the **untouched privileged exception**: it keeps its
 - Converting `places_search` to a catalog tool — separate follow-on.
 - Deleting `executeToolLocal` / `createToolPodJob` wholesale — they remain for
   the `places` category until the places follow-on lands.
-- Any change to the channel's `DirectLLMRunner` (it is already the target shape).
+- Any change to the channel's `DirectLLMRunner` tool-assembly (it is already the
+  target shape). Note: §0's `createSidecarToolPodJob` timeout fix does affect the
+  shared spawn path the channel also uses — that is intentional and beneficial.
+- Threading the channel identity onto agent jobs (ACL option B) — deferred; see §2.
+
+## 0. Prerequisite — fix the catalog `timeout` regression (live bug)
+
+A pre-existing regression blocks the whole feature and must be fixed first, in
+this branch. The `browser` tool in `values.yaml` carries `timeout: 600000`, but
+`timeout` is not in `ToolSpec`/`ALLOWED_KEYS`, and `parseToolCatalog` rejects any
+unknown key by failing the **entire** catalog. The orchestrator resolves catalog
+tools via `loadBaselineFromDisk` → `parseToolCatalog` (`src/tools/reconciler.ts`),
+so today `resolveToolByName` returns `undefined` for *every* catalog tool — the
+channel's `bash`/`web_fetch`/`web_search`/`browser` all fail at spawn. No test
+feeds the rendered baseline through `parseToolCatalog`, so it slipped through.
+
+Fix (proper, restores intended behavior):
+- Add `timeout?: number` to `ToolSpec` (`src/tools/types.ts`), include `'timeout'`
+  in `ALLOWED_KEYS`, and validate it as a positive integer (milliseconds).
+- Have `createSidecarToolPodJob` honor `toolSpec.timeout` when present (falling
+  back to the caller-supplied `timeout`), so `browser`'s 600 s becomes real on the
+  shared spawn path (channel and agent both benefit).
+- Add a regression test that feeds the **rendered Helm baseline** (the actual
+  `values.yaml` `tools:` wrapped in the catalog envelope) through
+  `parseToolCatalog` and asserts it parses, so a future invalid key fails CI.
+
+This unblocks §1–§4 and makes the per-tool timeout in §3 a real, schema-backed value.
 
 ## Confirmed current-state facts (the design rests on these)
 
@@ -78,26 +104,46 @@ Bootstrap (Mode 1) stays the **untouched privileged exception**: it keeps its
 ### 1. Catalog loading in the agent-runner
 
 The agent job manifest (`generateJobManifest`, `src/k8s/job-runner.ts`) gains a
-`kubeclaw-tools` ConfigMap volume mounted at `/etc/kubeclaw/tools` — the same
-mount the channel pod gets (`channel-pods.yaml`). At startup the runner constructs
-`new ToolCatalogLoader('/etc/kubeclaw/tools/tools.json')` and calls `.load()` once
-(no `.start()`/`fs.watch` — agent jobs are short-lived).
+`kubeclaw-tools` ConfigMap volume (`optional: true`) mounted at `/etc/kubeclaw/tools`
+— mirroring the channel pod (`channel-pods.yaml` mounts the same ConfigMap there).
 
-**Bootstrap (Mode 1) does not get this mount or loader.** Its tool surface is
+The agent-runner is a **separate package** (`container/agent-runner`, its own
+`rootDir`/`node_modules`) and cannot import the main package's `ToolCatalogLoader`.
+So "reuse the loader" (the brainstorm decision) is realized faithfully as a small
+**agent-runner-local reader** over the same `tools.json`: read the file, `JSON.parse`,
+take `tools[]`, and expose a `getForChannel(name)` that filters
+`!t.channels?.length || t.channels.includes(name)` — identical semantics to
+`ToolCatalogLoader.getForChannel`. It is deliberately **lenient** (it maps only the
+fields it needs: `name`, `description`, `parameters`, `channels`, `timeout`) rather
+than re-running strict `parseToolCatalog`; the orchestrator already validates and
+re-resolves+ACL-checks every tool at spawn, so the agent reader needs no validation.
+Loaded once at startup (no `fs.watch` — agent jobs are short-lived).
+
+**Bootstrap (Mode 1) does not get this mount or reader.** Its tool surface is
 unchanged (hardcoded `local_*` + `ask_admin`/`commit_channel_config`).
 
 ### 2. Tool assembly (`buildToolDefinitions`, agent-runner `index.ts ~618`)
 
 - **Drop** the hardcoded routed AgentTools: `bash`, `read`, `write`, `edit`,
   `glob`, `grep`, `web_fetch`, `web_search`, `agent_browser`.
-- **Add** catalog tools: for each `ToolSpec` from
-  `loader.getForChannel(process.env.KUBECLAW_CHANNEL ?? '')`, build an AgentTool
+- **Add** catalog tools: for each tool from
+  `reader.getForChannel(process.env.KUBECLAW_CHANNEL ?? '')`, build an AgentTool
   whose `name`/`description`/`parameters` come from the spec and whose `execute`
-  calls the unified by-name dispatch (§3).
-  - `getForChannel('')` returns only non-channel-restricted tools — **ACL option A**
-    for scheduler jobs (no channel context).
-  - `execute_agent` sub-agents already carry `KUBECLAW_CHANNEL`, so they also
-    receive channel-scoped tools — **ACL option B-lite, at no extra cost.**
+  calls the unified by-name dispatch (§3). The `parameters` (plain JSON Schema)
+  pass straight through — pi-ai validates tool args with **AJV** and serializes
+  `parameters` to providers as JSON Schema (no TypeBox needed); a single
+  `as unknown as TSchema` cast satisfies the compiler.
+  - **ACL: uniform option A.** `KUBECLAW_CHANNEL` is **not** set on agent job
+    manifests (verified — it is channel-pod-only), so the agent always evaluates
+    `getForChannel('')`, which returns only non-channel-restricted tools. This holds
+    uniformly for both `execute_agent` sub-agents and scheduler jobs. The agent
+    likewise sends `channel: ''` in its spawn request (§3), so the orchestrator's
+    own ACL re-check agrees (defense in depth). Channel-scoped tools are simply
+    unavailable to agent jobs in v1. (Option B — threading the spawning channel's
+    identity into the agent job env so sub-agents inherit channel-scoped tools — is
+    a deferred enhancement; it requires `generateJobManifest` to receive the channel,
+    which the `execute_agent` spawn request already carries to the orchestrator but
+    does not currently propagate into the job.)
 - **Keep** unchanged the in-process / IPC tools: `send_message`, `schedule_task`,
   `list_tasks`, `pause_task`, `resume_task`, `cancel_task`, `update_task`, and the
   `isMain`-gated `register_group` / `deploy_channel` / `control_channel`.
@@ -123,9 +169,9 @@ to the channel. Only the top half changes:
   `lastId='$'` to `lastId='0-0'` — the channel's race-free pattern (the pod reads
   calls from `0-0`, so a result produced before the reader starts is not missed).
   Correlation by `requestId` makes re-scanning prior entries harmless.
-- Use `toolSpec.timeout` when present for both the spawn `timeout` field and the
-  result-wait deadline (so `browser`'s 600 s works); default to the existing 60 s
-  otherwise.
+- Use the tool's `timeout` (now a real `ToolSpec` field per §0) when present for
+  both the spawn `timeout` field and the result-wait deadline (so `browser`'s 600 s
+  works); default to the existing fixed timeout otherwise.
 
 The orchestrator side needs **no change**: `startToolPodSpawnWatcher` already
 resolves a catalog tool by name, re-checks `spec.channels` against the supplied
@@ -171,6 +217,9 @@ LLM tool call (catalog tool, by name)
 ## Testing (all three levels)
 
 **Unit**
+- §0: the rendered Helm baseline (real `values.yaml` `tools:` in the catalog
+  envelope) parses cleanly via `parseToolCatalog`; `timeout` validates as a positive
+  integer; `createSidecarToolPodJob` honors `toolSpec.timeout` over the caller value.
 - `buildToolDefinitions` builds catalog AgentTools from a fake catalog and keeps the
   IPC tool set; dropped tools (`read`/`write`/`edit`/`glob`/`grep`/`web_*`/`agent_browser`)
   are absent.
