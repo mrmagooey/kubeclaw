@@ -10,6 +10,7 @@ import { promisify } from 'util';
 import fs from 'fs';
 import path from 'path';
 import { createClient, RedisClientType } from 'redis';
+import { chromium, type Browser, type Page } from 'playwright-core';
 
 const execFileAsync = promisify(execFile);
 
@@ -17,7 +18,7 @@ const agentJobId = process.env.KUBECLAW_TOOL_JOB_ID!;
 const category = process.env.KUBECLAW_CATEGORY as 'execution' | 'browser' | string;
 const redisUrl = process.env.REDIS_URL || 'redis://kubeclaw-redis:6379';
 const idleTimeout = parseInt(process.env.IDLE_TIMEOUT || '1800000', 10);
-const toolMode = process.env.KUBECLAW_TOOL_MODE as 'http-bridge' | 'file-bridge' | 'acp-bridge' | undefined;
+const toolMode = process.env.KUBECLAW_TOOL_MODE as 'http-bridge' | 'file-bridge' | 'acp-bridge' | 'cdp-bridge' | undefined;
 const toolPort = parseInt(process.env.KUBECLAW_TOOL_PORT || '8080', 10);
 const SHARED_DIR = process.env.KUBECLAW_SHARED_DIR || '/shared';
 const MAX_TOOL_OUTPUT_BYTES = parseInt(
@@ -137,9 +138,9 @@ export async function waitForToolReady(): Promise<void> {
 
 let readyPromise: Promise<void> | null = null;
 
-/** Memoized readiness gate — applies to http-bridge and acp-bridge only. */
+/** Memoized readiness gate — applies to http-bridge, acp-bridge, and cdp-bridge. */
 function ensureToolReady(): Promise<void> {
-  if (toolMode !== 'http-bridge' && toolMode !== 'acp-bridge') {
+  if (toolMode !== 'http-bridge' && toolMode !== 'acp-bridge' && toolMode !== 'cdp-bridge') {
     return Promise.resolve();
   }
   if (!readyPromise) {
@@ -627,9 +628,106 @@ function extractACPResult(response: any): string {
   return JSON.stringify(output);
 }
 
+// --- CDP bridge ---
+
+let cdpBrowser: Browser | null = null;
+let cdpPage: Page | null = null;
+
+async function getCdpPage(): Promise<Page> {
+  const url = process.env.KUBECLAW_CDP_URL || 'http://localhost:9222';
+  if (cdpBrowser?.isConnected() && cdpPage && !cdpPage.isClosed()) return cdpPage;
+  cdpBrowser = await chromium.connectOverCDP(url);
+  const ctx = cdpBrowser.contexts()[0] ?? (await cdpBrowser.newContext());
+  cdpPage = ctx.pages()[0] ?? (await ctx.newPage());
+  return cdpPage;
+}
+
+const SNAPSHOT_FN = `(() => {
+  const SEL = ['a[href]','button:not([disabled])','input:not([disabled])','select:not([disabled])','textarea:not([disabled])','[role=button]','[role=link]','[role=checkbox]','[role=tab]','[role=menuitem]','[role=combobox]','[tabindex]:not([tabindex="-1"])','[onclick]'].join(',');
+  document.querySelectorAll('[data-kc-ref]').forEach(e => e.removeAttribute('data-kc-ref'));
+  let n = 0; const out = [];
+  for (const el of document.querySelectorAll(SEL)) {
+    const r = el.getBoundingClientRect();
+    if (r.width === 0 && r.height === 0) continue;
+    const ref = 'e' + (++n);
+    el.setAttribute('data-kc-ref', ref);
+    const role = el.getAttribute('role') || el.tagName.toLowerCase();
+    const text = (el.getAttribute('aria-label') || el.getAttribute('placeholder') || el.textContent || '').trim().replace(/\\s+/g,' ').slice(0,80);
+    out.push('[' + ref + '] ' + role + ' "' + text + '"');
+  }
+  return out.join('\\n');
+})()`;
+
+export async function executeToolBridgeCdp(
+  tool: string,
+  input: Record<string, unknown>,
+): Promise<unknown> {
+  // Best-effort readiness: try /json/version once with a short timeout before
+  // connecting via CDP.  If it fails (sidecar not yet up, or in unit tests where
+  // there is no real chromium), we fall through to getCdpPage() which either
+  // uses the mock (tests) or returns a descriptive error string (production).
+  const cdpUrl = process.env.KUBECLAW_CDP_URL || 'http://localhost:9222';
+  await fetch(`${cdpUrl}/json/version`, { signal: AbortSignal.timeout(500) }).catch(() => {});
+
+  const action = String(input.action ?? '');
+  let page: Page;
+  try {
+    page = await getCdpPage();
+  } catch (err) {
+    return `error: cannot connect to browser (${err instanceof Error ? err.message : String(err)})`;
+  }
+  try {
+    switch (action) {
+      case 'navigate': {
+        await page.goto(String(input.url ?? ''), { waitUntil: 'domcontentloaded', timeout: 30000 });
+        return `Navigated to ${page.url()} — "${await page.title()}"`;
+      }
+      case 'snapshot': {
+        const elements = (await page.evaluate(SNAPSHOT_FN)) as string;
+        const text = (await page.innerText('body').catch(() => '')).replace(/\s+/g, ' ').slice(0, 4000);
+        const out = `URL: ${page.url()}\nTitle: ${await page.title()}\n\nInteractive elements:\n${elements}\n\nVisible text (truncated):\n${text}`;
+        return out.slice(0, MAX_TOOL_OUTPUT_BYTES);
+      }
+      case 'click': {
+        await page.locator(`[data-kc-ref="${String(input.ref ?? '')}"]`).click({ timeout: 10000 });
+        return `Clicked ${input.ref}`;
+      }
+      case 'type': {
+        const loc = page.locator(`[data-kc-ref="${String(input.ref ?? '')}"]`);
+        await loc.fill(String(input.text ?? ''), { timeout: 10000 });
+        if (input.submit) await loc.press('Enter');
+        return `Typed into ${input.ref}`;
+      }
+      case 'press': {
+        await page.keyboard.press(String(input.key ?? ''));
+        return `Pressed ${input.key}`;
+      }
+      case 'back': {
+        await page.goBack({ waitUntil: 'domcontentloaded' });
+        return `Back to ${page.url()}`;
+      }
+      case 'wait': {
+        const f = String(input.for ?? '');
+        if (/^\d+$/.test(f)) await page.waitForTimeout(Math.min(Number(f), 30000));
+        else await page.waitForSelector(f, { timeout: 30000 });
+        return `Waited for ${f}`;
+      }
+      default:
+        return `error: unknown action "${action}". Valid actions: navigate, snapshot, click, type, press, back, wait`;
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (/data-kc-ref|no element|not found|Timeout.*locator/i.test(msg)) {
+      return `error: element ${input.ref ?? ''} not found or not actionable — call snapshot first (${msg.slice(0, 200)})`;
+    }
+    return `error: ${msg.slice(0, 500)}`;
+  }
+}
+
 // --- Tool dispatch ---
 
 async function executeTool(tool: string, input: Record<string, unknown>, requestId: string): Promise<unknown> {
+  if (toolMode === 'cdp-bridge') return executeToolBridgeCdp(tool, input);
   if (toolMode === 'acp-bridge') return executeToolBridgeAcp(tool, input);
   if (toolMode === 'http-bridge') return executeToolBridgeHttp(tool, input);
   if (toolMode === 'file-bridge') return executeToolBridgeFile(tool, input, requestId, declaredFields);
