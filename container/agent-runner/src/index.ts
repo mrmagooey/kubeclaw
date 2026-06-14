@@ -27,17 +27,23 @@
 
 import fs from 'fs';
 import path from 'path';
+import { pathToFileURL } from 'url';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { randomUUID } from 'crypto';
 import { Agent } from '@mariozechner/pi-agent-core';
-import type { AgentTool, AgentEvent, AgentMessage } from '@mariozechner/pi-agent-core';
+import type {
+  AgentTool,
+  AgentEvent,
+  AgentMessage,
+} from '@mariozechner/pi-agent-core';
 import { Type, streamSimple } from '@mariozechner/pi-ai';
 import type { Api } from '@mariozechner/pi-ai';
 import { createClient, RedisClientType } from 'redis';
 import { CronExpressionParser } from 'cron-parser';
 import { RedisIPCClient } from './redis/ipc-client.js';
 import { buildModel, getApiKeyForProvider } from './model.js';
+import type { CatalogTool } from './tool-catalog.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -72,7 +78,9 @@ function writeOutput(output: ContainerOutput): void {
   console.log(OUTPUT_END_MARKER);
   if (redisIpcClient) {
     redisIpcClient.sendOutput(output).catch((err) => {
-      log(`Warning: failed to publish output to Redis: ${err instanceof Error ? err.message : String(err)}`);
+      log(
+        `Warning: failed to publish output to Redis: ${err instanceof Error ? err.message : String(err)}`,
+      );
     });
   }
 }
@@ -87,7 +95,9 @@ async function readStdin(): Promise<string> {
   return new Promise((resolve, reject) => {
     let data = '';
     process.stdin.setEncoding('utf8');
-    process.stdin.on('data', (chunk) => { data += chunk; });
+    process.stdin.on('data', (chunk) => {
+      data += chunk;
+    });
     process.stdin.on('end', () => resolve(data));
     process.stdin.on('error', reject);
   });
@@ -96,7 +106,10 @@ async function readStdin(): Promise<string> {
 // ---- Conversation history ----
 
 const HISTORY_FILE = '/workspace/group/.conversation.json';
-const MAX_HISTORY_MESSAGES = parseInt(process.env.KUBECLAW_HISTORY_MAX || '100', 10);
+const MAX_HISTORY_MESSAGES = parseInt(
+  process.env.KUBECLAW_HISTORY_MAX || '100',
+  10,
+);
 
 interface ConversationHistory {
   messages: AgentMessage[];
@@ -148,20 +161,33 @@ function migrateOpenAIHistory(messages: OpenAIMessage[]): AgentMessage[] {
     if (msg.role === 'user') {
       result.push({
         role: 'user',
-        content: typeof msg.content === 'string'
-          ? [{ type: 'text', text: msg.content }]
-          : msg.content || '',
+        content:
+          typeof msg.content === 'string'
+            ? [{ type: 'text', text: msg.content }]
+            : msg.content || '',
         timestamp: now,
       });
     } else if (msg.role === 'assistant') {
-      const content: Array<{ type: 'text'; text: string } | { type: 'toolCall'; id: string; name: string; arguments: Record<string, any> }> = [];
+      const content: Array<
+        | { type: 'text'; text: string }
+        | {
+            type: 'toolCall';
+            id: string;
+            name: string;
+            arguments: Record<string, any>;
+          }
+      > = [];
       if (msg.content) {
         content.push({ type: 'text', text: msg.content });
       }
       if (msg.tool_calls) {
         for (const tc of msg.tool_calls) {
           let args: Record<string, any> = {};
-          try { args = JSON.parse(tc.function.arguments); } catch { /* empty */ }
+          try {
+            args = JSON.parse(tc.function.arguments);
+          } catch {
+            /* empty */
+          }
           content.push({
             type: 'toolCall',
             id: tc.id,
@@ -176,7 +202,14 @@ function migrateOpenAIHistory(messages: OpenAIMessage[]): AgentMessage[] {
         api: 'openai-completions' as Api,
         provider: 'openai',
         model: 'unknown',
-        usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+        usage: {
+          input: 0,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 0,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
         stopReason: msg.tool_calls?.length ? 'toolUse' : 'stop',
         timestamp: now,
       });
@@ -197,14 +230,20 @@ function migrateOpenAIHistory(messages: OpenAIMessage[]): AgentMessage[] {
 function saveHistory(messages: AgentMessage[]): void {
   try {
     // Filter out system-level or non-standard messages, keep user/assistant/toolResult
-    const saveable = messages.filter((m) =>
-      m.role === 'user' || m.role === 'assistant' || m.role === 'toolResult'
+    const saveable = messages.filter(
+      (m) =>
+        m.role === 'user' || m.role === 'assistant' || m.role === 'toolResult',
     );
     const capped = saveable.slice(-MAX_HISTORY_MESSAGES);
-    const data: ConversationHistory = { messages: capped, updatedAt: new Date().toISOString() };
+    const data: ConversationHistory = {
+      messages: capped,
+      updatedAt: new Date().toISOString(),
+    };
     fs.writeFileSync(HISTORY_FILE, JSON.stringify(data, null, 2));
   } catch (err) {
-    log(`Warning: failed to save history: ${err instanceof Error ? err.message : String(err)}`);
+    log(
+      `Warning: failed to save history: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 }
 
@@ -215,17 +254,25 @@ function loadSystemPrompt(assistantName?: string): string {
 
   // Per-group instructions
   try {
-    const groupMd = fs.readFileSync('/workspace/group/CLAUDE.md', 'utf-8').trim();
+    const groupMd = fs
+      .readFileSync('/workspace/group/CLAUDE.md', 'utf-8')
+      .trim();
     if (groupMd) parts.push(groupMd);
-  } catch { /* not present */ }
+  } catch {
+    /* not present */
+  }
 
   // Global instructions
   try {
     if (!parts.length) {
-      const globalMd = fs.readFileSync('/workspace/global/CLAUDE.md', 'utf-8').trim();
+      const globalMd = fs
+        .readFileSync('/workspace/global/CLAUDE.md', 'utf-8')
+        .trim();
       if (globalMd) parts.push(globalMd);
     }
-  } catch { /* not present */ }
+  } catch {
+    /* not present */
+  }
 
   if (parts.length === 0) {
     const name = assistantName || 'the assistant';
@@ -262,7 +309,9 @@ class InputStreamManager {
         { COUNT: 100 },
       );
       this._enqueue(response);
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }
 
   async blockPoll(timeoutMs: number): Promise<void> {
@@ -272,7 +321,9 @@ class InputStreamManager {
         { BLOCK: Math.max(100, timeoutMs), COUNT: 100 },
       );
       this._enqueue(response);
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }
 
   drainUserMessages(): string[] {
@@ -290,7 +341,10 @@ class InputStreamManager {
     return this.queue.some((e) => e.type === 'close');
   }
 
-  async waitForToolPodAck(category: string, timeoutMs: number): Promise<string> {
+  async waitForToolPodAck(
+    category: string,
+    timeoutMs: number,
+  ): Promise<string> {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       const idx = this.queue.findIndex(
@@ -304,7 +358,9 @@ class InputStreamManager {
       if (blockMs <= 0) break;
       await this.blockPoll(blockMs);
     }
-    throw new Error(`Timeout waiting for tool_pod_ack for category=${category}`);
+    throw new Error(
+      `Timeout waiting for tool_pod_ack for category=${category}`,
+    );
   }
 
   private _enqueue(response: any): void {
@@ -363,12 +419,15 @@ async function callToolViaRedis(
 
   if (!podReadyMap.get(category)) {
     const taskChannel = `kubeclaw:tasks:${groupFolder}`;
-    await (redis as any).publish(taskChannel, JSON.stringify({
-      type: 'tool_pod_request',
-      agentJobId,
-      category,
-      groupFolder,
-    }));
+    await (redis as any).publish(
+      taskChannel,
+      JSON.stringify({
+        type: 'tool_pod_request',
+        agentJobId,
+        category,
+        groupFolder,
+      }),
+    );
     log(`Requested ${category} tool pod`);
     await inputStream.waitForToolPodAck(category, POD_ACK_TIMEOUT);
     podReadyMap.set(category, true);
@@ -403,7 +462,9 @@ async function callToolViaRedis(
         if (f.error) return `Tool error: ${f.error}`;
         try {
           const parsed = JSON.parse(f.result ?? 'null');
-          return typeof parsed === 'string' ? parsed : JSON.stringify(parsed, null, 2);
+          return typeof parsed === 'string'
+            ? parsed
+            : JSON.stringify(parsed, null, 2);
         } catch {
           return f.result ?? '';
         }
@@ -411,6 +472,79 @@ async function callToolViaRedis(
     }
   }
   return `Tool timed out after ${TOOL_CALL_TIMEOUT / 1000}s`;
+}
+
+const SPAWN_TOOL_POD_STREAM = 'kubeclaw:spawn-tool-pod';
+const CATALOG_TOOL_TIMEOUT_MS = 120_000;
+
+/**
+ * Execute a catalog tool by NAME via the orchestrator's spawn-tool-pod stream —
+ * the same path the channel's DirectLLMRunner uses. Writes the call first, then
+ * requests the sidecar pod (once per tool name), then block-reads the result
+ * stream from '0-0' and correlates by requestId.
+ */
+export async function callCatalogToolViaRedis(
+  redis: RedisClientType,
+  agentJobId: string,
+  groupFolder: string,
+  channel: string,
+  spec: CatalogTool,
+  args: Record<string, unknown>,
+  spawnedTools: Set<string>,
+): Promise<string> {
+  const toolName = spec.name;
+  const timeoutMs = spec.timeout ?? CATALOG_TOOL_TIMEOUT_MS;
+  const requestId = randomUUID();
+  const callsStream = `kubeclaw:toolcalls:${agentJobId}:${toolName}`;
+  const resultsStream = `kubeclaw:toolresults:${agentJobId}:${toolName}`;
+
+  // Write the call BEFORE spawning so the pod (which reads from lastId='0-0')
+  // cannot miss it.
+  await (redis as any).xAdd(callsStream, '*', {
+    requestId,
+    tool: toolName,
+    input: JSON.stringify(args),
+  });
+
+  if (!spawnedTools.has(toolName)) {
+    spawnedTools.add(toolName);
+    await (redis as any).xAdd(SPAWN_TOOL_POD_STREAM, '*', {
+      agentJobId,
+      groupFolder,
+      category: toolName,
+      timeout: String(timeoutMs),
+      channel,
+    });
+    log(`Requested sidecar tool pod for ${toolName}`);
+  }
+
+  const deadline = Date.now() + timeoutMs;
+  let lastId = '0-0';
+  while (Date.now() < deadline) {
+    const blockMs = Math.min(deadline - Date.now(), 5000);
+    const response = await (redis as any).xRead(
+      [{ key: resultsStream, id: lastId }],
+      { BLOCK: blockMs, COUNT: 10 },
+    );
+    if (!response?.length) continue;
+    for (const stream of response) {
+      for (const msg of (stream as any).messages ?? []) {
+        lastId = msg.id;
+        const f = msg.message as Record<string, string>;
+        if (f.requestId !== requestId) continue;
+        if (f.error) return `Tool error: ${f.error}`;
+        try {
+          const parsed = JSON.parse(f.result ?? 'null');
+          return typeof parsed === 'string'
+            ? parsed
+            : JSON.stringify(parsed, null, 2);
+        } catch {
+          return f.result ?? '';
+        }
+      }
+    }
+  }
+  return `Tool timed out after ${Math.floor(timeoutMs / 1000)}s`;
 }
 
 // ---- IPC tool handlers ----
@@ -425,7 +559,14 @@ async function handleSendMessage(
   const sender = args.sender ? String(args.sender) : undefined;
   await (redis as any).publish(
     `kubeclaw:messages:${groupFolder}`,
-    JSON.stringify({ type: 'message', chatJid, text, sender, groupFolder, timestamp: new Date().toISOString() }),
+    JSON.stringify({
+      type: 'message',
+      chatJid,
+      text,
+      sender,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    }),
   );
   return 'Message sent.';
 }
@@ -437,15 +578,22 @@ async function handleScheduleTask(
   isMain: boolean,
   args: Record<string, unknown>,
 ): Promise<string> {
-  const scheduleType = String(args.schedule_type ?? 'once') as 'cron' | 'interval' | 'once';
+  const scheduleType = String(args.schedule_type ?? 'once') as
+    | 'cron'
+    | 'interval'
+    | 'once';
   const scheduleValue = String(args.schedule_value ?? '');
 
   if (scheduleType === 'cron') {
-    try { CronExpressionParser.parse(scheduleValue); }
-    catch { return `Invalid cron: "${scheduleValue}". Use format like "0 9 * * *".`; }
+    try {
+      CronExpressionParser.parse(scheduleValue);
+    } catch {
+      return `Invalid cron: "${scheduleValue}". Use format like "0 9 * * *".`;
+    }
   } else if (scheduleType === 'interval') {
     const ms = parseInt(scheduleValue, 10);
-    if (isNaN(ms) || ms <= 0) return `Invalid interval: "${scheduleValue}". Must be positive milliseconds.`;
+    if (isNaN(ms) || ms <= 0)
+      return `Invalid interval: "${scheduleValue}". Must be positive milliseconds.`;
   } else if (scheduleType === 'once') {
     if (/[Zz]$/.test(scheduleValue) || /[+-]\d{2}:\d{2}$/.test(scheduleValue)) {
       return `Timestamp must be local time without timezone suffix. Got "${scheduleValue}".`;
@@ -455,7 +603,8 @@ async function handleScheduleTask(
     }
   }
 
-  const targetJid = isMain && args.target_group_jid ? String(args.target_group_jid) : chatJid;
+  const targetJid =
+    isMain && args.target_group_jid ? String(args.target_group_jid) : chatJid;
   const taskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
   await (redis as any).publish(
@@ -480,11 +629,19 @@ function handleListTasks(groupFolder: string, isMain: boolean): string {
   try {
     if (!fs.existsSync(tasksFile)) return 'No scheduled tasks found.';
     const all: any[] = JSON.parse(fs.readFileSync(tasksFile, 'utf-8'));
-    const tasks = isMain ? all : all.filter((t) => t.groupFolder === groupFolder);
+    const tasks = isMain
+      ? all
+      : all.filter((t) => t.groupFolder === groupFolder);
     if (tasks.length === 0) return 'No scheduled tasks found.';
-    return 'Scheduled tasks:\n' + tasks.map((t) =>
-      `- [${t.id}] ${String(t.prompt).slice(0, 50)}... (${t.schedule_type}: ${t.schedule_value}) - ${t.status}, next: ${t.next_run || 'N/A'}`,
-    ).join('\n');
+    return (
+      'Scheduled tasks:\n' +
+      tasks
+        .map(
+          (t) =>
+            `- [${t.id}] ${String(t.prompt).slice(0, 50)}... (${t.schedule_type}: ${t.schedule_value}) - ${t.status}, next: ${t.next_run || 'N/A'}`,
+        )
+        .join('\n')
+    );
   } catch (err) {
     return `Error reading tasks: ${err instanceof Error ? err.message : String(err)}`;
   }
@@ -499,7 +656,12 @@ async function handleTaskLifecycle(
 ): Promise<string> {
   await (redis as any).publish(
     `kubeclaw:tasks:${groupFolder}`,
-    JSON.stringify({ type, taskId: String(args.task_id ?? ''), groupFolder, isMain }),
+    JSON.stringify({
+      type,
+      taskId: String(args.task_id ?? ''),
+      groupFolder,
+      isMain,
+    }),
   );
   return `Task ${args.task_id} ${type.replace('_task', '')} requested.`;
 }
@@ -517,10 +679,15 @@ async function handleUpdateTask(
     isMain,
   };
   if (args.prompt !== undefined) payload.prompt = args.prompt;
-  if (args.schedule_type !== undefined) payload.schedule_type = args.schedule_type;
-  if (args.schedule_value !== undefined) payload.schedule_value = args.schedule_value;
+  if (args.schedule_type !== undefined)
+    payload.schedule_type = args.schedule_type;
+  if (args.schedule_value !== undefined)
+    payload.schedule_value = args.schedule_value;
 
-  await (redis as any).publish(`kubeclaw:tasks:${groupFolder}`, JSON.stringify(payload));
+  await (redis as any).publish(
+    `kubeclaw:tasks:${groupFolder}`,
+    JSON.stringify(payload),
+  );
   return `Task ${args.task_id} update requested.`;
 }
 
@@ -568,7 +735,10 @@ function localRead(args: Record<string, unknown>): string {
   const limit = typeof args.limit === 'number' ? args.limit : undefined;
   try {
     const lines = fs.readFileSync(filePath, 'utf-8').split('\n');
-    const slice = limit !== undefined ? lines.slice(offset, offset + limit) : lines.slice(offset);
+    const slice =
+      limit !== undefined
+        ? lines.slice(offset, offset + limit)
+        : lines.slice(offset);
     return slice.map((l, i) => `${offset + i + 1}\t${l}`).join('\n');
   } catch (err) {
     return `Error: ${err instanceof Error ? err.message : String(err)}`;
@@ -595,7 +765,9 @@ function localEdit(args: Record<string, unknown>): string {
   try {
     let content = fs.readFileSync(filePath, 'utf-8');
     if (!content.includes(oldStr)) return `old_string not found in ${filePath}`;
-    content = replaceAll ? content.split(oldStr).join(newStr) : content.replace(oldStr, newStr);
+    content = replaceAll
+      ? content.split(oldStr).join(newStr)
+      : content.replace(oldStr, newStr);
     fs.writeFileSync(filePath, content);
     return `Edited ${filePath}`;
   } catch (err) {
@@ -633,11 +805,22 @@ function buildToolDefinitions(
       description: 'Run a bash command in the execution environment.',
       parameters: Type.Object({
         command: Type.String({ description: 'The bash command to run' }),
-        timeout: Type.Optional(Type.Number({ description: 'Timeout in milliseconds (optional)' })),
+        timeout: Type.Optional(
+          Type.Number({ description: 'Timeout in milliseconds (optional)' }),
+        ),
       }),
-      execute: async (_id, params) => textResult(
-        await callToolViaRedis(redis, inputStream, agentJobId, groupFolder, 'bash', params as Record<string, unknown>, podReadyMap),
-      ),
+      execute: async (_id, params) =>
+        textResult(
+          await callToolViaRedis(
+            redis,
+            inputStream,
+            agentJobId,
+            groupFolder,
+            'bash',
+            params as Record<string, unknown>,
+            podReadyMap,
+          ),
+        ),
     },
     {
       name: 'read',
@@ -645,12 +828,27 @@ function buildToolDefinitions(
       description: 'Read a file from the workspace.',
       parameters: Type.Object({
         file_path: Type.String(),
-        offset: Type.Optional(Type.Number({ description: 'Line number to start reading from (0-based)' })),
-        limit: Type.Optional(Type.Number({ description: 'Number of lines to read' })),
+        offset: Type.Optional(
+          Type.Number({
+            description: 'Line number to start reading from (0-based)',
+          }),
+        ),
+        limit: Type.Optional(
+          Type.Number({ description: 'Number of lines to read' }),
+        ),
       }),
-      execute: async (_id, params) => textResult(
-        await callToolViaRedis(redis, inputStream, agentJobId, groupFolder, 'read', params as Record<string, unknown>, podReadyMap),
-      ),
+      execute: async (_id, params) =>
+        textResult(
+          await callToolViaRedis(
+            redis,
+            inputStream,
+            agentJobId,
+            groupFolder,
+            'read',
+            params as Record<string, unknown>,
+            podReadyMap,
+          ),
+        ),
     },
     {
       name: 'write',
@@ -660,9 +858,18 @@ function buildToolDefinitions(
         file_path: Type.String(),
         content: Type.String(),
       }),
-      execute: async (_id, params) => textResult(
-        await callToolViaRedis(redis, inputStream, agentJobId, groupFolder, 'write', params as Record<string, unknown>, podReadyMap),
-      ),
+      execute: async (_id, params) =>
+        textResult(
+          await callToolViaRedis(
+            redis,
+            inputStream,
+            agentJobId,
+            groupFolder,
+            'write',
+            params as Record<string, unknown>,
+            podReadyMap,
+          ),
+        ),
     },
     {
       name: 'edit',
@@ -674,9 +881,18 @@ function buildToolDefinitions(
         new_string: Type.String(),
         replace_all: Type.Optional(Type.Boolean()),
       }),
-      execute: async (_id, params) => textResult(
-        await callToolViaRedis(redis, inputStream, agentJobId, groupFolder, 'edit', params as Record<string, unknown>, podReadyMap),
-      ),
+      execute: async (_id, params) =>
+        textResult(
+          await callToolViaRedis(
+            redis,
+            inputStream,
+            agentJobId,
+            groupFolder,
+            'edit',
+            params as Record<string, unknown>,
+            podReadyMap,
+          ),
+        ),
     },
     {
       name: 'glob',
@@ -684,11 +900,22 @@ function buildToolDefinitions(
       description: 'Find files by glob pattern.',
       parameters: Type.Object({
         pattern: Type.String(),
-        path: Type.Optional(Type.String({ description: 'Directory to search in (optional)' })),
+        path: Type.Optional(
+          Type.String({ description: 'Directory to search in (optional)' }),
+        ),
       }),
-      execute: async (_id, params) => textResult(
-        await callToolViaRedis(redis, inputStream, agentJobId, groupFolder, 'glob', params as Record<string, unknown>, podReadyMap),
-      ),
+      execute: async (_id, params) =>
+        textResult(
+          await callToolViaRedis(
+            redis,
+            inputStream,
+            agentJobId,
+            groupFolder,
+            'glob',
+            params as Record<string, unknown>,
+            podReadyMap,
+          ),
+        ),
     },
     {
       name: 'grep',
@@ -698,15 +925,26 @@ function buildToolDefinitions(
         pattern: Type.String(),
         path: Type.Optional(Type.String()),
         glob: Type.Optional(Type.String()),
-        output_mode: Type.Optional(Type.Union([
-          Type.Literal('content'),
-          Type.Literal('files_with_matches'),
-          Type.Literal('count'),
-        ])),
+        output_mode: Type.Optional(
+          Type.Union([
+            Type.Literal('content'),
+            Type.Literal('files_with_matches'),
+            Type.Literal('count'),
+          ]),
+        ),
       }),
-      execute: async (_id, params) => textResult(
-        await callToolViaRedis(redis, inputStream, agentJobId, groupFolder, 'grep', params as Record<string, unknown>, podReadyMap),
-      ),
+      execute: async (_id, params) =>
+        textResult(
+          await callToolViaRedis(
+            redis,
+            inputStream,
+            agentJobId,
+            groupFolder,
+            'grep',
+            params as Record<string, unknown>,
+            podReadyMap,
+          ),
+        ),
     },
     // Browser tools (Redis-routed)
     {
@@ -715,11 +953,22 @@ function buildToolDefinitions(
       description: 'Fetch the content of a URL.',
       parameters: Type.Object({
         url: Type.String(),
-        prompt: Type.Optional(Type.String({ description: 'Optional focus prompt' })),
+        prompt: Type.Optional(
+          Type.String({ description: 'Optional focus prompt' }),
+        ),
       }),
-      execute: async (_id, params) => textResult(
-        await callToolViaRedis(redis, inputStream, agentJobId, groupFolder, 'web_fetch', params as Record<string, unknown>, podReadyMap),
-      ),
+      execute: async (_id, params) =>
+        textResult(
+          await callToolViaRedis(
+            redis,
+            inputStream,
+            agentJobId,
+            groupFolder,
+            'web_fetch',
+            params as Record<string, unknown>,
+            podReadyMap,
+          ),
+        ),
     },
     {
       name: 'web_search',
@@ -728,9 +977,18 @@ function buildToolDefinitions(
       parameters: Type.Object({
         query: Type.String(),
       }),
-      execute: async (_id, params) => textResult(
-        await callToolViaRedis(redis, inputStream, agentJobId, groupFolder, 'web_search', params as Record<string, unknown>, podReadyMap),
-      ),
+      execute: async (_id, params) =>
+        textResult(
+          await callToolViaRedis(
+            redis,
+            inputStream,
+            agentJobId,
+            groupFolder,
+            'web_search',
+            params as Record<string, unknown>,
+            podReadyMap,
+          ),
+        ),
     },
     {
       name: 'agent_browser',
@@ -739,22 +997,40 @@ function buildToolDefinitions(
       parameters: Type.Object({
         command: Type.String(),
       }),
-      execute: async (_id, params) => textResult(
-        await callToolViaRedis(redis, inputStream, agentJobId, groupFolder, 'agent_browser', params as Record<string, unknown>, podReadyMap),
-      ),
+      execute: async (_id, params) =>
+        textResult(
+          await callToolViaRedis(
+            redis,
+            inputStream,
+            agentJobId,
+            groupFolder,
+            'agent_browser',
+            params as Record<string, unknown>,
+            podReadyMap,
+          ),
+        ),
     },
     // IPC tools
     {
       name: 'send_message',
       label: 'Send Message',
-      description: 'Send a message to the user immediately while still running. Use for progress updates.',
+      description:
+        'Send a message to the user immediately while still running. Use for progress updates.',
       parameters: Type.Object({
         text: Type.String(),
-        sender: Type.Optional(Type.String({ description: 'Role/identity name (optional)' })),
+        sender: Type.Optional(
+          Type.String({ description: 'Role/identity name (optional)' }),
+        ),
       }),
-      execute: async (_id, params) => textResult(
-        await handleSendMessage(redis, groupFolder, chatJid, params as Record<string, unknown>),
-      ),
+      execute: async (_id, params) =>
+        textResult(
+          await handleSendMessage(
+            redis,
+            groupFolder,
+            chatJid,
+            params as Record<string, unknown>,
+          ),
+        ),
     },
     {
       name: 'schedule_task',
@@ -762,14 +1038,27 @@ function buildToolDefinitions(
       description: 'Schedule a recurring or one-time task.',
       parameters: Type.Object({
         prompt: Type.String(),
-        schedule_type: Type.Union([Type.Literal('cron'), Type.Literal('interval'), Type.Literal('once')]),
+        schedule_type: Type.Union([
+          Type.Literal('cron'),
+          Type.Literal('interval'),
+          Type.Literal('once'),
+        ]),
         schedule_value: Type.String(),
-        context_mode: Type.Optional(Type.Union([Type.Literal('group'), Type.Literal('isolated')])),
+        context_mode: Type.Optional(
+          Type.Union([Type.Literal('group'), Type.Literal('isolated')]),
+        ),
         target_group_jid: Type.Optional(Type.String()),
       }),
-      execute: async (_id, params) => textResult(
-        await handleScheduleTask(redis, groupFolder, chatJid, isMain, params as Record<string, unknown>),
-      ),
+      execute: async (_id, params) =>
+        textResult(
+          await handleScheduleTask(
+            redis,
+            groupFolder,
+            chatJid,
+            isMain,
+            params as Record<string, unknown>,
+          ),
+        ),
     },
     {
       name: 'list_tasks',
@@ -785,9 +1074,16 @@ function buildToolDefinitions(
       parameters: Type.Object({
         task_id: Type.String(),
       }),
-      execute: async (_id, params) => textResult(
-        await handleTaskLifecycle(redis, groupFolder, isMain, 'pause_task', params as Record<string, unknown>),
-      ),
+      execute: async (_id, params) =>
+        textResult(
+          await handleTaskLifecycle(
+            redis,
+            groupFolder,
+            isMain,
+            'pause_task',
+            params as Record<string, unknown>,
+          ),
+        ),
     },
     {
       name: 'resume_task',
@@ -796,9 +1092,16 @@ function buildToolDefinitions(
       parameters: Type.Object({
         task_id: Type.String(),
       }),
-      execute: async (_id, params) => textResult(
-        await handleTaskLifecycle(redis, groupFolder, isMain, 'resume_task', params as Record<string, unknown>),
-      ),
+      execute: async (_id, params) =>
+        textResult(
+          await handleTaskLifecycle(
+            redis,
+            groupFolder,
+            isMain,
+            'resume_task',
+            params as Record<string, unknown>,
+          ),
+        ),
     },
     {
       name: 'cancel_task',
@@ -807,9 +1110,16 @@ function buildToolDefinitions(
       parameters: Type.Object({
         task_id: Type.String(),
       }),
-      execute: async (_id, params) => textResult(
-        await handleTaskLifecycle(redis, groupFolder, isMain, 'cancel_task', params as Record<string, unknown>),
-      ),
+      execute: async (_id, params) =>
+        textResult(
+          await handleTaskLifecycle(
+            redis,
+            groupFolder,
+            isMain,
+            'cancel_task',
+            params as Record<string, unknown>,
+          ),
+        ),
     },
     {
       name: 'update_task',
@@ -818,12 +1128,24 @@ function buildToolDefinitions(
       parameters: Type.Object({
         task_id: Type.String(),
         prompt: Type.Optional(Type.String()),
-        schedule_type: Type.Optional(Type.Union([Type.Literal('cron'), Type.Literal('interval'), Type.Literal('once')])),
+        schedule_type: Type.Optional(
+          Type.Union([
+            Type.Literal('cron'),
+            Type.Literal('interval'),
+            Type.Literal('once'),
+          ]),
+        ),
         schedule_value: Type.Optional(Type.String()),
       }),
-      execute: async (_id, params) => textResult(
-        await handleUpdateTask(redis, groupFolder, isMain, params as Record<string, unknown>),
-      ),
+      execute: async (_id, params) =>
+        textResult(
+          await handleUpdateTask(
+            redis,
+            groupFolder,
+            isMain,
+            params as Record<string, unknown>,
+          ),
+        ),
     },
   ];
 
@@ -838,22 +1160,39 @@ function buildToolDefinitions(
         folder: Type.String(),
         trigger: Type.String(),
       }),
-      execute: async (_id, params) => textResult(
-        await handleRegisterGroup(redis, groupFolder, isMain, params as Record<string, unknown>),
-      ),
+      execute: async (_id, params) =>
+        textResult(
+          await handleRegisterGroup(
+            redis,
+            groupFolder,
+            isMain,
+            params as Record<string, unknown>,
+          ),
+        ),
     });
     tools.push({
       name: 'deploy_channel',
       label: 'Deploy Channel',
-      description: 'Ask the orchestrator to create Kubernetes resources for a new channel pod. Pass the full multi-document YAML. Main group only.',
+      description:
+        'Ask the orchestrator to create Kubernetes resources for a new channel pod. Pass the full multi-document YAML. Main group only.',
       parameters: Type.Object({
-        yamlContent: Type.String({ description: 'Multi-document Kubernetes YAML to apply (Deployment, PVC, Service)' }),
+        yamlContent: Type.String({
+          description:
+            'Multi-document Kubernetes YAML to apply (Deployment, PVC, Service)',
+        }),
       }),
       execute: async (_id, params) => {
-        if (!isMain) return textResult('deploy_channel is only available to the main group.');
+        if (!isMain)
+          return textResult(
+            'deploy_channel is only available to the main group.',
+          );
         await (redis as any).publish(
           `kubeclaw:tasks:${groupFolder}`,
-          JSON.stringify({ type: 'deploy_channel', yaml: String((params as any).yamlContent || ''), groupFolder }),
+          JSON.stringify({
+            type: 'deploy_channel',
+            yaml: String((params as any).yamlContent || ''),
+            groupFolder,
+          }),
         );
         return textResult('Deployment request sent to orchestrator.');
       },
@@ -861,18 +1200,34 @@ function buildToolDefinitions(
     tools.push({
       name: 'control_channel',
       label: 'Control Channel',
-      description: 'Send a control command to a running channel pod (e.g. reload to force reconnect). Main group only.',
+      description:
+        'Send a control command to a running channel pod (e.g. reload to force reconnect). Main group only.',
       parameters: Type.Object({
-        channelName: Type.String({ description: 'Channel pod name to control (e.g. telegram, irc, discord)' }),
-        command: Type.Union([Type.Literal('reload')], { description: 'reload: disconnect and reconnect the channel' }),
+        channelName: Type.String({
+          description:
+            'Channel pod name to control (e.g. telegram, irc, discord)',
+        }),
+        command: Type.Union([Type.Literal('reload')], {
+          description: 'reload: disconnect and reconnect the channel',
+        }),
       }),
       execute: async (_id, params) => {
-        if (!isMain) return textResult('control_channel is only available to the main group.');
+        if (!isMain)
+          return textResult(
+            'control_channel is only available to the main group.',
+          );
         await (redis as any).publish(
           `kubeclaw:tasks:${groupFolder}`,
-          JSON.stringify({ type: 'control_channel', channelName: String((params as any).channelName || ''), command: String((params as any).command || ''), groupFolder }),
+          JSON.stringify({
+            type: 'control_channel',
+            channelName: String((params as any).channelName || ''),
+            command: String((params as any).command || ''),
+            groupFolder,
+          }),
         );
-        return textResult(`Control command '${(params as any).command}' sent to channel '${(params as any).channelName}'.`);
+        return textResult(
+          `Control command '${(params as any).command}' sent to channel '${(params as any).channelName}'.`,
+        );
       },
     });
   }
@@ -882,23 +1237,27 @@ function buildToolDefinitions(
       {
         name: 'local_bash',
         label: 'Local Bash',
-        description: 'Run a bash command directly in this container (superuser mode). Use to install packages, modify agent code, or perform system-level setup.',
+        description:
+          'Run a bash command directly in this container (superuser mode). Use to install packages, modify agent code, or perform system-level setup.',
         parameters: Type.Object({
           command: Type.String(),
           timeout: Type.Optional(Type.Number()),
         }),
-        execute: async (_id, params) => textResult(await localBash(params as Record<string, unknown>)),
+        execute: async (_id, params) =>
+          textResult(await localBash(params as Record<string, unknown>)),
       },
       {
         name: 'local_read',
         label: 'Local Read',
-        description: "Read a file from this container's filesystem (superuser mode).",
+        description:
+          "Read a file from this container's filesystem (superuser mode).",
         parameters: Type.Object({
           file_path: Type.String(),
           offset: Type.Optional(Type.Number()),
           limit: Type.Optional(Type.Number()),
         }),
-        execute: async (_id, params) => textResult(localRead(params as Record<string, unknown>)),
+        execute: async (_id, params) =>
+          textResult(localRead(params as Record<string, unknown>)),
       },
       {
         name: 'local_write',
@@ -908,7 +1267,8 @@ function buildToolDefinitions(
           file_path: Type.String(),
           content: Type.String(),
         }),
-        execute: async (_id, params) => textResult(localWrite(params as Record<string, unknown>)),
+        execute: async (_id, params) =>
+          textResult(localWrite(params as Record<string, unknown>)),
       },
       {
         name: 'local_edit',
@@ -920,7 +1280,8 @@ function buildToolDefinitions(
           new_string: Type.String(),
           replace_all: Type.Optional(Type.Boolean()),
         }),
-        execute: async (_id, params) => textResult(localEdit(params as Record<string, unknown>)),
+        execute: async (_id, params) =>
+          textResult(localEdit(params as Record<string, unknown>)),
       },
     );
   }
@@ -958,8 +1319,14 @@ async function runAgentLoop(
 
   const model = buildModel();
   const tools = buildToolDefinitions(
-    isSuperuser, input.isMain, redis, inputStream, jobId,
-    input.groupFolder, input.chatJid, podReadyMap,
+    isSuperuser,
+    input.isMain,
+    redis,
+    inputStream,
+    jobId,
+    input.groupFolder,
+    input.chatJid,
+    podReadyMap,
   );
 
   const sessionId = input.sessionId || randomUUID();
@@ -1015,9 +1382,12 @@ async function runAgentLoop(
       case 'agent_end': {
         // Extract final text from the last assistant message
         const endMessages = event.messages;
-        const lastAssistant = [...endMessages].reverse().find(
-          (m): m is Extract<AgentMessage, { role: 'assistant' }> => (m as any).role === 'assistant',
-        );
+        const lastAssistant = [...endMessages]
+          .reverse()
+          .find(
+            (m): m is Extract<AgentMessage, { role: 'assistant' }> =>
+              (m as any).role === 'assistant',
+          );
         if (lastAssistant) {
           const textParts = (lastAssistant as any).content
             .filter((c: any) => c.type === 'text')
@@ -1036,18 +1406,31 @@ async function runAgentLoop(
     await agent.prompt(prompt);
 
     if (agentError) {
-      writeOutput({ status: 'error', result: null, newSessionId: sessionId, error: agentError });
+      writeOutput({
+        status: 'error',
+        result: null,
+        newSessionId: sessionId,
+        error: agentError,
+      });
     } else {
-      writeOutput({ status: 'success', result: finalResponse, newSessionId: sessionId });
+      writeOutput({
+        status: 'success',
+        result: finalResponse,
+        newSessionId: sessionId,
+      });
     }
 
     // Save conversation history (agent state has the full transcript)
     saveHistory(agent.state.messages);
-
   } catch (err) {
     const errorMsg = err instanceof Error ? err.message : String(err);
     log(`Agent error: ${errorMsg}`);
-    writeOutput({ status: 'error', result: null, newSessionId: sessionId, error: errorMsg });
+    writeOutput({
+      status: 'error',
+      result: null,
+      newSessionId: sessionId,
+      error: errorMsg,
+    });
   }
 
   // Wait for follow-up messages or close signal
@@ -1077,11 +1460,14 @@ async function runAgentLoop(
       if (agentError) {
         writeOutput({ status: 'error', result: null, error: agentError });
       } else {
-        writeOutput({ status: 'success', result: finalResponse, newSessionId: sessionId });
+        writeOutput({
+          status: 'success',
+          result: finalResponse,
+          newSessionId: sessionId,
+        });
       }
 
       saveHistory(agent.state.messages);
-
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       log(`Follow-up error: ${errorMsg}`);
@@ -1237,8 +1623,10 @@ async function runBootstrapMode(redis: RedisClientType): Promise<void> {
   const redisUrl = buildRedisUrlForBootstrap();
 
   if (!jobId || !instanceName || !channelType) {
-    log('ERROR: bootstrap mode requires KUBECLAW_BOOTSTRAP_JOB_ID, '
-      + 'KUBECLAW_BOOTSTRAP_INSTANCE, KUBECLAW_BOOTSTRAP_CHANNEL_TYPE');
+    log(
+      'ERROR: bootstrap mode requires KUBECLAW_BOOTSTRAP_JOB_ID, ' +
+        'KUBECLAW_BOOTSTRAP_INSTANCE, KUBECLAW_BOOTSTRAP_CHANNEL_TYPE',
+    );
     process.exit(1);
   }
 
@@ -1256,7 +1644,10 @@ async function runBootstrapMode(redis: RedisClientType): Promise<void> {
 
   async function publishToAdmin(text: string): Promise<void> {
     try {
-      await redis.publish(bootstrapTopic, JSON.stringify({ type: 'agent', text }));
+      await redis.publish(
+        bootstrapTopic,
+        JSON.stringify({ type: 'agent', text }),
+      );
     } catch (err: any) {
       log(`Warning: failed to publish to admin: ${err.message}`);
     }
@@ -1287,19 +1678,21 @@ async function runBootstrapMode(redis: RedisClientType): Promise<void> {
     name: 'commit_channel_config',
     label: 'Commit Channel Config',
     description:
-      'Hand off the configured channel to the orchestrator. Call after all '
-      + 'credentials are gathered/validated and the runtime PVC contains '
-      + 'channel-entry.js and any installed node_modules.',
+      'Hand off the configured channel to the orchestrator. Call after all ' +
+      'credentials are gathered/validated and the runtime PVC contains ' +
+      'channel-entry.js and any installed node_modules.',
     parameters: Type.Object({
-      channel_type: Type.String({ description: 'Channel type (e.g. "telegram")' }),
+      channel_type: Type.String({
+        description: 'Channel type (e.g. "telegram")',
+      }),
       instance_name: Type.String({ description: 'Instance name' }),
       secret_data: Type.Record(Type.String(), Type.String(), {
         description: 'Credential key-value pairs to store in a K8s Secret',
       }),
       runtime_pvc_lock_hash: Type.String({
         description:
-          'sha256 of canonical(package.json) + "\\n" + canonical(package-lock.json) '
-          + 'on the runtime PVC. Advisory only — orchestrator independently verifies.',
+          'sha256 of canonical(package.json) + "\\n" + canonical(package-lock.json) ' +
+          'on the runtime PVC. Advisory only — orchestrator independently verifies.',
       }),
     }),
     execute: async (_id, args) => {
@@ -1339,15 +1732,15 @@ async function runBootstrapMode(redis: RedisClientType): Promise<void> {
       name: 'ask_admin',
       label: 'Ask Admin',
       description:
-        'Ask the admin operator a question (e.g. which port, an API token) '
-        + 'and BLOCK until they answer. Returns the admin reply text. Use this '
-        + 'whenever the skill tells you to ask the admin something; never guess '
-        + 'a value the admin is supposed to provide.',
+        'Ask the admin operator a question (e.g. which port, an API token) ' +
+        'and BLOCK until they answer. Returns the admin reply text. Use this ' +
+        'whenever the skill tells you to ask the admin something; never guess ' +
+        'a value the admin is supposed to provide.',
       parameters: Type.Object({
         question: Type.String({
           description:
-            "The question to ask the admin operator. The returned value is "
-            + "the admin's answer.",
+            'The question to ask the admin operator. The returned value is ' +
+            "the admin's answer.",
         }),
       }),
       execute: async (_id, params) => {
@@ -1367,8 +1760,8 @@ async function runBootstrapMode(redis: RedisClientType): Promise<void> {
           return textResult(reply);
         } catch {
           return textResult(
-            'Timed out waiting for admin reply. Abort the bootstrap and '
-            + 'report the failure to the admin.',
+            'Timed out waiting for admin reply. Abort the bootstrap and ' +
+              'report the failure to the admin.',
           );
         }
       },
@@ -1377,8 +1770,8 @@ async function runBootstrapMode(redis: RedisClientType): Promise<void> {
       name: 'local_bash',
       label: 'Local Bash',
       description:
-        'Run a bash command in this bootstrap container. Use for npm ci, '
-        + 'credential validation (curl), file inspection.',
+        'Run a bash command in this bootstrap container. Use for npm ci, ' +
+        'credential validation (curl), file inspection.',
       parameters: Type.Object({
         command: Type.String(),
         timeout: Type.Optional(Type.Number()),
@@ -1402,8 +1795,8 @@ async function runBootstrapMode(redis: RedisClientType): Promise<void> {
       name: 'local_write',
       label: 'Local Write',
       description:
-        'Write a file to this container (creates parent dirs). Use to write '
-        + '/runtime/channel-entry.js, credential helpers, etc.',
+        'Write a file to this container (creates parent dirs). Use to write ' +
+        '/runtime/channel-entry.js, credential helpers, etc.',
       parameters: Type.Object({
         file_path: Type.String(),
         content: Type.String(),
@@ -1441,7 +1834,9 @@ async function runBootstrapMode(redis: RedisClientType): Promise<void> {
     if (event.type === 'turn_end') {
       toolRounds++;
       if (toolRounds >= MAX_TOOL_ROUNDS) {
-        log(`Max tool rounds (${MAX_TOOL_ROUNDS}) reached in bootstrap, aborting`);
+        log(
+          `Max tool rounds (${MAX_TOOL_ROUNDS}) reached in bootstrap, aborting`,
+        );
         agent.abort();
         return;
       }
@@ -1465,10 +1860,10 @@ async function runBootstrapMode(redis: RedisClientType): Promise<void> {
   });
 
   const initialPrompt =
-    `Please set up the ${channelType} channel for instance "${instanceName}". `
-    + `Follow the skill instructions: install any required packages onto /runtime, `
-    + `write the channel-entry.js, gather credentials, validate them, then call `
-    + `commit_channel_config.`;
+    `Please set up the ${channelType} channel for instance "${instanceName}". ` +
+    `Follow the skill instructions: install any required packages onto /runtime, ` +
+    `write the channel-entry.js, gather credentials, validate them, then call ` +
+    `commit_channel_config.`;
 
   try {
     await agent.prompt(initialPrompt);
@@ -1492,7 +1887,11 @@ async function main(): Promise<void> {
     try {
       await runBootstrapMode(redis);
     } finally {
-      try { await redis.quit(); } catch { /* best effort */ }
+      try {
+        await redis.quit();
+      } catch {
+        /* best effort */
+      }
     }
     // Explicit exit required: lingering Redis subscriber handles from ask_admin
     // keep the Node event loop alive after main() returns, preventing the
@@ -1504,7 +1903,11 @@ async function main(): Promise<void> {
   try {
     const stdinData = await readStdin();
     containerInput = JSON.parse(stdinData);
-    try { fs.unlinkSync('/tmp/input.json'); } catch { /* may not exist */ }
+    try {
+      fs.unlinkSync('/tmp/input.json');
+    } catch {
+      /* may not exist */
+    }
     log(`Received input for group: ${containerInput.groupFolder}`);
   } catch (err) {
     writeOutput({
@@ -1542,7 +1945,9 @@ async function main(): Promise<void> {
       await redisIpcClient.connect();
       log('Redis IPC output connected');
     } catch (err) {
-      log(`Warning: failed to connect Redis IPC output: ${err instanceof Error ? err.message : String(err)}`);
+      log(
+        `Warning: failed to connect Redis IPC output: ${err instanceof Error ? err.message : String(err)}`,
+      );
       redisIpcClient = null;
     }
   }
@@ -1557,7 +1962,14 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((err) => {
-  console.error('[agent-runner] Fatal error:', err);
-  process.exit(1);
-});
+// Only run the agent loop when executed as the process entrypoint (node dist/index.js).
+// Guarded so unit tests can import this module without triggering main().
+const invokedDirectly =
+  process.argv[1] !== undefined &&
+  import.meta.url === pathToFileURL(process.argv[1]).href;
+if (invokedDirectly) {
+  main().catch((err) => {
+    console.error('[agent-runner] Fatal error:', err);
+    process.exit(1);
+  });
+}
