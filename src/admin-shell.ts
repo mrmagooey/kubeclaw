@@ -1072,13 +1072,13 @@ export const TOOLS: OpenAI.ChatCompletionTool[] = [
           },
           pattern: {
             type: 'string',
-            enum: ['http', 'file', 'acp'],
+            enum: ['http', 'file', 'acp', 'cdp'],
             description: 'Bridge pattern the tool container speaks.',
           },
           port: {
             type: 'number',
             description:
-              'Port the container listens on (http/acp; default 8080).',
+              'Port the container listens on (http/acp/cdp; default 8080).',
           },
           command: {
             type: 'array',
@@ -1139,7 +1139,7 @@ export const TOOLS: OpenAI.ChatCompletionTool[] = [
           description: { type: 'string' },
           parameters: { type: 'object' },
           image: { type: 'string' },
-          pattern: { type: 'string', enum: ['http', 'file', 'acp'] },
+          pattern: { type: 'string', enum: ['http', 'file', 'acp', 'cdp'] },
           port: { type: 'number' },
           command: { type: 'array', items: { type: 'string' } },
           healthPath: { type: 'string' },
@@ -1935,7 +1935,7 @@ function handleRegisterTool(input: ToolInput): string {
     description: input.description as string,
     parameters: input.parameters as Record<string, unknown>,
     image: input.image as string,
-    pattern: input.pattern as 'http' | 'file' | 'acp',
+    pattern: input.pattern as 'http' | 'file' | 'acp' | 'cdp',
     ...(input.port !== undefined && { port: input.port as number }),
     ...(input.command !== undefined && { command: input.command as string[] }),
     ...(input.healthPath !== undefined && {

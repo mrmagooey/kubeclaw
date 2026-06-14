@@ -323,13 +323,21 @@ describe('validateTool — credentials', () => {
 });
 
 describe('validateTool — cdp pattern', () => {
-  const cdpBase = { ...base, image: 'chromedp/headless-shell:latest', pattern: 'cdp' as const, port: 9222 };
+  const cdpBase = {
+    ...base,
+    image: 'chromedp/headless-shell:latest',
+    pattern: 'cdp' as const,
+    port: 9222,
+  };
   it('accepts pattern cdp with image + port', () => {
     expect(validateTool(cdpBase)).toEqual({ ok: true });
   });
   it('rejects cdp without a port', () => {
     const { port, ...noPort } = cdpBase as any;
     expect(validateTool(noPort).ok).toBe(false);
+  });
+  it('rejects cdp with a non-numeric port', () => {
+    expect(validateTool({ ...cdpBase, port: '9222' }).ok).toBe(false);
   });
   it('still rejects an unknown pattern', () => {
     expect(validateTool({ ...base, pattern: 'grpc' }).ok).toBe(false);
