@@ -1717,11 +1717,14 @@ export class JobRunner {
     const port = toolSpec.port ?? 8080;
     const isFileBridge = toolSpec.pattern === 'file';
     const isAcpBridge = toolSpec.pattern === 'acp';
-    const toolMode = isFileBridge
-      ? 'file-bridge'
-      : isAcpBridge
-        ? 'acp-bridge'
-        : 'http-bridge';
+    const isCdpBridge = toolSpec.pattern === 'cdp';
+    const toolMode = isCdpBridge
+      ? 'cdp-bridge'
+      : isFileBridge
+        ? 'file-bridge'
+        : isAcpBridge
+          ? 'acp-bridge'
+          : 'http-bridge';
 
     // Keep job name under 63 chars: "kubeclaw-stool-" (15) + 8-char suffix + "-" + toolName (truncated)
     const agentSuffix = spec.agentJobId
@@ -1783,6 +1786,13 @@ export class JobRunner {
         },
         { name: 'KUBECLAW_ACP_MODE', value: toolSpec.acpMode || 'sync' },
       );
+    }
+
+    if (isCdpBridge) {
+      bridgeEnv.push({
+        name: 'KUBECLAW_CDP_URL',
+        value: `http://localhost:${port}`,
+      });
     }
 
     if (toolSpec.healthPath) {
@@ -1871,6 +1881,34 @@ export class JobRunner {
       } else {
         workEnv = [{ name: 'WORKDIR', value: '/tmp' }];
       }
+    }
+
+    // --- CDP: chromium native sidecar + /dev/shm volume ---
+    const cdpInitContainers = isCdpBridge
+      ? [
+          {
+            name: 'chromium',
+            image: toolSpec.image,
+            imagePullPolicy: toolSpec.pullPolicy ?? 'IfNotPresent',
+            ...(toolSpec.command ? { command: toolSpec.command } : {}),
+            ports: [{ containerPort: port }],
+            readinessProbe: {
+              httpGet: { path: '/json/version', port },
+              initialDelaySeconds: 2,
+              periodSeconds: 2,
+              failureThreshold: 15,
+            },
+            resources: {
+              requests: { memory: toolSpec.memoryRequest ?? '256Mi', cpu: toolSpec.cpuRequest ?? '100m' },
+              limits: { memory: toolSpec.memoryLimit ?? '1Gi', cpu: toolSpec.cpuLimit ?? '500m' },
+            },
+            volumeMounts: [{ name: 'dshm', mountPath: '/dev/shm' }],
+            restartPolicy: 'Always',
+          },
+        ]
+      : undefined;
+    if (isCdpBridge) {
+      volumes.push({ name: 'dshm', emptyDir: { medium: 'Memory', sizeLimit: '256Mi' } });
     }
 
     const userEnv: { name: string; value: string }[] = [
@@ -1964,6 +2002,7 @@ export class JobRunner {
             ...(credServiceAccount
               ? { automountServiceAccountToken: false }
               : {}),
+            ...(cdpInitContainers && { initContainers: cdpInitContainers }),
             containers: [
               {
                 name: 'kubeclaw-tool-bridge',
@@ -1977,28 +2016,32 @@ export class JobRunner {
                   limits: { memory: '128Mi', cpu: '200m' },
                 },
               } as any,
-              {
-                name: 'user-tool',
-                image: toolSpec.image,
-                imagePullPolicy: toolSpec.pullPolicy ?? 'IfNotPresent',
-                ...(isFileBridge && toolSpec.run
-                  ? { command: ['/bin/sh', '/kubeclaw/tool-wrapper.sh'] }
-                  : toolSpec.command
-                    ? { command: toolSpec.command }
-                    : {}),
-                env: [...userEnv, ...credEnv],
-                volumeMounts: userMounts,
-                resources: {
-                  requests: {
-                    memory: toolSpec.memoryRequest ?? TOOL_JOB_MEMORY_REQUEST,
-                    cpu: toolSpec.cpuRequest ?? TOOL_JOB_CPU_REQUEST,
-                  },
-                  limits: {
-                    memory: toolSpec.memoryLimit ?? TOOL_JOB_MEMORY_LIMIT,
-                    cpu: toolSpec.cpuLimit ?? TOOL_JOB_CPU_LIMIT,
-                  },
-                },
-              } as any,
+              ...(isCdpBridge
+                ? []
+                : [
+                    {
+                      name: 'user-tool',
+                      image: toolSpec.image,
+                      imagePullPolicy: toolSpec.pullPolicy ?? 'IfNotPresent',
+                      ...(isFileBridge && toolSpec.run
+                        ? { command: ['/bin/sh', '/kubeclaw/tool-wrapper.sh'] }
+                        : toolSpec.command
+                          ? { command: toolSpec.command }
+                          : {}),
+                      env: [...userEnv, ...credEnv],
+                      volumeMounts: userMounts,
+                      resources: {
+                        requests: {
+                          memory: toolSpec.memoryRequest ?? TOOL_JOB_MEMORY_REQUEST,
+                          cpu: toolSpec.cpuRequest ?? TOOL_JOB_CPU_REQUEST,
+                        },
+                        limits: {
+                          memory: toolSpec.memoryLimit ?? TOOL_JOB_MEMORY_LIMIT,
+                          cpu: toolSpec.cpuLimit ?? TOOL_JOB_CPU_LIMIT,
+                        },
+                      },
+                    } as any,
+                  ]),
               ...credContainers,
             ],
             volumes: [...volumes, ...credVolumes],

@@ -1894,6 +1894,47 @@ describe('JobRunner', () => {
       delete process.env.CREDENTIAL_INJECTION_AUDIT_ONLY;
       delete process.env.CREDENTIAL_INJECTION_MODE;
     });
+
+    const cdpSpec = () => ({
+      ...baseSpec,
+      toolSpec: {
+        ...baseSpec.toolSpec,
+        name: 'browser',
+        image: 'chromedp/headless-shell:latest',
+        pattern: 'cdp' as const,
+        port: 9222,
+        parameters: { type: 'object', properties: { action: { type: 'string' } }, required: ['action'] },
+      },
+    });
+
+    it('cdp: chromium native sidecar, no user-tool, /dev/shm, cdp-bridge env', async () => {
+      await jobRunner.createSidecarToolPodJob(cdpSpec());
+      const podSpec = mockBatchApi.createNamespacedJob.mock.calls.at(-1)![0].body.spec.template.spec;
+      // only the bridge in containers[] (no user-tool)
+      expect(podSpec.containers.map((c: any) => c.name)).toEqual(['kubeclaw-tool-bridge']);
+      // chromium as a native sidecar init-container
+      const init = (podSpec.initContainers ?? []).find((c: any) => c.name === 'chromium');
+      expect(init).toBeDefined();
+      expect(init.image).toBe('chromedp/headless-shell:latest');
+      expect(init.restartPolicy).toBe('Always');
+      expect(init.readinessProbe.httpGet).toEqual({ path: '/json/version', port: 9222 });
+      expect(init.volumeMounts).toContainEqual({ name: 'dshm', mountPath: '/dev/shm' });
+      // /dev/shm emptyDir
+      expect(podSpec.volumes).toContainEqual({ name: 'dshm', emptyDir: { medium: 'Memory', sizeLimit: '256Mi' } });
+      // bridge env
+      const bridge = podSpec.containers.find((c: any) => c.name === 'kubeclaw-tool-bridge');
+      const env = Object.fromEntries(bridge.env.map((e: any) => [e.name, e.value]));
+      expect(env.KUBECLAW_TOOL_MODE).toBe('cdp-bridge');
+      expect(env.KUBECLAW_CDP_URL).toBe('http://localhost:9222');
+      expect(env.KUBECLAW_TOOL_PORT).toBe('9222');
+    });
+
+    it('cdp: chromium command defaults to the image entrypoint when toolSpec.command absent', async () => {
+      await jobRunner.createSidecarToolPodJob(cdpSpec());
+      const podSpec = mockBatchApi.createNamespacedJob.mock.calls.at(-1)![0].body.spec.template.spec;
+      const init = podSpec.initContainers.find((c: any) => c.name === 'chromium');
+      expect(init.command).toBeUndefined();
+    });
   });
 
   // Shared fixture for credential injection tests
