@@ -34,11 +34,24 @@ const page = {
   waitForSelector: vi.fn(async () => {}),
   waitForTimeout: vi.fn(async () => {}),
   isClosed: vi.fn(() => false),
-  locator: vi.fn(() => ({ click: vi.fn(async () => {}), fill: vi.fn(async () => {}), press: vi.fn(async () => {}) })),
+  locator: vi.fn(() => ({
+    click: vi.fn(async () => {}),
+    fill: vi.fn(async () => {}),
+    press: vi.fn(async () => {}),
+  })),
 };
-const context = { pages: vi.fn(() => [page]), newPage: vi.fn(async () => page) };
-const browser = { isConnected: vi.fn(() => true), contexts: vi.fn(() => [context]), newContext: vi.fn(async () => context) };
-vi.mock('playwright-core', () => ({ chromium: { connectOverCDP: vi.fn(async () => browser) } }));
+const context = {
+  pages: vi.fn(() => [page]),
+  newPage: vi.fn(async () => page),
+};
+const browser = {
+  isConnected: vi.fn(() => true),
+  contexts: vi.fn(() => [context]),
+  newContext: vi.fn(async () => context),
+};
+vi.mock('playwright-core', () => ({
+  chromium: { connectOverCDP: vi.fn(async () => browser) },
+}));
 
 import { executeToolBridgeCdp } from '../container/agent-runner/src/tool-server.js';
 
@@ -49,13 +62,20 @@ describe('executeToolBridgeCdp', () => {
     page.goto.mockClear();
     page.goto.mockResolvedValue(undefined);
     page.locator.mockClear();
-    page.locator.mockReturnValue({ click: vi.fn(async () => {}), fill: vi.fn(async () => {}), press: vi.fn(async () => {}) });
+    page.locator.mockReturnValue({
+      click: vi.fn(async () => {}),
+      fill: vi.fn(async () => {}),
+      press: vi.fn(async () => {}),
+    });
     page.isClosed.mockReturnValue(false);
     browser.isConnected.mockReturnValue(true);
   });
 
   it('navigate returns the new URL + title', async () => {
-    const r = await executeToolBridgeCdp('browser', { action: 'navigate', url: 'https://example.com' });
+    const r = await executeToolBridgeCdp('browser', {
+      action: 'navigate',
+      url: 'https://example.com',
+    });
     expect(String(r)).toContain('example.com');
     expect(page.goto).toHaveBeenCalled();
   });
@@ -72,9 +92,18 @@ describe('executeToolBridgeCdp', () => {
   });
 
   it('type fills then optionally submits', async () => {
-    const loc = { click: vi.fn(), fill: vi.fn(async () => {}), press: vi.fn(async () => {}) };
+    const loc = {
+      click: vi.fn(),
+      fill: vi.fn(async () => {}),
+      press: vi.fn(async () => {}),
+    };
     page.locator.mockReturnValueOnce(loc as any);
-    await executeToolBridgeCdp('browser', { action: 'type', ref: 'e1', text: 'hi', submit: true });
+    await executeToolBridgeCdp('browser', {
+      action: 'type',
+      ref: 'e1',
+      text: 'hi',
+      submit: true,
+    });
     expect(loc.fill).toHaveBeenCalledWith('hi', expect.anything());
     expect(loc.press).toHaveBeenCalledWith('Enter');
   });
@@ -87,7 +116,10 @@ describe('executeToolBridgeCdp', () => {
 
   it('a Playwright failure is returned as a string, not thrown', async () => {
     page.goto.mockRejectedValueOnce(new Error('net::ERR_NAME_NOT_RESOLVED'));
-    const r = await executeToolBridgeCdp('browser', { action: 'navigate', url: 'https://nope.invalid' });
+    const r = await executeToolBridgeCdp('browser', {
+      action: 'navigate',
+      url: 'https://nope.invalid',
+    });
     expect(String(r)).toMatch(/error:/i);
   });
 });
