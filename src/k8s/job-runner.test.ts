@@ -1772,6 +1772,80 @@ describe('JobRunner', () => {
         jobRunner.createSidecarToolPodJob(fileSpec('group')),
       ).rejects.toThrow('not permitted');
     });
+
+    // --- Credential injection tests for createSidecarToolPodJob ---
+
+    const BRAVE_ENTRY = {
+      id: 'brave-search',
+      host: 'api.search.brave.com',
+      upstreamPort: 443,
+      credentialFields: [{ name: 'api_key', envVar: 'BRAVE_API_KEY' }],
+      baseUrlEnvs: {},
+      allowOperatorFallback: true,
+      allowedPositions: ['header', 'body'] as Array<'header' | 'body'>,
+    };
+    const fakeCatalog = { getCatalog: () => [BRAVE_ENTRY] };
+    const fakeSecrets = { getGroupPlaceholders: async () => ({}) };
+
+    const credToolSpec = (extra: Record<string, unknown> = {}) => ({
+      ...baseSpec,
+      toolSpec: {
+        ...baseSpec.toolSpec,
+        pattern: 'file' as const,
+        image: 'curlimages/curl:latest',
+        run: 'curl -sS "$(cat "$INPUT_DIR/query")"',
+        parameters: { type: 'object', properties: { query: { type: 'string' } } },
+        credentials: ['brave-search'],
+        ...extra,
+      },
+    });
+
+    it('mode=sidecar + credentials: attaches credential sidecar + placeholder/proxy env on user-tool only', async () => {
+      process.env.CREDENTIAL_INJECTION_MODE = 'sidecar';
+      (jobRunner as any).catalog = fakeCatalog;
+      (jobRunner as any).secretManager = fakeSecrets;
+      await jobRunner.createSidecarToolPodJob(credToolSpec());
+      const body = mockBatchApi.createNamespacedJob.mock.calls.at(-1)![0].body;
+      const podSpec = body.spec.template.spec;
+      expect(podSpec.containers.map((c: any) => c.name)).toContain('credential-sidecar');
+      const user = podSpec.containers.find((c: any) => c.name === 'user-tool');
+      const userEnvMap = Object.fromEntries(user.env.map((e: any) => [e.name, e.value]));
+      expect(userEnvMap.BRAVE_API_KEY).toMatch(/^(KC_PH_|injected-by-broker)/);
+      expect(userEnvMap.HTTPS_PROXY).toBeDefined();
+      expect(userEnvMap.SSL_CERT_FILE).toBe('/etc/ssl/certs/kubeclaw-egress-ca.crt');
+      const bridge = podSpec.containers.find((c: any) => c.name === 'kubeclaw-tool-bridge');
+      const bridgeEnvMap = Object.fromEntries(bridge.env.map((e: any) => [e.name, e.value]));
+      expect(bridgeEnvMap.BRAVE_API_KEY).toBeUndefined();
+      expect(bridgeEnvMap.HTTPS_PROXY).toBeUndefined();
+      expect(podSpec.serviceAccountName).toBe('kubeclaw-tool-job');
+      expect(body.spec.template.metadata.annotations['kubeclaw.io/owner-group']).toBe(baseSpec.groupFolder);
+      expect(podSpec.volumes.map((v: any) => v.name)).toEqual(expect.arrayContaining(['envoy-config', 'broker-token', 'egress-ca']));
+      delete process.env.CREDENTIAL_INJECTION_MODE;
+    });
+
+    it('mode=off: a credentials-declaring tool gets NO injection', async () => {
+      delete process.env.CREDENTIAL_INJECTION_MODE; // → 'off'
+      (jobRunner as any).catalog = fakeCatalog;
+      (jobRunner as any).secretManager = fakeSecrets;
+      await jobRunner.createSidecarToolPodJob(credToolSpec());
+      const podSpec = mockBatchApi.createNamespacedJob.mock.calls.at(-1)![0].body.spec.template.spec;
+      expect(podSpec.containers.map((c: any) => c.name)).not.toContain('credential-sidecar');
+      const user = podSpec.containers.find((c: any) => c.name === 'user-tool');
+      expect(user.env.map((e: any) => e.name)).not.toContain('BRAVE_API_KEY');
+      expect(podSpec.serviceAccountName).toBeFalsy();
+    });
+
+    it('mode=sidecar + NO credentials: no injection (gating)', async () => {
+      process.env.CREDENTIAL_INJECTION_MODE = 'sidecar';
+      (jobRunner as any).catalog = fakeCatalog;
+      (jobRunner as any).secretManager = fakeSecrets;
+      await jobRunner.createSidecarToolPodJob(credToolSpec({ credentials: undefined }));
+      const podSpec = mockBatchApi.createNamespacedJob.mock.calls.at(-1)![0].body.spec.template.spec;
+      expect(podSpec.containers.map((c: any) => c.name)).not.toContain('credential-sidecar');
+      const user = podSpec.containers.find((c: any) => c.name === 'user-tool');
+      expect(user.env.map((e: any) => e.name)).not.toContain('BRAVE_API_KEY');
+      delete process.env.CREDENTIAL_INJECTION_MODE;
+    });
   });
 
   // Shared fixture for credential injection tests

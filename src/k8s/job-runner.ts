@@ -1873,12 +1873,43 @@ export class JobRunner {
       }
     }
 
-    const userEnv = [
+    const userEnv: { name: string; value: string }[] = [
       { name: 'PORT', value: String(port) },
       ...(isFileBridge && toolSpec.run
         ? [{ name: 'KUBECLAW_TOOL_RUN', value: toolSpec.run }, ...workEnv]
         : []),
     ];
+
+    // --- Credential injection (gated on the tool declaring credentials) ---
+    const injectionMode = getInjectionMode();
+    const wantsCreds = (toolSpec.credentials?.length ?? 0) > 0 && injectionMode !== 'off';
+    const credContainers: unknown[] = [];
+    const credVolumes: unknown[] = [];
+    let credServiceAccount: string | undefined;
+    let credAnnotations: Record<string, string> | undefined;
+    if (wantsCreds) {
+      const ids = new Set(toolSpec.credentials);
+      const entries = (this.catalog?.getCatalog() ?? []).filter((e) => ids.has(e.id));
+      let groupPlaceholders: Record<string, Record<string, string>> = {};
+      if (this.secretManager) {
+        try {
+          groupPlaceholders = await this.secretManager.getGroupPlaceholders(spec.groupFolder);
+        } catch (err) {
+          logger.warn({ err }, 'getGroupPlaceholders failed for sidecar tool pod; using empty');
+        }
+      }
+      const { envs } = buildCatalogEnvs(entries, groupPlaceholders);
+      userEnv.push(...envs);
+      credServiceAccount = 'kubeclaw-tool-job';
+      credAnnotations = { 'kubeclaw.io/owner-group': spec.groupFolder };
+      if (injectionMode === 'sidecar') {
+        userEnv.push(...workloadEnvForSidecar({ port: CREDENTIAL_SIDECAR_PORT }));
+        credContainers.push(
+          sidecarContainerSpec({ image: CREDENTIAL_SIDECAR_IMAGE, port: CREDENTIAL_SIDECAR_PORT }),
+        );
+        credVolumes.push(...sidecarVolumes());
+      }
+    }
 
     const job: V1Job = {
       apiVersion: 'batch/v1',
@@ -1898,9 +1929,14 @@ export class JobRunner {
         activeDeadlineSeconds: timeoutSeconds,
         backoffLimit: 0,
         template: {
-          metadata: { labels: { app: 'kubeclaw-sidecar-tool' } },
+          metadata: {
+            labels: { app: 'kubeclaw-sidecar-tool' },
+            ...(credAnnotations && { annotations: credAnnotations }),
+          },
           spec: {
             restartPolicy: 'Never',
+            serviceAccountName: credServiceAccount ?? '',
+            automountServiceAccountToken: false,
             containers: [
               {
                 name: 'kubeclaw-tool-bridge',
@@ -1936,8 +1972,9 @@ export class JobRunner {
                   },
                 },
               } as any,
+              ...credContainers,
             ],
-            volumes,
+            volumes: [...volumes, ...credVolumes],
           },
         },
       },
