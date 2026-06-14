@@ -303,6 +303,130 @@ Declares `credentials: [brave-search]`, which maps to the `brave-search` catalog
 
 `browser` is not a catalog tool — it remains a built-in (its own follow-on spec). The legacy agent-runner (non-direct-llm path) keeps `web_fetch` and `web_search` as in-process built-ins alongside their catalog counterparts, matching the same dual-existence pattern as `bash`. The channel's direct-llm path resolves `web_fetch` and `web_search` from the catalog.
 
+## CDP pattern (browser tools)
+
+### `pattern: 'cdp'`
+
+The `cdp` pattern attaches the operator's stock Chromium-CDP image as a K8s
+native sidecar and wires a Playwright-over-CDP connection from the bridge to
+it.  `port` (the CDP port) is **required** — `validateTool` rejects the
+catalog entry if it is absent.  No `run`, `mount`, `requestMapping`, or
+`credentials` fields are used; `command` may be omitted if the image's
+default entrypoint already exposes CDP on the declared port.
+
+### Topology
+
+A `cdp` tool pod contains:
+
+| Container | Role |
+|---|---|
+| `kubeclaw-tool-bridge` | Bridge (kubeclaw-agent, `KUBECLAW_TOOL_MODE=cdp-bridge`) |
+| `chromium` init container (`restartPolicy: Always`) | Operator's Chromium image; exposed on `toolSpec.port` |
+
+There is **no `user-tool` container** for the `cdp` pattern.
+
+A 256 Mi `/dev/shm` emptyDir is mounted on the `chromium` container — Chromium
+requires shared memory for its renderer processes.
+
+**Readiness**: the `chromium` init container has an `httpGet` readiness probe
+on `/json/version` at `toolSpec.port` (`initialDelaySeconds: 2`,
+`periodSeconds: 2`, `failureThreshold: 15`).  `connectOverCDP` internally
+fetches `/json/version`, so the Playwright connect call itself also acts as a
+readiness gate.
+
+**Connection lifecycle**: the bridge holds one persistent `playwright-core`
+`connectOverCDP` connection (cached `Browser` + `Page`).  On the first call
+(or after a stale connection is detected) the bridge reconnects with up to 30 s
+of retry/backoff.  State — open tabs, cookies, page position — persists across
+tool calls within the pod's lifetime and is reset only when the pod exits (idle
+timeout or job completion).
+
+**Env vars stamped on the bridge container**:
+
+| Variable | Value |
+|---|---|
+| `KUBECLAW_TOOL_MODE` | `cdp-bridge` |
+| `KUBECLAW_CDP_URL` | `http://localhost:{port}` |
+
+### The `action` contract
+
+Every call must include an `action` field.  The supported actions are:
+
+| Action | Required fields | Effect |
+|---|---|---|
+| `navigate` | `url` | Loads the URL (`domcontentloaded`, 30 s timeout); returns URL + title |
+| `snapshot` | — | Injects `data-kc-ref="eN"` on visible interactive elements; returns URL, title, element list, and up to 4 000 chars of visible body text |
+| `click` | `ref` | Clicks the element with `[data-kc-ref="{ref}"]` (10 s timeout) |
+| `type` | `ref`, `text` | Fills the element; if `submit: true` also presses Enter |
+| `press` | `key` | Fires `keyboard.press(key)` on the page |
+| `back` | — | Navigates back (`domcontentloaded`, 30 s timeout) |
+| `wait` | `for` | If `for` is all digits, waits that many milliseconds (capped at 30 000); otherwise waits for the CSS selector to appear (30 s timeout) |
+
+**Snapshot and refs**: `snapshot` stamps `data-kc-ref` attributes on every
+visible interactive element (links, buttons, inputs, selects, textareas, ARIA
+roles, `tabindex`, `onclick`).  Each ref is of the form `eN` (e.g. `e1`,
+`e2`).  `click` and `type` target `[data-kc-ref="…"]`.  If the element is
+stale or not found the bridge returns:
+
+```
+error: element {ref} not found or not actionable — call snapshot first (…)
+```
+
+An unrecognised action returns:
+
+```
+error: unknown action "{action}". Valid actions: navigate, snapshot, click, type, press, back, wait
+```
+
+All errors are returned as strings (not exceptions), so the LLM can read the
+message and recover without the tool call failing at the protocol layer.
+
+### Worked example: the `browser` baseline
+
+The Helm baseline catalog ships `browser` on `chromedp/headless-shell:latest`.
+The image's default entrypoint already exposes CDP on port 9222, so no
+`command` override is needed.
+
+```yaml
+- name: browser
+  description: Drive a real web browser (Chromium). Call snapshot to see the
+    page (it returns the interactive elements with refs and the visible text),
+    then click/type using a ref. Actions persist within a session.
+  parameters:
+    type: object
+    properties:
+      action: { type: string, enum: [navigate, snapshot, click, type, press, back, wait] }
+      url:    { type: string }
+      ref:    { type: string }
+      text:   { type: string }
+      submit: { type: boolean }
+      key:    { type: string }
+      for:    { type: string }
+    required: [action]
+  image: chromedp/headless-shell:latest
+  pattern: cdp
+  port: 9222
+  memoryRequest: 256Mi
+  memoryLimit: 1Gi
+  cpuRequest: 100m
+  cpuLimit: "1"
+```
+
+No `credentials`, `mount`, `run`, or `command` are set.  The per-tool resource
+fields (`memoryRequest`, `memoryLimit`, `cpuRequest`, `cpuLimit`) are applied
+to the `chromium` init container; the bridge container uses fixed defaults
+(64 Mi request / 128 Mi limit, 50 m / 200 m CPU).
+
+**Dual existence note**: `browser` also remains a built-in tool in the legacy
+agent-runner (the non-direct-LLM path).  The catalog entry and the built-in
+coexist; the channel's direct-LLM path resolves `browser` from the catalog.
+The first-party `kubeclaw-browser-sidecar` image used by the legacy
+agent-runner's browser sidecar is separate and unchanged.
+
+`places_search` was decoupled from the `browser` category onto its own `places`
+category at the same time; both `places_search` and `places` are reserved names
+in `validateTool` and cannot be used for catalog tools.
+
 ## Worked example: `bash` and `bash_persist`
 
 The Helm baseline catalog ships two tools that illustrate the `run` + mount model using stock `alpine:latest` — no custom image required.
