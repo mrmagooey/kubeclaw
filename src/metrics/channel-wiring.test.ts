@@ -230,16 +230,18 @@ describe('DirectLLMRunner channel metrics wiring', () => {
 
   it('records status=failure when a tool throws', async () => {
     // The global redis mock has xadd rejecting, so any executeToolViaK8s call
-    // will throw → toolSuccess = false.
+    // will throw → toolSuccess = false. Use 'browser' (a static built-in that
+    // routes through executeToolViaK8s); web_fetch/web_search are now catalog
+    // tools that resolve to a graceful "unknown tool" error in direct mode.
     const metrics = makeMetricsMock();
-    const fakeClient = makeFakeOpenAIWithToolCall('web_fetch');
+    const fakeClient = makeFakeOpenAIWithToolCall('browser');
     const runner = new DirectLLMRunner(fakeClient);
     runner.setChannelMetrics(metrics);
 
     await runner.runAgent(
       { name: 'TestGroup', folder: 'testgroup', trigger: '', added_at: '' },
       {
-        prompt: 'Fetch http://example.com',
+        prompt: 'Open a web page',
         groupFolder: 'testgroup',
         chatJid: 'jid@g.us',
         isMain: false,
