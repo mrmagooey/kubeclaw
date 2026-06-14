@@ -1794,7 +1794,10 @@ describe('JobRunner', () => {
         pattern: 'file' as const,
         image: 'curlimages/curl:latest',
         run: 'curl -sS "$(cat "$INPUT_DIR/query")"',
-        parameters: { type: 'object', properties: { query: { type: 'string' } } },
+        parameters: {
+          type: 'object',
+          properties: { query: { type: 'string' } },
+        },
         credentials: ['brave-search'],
         ...extra,
       },
@@ -1807,19 +1810,33 @@ describe('JobRunner', () => {
       await jobRunner.createSidecarToolPodJob(credToolSpec());
       const body = mockBatchApi.createNamespacedJob.mock.calls.at(-1)![0].body;
       const podSpec = body.spec.template.spec;
-      expect(podSpec.containers.map((c: any) => c.name)).toContain('credential-sidecar');
+      expect(podSpec.containers.map((c: any) => c.name)).toContain(
+        'credential-sidecar',
+      );
       const user = podSpec.containers.find((c: any) => c.name === 'user-tool');
-      const userEnvMap = Object.fromEntries(user.env.map((e: any) => [e.name, e.value]));
+      const userEnvMap = Object.fromEntries(
+        user.env.map((e: any) => [e.name, e.value]),
+      );
       expect(userEnvMap.BRAVE_API_KEY).toMatch(/^(KC_PH_|injected-by-broker)/);
       expect(userEnvMap.HTTPS_PROXY).toBeDefined();
-      expect(userEnvMap.SSL_CERT_FILE).toBe('/etc/ssl/certs/kubeclaw-egress-ca.crt');
-      const bridge = podSpec.containers.find((c: any) => c.name === 'kubeclaw-tool-bridge');
-      const bridgeEnvMap = Object.fromEntries(bridge.env.map((e: any) => [e.name, e.value]));
+      expect(userEnvMap.SSL_CERT_FILE).toBe(
+        '/etc/ssl/certs/kubeclaw-egress-ca.crt',
+      );
+      const bridge = podSpec.containers.find(
+        (c: any) => c.name === 'kubeclaw-tool-bridge',
+      );
+      const bridgeEnvMap = Object.fromEntries(
+        bridge.env.map((e: any) => [e.name, e.value]),
+      );
       expect(bridgeEnvMap.BRAVE_API_KEY).toBeUndefined();
       expect(bridgeEnvMap.HTTPS_PROXY).toBeUndefined();
       expect(podSpec.serviceAccountName).toBe('kubeclaw-tool-job');
-      expect(body.spec.template.metadata.annotations['kubeclaw.io/owner-group']).toBe(baseSpec.groupFolder);
-      expect(podSpec.volumes.map((v: any) => v.name)).toEqual(expect.arrayContaining(['envoy-config', 'broker-token', 'egress-ca']));
+      expect(
+        body.spec.template.metadata.annotations['kubeclaw.io/owner-group'],
+      ).toBe(baseSpec.groupFolder);
+      expect(podSpec.volumes.map((v: any) => v.name)).toEqual(
+        expect.arrayContaining(['envoy-config', 'broker-token', 'egress-ca']),
+      );
       delete process.env.CREDENTIAL_INJECTION_MODE;
     });
 
@@ -1828,8 +1845,12 @@ describe('JobRunner', () => {
       (jobRunner as any).catalog = fakeCatalog;
       (jobRunner as any).secretManager = fakeSecrets;
       await jobRunner.createSidecarToolPodJob(credToolSpec());
-      const podSpec = mockBatchApi.createNamespacedJob.mock.calls.at(-1)![0].body.spec.template.spec;
-      expect(podSpec.containers.map((c: any) => c.name)).not.toContain('credential-sidecar');
+      const podSpec =
+        mockBatchApi.createNamespacedJob.mock.calls.at(-1)![0].body.spec
+          .template.spec;
+      expect(podSpec.containers.map((c: any) => c.name)).not.toContain(
+        'credential-sidecar',
+      );
       const user = podSpec.containers.find((c: any) => c.name === 'user-tool');
       expect(user.env.map((e: any) => e.name)).not.toContain('BRAVE_API_KEY');
       expect(podSpec.serviceAccountName).toBeFalsy();
@@ -1839,11 +1860,34 @@ describe('JobRunner', () => {
       process.env.CREDENTIAL_INJECTION_MODE = 'sidecar';
       (jobRunner as any).catalog = fakeCatalog;
       (jobRunner as any).secretManager = fakeSecrets;
-      await jobRunner.createSidecarToolPodJob(credToolSpec({ credentials: undefined }));
-      const podSpec = mockBatchApi.createNamespacedJob.mock.calls.at(-1)![0].body.spec.template.spec;
-      expect(podSpec.containers.map((c: any) => c.name)).not.toContain('credential-sidecar');
+      await jobRunner.createSidecarToolPodJob(
+        credToolSpec({ credentials: undefined }),
+      );
+      const podSpec =
+        mockBatchApi.createNamespacedJob.mock.calls.at(-1)![0].body.spec
+          .template.spec;
+      expect(podSpec.containers.map((c: any) => c.name)).not.toContain(
+        'credential-sidecar',
+      );
       const user = podSpec.containers.find((c: any) => c.name === 'user-tool');
       expect(user.env.map((e: any) => e.name)).not.toContain('BRAVE_API_KEY');
+      delete process.env.CREDENTIAL_INJECTION_MODE;
+    });
+
+    it('mode=sidecar + auditOnly: attaches sidecar + SA but NO placeholder env or owner-group annotation', async () => {
+      process.env.CREDENTIAL_INJECTION_MODE = 'sidecar';
+      process.env.CREDENTIAL_INJECTION_AUDIT_ONLY = 'true';
+      (jobRunner as any).catalog = fakeCatalog;
+      (jobRunner as any).secretManager = fakeSecrets;
+      await jobRunner.createSidecarToolPodJob(credToolSpec());
+      const body = mockBatchApi.createNamespacedJob.mock.calls.at(-1)![0].body;
+      const podSpec = body.spec.template.spec;
+      expect(podSpec.containers.map((c: any) => c.name)).toContain('credential-sidecar');
+      expect(podSpec.serviceAccountName).toBe('kubeclaw-tool-job');
+      const user = podSpec.containers.find((c: any) => c.name === 'user-tool');
+      expect(user.env.map((e: any) => e.name)).not.toContain('BRAVE_API_KEY');
+      expect(body.spec.template.metadata.annotations?.['kubeclaw.io/owner-group']).toBeUndefined();
+      delete process.env.CREDENTIAL_INJECTION_AUDIT_ONLY;
       delete process.env.CREDENTIAL_INJECTION_MODE;
     });
   });

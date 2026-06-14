@@ -1882,30 +1882,55 @@ export class JobRunner {
 
     // --- Credential injection (gated on the tool declaring credentials) ---
     const injectionMode = getInjectionMode();
-    const wantsCreds = (toolSpec.credentials?.length ?? 0) > 0 && injectionMode !== 'off';
+    const auditOnly = getAuditOnly();
+    const wantsCreds =
+      (toolSpec.credentials?.length ?? 0) > 0 && injectionMode !== 'off';
+    const credEnv: { name: string; value: string }[] = [];
     const credContainers: unknown[] = [];
     const credVolumes: unknown[] = [];
     let credServiceAccount: string | undefined;
     let credAnnotations: Record<string, string> | undefined;
     if (wantsCreds) {
-      const ids = new Set(toolSpec.credentials);
-      const entries = (this.catalog?.getCatalog() ?? []).filter((e) => ids.has(e.id));
-      let groupPlaceholders: Record<string, Record<string, string>> = {};
-      if (this.secretManager) {
-        try {
-          groupPlaceholders = await this.secretManager.getGroupPlaceholders(spec.groupFolder);
-        } catch (err) {
-          logger.warn({ err }, 'getGroupPlaceholders failed for sidecar tool pod; using empty');
-        }
-      }
-      const { envs } = buildCatalogEnvs(entries, groupPlaceholders);
-      userEnv.push(...envs);
+      // SA is set whenever injection is active (mirrors generateJobManifest: mode!=='off' → kubeclaw-tool-job).
       credServiceAccount = 'kubeclaw-tool-job';
-      credAnnotations = { 'kubeclaw.io/owner-group': spec.groupFolder };
+      // auditOnly observes egress without injecting: skip the placeholder envs + owner-group annotation.
+      if (!auditOnly) {
+        const ids = new Set(toolSpec.credentials);
+        const entries = (this.catalog?.getCatalog() ?? []).filter((e) =>
+          ids.has(e.id),
+        );
+        if ((toolSpec.credentials?.length ?? 0) > 0 && entries.length === 0) {
+          logger.warn(
+            { credentials: toolSpec.credentials },
+            'tool declares credentials but no catalog entries matched; no placeholder env injected',
+          );
+        }
+        let groupPlaceholders: Record<string, Record<string, string>> = {};
+        if (this.secretManager) {
+          try {
+            groupPlaceholders = await this.secretManager.getGroupPlaceholders(
+              spec.groupFolder,
+            );
+          } catch (err) {
+            logger.warn(
+              { err },
+              'getGroupPlaceholders failed for sidecar tool pod; using empty',
+            );
+          }
+        }
+        const { envs } = buildCatalogEnvs(entries, groupPlaceholders);
+        credEnv.push(...envs);
+        credAnnotations = { 'kubeclaw.io/owner-group': spec.groupFolder };
+      }
       if (injectionMode === 'sidecar') {
-        userEnv.push(...workloadEnvForSidecar({ port: CREDENTIAL_SIDECAR_PORT }));
+        credEnv.push(
+          ...workloadEnvForSidecar({ port: CREDENTIAL_SIDECAR_PORT }),
+        );
         credContainers.push(
-          sidecarContainerSpec({ image: CREDENTIAL_SIDECAR_IMAGE, port: CREDENTIAL_SIDECAR_PORT }),
+          sidecarContainerSpec({
+            image: CREDENTIAL_SIDECAR_IMAGE,
+            port: CREDENTIAL_SIDECAR_PORT,
+          }),
         );
         credVolumes.push(...sidecarVolumes());
       }
@@ -1936,7 +1961,7 @@ export class JobRunner {
           spec: {
             restartPolicy: 'Never',
             serviceAccountName: credServiceAccount ?? '',
-            automountServiceAccountToken: false,
+            ...(credServiceAccount ? { automountServiceAccountToken: false } : {}),
             containers: [
               {
                 name: 'kubeclaw-tool-bridge',
@@ -1959,7 +1984,7 @@ export class JobRunner {
                   : toolSpec.command
                     ? { command: toolSpec.command }
                     : {}),
-                env: userEnv,
+                env: [...userEnv, ...credEnv],
                 volumeMounts: userMounts,
                 resources: {
                   requests: {
