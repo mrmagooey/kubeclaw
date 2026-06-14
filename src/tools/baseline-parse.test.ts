@@ -15,10 +15,10 @@ describe('rendered Helm tools baseline', () => {
     });
     const r = parseToolCatalog(envelope);
     expect(r.ok).toBe(true);
-    if (r.ok) {
-      const names = r.tools.map((t) => t.name).sort();
-      expect(names).toContain('browser');
-      expect(names).toContain('bash');
-    }
+    if (!r.ok) return; // narrow; the expect above already failed the test
+    const names = r.tools.map((t) => t.name).sort();
+    expect(names.length).toBeGreaterThan(0);
+    expect(names).toContain('browser');
+    expect(names).toContain('bash');
   });
 });

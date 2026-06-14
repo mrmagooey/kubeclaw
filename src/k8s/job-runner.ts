@@ -1776,7 +1776,7 @@ export class JobRunner {
       { name: 'KUBECLAW_GROUP_FOLDER', value: spec.groupFolder },
       { name: 'KUBECLAW_TOOL_MODE', value: toolMode },
       { name: 'KUBECLAW_TOOL_PORT', value: String(port) },
-      { name: 'IDLE_TIMEOUT', value: String(spec.timeout) },
+      { name: 'IDLE_TIMEOUT', value: String(effectiveTimeoutMs) },
       { name: 'REDIS_URL', value: redisUrl },
     ];
 
