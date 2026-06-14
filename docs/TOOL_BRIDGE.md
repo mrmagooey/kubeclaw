@@ -218,6 +218,91 @@ The bridge authenticates to Redis using per-job ACL credentials injected via `RE
 
 If the bridge loses its Redis connection, it reconnects with exponential backoff: `min(2^retries × 100 ms, 10 s)`, giving up after 10 retries.
 
+## Credential-injected tools
+
+Some catalog tools need a third-party API key at egress. Rather than placing the real key in the pod environment, KubeClaw uses the credential-injection system: the tool declares which broker-catalog ids it needs, the orchestrator stamps placeholder env vars onto the `user-tool` container, and the in-pod Envoy sidecar (or Istio egress gateway) substitutes the real value at the moment the request leaves the cluster. The `user-tool` container never holds the real secret.
+
+### `ToolSpec.credentials`
+
+`credentials` is an optional array of broker-catalog id strings:
+
+```yaml
+credentials: [brave-search]
+```
+
+Each id must correspond to an entry in `credentialInjection.catalog` in `values.yaml`. Validation rejects non-strings and empty strings. Declaring any id triggers credential-sidecar attachment in sidecar mode and stamps per-tool placeholder env vars onto `user-tool`. A tool only receives the placeholders for the ids it declares — it cannot reference another id's env var and therefore cannot form a request that exfiltrates another host's secret.
+
+### What gets attached (sidecar mode, `mode: sidecar`)
+
+When `toolSpec.credentials` is non-empty and `CREDENTIAL_INJECTION_MODE != off`, `createSidecarToolPodJob` builds:
+
+| What | How |
+|---|---|
+| `credential-sidecar` container | Envoy proxy; runs at `CREDENTIAL_SIDECAR_PORT`; substitutes the real credential at egress via `ext_authz` |
+| `envoy-config` volume | ConfigMap `kubeclaw-envoy-sidecar`; mounted at `/etc/envoy` on the sidecar |
+| `broker-token` volume | Projected service-account token (audience `kubeclaw-credential-broker`, 10 min TTL); mounted at `/var/run/secrets/tokens` on the sidecar |
+| `egress-ca` volume | Secret `kubeclaw-egress-ca-tls` (key `ca.crt` → path `kubeclaw-egress-ca.crt`); mounted at `/etc/ssl/certs` on the sidecar |
+| Proxy env on `user-tool` | `HTTPS_PROXY`, `HTTP_PROXY` → `http://127.0.0.1:{port}`; `NO_PROXY` → `localhost,127.0.0.1,kubeclaw-redis,credential-broker`; `NODE_EXTRA_CA_CERTS` and `SSL_CERT_FILE` → `/etc/ssl/certs/kubeclaw-egress-ca.crt` |
+| Placeholder env on `user-tool` | One env var per `credentialFields` entry for each declared id (e.g. `BRAVE_API_KEY`); value is the group's registered placeholder, the operator-fallback sentinel, or `injected-by-broker` |
+| `serviceAccountName: kubeclaw-tool-job` | Set whenever injection is active (`mode != off`) |
+| `automountServiceAccountToken: false` | Set alongside the SA |
+| `kubeclaw.io/owner-group` annotation | Set on the pod template so the broker can resolve the group for identity propagation |
+
+The `kubeclaw-tool-bridge` container receives none of the credential env vars or the proxy env — only the `user-tool` container does.
+
+**Audit-only mode** (`CREDENTIAL_INJECTION_AUDIT_ONLY=true`): the sidecar container and volumes are still attached (so the broker can observe egress), and `serviceAccountName` is still set, but the placeholder env vars and the `kubeclaw.io/owner-group` annotation are skipped.
+
+**`mode: off`**: no injection occurs — no sidecar, no SA, no env changes.
+
+### How the secret is protected
+
+The real API key never appears in the pod spec. The `user-tool` container holds only a `KC_PH_…` placeholder (or the operator-fallback sentinel `KC_PH_FALLBACK_{id}`). When `user-tool` makes an outbound HTTPS request, traffic is intercepted by the `credential-sidecar` Envoy, which calls the broker's `ext_authz` endpoint. The broker maps the placeholder back to the real secret, stamps the appropriate request header (e.g. `X-Subscription-Token`), and forwards the request to the upstream host.
+
+### Worked example: `web_fetch` and `web_search`
+
+Both tools ship in the Helm baseline catalog on `curlimages/curl:latest` with `pattern: file` and `mount: none`.
+
+**`web_fetch`** (no credentials — direct egress):
+
+```yaml
+- name: web_fetch
+  description: Fetch the raw content of a URL over HTTP(S).
+  parameters:
+    type: object
+    properties:
+      url: { type: string }
+    required: [url]
+  image: curlimages/curl:latest
+  pattern: file
+  mount: none
+  run: 'curl -sSL -A "Mozilla/5.0 KubeClaw/1.0" -- "$(cat "$INPUT_DIR/url")"'
+```
+
+No `credentials` declared, so no sidecar is attached and the request goes directly to the remote host. The `--` option terminator before the URL prevents a crafted URL from being interpreted as a curl flag (argument-injection guard).
+
+**`web_search`** (credentials required — egress via Envoy):
+
+```yaml
+- name: web_search
+  description: Search the web via the Brave Search API. Returns the raw Brave JSON response (up to 10 results).
+  parameters:
+    type: object
+    properties:
+      query: { type: string }
+    required: [query]
+  image: curlimages/curl:latest
+  pattern: file
+  mount: none
+  credentials: [brave-search]
+  run: 'curl -sS -G -H "X-Subscription-Token: $BRAVE_API_KEY" --data-urlencode "q=$(cat "$INPUT_DIR/query")" --data-urlencode "count=10" "https://api.search.brave.com/res/v1/web/search"'
+```
+
+Declares `credentials: [brave-search]`, which maps to the `brave-search` catalog entry (`BRAVE_API_KEY` placeholder env, `allowOperatorFallback: true`). In sidecar mode the `credential-sidecar` Envoy intercepts the outbound HTTPS request and the broker substitutes the real Brave API key. The tool script reads `$BRAVE_API_KEY` (the placeholder) at request time; the real value is inserted at egress. The result is the raw Brave JSON response.
+
+### Note: `browser` and the legacy agent-runner
+
+`browser` is not a catalog tool — it remains a built-in (its own follow-on spec). The legacy agent-runner (non-direct-llm path) keeps `web_fetch` and `web_search` as in-process built-ins alongside their catalog counterparts, matching the same dual-existence pattern as `bash`. The channel's direct-llm path resolves `web_fetch` and `web_search` from the catalog.
+
 ## Worked example: `bash` and `bash_persist`
 
 The Helm baseline catalog ships two tools that illustrate the `run` + mount model using stock `alpine:latest` — no custom image required.
