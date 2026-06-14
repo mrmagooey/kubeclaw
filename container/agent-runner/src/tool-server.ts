@@ -1,7 +1,7 @@
 /**
  * KubeClaw Tool Server
  * Alternative entrypoint for the tool container image.
- * Runs in tool category pods (execution | browser) and executes tool calls
+ * Runs in tool category pods (execution | places) and executes tool calls
  * routed from the agent MCP server via Redis Streams.
  */
 
@@ -15,7 +15,7 @@ import { chromium, type Browser, type Page } from 'playwright-core';
 const execFileAsync = promisify(execFile);
 
 const agentJobId = process.env.KUBECLAW_TOOL_JOB_ID!;
-const category = process.env.KUBECLAW_CATEGORY as 'execution' | 'browser' | string;
+const category = process.env.KUBECLAW_CATEGORY as 'execution' | 'places' | string;
 const redisUrl = process.env.REDIS_URL || 'redis://kubeclaw-redis:6379';
 const idleTimeout = parseInt(process.env.IDLE_TIMEOUT || '1800000', 10);
 const toolMode = process.env.KUBECLAW_TOOL_MODE as 'http-bridge' | 'file-bridge' | 'acp-bridge' | 'cdp-bridge' | undefined;

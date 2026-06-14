@@ -346,6 +346,9 @@ describe('validateTool — cdp pattern', () => {
   it('still rejects an unknown pattern', () => {
     expect(validateTool({ ...base, pattern: 'grpc' }).ok).toBe(false);
   });
+  it('rejects credentials on a cdp tool', () => {
+    expect(validateTool({ ...cdpBase, credentials: ['brave-search'] }).ok).toBe(false);
+  });
 });
 
 describe('parseToolCatalog', () => {
