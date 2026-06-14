@@ -1882,11 +1882,15 @@ describe('JobRunner', () => {
       await jobRunner.createSidecarToolPodJob(credToolSpec());
       const body = mockBatchApi.createNamespacedJob.mock.calls.at(-1)![0].body;
       const podSpec = body.spec.template.spec;
-      expect(podSpec.containers.map((c: any) => c.name)).toContain('credential-sidecar');
+      expect(podSpec.containers.map((c: any) => c.name)).toContain(
+        'credential-sidecar',
+      );
       expect(podSpec.serviceAccountName).toBe('kubeclaw-tool-job');
       const user = podSpec.containers.find((c: any) => c.name === 'user-tool');
       expect(user.env.map((e: any) => e.name)).not.toContain('BRAVE_API_KEY');
-      expect(body.spec.template.metadata.annotations?.['kubeclaw.io/owner-group']).toBeUndefined();
+      expect(
+        body.spec.template.metadata.annotations?.['kubeclaw.io/owner-group'],
+      ).toBeUndefined();
       delete process.env.CREDENTIAL_INJECTION_AUDIT_ONLY;
       delete process.env.CREDENTIAL_INJECTION_MODE;
     });

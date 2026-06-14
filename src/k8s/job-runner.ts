@@ -1961,7 +1961,9 @@ export class JobRunner {
           spec: {
             restartPolicy: 'Never',
             serviceAccountName: credServiceAccount ?? '',
-            ...(credServiceAccount ? { automountServiceAccountToken: false } : {}),
+            ...(credServiceAccount
+              ? { automountServiceAccountToken: false }
+              : {}),
             containers: [
               {
                 name: 'kubeclaw-tool-bridge',
