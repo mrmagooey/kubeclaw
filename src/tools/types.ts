@@ -69,7 +69,7 @@ const NAME_RE = /^[A-Za-z][A-Za-z0-9_-]*$/;
 //    execution, places) — a catalog tool named after a category would be
 //    silently routed to a legacy tool pod instead of its own image.
 // Note: web_fetch, web_search, and browser are now catalog tools and are no longer reserved.
-const RESERVED_NAMES = new Set(['places_search', 'execution']);
+const RESERVED_NAMES = new Set(['places_search', 'execution', 'places']);
 
 const ALLOWED_KEYS = new Set([
   'name',

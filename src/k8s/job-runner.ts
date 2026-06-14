@@ -1586,7 +1586,7 @@ export class JobRunner {
   }
 
   /**
-   * Create a tool pod job (execution or browser category)
+   * Create a tool pod job (execution or places category)
    * Returns the K8s job name as podJobId
    */
   async createToolPodJob(spec: ToolPodJobSpec): Promise<string> {
@@ -1899,8 +1899,14 @@ export class JobRunner {
               failureThreshold: 15,
             },
             resources: {
-              requests: { memory: toolSpec.memoryRequest ?? '256Mi', cpu: toolSpec.cpuRequest ?? '100m' },
-              limits: { memory: toolSpec.memoryLimit ?? '1Gi', cpu: toolSpec.cpuLimit ?? '500m' },
+              requests: {
+                memory: toolSpec.memoryRequest ?? '256Mi',
+                cpu: toolSpec.cpuRequest ?? '100m',
+              },
+              limits: {
+                memory: toolSpec.memoryLimit ?? '1Gi',
+                cpu: toolSpec.cpuLimit ?? '500m',
+              },
             },
             volumeMounts: [{ name: 'dshm', mountPath: '/dev/shm' }],
             restartPolicy: 'Always',
@@ -1908,7 +1914,10 @@ export class JobRunner {
         ]
       : undefined;
     if (isCdpBridge) {
-      volumes.push({ name: 'dshm', emptyDir: { medium: 'Memory', sizeLimit: '256Mi' } });
+      volumes.push({
+        name: 'dshm',
+        emptyDir: { medium: 'Memory', sizeLimit: '256Mi' },
+      });
     }
 
     const userEnv: { name: string; value: string }[] = [
@@ -2032,7 +2041,8 @@ export class JobRunner {
                       volumeMounts: userMounts,
                       resources: {
                         requests: {
-                          memory: toolSpec.memoryRequest ?? TOOL_JOB_MEMORY_REQUEST,
+                          memory:
+                            toolSpec.memoryRequest ?? TOOL_JOB_MEMORY_REQUEST,
                           cpu: toolSpec.cpuRequest ?? TOOL_JOB_CPU_REQUEST,
                         },
                         limits: {

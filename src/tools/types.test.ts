@@ -51,6 +51,10 @@ describe('validateTool', () => {
     expect(validateTool({ ...base, name: 'execution' }).ok).toBe(false);
   });
 
+  it('rejects a catalog tool named after the places built-in category', () => {
+    expect(validateTool({ ...base, name: 'places' }).ok).toBe(false);
+  });
+
   it('requires image', () => {
     const { image, ...noImage } = base;
     expect(validateTool(noImage).ok).toBe(false);
