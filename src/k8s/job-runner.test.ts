@@ -331,6 +331,21 @@ describe('JobRunner', () => {
       });
     });
 
+    it('agent job manifest mounts the kubeclaw-tools ConfigMap at /etc/kubeclaw/tools', () => {
+      const manifest = jobRunner.generateJobManifest(makeSpec());
+      const container = manifest.spec.template.spec.containers[0];
+      const mount = container.volumeMounts.find(
+        (m: any) => m.mountPath === '/etc/kubeclaw/tools',
+      );
+      expect(mount).toBeDefined();
+      expect(mount.readOnly).toBe(true);
+      const vol = manifest.spec.template.spec.volumes.find(
+        (v: any) => v.name === mount.name,
+      );
+      expect(vol.configMap.name).toBe('kubeclaw-tools');
+      expect(vol.configMap.optional).toBe(true);
+    });
+
     it('claude provider: injects ANTHROPIC_API_KEY, ANTHROPIC_BASE_URL, ANTHROPIC_MODEL', () => {
       const spec = makeSpec({ provider: 'claude' });
       const manifest = jobRunner.generateJobManifest(spec);

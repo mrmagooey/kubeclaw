@@ -981,6 +981,18 @@ export class JobRunner {
       readOnly: true,
     } as any);
 
+    // Mount the merged tool catalog ConfigMap so the agent-runner can read tools.json
+    // and route tool execution by name (same catalog the channel pods mount).
+    volumes.push({
+      name: 'tools-catalog',
+      configMap: { name: 'kubeclaw-tools', optional: true },
+    } as any);
+    volumeMounts.push({
+      name: 'tools-catalog',
+      mountPath: '/etc/kubeclaw/tools',
+      readOnly: true,
+    } as any);
+
     // Add browser WebSocket endpoint to agent env when sidecar is enabled
     if (spec.browserSidecar) {
       envVars.push({
