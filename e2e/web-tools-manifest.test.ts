@@ -44,10 +44,10 @@ if (!process.env.KUBECLAW_NAMESPACE) {
   process.env.KUBECLAW_NAMESPACE = NAMESPACE;
 }
 
-// getInjectionMode() in config.ts reads CREDENTIAL_INJECTION_MODE at import time.
-// Set before any dynamic import so the sidecar path is exercised.
-const _prevInjectionMode = process.env.CREDENTIAL_INJECTION_MODE;
-process.env.CREDENTIAL_INJECTION_MODE = 'sidecar';
+// CREDENTIAL_INJECTION_MODE: getInjectionMode() reads process.env at call time
+// (not at import time), so this does NOT need to be set before the dynamic import.
+// We save/restore in beforeAll/afterAll to avoid leaking into sibling e2e tests.
+let savedInjectionMode: string | undefined;
 
 // ── Cluster-gate helpers ──────────────────────────────────────────────────────
 
@@ -156,31 +156,66 @@ async function deleteJobIfExists(jobName: string): Promise<void> {
 
 // ── Suite ─────────────────────────────────────────────────────────────────────
 
+// Module-scoped saves for jobRunner singleton stubs (restored in afterAll).
+let savedCatalog: unknown;
+let savedSecretManager: unknown;
+
 describe('web_search credential-injection + web_fetch plain manifest assertions', () => {
   let orchestratorRunning = false;
 
   // Jobs created during tests; cleaned up in afterAll.
   const createdJobs: string[] = [];
 
-  beforeAll(() => {
+  beforeAll(async () => {
+    // Save + set CREDENTIAL_INJECTION_MODE here (not module-top) so it doesn't
+    // leak into sibling e2e tests that share the same process in singleFork mode.
+    savedInjectionMode = process.env.CREDENTIAL_INJECTION_MODE;
+    process.env.CREDENTIAL_INJECTION_MODE = 'sidecar';
+
     orchestratorRunning = isOrchestratorReady();
     if (!orchestratorRunning) {
       console.warn(
         `[web-tools-manifest] Orchestrator not ready in namespace ${NAMESPACE} — all tests will skip`,
       );
+      return;
     }
+
+    // Save jobRunner singleton properties before stubbing, so afterAll can restore them.
+    const { jobRunner } = await import('../src/k8s/job-runner.js');
+    savedCatalog = (jobRunner as any).catalog;
+    savedSecretManager = (jobRunner as any).secretManager;
+
+    // Install stubs once for the whole suite.
+    const BRAVE_ENTRY = {
+      id: 'brave-search',
+      host: 'api.search.brave.com',
+      upstreamPort: 443,
+      credentialFields: [{ name: 'api_key', envVar: 'BRAVE_API_KEY' }],
+      baseUrlEnvs: {},
+      allowOperatorFallback: true,
+      allowedPositions: ['header', 'body'],
+    };
+    (jobRunner as any).catalog = { getCatalog: () => [BRAVE_ENTRY] };
+    (jobRunner as any).secretManager = { getGroupPlaceholders: async () => ({}) };
   });
 
   afterAll(async () => {
     for (const jobName of createdJobs) {
       await deleteJobIfExists(jobName);
     }
-    // Restore env
+
+    // Restore CREDENTIAL_INJECTION_MODE.
+    if (savedInjectionMode === undefined) delete process.env.CREDENTIAL_INJECTION_MODE;
+    else process.env.CREDENTIAL_INJECTION_MODE = savedInjectionMode;
+
+    // Restore KUBECLAW_NAMESPACE.
     if (_prevKubeclawNamespace === undefined) delete process.env.KUBECLAW_NAMESPACE;
     else process.env.KUBECLAW_NAMESPACE = _prevKubeclawNamespace;
 
-    if (_prevInjectionMode === undefined) delete process.env.CREDENTIAL_INJECTION_MODE;
-    else process.env.CREDENTIAL_INJECTION_MODE = _prevInjectionMode;
+    // Restore jobRunner singleton stubs.
+    const { jobRunner } = await import('../src/k8s/job-runner.js');
+    (jobRunner as any).catalog = savedCatalog;
+    (jobRunner as any).secretManager = savedSecretManager;
   });
 
   // ── 1. web_search (credentials + sidecar) ───────────────────────────────────
@@ -191,19 +226,6 @@ describe('web_search credential-injection + web_fetch plain manifest assertions'
       if (!orchestratorRunning) return ctx.skip();
 
       const { jobRunner } = await import('../src/k8s/job-runner.js');
-
-      // Stub catalog + secret manager so brave-search resolves without a broker
-      const BRAVE_ENTRY = {
-        id: 'brave-search',
-        host: 'api.search.brave.com',
-        upstreamPort: 443,
-        credentialFields: [{ name: 'api_key', envVar: 'BRAVE_API_KEY' }],
-        baseUrlEnvs: {},
-        allowOperatorFallback: true,
-        allowedPositions: ['header', 'body'],
-      };
-      (jobRunner as any).catalog = { getCatalog: () => [BRAVE_ENTRY] };
-      (jobRunner as any).secretManager = { getGroupPlaceholders: async () => ({}) };
 
       const agentJobId = `e2e-web-search-${Date.now()}`;
       const groupFolder = `e2e-web-search-${Date.now()}`;
@@ -301,20 +323,6 @@ describe('web_search credential-injection + web_fetch plain manifest assertions'
       if (!orchestratorRunning) return ctx.skip();
 
       const { jobRunner } = await import('../src/k8s/job-runner.js');
-
-      // Stub catalog + secret manager (even though this tool has no credentials,
-      // keep stubs in place for consistency)
-      const BRAVE_ENTRY = {
-        id: 'brave-search',
-        host: 'api.search.brave.com',
-        upstreamPort: 443,
-        credentialFields: [{ name: 'api_key', envVar: 'BRAVE_API_KEY' }],
-        baseUrlEnvs: {},
-        allowOperatorFallback: true,
-        allowedPositions: ['header', 'body'],
-      };
-      (jobRunner as any).catalog = { getCatalog: () => [BRAVE_ENTRY] };
-      (jobRunner as any).secretManager = { getGroupPlaceholders: async () => ({}) };
 
       const agentJobId = `e2e-web-fetch-${Date.now()}`;
       const groupFolder = `e2e-web-fetch-${Date.now()}`;
