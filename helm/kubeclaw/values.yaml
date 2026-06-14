@@ -520,6 +520,29 @@ tools:
     pattern: file
     mount: group
     run: 'sh -c "$(cat "$INPUT_DIR/command")"'
+  - name: web_fetch
+    description: Fetch the raw content of a URL over HTTP(S).
+    parameters:
+      type: object
+      properties:
+        url: { type: string }
+      required: [url]
+    image: curlimages/curl:latest
+    pattern: file
+    mount: none
+    run: 'curl -sSL -A "Mozilla/5.0 KubeClaw/1.0" "$(cat "$INPUT_DIR/url")"'
+  - name: web_search
+    description: Search the web via the Brave Search API. Returns the raw Brave JSON response (up to 10 results).
+    parameters:
+      type: object
+      properties:
+        query: { type: string }
+      required: [query]
+    image: curlimages/curl:latest
+    pattern: file
+    mount: none
+    credentials: [brave-search]
+    run: 'curl -sS -G -H "X-Subscription-Token: $BRAVE_API_KEY" --data-urlencode "q=$(cat "$INPUT_DIR/query")" --data-urlencode "count=10" "https://api.search.brave.com/res/v1/web/search"'
 
 # Prometheus metrics scraping. Requires prometheus-operator in the cluster.
 metrics:
