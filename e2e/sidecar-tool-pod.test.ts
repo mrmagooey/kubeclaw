@@ -1010,3 +1010,247 @@ describe('Sidecar Tool Pod — request mapping', () => {
     }
   }, 25000);
 });
+
+// ---- Web tool run-template integration tests --------------------------------
+//
+// Prove that the `web_fetch` and `web_search` catalog run templates are correct
+// end-to-end: real compiled file-bridge + real tool-wrapper.sh + real curl
+// hitting a local HTTP server.  No Kubernetes, no Brave API, no credential
+// proxy — just the run templates as written in the catalog.
+//
+// web_fetch run template:
+//   curl -sSL -A "Mozilla/5.0 KubeClaw/1.0" -- "$(cat "$INPUT_DIR/url")"
+//
+// web_search run template:
+//   curl -sS -G -H "X-Subscription-Token: $BRAVE_API_KEY"
+//        --data-urlencode "q=$(cat "$INPUT_DIR/query")"
+//        --data-urlencode "count=10"
+//        "https://api.search.brave.com/res/v1/web/search"
+//   (local URL substituted for Brave in tests)
+//
+// The credential substitution (KC_PH_ → real key) is broker/Envoy and is NOT
+// exercised here.  We pass a literal token to prove the header carries it and
+// --data-urlencode encodes the query correctly.
+
+describe('Sidecar Tool Pod — web tool run templates (file-bridge + real curl)', () => {
+  let echoServer: Server;
+  let echoPort: number;
+
+  // Captures per-request details for assertion
+  interface CapturedRequest {
+    path: string;
+    query: string;
+    token: string | null;
+  }
+  let lastRequest: CapturedRequest | null = null;
+
+  beforeAll(async () => {
+    // A tiny echo server: captures path, raw query string, and x-subscription-token
+    // header, then responds with a JSON object containing them.
+    echoServer = createServer((req: IncomingMessage, res: ServerResponse) => {
+      const rawUrl = req.url ?? '/';
+      const qIdx = rawUrl.indexOf('?');
+      const reqPath = qIdx === -1 ? rawUrl : rawUrl.slice(0, qIdx);
+      const rawQuery = qIdx === -1 ? '' : rawUrl.slice(qIdx + 1);
+      const token = req.headers['x-subscription-token'] as string | null ?? null;
+
+      lastRequest = { path: reqPath, query: rawQuery, token };
+
+      const body = JSON.stringify({ path: reqPath, query: rawQuery, token });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(body);
+    });
+    await new Promise<void>((resolve) => echoServer.listen(0, '127.0.0.1', resolve));
+    echoPort = (echoServer.address() as AddressInfo).port;
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve) => echoServer.close(() => resolve()));
+  });
+
+  /**
+   * Extract and patch tool-wrapper.sh from k8s/35-configmaps.yaml, rewriting
+   * only S=/shared → S=<tempShared>.  Identical to the helper in the file-bridge
+   * describe block above but scoped locally so these tests are self-contained.
+   */
+  function makeWrapperScript(tempShared: string): string {
+    const configmapsPath = path.resolve(process.cwd(), 'k8s/35-configmaps.yaml');
+    const yaml = fs.readFileSync(configmapsPath, 'utf-8');
+
+    const blockStart = yaml.indexOf('  tool-wrapper.sh: |\n');
+    if (blockStart === -1) throw new Error('tool-wrapper.sh block not found in k8s/35-configmaps.yaml');
+    const afterMarker = yaml.slice(blockStart + '  tool-wrapper.sh: |\n'.length);
+
+    const lines: string[] = [];
+    for (const line of afterMarker.split('\n')) {
+      if (line.startsWith('    ') || line === '') {
+        lines.push(line.startsWith('    ') ? line.slice(4) : '');
+      } else {
+        break;
+      }
+    }
+    const scriptBody = lines.join('\n');
+
+    // Sanity-check: key protocol markers must be present
+    if (!scriptBody.includes('INPUT_DIR')) throw new Error('Wrapper missing INPUT_DIR');
+    if (!scriptBody.includes('KUBECLAW_TOOL_RUN')) throw new Error('Wrapper missing KUBECLAW_TOOL_RUN');
+
+    const modified = scriptBody.replace('S=/shared', `S=${tempShared}`);
+    const scriptFile = path.join(tempShared, 'tool-wrapper.sh');
+    fs.writeFileSync(scriptFile, modified, { mode: 0o755 });
+    return scriptFile;
+  }
+
+  /** Spawn wrapper with an optional set of extra env vars (e.g. BRAVE_API_KEY). */
+  function spawnWrapperWithEnv(
+    scriptPath: string,
+    workdir: string,
+    toolRun: string,
+    extraEnv: Record<string, string> = {},
+  ): ChildProcess {
+    return spawn('sh', [scriptPath], {
+      env: {
+        ...process.env,
+        WORKDIR: workdir,
+        KUBECLAW_TOOL_RUN: toolRun,
+        KUBECLAW_POLL_INTERVAL: '1',
+        ...extraEnv,
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+  }
+
+  it('web_fetch: curl fetches URL from INPUT_DIR/url and returns body', async () => {
+    const redis = getSharedRedis();
+    if (!redis) throw new Error('Redis not available');
+
+    const sharedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kubeclaw-wf-fetch-'));
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kubeclaw-wf-fetch-work-'));
+    const wrapperScript = makeWrapperScript(sharedDir);
+
+    const agentJobId = `e2e-wf-fetch-${Date.now()}`;
+    const toolName = 'web_fetch';
+    const requestId = `req-wf-fetch-${Date.now()}`;
+
+    const toolRun = 'curl -sSL -A "Mozilla/5.0 KubeClaw/1.0" -- "$(cat "$INPUT_DIR/url")"';
+
+    let toolServerProc: ChildProcess | null = null;
+    let wrapperProc: ChildProcess | null = null;
+
+    try {
+      lastRequest = null;
+      const targetUrl = `http://127.0.0.1:${echoPort}/hello`;
+
+      await pushToolCall(agentJobId, toolName, requestId, toolName, { url: targetUrl });
+
+      toolServerProc = spawnToolServer({
+        KUBECLAW_TOOL_JOB_ID: agentJobId,
+        KUBECLAW_CATEGORY: toolName,
+        KUBECLAW_TOOL_MODE: 'file-bridge',
+        KUBECLAW_SHARED_DIR: sharedDir,
+        KUBECLAW_TOOL_FIELDS: 'url',
+        IDLE_TIMEOUT: '20000',
+        REDIS_URL: getRedisUrlForTests(),
+      });
+
+      wrapperProc = spawnWrapperWithEnv(wrapperScript, workDir, toolRun);
+
+      const { result, error } = await waitForToolResult(agentJobId, toolName, requestId, 20000);
+
+      expect(error).toBeNull();
+      expect(result).not.toBeNull();
+
+      // result is JSON.stringified by the bridge; parse once to get the raw body string.
+      const body = JSON.parse(result!) as string;
+      const parsed = JSON.parse(body) as { path: string; query: string; token: string | null };
+
+      // The echo server must have received a request to /hello
+      expect(parsed.path).toBe('/hello');
+      // No token header for web_fetch
+      expect(parsed.token).toBeNull();
+    } finally {
+      toolServerProc?.kill();
+      wrapperProc?.kill();
+      fs.rmSync(sharedDir, { recursive: true, force: true });
+      fs.rmSync(workDir, { recursive: true, force: true });
+      await cleanupStreams(agentJobId, toolName);
+    }
+  }, 30000);
+
+  it('web_search: curl sends X-Subscription-Token header and URL-encodes query', async () => {
+    const redis = getSharedRedis();
+    if (!redis) throw new Error('Redis not available');
+
+    const sharedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kubeclaw-wf-search-'));
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kubeclaw-wf-search-work-'));
+    const wrapperScript = makeWrapperScript(sharedDir);
+
+    const agentJobId = `e2e-wf-search-${Date.now()}`;
+    const toolName = 'web_search';
+    const requestId = `req-wf-search-${Date.now()}`;
+
+    // Run template from catalog with local URL substituted for Brave endpoint.
+    // BRAVE_API_KEY is injected into the wrapper subprocess env below.
+    const localSearchUrl = `http://127.0.0.1:${echoPort}/search`;
+    const toolRun = [
+      'curl -sS -G',
+      '-H "X-Subscription-Token: $BRAVE_API_KEY"',
+      '--data-urlencode "q=$(cat "$INPUT_DIR/query")"',
+      '--data-urlencode "count=10"',
+      `"${localSearchUrl}"`,
+    ].join(' ');
+
+    let toolServerProc: ChildProcess | null = null;
+    let wrapperProc: ChildProcess | null = null;
+
+    try {
+      lastRequest = null;
+
+      // Query with special chars that must be URL-encoded by --data-urlencode
+      const query = 'cats & dogs';
+
+      await pushToolCall(agentJobId, toolName, requestId, toolName, { query });
+
+      toolServerProc = spawnToolServer({
+        KUBECLAW_TOOL_JOB_ID: agentJobId,
+        KUBECLAW_CATEGORY: toolName,
+        KUBECLAW_TOOL_MODE: 'file-bridge',
+        KUBECLAW_SHARED_DIR: sharedDir,
+        KUBECLAW_TOOL_FIELDS: 'query',
+        IDLE_TIMEOUT: '20000',
+        REDIS_URL: getRedisUrlForTests(),
+      });
+
+      // BRAVE_API_KEY is set on the wrapper subprocess env — mirrors how the
+      // job-runner stamps it on the user-tool container at pod creation time.
+      wrapperProc = spawnWrapperWithEnv(wrapperScript, workDir, toolRun, {
+        BRAVE_API_KEY: 'test-token-123',
+      });
+
+      const { result, error } = await waitForToolResult(agentJobId, toolName, requestId, 20000);
+
+      expect(error).toBeNull();
+      expect(result).not.toBeNull();
+
+      // result is JSON.stringified by the bridge; parse once to get the raw body string.
+      const body = JSON.parse(result!) as string;
+      const parsed = JSON.parse(body) as { path: string; query: string; token: string | null };
+
+      // Token header must be carried through
+      expect(parsed.token).toBe('test-token-123');
+
+      // --data-urlencode must have URL-encoded "cats & dogs" → server receives
+      // it as the decoded query string value.  Node's URLSearchParams handles decoding.
+      const params = new URLSearchParams(parsed.query);
+      expect(params.get('q')).toBe('cats & dogs');
+      // count=10 must also appear
+      expect(params.get('count')).toBe('10');
+    } finally {
+      toolServerProc?.kill();
+      wrapperProc?.kill();
+      fs.rmSync(sharedDir, { recursive: true, force: true });
+      fs.rmSync(workDir, { recursive: true, force: true });
+      await cleanupStreams(agentJobId, toolName);
+    }
+  }, 30000);
+});
