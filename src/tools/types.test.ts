@@ -322,6 +322,20 @@ describe('validateTool — credentials', () => {
   });
 });
 
+describe('validateTool — cdp pattern', () => {
+  const cdpBase = { ...base, image: 'chromedp/headless-shell:latest', pattern: 'cdp' as const, port: 9222 };
+  it('accepts pattern cdp with image + port', () => {
+    expect(validateTool(cdpBase)).toEqual({ ok: true });
+  });
+  it('rejects cdp without a port', () => {
+    const { port, ...noPort } = cdpBase as any;
+    expect(validateTool(noPort).ok).toBe(false);
+  });
+  it('still rejects an unknown pattern', () => {
+    expect(validateTool({ ...base, pattern: 'grpc' }).ok).toBe(false);
+  });
+});
+
 describe('parseToolCatalog', () => {
   it('parses a valid wire object', () => {
     const json = JSON.stringify({ version: 1, generation: 3, tools: [base] });

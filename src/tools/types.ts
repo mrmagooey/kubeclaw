@@ -20,7 +20,7 @@ export interface ToolSpec {
   description: string;
   parameters: Record<string, unknown>; // JSON Schema object
   image: string;
-  pattern: 'http' | 'file' | 'acp';
+  pattern: 'http' | 'file' | 'acp' | 'cdp';
   port?: number; // http/acp: port the user container listens on (default 8080)
   command?: string[]; // optional entrypoint override for user container
   pullPolicy?: 'Always' | 'IfNotPresent' | 'Never';
@@ -94,7 +94,7 @@ const ALLOWED_KEYS = new Set([
   'channels',
   'credentials',
 ]);
-const PATTERNS = new Set(['http', 'file', 'acp']);
+const PATTERNS = new Set(['http', 'file', 'acp', 'cdp']);
 
 const HTTP_METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']);
 const ALLOWED_MAPPING_KEYS = new Set([
@@ -179,7 +179,10 @@ export function validateTool(t: unknown): ValidationResult {
     return { ok: false, error: 'image must be a non-empty string' };
   }
   if (typeof obj.pattern !== 'string' || !PATTERNS.has(obj.pattern)) {
-    return { ok: false, error: 'pattern must be one of http|file|acp' };
+    return { ok: false, error: 'pattern must be one of http|file|acp|cdp' };
+  }
+  if (obj.pattern === 'cdp' && (obj.port === undefined || typeof obj.port !== 'number')) {
+    return { ok: false, error: 'cdp pattern requires a numeric port (the CDP port)' };
   }
   if (
     obj.port !== undefined &&
