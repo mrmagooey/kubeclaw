@@ -1962,6 +1962,26 @@ describe('JobRunner', () => {
       );
       expect(init.command).toBeUndefined();
     });
+
+    it('honors toolSpec.timeout over the caller timeout for activeDeadlineSeconds', async () => {
+      await jobRunner.createSidecarToolPodJob({
+        agentJobId: 'job-1',
+        groupFolder: 'g1',
+        toolName: 'browser',
+        toolSpec: {
+          name: 'browser',
+          description: 'x',
+          parameters: { type: 'object', properties: {} },
+          image: 'chromedp/headless-shell:latest',
+          pattern: 'cdp' as const,
+          port: 9222,
+          timeout: 600000,
+        },
+        timeout: 60000,
+      });
+      const call = mockBatchApi.createNamespacedJob.mock.calls.at(-1)![0];
+      expect(call.body.spec.activeDeadlineSeconds).toBe(600);
+    });
   });
 
   // Shared fixture for credential injection tests

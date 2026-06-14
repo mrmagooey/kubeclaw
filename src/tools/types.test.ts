@@ -100,6 +100,34 @@ describe('validateTool', () => {
   it('rejects non-string command elements', () => {
     expect(validateTool({ ...base, command: ['ok', 5] }).ok).toBe(false);
   });
+
+  it('accepts a positive integer timeout', () => {
+    const r = validateTool({
+      name: 'slowtool',
+      description: 'x',
+      parameters: { type: 'object', properties: {} },
+      image: 'alpine:latest',
+      pattern: 'file',
+      run: 'echo hi',
+      timeout: 600000,
+    });
+    expect(r.ok).toBe(true);
+  });
+
+  it('rejects a non-positive or non-integer timeout', () => {
+    for (const bad of [0, -1, 1.5, 'x']) {
+      const r = validateTool({
+        name: 'slowtool',
+        description: 'x',
+        parameters: { type: 'object', properties: {} },
+        image: 'alpine:latest',
+        pattern: 'file',
+        run: 'echo hi',
+        timeout: bad as unknown as number,
+      });
+      expect(r.ok).toBe(false);
+    }
+  });
 });
 
 describe('validateTool — requestMapping', () => {

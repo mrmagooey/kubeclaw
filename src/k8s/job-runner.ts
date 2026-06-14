@@ -1737,7 +1737,9 @@ export class JobRunner {
       .slice(0, 35);
     const jobName = `kubeclaw-stool-${agentSuffix}-${safeTool}`;
 
-    const timeoutSeconds = Math.floor(spec.timeout / 1000);
+    // A per-tool catalog timeout (toolSpec.timeout, ms) overrides the caller default.
+    const effectiveTimeoutMs = spec.toolSpec.timeout ?? spec.timeout;
+    const timeoutSeconds = Math.floor(effectiveTimeoutMs / 1000);
     // Prefer a per-job ACL user scoped to exactly this job's two streams
     // (ported from the legacy adapter security model). Fall back to the
     // shared 'tool-server' user if minting fails (e.g. Redis < 7), matching

@@ -50,6 +50,10 @@ export interface ToolSpec {
    *  user-tool container; the in-pod Envoy + broker substitute the real value at
    *  egress. Presence of any id triggers credential-sidecar attachment. */
   credentials?: string[];
+  /** Optional per-tool execution timeout in milliseconds. When set, overrides the
+   *  caller-supplied default for the tool's sidecar Job (activeDeadlineSeconds) and
+   *  the agent/channel result-wait deadline. */
+  timeout?: number;
 }
 
 export interface ToolCatalogWire {
@@ -93,6 +97,7 @@ const ALLOWED_KEYS = new Set([
   'acpMode',
   'channels',
   'credentials',
+  'timeout',
 ]);
 const PATTERNS = new Set(['http', 'file', 'acp', 'cdp']);
 
@@ -314,6 +319,15 @@ export function validateTool(t: unknown): ValidationResult {
         error:
           'credentials is not supported for pattern "cdp" (no user-tool container to inject into)',
       };
+    }
+  }
+  if (obj.timeout !== undefined) {
+    if (
+      typeof obj.timeout !== 'number' ||
+      !Number.isInteger(obj.timeout) ||
+      obj.timeout <= 0
+    ) {
+      return { ok: false, error: 'timeout must be a positive integer (ms)' };
     }
   }
   return { ok: true };
