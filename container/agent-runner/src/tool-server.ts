@@ -138,9 +138,9 @@ export async function waitForToolReady(): Promise<void> {
 
 let readyPromise: Promise<void> | null = null;
 
-/** Memoized readiness gate — applies to http-bridge, acp-bridge, and cdp-bridge. */
+/** Memoized readiness gate — applies to http-bridge and acp-bridge only. */
 function ensureToolReady(): Promise<void> {
-  if (toolMode !== 'http-bridge' && toolMode !== 'acp-bridge' && toolMode !== 'cdp-bridge') {
+  if (toolMode !== 'http-bridge' && toolMode !== 'acp-bridge') {
     return Promise.resolve();
   }
   if (!readyPromise) {
@@ -636,7 +636,26 @@ let cdpPage: Page | null = null;
 async function getCdpPage(): Promise<Page> {
   const url = process.env.KUBECLAW_CDP_URL || 'http://localhost:9222';
   if (cdpBrowser?.isConnected() && cdpPage && !cdpPage.isClosed()) return cdpPage;
-  cdpBrowser = await chromium.connectOverCDP(url);
+  // Close a stale-but-connected browser before reconnecting (avoid CDP client leak).
+  if (cdpBrowser) {
+    await cdpBrowser.close().catch(() => {});
+    cdpBrowser = null;
+    cdpPage = null;
+  }
+  // Connect with retry/backoff — the chromium sidecar may still be starting; connectOverCDP
+  // hits /json/version internally, so the connect itself is the readiness gate.
+  const deadline = Date.now() + 30000;
+  let lastErr: unknown;
+  while (Date.now() < deadline) {
+    try {
+      cdpBrowser = await chromium.connectOverCDP(url);
+      break;
+    } catch (err) {
+      lastErr = err;
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+  }
+  if (!cdpBrowser) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
   const ctx = cdpBrowser.contexts()[0] ?? (await cdpBrowser.newContext());
   cdpPage = ctx.pages()[0] ?? (await ctx.newPage());
   return cdpPage;
@@ -662,13 +681,6 @@ export async function executeToolBridgeCdp(
   tool: string,
   input: Record<string, unknown>,
 ): Promise<unknown> {
-  // Best-effort readiness: try /json/version once with a short timeout before
-  // connecting via CDP.  If it fails (sidecar not yet up, or in unit tests where
-  // there is no real chromium), we fall through to getCdpPage() which either
-  // uses the mock (tests) or returns a descriptive error string (production).
-  const cdpUrl = process.env.KUBECLAW_CDP_URL || 'http://localhost:9222';
-  await fetch(`${cdpUrl}/json/version`, { signal: AbortSignal.timeout(500) }).catch(() => {});
-
   const action = String(input.action ?? '');
   let page: Page;
   try {
@@ -703,7 +715,7 @@ export async function executeToolBridgeCdp(
         return `Pressed ${input.key}`;
       }
       case 'back': {
-        await page.goBack({ waitUntil: 'domcontentloaded' });
+        await page.goBack({ waitUntil: 'domcontentloaded', timeout: 30000 });
         return `Back to ${page.url()}`;
       }
       case 'wait': {
