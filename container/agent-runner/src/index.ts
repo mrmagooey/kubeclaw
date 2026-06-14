@@ -38,12 +38,13 @@ import type {
   AgentMessage,
 } from '@mariozechner/pi-agent-core';
 import { Type, streamSimple } from '@mariozechner/pi-ai';
-import type { Api } from '@mariozechner/pi-ai';
+import type { Api, TSchema } from '@mariozechner/pi-ai';
 import { createClient, RedisClientType } from 'redis';
 import { CronExpressionParser } from 'cron-parser';
 import { RedisIPCClient } from './redis/ipc-client.js';
 import { buildModel, getApiKeyForProvider } from './model.js';
 import type { CatalogTool } from './tool-catalog.js';
+import { loadCatalog } from './tool-catalog.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -787,230 +788,57 @@ function textResult(text: string) {
 
 // ---- Tool definitions (pi-agent-core AgentTool format) ----
 
-function buildToolDefinitions(
-  isSuperuser: boolean,
-  isMain: boolean,
-  redis: RedisClientType,
-  inputStream: InputStreamManager,
-  agentJobId: string,
-  groupFolder: string,
-  chatJid: string,
-  podReadyMap: Map<string, boolean>,
+interface BuildToolDefinitionsArgs {
+  isSuperuser: boolean;
+  isMain: boolean;
+  redis: RedisClientType;
+  agentJobId: string;
+  groupFolder: string;
+  chatJid: string;
+  channel: string;
+  catalogTools: CatalogTool[];
+  spawnedTools: Set<string>;
+}
+
+export function buildToolDefinitions(
+  args: BuildToolDefinitionsArgs,
 ): AgentTool<any>[] {
-  const tools: AgentTool<any>[] = [
-    // Execution tools (Redis-routed)
-    {
-      name: 'bash',
-      label: 'Bash',
-      description: 'Run a bash command in the execution environment.',
-      parameters: Type.Object({
-        command: Type.String({ description: 'The bash command to run' }),
-        timeout: Type.Optional(
-          Type.Number({ description: 'Timeout in milliseconds (optional)' }),
+  const {
+    isSuperuser,
+    isMain,
+    redis,
+    agentJobId,
+    groupFolder,
+    chatJid,
+    channel,
+    catalogTools,
+    spawnedTools,
+  } = args;
+
+  // Catalog tools — routed by name through the spawn-tool-pod stream, identical
+  // to the channel's DirectLLMRunner. Parameters are plain JSON Schema (pi-ai
+  // validates with AJV), so the catalog spec passes straight through.
+  const tools: AgentTool<any>[] = catalogTools.map((spec) => ({
+    name: spec.name,
+    label: spec.name,
+    description: spec.description,
+    parameters: spec.parameters as unknown as TSchema,
+    execute: async (_id: string, params: unknown) =>
+      textResult(
+        await callCatalogToolViaRedis(
+          redis,
+          agentJobId,
+          groupFolder,
+          channel,
+          spec,
+          params as Record<string, unknown>,
+          spawnedTools,
         ),
-      }),
-      execute: async (_id, params) =>
-        textResult(
-          await callToolViaRedis(
-            redis,
-            inputStream,
-            agentJobId,
-            groupFolder,
-            'bash',
-            params as Record<string, unknown>,
-            podReadyMap,
-          ),
-        ),
-    },
-    {
-      name: 'read',
-      label: 'Read',
-      description: 'Read a file from the workspace.',
-      parameters: Type.Object({
-        file_path: Type.String(),
-        offset: Type.Optional(
-          Type.Number({
-            description: 'Line number to start reading from (0-based)',
-          }),
-        ),
-        limit: Type.Optional(
-          Type.Number({ description: 'Number of lines to read' }),
-        ),
-      }),
-      execute: async (_id, params) =>
-        textResult(
-          await callToolViaRedis(
-            redis,
-            inputStream,
-            agentJobId,
-            groupFolder,
-            'read',
-            params as Record<string, unknown>,
-            podReadyMap,
-          ),
-        ),
-    },
-    {
-      name: 'write',
-      label: 'Write',
-      description: 'Write content to a file in the workspace.',
-      parameters: Type.Object({
-        file_path: Type.String(),
-        content: Type.String(),
-      }),
-      execute: async (_id, params) =>
-        textResult(
-          await callToolViaRedis(
-            redis,
-            inputStream,
-            agentJobId,
-            groupFolder,
-            'write',
-            params as Record<string, unknown>,
-            podReadyMap,
-          ),
-        ),
-    },
-    {
-      name: 'edit',
-      label: 'Edit',
-      description: 'Replace a string in a file.',
-      parameters: Type.Object({
-        file_path: Type.String(),
-        old_string: Type.String(),
-        new_string: Type.String(),
-        replace_all: Type.Optional(Type.Boolean()),
-      }),
-      execute: async (_id, params) =>
-        textResult(
-          await callToolViaRedis(
-            redis,
-            inputStream,
-            agentJobId,
-            groupFolder,
-            'edit',
-            params as Record<string, unknown>,
-            podReadyMap,
-          ),
-        ),
-    },
-    {
-      name: 'glob',
-      label: 'Glob',
-      description: 'Find files by glob pattern.',
-      parameters: Type.Object({
-        pattern: Type.String(),
-        path: Type.Optional(
-          Type.String({ description: 'Directory to search in (optional)' }),
-        ),
-      }),
-      execute: async (_id, params) =>
-        textResult(
-          await callToolViaRedis(
-            redis,
-            inputStream,
-            agentJobId,
-            groupFolder,
-            'glob',
-            params as Record<string, unknown>,
-            podReadyMap,
-          ),
-        ),
-    },
-    {
-      name: 'grep',
-      label: 'Grep',
-      description: 'Search file contents with regex.',
-      parameters: Type.Object({
-        pattern: Type.String(),
-        path: Type.Optional(Type.String()),
-        glob: Type.Optional(Type.String()),
-        output_mode: Type.Optional(
-          Type.Union([
-            Type.Literal('content'),
-            Type.Literal('files_with_matches'),
-            Type.Literal('count'),
-          ]),
-        ),
-      }),
-      execute: async (_id, params) =>
-        textResult(
-          await callToolViaRedis(
-            redis,
-            inputStream,
-            agentJobId,
-            groupFolder,
-            'grep',
-            params as Record<string, unknown>,
-            podReadyMap,
-          ),
-        ),
-    },
-    // Browser tools (Redis-routed)
-    {
-      name: 'web_fetch',
-      label: 'Web Fetch',
-      description: 'Fetch the content of a URL.',
-      parameters: Type.Object({
-        url: Type.String(),
-        prompt: Type.Optional(
-          Type.String({ description: 'Optional focus prompt' }),
-        ),
-      }),
-      execute: async (_id, params) =>
-        textResult(
-          await callToolViaRedis(
-            redis,
-            inputStream,
-            agentJobId,
-            groupFolder,
-            'web_fetch',
-            params as Record<string, unknown>,
-            podReadyMap,
-          ),
-        ),
-    },
-    {
-      name: 'web_search',
-      label: 'Web Search',
-      description: 'Search the web.',
-      parameters: Type.Object({
-        query: Type.String(),
-      }),
-      execute: async (_id, params) =>
-        textResult(
-          await callToolViaRedis(
-            redis,
-            inputStream,
-            agentJobId,
-            groupFolder,
-            'web_search',
-            params as Record<string, unknown>,
-            podReadyMap,
-          ),
-        ),
-    },
-    {
-      name: 'agent_browser',
-      label: 'Agent Browser',
-      description: 'Run browser automation with Playwright.',
-      parameters: Type.Object({
-        command: Type.String(),
-      }),
-      execute: async (_id, params) =>
-        textResult(
-          await callToolViaRedis(
-            redis,
-            inputStream,
-            agentJobId,
-            groupFolder,
-            'agent_browser',
-            params as Record<string, unknown>,
-            podReadyMap,
-          ),
-        ),
-    },
-    // IPC tools
+      ),
+  }));
+
+  // IPC tools (in-process / Redis pub-sub) — unchanged.
+  tools.push(
     {
       name: 'send_message',
       label: 'Send Message',
@@ -1147,7 +975,7 @@ function buildToolDefinitions(
           ),
         ),
     },
-  ];
+  );
 
   if (isMain) {
     tools.push({
@@ -1300,7 +1128,10 @@ async function runAgentLoop(
   jobId: string,
 ): Promise<void> {
   const isSuperuser = process.env.KUBECLAW_SUPERUSER === 'true';
-  const podReadyMap = new Map<string, boolean>();
+  const channel = process.env.KUBECLAW_CHANNEL ?? '';
+  const spawnedTools = new Set<string>();
+  const catalog = loadCatalog('/etc/kubeclaw/tools/tools.json');
+  const catalogTools = catalog.getForChannel(channel);
 
   const systemPrompt = loadSystemPrompt(input.assistantName);
   const history = loadHistory();
@@ -1318,16 +1149,17 @@ async function runAgentLoop(
   }
 
   const model = buildModel();
-  const tools = buildToolDefinitions(
+  const tools = buildToolDefinitions({
     isSuperuser,
-    input.isMain,
+    isMain: input.isMain,
     redis,
-    inputStream,
-    jobId,
-    input.groupFolder,
-    input.chatJid,
-    podReadyMap,
-  );
+    agentJobId: jobId,
+    groupFolder: input.groupFolder,
+    chatJid: input.chatJid,
+    channel,
+    catalogTools,
+    spawnedTools,
+  });
 
   const sessionId = input.sessionId || randomUUID();
   let toolRounds = 0;
