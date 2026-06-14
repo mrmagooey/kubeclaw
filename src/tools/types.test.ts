@@ -293,6 +293,24 @@ describe('validateTool — mount + run', () => {
   });
 });
 
+describe('validateTool — credentials', () => {
+  it('accepts a credentials string array', () => {
+    expect(validateTool({ ...base, credentials: ['brave-search'] })).toEqual({ ok: true });
+  });
+  it('accepts an absent credentials field', () => {
+    expect(validateTool(base)).toEqual({ ok: true });
+  });
+  it('rejects a non-array credentials', () => {
+    expect(validateTool({ ...base, credentials: 'brave-search' }).ok).toBe(false);
+  });
+  it('rejects a non-string element', () => {
+    expect(validateTool({ ...base, credentials: ['ok', 123] }).ok).toBe(false);
+  });
+  it('rejects an empty-string element', () => {
+    expect(validateTool({ ...base, credentials: [''] }).ok).toBe(false);
+  });
+});
+
 describe('parseToolCatalog', () => {
   it('parses a valid wire object', () => {
     const json = JSON.stringify({ version: 1, generation: 3, tools: [base] });

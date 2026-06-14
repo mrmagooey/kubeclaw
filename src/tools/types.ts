@@ -45,6 +45,11 @@ export interface ToolSpec {
   acpMode?: 'sync' | 'async';
   /** Channels this tool is visible to. Empty/absent = all channels. */
   channels?: string[];
+  /** Broker-catalog ids whose credentials this tool needs injected at egress.
+   *  Each id resolves (orchestrator-side) to a placeholder env var on the
+   *  user-tool container; the in-pod Envoy + broker substitute the real value at
+   *  egress. Presence of any id triggers credential-sidecar attachment. */
+  credentials?: string[];
 }
 
 export interface ToolCatalogWire {
@@ -92,6 +97,7 @@ const ALLOWED_KEYS = new Set([
   'acpAgentName',
   'acpMode',
   'channels',
+  'credentials',
 ]);
 const PATTERNS = new Set(['http', 'file', 'acp']);
 
@@ -285,6 +291,16 @@ export function validateTool(t: unknown): ValidationResult {
       obj.channels.some((c) => typeof c !== 'string'))
   ) {
     return { ok: false, error: 'channels must be string[]' };
+  }
+  if (obj.credentials !== undefined) {
+    if (!Array.isArray(obj.credentials)) {
+      return { ok: false, error: 'credentials must be an array of strings' };
+    }
+    for (const c of obj.credentials) {
+      if (typeof c !== 'string' || c.length === 0) {
+        return { ok: false, error: 'each credentials entry must be a non-empty string' };
+      }
+    }
   }
   return { ok: true };
 }
