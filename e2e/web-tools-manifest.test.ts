@@ -97,6 +97,19 @@ interface K8sContainer {
   volumeMounts?: Array<{ name: string; mountPath: string; subPath?: string }>;
 }
 
+interface K8sInitContainer {
+  name: string;
+  image: string;
+  command?: string[];
+  env?: Array<{ name: string; value?: string }>;
+  volumeMounts?: Array<{ name: string; mountPath: string; subPath?: string }>;
+  restartPolicy?: string;
+  readinessProbe?: {
+    httpGet?: { path: string; port: number };
+    [key: string]: unknown;
+  };
+}
+
 interface K8sJob {
   metadata: {
     name: string;
@@ -110,6 +123,7 @@ interface K8sJob {
       };
       spec: {
         serviceAccountName?: string;
+        initContainers?: K8sInitContainer[];
         containers: K8sContainer[];
         volumes?: Array<{
           name: string;
@@ -381,6 +395,111 @@ describe('web_search credential-injection + web_fetch plain manifest assertions'
       ).toBeUndefined();
 
       console.log(`web_fetch plain job created: ${jobName}`);
+    },
+    90_000,
+  );
+
+  // ── 3. cdp browser (no credentials, chromium native sidecar) ────────────────
+
+  it(
+    'browser (cdp pattern): only kubeclaw-tool-bridge container, chromium initContainer with /dev/shm, cdp-bridge env',
+    async (ctx) => {
+      if (!orchestratorRunning) return ctx.skip();
+
+      const { jobRunner } = await import('../src/k8s/job-runner.js');
+
+      const browserCdpSpec = {
+        agentJobId: `e2e-browser-${Date.now()}`,
+        groupFolder: 'my-group',
+        toolName: 'browser',
+        toolSpec: {
+          name: 'browser',
+          description: 'Drive a browser',
+          parameters: { type: 'object', properties: { action: { type: 'string' } }, required: ['action'] },
+          image: 'chromedp/headless-shell:latest',
+          pattern: 'cdp' as const,
+          port: 9222,
+        },
+        timeout: 600000,
+      };
+
+      const jobName = await jobRunner.createSidecarToolPodJob(browserCdpSpec);
+      createdJobs.push(jobName);
+
+      const job = await pollForJob(
+        `app=kubeclaw-sidecar-tool,kubeclaw/agent-job=${browserCdpSpec.agentJobId}`,
+        60_000,
+      );
+
+      const podSpec = job.spec.template.spec;
+      const containers = podSpec.containers;
+      const containerNames = containers.map((c) => c.name);
+
+      // ── only kubeclaw-tool-bridge; no user-tool ──────────────────────────────
+      expect(
+        containerNames,
+        'cdp bridge pod must have kubeclaw-tool-bridge container',
+      ).toContain('kubeclaw-tool-bridge');
+      expect(
+        containerNames,
+        'cdp bridge pod must NOT have a user-tool container',
+      ).not.toContain('user-tool');
+      expect(
+        containerNames,
+        'cdp bridge pod must NOT have a credential-sidecar container',
+      ).not.toContain('credential-sidecar');
+
+      // ── chromium initContainer ───────────────────────────────────────────────
+      const initContainers = podSpec.initContainers ?? [];
+      const chromium = initContainers.find((c) => c.name === 'chromium');
+      expect(
+        chromium,
+        'chromium initContainer must be present for cdp pattern',
+      ).toBeDefined();
+      expect(chromium!.image).toBe('chromedp/headless-shell:latest');
+      expect(
+        chromium!.restartPolicy,
+        'chromium initContainer must have restartPolicy Always (native sidecar)',
+      ).toBe('Always');
+      expect(
+        chromium!.readinessProbe?.httpGet?.path,
+        'chromium readinessProbe must probe /json/version',
+      ).toBe('/json/version');
+      expect(
+        chromium!.readinessProbe?.httpGet?.port,
+        'chromium readinessProbe must probe port 9222',
+      ).toBe(9222);
+      const chromiumMounts = chromium!.volumeMounts ?? [];
+      expect(
+        chromiumMounts.some((m) => m.name === 'dshm' && m.mountPath === '/dev/shm'),
+        'chromium initContainer must mount dshm at /dev/shm',
+      ).toBe(true);
+
+      // ── dshm emptyDir volume ─────────────────────────────────────────────────
+      const volumes = podSpec.volumes ?? [];
+      const dshmVolume = volumes.find((v) => v.name === 'dshm');
+      expect(dshmVolume, 'dshm volume must be present').toBeDefined();
+      expect(
+        dshmVolume!.emptyDir?.medium,
+        'dshm emptyDir must use Memory medium',
+      ).toBe('Memory');
+
+      // ── bridge env: cdp-bridge mode + CDP URL ───────────────────────────────
+      const bridge = containers.find((c) => c.name === 'kubeclaw-tool-bridge')!;
+      expect(bridge).toBeDefined();
+      const bridgeEnvMap = Object.fromEntries(
+        (bridge.env ?? []).map((e) => [e.name, e.value ?? '']),
+      );
+      expect(
+        bridgeEnvMap.KUBECLAW_TOOL_MODE,
+        'bridge env must have KUBECLAW_TOOL_MODE=cdp-bridge',
+      ).toBe('cdp-bridge');
+      expect(
+        bridgeEnvMap.KUBECLAW_CDP_URL,
+        'bridge env must have KUBECLAW_CDP_URL=http://localhost:9222',
+      ).toBe('http://localhost:9222');
+
+      console.log(`browser cdp job created: ${jobName}`);
     },
     90_000,
   );
