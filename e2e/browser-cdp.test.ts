@@ -15,6 +15,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawn, execSync, ChildProcess } from 'child_process';
 import { createServer, AddressInfo } from 'http';
+import * as fs from 'fs';
 import * as path from 'path';
 import { getSharedRedis, getRedisUrlForTests } from './setup.js';
 
@@ -35,6 +36,36 @@ function isDockerAvailable(): boolean {
 }
 
 const DOCKER_AVAILABLE = isDockerAvailable();
+
+// ---------------------------------------------------------------------------
+// Ensure container/agent-runner is built before any test in this file runs.
+// Mirrors the identical bootstrap in sidecar-tool-pod.test.ts so this suite
+// is self-sufficient regardless of run order.
+// ---------------------------------------------------------------------------
+
+function ensureToolServerBuilt(): void {
+  const installComplete = path.join(AGENT_RUNNER_DIR, 'node_modules', '.package-lock.json');
+  if (!fs.existsSync(installComplete)) {
+    console.log('[browser-cdp] node_modules/.package-lock.json missing — running npm install in container/agent-runner ...');
+    execSync('npm install', { cwd: AGENT_RUNNER_DIR, stdio: 'inherit', timeout: 120_000 });
+  }
+
+  // Always build — tsc is fast (~1s when up-to-date) and the alternative
+  // is silently running against stale output if src/ changed.
+  execSync('npm run build', { cwd: AGENT_RUNNER_DIR, stdio: 'inherit', timeout: 120_000 });
+
+  if (!fs.existsSync(TOOL_SERVER_BIN)) {
+    throw new Error(
+      `container/agent-runner build did not produce ${TOOL_SERVER_BIN}. Run \`cd container/agent-runner && npm install && npm run build\` manually.`,
+    );
+  }
+}
+
+// Bootstrap: install deps if needed, always build container/agent-runner.
+// Runs once before any test in this file — independent of docker availability.
+beforeAll(() => {
+  ensureToolServerBuilt();
+}, 180_000);
 
 // ---------------------------------------------------------------------------
 // Helpers shared with sidecar-tool-pod.test.ts (duplicated for file isolation)
@@ -228,22 +259,11 @@ describe('Browser CDP Bridge — cdp-bridge mode against real chromedp/headless-
   }, 30_000);
 
   // -------------------------------------------------------------------------
-  // Helper: skip tests when docker is not present or container didn't start
-  // -------------------------------------------------------------------------
-
-  function requireDockerReady(): void {
-    if (!DOCKER_AVAILABLE || !chromiumContainerId) {
-      console.warn('[browser-cdp] Skipping — docker unavailable or chromium container did not start');
-      return;
-    }
-  }
-
-  // -------------------------------------------------------------------------
   // Test 1: navigate to a self-contained data URL
   // -------------------------------------------------------------------------
 
-  it('navigate: goes to a data URL and returns the URL in the result', async () => {
-    if (!DOCKER_AVAILABLE || !chromiumContainerId) return requireDockerReady();
+  it('navigate: goes to a data URL and returns the URL in the result', async (ctx) => {
+    if (!DOCKER_AVAILABLE || !chromiumContainerId) { ctx.skip(); return; }
 
     const redis = getSharedRedis();
     if (!redis) {
@@ -274,8 +294,8 @@ describe('Browser CDP Bridge — cdp-bridge mode against real chromedp/headless-
   // Test 2: snapshot → ref injection + button text visible
   // -------------------------------------------------------------------------
 
-  it('snapshot: returns [e1] ref and "Login" text after navigate', async () => {
-    if (!DOCKER_AVAILABLE || !chromiumContainerId) return requireDockerReady();
+  it('snapshot: returns [e1] ref and "Login" text after navigate', async (ctx) => {
+    if (!DOCKER_AVAILABLE || !chromiumContainerId) { ctx.skip(); return; }
 
     const redis = getSharedRedis();
     if (!redis) {
@@ -304,8 +324,8 @@ describe('Browser CDP Bridge — cdp-bridge mode against real chromedp/headless-
   // Test 3: click the button using the [e1] ref
   // -------------------------------------------------------------------------
 
-  it('click: clicking [e1] returns no error', async () => {
-    if (!DOCKER_AVAILABLE || !chromiumContainerId) return requireDockerReady();
+  it('click: clicking [e1] returns no error', async (ctx) => {
+    if (!DOCKER_AVAILABLE || !chromiumContainerId) { ctx.skip(); return; }
 
     const redis = getSharedRedis();
     if (!redis) {
@@ -337,8 +357,8 @@ describe('Browser CDP Bridge — cdp-bridge mode against real chromedp/headless-
   // cdpBrowser/cdpPage held in tool-server module scope.
   // -------------------------------------------------------------------------
 
-  it('statefulness: snapshot after click shows updated title "clicked"', async () => {
-    if (!DOCKER_AVAILABLE || !chromiumContainerId) return requireDockerReady();
+  it('statefulness: snapshot after click shows updated title "clicked"', async (ctx) => {
+    if (!DOCKER_AVAILABLE || !chromiumContainerId) { ctx.skip(); return; }
 
     const redis = getSharedRedis();
     if (!redis) {
@@ -373,8 +393,8 @@ describe('Browser CDP Bridge — cdp-bridge mode against real chromedp/headless-
   // type into the input, then snapshot again and confirm the value persists.
   // -------------------------------------------------------------------------
 
-  it('type + statefulness: typed text persists in visible text across calls', async () => {
-    if (!DOCKER_AVAILABLE || !chromiumContainerId) return requireDockerReady();
+  it('type + statefulness: typed text persists in visible text across calls', async (ctx) => {
+    if (!DOCKER_AVAILABLE || !chromiumContainerId) { ctx.skip(); return; }
 
     const redis = getSharedRedis();
     if (!redis) {
