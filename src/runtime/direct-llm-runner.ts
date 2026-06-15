@@ -78,6 +78,8 @@ When the user asks for a recommendation (restaurants, films, activities, product
 
 2. **Search** — call \`places_search\` (or \`web_search\` if \`places_search\` is unavailable)
    with a query that incorporates the user's location and any constraints already known.
+   \`places_search\` returns the raw Google Places \`searchText\` JSON; read and summarize it
+   for the user rather than surfacing the raw payload.
 
 3. **Refinement** — if the user adds a constraint ("cheaper", "closer", "vegetarian"),
    re-invoke \`places_search\` with the updated query rather than answering from memory.
