@@ -83,7 +83,6 @@ vi.mock('../config.js', () => ({
 
 vi.mock('./job-runner.js', () => ({
   jobRunner: {
-    createToolPodJob: vi.fn().mockResolvedValue('nc-test-pod-abc123'),
     createSidecarToolPodJob: vi
       .fn()
       .mockResolvedValue('kubeclaw-stool-abc-tool'),
@@ -1092,7 +1091,6 @@ describe('processTaskIpc', () => {
         deps,
       );
 
-      expect(jobRunner.createToolPodJob).not.toHaveBeenCalled();
       expect(mockXadd).not.toHaveBeenCalledWith(
         'kubeclaw:input:agent-job-1',
         '*',
@@ -1483,7 +1481,6 @@ describe('startToolPodSpawnWatcher', () => {
         toolSpec: expect.objectContaining({ image: 'kubeclaw-places:latest' }),
       }),
     );
-    expect(jobRunner.createToolPodJob).not.toHaveBeenCalled();
   });
 
   it('skips messages missing required fields', async () => {
@@ -1501,7 +1498,7 @@ describe('startToolPodSpawnWatcher', () => {
     });
 
     await startToolPodSpawnWatcher();
-    expect(jobRunner.createToolPodJob).not.toHaveBeenCalled();
+    expect(jobRunner.createSidecarToolPodJob).not.toHaveBeenCalled();
   });
 
   it('exits immediately when ipcWatcherRunning is false', async () => {
@@ -1569,7 +1566,6 @@ describe('startToolPodSpawnWatcher', () => {
         timeout: 60000,
       }),
     );
-    expect(jobRunner.createToolPodJob).not.toHaveBeenCalled();
     // No error written
     expect(mockXadd).not.toHaveBeenCalledWith(
       expect.stringContaining('toolresults'),
@@ -1627,7 +1623,6 @@ describe('startToolPodSpawnWatcher', () => {
     await startToolPodSpawnWatcher(resolveTool);
 
     expect(jobRunner.createSidecarToolPodJob).not.toHaveBeenCalled();
-    expect(jobRunner.createToolPodJob).not.toHaveBeenCalled();
     // An error result must be written to the tool-results stream
     expect(mockXadd).toHaveBeenCalledWith(
       'kubeclaw:toolresults:j-acl:home_control',
@@ -1742,7 +1737,6 @@ describe('startToolPodSpawnWatcher', () => {
     await startToolPodSpawnWatcher(resolveTool);
 
     expect(jobRunner.createSidecarToolPodJob).not.toHaveBeenCalled();
-    expect(jobRunner.createToolPodJob).not.toHaveBeenCalled();
     // An error result must be written to the tool-results stream
     expect(mockXadd).toHaveBeenCalledWith(
       'kubeclaw:toolresults:j-unknown:nonexistent_tool',
@@ -1793,7 +1787,6 @@ describe('startToolPodSpawnWatcher', () => {
     // execution is not a BUILTIN_CATEGORY anymore, so resolveTool is called
     expect(resolveTool).toHaveBeenCalledWith('execution');
     // resolveTool returns undefined → writeToolError is called, no pod is created
-    expect(jobRunner.createToolPodJob).not.toHaveBeenCalled();
     expect(jobRunner.createSidecarToolPodJob).not.toHaveBeenCalled();
     expect(mockXadd).toHaveBeenCalledWith(
       'kubeclaw:toolresults:j-exec:execution',
