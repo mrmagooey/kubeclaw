@@ -9,17 +9,14 @@
  *   Each result wrapped in OUTPUT_START_MARKER / OUTPUT_END_MARKER pairs on stdout
  *   In K8s mode: also published to Redis kubeclaw:messages:${groupFolder}
  *
- * Tool calls: all routed via Redis streams to tool pods.
- *   Execution tools (bash, read, write, edit, glob, grep):
- *     → kubeclaw:toolcalls:{jobId}:execution → tool pod → kubeclaw:toolresults:{jobId}:execution
- *   Browser tools (web_fetch, web_search, agent_browser):
- *     → kubeclaw:toolcalls:{jobId}:browser → tool pod → kubeclaw:toolresults:{jobId}:browser
- *   IPC tools (send_message, schedule_task, …):
- *     → Redis pub/sub directly, no tool pod needed
+ * Tool calls: catalog tools are routed BY NAME through the orchestrator's
+ *   kubeclaw:spawn-tool-pod stream → sidecar tool pod → kubeclaw:toolresults
+ *   (identical to the channel's DirectLLMRunner). IPC tools (send_message,
+ *   schedule_task, …) publish to Redis directly, no tool pod.
  *
  * Superuser mode (KUBECLAW_SUPERUSER=true):
  *   Adds local_bash, local_read, local_write, local_edit tools that run directly
- *   in this process. Only set by the orchestrator for privileged groups.
+ *   in this process. Only set by the bootstrap Job (Mode 1); never on normal agent jobs.
  *
  * Follow-up messages: read from kubeclaw:input:{jobId} Redis stream.
  *   No filesystem IPC polling.
@@ -288,8 +285,6 @@ function loadSystemPrompt(assistantName?: string): string {
 interface InputEntry {
   type: string;
   text?: string;
-  category?: string;
-  podJobId?: string;
 }
 
 class InputStreamManager {
@@ -342,28 +337,6 @@ class InputStreamManager {
     return this.queue.some((e) => e.type === 'close');
   }
 
-  async waitForToolPodAck(
-    category: string,
-    timeoutMs: number,
-  ): Promise<string> {
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-      const idx = this.queue.findIndex(
-        (e) => e.type === 'tool_pod_ack' && e.category === category,
-      );
-      if (idx >= 0) {
-        const [ack] = this.queue.splice(idx, 1);
-        return ack.podJobId ?? '';
-      }
-      const blockMs = Math.min(deadline - Date.now(), 5000);
-      if (blockMs <= 0) break;
-      await this.blockPoll(blockMs);
-    }
-    throw new Error(
-      `Timeout waiting for tool_pod_ack for category=${category}`,
-    );
-  }
-
   private _enqueue(response: any): void {
     if (!response?.length) return;
     for (const stream of response) {
@@ -373,106 +346,10 @@ class InputStreamManager {
         this.queue.push({
           type: f.type || '',
           text: f.text,
-          category: f.category,
-          podJobId: f.podJobId,
         });
       }
     }
   }
-}
-
-// ---- Tool pod dispatch ----
-
-const TOOL_CATEGORY: Record<string, 'execution' | 'browser'> = {
-  bash: 'execution',
-  read: 'execution',
-  write: 'execution',
-  edit: 'execution',
-  glob: 'execution',
-  grep: 'execution',
-  web_fetch: 'browser',
-  web_search: 'browser',
-  agent_browser: 'browser',
-};
-
-const TOOL_SERVER_NAME: Record<string, string> = {
-  web_fetch: 'webFetch',
-  web_search: 'webSearch',
-  agent_browser: 'agentBrowser',
-};
-
-const TOOL_CALL_TIMEOUT = 120_000;
-const POD_ACK_TIMEOUT = 60_000;
-
-async function callToolViaRedis(
-  redis: RedisClientType,
-  inputStream: InputStreamManager,
-  agentJobId: string,
-  groupFolder: string,
-  toolName: string,
-  args: Record<string, unknown>,
-  podReadyMap: Map<string, boolean>,
-): Promise<string> {
-  const category = TOOL_CATEGORY[toolName];
-  if (!category) return `Unknown tool: ${toolName}`;
-
-  const serverName = TOOL_SERVER_NAME[toolName] ?? toolName;
-
-  if (!podReadyMap.get(category)) {
-    const taskChannel = `kubeclaw:tasks:${groupFolder}`;
-    await (redis as any).publish(
-      taskChannel,
-      JSON.stringify({
-        type: 'tool_pod_request',
-        agentJobId,
-        category,
-        groupFolder,
-      }),
-    );
-    log(`Requested ${category} tool pod`);
-    await inputStream.waitForToolPodAck(category, POD_ACK_TIMEOUT);
-    podReadyMap.set(category, true);
-    log(`${category} tool pod ready`);
-  }
-
-  const requestId = randomUUID();
-  const callsStream = `kubeclaw:toolcalls:${agentJobId}:${category}`;
-  const resultsStream = `kubeclaw:toolresults:${agentJobId}:${category}`;
-
-  await (redis as any).xAdd(callsStream, '*', {
-    requestId,
-    tool: serverName,
-    input: JSON.stringify(args),
-  });
-
-  const deadline = Date.now() + TOOL_CALL_TIMEOUT;
-  let lastId = '$';
-
-  while (Date.now() < deadline) {
-    const blockMs = Math.min(deadline - Date.now(), 5000);
-    const response = await (redis as any).xRead(
-      [{ key: resultsStream, id: lastId }],
-      { BLOCK: blockMs, COUNT: 10 },
-    );
-    if (!response?.length) continue;
-    for (const stream of response) {
-      for (const msg of (stream as any).messages ?? []) {
-        lastId = msg.id;
-        const f = msg.message as Record<string, string>;
-        if (f.requestId !== requestId) continue;
-        if (f.error) return `Tool error: ${f.error}`;
-        try {
-          const parsed = JSON.parse(f.result ?? 'null');
-          return typeof parsed === 'string'
-            ? parsed
-            : JSON.stringify(parsed, null, 2);
-        } catch {
-          return f.result ?? '';
-        }
-      }
-    }
-  }
-  return `Tool timed out after ${TOOL_CALL_TIMEOUT / 1000}s`;
 }
 
 const SPAWN_TOOL_POD_STREAM = 'kubeclaw:spawn-tool-pod';

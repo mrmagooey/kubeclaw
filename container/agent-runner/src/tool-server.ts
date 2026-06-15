@@ -15,10 +15,18 @@ import { chromium, type Browser, type Page } from 'playwright-core';
 const execFileAsync = promisify(execFile);
 
 const agentJobId = process.env.KUBECLAW_TOOL_JOB_ID!;
-const category = process.env.KUBECLAW_CATEGORY as 'execution' | 'places' | string;
+const category = process.env.KUBECLAW_CATEGORY as
+  | 'execution'
+  | 'places'
+  | string;
 const redisUrl = process.env.REDIS_URL || 'redis://kubeclaw-redis:6379';
 const idleTimeout = parseInt(process.env.IDLE_TIMEOUT || '1800000', 10);
-const toolMode = process.env.KUBECLAW_TOOL_MODE as 'http-bridge' | 'file-bridge' | 'acp-bridge' | 'cdp-bridge' | undefined;
+const toolMode = process.env.KUBECLAW_TOOL_MODE as
+  | 'http-bridge'
+  | 'file-bridge'
+  | 'acp-bridge'
+  | 'cdp-bridge'
+  | undefined;
 const toolPort = parseInt(process.env.KUBECLAW_TOOL_PORT || '8080', 10);
 const SHARED_DIR = process.env.KUBECLAW_SHARED_DIR || '/shared';
 const MAX_TOOL_OUTPUT_BYTES = parseInt(
@@ -26,7 +34,9 @@ const MAX_TOOL_OUTPUT_BYTES = parseInt(
   10,
 );
 const declaredFields = (process.env.KUBECLAW_TOOL_FIELDS || '')
-  .split(',').map((s) => s.trim()).filter(Boolean);
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
 
 const TOOLCALLS_STREAM = `kubeclaw:toolcalls:${agentJobId}:${category}`;
 const TOOLRESULTS_STREAM = `kubeclaw:toolresults:${agentJobId}:${category}`;
@@ -82,7 +92,9 @@ export async function fetchWithRetry(
   for (let attempt = 0; attempt < RETRY_MAX_ATTEMPTS; attempt++) {
     if (attempt > 0) {
       const delay = RETRY_BASE_MS * Math.pow(2, attempt - 1);
-      log(`Retrying ${url} in ${delay}ms (attempt ${attempt + 1}/${RETRY_MAX_ATTEMPTS})`);
+      log(
+        `Retrying ${url} in ${delay}ms (attempt ${attempt + 1}/${RETRY_MAX_ATTEMPTS})`,
+      );
       await new Promise((r) => setTimeout(r, delay));
     }
     try {
@@ -133,7 +145,9 @@ export async function waitForToolReady(): Promise<void> {
       await new Promise((r) => setTimeout(r, READY_INTERVAL_MS));
     }
   }
-  throw new Error(`User container not ready after ${READY_TIMEOUT_MS}ms (${url})`);
+  throw new Error(
+    `User container not ready after ${READY_TIMEOUT_MS}ms (${url})`,
+  );
 }
 
 let readyPromise: Promise<void> | null = null;
@@ -154,7 +168,10 @@ function ensureToolReady(): Promise<void> {
 
 // --- Execution tools ---
 
-async function toolBash(input: { command: string; timeout?: number }): Promise<string> {
+async function toolBash(input: {
+  command: string;
+  timeout?: number;
+}): Promise<string> {
   const cleanEnv: NodeJS.ProcessEnv = { ...process.env };
   for (const key of SECRET_ENV_VARS) delete cleanEnv[key];
 
@@ -163,30 +180,51 @@ async function toolBash(input: { command: string; timeout?: number }): Promise<s
     const { stdout, stderr } = await execFileAsync(
       '/bin/bash',
       ['-c', input.command],
-      { env: cleanEnv, cwd: '/workspace/group', timeout: timeoutMs, maxBuffer: 10 * 1024 * 1024 },
+      {
+        env: cleanEnv,
+        cwd: '/workspace/group',
+        timeout: timeoutMs,
+        maxBuffer: 10 * 1024 * 1024,
+      },
     );
     return stdout + (stderr ? `\nstderr: ${stderr}` : '');
   } catch (err: any) {
-    const out = (err.stdout || '') + (err.stderr ? `\nstderr: ${err.stderr}` : '');
+    const out =
+      (err.stdout || '') + (err.stderr ? `\nstderr: ${err.stderr}` : '');
     return out || err.message;
   }
 }
 
-async function toolRead(input: { file_path: string; offset?: number; limit?: number }): Promise<string> {
+async function toolRead(input: {
+  file_path: string;
+  offset?: number;
+  limit?: number;
+}): Promise<string> {
   const content = fs.readFileSync(input.file_path, 'utf-8');
   const lines = content.split('\n');
   const start = (input.offset || 1) - 1;
   const end = input.limit ? start + input.limit : lines.length;
-  return lines.slice(start, end).map((l, i) => `${start + i + 1}\t${l}`).join('\n');
+  return lines
+    .slice(start, end)
+    .map((l, i) => `${start + i + 1}\t${l}`)
+    .join('\n');
 }
 
-async function toolWrite(input: { file_path: string; content: string }): Promise<string> {
+async function toolWrite(input: {
+  file_path: string;
+  content: string;
+}): Promise<string> {
   fs.mkdirSync(path.dirname(input.file_path), { recursive: true });
   fs.writeFileSync(input.file_path, input.content, 'utf-8');
   return `Written to ${input.file_path}`;
 }
 
-async function toolEdit(input: { file_path: string; old_string: string; new_string: string; replace_all?: boolean }): Promise<string> {
+async function toolEdit(input: {
+  file_path: string;
+  old_string: string;
+  new_string: string;
+  replace_all?: boolean;
+}): Promise<string> {
   const content = fs.readFileSync(input.file_path, 'utf-8');
   if (!content.includes(input.old_string)) {
     throw new Error(`old_string not found in ${input.file_path}`);
@@ -198,20 +236,33 @@ async function toolEdit(input: { file_path: string; old_string: string; new_stri
   return `Edited ${input.file_path}`;
 }
 
-async function toolGlob(input: { pattern: string; path?: string }): Promise<string> {
+async function toolGlob(input: {
+  pattern: string;
+  path?: string;
+}): Promise<string> {
   const cwd = input.path || '/workspace/group';
-  const { stdout } = await execFileAsync('bash', ['-c', `cd ${JSON.stringify(cwd)} && find . -path ${JSON.stringify(`./${input.pattern.replace(/\*\*/g, '*')}`)} 2>/dev/null | head -100`]);
+  const { stdout } = await execFileAsync('bash', [
+    '-c',
+    `cd ${JSON.stringify(cwd)} && find . -path ${JSON.stringify(`./${input.pattern.replace(/\*\*/g, '*')}`)} 2>/dev/null | head -100`,
+  ]);
   // Use ripgrep/glob style via bash find as fallback; prefer glob if available
   return stdout.trim() || '(no matches)';
 }
 
-async function toolGrep(input: { pattern: string; path?: string; glob?: string; output_mode?: string }): Promise<string> {
+async function toolGrep(input: {
+  pattern: string;
+  path?: string;
+  glob?: string;
+  output_mode?: string;
+}): Promise<string> {
   const searchPath = input.path || '/workspace/group';
   const args = ['-r', '--no-heading', '-l'];
   if (input.glob) args.push('--include', input.glob);
   args.push(input.pattern, searchPath);
   try {
-    const { stdout } = await execFileAsync('grep', args, { maxBuffer: 5 * 1024 * 1024 });
+    const { stdout } = await execFileAsync('grep', args, {
+      maxBuffer: 5 * 1024 * 1024,
+    });
     return stdout.trim() || '(no matches)';
   } catch (err: any) {
     if (err.code === 1) return '(no matches)';
@@ -219,14 +270,25 @@ async function toolGrep(input: { pattern: string; path?: string; glob?: string; 
   }
 }
 
-async function toolTodoWrite(input: { todos: Array<{ id: string; content: string; status: string; priority: string }> }): Promise<string> {
+async function toolTodoWrite(input: {
+  todos: Array<{
+    id: string;
+    content: string;
+    status: string;
+    priority: string;
+  }>;
+}): Promise<string> {
   const todoPath = '/workspace/group/.claude/todos.json';
   fs.mkdirSync(path.dirname(todoPath), { recursive: true });
   fs.writeFileSync(todoPath, JSON.stringify(input.todos, null, 2));
   return 'Todos updated.';
 }
 
-async function toolNotebookEdit(input: { notebook_path: string; new_source: string; cell_id: string }): Promise<string> {
+async function toolNotebookEdit(input: {
+  notebook_path: string;
+  new_source: string;
+  cell_id: string;
+}): Promise<string> {
   const nb = JSON.parse(fs.readFileSync(input.notebook_path, 'utf-8'));
   const cell = nb.cells?.find((c: { id?: string }) => c.id === input.cell_id);
   if (!cell) throw new Error(`Cell ${input.cell_id} not found`);
@@ -237,8 +299,13 @@ async function toolNotebookEdit(input: { notebook_path: string; new_source: stri
 
 // --- Browser tools ---
 
-async function toolWebFetch(input: { url: string; prompt?: string }): Promise<string> {
-  const res = await fetch(input.url, { headers: { 'User-Agent': 'Mozilla/5.0 KubeClaw/1.0' } });
+async function toolWebFetch(input: {
+  url: string;
+  prompt?: string;
+}): Promise<string> {
+  const res = await fetch(input.url, {
+    headers: { 'User-Agent': 'Mozilla/5.0 KubeClaw/1.0' },
+  });
   const text = await res.text();
   // Trim to avoid huge responses
   return text.slice(0, MAX_TOOL_OUTPUT_BYTES);
@@ -253,20 +320,17 @@ export interface BraveSearchResult {
 }
 
 export async function toolWebSearch(input: { query: string }): Promise<string> {
-  const apiUrl =
-    `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(input.query)}&count=10`;
+  const apiUrl = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(input.query)}&count=10`;
 
   // In sidecar/istio mode the workload's HTTPS_PROXY routes through Envoy and
   // the broker stamps X-Subscription-Token via ext_authz — do NOT set the
   // header manually.  In mode=off read BRAVE_API_KEY directly.
   const key = process.env.BRAVE_API_KEY;
   const shouldSetHeader =
-    !!key &&
-    !key.startsWith('KC_PH_') &&
-    key !== 'injected-by-broker';
+    !!key && !key.startsWith('KC_PH_') && key !== 'injected-by-broker';
 
   const headers: Record<string, string> = {
-    'Accept': 'application/json',
+    Accept: 'application/json',
     'Accept-Encoding': 'gzip',
   };
   if (shouldSetHeader) {
@@ -280,13 +344,17 @@ export async function toolWebSearch(input: { query: string }): Promise<string> {
     );
   }
 
-  const data = await res.json() as { web?: { results?: Array<{
-    title?: string;
-    url?: string;
-    description?: string;
-    age?: string;
-    meta_url?: { hostname?: string };
-  }> } };
+  const data = (await res.json()) as {
+    web?: {
+      results?: Array<{
+        title?: string;
+        url?: string;
+        description?: string;
+        age?: string;
+        meta_url?: { hostname?: string };
+      }>;
+    };
+  };
 
   const results: BraveSearchResult[] = (data.web?.results ?? []).map((r) => ({
     title: r.title ?? '',
@@ -301,7 +369,11 @@ export async function toolWebSearch(input: { query: string }): Promise<string> {
 
 async function toolAgentBrowser(input: { command: string }): Promise<string> {
   try {
-    const { stdout, stderr } = await execFileAsync('agent-browser', [input.command], { timeout: 60000 });
+    const { stdout, stderr } = await execFileAsync(
+      'agent-browser',
+      [input.command],
+      { timeout: 60000 },
+    );
     return stdout + (stderr ? `\nstderr: ${stderr}` : '');
   } catch (err: any) {
     return err.stdout || err.message;
@@ -384,7 +456,10 @@ function substitutePathTokens(
 /** Substitute tokens inside a JSON body template. A string leaf exactly equal to
  *  "{field}" is replaced with the field's value preserving its JSON type; a leaf
  *  embedding a token in a larger string is string-interpolated. */
-function substituteBody(node: unknown, input: Record<string, unknown>): unknown {
+function substituteBody(
+  node: unknown,
+  input: Record<string, unknown>,
+): unknown {
   if (typeof node === 'string') {
     const exact = node.match(/^\{([A-Za-z_][A-Za-z0-9_]*)\}$/);
     if (exact) {
@@ -399,7 +474,8 @@ function substituteBody(node: unknown, input: Record<string, unknown>): unknown 
   if (Array.isArray(node)) return node.map((n) => substituteBody(n, input));
   if (node && typeof node === 'object') {
     const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(node)) out[k] = substituteBody(v, input);
+    for (const [k, v] of Object.entries(node))
+      out[k] = substituteBody(v, input);
     return out;
   }
   return node;
@@ -432,7 +508,10 @@ export function buildMappedRequest(
   return { url: url.toString(), method: mapping.method, headers, body };
 }
 
-export function extractResponsePath(bodyText: string, responsePath: string): string {
+export function extractResponsePath(
+  bodyText: string,
+  responsePath: string,
+): string {
   let parsed: unknown;
   try {
     parsed = JSON.parse(bodyText);
@@ -541,7 +620,9 @@ export async function executeToolBridgeFile(
         fs.rmSync(respDir, { recursive: true, force: true });
       }
       if (exit !== '0') {
-        throw new Error(`exit ${exit}: ${stderr.slice(0, MAX_TOOL_OUTPUT_BYTES)}`);
+        throw new Error(
+          `exit ${exit}: ${stderr.slice(0, MAX_TOOL_OUTPUT_BYTES)}`,
+        );
       }
       return stdout.slice(0, MAX_TOOL_OUTPUT_BYTES);
     }
@@ -565,10 +646,12 @@ async function executeToolBridgeAcp(
 
   // Convert tool input to ACP message format
   const taskText = (input.task as string) ?? JSON.stringify(input);
-  const acpInput = [{
-    role: 'user',
-    parts: [{ content: taskText, content_type: 'text/plain' }],
-  }];
+  const acpInput = [
+    {
+      role: 'user',
+      parts: [{ content: taskText, content_type: 'text/plain' }],
+    },
+  ];
 
   if (acpMode === 'sync') {
     const res = await fetchWithRetry(
@@ -576,7 +659,11 @@ async function executeToolBridgeAcp(
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agent_name: agentName, input: acpInput, mode: 'synchronous' }),
+        body: JSON.stringify({
+          agent_name: agentName,
+          input: acpInput,
+          mode: 'synchronous',
+        }),
       },
       idleTimeout,
     );
@@ -589,13 +676,13 @@ async function executeToolBridgeAcp(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ agent_name: agentName, input: acpInput }),
   });
-  const run = await createRes.json() as { run_id: string; status: string };
+  const run = (await createRes.json()) as { run_id: string; status: string };
 
   // Poll with exponential backoff
   let delay = 500;
   const deadline = Date.now() + idleTimeout;
   while (Date.now() < deadline) {
-    await new Promise(r => setTimeout(r, delay));
+    await new Promise((r) => setTimeout(r, delay));
     delay = Math.min(delay * 1.5, 5000);
 
     // Intentionally plain fetch (no fetchWithRetry): the poll loop itself is
@@ -603,11 +690,15 @@ async function executeToolBridgeAcp(
     // states (e.g. a 404 after run cleanup would be retried as if transient).
     const pollRes = await fetch(`${acpBaseUrl}/runs/${run.run_id}`);
     if (!pollRes.ok) throw new Error(`ACP poll error: ${pollRes.status}`);
-    const state = await pollRes.json() as { status: string; output?: unknown };
+    const state = (await pollRes.json()) as {
+      status: string;
+      output?: unknown;
+    };
 
     if (state.status === 'completed') return extractACPResult(state);
     if (state.status === 'failed') throw new Error('ACP agent run failed');
-    if (state.status === 'cancelled') throw new Error('ACP agent run cancelled');
+    if (state.status === 'cancelled')
+      throw new Error('ACP agent run cancelled');
     if (state.status === 'awaiting') {
       return `ACP agent is awaiting input: ${JSON.stringify(state.output ?? 'additional information needed')}`;
     }
@@ -620,9 +711,13 @@ function extractACPResult(response: any): string {
   if (typeof output === 'string') return output;
   if (Array.isArray(output)) {
     return output
-      .flatMap((msg: any) => (msg.parts ?? [])
-        .filter((p: any) => !p.content_type || p.content_type === 'text/plain')
-        .map((p: any) => p.content))
+      .flatMap((msg: any) =>
+        (msg.parts ?? [])
+          .filter(
+            (p: any) => !p.content_type || p.content_type === 'text/plain',
+          )
+          .map((p: any) => p.content),
+      )
       .join('\n');
   }
   return JSON.stringify(output);
@@ -635,7 +730,8 @@ let cdpPage: Page | null = null;
 
 async function getCdpPage(): Promise<Page> {
   const url = process.env.KUBECLAW_CDP_URL || 'http://localhost:9222';
-  if (cdpBrowser?.isConnected() && cdpPage && !cdpPage.isClosed()) return cdpPage;
+  if (cdpBrowser?.isConnected() && cdpPage && !cdpPage.isClosed())
+    return cdpPage;
   // Close a stale-but-connected browser before reconnecting (avoid CDP client leak).
   if (cdpBrowser) {
     await cdpBrowser.close().catch(() => {});
@@ -655,7 +751,8 @@ async function getCdpPage(): Promise<Page> {
       await new Promise((r) => setTimeout(r, 1000));
     }
   }
-  if (!cdpBrowser) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+  if (!cdpBrowser)
+    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
   const ctx = cdpBrowser.contexts()[0] ?? (await cdpBrowser.newContext());
   cdpPage = ctx.pages()[0] ?? (await ctx.newPage());
   return cdpPage;
@@ -691,17 +788,24 @@ export async function executeToolBridgeCdp(
   try {
     switch (action) {
       case 'navigate': {
-        await page.goto(String(input.url ?? ''), { waitUntil: 'domcontentloaded', timeout: 30000 });
+        await page.goto(String(input.url ?? ''), {
+          waitUntil: 'domcontentloaded',
+          timeout: 30000,
+        });
         return `Navigated to ${page.url()} — "${await page.title()}"`;
       }
       case 'snapshot': {
         const elements = (await page.evaluate(SNAPSHOT_FN)) as string;
-        const text = (await page.innerText('body').catch(() => '')).replace(/\s+/g, ' ').slice(0, 4000);
+        const text = (await page.innerText('body').catch(() => ''))
+          .replace(/\s+/g, ' ')
+          .slice(0, 4000);
         const out = `URL: ${page.url()}\nTitle: ${await page.title()}\n\nInteractive elements:\n${elements}\n\nVisible text (truncated):\n${text}`;
         return out.slice(0, MAX_TOOL_OUTPUT_BYTES);
       }
       case 'click': {
-        await page.locator(`[data-kc-ref="${String(input.ref ?? '')}"]`).click({ timeout: 10000 });
+        await page
+          .locator(`[data-kc-ref="${String(input.ref ?? '')}"]`)
+          .click({ timeout: 10000 });
         return `Clicked ${input.ref}`;
       }
       case 'type': {
@@ -720,7 +824,8 @@ export async function executeToolBridgeCdp(
       }
       case 'wait': {
         const f = String(input.for ?? '');
-        if (/^\d+$/.test(f)) await page.waitForTimeout(Math.min(Number(f), 30000));
+        if (/^\d+$/.test(f))
+          await page.waitForTimeout(Math.min(Number(f), 30000));
         else await page.waitForSelector(f, { timeout: 30000 });
         return `Waited for ${f}`;
       }
@@ -738,32 +843,28 @@ export async function executeToolBridgeCdp(
 
 // --- Tool dispatch ---
 
-async function executeTool(tool: string, input: Record<string, unknown>, requestId: string): Promise<unknown> {
+async function executeTool(
+  tool: string,
+  input: Record<string, unknown>,
+  requestId: string,
+): Promise<unknown> {
   if (toolMode === 'cdp-bridge') return executeToolBridgeCdp(tool, input);
   if (toolMode === 'acp-bridge') return executeToolBridgeAcp(tool, input);
   if (toolMode === 'http-bridge') return executeToolBridgeHttp(tool, input);
-  if (toolMode === 'file-bridge') return executeToolBridgeFile(tool, input, requestId, declaredFields);
+  if (toolMode === 'file-bridge')
+    return executeToolBridgeFile(tool, input, requestId, declaredFields);
   return executeToolLocal(tool, input);
 }
 
-async function executeToolLocal(tool: string, input: Record<string, unknown>): Promise<unknown> {
+async function executeToolLocal(
+  tool: string,
+  input: Record<string, unknown>,
+): Promise<unknown> {
   switch (tool) {
-    // execution
-    case 'bash': return toolBash(input as any);
-    case 'read': return toolRead(input as any);
-    case 'write': return toolWrite(input as any);
-    case 'edit': return toolEdit(input as any);
-    case 'glob': return toolGlob(input as any);
-    case 'grep': return toolGrep(input as any);
-    case 'todoWrite': return toolTodoWrite(input as any);
-    case 'notebookEdit': return toolNotebookEdit(input as any);
-    // browser
-    case 'webFetch': return toolWebFetch(input as any);
-    case 'webSearch': return toolWebSearch(input as any);
-    case 'agentBrowser': return toolAgentBrowser(input as any);
     case 'task':
     case 'taskOutput':
-    case 'taskStop': return toolTask(input as any);
+    case 'taskStop':
+      return toolTask(input as any);
     default:
       throw new Error(`Unknown tool: ${tool}`);
   }
@@ -773,11 +874,15 @@ async function executeToolLocal(tool: string, input: Record<string, unknown>): P
 
 async function main(): Promise<void> {
   if (!agentJobId || (!category && !toolMode)) {
-    log('KUBECLAW_TOOL_JOB_ID and either KUBECLAW_CATEGORY or KUBECLAW_TOOL_MODE are required');
+    log(
+      'KUBECLAW_TOOL_JOB_ID and either KUBECLAW_CATEGORY or KUBECLAW_TOOL_MODE are required',
+    );
     process.exit(1);
   }
 
-  log(`Starting. agentJobId=${agentJobId} category=${category} toolMode=${toolMode ?? 'none'}`);
+  log(
+    `Starting. agentJobId=${agentJobId} category=${category} toolMode=${toolMode ?? 'none'}`,
+  );
 
   const redis = createClient({
     url: redisUrl,
@@ -844,7 +949,9 @@ async function main(): Promise<void> {
         });
       }
     } catch (err) {
-      log(`Stream read error: ${err instanceof Error ? err.message : String(err)}`);
+      log(
+        `Stream read error: ${err instanceof Error ? err.message : String(err)}`,
+      );
       await new Promise((r) => setTimeout(r, 1000));
     }
   }

@@ -38,7 +38,7 @@ import {
 } from './redis-client.js';
 import { TaskRequest } from './types.js';
 import { jobRunner } from './job-runner.js';
-import { ASSISTANT_NAME, CONTAINER_TIMEOUT, IDLE_TIMEOUT } from '../config.js';
+import { ASSISTANT_NAME } from '../config.js';
 import {
   installCapability,
   removeCapability,
@@ -276,7 +276,7 @@ function channelPvcNames(channel: string): {
 // Track tool pod jobs per tool job for cleanup
 const toolPodsByAgent = new Map<string, Set<string>>();
 
-const BUILTIN_CATEGORIES = new Set(['execution', 'places']);
+export const BUILTIN_CATEGORIES = new Set(['places']);
 
 /**
  * Active K8s agent-job names keyed by groupFolder.
@@ -748,50 +748,6 @@ export async function processTaskIpc(
       }
       break;
 
-    case 'tool_pod_request':
-      if (data.agentJobId && data.category && data.groupFolder) {
-        const { agentJobId, category, groupFolder: podGroupFolder } = data;
-        try {
-          const timeout = Math.max(CONTAINER_TIMEOUT, IDLE_TIMEOUT + 30_000);
-          const podJobId = await jobRunner.createToolPodJob({
-            agentJobId,
-            groupFolder: podGroupFolder,
-            category,
-            timeout,
-          });
-
-          // Track pod for cleanup when agent ends
-          if (!toolPodsByAgent.has(agentJobId)) {
-            toolPodsByAgent.set(agentJobId, new Set());
-          }
-          toolPodsByAgent.get(agentJobId)!.add(podJobId);
-
-          // Send ack back to agent via input stream
-          const client = getRedisClient();
-          const streamKey = getInputStream(agentJobId);
-          await client.xadd(
-            streamKey,
-            '*',
-            'type',
-            'tool_pod_ack',
-            'category',
-            category,
-            'podJobId',
-            podJobId,
-          );
-          logger.info(
-            { agentJobId, category, podJobId },
-            'Tool pod created and ack sent',
-          );
-        } catch (err) {
-          logger.error(
-            { agentJobId, category, err },
-            'Failed to create tool pod',
-          );
-        }
-      }
-      break;
-
     case 'deploy_channel':
       if (!isMain) {
         logger.warn(
@@ -1047,7 +1003,7 @@ export async function startToolPodSpawnWatcher(
               await jobRunner.createToolPodJob({
                 agentJobId,
                 groupFolder,
-                category: category as 'browser' | 'execution' | 'places',
+                category: category as 'places',
                 timeout: timeoutMs,
                 groupsPvc,
                 sessionsPvc,

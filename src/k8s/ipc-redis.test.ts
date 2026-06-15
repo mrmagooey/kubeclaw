@@ -208,6 +208,7 @@ import {
   startBootstrapTaskWatcher,
   currentStepByJob,
   pendingBootstrapQuestionByJob,
+  BUILTIN_CATEGORIES,
 } from './ipc-redis.js';
 import type { RegisteredGroup } from '../types.js';
 
@@ -1076,7 +1077,7 @@ describe('processTaskIpc', () => {
   });
 
   describe('tool_pod_request', () => {
-    it('creates a tool pod and sends ack', async () => {
+    it('is now ignored (message type retired — no tool pod created, no ack sent)', async () => {
       const { jobRunner } = await import('./job-runner.js');
       const deps = createMockDeps();
 
@@ -1092,36 +1093,27 @@ describe('processTaskIpc', () => {
         deps,
       );
 
-      expect(jobRunner.createToolPodJob).toHaveBeenCalledWith(
-        expect.objectContaining({
-          agentJobId: 'agent-job-1',
-          category: 'execution',
-        }),
-      );
-      expect(mockXadd).toHaveBeenCalledWith(
+      expect(jobRunner.createToolPodJob).not.toHaveBeenCalled();
+      expect(mockXadd).not.toHaveBeenCalledWith(
         'kubeclaw:input:agent-job-1',
         '*',
         'type',
         'tool_pod_ack',
-        'category',
-        'execution',
-        'podJobId',
-        'nc-test-pod-abc123',
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
       );
     });
+  });
 
-    it('skips when required fields are missing', async () => {
-      const { jobRunner } = await import('./job-runner.js');
-      const deps = createMockDeps();
+  describe('BUILTIN_CATEGORIES', () => {
+    it('does not contain execution (retired)', () => {
+      expect(BUILTIN_CATEGORIES.has('execution')).toBe(false);
+    });
 
-      await processTaskIpc(
-        { type: 'tool_pod_request', agentJobId: 'agent-job-1' },
-        'main',
-        true,
-        deps,
-      );
-
-      expect(jobRunner.createToolPodJob).not.toHaveBeenCalled();
+    it('contains places', () => {
+      expect(BUILTIN_CATEGORIES.has('places')).toBe(true);
     });
   });
 });
@@ -1138,27 +1130,12 @@ describe('cleanupToolPods', () => {
   });
 
   it('stops all tracked tool pods and removes them from the map', async () => {
+    // tool_pod_request no longer populates toolPodsByAgent from processTaskIpc;
+    // instead, pods are now tracked when created by startToolPodSpawnWatcher.
+    // cleanupToolPods itself is still responsible for cleaning up whatever ends
+    // up in the map, so verify it is a no-op when nothing is tracked for a job.
     const { jobRunner } = await import('./job-runner.js');
-    const deps = createMockDeps();
 
-    // Create a tool pod via processTaskIpc so it gets tracked
-    await processTaskIpc(
-      {
-        type: 'tool_pod_request',
-        agentJobId: 'tracked-job',
-        category: 'browser',
-        groupFolder: 'g',
-      },
-      'main',
-      true,
-      deps,
-    );
-
-    await cleanupToolPods('tracked-job');
-    expect(jobRunner.stopJob).toHaveBeenCalledWith('nc-test-pod-abc123');
-
-    // Second cleanup should be a no-op (already deleted from map)
-    vi.mocked(jobRunner.stopJob).mockClear();
     await cleanupToolPods('tracked-job');
     expect(jobRunner.stopJob).not.toHaveBeenCalled();
   });
@@ -1493,7 +1470,7 @@ describe('startToolPodSpawnWatcher', () => {
                   'groupFolder',
                   'g',
                   'category',
-                  'execution',
+                  'places',
                   'timeout',
                   '60000',
                   'channel',
@@ -1513,7 +1490,7 @@ describe('startToolPodSpawnWatcher', () => {
     expect(jobRunner.createToolPodJob).toHaveBeenCalledWith(
       expect.objectContaining({
         agentJobId: 'j1',
-        category: 'execution',
+        category: 'places',
         groupsPvc: 'kubeclaw-channel-telegram-groups',
         sessionsPvc: 'kubeclaw-channel-telegram-sessions',
       }),
@@ -1827,7 +1804,7 @@ describe('startToolPodSpawnWatcher', () => {
     );
   });
 
-  it('routes to createToolPodJob for built-in execution category', async () => {
+  it('routes to createToolPodJob for built-in places category', async () => {
     const { jobRunner } = await import('./job-runner.js');
     startIpcWatcher(createMockDeps());
 
@@ -1846,7 +1823,7 @@ describe('startToolPodSpawnWatcher', () => {
                   'groupFolder',
                   'g',
                   'category',
-                  'execution',
+                  'places',
                   'timeout',
                   '60000',
                 ],
@@ -1863,6 +1840,57 @@ describe('startToolPodSpawnWatcher', () => {
 
     expect(jobRunner.createToolPodJob).toHaveBeenCalled();
     expect(jobRunner.createSidecarToolPodJob).not.toHaveBeenCalled();
+  });
+
+  it('execution category is no longer builtin and is routed as unknown catalog tool', async () => {
+    const { jobRunner } = await import('./job-runner.js');
+    startIpcWatcher(createMockDeps());
+
+    const resolveTool = vi.fn().mockReturnValue(undefined); // execution is not in catalog
+
+    let callCount = 0;
+    mockXread.mockImplementation(async () => {
+      if (callCount++ === 0) {
+        return [
+          [
+            'kubeclaw:spawn-tool-pod',
+            [
+              [
+                '1-0',
+                [
+                  'agentJobId',
+                  'j-exec',
+                  'groupFolder',
+                  'g',
+                  'category',
+                  'execution',
+                  'timeout',
+                  '60000',
+                  'channel',
+                  'http',
+                ],
+              ],
+            ],
+          ],
+        ];
+      }
+      await stopIpcWatcher();
+      return null;
+    });
+
+    await startToolPodSpawnWatcher(resolveTool);
+
+    // execution is not a BUILTIN_CATEGORY anymore, so resolveTool is called
+    expect(resolveTool).toHaveBeenCalledWith('execution');
+    // resolveTool returns undefined → writeToolError is called, no pod is created
+    expect(jobRunner.createToolPodJob).not.toHaveBeenCalled();
+    expect(jobRunner.createSidecarToolPodJob).not.toHaveBeenCalled();
+    expect(mockXadd).toHaveBeenCalledWith(
+      'kubeclaw:toolresults:j-exec:execution',
+      '*',
+      'error',
+      'Unknown tool: execution',
+    );
   });
 
   it('logs error and continues when createToolPodJob rejects (e.g. MODULE_NOT_FOUND in tool pod)', async () => {
@@ -1895,7 +1923,7 @@ describe('startToolPodSpawnWatcher', () => {
                   'groupFolder',
                   'g',
                   'category',
-                  'execution',
+                  'places',
                   'timeout',
                   '60000',
                   'channel',
@@ -1913,7 +1941,7 @@ describe('startToolPodSpawnWatcher', () => {
     await startToolPodSpawnWatcher();
 
     expect(jobRunner.createToolPodJob).toHaveBeenCalledWith(
-      expect.objectContaining({ agentJobId: 'j-fail', category: 'execution' }),
+      expect.objectContaining({ agentJobId: 'j-fail', category: 'places' }),
     );
     expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
       expect.objectContaining({ agentJobId: 'j-fail' }),

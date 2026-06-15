@@ -1130,36 +1130,13 @@ describe('JobRunner', () => {
       );
     });
 
-    it('should include volume mounts for execution category', async () => {
+    it('should not include volume mounts for places category (no workspace mount needed)', async () => {
       mockBatchApi.createNamespacedJob.mockResolvedValue({});
 
       const spec: ToolPodJobSpec = {
         agentJobId: 'agent-job-123',
         groupFolder: 'test-group',
-        category: 'execution',
-        timeout: 300000,
-      };
-
-      await jobRunner.createToolPodJob(spec);
-
-      const callArgs = mockBatchApi.createNamespacedJob.mock.calls[0][0];
-      const volumeMounts =
-        callArgs.body.spec?.template?.spec?.containers?.[0]?.volumeMounts || [];
-
-      expect(
-        volumeMounts.some(
-          (v: { mountPath: string }) => v.mountPath === '/workspace/group',
-        ),
-      ).toBe(true);
-    });
-
-    it('should not include volume mounts for browser category', async () => {
-      mockBatchApi.createNamespacedJob.mockResolvedValue({});
-
-      const spec: ToolPodJobSpec = {
-        agentJobId: 'agent-job-123',
-        groupFolder: 'test-group',
-        category: 'browser',
+        category: 'places',
         timeout: 300000,
       };
 
@@ -1172,13 +1149,13 @@ describe('JobRunner', () => {
       expect(volumeMounts.length).toBe(0);
     });
 
-    it('should include correct volumes for execution category', async () => {
+    it('should not include volumes for places category', async () => {
       mockBatchApi.createNamespacedJob.mockResolvedValue({});
 
       const spec: ToolPodJobSpec = {
         agentJobId: 'agent-job-123',
         groupFolder: 'test-group',
-        category: 'execution',
+        category: 'places',
         timeout: 300000,
       };
 
@@ -1187,12 +1164,7 @@ describe('JobRunner', () => {
       const callArgs = mockBatchApi.createNamespacedJob.mock.calls[0][0];
       const volumes = callArgs.body.spec?.template?.spec?.volumes || [];
 
-      expect(
-        volumes.some((v: { name: string }) => v.name === 'groups-pvc'),
-      ).toBe(true);
-      expect(
-        volumes.some((v: { name: string }) => v.name === 'sessions-pvc'),
-      ).toBe(true);
+      expect(volumes.length).toBe(0);
     });
   });
 

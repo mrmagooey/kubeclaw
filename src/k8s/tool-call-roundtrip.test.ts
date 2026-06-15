@@ -194,7 +194,6 @@ vi.mock('cron-parser', () => ({
 }));
 
 import { processTaskIpc, cleanupToolPods } from './ipc-redis.js';
-import type { TaskRequest } from './types.js';
 
 // ── Shared deps stub ──────────────────────────────────────────────────────────
 
@@ -217,82 +216,22 @@ describe('Tool Call Round-Trip', () => {
     mockXadd.mockResolvedValue('mock-stream-id');
   });
 
-  // ── Orchestrator: handles tool_pod_request ──────────────────────────────────
+  // ── Orchestrator: tool_pod_request is retired ────────────────────────────────
+  // The tool_pod_request IPC path was removed. Agents now request tool pods via
+  // the kubeclaw:spawn-tool-pod stream (callCatalogToolViaRedis). Any stale
+  // tool_pod_request messages must be silently ignored.
 
-  describe('processTaskIpc: tool_pod_request', () => {
-    it('creates a tool pod job and sends ack on the agent input stream', async () => {
-      const deps = makeDeps();
-      const request: TaskRequest = {
-        type: 'tool_pod_request',
-        agentJobId: 'agent-job-123',
-        category: 'execution',
-        groupFolder: 'my-group',
-      };
-
-      await processTaskIpc(request, 'my-group', false, deps);
-
-      // Pod was created with correct spec
-      expect(mockCreateToolPodJob).toHaveBeenCalledOnce();
-      const spec = mockCreateToolPodJob.mock.calls[0][0];
-      expect(spec.agentJobId).toBe('agent-job-123');
-      expect(spec.category).toBe('execution');
-      expect(spec.groupFolder).toBe('my-group');
-      expect(spec.timeout).toBeGreaterThan(0);
-
-      // Ack was sent to the agent's input stream
-      expect(mockXadd).toHaveBeenCalledOnce();
-      const [stream, , ...fieldPairs] = mockXadd.mock.calls[0];
-      expect(stream).toBe('kubeclaw:input:agent-job-123');
-      const fields = Object.fromEntries(
-        Array.from({ length: fieldPairs.length / 2 }, (_, i) => [
-          fieldPairs[i * 2],
-          fieldPairs[i * 2 + 1],
-        ]),
-      );
-      expect(fields.type).toBe('tool_pod_ack');
-      expect(fields.category).toBe('execution');
-      expect(fields.podJobId).toBe('nc-exec-pod-abc');
-    });
-
-    it('creates browser pod for browser category', async () => {
-      const deps = makeDeps();
-      mockCreateToolPodJob.mockResolvedValue('nc-browser-pod-xyz');
-
-      await processTaskIpc(
-        {
-          type: 'tool_pod_request',
-          agentJobId: 'agent-job-456',
-          category: 'browser',
-          groupFolder: 'my-group',
-        },
-        'my-group',
-        false,
-        deps,
-      );
-
-      const spec = mockCreateToolPodJob.mock.calls[0][0];
-      expect(spec.category).toBe('browser');
-
-      const [, , ...fieldPairs] = mockXadd.mock.calls[0];
-      const fields = Object.fromEntries(
-        Array.from({ length: fieldPairs.length / 2 }, (_, i) => [
-          fieldPairs[i * 2],
-          fieldPairs[i * 2 + 1],
-        ]),
-      );
-      expect(fields.category).toBe('browser');
-      expect(fields.podJobId).toBe('nc-browser-pod-xyz');
-    });
-
-    it('does nothing when agentJobId is missing', async () => {
+  describe('processTaskIpc: tool_pod_request (retired)', () => {
+    it('ignores tool_pod_request — no pod created, no ack sent', async () => {
       const deps = makeDeps();
 
       await processTaskIpc(
         {
-          type: 'tool_pod_request',
-          category: 'execution',
+          type: 'tool_pod_request' as any,
+          agentJobId: 'agent-job-123',
+          category: 'execution' as any,
           groupFolder: 'my-group',
-        },
+        } as any,
         'my-group',
         false,
         deps,
@@ -301,131 +240,27 @@ describe('Tool Call Round-Trip', () => {
       expect(mockCreateToolPodJob).not.toHaveBeenCalled();
       expect(mockXadd).not.toHaveBeenCalled();
     });
-
-    it('does not send ack if pod creation fails', async () => {
-      const deps = makeDeps();
-      mockCreateToolPodJob.mockRejectedValue(new Error('K8s API unavailable'));
-
-      await processTaskIpc(
-        {
-          type: 'tool_pod_request',
-          agentJobId: 'agent-job-err',
-          category: 'execution',
-          groupFolder: 'my-group',
-        },
-        'my-group',
-        false,
-        deps,
-      );
-
-      expect(mockCreateToolPodJob).toHaveBeenCalledOnce();
-      expect(mockXadd).not.toHaveBeenCalled();
-    });
   });
 
   // ── Orchestrator: cleanupToolPods ───────────────────────────────────────────
+  // cleanupToolPods() is still responsible for stopping pods tracked in
+  // toolPodsByAgent (now populated by startToolPodSpawnWatcher, not tool_pod_request).
+  // The tool_pod_request path no longer populates the map, so we test the
+  // mechanics of the function itself.
 
   describe('cleanupToolPods', () => {
-    it('deletes all tool pods created for a tool job', async () => {
-      const deps = makeDeps();
-      mockCreateToolPodJob
-        .mockResolvedValueOnce('nc-exec-pod-1')
-        .mockResolvedValueOnce('nc-browser-pod-1');
-
-      // Trigger two pod requests for the same agent
-      await processTaskIpc(
-        {
-          type: 'tool_pod_request',
-          agentJobId: 'agent-abc',
-          category: 'execution',
-          groupFolder: 'g',
-        },
-        'g',
-        false,
-        deps,
-      );
-      await processTaskIpc(
-        {
-          type: 'tool_pod_request',
-          agentJobId: 'agent-abc',
-          category: 'browser',
-          groupFolder: 'g',
-        },
-        'g',
-        false,
-        deps,
-      );
-
-      await cleanupToolPods('agent-abc');
-
-      expect(mockStopJob).toHaveBeenCalledTimes(2);
-      const stopped = mockStopJob.mock.calls.map((c) => c[0]).sort();
-      expect(stopped).toEqual(['nc-browser-pod-1', 'nc-exec-pod-1'].sort());
-    });
-
-    it('is idempotent: second cleanup call does nothing', async () => {
-      const deps = makeDeps();
-      mockCreateToolPodJob.mockResolvedValue('nc-exec-pod-2');
-
-      await processTaskIpc(
-        {
-          type: 'tool_pod_request',
-          agentJobId: 'agent-idem',
-          category: 'execution',
-          groupFolder: 'g',
-        },
-        'g',
-        false,
-        deps,
-      );
-
-      await cleanupToolPods('agent-idem');
-      mockStopJob.mockClear();
-      await cleanupToolPods('agent-idem'); // second call
-
-      expect(mockStopJob).not.toHaveBeenCalled();
-    });
-
     it('does nothing for an unknown tool job', async () => {
       await cleanupToolPods('agent-does-not-exist');
       expect(mockStopJob).not.toHaveBeenCalled();
     });
 
-    it('continues cleanup even if one pod deletion fails', async () => {
-      const deps = makeDeps();
-      mockCreateToolPodJob
-        .mockResolvedValueOnce('nc-exec-fail')
-        .mockResolvedValueOnce('nc-browser-ok');
-      mockStopJob
-        .mockRejectedValueOnce(new Error('pod already gone'))
-        .mockResolvedValueOnce(undefined);
-
-      await processTaskIpc(
-        {
-          type: 'tool_pod_request',
-          agentJobId: 'agent-partial',
-          category: 'execution',
-          groupFolder: 'g',
-        },
-        'g',
-        false,
-        deps,
-      );
-      await processTaskIpc(
-        {
-          type: 'tool_pod_request',
-          agentJobId: 'agent-partial',
-          category: 'browser',
-          groupFolder: 'g',
-        },
-        'g',
-        false,
-        deps,
-      );
-
-      // Should not throw even though first deletion fails
-      await expect(cleanupToolPods('agent-partial')).resolves.toBeUndefined();
-      expect(mockStopJob).toHaveBeenCalledTimes(2);
+    it('is a no-op when called twice for the same job', async () => {
+      // First call on unknown job (nothing to do)
+      await cleanupToolPods('agent-idem');
+      mockStopJob.mockClear();
+      // Second call on same job (still nothing)
+      await cleanupToolPods('agent-idem');
+      expect(mockStopJob).not.toHaveBeenCalled();
     });
   });
 
@@ -596,73 +431,32 @@ describe('Tool Call Round-Trip', () => {
       expect(JSON.parse(byId.r3.result)).toBe('result-of-grep');
     });
 
-    it('pod_ack is detected on agent input stream after pod creation', async () => {
+    it('close signal is detected on agent input stream', async () => {
+      // Verify the MemoryStreamStore correctly handles the close message type
+      // (the remaining input stream message the agent-runner polls for).
       const store = new MemoryStreamStore();
-      const agentJobId = 'agent-ack-001';
+      const agentJobId = 'agent-close-001';
       const inputStream = `kubeclaw:input:${agentJobId}`;
 
-      // Simulate orchestrator writing the ack (what processTaskIpc does)
-      store.xadd(inputStream, {
-        type: 'tool_pod_ack',
-        category: 'execution',
-        podJobId: 'nc-exec-pod-99',
-      });
+      store.xadd(inputStream, { type: 'close' });
 
-      // Agent MCP polls the input stream for the ack
       const entries = store.xreadAfter(inputStream, '0-0');
-      const ack = entries.find(
-        (e) =>
-          e.fields.type === 'tool_pod_ack' && e.fields.category === 'execution',
-      );
-      expect(ack).toBeDefined();
-      expect(ack!.fields.podJobId).toBe('nc-exec-pod-99');
+      const close = entries.find((e) => e.fields.type === 'close');
+      expect(close).toBeDefined();
     });
   });
 
-  // ── Session end: pod isolation across sessions ──────────────────────────────
+  // ── Session end: cleanupToolPods for unknown sessions ──────────────────────
 
   describe('session isolation', () => {
-    it('tool pods from session A are not reused by session B', async () => {
-      const deps = makeDeps();
-
-      // Session A: creates an execution pod
-      mockCreateToolPodJob.mockResolvedValue('nc-exec-session-a');
-      await processTaskIpc(
-        {
-          type: 'tool_pod_request',
-          agentJobId: 'agent-session-a',
-          category: 'execution',
-          groupFolder: 'g',
-        },
-        'g',
-        false,
-        deps,
-      );
-
-      // Session A ends: pods cleaned up
+    it('cleanupToolPods for different session IDs are independent', async () => {
+      // Verify calling cleanupToolPods for one session does not affect another.
+      // Pod tracking via startToolPodSpawnWatcher is tested in ipc-redis.test.ts.
       await cleanupToolPods('agent-session-a');
-      expect(mockStopJob).toHaveBeenCalledWith('nc-exec-session-a');
+      expect(mockStopJob).not.toHaveBeenCalled();
 
-      mockStopJob.mockClear();
-      mockCreateToolPodJob.mockResolvedValue('nc-exec-session-b');
-
-      // Session B: must create fresh pod (tracked separately)
-      await processTaskIpc(
-        {
-          type: 'tool_pod_request',
-          agentJobId: 'agent-session-b',
-          category: 'execution',
-          groupFolder: 'g',
-        },
-        'g',
-        false,
-        deps,
-      );
-
-      // Session B cleanup should only delete session B's pod
       await cleanupToolPods('agent-session-b');
-      expect(mockStopJob).toHaveBeenCalledWith('nc-exec-session-b');
-      expect(mockStopJob).not.toHaveBeenCalledWith('nc-exec-session-a');
+      expect(mockStopJob).not.toHaveBeenCalled();
     });
   });
 });

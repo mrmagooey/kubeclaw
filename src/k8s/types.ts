@@ -80,12 +80,10 @@ export interface AgentOutputMessage {
 }
 
 export interface HostInputMessage {
-  type: 'message' | 'close' | 'task_update' | 'tool_pod_ack';
+  type: 'message' | 'close' | 'task_update';
   text?: string;
   taskId?: string;
   status?: 'paused' | 'resumed' | 'cancelled';
-  category?: string;
-  podJobId?: string;
 }
 
 export interface TaskRequest {
@@ -97,7 +95,6 @@ export interface TaskRequest {
     | 'update_task'
     | 'register_group'
     | 'refresh_groups'
-    | 'tool_pod_request'
     | 'deploy_channel'
     | 'control_channel'
     | 'install_capability'
@@ -124,9 +121,6 @@ export interface TaskRequest {
   trigger?: string;
   requiresTrigger?: boolean;
   containerConfig?: Record<string, unknown>;
-  // Tool pod request fields
-  category?: 'execution' | 'browser' | 'places';
-  agentJobId?: string;
   // Capability fields
   spec?: string; // JSON-stringified CapabilitySpec for install_capability
   resultStream?: string; // for list_capabilities / secret.* result
@@ -167,7 +161,7 @@ export type IpcResponse =
 export interface ToolPodJobSpec {
   agentJobId: string;
   groupFolder: string;
-  category: 'execution' | 'browser' | 'places';
+  category: 'places';
   timeout: number;
   provider?: string; // inherit parent agent's provider for image selection
   groupsPvc?: string; // defaults to 'kubeclaw-groups'

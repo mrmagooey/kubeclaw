@@ -491,7 +491,7 @@ async function executeToolViaK8s(
         await jobRunner.createToolPodJob({
           agentJobId: toolJobId,
           groupFolder,
-          category: category as 'browser' | 'execution' | 'places',
+          category: category as 'places',
           timeout: TOOL_TIMEOUT_MS,
           maxToolOutputBytes,
         });

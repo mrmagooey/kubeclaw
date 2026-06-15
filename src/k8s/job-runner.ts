@@ -1598,7 +1598,7 @@ export class JobRunner {
   }
 
   /**
-   * Create a tool pod job (execution or places category)
+   * Create a tool pod job (places category)
    * Returns the K8s job name as podJobId
    */
   async createToolPodJob(spec: ToolPodJobSpec): Promise<string> {
@@ -1636,28 +1636,6 @@ export class JobRunner {
       subPath?: string;
     }> = [];
     const volumes: Array<any> = [];
-
-    if (spec.category === 'execution') {
-      volumeMounts.push({
-        name: 'groups-pvc',
-        mountPath: '/workspace/group',
-        subPath: spec.groupFolder,
-      });
-      volumes.push(
-        {
-          name: 'groups-pvc',
-          persistentVolumeClaim: {
-            claimName: spec.groupsPvc ?? 'kubeclaw-groups',
-          },
-        },
-        {
-          name: 'sessions-pvc',
-          persistentVolumeClaim: {
-            claimName: spec.sessionsPvc ?? 'kubeclaw-sessions',
-          },
-        },
-      );
-    }
 
     const job: V1Job = {
       apiVersion: 'batch/v1',
