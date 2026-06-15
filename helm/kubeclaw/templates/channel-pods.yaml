@@ -88,6 +88,8 @@ spec:
                   name: {{ include "kubeclaw.secretName" $ }}
                   key: openai-base-url
                   optional: true
+            {{- else }}
+            {{- include "kubeclaw.llmBrokerEnv" $ | nindent 12 }}
             {{- end }}
             - name: DIRECT_LLM_MODEL
               valueFrom:
@@ -156,13 +158,7 @@ spec:
             {{- if eq $.Values.credentialInjection.mode "sidecar" }}
             {{- include "kubeclaw.credentialSidecarEnv" $ | nindent 12 }}
             {{- end }}
-            {{- if eq $.Values.credentialInjection.mode "istio" }}
-            # Istio captures all egress via iptables redirection; no
-            # HTTPS_PROXY is needed. The base URL overrides below route
-            # workload SDKs through the egress gateway, which stamps the
-            # broker-supplied Authorization header.
-            {{- include "kubeclaw.istioBaseUrlEnv" $ | nindent 12 }}
-            {{- end }}
+{{- /* Base URLs for istio mode are covered by kubeclaw.llmBrokerEnv (injected above). */}}
           ports:
             {{- if $cfg.httpPort }}
             - name: http

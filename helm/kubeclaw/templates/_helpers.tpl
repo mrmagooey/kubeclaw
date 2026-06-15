@@ -185,6 +185,24 @@ than a bare slice (Helm's fromJson cannot range over a top-level JSON array).
 {{- end -}}
 
 {{/*
+kubeclaw.llmBrokerEnv — LLM provider envs when credential injection is active
+(sidecar or istio, not auditOnly). Channel pods are multi-group → operator-fallback
+sentinel KC_PH_FALLBACK_<id> (MUST match FALLBACK_SENTINEL_PREFIX in
+src/k8s/job-runner.ts) + http:// base URLs (TLS origination). Base URLs MUST match
+the credentialInjection.catalog baseUrlEnvs in values.yaml.
+*/}}
+{{- define "kubeclaw.llmBrokerEnv" -}}
+- { name: OPENAI_API_KEY,      value: "KC_PH_FALLBACK_openai" }
+- { name: OPENAI_BASE_URL,     value: "http://api.openai.com/v1" }
+- { name: ANTHROPIC_API_KEY,   value: "KC_PH_FALLBACK_anthropic" }
+- { name: ANTHROPIC_BASE_URL,  value: "http://api.anthropic.com" }
+- { name: OPENROUTER_API_KEY,  value: "KC_PH_FALLBACK_openrouter" }
+- { name: OPENROUTER_BASE_URL, value: "http://openrouter.ai/api/v1" }
+- { name: VOYAGE_API_KEY,      value: "KC_PH_FALLBACK_voyage" }
+- { name: VOYAGE_BASE_URL,     value: "http://api.voyageai.com" }
+{{- end -}}
+
+{{/*
 kubeclaw.istioBaseUrlEnv — emits env entries for three of the four built-in
 broker providers (openai, anthropic, openrouter) pointing at http:// hostnames,
 so workload SDKs route through the istio egress gateway for credential stamping.
