@@ -2,7 +2,7 @@
  * Minikube-live e2e: bash / bash_persist catalog tools — file-bridge + mounts.
  *
  * Prior version (Story 169) tested the old execution-category dispatch path
- * (app=kubeclaw-sidecar-tool, kubeclaw/agent-job=<id>, tool-server.js) which is being
+ * (app=kubeclaw-tool-pod, category=execution, tool-server.js) which is being
  * replaced by the file-bridge + catalog form introduced in feat/tool-mounts-bash.
  * Those execution-category assertions have been removed and replaced here.
  *
