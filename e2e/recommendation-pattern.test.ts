@@ -9,7 +9,8 @@
  *   AC3. When no profile row exists, read_user_profile handler returns '{}' without error.
  *   AC4. Conversation history from a first turn is visible to the second turn's LLM call
  *        (multi-turn refinement threading works).
- *   AC5. `places_search` is present in the tool list advertised to the LLM.
+ *   AC5. `places_search` is a catalog tool (not in the static TOOLS array); it is present
+ *        in the Helm baseline catalog that gets injected into the runner at runtime.
  *
  * Uses the in-process mock LLM server (getMockLlmPort) + real SQLite.
  * No Kubernetes required.
@@ -158,18 +159,44 @@ describe('Recommendation execution pattern (E2E)', () => {
     console.log(`✅ AC4: history has ${history.length} messages across two turns`);
   });
 
-  it('AC5: places_search is in the tool list advertised to the LLM', async () => {
+  it('AC5: places_search is a catalog tool — absent from static TOOLS, present in Helm baseline catalog', async () => {
     if (!getMockLlmPort()) return;
 
+    // places_search moved from the static TOOLS array to the catalog (Helm values.yaml).
+    // The runner merges catalog tools into the effective tool list at runtime via
+    // buildCatalogToolDefs(toolCatalog.getForChannel(...)). Static TOOLS should NOT
+    // contain places_search; catalog availability is the authoritative test.
     const { __testing__ } = await import('../src/runtime/direct-llm-runner.js');
-    const toolNames = __testing__.toolsForTest().map((t: any) => t.function.name);
+    const staticToolNames = __testing__.toolsForTest().map((t: any) => t.function.name);
+    expect(staticToolNames).not.toContain('places_search');
+    console.log('✅ AC5a: places_search absent from static TOOLS array');
 
-    expect(toolNames).toContain('places_search');
-    // Verify it has the expected parameter shape
-    const tool = __testing__.toolsForTest().find(
-      (t: any) => t.function.name === 'places_search',
-    );
-    expect(tool!.function.parameters.properties).toHaveProperty('query');
-    console.log('✅ AC5: places_search present in TOOLS with query parameter');
+    // Verify places_search is declared in the Helm baseline catalog (values.yaml).
+    // This is the source-of-truth for catalog availability; runtime injection of the
+    // catalog into the runner is covered by the catalog/baseline unit tests.
+    const { readFileSync } = await import('fs');
+    const { parse: parseYaml } = await import('yaml');
+    const { parseToolCatalog } = await import('../src/tools/types.js');
+
+    const values = parseYaml(
+      readFileSync('helm/kubeclaw/values.yaml', 'utf-8'),
+    ) as { tools?: unknown[] };
+    const envelope = JSON.stringify({
+      version: 1,
+      generation: 0,
+      tools: values.tools ?? [],
+    });
+    const r = parseToolCatalog(envelope);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+
+    const catalogNames = r.tools.map((t) => t.name);
+    expect(catalogNames).toContain('places_search');
+
+    // Verify the catalog entry has the expected parameter shape
+    const spec = r.tools.find((t) => t.name === 'places_search');
+    expect(spec!.parameters).toBeDefined();
+    expect((spec!.parameters as any).properties).toHaveProperty('query');
+    console.log('✅ AC5b: places_search present in Helm baseline catalog with query parameter');
   });
 });

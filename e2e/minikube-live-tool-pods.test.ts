@@ -25,7 +25,7 @@
  *   Job metadata: app=kubeclaw-agent, kubeclaw/group=<groupFolder>, kubeclaw/chat-jid=<sanitised>
  *   Pod template: app=kubeclaw-agent
  *
- * TOOL_CATEGORY map (src/runtime/direct-llm-runner.ts:300-305):
+ * Catalog category routing (src/runtime/direct-llm-runner.ts):
  *   bash → execution
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';

@@ -360,7 +360,7 @@ describe('Minikube-live: failure modes for tools, capabilities, and HTTP channel
   // invariant is that the tool pod writes a result (error message) within the
   // timeout window rather than hanging indefinitely.
   //
-  // The TOOL_CATEGORY for web_fetch is 'browser' per src/runtime/direct-llm-runner.ts.
+  // The catalog category for web_fetch is 'browser' (same sidecar pod as the Playwright browser tool).
   it(
     'web_fetch to an unresolvable host produces an error result (no hang)',
     async () => {
@@ -370,8 +370,8 @@ describe('Minikube-live: failure modes for tools, capabilities, and HTTP channel
       const rand = randHex();
       const agentJobId = `fail-fetch-${Date.now()}-${rand}`;
       const requestId = `${agentJobId}-req`;
-      // TOOL_CATEGORY map (src/runtime/direct-llm-runner.ts:300-305):
-      //   web_fetch → 'browser'  (same pod as the Playwright browser tool)
+      // web_fetch routes to the 'browser' catalog sidecar pod
+      // (same pod as the Playwright browser tool).
       const category = 'browser';
 
       const toolCallsStream = `kubeclaw:toolcalls:${agentJobId}:${category}`;

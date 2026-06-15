@@ -1318,7 +1318,7 @@ describe('DirectLLMRunner — direct-mode custom-tool dispatch (Fix 1 + Fix 2)',
     const { jobRunner } = await import('../k8s/job-runner.js');
 
     const runner = new DirectLLMRunner();
-    // Register the tool so the LLM can call it (catalog tool not in TOOL_CATEGORY)
+    // Register the tool so the LLM can call it (catalog tool, not in the static TOOLS array)
     const result = await runner.runAgent(baseGroup, baseInput);
 
     // Run should still complete (error fed back as tool result)
