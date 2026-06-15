@@ -98,12 +98,24 @@ function k(args: string, opts?: { allowFail?: boolean }): string {
 // The broker is deployed as the orchestrator image with KUBECLAW_MODE=credential-broker.
 // We re-tag rather than rebuild to avoid racing with other e2e workers.
 
-function buildBrokerImage(): string {
+function tagBrokerImage(): string {
   const tag = 'kubeclaw-orchestrator:e2e-llm-broker';
   if (process.env.KC_E2E_SKIP_BUILD === '1') return tag;
   const profileFlag = process.env.KUBECLAW_MINIKUBE_PROFILE
     ? `-p ${process.env.KUBECLAW_MINIKUBE_PROFILE}`
     : '';
+  // Preflight: verify kubeclaw-orchestrator:latest is present in minikube's docker daemon.
+  // If absent, docker tag below would fail opaquely after beforeAll has already partially
+  // constructed the namespace.
+  const imageId = execSync(
+    `eval $(minikube ${profileFlag} docker-env) && docker images -q kubeclaw-orchestrator:latest`,
+    { encoding: 'utf8', shell: '/bin/bash', stdio: 'pipe' },
+  ).trim();
+  if (!imageId) {
+    throw new Error(
+      'kubeclaw-orchestrator:latest not present in minikube; run minikube-live-setup or build it first',
+    );
+  }
   execSync(
     `eval $(minikube ${profileFlag} docker-env) && docker tag kubeclaw-orchestrator:latest ${tag}`,
     { encoding: 'utf8', shell: '/bin/bash', stdio: 'pipe' },
@@ -190,7 +202,7 @@ describe.skipIf(!hasCluster)(
 
       createDummyCASecret();
 
-      const image = buildBrokerImage();
+      const image = tagBrokerImage();
 
       // Install with mode=sidecar.  We pass secrets.openaiApiKey so the chart
       // creates kubeclaw-secrets with both the hyphenated key (openai-api-key)
@@ -408,13 +420,16 @@ describe.skipIf(!hasCluster)(
 
           // Decode the base64 value and assert it is the operator key.
           const entry = subHeader.split(';').find((e) => e.startsWith(placeholder));
-          if (entry) {
-            const b64 = entry.slice(placeholder.length + 1); // skip "placeholder="
-            const decoded = Buffer.from(b64, 'base64').toString('utf8');
-            expect(decoded, 'substituted value must be the operator OpenAI key').toBe(
-              OPERATOR_OPENAI_KEY,
-            );
-          }
+          expect(
+            entry,
+            `x-kubeclaw-substitutions header must contain an entry starting with "${placeholder}"; ` +
+              `got: "${subHeader}" — header format may have changed or broker did not emit the placeholder`,
+          ).toBeDefined();
+          const b64 = entry!.slice(placeholder.length + 1); // skip "placeholder="
+          const decoded = Buffer.from(b64, 'base64').toString('utf8');
+          expect(decoded, 'substituted value must be the operator OpenAI key').toBe(
+            OPERATOR_OPENAI_KEY,
+          );
         } finally {
           rmSync(tmp, { recursive: true, force: true });
           execSync(
