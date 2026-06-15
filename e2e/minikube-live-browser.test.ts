@@ -7,7 +7,7 @@
  *
  * These tests verify the web_fetch and web_search built-in tools:
  *   1. A user message directs the LLM to call web_fetch → the orchestrator
- *      creates a K8s Job with label app=kubeclaw-tool-pod → the tool pod
+ *      creates a K8s Job with label app=kubeclaw-sidecar-tool → the tool pod
  *      logs "Executing tool=webFetch".
  *   2. Same flow for web_search → "Executing tool=webSearch".
  *   3. Browser (Playwright agent_browser) tool spawns a browser-category tool
@@ -293,15 +293,15 @@ describe('Minikube-live: browser/web tool pod spawned via LLM directive', () => 
         const res = await postPromise;
         expect(res.status, 'POST /message returned unexpected status').toBe(200);
 
-        // Poll for a tool pod — try primary label first, fall back to category label.
+        // Poll for a sidecar tool pod — try primary label first, fall back to category label.
         // Only consider pods created after this test started.
-        podName = await waitForToolPod('app=kubeclaw-tool-pod', 90_000, testStartMs);
+        podName = await waitForToolPod('app=kubeclaw-sidecar-tool', 90_000, testStartMs);
         if (podName === null) {
           podName = await waitForToolPod('kubeclaw/category=browser', 30_000, testStartMs);
         }
         expect(
           podName,
-          'No kubeclaw-tool-pod appeared within 90 s after web_fetch directive',
+          'No kubeclaw-sidecar-tool pod appeared within 90 s after web_fetch directive',
         ).not.toBeNull();
 
         // Poll the pod's logs for the expected execution marker.
@@ -369,15 +369,15 @@ describe('Minikube-live: browser/web tool pod spawned via LLM directive', () => 
         const res = await postPromise;
         expect(res.status, 'POST /message returned unexpected status').toBe(200);
 
-        // Poll for a tool pod — try primary label first, fall back to category label.
+        // Poll for a sidecar tool pod — try primary label first, fall back to category label.
         // Only consider pods created after this test started.
-        podName = await waitForToolPod('app=kubeclaw-tool-pod', 90_000, testStartMs);
+        podName = await waitForToolPod('app=kubeclaw-sidecar-tool', 90_000, testStartMs);
         if (podName === null) {
           podName = await waitForToolPod('kubeclaw/category=browser', 30_000, testStartMs);
         }
         expect(
           podName,
-          'No kubeclaw-tool-pod appeared within 90 s after web_search directive',
+          'No kubeclaw-sidecar-tool pod appeared within 90 s after web_search directive',
         ).not.toBeNull();
 
         // Poll the pod's logs for the expected execution marker.
@@ -510,14 +510,14 @@ describe('Minikube-live: browser/web tool pod spawned via LLM directive', () => 
         const res = await postPromise;
         expect(res.status, 'POST /message returned unexpected status').toBe(200);
 
-        // Poll for a tool pod created after this test started.
-        podName = await waitForToolPod('app=kubeclaw-tool-pod', 120_000, testStartMs);
+        // Poll for a sidecar tool pod created after this test started.
+        podName = await waitForToolPod('app=kubeclaw-sidecar-tool', 120_000, testStartMs);
         if (podName === null) {
           podName = await waitForToolPod('kubeclaw/category=browser', 30_000, testStartMs);
         }
         expect(
           podName,
-          'No kubeclaw-tool-pod appeared within 120 s after browser directive',
+          'No kubeclaw-sidecar-tool pod appeared within 120 s after browser directive',
         ).not.toBeNull();
 
         // Hard assertion: pod logs must contain the agentBrowser execution marker.
@@ -613,8 +613,8 @@ describe('Minikube-live: browser/web tool pod spawned via LLM directive', () => 
         'timeout', '120000',
       );
 
-      // 2. Wait for the tool pod to be created and become Running/Completed.
-      let podName: string | null = await waitForToolPod('app=kubeclaw-tool-pod', 120_000, testStartMs);
+      // 2. Wait for the sidecar tool pod to be created and become Running/Completed.
+      let podName: string | null = await waitForToolPod('app=kubeclaw-sidecar-tool', 120_000, testStartMs);
       if (podName === null) {
         podName = await waitForToolPod('kubeclaw/category=browser', 30_000, testStartMs);
       }

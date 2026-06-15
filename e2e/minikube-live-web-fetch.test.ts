@@ -13,7 +13,7 @@
  *
  * Hard assertions (must pass):
  *   - POST /message returns HTTP 200.
- *   - A tool pod labelled app=kubeclaw-tool-pod appears within 90 s.
+ *   - A sidecar tool pod labelled app=kubeclaw-sidecar-tool appears within 90 s.
  *   - The pod's logs contain "Executing tool=webFetch".
  *
  * Informational (console.log / console.warn only — not hard failures):
@@ -230,12 +230,12 @@ describe('Minikube-live: Story 166 — web_fetch tool job dispatched via LLM dir
         const res = await postPromise;
         expect(res.status, 'POST /message returned unexpected status').toBe(200);
 
-        // AC2 proxy: a browser-category tool pod appears within 90 s.
-        // The primary label on pod template is app=kubeclaw-tool-pod.
-        podName = await waitForToolPod('app=kubeclaw-tool-pod', 90_000, testStartMs);
+        // AC2 proxy: a browser-category sidecar tool pod appears within 90 s.
+        // The primary label on pod template is app=kubeclaw-sidecar-tool.
+        podName = await waitForToolPod('app=kubeclaw-sidecar-tool', 90_000, testStartMs);
         expect(
           podName,
-          'No kubeclaw-tool-pod appeared within 90 s after web_fetch directive (Story 166 AC2)',
+          'No kubeclaw-sidecar-tool pod appeared within 90 s after web_fetch directive (Story 166 AC2)',
         ).not.toBeNull();
 
         // AC2 proxy: pod logs must contain the webFetch execution marker.

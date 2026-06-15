@@ -4,7 +4,6 @@
  * Verifies that the orchestrator's startToolPodSpawnWatcher() correctly processes
  * messages from the kubeclaw:spawn-tool-pod stream and creates the right K8s jobs:
  *
- *   - Standard category (no toolImage) → single-container job (app=kubeclaw-tool-pod)
  *   - Sidecar (toolImage present) → two-container job (app=kubeclaw-sidecar-tool)
  *     with kubeclaw-tool-bridge + user-tool containers
  *   - Sidecar with requestMapping → bridge container carries KUBECLAW_TOOL_REQUEST_MAPPING
@@ -80,43 +79,6 @@ describe('Tool Pod Spawn Watcher', () => {
       // orchestrator not deployed
     }
   });
-
-  it('standard category creates a single-container tool pod job', async (ctx) => {
-    if (!orchestratorRunning) ctx.skip();
-    const redis = getSharedRedis();
-    if (!redis) ctx.skip();
-
-    // Trim stream + wait one BLOCK cycle to avoid the lastId='$' race
-    await redis.del('kubeclaw:spawn-tool-pod');
-    await new Promise((r) => setTimeout(r, 6000));
-
-    const agentJobId = `e2e-tpspawn-std-${Date.now()}`;
-    const groupFolder = `spawn-std-${Date.now()}`;
-
-    await redis.xadd(
-      'kubeclaw:spawn-tool-pod', '*',
-      'agentJobId', agentJobId,
-      'groupFolder', groupFolder,
-      'category', 'execution',
-      'timeout', '60000',
-      'channel', '',
-    );
-
-    const job = await pollForJob(
-      `app=kubeclaw-tool-pod,kubeclaw/agent-job=${agentJobId}`,
-    );
-
-    const containers = job.spec.template.spec.containers;
-    expect(containers).toHaveLength(1);
-
-    const envMap = Object.fromEntries(
-      (containers[0].env ?? []).map((e) => [e.name, e.value ?? '']),
-    );
-    expect(envMap.KUBECLAW_TOOL_JOB_ID).toBe(agentJobId);
-    expect(envMap.KUBECLAW_CATEGORY).toBe('execution');
-
-    console.log(`✅ Standard tool pod job created: ${job.metadata.name}`);
-  }, 90000);
 
   it('sidecar spawn with toolImage creates a two-container job', async (ctx) => {
     if (!orchestratorRunning) ctx.skip();

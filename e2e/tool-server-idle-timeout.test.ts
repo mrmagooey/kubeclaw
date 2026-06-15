@@ -116,7 +116,7 @@ describe('Tool Server Idle Timeout', () => {
 
     console.log(`⏳ Waiting up to ${TEST_WAIT_MS / 1000}s for idle tool pod to terminate...`);
 
-    const labelSelector = `app=kubeclaw-tool-pod,kubeclaw/agent-job=${agentJobId}`;
+    const labelSelector = `app=kubeclaw-sidecar-tool,kubeclaw/agent-job=${agentJobId}`;
     const status = await pollJobTermination(labelSelector, TEST_WAIT_MS);
 
     // Job must have terminated (succeeded or DeadlineExceeded — both prove idle exit)
@@ -163,7 +163,7 @@ describe('Tool Server Idle Timeout', () => {
     // The tool-server connects, reads the calls stream (empty), resets idle timer.
     // After longerTimeout ms with no calls, it calls process.exit(0).
     // We just verify the job exists (was created), not that it's done yet.
-    const labelSelector = `app=kubeclaw-tool-pod,kubeclaw/agent-job=${agentJobId}`;
+    const labelSelector = `app=kubeclaw-sidecar-tool,kubeclaw/agent-job=${agentJobId}`;
     const jobCheckResult = spawnSync(
       'kubectl',
       ['get', 'jobs', '-n', NAMESPACE, '-l', labelSelector, '-o', 'json'],

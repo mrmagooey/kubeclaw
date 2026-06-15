@@ -17,9 +17,9 @@
  *   getSpawnToolJobStream()                     → kubeclaw:spawn-agent-job
  *   getToolJobResultStream(jobId)               → kubeclaw:agent-job-result:<jobId>
  *
- * Tool-pod labels (src/k8s/job-runner.ts:1243-1254):
- *   Job metadata: app=kubeclaw-tool-pod, kubeclaw/category=<category>, kubeclaw/group, kubeclaw/agent-job
- *   Pod template:  app=kubeclaw-tool-pod  ← kubeclaw/category is NOT on the pod template
+ * Tool-pod labels (src/k8s/job-runner.ts — createSidecarToolPodJob):
+ *   Job metadata: app=kubeclaw-sidecar-tool, kubeclaw/category=<category>, kubeclaw/group, kubeclaw/agent-job
+ *   Pod template:  app=kubeclaw-sidecar-tool, kubeclaw/agent-job  ← kubeclaw/category is NOT on the pod template
  *
  * Tool-job labels (src/k8s/job-runner.ts:167, 789-801):
  *   Job metadata: app=kubeclaw-agent, kubeclaw/group=<groupFolder>, kubeclaw/chat-jid=<sanitised>
@@ -303,16 +303,14 @@ describe('Minikube-live: tool pod and tool job spawning via Redis IPC (direct by
 
       // Hard assertion: a pod with the expected label must appear within 90 s.
       //
-      // Label layout (job-runner.ts:1243-1254):
-      //   Job metadata labels: app=kubeclaw-tool-pod, kubeclaw/category, kubeclaw/group,
+      // Label layout (job-runner.ts — createSidecarToolPodJob):
+      //   Job metadata labels: app=kubeclaw-sidecar-tool, kubeclaw/category, kubeclaw/group,
       //                        kubeclaw/agent-job
-      //   Pod TEMPLATE labels: app=kubeclaw-tool-pod  ← category is NOT propagated
+      //   Pod TEMPLATE labels: app=kubeclaw-sidecar-tool, kubeclaw/agent-job
       //
-      // `kubectl get pods -l ...` matches pod-template labels only, so the
-      // kubeclaw/category selector would return nothing even when the pod exists.
-      // Query by app=kubeclaw-tool-pod and rely on the sinceMs timestamp filter to
-      // exclude pods from prior tests.
-      const podSelector = 'app=kubeclaw-tool-pod';
+      // Selecting by both labels gives an exact match for this agentJobId with no
+      // need for a timestamp filter to exclude pods from prior tests.
+      const podSelector = `app=kubeclaw-sidecar-tool,kubeclaw/agent-job=${agentJobId}`;
       const podName = await waitForToolPod(podSelector, 90_000, testStartMs);
       expect(
         podName,

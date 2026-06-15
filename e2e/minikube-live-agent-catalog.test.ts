@@ -362,10 +362,9 @@ describe('Minikube-live: agent-runner catalog unification — bash/bash_persist 
 
       console.log(`Stage 2: waiting for bash tool pod (agentJobId=${agentJobId})...`);
 
-      // Hard assertion: a tool pod must appear (app=kubeclaw-tool-pod is the
-      // pod-template label; kubeclaw/category is only on the Job metadata label).
-      // Use sinceMs to exclude pods from Stage 1.
-      const podSelector = 'app=kubeclaw-tool-pod';
+      // Hard assertion: a sidecar tool pod must appear. Selects by both the pod-template
+      // label (app=kubeclaw-sidecar-tool) and the agent-job label for an exact match.
+      const podSelector = `app=kubeclaw-sidecar-tool,kubeclaw/agent-job=${agentJobId}`;
       const podName = await (async () => {
         const deadline = Date.now() + 90_000;
         while (Date.now() < deadline) {
@@ -454,7 +453,7 @@ describe('Minikube-live: agent-runner catalog unification — bash/bash_persist 
 
       console.log(`Stage 3: waiting for bash_persist tool pod (agentJobId=${persistAgentJobId})...`);
 
-      const podSelector = 'app=kubeclaw-tool-pod';
+      const podSelector = `app=kubeclaw-sidecar-tool,kubeclaw/agent-job=${persistAgentJobId}`;
       const podName = await (async () => {
         const deadline = Date.now() + 90_000;
         while (Date.now() < deadline) {

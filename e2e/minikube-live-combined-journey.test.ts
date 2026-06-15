@@ -316,9 +316,9 @@ describe('Minikube-live: combined journey across one agent channel', () => {
       'channel', 'http',
     );
 
-    // Tool pod Jobs carry: app=kubeclaw-tool-pod, kubeclaw/group=<groupFolder>
-    // Use both labels to avoid matching agent jobs from Stage 2.
-    const toolJob = await waitForJob(`app=kubeclaw-tool-pod,kubeclaw/group=${GROUP_FOLDER}`, 180_000, startMs);
+    // Tool pod Jobs carry: app=kubeclaw-sidecar-tool, kubeclaw/agent-job=<toolJobId>
+    // Use both labels to get an exact match for this specific tool job.
+    const toolJob = await waitForJob(`app=kubeclaw-sidecar-tool,kubeclaw/agent-job=${toolJobId}`, 180_000, startMs);
     expect(toolJob, `No tool Job for group ${GROUP_FOLDER} appeared within 180 s`).not.toBeNull();
     console.log(`Stage 3: tool Job appeared: ${toolJob}`);
 

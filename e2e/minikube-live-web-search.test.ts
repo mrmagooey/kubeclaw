@@ -16,7 +16,7 @@
  *
  * Hard assertions (must pass):
  *   - POST /message returns HTTP 200.
- *   - A tool pod labelled app=kubeclaw-tool-pod appears within 90 s.
+ *   - A sidecar tool pod labelled app=kubeclaw-sidecar-tool appears within 90 s.
  *   - The pod's logs contain "Executing tool=webSearch".
  *
  * Informational (console.log / console.warn only — not hard failures):
@@ -218,14 +218,13 @@ describe('Minikube-live: Story 167 — web_search tool job dispatched via LLM di
         const res = await postPromise;
         expect(res.status, 'POST /message returned unexpected status').toBe(200);
 
-        // AC2 proxy: a browser-category tool pod appears within 90 s.
+        // AC2 proxy: a browser-category sidecar tool pod appears within 90 s.
         // Both web_fetch and web_search map to category=browser; the pod label
-        // app=kubeclaw-tool-pod is the reliable selector (category is on the Job
-        // metadata, not the pod template — see minikube-live-tool-pods.test.ts).
-        podName = await waitForToolPod('app=kubeclaw-tool-pod', 90_000, testStartMs);
+        // app=kubeclaw-sidecar-tool is the reliable selector for sidecar pods.
+        podName = await waitForToolPod('app=kubeclaw-sidecar-tool', 90_000, testStartMs);
         expect(
           podName,
-          'No kubeclaw-tool-pod appeared within 90 s after web_search directive (Story 167 AC2)',
+          'No kubeclaw-sidecar-tool pod appeared within 90 s after web_search directive (Story 167 AC2)',
         ).not.toBeNull();
 
         // AC2 proxy: pod logs must contain the webSearch execution marker.
