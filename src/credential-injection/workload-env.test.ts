@@ -62,9 +62,11 @@ describe('workloadEnvForSidecar', () => {
 describe('helm chart NO_PROXY parity', () => {
   it('helm template renders the same NO_PROXY value as workloadEnvForSidecar', () => {
     // Enable an HTTP channel so channel-pods.yaml renders and includes credentialSidecarEnv.
+    // Run from the repo root (vitest's cwd) — never a hardcoded checkout path,
+    // which breaks outside the worktree it was authored in.
     const rendered = execSync(
       'helm template helm/kubeclaw --set channels.http.enabled=true',
-      { cwd: '/home/peter/projects/kubeclaw/.claude/worktrees/feat-llm-credential-broker', encoding: 'utf8' },
+      { cwd: process.cwd(), encoding: 'utf8' },
     );
     const expectedNoProxy =
       'localhost,127.0.0.1,kubeclaw-redis,kubeclaw-credential-broker,ollama,kubeclaw-qdrant,.svc,.svc.cluster.local,.cluster.local';
