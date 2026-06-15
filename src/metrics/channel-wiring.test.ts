@@ -11,6 +11,13 @@ import {
   setDbQueryCallback,
 } from '../db.js';
 
+// Mock config so we can run in channel mode for tool-failure tests (in channel
+// mode executeToolViaK8s skips the catalog lookup and calls xadd directly).
+vi.mock('../config.js', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../config.js')>();
+  return { ...original, KUBECLAW_MODE: 'channel' };
+});
+
 // Mock redis-client so tool executions that reach executeToolViaK8s throw
 // (simulating Redis unavailable), which exercises the toolSuccess=false path.
 vi.mock('../k8s/redis-client.js', () => ({
@@ -230,11 +237,11 @@ describe('DirectLLMRunner channel metrics wiring', () => {
 
   it('records status=failure when a tool throws', async () => {
     // The global redis mock has xadd rejecting, so any executeToolViaK8s call
-    // will throw → toolSuccess = false. Use 'places_search' (a static built-in
-    // that routes through executeToolViaK8s); web_fetch/web_search are now
-    // catalog tools that resolve to a graceful "unknown tool" error in direct mode.
+    // will throw → toolSuccess = false. The module-level vi.mock sets
+    // KUBECLAW_MODE='channel' so executeToolViaK8s skips the catalog lookup
+    // and always calls xadd (which then throws, giving us toolSuccess=false).
     const metrics = makeMetricsMock();
-    const fakeClient = makeFakeOpenAIWithToolCall('places_search');
+    const fakeClient = makeFakeOpenAIWithToolCall('web_fetch');
     const runner = new DirectLLMRunner(fakeClient);
     runner.setChannelMetrics(metrics);
 

@@ -434,8 +434,8 @@ describe('DirectLLMRunner', () => {
     const callArgs = mockCreate.mock.calls[0][0];
     const toolNames = callArgs.tools.map((t: any) => t.function.name);
     expect(toolNames).toContain('home_control');
-    // Built-in tools still included (places_search remains a static built-in)
-    expect(toolNames).toContain('places_search');
+    // Built-in tools still included
+    expect(toolNames).toContain('schedule_task');
   });
 
   it('runAgent uses reasoning_content as fallback when content is null (thinking models)', async () => {
@@ -563,13 +563,13 @@ describe('DirectLLMRunner', () => {
     const runner = new DirectLLMRunner();
 
     await runner.runAgent(baseGroup, baseInput, undefined, undefined, {
-      toolFilter: new Set(['places_search']),
+      toolFilter: new Set(['schedule_task']),
     });
 
     const callArgs = mockCreate.mock.calls[0][0];
     const toolNames = callArgs.tools.map((t: any) => t.function.name);
     // Only the allowlisted tool is advertised
-    expect(toolNames).toEqual(['places_search']);
+    expect(toolNames).toEqual(['schedule_task']);
     // Other built-in tools are not included
     expect(toolNames).not.toContain('browser');
     expect(toolNames).not.toContain('execute_agent');
@@ -1146,41 +1146,6 @@ describe('loadSystemPrompt — RECOMMENDATION_CONTRACT injection', () => {
   });
 });
 
-describe('TOOLS — places_search registration', () => {
-  it('includes places_search in the built-in tool list', async () => {
-    const { __testing__ } = await import('./direct-llm-runner.js');
-    const names = __testing__.toolsForTest().map((t: any) => t.function.name);
-    expect(names).toContain('places_search');
-  });
-
-  it('places_search tool definition has required query and location parameters', async () => {
-    const { __testing__ } = await import('./direct-llm-runner.js');
-    const tool = __testing__
-      .toolsForTest()
-      .find((t: any) => t.function.name === 'places_search');
-    expect(tool).toBeDefined();
-    const props = tool!.function.parameters.properties as Record<
-      string,
-      unknown
-    >;
-    expect(props).toHaveProperty('query');
-    expect(props).toHaveProperty('location');
-    expect(tool!.function.parameters.required).toContain('query');
-  });
-
-  it('places_search is mapped to places category in TOOL_CATEGORY', async () => {
-    const { __testing__ } = await import('./direct-llm-runner.js');
-    expect(__testing__.toolCategoryForTest('places_search')).toBe('places');
-  });
-
-  it('places_search is mapped to placesSearch in TOOL_SERVER_NAME', async () => {
-    const { __testing__ } = await import('./direct-llm-runner.js');
-    expect(__testing__.toolServerNameForTest('places_search')).toBe(
-      'placesSearch',
-    );
-  });
-});
-
 describe('recommendation pattern — integration', () => {
   const baseGroup = {
     name: 'test-group',
@@ -1249,90 +1214,6 @@ describe('recommendation pattern — integration', () => {
     expect(result.result).toBe('Here are my top Italian picks for you.');
     expect(jobRunner.runToolJob).not.toHaveBeenCalled();
     expect(mockCreate).toHaveBeenCalledTimes(2);
-  });
-
-  it('places_search tool call routes via K8s places pod (TOOL_CATEGORY=places)', async () => {
-    mockCreate
-      .mockResolvedValueOnce({
-        choices: [
-          {
-            message: {
-              role: 'assistant',
-              content: null,
-              tool_calls: [
-                {
-                  id: 'call-ps-1',
-                  type: 'function',
-                  function: {
-                    name: 'places_search',
-                    arguments: JSON.stringify({
-                      query: 'Italian restaurants',
-                      location: 'Brooklyn, NY',
-                    }),
-                  },
-                },
-              ],
-            },
-          },
-        ],
-      })
-      .mockResolvedValueOnce({
-        choices: [
-          {
-            message: {
-              role: 'assistant',
-              content: 'Top 3 Italian spots in Brooklyn.',
-              tool_calls: [],
-            },
-          },
-        ],
-      });
-
-    let capturedRequestId: string | undefined;
-    mockRedisInstance.xadd.mockImplementation((...args: unknown[]) => {
-      const fields = args.slice(2) as string[];
-      const idx = fields.indexOf('requestId');
-      if (idx >= 0) capturedRequestId = fields[idx + 1];
-      return Promise.resolve('1-0');
-    });
-    mockRedisInstance.xread.mockImplementation(async () => {
-      if (!capturedRequestId) return null;
-      return [
-        [
-          'stream',
-          [
-            [
-              '1-0',
-              [
-                'requestId',
-                capturedRequestId,
-                'result',
-                JSON.stringify([
-                  {
-                    name: 'Lucali',
-                    address: '575 Henry St',
-                    rating: 4.8,
-                    price: '$$',
-                  },
-                ]),
-              ],
-            ],
-          ],
-        ],
-      ];
-    });
-
-    const { DirectLLMRunner } = await import('./direct-llm-runner.js');
-    const { jobRunner } = await import('../k8s/job-runner.js');
-
-    const runner = new DirectLLMRunner();
-    const result = await runner.runAgent(baseGroup, baseInput);
-
-    expect(result.status).toBe('success');
-    expect(jobRunner.createToolPodJob).toHaveBeenCalled();
-    const podJobCall = (jobRunner.createToolPodJob as ReturnType<typeof vi.fn>)
-      .mock.calls[0][0];
-    expect(podJobCall.category).toBe('places');
   });
 
   it('second runAgent call on same groupFolder receives recommendation contract in system prompt', async () => {

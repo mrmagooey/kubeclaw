@@ -543,6 +543,28 @@ tools:
     mount: none
     credentials: [brave-search]
     run: 'curl -sS -G -H "X-Subscription-Token: $BRAVE_API_KEY" --data-urlencode "q=$(cat "$INPUT_DIR/query")" --data-urlencode "count=10" "https://api.search.brave.com/res/v1/web/search"'
+  - name: places_search
+    description: >-
+      Search for local places (restaurants, cafés, shops, attractions) by free-text
+      query via the Google Places API. Put the location in the query text, e.g.
+      "ramen in Melbourne CBD". Returns the raw Google Places searchText JSON.
+    parameters:
+      type: object
+      properties:
+        query: { type: string }
+      required: [query]
+    image: curlimages/curl:latest
+    pattern: file
+    mount: none
+    credentials: [google-places]
+    run: >-
+      q=$(tr -d '\n\r' < "$INPUT_DIR/query" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g');
+      curl -sS -X POST
+      -H "Content-Type: application/json"
+      -H "X-Goog-Api-Key: $GOOGLE_PLACES_API_KEY"
+      -H "X-Goog-FieldMask: places.displayName,places.formattedAddress,places.location,places.rating,places.priceLevel,places.types,places.regularOpeningHours.openNow,places.userRatingCount"
+      --data "{\"textQuery\":\"$q\"}"
+      "$GOOGLE_PLACES_BASE_URL/v1/places:searchText"
   - name: browser
     description: Drive a real web browser (Chromium). Call snapshot to see the page (it returns the interactive elements with refs and the visible text), then click/type using a ref. Actions persist within a session.
     parameters:

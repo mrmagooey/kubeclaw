@@ -338,38 +338,6 @@ export const TOOLS: OpenAI.ChatCompletionFunctionTool[] = [
       },
     },
   },
-  {
-    type: 'function',
-    function: {
-      name: 'places_search',
-      description:
-        'Search for local places (restaurants, cafés, shops, attractions) near a given location. ' +
-        'Returns a ranked list of results with name, address, rating, price tier, and a brief description. ' +
-        'Use when the user asks for recommendations for a place to eat, visit, or shop.',
-      parameters: {
-        type: 'object',
-        properties: {
-          query: {
-            type: 'string',
-            description:
-              'What to search for, e.g. "Italian restaurants", "coffee shops", "bookstores"',
-          },
-          location: {
-            type: 'string',
-            description:
-              'Where to search, e.g. "Melbourne CBD, Australia", "Brooklyn, NY". ' +
-              'Omit to use the profile location if available.',
-          },
-          max_results: {
-            type: 'number',
-            description:
-              'Maximum number of results to return (default 5, max 10)',
-          },
-        },
-        required: ['query'],
-      },
-    },
-  },
 ];
 
 /**
@@ -382,16 +350,6 @@ export const TOOLS: OpenAI.ChatCompletionFunctionTool[] = [
 const STATIC_TOOL_NAMES: ReadonlySet<string> = new Set(
   TOOLS.map((t) => t.function.name),
 );
-
-// Translate LLM-facing tool names to the names the tool server expects
-const TOOL_SERVER_NAME: Record<string, string> = {
-  places_search: 'placesSearch',
-};
-
-// Map LLM tool name → tool pod category
-const TOOL_CATEGORY: Record<string, 'places'> = {
-  places_search: 'places',
-};
 
 // ---- Catalog tool definitions ----
 
@@ -418,9 +376,8 @@ async function executeToolViaK8s(
   spawnedCategories: Set<string>,
   maxToolOutputBytes?: number,
 ): Promise<string> {
-  const isCustomTool = !TOOL_CATEGORY[toolName];
-  const category = TOOL_CATEGORY[toolName] ?? toolName;
-  const serverToolName = TOOL_SERVER_NAME[toolName] ?? toolName;
+  const category = toolName;
+  const serverToolName = toolName;
   const requestId = crypto.randomUUID();
   const redis = getRedisClient();
 
@@ -430,10 +387,8 @@ async function executeToolViaK8s(
   // In direct (orchestrator) mode, resolve the catalog spec up front so an
   // unknown tool fails before we write an orphaned tool-call stream entry.
   const directSpec =
-    KUBECLAW_MODE !== 'channel' && isCustomTool
-      ? resolveToolByName(toolName)
-      : undefined;
-  if (KUBECLAW_MODE !== 'channel' && isCustomTool && !directSpec) {
+    KUBECLAW_MODE !== 'channel' ? resolveToolByName(toolName) : undefined;
+  if (KUBECLAW_MODE !== 'channel' && !directSpec) {
     return `Tool error: unknown tool ${toolName}`;
   }
 
@@ -475,31 +430,17 @@ async function executeToolViaK8s(
         'DirectLLMRunner: requested tool pod from orchestrator',
       );
     } else {
-      if (directSpec) {
-        await jobRunner.createSidecarToolPodJob({
-          agentJobId: toolJobId,
-          groupFolder,
-          toolName,
-          toolSpec: directSpec,
-          timeout: TOOL_TIMEOUT_MS,
-        });
-        logger.debug(
-          { toolJobId, toolName },
-          'DirectLLMRunner: spawned sidecar tool pod',
-        );
-      } else {
-        await jobRunner.createToolPodJob({
-          agentJobId: toolJobId,
-          groupFolder,
-          category: category as 'places',
-          timeout: TOOL_TIMEOUT_MS,
-          maxToolOutputBytes,
-        });
-        logger.debug(
-          { toolJobId, category },
-          'DirectLLMRunner: spawned tool pod',
-        );
-      }
+      await jobRunner.createSidecarToolPodJob({
+        agentJobId: toolJobId,
+        groupFolder,
+        toolName,
+        toolSpec: directSpec!,
+        timeout: TOOL_TIMEOUT_MS,
+      });
+      logger.debug(
+        { toolJobId, toolName },
+        'DirectLLMRunner: spawned sidecar tool pod',
+      );
     }
   }
 
@@ -1537,6 +1478,4 @@ export const __testing__ = {
   loadSystemPromptForTest: (group: string, groupsDir: string) =>
     loadSystemPrompt(group, groupsDir),
   toolsForTest: () => TOOLS,
-  toolCategoryForTest: (name: string) => TOOL_CATEGORY[name],
-  toolServerNameForTest: (name: string) => TOOL_SERVER_NAME[name],
 };

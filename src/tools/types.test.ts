@@ -34,15 +34,8 @@ describe('validateTool', () => {
     expect(validateTool({ ...base, name: 'has space' }).ok).toBe(false);
   });
 
-  it('rejects a name that collides with a static built-in', () => {
-    // web_fetch, web_search, and browser are now catalog tools and are no longer reserved
-    for (const n of ['places_search']) {
-      expect(validateTool({ ...base, name: n }).ok).toBe(false);
-    }
-  });
-
-  it('allows web_fetch, web_search, and browser as catalog tool names (no longer static built-ins)', () => {
-    for (const n of ['web_fetch', 'web_search', 'browser']) {
+  it('allows web_fetch, web_search, browser, and places_search as catalog tool names (no longer static built-ins)', () => {
+    for (const n of ['web_fetch', 'web_search', 'browser', 'places_search']) {
       expect(validateTool({ ...base, name: n }).ok).toBe(true);
     }
   });

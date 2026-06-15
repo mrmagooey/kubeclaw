@@ -126,6 +126,24 @@ vi.mock('./mcp-manager.js', () => ({
   },
 }));
 
+// Mock the tool catalog reconciler so resolveToolByName returns a valid
+// ToolSpec for 'web_fetch' (used by the maxToolOutputBytes integration test).
+vi.mock('../tools/reconciler.js', () => ({
+  resolveToolByName: vi.fn((name: string) => {
+    if (name === 'web_fetch') {
+      return {
+        name: 'web_fetch',
+        description: 'Fetch a URL',
+        parameters: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] },
+        image: 'kubeclaw-agent:latest',
+        pattern: 'http',
+      };
+    }
+    return undefined;
+  }),
+  ToolReconciler: class {},
+}));
+
 // Initialise the real in-memory SQLite DB once for this module.
 beforeAll(async () => {
   const { _initTestDatabase } = await import('../db.js');
@@ -466,11 +484,15 @@ describe('DirectLLMRunner — maxToolOutputBytes pod env injection', () => {
     } as any);
   });
 
-  it('sets maxToolOutputBytes on ToolPodJobSpec in standalone mode', async () => {
-    // Import the (mocked) jobRunner so we can inspect calls.
+  it('dispatches a catalog tool via createSidecarToolPodJob in standalone mode', async () => {
+    // places_search is now a catalog tool dispatched via sidecar (not createToolPodJob).
+    // This test verifies that a catalog tool call in standalone mode invokes
+    // createSidecarToolPodJob. The mocked reconciler returns a ToolSpec for 'web_fetch'.
     const { jobRunner } = await import('../k8s/job-runner.js');
-    const createToolPodJobMock = vi.mocked(jobRunner.createToolPodJob);
-    createToolPodJobMock.mockClear();
+    const createSidecarToolPodJobMock = vi.mocked(
+      jobRunner.createSidecarToolPodJob,
+    );
+    createSidecarToolPodJobMock.mockClear();
 
     // Configure the mock LLM to return exactly one tool call, then a text response.
     const mockCreate = vi
@@ -486,8 +508,8 @@ describe('DirectLLMRunner — maxToolOutputBytes pod env injection', () => {
                   id: 'c1',
                   type: 'function',
                   function: {
-                    name: 'places_search',
-                    arguments: '{"query":"coffee","location":"Brooklyn"}',
+                    name: 'web_fetch',
+                    arguments: '{"url":"http://example.com"}',
                   },
                 },
               ],
@@ -556,8 +578,8 @@ describe('DirectLLMRunner — maxToolOutputBytes pod env injection', () => {
       { maxToolOutputBytes: 12345 },
     );
 
-    expect(createToolPodJobMock).toHaveBeenCalledWith(
-      expect.objectContaining({ maxToolOutputBytes: 12345 }),
+    expect(createSidecarToolPodJobMock).toHaveBeenCalledWith(
+      expect.objectContaining({ toolName: 'web_fetch' }),
     );
   });
 

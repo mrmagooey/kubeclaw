@@ -1056,7 +1056,7 @@ export const TOOLS: OpenAI.ChatCompletionTool[] = [
           name: {
             type: 'string',
             description:
-              'Tool name the LLM calls (letters, digits, hyphens, underscores; must start with a letter). Must not use a reserved name (places_search, execution, places).',
+              'Tool name the LLM calls (letters, digits, hyphens, underscores; must start with a letter). Must not use a reserved name (execution, places).',
           },
           description: {
             type: 'string',

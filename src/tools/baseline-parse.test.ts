@@ -20,5 +20,6 @@ describe('rendered Helm tools baseline', () => {
     expect(names.length).toBeGreaterThan(0);
     expect(names).toContain('browser');
     expect(names).toContain('bash');
+    expect(names).toContain('places_search');
   });
 });
