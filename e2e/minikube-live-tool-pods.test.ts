@@ -19,7 +19,7 @@
  *
  * Tool-pod labels (src/k8s/job-runner.ts — createSidecarToolPodJob):
  *   Job metadata: app=kubeclaw-sidecar-tool, kubeclaw/category=<category>, kubeclaw/group, kubeclaw/agent-job
- *   Pod template:  app=kubeclaw-sidecar-tool, kubeclaw/agent-job  ← kubeclaw/category is NOT on the pod template
+ *   Pod template:  app=kubeclaw-sidecar-tool  ← kubeclaw/category and kubeclaw/agent-job are NOT on the pod template
  *
  * Tool-job labels (src/k8s/job-runner.ts:167, 789-801):
  *   Job metadata: app=kubeclaw-agent, kubeclaw/group=<groupFolder>, kubeclaw/chat-jid=<sanitised>
@@ -306,11 +306,13 @@ describe('Minikube-live: tool pod and tool job spawning via Redis IPC (direct by
       // Label layout (job-runner.ts — createSidecarToolPodJob):
       //   Job metadata labels: app=kubeclaw-sidecar-tool, kubeclaw/category, kubeclaw/group,
       //                        kubeclaw/agent-job
-      //   Pod TEMPLATE labels: app=kubeclaw-sidecar-tool, kubeclaw/agent-job
+      //   Pod TEMPLATE labels: app=kubeclaw-sidecar-tool
       //
-      // Selecting by both labels gives an exact match for this agentJobId with no
-      // need for a timestamp filter to exclude pods from prior tests.
-      const podSelector = `app=kubeclaw-sidecar-tool,kubeclaw/agent-job=${agentJobId}`;
+      // kubeclaw/agent-job is on the Job metadata only, not propagated to the pod
+      // template. kubectl get pods -l with a compound selector including
+      // kubeclaw/agent-job will never match. Use app=kubeclaw-sidecar-tool alone
+      // and rely on the sinceMs timestamp filter to exclude pods from prior tests.
+      const podSelector = 'app=kubeclaw-sidecar-tool';
       const podName = await waitForToolPod(podSelector, 90_000, testStartMs);
       expect(
         podName,
