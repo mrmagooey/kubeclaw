@@ -1128,17 +1128,6 @@ describe('cleanupToolPods', () => {
     await cleanupToolPods('nonexistent-job');
     expect(jobRunner.stopJob).not.toHaveBeenCalled();
   });
-
-  it('stops all tracked tool pods and removes them from the map', async () => {
-    // tool_pod_request no longer populates toolPodsByAgent from processTaskIpc;
-    // instead, pods are now tracked when created by startToolPodSpawnWatcher.
-    // cleanupToolPods itself is still responsible for cleaning up whatever ends
-    // up in the map, so verify it is a no-op when nothing is tracked for a job.
-    const { jobRunner } = await import('./job-runner.js');
-
-    await cleanupToolPods('tracked-job');
-    expect(jobRunner.stopJob).not.toHaveBeenCalled();
-  });
 });
 
 describe('startIpcWatcher', () => {

@@ -67,11 +67,11 @@ export type ValidationResult = { ok: true } | { ok: false; error: string };
 const NAME_RE = /^[A-Za-z][A-Za-z0-9_-]*$/;
 
 // Reserved names a catalog tool may not use:
-//  - the remaining static built-in tool names (TOOL_SERVER_NAME keys in direct-llm-runner.ts:
-//    places_search), and
-//  - the built-in spawn categories (BUILTIN_CATEGORIES in k8s/ipc-redis.ts:
-//    execution, places) — a catalog tool named after a category would be
-//    silently routed to a legacy tool pod instead of its own image.
+//  - the static built-in tool name places_search (still dispatched as a
+//    built-in; see TOOL_SERVER_NAME in direct-llm-runner.ts), and
+//  - execution and places — BUILTIN_CATEGORIES in k8s/ipc-redis.ts currently
+//    contains only "places", but both names are reserved so a catalog tool
+//    cannot collide with a current or historical built-in category name.
 // Note: web_fetch, web_search, and browser are now catalog tools and are no longer reserved.
 const RESERVED_NAMES = new Set(['places_search', 'execution', 'places']);
 

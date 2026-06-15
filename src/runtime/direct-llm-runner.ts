@@ -2,8 +2,8 @@
  * DirectLLMRunner — calls an OpenAI-compatible API directly inside the
  * orchestrator process or a channel pod. No Kubernetes Job is spawned for
  * chat. Conversation history is persisted in SQLite per group. When the LLM
- * calls a tool, execution is delegated to a K8s tool pod (places / execution
- * categories) or a full K8s tool job (execute_agent).
+ * calls a tool, execution is delegated to a K8s tool pod (places category)
+ * or a full K8s tool job (execute_agent).
  *
  * Configure via environment variables (see src/runtime/llm-client.ts).
  */
@@ -389,7 +389,7 @@ const TOOL_SERVER_NAME: Record<string, string> = {
 };
 
 // Map LLM tool name → tool pod category
-const TOOL_CATEGORY: Record<string, 'browser' | 'execution' | 'places'> = {
+const TOOL_CATEGORY: Record<string, 'places'> = {
   places_search: 'places',
 };
 

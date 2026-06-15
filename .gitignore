@@ -1,5 +1,6 @@
 # Dependencies
-node_modules/
+# Bare (no trailing slash) so worktree node_modules symlinks are ignored too.
+node_modules
 .npm-cache/
 # Build output
 dist/
