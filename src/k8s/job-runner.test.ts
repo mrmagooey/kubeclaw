@@ -1856,7 +1856,9 @@ describe('JobRunner', () => {
       vi.mocked(configModule.getInjectionMode).mockReturnValue('sidecar');
     });
 
-    it('appends credential-sidecar container, strips API key envs, adds HTTPS_PROXY', () => {
+    it('appends credential-sidecar container and adds HTTPS_PROXY (raw keys pass through without catalog)', () => {
+      // Without catalog entries the LLM key stripping is entirely catalog-driven.
+      // The sidecar machinery only adds the Envoy container and proxy env vars.
       const manifest = jobRunner.generateJobManifest(credInjectionSpec);
       const containers = manifest.spec?.template?.spec?.containers ?? [];
       expect(containers).toHaveLength(2);
@@ -1865,9 +1867,9 @@ describe('JobRunner', () => {
       );
       const main = containers.find((c) => c.name !== 'credential-sidecar')!;
       const envNames = (main.env ?? []).map((e) => e.name);
-      expect(envNames).not.toContain('ANTHROPIC_API_KEY');
-      expect(envNames).not.toContain('OPENAI_API_KEY');
-      expect(envNames).not.toContain('OPENROUTER_API_KEY');
+      // Keys pass through as secretKeyRefs when no catalog covers them
+      expect(envNames).toContain('ANTHROPIC_API_KEY');
+      // Non-LLM token envs are never injected by job-runner
       expect(envNames).not.toContain('ANTHROPIC_AUTH_TOKEN');
       expect(envNames).not.toContain('CLAUDE_CODE_OAUTH_TOKEN');
       expect(envNames).toContain('HTTPS_PROXY');
@@ -1911,17 +1913,17 @@ describe('JobRunner', () => {
       vi.mocked(configModule.getAuditOnly).mockReturnValue(false);
     });
 
-    it('substitutes API key envs with placeholder and does NOT add HTTPS_PROXY when mode=istio', () => {
+    it('keeps raw secretKeyRef envs and does NOT add HTTPS_PROXY when mode=istio and no catalog', () => {
+      // Without catalog entries, no substitution occurs. Keys pass through as secretKeyRefs.
+      // Istio iptables handles routing so HTTPS_PROXY is not needed.
       const manifest = jobRunner.generateJobManifest(credInjectionSpec);
       const env = manifest.spec?.template?.spec?.containers?.[0]?.env ?? [];
       const envNames = env.map((e) => e.name);
-      // Keys must still be present (as placeholder) so SDK constructors don't throw
+      // Keys are present as raw secretKeyRefs (catalog not present to replace them)
       expect(envNames).toContain('ANTHROPIC_API_KEY');
       expect(envNames).toContain('OPENAI_API_KEY');
-      // Values must be the placeholder, not the real secret
       const anthropicKey = env.find((e) => e.name === 'ANTHROPIC_API_KEY');
-      expect(anthropicKey?.value).toBe('injected-by-broker');
-      expect(anthropicKey?.valueFrom).toBeUndefined();
+      expect(anthropicKey?.valueFrom?.secretKeyRef).toBeDefined();
       // istio mode does not add HTTPS_PROXY (Istio iptables handles routing)
       expect(envNames).not.toContain('HTTPS_PROXY');
     });
@@ -1952,11 +1954,13 @@ describe('JobRunner', () => {
       );
     });
 
-    it('substitutes API key envs with the literal "injected-by-broker" placeholder', () => {
+    it('keeps raw secretKeyRef envs without catalog (catalog drives "injected-by-broker" for no-fallback entries)', () => {
+      // Without catalog entries, raw secretKeyRef envs pass through unchanged in istio mode.
+      // The "injected-by-broker" literal is only emitted by buildCatalogEnvs when an entry
+      // has allowOperatorFallback=false and no group credential is registered.
       const manifest = jobRunner.generateJobManifest(credInjectionSpec);
       const env = manifest.spec?.template?.spec?.containers?.[0]?.env ?? [];
       const named = (n: string) => env.find((e: any) => e.name === n);
-      // credInjectionSpec uses provider=claude; keys present for that provider:
       for (const key of [
         'OPENAI_API_KEY',
         'ANTHROPIC_API_KEY',
@@ -1964,30 +1968,23 @@ describe('JobRunner', () => {
       ]) {
         const entry = named(key);
         expect(entry, `${key} entry exists`).toBeDefined();
-        expect(entry).toMatchObject({ name: key, value: 'injected-by-broker' });
-        expect(entry!.valueFrom).toBeUndefined();
+        // Raw secretKeyRef passes through; value is undefined when valueFrom is set
+        expect(entry!.valueFrom?.secretKeyRef).toBeDefined();
       }
     });
 
-    it('substitutes BASE_URL envs with http:// literal values', () => {
+    it('keeps raw BASE_URL secretKeyRef envs without catalog (http:// base URLs come from catalog baseUrlEnvs)', () => {
+      // Without catalog entries, BASE_URL envs pass through as configured by the built-in
+      // provider env injection. The http:// base URL rewriting is now catalog-driven.
       const manifest = jobRunner.generateJobManifest(credInjectionSpec);
       const env = manifest.spec?.template?.spec?.containers?.[0]?.env ?? [];
       const named = (n: string) => env.find((e: any) => e.name === n);
-      expect(named('OPENAI_BASE_URL')).toMatchObject({
-        value: 'http://api.openai.com',
-      });
-      expect(named('ANTHROPIC_BASE_URL')).toMatchObject({
-        value: 'http://api.anthropic.com',
-      });
-      expect(named('OPENROUTER_BASE_URL')).toMatchObject({
-        value: 'http://openrouter.ai',
-      });
-      for (const key of [
-        'OPENAI_BASE_URL',
-        'ANTHROPIC_BASE_URL',
-        'OPENROUTER_BASE_URL',
-      ]) {
-        expect(named(key)!.valueFrom).toBeUndefined();
+      // Built-in envs inject ANTHROPIC_BASE_URL via secretKeyRef; without catalog they stay
+      const anthropicBase = named('ANTHROPIC_BASE_URL');
+      expect(anthropicBase).toBeDefined();
+      // value may be a literal or secretKeyRef depending on built-in injection; never http:// without catalog
+      if (anthropicBase?.value) {
+        expect(anthropicBase.value).not.toBe('http://api.anthropic.com');
       }
     });
 
@@ -2101,6 +2098,79 @@ describe('JobRunner', () => {
     });
   });
 
+  describe('generateJobManifest — catalog drives LLM keys (Task 3)', () => {
+    // Fake openai catalog entry matching the values.yaml definition from Task 1
+    const openaiCatalogEntry = {
+      id: 'openai',
+      host: 'api.openai.com',
+      upstreamPort: 443,
+      credentialFields: [{ name: 'api_key', envVar: 'OPENAI_API_KEY' }],
+      baseUrlEnvs: { OPENAI_BASE_URL: 'http://api.openai.com/v1' },
+      allowOperatorFallback: true,
+      allowedPositions: ['header' as const],
+    };
+
+    const specWithOpenaiCatalog = {
+      ...makeSpec(),
+      catalogEntries: [openaiCatalogEntry],
+      groupPlaceholders: {}, // no group-registered credential
+    };
+
+    beforeEach(() => {
+      vi.mocked(configModule.getInjectionMode).mockImplementation(() => {
+        const raw = process.env.CREDENTIAL_INJECTION_MODE;
+        if (raw === 'sidecar' || raw === 'istio') return raw;
+        return 'off';
+      });
+      vi.mocked(configModule.getAuditOnly).mockReturnValue(false);
+    });
+
+    afterEach(() => {
+      delete process.env.CREDENTIAL_INJECTION_MODE;
+    });
+
+    it('sidecar mode: catalog entry produces KC_PH_FALLBACK_openai and base URL; no raw secretKeyRef', () => {
+      process.env.CREDENTIAL_INJECTION_MODE = 'sidecar';
+      const manifest = jobRunner.generateJobManifest(specWithOpenaiCatalog);
+      const env = manifest.spec!.template.spec!.containers[0].env as Array<{
+        name: string;
+        value?: string;
+        valueFrom?: object;
+      }>;
+
+      const apiKeyEnv = env.find((e) => e.name === 'OPENAI_API_KEY');
+      expect(apiKeyEnv, 'OPENAI_API_KEY env must be present').toBeDefined();
+      expect(apiKeyEnv?.value).toBe('KC_PH_FALLBACK_openai');
+      expect(apiKeyEnv?.valueFrom).toBeUndefined();
+
+      const baseUrlEnv = env.find((e) => e.name === 'OPENAI_BASE_URL');
+      expect(baseUrlEnv, 'OPENAI_BASE_URL env must be present').toBeDefined();
+      expect(baseUrlEnv?.value).toBe('http://api.openai.com/v1');
+      expect(baseUrlEnv?.valueFrom).toBeUndefined();
+    });
+
+    it('istio mode: catalog entry produces KC_PH_FALLBACK_openai (NOT injected-by-broker) and base URL', () => {
+      process.env.CREDENTIAL_INJECTION_MODE = 'istio';
+      const manifest = jobRunner.generateJobManifest(specWithOpenaiCatalog);
+      const env = manifest.spec!.template.spec!.containers[0].env as Array<{
+        name: string;
+        value?: string;
+        valueFrom?: object;
+      }>;
+
+      const apiKeyEnv = env.find((e) => e.name === 'OPENAI_API_KEY');
+      expect(apiKeyEnv, 'OPENAI_API_KEY env must be present').toBeDefined();
+      expect(apiKeyEnv?.value).toBe('KC_PH_FALLBACK_openai');
+      expect(apiKeyEnv?.value).not.toBe('injected-by-broker');
+      expect(apiKeyEnv?.valueFrom).toBeUndefined();
+
+      const baseUrlEnv = env.find((e) => e.name === 'OPENAI_BASE_URL');
+      expect(baseUrlEnv, 'OPENAI_BASE_URL env must be present').toBeDefined();
+      expect(baseUrlEnv?.value).toBe('http://api.openai.com/v1');
+      expect(baseUrlEnv?.valueFrom).toBeUndefined();
+    });
+  });
+
   describe('generateJobManifest: credential injection env stripping', () => {
     const runner = new JobRunner();
 
@@ -2122,15 +2192,20 @@ describe('JobRunner', () => {
       delete process.env.CREDENTIAL_INJECTION_AUDIT_ONLY;
     });
 
-    it('strips API key envs when mode=sidecar and auditOnly=false', () => {
+    it('raw API key envs pass through in mode=sidecar without catalog (stripping is catalog-driven)', () => {
+      // The old STRIPPED_WHEN_INJECTED set has been removed. Without catalog entries covering
+      // the LLM keys, the raw secretKeyRef envs pass through in sidecar mode.
       process.env.CREDENTIAL_INJECTION_MODE = 'sidecar';
       process.env.CREDENTIAL_INJECTION_AUDIT_ONLY = 'false';
       const manifest = runner.generateJobManifest(makeSpec());
       const agentEnv = manifest.spec!.template.spec!.containers[0]
         .env as Array<{ name: string }>;
       const names = agentEnv.map((e) => e.name);
-      expect(names).not.toContain('ANTHROPIC_API_KEY');
-      expect(names).not.toContain('OPENROUTER_API_KEY');
+      // Keys pass through as secretKeyRefs; catalog would replace them with placeholders
+      expect(names).toContain('ANTHROPIC_API_KEY');
+      expect(names).toContain('OPENROUTER_API_KEY');
+      // Sidecar proxy env still gets injected
+      expect(names).toContain('HTTPS_PROXY');
     });
 
     it('does NOT strip API key envs when mode=sidecar and auditOnly=true', () => {
@@ -2168,18 +2243,19 @@ describe('JobRunner', () => {
       expect(names).toContain('ANTHROPIC_API_KEY');
     });
 
-    it('mode=istio: substitutes API keys with placeholder, no HTTPS_PROXY, no credential-sidecar container', () => {
+    it('mode=istio: raw API key envs pass through without catalog; no HTTPS_PROXY, no credential-sidecar', () => {
+      // The old applyIstioModeEnvSubstitution function has been removed. Without catalog entries,
+      // raw secretKeyRef envs pass through unchanged. Catalog drives the placeholder substitution.
       process.env.CREDENTIAL_INJECTION_MODE = 'istio';
       process.env.CREDENTIAL_INJECTION_AUDIT_ONLY = 'false';
       const manifest = runner.generateJobManifest(makeSpec());
       const agentEnv = manifest.spec!.template.spec!.containers[0]
         .env as Array<{ name: string; value?: string; valueFrom?: object }>;
       const names = agentEnv.map((e) => e.name);
-      // Keys must be present with placeholder value (not stripped)
+      // Keys are present as raw secretKeyRefs (no catalog to replace them)
       expect(names).toContain('ANTHROPIC_API_KEY');
       const anthropicKey = agentEnv.find((e) => e.name === 'ANTHROPIC_API_KEY');
-      expect(anthropicKey?.value).toBe('injected-by-broker');
-      expect(anthropicKey?.valueFrom).toBeUndefined();
+      expect(anthropicKey?.valueFrom?.secretKeyRef).toBeDefined();
       // istio mode does not add HTTPS_PROXY
       expect(names).not.toContain('HTTPS_PROXY');
       const containerNames = manifest.spec!.template.spec!.containers.map(

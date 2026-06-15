@@ -186,63 +186,6 @@ export function buildJobName(folder: string): string {
   return `${prefix}-${truncated}-${suffix}`;
 }
 
-/**
- * Credential env-var names the chart manages. In mode=sidecar these are
- * stripped (the per-pod Envoy adds Authorization on every request via
- * ext_authz); in mode=istio (auditOnly=false) they are SUBSTITUTED with
- * a placeholder so SDKs that enforce client-side key presence still
- * construct, with the real credential added by the gateway's ext_authz
- * response on each request.
- */
-const STRIPPED_WHEN_INJECTED = new Set([
-  'OPENAI_API_KEY',
-  'OPENROUTER_API_KEY',
-  'ANTHROPIC_API_KEY',
-  'VOYAGE_API_KEY',
-]);
-
-/**
- * In mode=istio, API key envs are replaced with this literal string instead of
- * being stripped.  SDKs like the OpenAI client enforce client-side key presence
- * and throw at construction if the env is absent.  The gateway's ext_authz
- * response overwrites the Authorization header on every request, so this
- * placeholder never leaves the cluster.
- */
-const ISTIO_API_KEY_PLACEHOLDER = 'injected-by-broker';
-
-/**
- * Provider BASE_URL envs that must point at the http:// (non-TLS) hostname so
- * traffic routes through the Istio egress gateway rather than being sent
- * directly over TLS (which would bypass the gateway's ext_authz filter).
- */
-const ISTIO_BASE_URLS: Record<string, string> = {
-  OPENAI_BASE_URL: 'http://api.openai.com',
-  ANTHROPIC_BASE_URL: 'http://api.anthropic.com',
-  OPENROUTER_BASE_URL: 'http://openrouter.ai',
-};
-
-/**
- * Substitute credential envs for mode=istio workloads.
- *
- * - API key envs: replaced with the literal placeholder string so SDK
- *   constructors are satisfied, but the gateway overwrites the header before
- *   the request reaches the upstream provider.
- * - BASE_URL envs: replaced with http:// literals so the SDK targets the
- *   egress gateway listener (which expects plain HTTP from the sidecar).
- */
-function applyIstioModeEnvSubstitution(
-  env: Array<{ name: string; value?: string; valueFrom?: object }>,
-): Array<{ name: string; value?: string; valueFrom?: object }> {
-  return env.map((e) => {
-    if (STRIPPED_WHEN_INJECTED.has(e.name) && e.valueFrom) {
-      return { name: e.name, value: ISTIO_API_KEY_PLACEHOLDER };
-    }
-    if (e.name in ISTIO_BASE_URLS) {
-      return { name: e.name, value: ISTIO_BASE_URLS[e.name] };
-    }
-    return e;
-  });
-}
 
 /** Sentinel stamped when a catalog entry has `allowOperatorFallback: true` and the group
  * has not registered its own credential. The broker maps this to the operator's key from
@@ -282,8 +225,8 @@ function buildCatalogEnvs(
         // Unregistered + operator fallback allowed — static sentinel; broker maps to operator key
         value = `${FALLBACK_SENTINEL_PREFIX}${entry.id}`;
       } else {
-        // Unregistered + no fallback — fail-closed literal
-        value = ISTIO_API_KEY_PLACEHOLDER;
+        // Unregistered + no fallback — fail-closed literal; broker won't substitute
+        value = 'injected-by-broker';
       }
       envs.push({ name: field.envVar, value });
     }
@@ -1001,18 +944,15 @@ export class JobRunner {
     }
 
     // Credential injection env transformation.
-    // - sidecar mode: strip API key envs entirely; add HTTPS_PROXY to route
-    //   traffic through the per-pod Envoy sidecar.  In audit-only mode the
-    //   keys are kept but HTTPS_PROXY is still set so the broker can observe.
-    // - istio mode: substitute API key envs with a literal placeholder string
-    //   (so SDK constructors don't throw) and set provider BASE_URL envs to
-    //   http:// hostnames (so the SDK targets the egress gateway listener).
-    //   The gateway's ext_authz response overwrites Authorization on every
-    //   request, so the placeholder never reaches the upstream provider.
-    //   In audit-only mode no substitution is performed.
+    // LLM provider keys (openai/anthropic/openrouter/voyage) are now catalog entries.
+    // buildCatalogEnvs replaces their raw secretKeyRef envs with KC_PH_… placeholders
+    // when injection is on and not in audit-only mode.  In audit-only mode, raw keys
+    // are preserved so the broker can observe them.
     //
-    // When catalog entries are present (operator has a catalog configured),
-    // catalog-driven env substitution replaces hard-coded per-built-in logic.
+    // sidecar mode: adds HTTPS_PROXY so Node fetch routes through the per-pod Envoy.
+    //   In audit-only mode the raw secretKeyRef keys are kept; HTTPS_PROXY is still set.
+    // istio mode: baseEnvVars already contain the catalog placeholders (or raw keys in
+    //   audit-only) — no per-key substitution needed; Istio iptables handles routing.
     const injectionMode = getInjectionMode();
     const auditOnly = getAuditOnly();
 
@@ -1037,20 +977,16 @@ export class JobRunner {
     }
 
     let finalEnv: Array<{ name: string; value?: string; valueFrom?: object }>;
-    if (injectionMode === 'istio' && !auditOnly) {
-      finalEnv = applyIstioModeEnvSubstitution(baseEnvVars);
-    } else if (injectionMode === 'sidecar' && !auditOnly) {
-      finalEnv = [
-        ...baseEnvVars.filter((e) => !STRIPPED_WHEN_INJECTED.has(e.name)),
-        ...workloadEnvForSidecar({ port: CREDENTIAL_SIDECAR_PORT }),
-      ];
-    } else if (injectionMode === 'sidecar') {
-      // auditOnly=true: keep keys, but still add HTTPS_PROXY for broker observation
+    if (injectionMode === 'sidecar') {
+      // sidecar (active or audit-only): always add HTTPS_PROXY so the per-pod Envoy
+      // can observe / intercept traffic.  In audit-only the raw keys survive; active
+      // mode has already had them replaced by catalog placeholders above.
       finalEnv = [
         ...baseEnvVars,
         ...workloadEnvForSidecar({ port: CREDENTIAL_SIDECAR_PORT }),
       ];
     } else {
+      // istio (transparent) or off: baseEnvVars already has the right keys
       finalEnv = baseEnvVars;
     }
 
