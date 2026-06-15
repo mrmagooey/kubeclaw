@@ -16,8 +16,9 @@ export function workloadEnvForSidecar(
     { name: ENV_HTTPS_PROXY, value: proxy },
     { name: ENV_HTTP_PROXY, value: proxy },
     {
+      // keep in sync with helm/kubeclaw/templates/_helpers.tpl kubeclaw.credentialSidecarEnv
       name: ENV_NO_PROXY,
-      value: 'localhost,127.0.0.1,kubeclaw-redis,credential-broker',
+      value: 'localhost,127.0.0.1,kubeclaw-redis,kubeclaw-credential-broker,ollama,kubeclaw-qdrant,.svc,.svc.cluster.local,.cluster.local',
     },
     { name: ENV_NODE_EXTRA_CA, value: '/etc/ssl/certs/kubeclaw-egress-ca.crt' },
     { name: ENV_SSL_CERT_FILE, value: '/etc/ssl/certs/kubeclaw-egress-ca.crt' },

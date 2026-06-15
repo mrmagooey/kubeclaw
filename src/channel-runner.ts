@@ -28,6 +28,7 @@ import './channels/index.js'; // self-register all channel factories
 import { getChannelFactory } from './channels/registry.js';
 import { loadChannelPlugins } from './channels/plugin-loader.js';
 import { getDirectLLMRunner, shutdownAllRunners } from './runtime/index.js';
+import { installProxyDispatcher } from './runtime/proxy-dispatcher.js';
 import {
   setCapability,
   deleteCapability,
@@ -3256,6 +3257,7 @@ export function _setSpecialistCatalogForTesting(
 // ── Main ─────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
+  installProxyDispatcher();
   // Start the specialist catalog watcher before the message loop.
   (specialistCatalog as SpecialistCatalogLoader).start?.();
   toolCatalog.start();

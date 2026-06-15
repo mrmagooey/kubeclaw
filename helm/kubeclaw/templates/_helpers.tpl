@@ -106,7 +106,8 @@ Caller must have already gated on .Values.credentialInjection.mode == "sidecar".
 {{- define "kubeclaw.credentialSidecarEnv" -}}
 - { name: HTTPS_PROXY,        value: "http://127.0.0.1:{{ .Values.credentialInjection.sidecar.listenPort }}" }
 - { name: HTTP_PROXY,         value: "http://127.0.0.1:{{ .Values.credentialInjection.sidecar.listenPort }}" }
-- { name: NO_PROXY,           value: "localhost,127.0.0.1,kubeclaw-redis,kubeclaw-credential-broker" }
+{{/* keep in sync with src/credential-injection/workload-env.ts workloadEnvForSidecar */}}
+- { name: NO_PROXY,           value: "localhost,127.0.0.1,kubeclaw-redis,kubeclaw-credential-broker,ollama,kubeclaw-qdrant,.svc,.svc.cluster.local,.cluster.local" }
 - { name: NODE_EXTRA_CA_CERTS, value: "/etc/ssl/certs/kubeclaw-egress-ca.crt" }
 - { name: SSL_CERT_FILE,       value: "/etc/ssl/certs/kubeclaw-egress-ca.crt" }
 {{- end -}}

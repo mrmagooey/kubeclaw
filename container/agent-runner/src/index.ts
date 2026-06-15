@@ -42,6 +42,7 @@ import { RedisIPCClient } from './redis/ipc-client.js';
 import { buildModel, getApiKeyForProvider } from './model.js';
 import type { CatalogTool } from './tool-catalog.js';
 import { loadCatalog } from './tool-catalog.js';
+import { installProxyDispatcher } from './proxy-dispatcher.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -1584,6 +1585,7 @@ async function runBootstrapMode(redis: RedisClientType): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  installProxyDispatcher();
   // Bootstrap mode short-circuit — when KUBECLAW_BOOTSTRAP_SKILL is set, this
   // image runs as a channel bootstrap Job (Stories 174-184). Skip stdin/IPC
   // setup entirely and drive the skill-loaded agent loop directly.

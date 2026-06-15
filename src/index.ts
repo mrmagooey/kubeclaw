@@ -21,6 +21,7 @@ import {
   getDirectLLMRunner,
   shutdownAllRunners,
 } from './runtime/index.js';
+import { installProxyDispatcher } from './runtime/proxy-dispatcher.js';
 import {
   recordBootstrapTerminal,
   getAllChats,
@@ -257,6 +258,7 @@ export function _resetState(): void {
 }
 
 async function main(): Promise<void> {
+  installProxyDispatcher();
   if (KUBECLAW_MODE === 'credential-broker') {
     const { startBroker } = await import('./credential-broker/index.js');
     await startBroker();
