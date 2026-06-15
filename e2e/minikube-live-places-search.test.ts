@@ -11,7 +11,7 @@
  *
  *   1. Write a tool call to kubeclaw:toolcalls:<agentJobId>:places_search
  *   2. XADD kubeclaw:spawn-tool-pod with category=places_search
- *   3. Assert the sidecar tool pod (app=kubeclaw-sidecar-tool,kubeclaw/agent-job=<id>) appears within 90 s
+ *   3. Assert the sidecar tool pod (app=kubeclaw-sidecar-tool) appears within 90 s
  *   4. Assert kubeclaw:toolresults:<agentJobId>:places_search receives a result
  *      within 120 s — the result may be an auth error from Google (HTTP 403) or
  *      a valid JSON body, either proves the sidecar bridge executed curl and the
@@ -39,7 +39,7 @@
  *
  * Hard assertions:
  *   - POST /message (provisioned gate) — cluster is live
- *   - Sidecar tool pod (app=kubeclaw-sidecar-tool,kubeclaw/agent-job=<id>) appears within 90 s of spawn
+ *   - Sidecar tool pod (app=kubeclaw-sidecar-tool) appears within 90 s of spawn
  *   - kubeclaw:toolresults:<id>:places_search receives an entry within 120 s
  *   - The result entry has the correct requestId field
  *   - The result field is non-empty (curl produced output)
@@ -189,7 +189,7 @@ describe('Minikube-live: places_search via file-bridge sidecar (Google searchTex
   //
   // Writes a tool call directly to kubeclaw:toolcalls:<id>:places_search, then
   // publishes kubeclaw:spawn-tool-pod with category=places_search. Asserts that:
-  //   1. The sidecar tool pod (app=kubeclaw-sidecar-tool,kubeclaw/agent-job=<id>) appears within 90 s.
+  //   1. The sidecar tool pod (app=kubeclaw-sidecar-tool) appears within 90 s.
   //   2. kubeclaw:toolresults:<id>:places_search receives an entry within 120 s.
   //   3. The result entry carries the correct requestId.
   //   4. The result field is non-empty (curl ran and produced output, whether that
@@ -250,13 +250,14 @@ describe('Minikube-live: places_search via file-bridge sidecar (Google searchTex
       console.log(`places_search: waiting for tool pod (agentJobId=${agentJobId})...`);
 
       // Hard assertion: the sidecar tool pod must appear within 90 s.
-      // Catalog tools spawn via createSidecarToolPodJob, which labels the pod
-      // `app=kubeclaw-sidecar-tool` (job-runner.ts ~1886/1898) plus
-      // `kubeclaw/agent-job=<agentJobId>`. (The old `app=kubeclaw-tool-pod`
-      // category pods were removed when createToolPodJob was deleted.) The
-      // agent-job label uniquely identifies THIS call's pod — same selector
-      // pattern as web-tools-manifest.test.ts / tool-pod-spawn.test.ts.
-      const podSelector = `app=kubeclaw-sidecar-tool,kubeclaw/agent-job=${agentJobId}`;
+      // Catalog tools spawn via createSidecarToolPodJob, which labels the POD
+      // template `app=kubeclaw-sidecar-tool` only (job-runner.ts ~1898). The
+      // `kubeclaw/agent-job=<id>` label is on the JOB metadata, NOT the pod
+      // template, so a pod query (waitForToolPod = `kubectl get pods`) must use
+      // `app=kubeclaw-sidecar-tool` alone and rely on the sinceMs timestamp
+      // filter to exclude prior pods. (The old `app=kubeclaw-tool-pod` category
+      // pods were removed when createToolPodJob was deleted.)
+      const podSelector = `app=kubeclaw-sidecar-tool`;
       const podName = await waitForToolPod(podSelector, 90_000, testStartMs);
       expect(
         podName,
