@@ -242,3 +242,126 @@ describe('Resolver — substitution map', () => {
     expect(result.status).toBe('unknown_destination');
   });
 });
+
+describe('Resolver — LLM catalog entries supersede mappings', () => {
+  function makeSrc(): K8sSecretSource {
+    return new K8sSecretSource({ readSecret: vi.fn(), cacheTtlMs: 0 });
+  }
+
+  const openaiEntry = {
+    id: 'openai',
+    host: 'api.openai.com',
+    upstreamPort: 443,
+    credentialFields: [{ name: 'api_key', envVar: 'OPENAI_API_KEY' }],
+    baseUrlEnvs: { OPENAI_BASE_URL: 'http://api.openai.com/v1' },
+    allowOperatorFallback: true,
+    allowedPositions: ['header' as const],
+    apiKeyShape: { prefix: 'sk-', minLength: 20 },
+  };
+
+  it('operator-fallback: no group credential → resolves with KC_PH_FALLBACK_openai', async () => {
+    // A group exists but has no registered OpenAI credential. The broker should
+    // fall back to the operator key via allowOperatorFallback.
+    const src = makeSrc();
+    const reader = vi.fn().mockResolvedValue('sk-fake-operator-key');
+    const r = new Resolver({
+      mappings: [], // No legacy mapping for api.openai.com — catalog must win.
+      catalog: [openaiEntry],
+      groupSource: src,
+      operatorSecretReader: reader,
+    });
+
+    const result = await r.resolveSubstitutionMapAsync({
+      identity: 'sa/kubeclaw-tool-job',
+      ownerGroup: 'some-group',
+      host: 'api.openai.com',
+    });
+
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok') throw new Error('narrowing');
+    expect(result.keySource).toBe('operatorFallback');
+    expect(result.catalogId).toBe('openai');
+    expect(result.substitutions).toEqual([
+      { placeholder: 'KC_PH_FALLBACK_openai', value: 'sk-fake-operator-key' },
+    ]);
+    // operatorSecretReader called with catalog id, not hyphenated key
+    expect(reader).toHaveBeenCalledWith('openai');
+  });
+
+  it('per-group: group credential registered → resolves with group placeholder', async () => {
+    const src = makeSrc();
+    // Simulate a group that has registered its own OpenAI key.
+    src.applyGroupSecretEvent({
+      type: 'ADDED',
+      secret: {
+        metadata: {
+          name: 'kubeclaw-group-secrets-myteam',
+          labels: { 'kubeclaw.io/group-secrets': 'true' },
+        },
+        data: {
+          openai: Buffer.from(
+            JSON.stringify({
+              fields: {
+                api_key: {
+                  value: 'sk-group-key-abcdef',
+                  placeholder: 'KC_PH_api_key_myteam_1234',
+                },
+              },
+              registeredAt: '2026-06-15T00:00:00Z',
+            }),
+          ).toString('base64'),
+        },
+      },
+    });
+
+    const reader = vi.fn().mockResolvedValue('sk-fake-operator-key');
+    const r = new Resolver({
+      mappings: [],
+      catalog: [openaiEntry],
+      groupSource: src,
+      operatorSecretReader: reader,
+    });
+
+    const result = await r.resolveSubstitutionMapAsync({
+      identity: 'sa/kubeclaw-tool-job',
+      ownerGroup: 'myteam',
+      host: 'api.openai.com',
+    });
+
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok') throw new Error('narrowing');
+    expect(result.keySource).toBe('groupSecret');
+    expect(result.catalogId).toBe('openai');
+    expect(result.substitutions).toEqual([
+      { placeholder: 'KC_PH_api_key_myteam_1234', value: 'sk-group-key-abcdef' },
+    ]);
+    // Operator reader should NOT be called — group key wins.
+    expect(reader).not.toHaveBeenCalled();
+  });
+
+  it('no-mapping: api.openai.com is not in mappings, only catalog resolves it', () => {
+    // Confirm the catalog path (not mappings) handles api.openai.com.
+    // This verifies the LLM mappings retirement: the old mappings entries are gone.
+    const r = new Resolver({
+      mappings: [], // retired LLM mappings
+      catalog: [openaiEntry],
+      groupSource: makeSrc(),
+      operatorSecretReader: vi.fn(),
+    });
+
+    // find() is the legacy mappings path — should return undefined for openai
+    const mapping = r.find({ destination: 'api.openai.com', identity: 'sa/kubeclaw-tool-job' });
+    expect(mapping).toBeUndefined();
+
+    // The catalog path should recognise the host
+    const result = r.resolveSubstitutionMap({
+      identity: 'sa/kubeclaw-tool-job',
+      ownerGroup: 'some-group',
+      host: 'api.openai.com',
+    });
+    // no_credential because no group key registered (not unknown_destination)
+    expect(result.status).toBe('no_credential');
+    if (result.status !== 'no_credential') throw new Error('narrowing');
+    expect(result.catalogId).toBe('openai');
+  });
+});

@@ -97,6 +97,10 @@ secrets:
   embeddingModel: ""
   # Optional: default model for DirectLLMRunner / AdminShell (e.g. gpt-4o, openai/gpt-4o)
   directLlmModel: ""
+  # Optional: OpenRouter API key (https://openrouter.ai/) — for agent jobs using openrouter provider.
+  openrouterApiKey: ""
+  # Optional: Voyage AI API key (https://www.voyageai.com/) — for Voyage embeddings.
+  voyageApiKey: ""
   # Admin HTTP interface password. Auto-generated on first install if left empty.
   adminHttpPassword: ""
   # Set to use an existing Secret instead of creating one from the values above.
@@ -444,6 +448,55 @@ credentialInjection:
       allowOperatorFallback: false
       allowedPositions: [header]
       apiKeyShape: { prefix: "AIza", minLength: 39 }
+    - id: openai
+      host: api.openai.com
+      upstreamPort: 443
+      credentialFields:
+        - { name: api_key, envVar: OPENAI_API_KEY }
+      baseUrlEnvs:
+        # http:// scheme is intentional — Envoy originates TLS upstream; cleartext
+        # hop is loopback (sidecar) or mesh-mTLS (istio), never the external wire.
+        # /v1 suffix required: pi-ai and the OpenAI SDK append paths like
+        # /chat/completions to this base URL, so it must end at /v1.
+        OPENAI_BASE_URL: "http://api.openai.com/v1"
+      allowOperatorFallback: true
+      allowedPositions: [header]
+      apiKeyShape: { prefix: "sk-", minLength: 20 }
+    - id: anthropic
+      host: api.anthropic.com
+      upstreamPort: 443
+      credentialFields:
+        - { name: api_key, envVar: ANTHROPIC_API_KEY }
+      baseUrlEnvs:
+        # Bare host — pi-ai's anthropic-messages api uses the host directly and
+        # appends its own paths (e.g. /v1/messages). No trailing path here.
+        ANTHROPIC_BASE_URL: "http://api.anthropic.com"
+      allowOperatorFallback: true
+      allowedPositions: [header]
+      apiKeyShape: { prefix: "sk-ant-", minLength: 20 }
+    - id: openrouter
+      host: openrouter.ai
+      upstreamPort: 443
+      credentialFields:
+        - { name: api_key, envVar: OPENROUTER_API_KEY }
+      baseUrlEnvs:
+        # /api/v1 suffix required: pi-ai defaults https://openrouter.ai/api/v1
+        # and appends paths like /chat/completions to this base URL.
+        OPENROUTER_BASE_URL: "http://openrouter.ai/api/v1"
+      allowOperatorFallback: true
+      allowedPositions: [header]
+      apiKeyShape: { prefix: "sk-or-", minLength: 20 }
+    - id: voyage
+      host: api.voyageai.com
+      upstreamPort: 443
+      credentialFields:
+        - { name: api_key, envVar: VOYAGE_API_KEY }
+      baseUrlEnvs:
+        # Bare host — embedding-client.ts posts to ${VOYAGE_BASE_URL}/v1/embeddings,
+        # so the base URL must be the bare host without any path suffix.
+        VOYAGE_BASE_URL: "http://api.voyageai.com"
+      allowOperatorFallback: true
+      allowedPositions: [header]
   #   - id: replicate
   #     host: api.replicate.com
   #     upstreamPort: 443
