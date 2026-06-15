@@ -14,6 +14,10 @@
  *                        Defaults to OPENAI_BASE_URL if unset.
  *   OPENAI_API_KEY     — reused for OpenAI embeddings
  *   VOYAGE_API_KEY     — required when EMBEDDING_PROVIDER=voyage
+ *   VOYAGE_BASE_URL    — optional base URL for Voyage AI (bare host, no
+ *                        trailing slash). Defaults to https://api.voyageai.com.
+ *                        Set by the credential broker to route traffic through
+ *                        the Envoy proxy.
  */
 
 import OpenAI from 'openai';
@@ -86,7 +90,9 @@ async function embedVoyage(texts: string[]): Promise<number[][]> {
       'VOYAGE_API_KEY is required when EMBEDDING_PROVIDER=voyage',
     );
 
-  const response = await fetch('https://api.voyageai.com/v1/embeddings', {
+  const base =
+    process.env.VOYAGE_BASE_URL ?? 'https://api.voyageai.com';
+  const response = await fetch(`${base}/v1/embeddings`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,

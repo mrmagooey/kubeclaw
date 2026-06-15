@@ -32,6 +32,7 @@ describe('embedding-client', () => {
     delete process.env.EMBEDDING_PROVIDER;
     delete process.env.EMBEDDING_MODEL;
     delete process.env.VOYAGE_API_KEY;
+    delete process.env.VOYAGE_BASE_URL;
     process.env.OPENAI_API_KEY = 'test-key';
   });
 
@@ -148,6 +149,38 @@ describe('embedding-client', () => {
             Authorization: 'Bearer pa-test-key',
           }),
         }),
+      );
+    });
+
+    it('uses default URL https://api.voyageai.com/v1/embeddings when VOYAGE_BASE_URL is unset', async () => {
+      delete process.env.VOYAGE_BASE_URL;
+      (fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ data: [{ embedding: [0.1] }] }),
+      });
+
+      const { embed } = await import('./embedding-client.js');
+      await embed(['hello']);
+
+      expect(fetch).toHaveBeenCalledWith(
+        'https://api.voyageai.com/v1/embeddings',
+        expect.anything(),
+      );
+    });
+
+    it('uses VOYAGE_BASE_URL when set (broker mode)', async () => {
+      process.env.VOYAGE_BASE_URL = 'http://api.voyageai.com';
+      (fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ data: [{ embedding: [0.9, 0.8] }] }),
+      });
+
+      const { embed } = await import('./embedding-client.js');
+      await embed(['test']);
+
+      expect(fetch).toHaveBeenCalledWith(
+        'http://api.voyageai.com/v1/embeddings',
+        expect.anything(),
       );
     });
 

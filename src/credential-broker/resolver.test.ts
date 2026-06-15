@@ -365,3 +365,45 @@ describe('Resolver — LLM catalog entries supersede mappings', () => {
     expect(result.catalogId).toBe('openai');
   });
 });
+
+describe('Resolver — anthropic catalog entry', () => {
+  function makeSrc(): K8sSecretSource {
+    return new K8sSecretSource({ readSecret: vi.fn(), cacheTtlMs: 0 });
+  }
+
+  const anthropicEntry = {
+    id: 'anthropic',
+    host: 'api.anthropic.com',
+    upstreamPort: 443,
+    credentialFields: [{ name: 'api_key', envVar: 'ANTHROPIC_API_KEY' }],
+    baseUrlEnvs: { ANTHROPIC_BASE_URL: 'http://api.anthropic.com' },
+    allowOperatorFallback: true,
+    allowedPositions: ['header' as const],
+  };
+
+  it('operator-fallback: no group credential → resolves with KC_PH_FALLBACK_anthropic', async () => {
+    const src = makeSrc();
+    const reader = vi.fn().mockResolvedValue('sk-ant-operator-key');
+    const r = new Resolver({
+      mappings: [],
+      catalog: [anthropicEntry],
+      groupSource: src,
+      operatorSecretReader: reader,
+    });
+
+    const result = await r.resolveSubstitutionMapAsync({
+      identity: 'sa/kubeclaw-tool-job',
+      ownerGroup: 'some-group',
+      host: 'api.anthropic.com',
+    });
+
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok') throw new Error('narrowing');
+    expect(result.keySource).toBe('operatorFallback');
+    expect(result.catalogId).toBe('anthropic');
+    expect(result.substitutions).toEqual([
+      { placeholder: 'KC_PH_FALLBACK_anthropic', value: 'sk-ant-operator-key' },
+    ]);
+    expect(reader).toHaveBeenCalledWith('anthropic');
+  });
+});
