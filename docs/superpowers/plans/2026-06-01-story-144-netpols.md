@@ -6,15 +6,14 @@ Verify that the chart renders per-category NetworkPolicies that restrict pod egr
 
 ## Architecture
 
-All NetworkPolicy objects live in `helm/kubeclaw/templates/networkpolicies.yaml`, guarded by `{{- if .Values.networkPolicy.enabled }}`. Six policies are rendered, one per pod category:
+All NetworkPolicy objects live in `helm/kubeclaw/templates/networkpolicies.yaml`, guarded by `{{- if .Values.networkPolicy.enabled }}`. Five policies are rendered, one per pod category:
 
 | Policy name | Pod selector | Allowed egress |
 |---|---|---|
 | `kubeclaw-agent-policy` | `app: kubeclaw-agent` | DNS/53, Redis/6379; TCP/443 only when `credentialInjection.mode == "off"` |
 | `kubeclaw-orchestrator-policy` | `app: kubeclaw-orchestrator` | Unrestricted egress; ingress restricted to TCP/8080 |
 | `kubeclaw-channel-policy` | label `kubeclaw/channel` exists | DNS/53, Redis/6379, HTTP/80 + HTTPS/443 (mode=off only); ingress denied |
-| `kubeclaw-tool-pod-policy` | `app: kubeclaw-tool-pod` | DNS/53, Redis/6379, TCP/80+443 (mode=off only) |
-| `kubeclaw-sidecar-tool-policy` | `app: kubeclaw-sidecar-tool` | Same profile as tool pods |
+| `kubeclaw-sidecar-tool-policy` | `app: kubeclaw-sidecar-tool` | DNS/53, Redis/6379, TCP/80+443 (mode=off only); `extraEgressPorts` applies |
 | `kubeclaw-capability-policy` | label `kubeclaw/capability` exists | DNS/53, Redis/6379, HTTP/80 + HTTPS/443 (mode=off only); ingress only from channel and orchestrator pods |
 
 Because no default-allow policy is present, any pod without a matching selector has no egress — achieving the default-deny requirement.

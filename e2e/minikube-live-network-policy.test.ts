@@ -18,10 +18,10 @@
  * Do NOT switch CNIs as part of test setup — it requires minikube restart.
  *
  * ── Policies under test ───────────────────────────────────────────────────────
- * kubeclaw-channel-policy  — channel pods egress: DNS + Redis + HTTPS/HTTP only
- * kubeclaw-orchestrator-policy — ingress restricted to port 8080 only
- * kubeclaw-capability-policy   — no ingress from outside channel/orchestrator
- * kubeclaw-tool-pod-policy     — same as channel; no K8s API, no inbound
+ * kubeclaw-channel-policy        — channel pods egress: DNS + Redis + HTTPS/HTTP only
+ * kubeclaw-orchestrator-policy   — ingress restricted to port 8080 only
+ * kubeclaw-capability-policy     — no ingress from outside channel/orchestrator
+ * kubeclaw-sidecar-tool-policy   — same as channel; no K8s API, no inbound
  *
  * ── Test plan ────────────────────────────────────────────────────────────────
  * 1. Channel pod CANNOT reach an arbitrary host on a non-whitelisted port
@@ -29,7 +29,7 @@
  * 2. Channel pod CAN reach Redis (whitelisted — proves the probe isn't broken).
  * 3. Orchestrator admin port (9090) unreachable from the channel pod.
  * 4. Capability pod reachable only from within the cluster namespace.
- * 5. Tool pod CANNOT reach the orchestrator's admin port.
+ * 5. Sidecar tool pod CANNOT reach the orchestrator's admin port.
  *
  * Globals: globalSetup at e2e/minikube-live-setup.ts.
  * Namespace: kubeclaw-live.
@@ -422,36 +422,37 @@ describe('Minikube-live: NetworkPolicy enforcement', () => {
     90_000,
   );
 
-  // ── Test 5: Tool pod cannot reach the orchestrator admin port ───────────────
+  // ── Test 5: Sidecar tool pod cannot reach the orchestrator admin port ────────
   //
-  // Tool pods (app=kubeclaw-tool-pod) are short-lived; they may not be present
-  // when this test runs. If no tool pod is running, we perform the check by
-  // temporarily labelling the probe pod with app=kubeclaw-tool-pod to emulate
-  // a tool pod's network identity. This exercises the same iptables rules.
+  // Sidecar tool pods (app=kubeclaw-sidecar-tool) are short-lived; they may not
+  // be present when this test runs. If no sidecar tool pod is running, we perform
+  // the check by temporarily labelling the probe pod with app=kubeclaw-sidecar-tool
+  // to emulate a sidecar tool pod's network identity. This exercises the same
+  // iptables rules from kubeclaw-sidecar-tool-policy.
   //
-  // kubeclaw-tool-pod-policy has no inbound rule and its egress does not list
-  // port 9090 — so tool pods must not reach the orchestrator admin interface.
+  // kubeclaw-sidecar-tool-policy has no inbound rule and its egress does not list
+  // port 9090 — so sidecar tool pods must not reach the orchestrator admin interface.
   it(
-    'tool pod (simulated) cannot reach orchestrator admin port 9090',
+    'sidecar tool pod (simulated) cannot reach orchestrator admin port 9090',
     async () => {
       expect(
         orchestratorIp,
         'Could not resolve orchestrator pod IP',
       ).not.toBeNull();
 
-      // Look for a live tool pod first.
-      let toolPod = getRunningPod('app=kubeclaw-tool-pod');
+      // Look for a live sidecar tool pod first.
+      let toolPod = getRunningPod('app=kubeclaw-sidecar-tool');
 
       let ephemeral = false;
       if (!toolPod) {
-        // No tool pod running — spin up an ephemeral busybox labelled as a tool pod.
-        // Under Calico/Cilium the label triggers the kubeclaw-tool-pod-policy rules.
-        const podName = `netpol-toolsim-${Date.now()}`;
+        // No sidecar tool pod running — spin up an ephemeral busybox labelled as one.
+        // Under Calico/Cilium the label triggers kubeclaw-sidecar-tool-policy rules.
+        const podName = `netpol-sctoolsim-${Date.now()}`;
         kubectl([
           'run', podName, '-n', NAMESPACE,
           '--image=busybox:stable',
           '--restart=Never',
-          '--labels=app=kubeclaw-tool-pod',
+          '--labels=app=kubeclaw-sidecar-tool',
           '--command', '--', 'sleep', '60',
         ], { timeout: 30_000 });
 
@@ -470,7 +471,7 @@ describe('Minikube-live: NetworkPolicy enforcement', () => {
 
         if (!ready) {
           console.warn(
-            `Simulated tool pod ${podName} did not start within 20 s — skipping test.`,
+            `Simulated sidecar tool pod ${podName} did not start within 20 s — skipping test.`,
           );
           kubectl(['delete', 'pod', podName, '-n', NAMESPACE,
             '--ignore-not-found', '--grace-period=0'], { timeout: 15_000 });
@@ -484,7 +485,7 @@ describe('Minikube-live: NetworkPolicy enforcement', () => {
       try {
         const result = execInPod(
           toolPod,
-          // busybox wget (simulated pod) or curl (live tool pod).
+          // busybox wget (simulated pod) or curl (live sidecar tool pod).
           // We try wget first (busybox), fall back to curl.
           ['sh', '-c',
             `wget -q -T 8 -O /dev/null http://${orchestratorIp!}:9090/ 2>&1; echo "exit:$?"`],
@@ -493,14 +494,14 @@ describe('Minikube-live: NetworkPolicy enforcement', () => {
 
         const output = result.stdout.trim();
 
-        // Under an enforcing CNI the tool pod policy has no egress rule for port 9090
+        // Under an enforcing CNI the sidecar tool policy has no egress rule for port 9090
         // (only DNS, Redis, HTTP/HTTPS on 80/443 when credentialInjection.mode=off).
         // Connection must fail → wget exits non-zero → output must NOT contain "exit:0".
         expect(
           output,
-          `Tool pod ${toolPod} reached orchestrator admin port 9090 — ` +
-          'kubeclaw-tool-pod-policy egress must NOT allow port 9090. ' +
-          'Tool pods can access the orchestrator admin interface.',
+          `Sidecar tool pod ${toolPod} reached orchestrator admin port 9090 — ` +
+          'kubeclaw-sidecar-tool-policy egress must NOT allow port 9090. ' +
+          'Sidecar tool pods can access the orchestrator admin interface.',
         ).not.toContain('exit:0');
       } finally {
         if (ephemeral && toolPod) {

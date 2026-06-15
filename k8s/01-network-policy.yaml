@@ -86,38 +86,7 @@ spec:
         - protocol: TCP
           port: 80
 ---
-# Tool pods (execution/browser): DNS + Redis IPC + HTTP/HTTPS for web tasks.
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: kubeclaw-tool-pod-policy
-  namespace: kubeclaw
-spec:
-  podSelector:
-    matchLabels:
-      app: kubeclaw-tool-pod
-  policyTypes:
-    - Egress
-  egress:
-    - to: []
-      ports:
-        - protocol: UDP
-          port: 53
-    - to:
-        - podSelector:
-            matchLabels:
-              app: kubeclaw-redis
-      ports:
-        - protocol: TCP
-          port: 6379
-    - to: []
-      ports:
-        - protocol: TCP
-          port: 80
-        - protocol: TCP
-          port: 443
----
-# Sidecar tool pods (custom user containers): same egress profile as tool pods.
+# Sidecar tool pods (custom user containers): DNS + Redis IPC + HTTP/HTTPS for web tasks.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
