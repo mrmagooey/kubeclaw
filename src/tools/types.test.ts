@@ -48,6 +48,34 @@ describe('validateTool', () => {
     expect(validateTool({ ...base, name: 'places' }).ok).toBe(false);
   });
 
+  it('rejects catalog tools named after direct-llm-runner built-ins', () => {
+    for (const n of ['execute_agent', 'schedule_task', 'propose_skill']) {
+      const r = validateTool({ ...base, name: n });
+      expect(r.ok, `expected ${n} to be rejected`).toBe(false);
+    }
+  });
+
+  it('rejects catalog tools named after agent-runner IPC built-ins', () => {
+    for (const n of ['send_message', 'resume_task', 'update_task', 'register_group']) {
+      const r = validateTool({ ...base, name: n });
+      expect(r.ok, `expected ${n} to be rejected`).toBe(false);
+    }
+  });
+
+  it('rejects catalog tools named after superuser local built-ins', () => {
+    for (const n of ['local_bash', 'local_read', 'local_write', 'local_edit']) {
+      const r = validateTool({ ...base, name: n });
+      expect(r.ok, `expected ${n} to be rejected`).toBe(false);
+    }
+  });
+
+  it('rejects catalog tools named after locally-registered built-ins', () => {
+    for (const n of ['set_reminder', 'list_credentials', 'update_profile', 'read_user_profile']) {
+      const r = validateTool({ ...base, name: n });
+      expect(r.ok, `expected ${n} to be rejected`).toBe(false);
+    }
+  });
+
   it('requires image', () => {
     const { image, ...noImage } = base;
     expect(validateTool(noImage).ok).toBe(false);

@@ -66,12 +66,51 @@ export type ValidationResult = { ok: true } | { ok: false; error: string };
 
 const NAME_RE = /^[A-Za-z][A-Za-z0-9_-]*$/;
 
-// Reserved names a catalog tool may not use:
-//  - execution and places — retired spawn categories kept reserved defensively
-//    so a catalog tool cannot collide with a historical built-in category name.
-// Note: web_fetch, web_search, browser, and places_search are catalog tools
-// and are not reserved.
-const RESERVED_NAMES = new Set(['execution', 'places']);
+// Reserved names a catalog tool may not use.
+//
+// Built-in / IPC tool names — names that are wired in-process by either the
+// direct-llm-runner (TOOLS array + registerLocalTool calls) or the agent-runner
+// (buildToolDefinitions: IPC, isMain, isSuperuser, and bootstrap tools).
+// A catalog tool with any of these names would silently shadow the built-in.
+//
+// Also reserved: two retired spawn-category names kept defensively so a catalog
+// tool cannot collide with a historical built-in category name.
+const RESERVED_NAMES = new Set([
+  // direct-llm-runner TOOLS array
+  'cancel_task',
+  'deploy_mcp_server',
+  'execute_agent',
+  'list_mcp_servers',
+  'list_tasks',
+  'pause_task',
+  'propose_skill',
+  'remove_mcp_server',
+  'schedule_task',
+  // direct-llm-runner registerLocalTool (constructor + channel-runner.ts)
+  'list_credentials',
+  'read_user_profile',
+  'set_reminder',
+  'update_profile',
+  // agent-runner IPC tools (all contexts)
+  'resume_task',
+  'send_message',
+  'update_task',
+  // agent-runner isMain tools
+  'control_channel',
+  'deploy_channel',
+  'register_group',
+  // agent-runner isSuperuser tools
+  'local_bash',
+  'local_edit',
+  'local_read',
+  'local_write',
+  // agent-runner bootstrap tools
+  'ask_admin',
+  'commit_channel_config',
+  // retired spawn-category names (historical, kept defensively)
+  'execution',
+  'places',
+]);
 
 const ALLOWED_KEYS = new Set([
   'name',
