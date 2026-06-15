@@ -67,11 +67,10 @@ export type ValidationResult = { ok: true } | { ok: false; error: string };
 const NAME_RE = /^[A-Za-z][A-Za-z0-9_-]*$/;
 
 // Reserved names a catalog tool may not use:
-//  - execution and places — BUILTIN_CATEGORIES in k8s/ipc-redis.ts currently
-//    contains only "places", but both names are reserved so a catalog tool
-//    cannot collide with a current or historical built-in category name.
-// Note: web_fetch, web_search, browser, and places_search are now catalog tools
-// and are no longer reserved.
+//  - execution and places — retired spawn categories kept reserved defensively
+//    so a catalog tool cannot collide with a historical built-in category name.
+// Note: web_fetch, web_search, browser, and places_search are catalog tools
+// and are not reserved.
 const RESERVED_NAMES = new Set(['execution', 'places']);
 
 const ALLOWED_KEYS = new Set([
