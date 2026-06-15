@@ -276,7 +276,6 @@ function channelPvcNames(channel: string): {
 // Track tool pod jobs per tool job for cleanup
 const toolPodsByAgent = new Map<string, Set<string>>();
 
-export const BUILTIN_CATEGORIES = new Set(['places']);
 
 /**
  * Active K8s agent-job names keyed by groupFolder.
@@ -999,70 +998,52 @@ export async function startToolPodSpawnWatcher(
             : undefined;
 
           try {
-            if (BUILTIN_CATEGORIES.has(category)) {
-              await jobRunner.createToolPodJob({
+            // Catalog tool: orchestrator resolves the spec by name and
+            // re-checks the channel ACL. The channel only sent the name.
+            const spec = resolveTool(category);
+            if (!spec) {
+              await writeToolError(
                 agentJobId,
-                groupFolder,
-                category: category as 'places',
-                timeout: timeoutMs,
-                groupsPvc,
-                sessionsPvc,
-                ...(maxToolOutputBytes !== undefined
-                  ? { maxToolOutputBytes }
-                  : {}),
-              });
-              logger.debug(
+                category,
+                `Unknown tool: ${category}`,
+              );
+              logger.warn(
                 { agentJobId, category },
-                'Spawned built-in tool pod',
+                'Unknown catalog tool; dropped spawn',
               );
-            } else {
-              // Catalog tool: orchestrator resolves the spec by name and
-              // re-checks the channel ACL. The channel only sent the name.
-              const spec = resolveTool(category);
-              if (!spec) {
-                await writeToolError(
-                  agentJobId,
-                  category,
-                  `Unknown tool: ${category}`,
-                );
-                logger.warn(
-                  { agentJobId, category },
-                  'Unknown catalog tool; dropped spawn',
-                );
-                continue;
-              }
-              if (
-                spec.channels?.length &&
-                !spec.channels.includes(channel ?? '')
-              ) {
-                await writeToolError(
-                  agentJobId,
-                  category,
-                  `Tool ${category} is not available on this channel`,
-                );
-                logger.warn(
-                  { agentJobId, category, channel },
-                  'Catalog tool not scoped to channel; rejected',
-                );
-                continue;
-              }
-              // maxToolOutputBytes is not forwarded to catalog sidecar tools —
-              // output sizing for the tool-bridge path is out of scope here
-              // (tracked under spawn-path hardening, not the catalog work).
-              await jobRunner.createSidecarToolPodJob({
-                agentJobId,
-                groupFolder,
-                toolName: category,
-                toolSpec: spec,
-                timeout: timeoutMs,
-                groupsPvc,
-                sessionsPvc,
-              });
-              logger.debug(
-                { agentJobId, category, image: spec.image },
-                'Resolved + spawned catalog sidecar tool pod',
-              );
+              continue;
             }
+            if (
+              spec.channels?.length &&
+              !spec.channels.includes(channel ?? '')
+            ) {
+              await writeToolError(
+                agentJobId,
+                category,
+                `Tool ${category} is not available on this channel`,
+              );
+              logger.warn(
+                { agentJobId, category, channel },
+                'Catalog tool not scoped to channel; rejected',
+              );
+              continue;
+            }
+            // maxToolOutputBytes is not forwarded to catalog sidecar tools —
+            // output sizing for the tool-bridge path is out of scope here
+            // (tracked under spawn-path hardening, not the catalog work).
+            await jobRunner.createSidecarToolPodJob({
+              agentJobId,
+              groupFolder,
+              toolName: category,
+              toolSpec: spec,
+              timeout: timeoutMs,
+              groupsPvc,
+              sessionsPvc,
+            });
+            logger.debug(
+              { agentJobId, category, image: spec.image },
+              'Resolved + spawned catalog sidecar tool pod',
+            );
           } catch (err) {
             logger.error(
               { agentJobId, category, err },

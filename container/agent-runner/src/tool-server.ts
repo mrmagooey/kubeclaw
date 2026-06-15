@@ -216,28 +216,6 @@ export async function toolWebSearch(input: { query: string }): Promise<string> {
   return JSON.stringify(results);
 }
 
-async function toolTask(input: Record<string, unknown>): Promise<string> {
-  // Proxy to orchestrator via Redis tasks channel
-  const redis = await getRedisForTask();
-  const groupFolder = process.env.KUBECLAW_GROUP_FOLDER || 'unknown';
-  await redis.publish(
-    `kubeclaw:tasks:${groupFolder}`,
-    JSON.stringify({ type: 'schedule_task', ...input }),
-  );
-  return 'Task request sent.';
-}
-
-let taskRedis: RedisClientType | null = null;
-async function getRedisForTask(): Promise<RedisClientType> {
-  if (!taskRedis) {
-    taskRedis = createClient({
-      url: redisUrl,
-      socket: { reconnectStrategy },
-    }) as RedisClientType;
-    await taskRedis.connect();
-  }
-  return taskRedis;
-}
 
 // --- Request-mapping helpers ---
 
@@ -689,21 +667,9 @@ async function executeTool(
   if (toolMode === 'http-bridge') return executeToolBridgeHttp(tool, input);
   if (toolMode === 'file-bridge')
     return executeToolBridgeFile(tool, input, requestId, declaredFields);
-  return executeToolLocal(tool, input);
-}
-
-async function executeToolLocal(
-  tool: string,
-  input: Record<string, unknown>,
-): Promise<unknown> {
-  switch (tool) {
-    case 'task':
-    case 'taskOutput':
-    case 'taskStop':
-      return toolTask(input as any);
-    default:
-      throw new Error(`Unknown tool: ${tool}`);
-  }
+  throw new Error(
+    `No tool bridge mode set (KUBECLAW_TOOL_MODE missing); tool=${tool}`,
+  );
 }
 
 // --- Main loop ---

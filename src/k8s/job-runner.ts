@@ -51,7 +51,6 @@ import {
   JobOutput,
   ToolJobSpec,
   AgentOutputMessage,
-  ToolPodJobSpec,
   SidecarToolPodJobSpec,
   RawAttachment,
 } from './types.js';
@@ -1595,104 +1594,6 @@ export class JobRunner {
     await closeRedisConnections();
 
     logger.info('JobRunner cleanup completed');
-  }
-
-  /**
-   * Create a tool pod job (places category)
-   * Returns the K8s job name as podJobId
-   */
-  async createToolPodJob(spec: ToolPodJobSpec): Promise<string> {
-    const jobName = buildJobName(`${spec.groupFolder}-${spec.category}`);
-    const timeoutSeconds = Math.floor(spec.timeout / 1000);
-
-    const envVars: Array<{ name: string; value?: string; valueFrom?: object }> =
-      [
-        { name: 'TZ', value: TIMEZONE },
-        { name: 'KUBECLAW_TOOL_JOB_ID', value: spec.agentJobId },
-        { name: 'KUBECLAW_CATEGORY', value: spec.category },
-        { name: 'KUBECLAW_GROUP_FOLDER', value: spec.groupFolder },
-        // Tool server pods authenticate as the 'tool-server' ACL user.
-        {
-          name: 'REDIS_URL',
-          value: buildRedisUrl(
-            process.env.REDIS_URL || 'redis://kubeclaw-redis:6379',
-            'tool-server',
-            REDIS_TOOL_SERVER_PASSWORD || process.env.REDIS_ADMIN_PASSWORD,
-          ),
-        },
-        { name: 'IDLE_TIMEOUT', value: String(spec.timeout) },
-      ];
-
-    if (spec.maxToolOutputBytes !== undefined) {
-      envVars.push({
-        name: 'KUBECLAW_MAX_TOOL_OUTPUT_BYTES',
-        value: String(spec.maxToolOutputBytes),
-      });
-    }
-
-    const volumeMounts: Array<{
-      name: string;
-      mountPath: string;
-      subPath?: string;
-    }> = [];
-    const volumes: Array<any> = [];
-
-    const job: V1Job = {
-      apiVersion: 'batch/v1',
-      kind: 'Job',
-      metadata: {
-        name: jobName,
-        namespace: this.namespace,
-        labels: {
-          app: 'kubeclaw-tool-pod',
-          'kubeclaw/group': spec.groupFolder,
-          'kubeclaw/category': spec.category,
-          'kubeclaw/agent-job': spec.agentJobId,
-        },
-      },
-      spec: {
-        ttlSecondsAfterFinished: JOB_TTL_SECONDS_AFTER_FINISHED,
-        activeDeadlineSeconds: timeoutSeconds,
-        backoffLimit: 0,
-        template: {
-          metadata: { labels: { app: 'kubeclaw-tool-pod' } },
-          spec: {
-            restartPolicy: 'Never',
-            containers: [
-              {
-                name: 'tool-server',
-                image: getContainerImage((spec.provider as any) || 'openai'),
-                imagePullPolicy: 'IfNotPresent',
-                command: ['node', '/app/dist/tool-server.js'],
-                env: envVars,
-                volumeMounts,
-                resources: {
-                  requests: {
-                    memory: TOOL_JOB_MEMORY_REQUEST,
-                    cpu: TOOL_JOB_CPU_REQUEST,
-                  },
-                  limits: {
-                    memory: TOOL_JOB_MEMORY_LIMIT,
-                    cpu: TOOL_JOB_CPU_LIMIT,
-                  },
-                },
-              } as any,
-            ],
-            volumes,
-          },
-        },
-      },
-    };
-
-    await this.batchApi.createNamespacedJob({
-      namespace: this.namespace,
-      body: job,
-    });
-    logger.info(
-      { jobName, category: spec.category, agentJobId: spec.agentJobId },
-      'Tool pod job created',
-    );
-    return jobName;
   }
 
   /**

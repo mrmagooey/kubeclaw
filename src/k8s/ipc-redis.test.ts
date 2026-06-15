@@ -208,7 +208,6 @@ import {
   startBootstrapTaskWatcher,
   currentStepByJob,
   pendingBootstrapQuestionByJob,
-  BUILTIN_CATEGORIES,
 } from './ipc-redis.js';
 import type { RegisteredGroup } from '../types.js';
 
@@ -1107,15 +1106,6 @@ describe('processTaskIpc', () => {
     });
   });
 
-  describe('BUILTIN_CATEGORIES', () => {
-    it('does not contain execution (retired)', () => {
-      expect(BUILTIN_CATEGORIES.has('execution')).toBe(false);
-    });
-
-    it('contains places', () => {
-      expect(BUILTIN_CATEGORIES.has('places')).toBe(true);
-    });
-  });
 });
 
 describe('cleanupToolPods', () => {
@@ -1440,9 +1430,18 @@ describe('startToolPodSpawnWatcher', () => {
     await stopIpcWatcher();
   });
 
-  it('processes a spawn-tool-pod message and creates a tool pod', async () => {
+  it('routes places category to catalog path (createSidecarToolPodJob), not builtin', async () => {
     const { jobRunner } = await import('./job-runner.js');
-    startIpcWatcher(createMockDeps()); // sets ipcWatcherRunning = true
+    startIpcWatcher(createMockDeps());
+
+    const toolSpec = {
+      name: 'places_search',
+      description: 'Search for places',
+      parameters: { type: 'object', properties: {} },
+      image: 'kubeclaw-places:latest',
+      pattern: 'file' as const,
+    };
+    const resolveTool = vi.fn().mockReturnValue(toolSpec);
 
     let callCount = 0;
     mockXread.mockImplementation(async () => {
@@ -1455,7 +1454,7 @@ describe('startToolPodSpawnWatcher', () => {
                 '1-0',
                 [
                   'agentJobId',
-                  'j1',
+                  'j-places',
                   'groupFolder',
                   'g',
                   'category',
@@ -1474,16 +1473,17 @@ describe('startToolPodSpawnWatcher', () => {
       return null;
     });
 
-    await startToolPodSpawnWatcher();
+    await startToolPodSpawnWatcher(resolveTool);
 
-    expect(jobRunner.createToolPodJob).toHaveBeenCalledWith(
+    expect(resolveTool).toHaveBeenCalledWith('places');
+    expect(jobRunner.createSidecarToolPodJob).toHaveBeenCalledWith(
       expect.objectContaining({
-        agentJobId: 'j1',
-        category: 'places',
-        groupsPvc: 'kubeclaw-channel-telegram-groups',
-        sessionsPvc: 'kubeclaw-channel-telegram-sessions',
+        agentJobId: 'j-places',
+        toolName: 'places',
+        toolSpec: expect.objectContaining({ image: 'kubeclaw-places:latest' }),
       }),
     );
+    expect(jobRunner.createToolPodJob).not.toHaveBeenCalled();
   });
 
   it('skips messages missing required fields', async () => {
@@ -1502,47 +1502,6 @@ describe('startToolPodSpawnWatcher', () => {
 
     await startToolPodSpawnWatcher();
     expect(jobRunner.createToolPodJob).not.toHaveBeenCalled();
-  });
-
-  it('uses default PVC names when channel is empty', async () => {
-    const { jobRunner } = await import('./job-runner.js');
-    startIpcWatcher(createMockDeps());
-
-    let callCount = 0;
-    mockXread.mockImplementation(async () => {
-      if (callCount++ === 0) {
-        return [
-          [
-            'kubeclaw:spawn-tool-pod',
-            [
-              [
-                '1-0',
-                [
-                  'agentJobId',
-                  'j2',
-                  'groupFolder',
-                  'g',
-                  'category',
-                  'places',
-                  'timeout',
-                  '30000',
-                ],
-              ],
-            ],
-          ],
-        ];
-      }
-      await stopIpcWatcher();
-      return null;
-    });
-
-    await startToolPodSpawnWatcher();
-    expect(jobRunner.createToolPodJob).toHaveBeenCalledWith(
-      expect.objectContaining({
-        groupsPvc: 'kubeclaw-groups',
-        sessionsPvc: 'kubeclaw-sessions',
-      }),
-    );
   });
 
   it('exits immediately when ipcWatcherRunning is false', async () => {
@@ -1793,44 +1752,6 @@ describe('startToolPodSpawnWatcher', () => {
     );
   });
 
-  it('routes to createToolPodJob for built-in places category', async () => {
-    const { jobRunner } = await import('./job-runner.js');
-    startIpcWatcher(createMockDeps());
-
-    let callCount = 0;
-    mockXread.mockImplementation(async () => {
-      if (callCount++ === 0) {
-        return [
-          [
-            'kubeclaw:spawn-tool-pod',
-            [
-              [
-                '1-0',
-                [
-                  'agentJobId',
-                  'j-regular',
-                  'groupFolder',
-                  'g',
-                  'category',
-                  'places',
-                  'timeout',
-                  '60000',
-                ],
-              ],
-            ],
-          ],
-        ];
-      }
-      await stopIpcWatcher();
-      return null;
-    });
-
-    await startToolPodSpawnWatcher();
-
-    expect(jobRunner.createToolPodJob).toHaveBeenCalled();
-    expect(jobRunner.createSidecarToolPodJob).not.toHaveBeenCalled();
-  });
-
   it('execution category is no longer builtin and is routed as unknown catalog tool', async () => {
     const { jobRunner } = await import('./job-runner.js');
     startIpcWatcher(createMockDeps());
@@ -1882,61 +1803,6 @@ describe('startToolPodSpawnWatcher', () => {
     );
   });
 
-  it('logs error and continues when createToolPodJob rejects (e.g. MODULE_NOT_FOUND in tool pod)', async () => {
-    // Regression test: if the tool-server image is stale or built from the
-    // wrong Dockerfile, the K8s Job pod exits with MODULE_NOT_FOUND for
-    // /app/dist/tool-server.js.  The orchestrator itself doesn't see the pod
-    // error directly — it only sees createToolPodJob resolve (the Job object
-    // was created successfully).  However, if Job *creation* itself fails (API
-    // error, quota exceeded, etc.) the watcher must log and not crash.
-    const { jobRunner } = await import('./job-runner.js');
-    const { logger } = await import('../logger.js');
-    startIpcWatcher(createMockDeps());
-
-    vi.mocked(jobRunner.createToolPodJob).mockRejectedValueOnce(
-      new Error('K8s API: forbidden'),
-    );
-
-    let callCount = 0;
-    mockXread.mockImplementation(async () => {
-      if (callCount++ === 0) {
-        return [
-          [
-            'kubeclaw:spawn-tool-pod',
-            [
-              [
-                '1-0',
-                [
-                  'agentJobId',
-                  'j-fail',
-                  'groupFolder',
-                  'g',
-                  'category',
-                  'places',
-                  'timeout',
-                  '60000',
-                  'channel',
-                  'http',
-                ],
-              ],
-            ],
-          ],
-        ];
-      }
-      await stopIpcWatcher();
-      return null;
-    });
-
-    await startToolPodSpawnWatcher();
-
-    expect(jobRunner.createToolPodJob).toHaveBeenCalledWith(
-      expect.objectContaining({ agentJobId: 'j-fail', category: 'places' }),
-    );
-    expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
-      expect.objectContaining({ agentJobId: 'j-fail' }),
-      'Failed to spawn tool pod for channel pod',
-    );
-  });
 });
 
 describe('startToolJobSpawnWatcher', () => {
