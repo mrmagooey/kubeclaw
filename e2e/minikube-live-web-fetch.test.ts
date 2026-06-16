@@ -14,7 +14,9 @@
  * Hard assertions (must pass):
  *   - POST /message returns HTTP 200.
  *   - A sidecar tool pod labelled app=kubeclaw-sidecar-tool appears within 90 s.
- *   - The pod's logs contain "Executing tool=webFetch".
+ *   - The pod's logs contain "Executing tool=web_fetch".
+ *     (The catalog tool name is "web_fetch"; the sidecar tool-server logs the
+ *     `tool` field verbatim from the toolcalls Redis stream.)
  *
  * Informational (console.log / console.warn only — not hard failures):
  *   - Whether the SSE stream delivered any data within 60 s.
@@ -22,7 +24,7 @@
  *
  * ACs that are informational only:
  *   AC1 (channel-pod log line tool_call name=web_fetch) — hard to assert without
- *       streaming the orchestrator logs in CI; the pod-log "Executing tool=webFetch"
+ *       streaming the orchestrator logs in CI; the pod-log "Executing tool=web_fetch"
  *       is an equivalent observable signal.
  *   AC4 (distinctive proper noun in SSE reply) — marked informational because
  *       small models may produce truncated summaries. Covered by the SSE check.
@@ -203,10 +205,10 @@ describe('Minikube-live: Story 166 — web_fetch tool job dispatched via LLM dir
 
   afterAll(() => { /* nothing to teardown — tool pods are self-cleaning (TTL) */ });
 
-  // ── web_fetch: LLM directive → browser-category tool pod → webFetch execution ──
+  // ── web_fetch: LLM directive → sidecar tool pod → web_fetch execution ──
 
   it(
-    'web_fetch tool call → browser-category tool pod executes webFetch',
+    'web_fetch tool call → sidecar tool pod executes web_fetch',
     async () => {
       expect(provisioned, 'globalSetup port-forward not live').toBe(true);
 
@@ -238,12 +240,15 @@ describe('Minikube-live: Story 166 — web_fetch tool job dispatched via LLM dir
           'No kubeclaw-sidecar-tool pod appeared within 90 s after web_fetch directive (Story 166 AC2)',
         ).not.toBeNull();
 
-        // AC2 proxy: pod logs must contain the webFetch execution marker.
-        // tool-server.ts emits: `Executing tool=webFetch requestId=...`
-        const logFound = await waitForPodLog(podName!, 'Executing tool=webFetch', 90_000);
+        // AC2 proxy: pod logs must contain the web_fetch execution marker.
+        // tool-server.ts emits: `Executing tool=web_fetch requestId=...`
+        // (The catalog tool name is "web_fetch", not the old camelCase "webFetch" —
+        // the sidecar tool-server logs the `tool` field verbatim from the toolcalls
+        // Redis stream, and callCatalogToolViaRedis writes tool=<toolName>.)
+        const logFound = await waitForPodLog(podName!, 'Executing tool=web_fetch', 90_000);
         expect(
           logFound,
-          `Pod ${podName} logs did not contain "Executing tool=webFetch" within 90 s`,
+          `Pod ${podName} logs did not contain "Executing tool=web_fetch" within 90 s`,
         ).toBe(true);
       } finally {
         // AC4 (informational): did SSE reply mention the distinctive phrase "Maathai"?

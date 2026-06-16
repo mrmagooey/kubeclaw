@@ -17,7 +17,9 @@
  * Hard assertions (must pass):
  *   - POST /message returns HTTP 200.
  *   - A sidecar tool pod labelled app=kubeclaw-sidecar-tool appears within 90 s.
- *   - The pod's logs contain "Executing tool=webSearch".
+ *   - The pod's logs contain "Executing tool=web_search".
+ *     (The catalog tool name is "web_search"; the sidecar tool-server logs the
+ *     `tool` field verbatim from the toolcalls Redis stream.)
  *
  * Informational (console.log / console.warn only — not hard failures):
  *   - Whether the SSE reply contains a fully-qualified URL (AC4 proxy).
@@ -194,10 +196,10 @@ describe('Minikube-live: Story 167 — web_search tool job dispatched via LLM di
 
   afterAll(() => { /* tool pods are self-cleaning via TTL */ });
 
-  // ── web_search: LLM directive → browser-category tool pod → webSearch execution ──
+  // ── web_search: LLM directive → sidecar tool pod → web_search execution ──
 
   it(
-    'web_search tool call → browser-category tool pod executes webSearch',
+    'web_search tool call → sidecar tool pod executes web_search',
     async () => {
       expect(provisioned, 'globalSetup port-forward not live').toBe(true);
 
@@ -227,12 +229,14 @@ describe('Minikube-live: Story 167 — web_search tool job dispatched via LLM di
           'No kubeclaw-sidecar-tool pod appeared within 90 s after web_search directive (Story 167 AC2)',
         ).not.toBeNull();
 
-        // AC2 proxy: pod logs must contain the webSearch execution marker.
-        // tool-server.ts emits: `Executing tool=webSearch requestId=...`
-        const logFound = await waitForPodLog(podName!, 'Executing tool=webSearch', 90_000);
+        // AC2 proxy: pod logs must contain the web_search execution marker.
+        // tool-server.ts emits: `Executing tool=web_search requestId=...`
+        // (The catalog tool name is "web_search", not the old camelCase "webSearch" —
+        // callCatalogToolViaRedis writes tool=<toolName> where toolName = "web_search".)
+        const logFound = await waitForPodLog(podName!, 'Executing tool=web_search', 90_000);
         expect(
           logFound,
-          `Pod ${podName} logs did not contain "Executing tool=webSearch" within 90 s`,
+          `Pod ${podName} logs did not contain "Executing tool=web_search" within 90 s`,
         ).toBe(true);
       } finally {
         // AC4 (informational): does the SSE reply contain a URL?

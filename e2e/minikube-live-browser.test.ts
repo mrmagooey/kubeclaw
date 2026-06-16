@@ -5,21 +5,20 @@
  * into namespace `kubeclaw-live` and port-forwarded svc/kubeclaw-channel-http
  * to localhost:14081.
  *
- * These tests verify the web_fetch and web_search built-in tools:
+ * These tests verify the web_fetch, web_search, and browser catalog tools:
  *   1. A user message directs the LLM to call web_fetch → the orchestrator
- *      creates a K8s Job with label app=kubeclaw-sidecar-tool → the tool pod
- *      logs "Executing tool=webFetch".
- *   2. Same flow for web_search → "Executing tool=webSearch".
- *   3. Browser (Playwright agent_browser) tool spawns a browser-category tool
- *      pod — two sub-tests:
+ *      creates a sidecar tool pod (app=kubeclaw-sidecar-tool) → the pod
+ *      logs "Executing tool=web_fetch" (catalog tool name, not old camelCase).
+ *   2. Same flow for web_search → "Executing tool=web_search".
+ *   3. Browser tool spawns a sidecar tool pod — two sub-tests:
  *      a. LLM-driven: directive prompt forces the `browser` tool call.
  *      b. Redis bypass: directly injects a tool call to verify the
- *         `agentBrowser` code path regardless of LLM model choice.
+ *         browser catalog path regardless of LLM model choice.
  *
  * Hard assertions (must pass):
  *   - POST /message returns 200
- *   - A tool pod appears in the namespace within 90 s (120 s for browser tests)
- *   - The pod's logs contain the expected "Executing tool=..." substring
+ *   - A sidecar tool pod (app=kubeclaw-sidecar-tool) appears within 90 s (120 s for browser)
+ *   - The pod's logs contain the expected "Executing tool=<catalog-name>" substring
  *
  * Informational (console.log / console.warn only — not hard failures):
  *   - Whether the SSE stream delivered any data lines within 60 s (90 s for browser)
@@ -305,16 +304,17 @@ describe('Minikube-live: browser/web tool pod spawned via LLM directive', () => 
         ).not.toBeNull();
 
         // Poll the pod's logs for the expected execution marker.
-        // The exact string produced by tool-server.ts:357 is:
-        //   Executing tool=webFetch requestId=...
+        // The sidecar tool-server emits: `Executing tool=web_fetch requestId=...`
+        // (Catalog tool name is "web_fetch", not the old camelCase "webFetch" —
+        // callCatalogToolViaRedis writes tool=<toolName> verbatim.)
         const logFound = await waitForPodLog(
           podName!,
-          'Executing tool=webFetch',
+          'Executing tool=web_fetch',
           90_000,
         );
         expect(
           logFound,
-          `Pod ${podName} logs did not contain "Executing tool=webFetch" within 90 s`,
+          `Pod ${podName} logs did not contain "Executing tool=web_fetch" within 90 s`,
         ).toBe(true);
       } finally {
         // Informational: did the SSE stream deliver content?
@@ -381,15 +381,17 @@ describe('Minikube-live: browser/web tool pod spawned via LLM directive', () => 
         ).not.toBeNull();
 
         // Poll the pod's logs for the expected execution marker.
-        // tool-server.ts:357: `log(\`Executing tool=${tool} requestId=${requestId}\`)`
+        // The sidecar tool-server emits: `Executing tool=web_search requestId=...`
+        // (Catalog tool name is "web_search", not the old camelCase "webSearch" —
+        // callCatalogToolViaRedis writes tool=<toolName> verbatim.)
         const logFound = await waitForPodLog(
           podName!,
-          'Executing tool=webSearch',
+          'Executing tool=web_search',
           90_000,
         );
         expect(
           logFound,
-          `Pod ${podName} logs did not contain "Executing tool=webSearch" within 90 s`,
+          `Pod ${podName} logs did not contain "Executing tool=web_search" within 90 s`,
         ).toBe(true);
       } finally {
         // Informational + structural: did the SSE stream deliver structured data?
@@ -466,24 +468,24 @@ describe('Minikube-live: browser/web tool pod spawned via LLM directive', () => 
     180_000,
   );
 
-  // ── 3a. browser (LLM-driven): directive prompt → agentBrowser tool pod ──────
+  // ── 3a. browser (LLM-driven): directive prompt → browser sidecar tool pod ────
   //
   // This test issues a directive prompt that names the `browser` tool
   // explicitly (not `web_fetch`). Gemma/small models sometimes fall back to
   // `web_fetch` anyway — see the fallback note in the test body. Either way
-  // a browser-category tool pod must be spawned.
+  // a sidecar tool pod must be spawned.
   //
   // Hard assertions:
   //   - POST /message returns 200
-  //   - A browser-category tool pod appears within 120 s
-  //   - Pod logs contain "Executing tool=agentBrowser"
-  //     (tool-server.ts:357: `log(\`Executing tool=${tool} requestId=${requestId}\`)`)
+  //   - A sidecar tool pod (app=kubeclaw-sidecar-tool) appears within 120 s
+  //   - Pod logs contain "Executing tool=browser"
+  //     (Catalog tool name is "browser"; tool-server logs the `tool` field verbatim.)
   //
   // Informational only (console.log / console.warn):
   //   - SSE delivered any data within 90 s
   //   - SSE mentions "example.com" or "Example Domain" (Chromium navigation result)
   it(
-    'browser (Playwright agent_browser) tool spawns a browser-category tool pod and executes Chromium-backed navigation',
+    'browser tool spawns a sidecar tool pod and executes Chromium-backed navigation',
     async () => {
       expect(provisioned, 'globalSetup port-forward not live').toBe(true);
 
@@ -520,29 +522,31 @@ describe('Minikube-live: browser/web tool pod spawned via LLM directive', () => 
           'No kubeclaw-sidecar-tool pod appeared within 120 s after browser directive',
         ).not.toBeNull();
 
-        // Hard assertion: pod logs must contain the agentBrowser execution marker.
-        // tool-server.ts:357 emits: `[tool-server:browser] Executing tool=agentBrowser requestId=...`
+        // Hard assertion: pod logs must contain the browser execution marker.
+        // The sidecar tool-server emits: `[tool-server:browser] Executing tool=browser requestId=...`
+        // (Catalog tool name is "browser", not the old "agentBrowser" —
+        // callCatalogToolViaRedis writes tool=<toolName> verbatim from the catalog.)
         agentBrowserLogFound = await waitForPodLog(
           podName!,
-          'Executing tool=agentBrowser',
+          'Executing tool=browser',
           90_000,
         );
 
         if (!agentBrowserLogFound) {
           // Gemma chose web_fetch instead — verify which tool ran.
-          const webFetchFallback = await waitForPodLog(podName!, 'Executing tool=webFetch', 5_000);
+          const webFetchFallback = await waitForPodLog(podName!, 'Executing tool=web_fetch', 5_000);
           if (webFetchFallback) {
             console.warn(
               'browser (LLM-driven): LLM chose web_fetch instead of browser — ' +
-              'tool dispatch path verified for browser-category category. ' +
-              'The agentBrowser code path is deterministically validated by the Redis-bypass test.',
+              'tool dispatch path verified for the sidecar catalog path. ' +
+              'The browser code path is deterministically validated by the Redis-bypass test.',
             );
           }
         }
 
         expect(
           agentBrowserLogFound,
-          `Pod ${podName} logs did not contain "Executing tool=agentBrowser" within 90 s — ` +
+          `Pod ${podName} logs did not contain "Executing tool=browser" within 90 s — ` +
           'LLM may have chosen a different tool; see Redis-bypass test for deterministic coverage',
         ).toBe(true);
       } finally {
@@ -561,7 +565,7 @@ describe('Minikube-live: browser/web tool pod spawned via LLM directive', () => 
         console.log(
           `browser (LLM-driven) observability: SSE delivered=${sseDelivered}, ` +
           `SSE contains browser navigation result=${sseHasBrowserContent}, ` +
-          `agentBrowser log found=${agentBrowserLogFound}, ` +
+          `browser log found=${agentBrowserLogFound}, ` +
           `tool pod name=${podName ?? 'none'}`,
         );
         if (!sseDelivered) {
@@ -576,20 +580,21 @@ describe('Minikube-live: browser/web tool pod spawned via LLM directive', () => 
     240_000,
   );
 
-  // ── 3b. browser (Redis bypass): direct Redis injection → agentBrowser ────────
+  // ── 3b. browser (Redis bypass): direct Redis injection → browser catalog tool ──
   //
   // This test bypasses the LLM entirely to give hard, deterministic coverage of
-  // the agentBrowser code path, regardless of which tool the LLM model chooses.
+  // the browser catalog tool path, regardless of which tool the LLM model chooses.
   //
   // Steps:
-  //   1. XADD to `kubeclaw:spawn-tool-pod` to request a browser-category pod.
-  //   2. Wait for the pod to appear (120 s).
+  //   1. XADD to `kubeclaw:spawn-tool-pod` to request a browser-category pod
+  //      (category=browser, the catalog tool name).
+  //   2. Wait for the sidecar pod to appear (120 s).
   //   3. XADD a tool call to `kubeclaw:toolcalls:<agentJobId>:browser` with
-  //      tool=agentBrowser.
-  //   4. Assert pod logs contain "Executing tool=agentBrowser".
-  //      (tool-server.ts:357: `log(\`Executing tool=${tool} requestId=${requestId}\`)`)
+  //      tool=browser (catalog name, not old "agentBrowser").
+  //   4. Assert pod logs contain "Executing tool=browser".
+  //      (tool-server logs `tool` field verbatim from the toolcalls stream.)
   it(
-    'browser tool dispatched via Redis bypass executes via agent-browser CLI',
+    'browser tool dispatched via Redis bypass executes via cdp-bridge sidecar',
     async (ctx) => {
       if (!redis) {
         ctx.skip();
@@ -624,35 +629,37 @@ describe('Minikube-live: browser/web tool pod spawned via LLM directive', () => 
       ).not.toBeNull();
 
       // 3. Inject a tool call directly into the tool pod's input stream.
-      //    The stream key matches TOOLCALLS_STREAM in tool-server.ts:24:
+      //    The stream key matches TOOLCALLS_STREAM in tool-server.ts:
       //      `kubeclaw:toolcalls:${agentJobId}:${category}`
-      //    Using `echo 'agent-browser invoked'` as the command so the pod
-      //    doesn't need a real network — agent-browser CLI receives it and
-      //    exits immediately.
+      //    The `tool` field must be the catalog tool name "browser" (not the old
+      //    "agentBrowser" name from the deleted BUILTIN_CATEGORIES path).
+      //    The tool-server logs: `Executing tool=browser requestId=...`
       await redis.xadd(
         `kubeclaw:toolcalls:${agentJobId}:browser`,
         '*',
         'requestId', requestId,
-        'tool', 'agentBrowser',
-        'input', JSON.stringify({ command: "echo 'agent-browser invoked'" }),
+        'tool', 'browser',
+        'input', JSON.stringify({ command: "echo 'browser invoked'" }),
       );
 
       // 4. Hard assertion: pod logs must contain the execution marker.
-      //    tool-server.ts:357: `log(\`Executing tool=${tool} requestId=${requestId}\`)`
-      //    which produces: `[tool-server:browser] Executing tool=agentBrowser requestId=...`
+      //    tool-server.ts: `log(\`Executing tool=${tool} requestId=${requestId}\`)`
+      //    which produces: `[tool-server:browser] Executing tool=browser requestId=...`
+      //    (Catalog tool name "browser" replaces the old "agentBrowser" from the
+      //    deleted BUILTIN_CATEGORIES/executeToolLocal path.)
       const logFound = await waitForPodLog(
         podName!,
-        'Executing tool=agentBrowser',
+        'Executing tool=browser',
         90_000,
       );
       expect(
         logFound,
-        `Pod ${podName} logs did not contain "Executing tool=agentBrowser" within 90 s ` +
+        `Pod ${podName} logs did not contain "Executing tool=browser" within 90 s ` +
         `(agentJobId=${agentJobId}, requestId=${requestId})`,
       ).toBe(true);
 
       console.log(
-        `browser (Redis bypass): agentBrowser dispatched and confirmed in pod ${podName} ` +
+        `browser (Redis bypass): browser tool dispatched and confirmed in pod ${podName} ` +
         `(agentJobId=${agentJobId})`,
       );
     },

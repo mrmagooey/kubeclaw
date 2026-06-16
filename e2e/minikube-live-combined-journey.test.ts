@@ -9,7 +9,7 @@
  *   0. Channel pod Ready and runs kubeclaw-agent:latest (NOT :claude/:openrouter).
  *   1. Install MCP capability journey-test-mcp; channel connects to it.
  *   2. execute_agent via Redis bypass -> nested kubeclaw-agent Job + result.
- *   3. bash tool pod via Redis bypass -> kubeclaw-tool Job spawned.
+ *   3. bash tool pod via Redis bypass -> sidecar tool Job spawned (category=bash).
  *   4. MCP record_test_message tool reachable from channel pod (tools/list).
  *   5. One LLM-driven request through POST /message (asserts 200 only).
  *
@@ -291,13 +291,16 @@ describe('Minikube-live: combined journey across one agent channel', () => {
     console.log(`Stage 2: result (first 200): ${(result.result ?? '').slice(0, 200)}`);
   }, 600_000);
 
-  it('Stage 3: spawn-tool-pod bypass spawns an execution tool Job', async () => {
+  it('Stage 3: spawn-tool-pod bypass spawns a bash sidecar tool Job', async () => {
+    // The old "execution" category was deleted with createToolPodJob.
+    // The `bash` tool now dispatches as category=bash (callCatalogToolViaRedis
+    // sets category=toolName). Stream keys use "bash" not "execution".
     expect(provisioned).toBe(true);
     expect(redis).not.toBeNull();
 
     const rand = Math.random().toString(36).slice(2, 8);
     const toolJobId = `journey-tool-${Date.now()}-${rand}`;
-    const callsStream = `kubeclaw:toolcalls:${toolJobId}:execution`;
+    const callsStream = `kubeclaw:toolcalls:${toolJobId}:bash`;
     const startMs = Date.now();
 
     await redis!.xadd(
@@ -311,18 +314,20 @@ describe('Minikube-live: combined journey across one agent channel', () => {
       'kubeclaw:spawn-tool-pod', '*',
       'agentJobId', toolJobId,
       'groupFolder', GROUP_FOLDER,
-      'category', 'execution',
+      'category', 'bash',
       'timeout', '120000',
       'channel', 'http',
     );
 
     // Tool pod Jobs carry: app=kubeclaw-sidecar-tool, kubeclaw/agent-job=<toolJobId>
     // Use both labels to get an exact match for this specific tool job.
+    // (kubeclaw/agent-job is on the Job metadata only, not the pod template —
+    // so this compound selector works for Jobs but not for `kubectl get pods`.)
     const toolJob = await waitForJob(`app=kubeclaw-sidecar-tool,kubeclaw/agent-job=${toolJobId}`, 180_000, startMs);
-    expect(toolJob, `No tool Job for group ${GROUP_FOLDER} appeared within 180 s`).not.toBeNull();
-    console.log(`Stage 3: tool Job appeared: ${toolJob}`);
+    expect(toolJob, `No bash sidecar tool Job appeared within 180 s`).not.toBeNull();
+    console.log(`Stage 3: bash sidecar tool Job appeared: ${toolJob}`);
 
-    const resultsStream = `kubeclaw:toolresults:${toolJobId}:execution`;
+    const resultsStream = `kubeclaw:toolresults:${toolJobId}:bash`;
     try {
       const len = await redis!.xlen(resultsStream);
       console.log(`Stage 3: toolresults stream length=${len}`);

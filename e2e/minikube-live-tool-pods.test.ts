@@ -2,11 +2,13 @@
  * Minikube-live tool-pod end-to-end tests.
  *
  * Validates that the orchestrator correctly spawns tool pods for:
- *   1. The `execution` category (`bash` tool) via the spawn-tool-pod Redis stream.
+ *   1. The `bash` catalog tool via the spawn-tool-pod Redis stream
+ *      (category=bash — the new per-name convention; the old "execution" category
+ *      was deleted with createToolPodJob in the agent-runner catalog unification).
  *   2. Full agent jobs (`execute_agent`) via the spawn-agent-job Redis stream.
  *
  * Both tests BYPASS the LLM by writing tool-call streams directly — the same
- * pattern used in e2e/alpine-tool-execution.test.ts. This avoids Gemma-4-E4B's
+ * pattern used in e2e/minikube-live-agent-catalog.test.ts. This avoids Gemma-4-E4B's
  * unreliable tool-calling path while still exercising the full orchestrator
  * → K8s → Redis IPC infrastructure.
  *
@@ -25,8 +27,8 @@
  *   Job metadata: app=kubeclaw-agent, kubeclaw/group=<groupFolder>, kubeclaw/chat-jid=<sanitised>
  *   Pod template: app=kubeclaw-agent
  *
- * Catalog category routing (src/runtime/direct-llm-runner.ts):
- *   bash → execution
+ * Catalog category routing (src/runtime/direct-llm-runner.ts, callCatalogToolViaRedis):
+ *   category = toolName (e.g. bash → category=bash, web_fetch → category=web_fetch)
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawnSync } from 'node:child_process';
@@ -253,10 +255,14 @@ describe('Minikube-live: tool pod and tool job spawning via Redis IPC (direct by
     }
   });
 
-  // ── 1. bash → execution-category tool pod spawn via Redis IPC ────────────
+  // ── 1. bash → bash-category sidecar tool pod spawn via Redis IPC ─────────
+  //
+  // The old "execution" category was deleted with createToolPodJob in the
+  // agent-runner catalog unification. The `bash` tool now dispatches as
+  // category=bash (callCatalogToolViaRedis sets category=toolName).
 
   it(
-    'execution-category tool pod spawn via Redis IPC (bash)',
+    'bash-category sidecar tool pod spawn via Redis IPC',
     async () => {
       expect(provisioned, 'globalSetup port-forward not live').toBe(true);
       expect(redis, 'Redis client not initialised').not.toBeNull();
@@ -264,11 +270,11 @@ describe('Minikube-live: tool pod and tool job spawning via Redis IPC (direct by
       const rand = Math.random().toString(36).slice(2, 8);
       const agentJobId = `direct-test-bash-${Date.now()}-${rand}`;
       const requestId = `${agentJobId}-req`;
-      const category = 'execution';
+      const category = 'bash';
 
-      // Stream keys — kubeclaw:toolcalls:<agentJobId>:execution
-      //              kubeclaw:toolresults:<agentJobId>:execution
-      // (src/k8s/redis-client.ts:118-130)
+      // Stream keys — kubeclaw:toolcalls:<agentJobId>:bash
+      //              kubeclaw:toolresults:<agentJobId>:bash
+      // (src/k8s/redis-client.ts getToolCallsStream / getToolResultsStream)
       const toolCallsStream = `kubeclaw:toolcalls:${agentJobId}:${category}`;
       const toolResultsStream = `kubeclaw:toolresults:${agentJobId}:${category}`;
 
@@ -299,7 +305,7 @@ describe('Minikube-live: tool pod and tool job spawning via Redis IPC (direct by
         'channel', 'http',
       );
 
-      console.log(`Waiting for execution tool pod (agentJobId=${agentJobId})...`);
+      console.log(`Waiting for bash sidecar tool pod (agentJobId=${agentJobId})...`);
 
       // Hard assertion: a pod with the expected label must appear within 90 s.
       //

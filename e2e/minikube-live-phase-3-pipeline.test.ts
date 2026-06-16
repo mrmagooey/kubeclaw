@@ -13,8 +13,8 @@
  *   AC1 — Message published to inbound channel reaches the orchestrator.
  *          Verified by orchestrator log lines captured after POST /message.
  *   AC2 — Orchestrator spawns tool-job pod, waits for completion.
- *          Verified via kubectl for the browser-category tool pod spawned
- *          by the web_fetch prompt (mirrors minikube-live-researcher harness).
+ *          Verified via orchestrator log "Sidecar tool pod job created" with
+ *          category=web_fetch (the catalog tool name for the web_fetch prompt).
  *   AC3 — Tool result published back through Redis to the channel.
  *          Implicitly verified: the SSE reply contains content that could
  *          only come from a real tool execution (fetched URL fragment).
@@ -386,19 +386,24 @@ describe.skipIf(!providerAvailable)(
             `Researcher reply should cite the Wikipedia URL. Got: ${JSON.stringify(fullReply)}`,
           ).toContain(WIKI_URL_FRAGMENT);
 
-          // AC2: the orchestrator must have spawned a browser-category tool-pod
-          // job between our POST and the SSE reply. Scoped by --since-time so
-          // earlier tests' tool-pod events are not counted as false positives.
+          // AC2: the orchestrator must have spawned a sidecar tool-pod job between
+          // our POST and the SSE reply. Scoped by --since-time so earlier tests'
+          // tool-pod events are not counted as false positives.
+          //
+          // The new log message is "Sidecar tool pod job created" (not the deleted
+          // "Tool pod job created" from createToolPodJob). web_fetch dispatches as
+          // category=web_fetch (callCatalogToolViaRedis: category = toolName),
+          // not the old category=browser that the deleted BUILTIN_CATEGORIES used.
           const logs = orchestratorLogsSince(logCheckpoint);
           expect(
             logs,
-            'orchestrator log after POST should contain "Tool pod job created" — ' +
-              'without it the test cannot prove a tool-pod was actually spawned',
-          ).toMatch(/Tool pod job created/);
+            'orchestrator log after POST should contain "Sidecar tool pod job created" — ' +
+              'without it the test cannot prove a sidecar tool-pod was actually spawned',
+          ).toMatch(/Sidecar tool pod job created/);
           expect(
             logs,
-            'tool pod must be browser-category (the category that contains web_fetch)',
-          ).toMatch(/"category":"browser"/);
+            'tool pod must be web_fetch category (catalog tool name = category name)',
+          ).toMatch(/"category":"web_fetch"/);
         } finally {
           sse.dispose();
         }
