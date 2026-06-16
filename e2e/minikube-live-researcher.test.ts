@@ -96,10 +96,29 @@ async function probeProvider(): Promise<{ ok: boolean; reason: string }> {
       };
     }
     const payload = (await chatRes.json()) as {
-      choices?: { message?: { content?: string } }[];
+      choices?: {
+        message?: {
+          content?: string | null;
+          reasoning?: string | null;
+          reasoning_content?: string | null;
+        };
+      }[];
     };
-    if (typeof payload.choices?.[0]?.message?.content !== 'string') {
-      return { ok: false, reason: 'malformed chat response' };
+    // Some reasoning models (e.g. Kimi k2.5, Nemotron via OpenRouter) leave
+    // `content` null and put the answer in `reasoning`/`reasoning_content` —
+    // and under the tiny max_tokens probe the reasoning budget can leave
+    // `content` empty. Accept a non-empty string in any of these fields, which
+    // mirrors how the runtime extracts the answer (DirectLLMRunner) and the
+    // phase-3 / specialist-mention-routing probes.
+    const msg = payload.choices?.[0]?.message;
+    const nonEmpty = (s: unknown): boolean =>
+      typeof s === 'string' && s.length > 0;
+    if (
+      !nonEmpty(msg?.content) &&
+      !nonEmpty(msg?.reasoning) &&
+      !nonEmpty(msg?.reasoning_content)
+    ) {
+      return { ok: false, reason: 'malformed chat response (no content/reasoning field)' };
     }
     return { ok: true, reason: '' };
   } catch (err) {
