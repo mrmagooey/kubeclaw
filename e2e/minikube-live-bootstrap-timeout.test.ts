@@ -309,6 +309,14 @@ describe(
         // Step 2: Wait for the timeout SSE message (type=timeout).
         // The Job's activeDeadlineSeconds=BOOTSTRAP_TIMEOUT_SECONDS will fire.
         // The orchestrator observes DeadlineExceeded and calls cleanupBootstrapResources.
+        //
+        // Note: there is an acceptable race window here — callBootstrapChannelFromSkill
+        // polls kubectl until the Job appears, and only then does waitForSseMessage open
+        // the /events SSE connection. Any SSE events emitted between "Job appears" and
+        // "SSE opens" would be missed. For the default BOOTSTRAP_TIMEOUT_SECONDS value
+        // (~60 s) the timeout event fires well after the SSE connection is established,
+        // so the window is harmless in practice. Only a very short timeout (< ~5 s)
+        // would make this a real concern.
         const timeoutMsg = await waitForSseMessage(
           ADMIN_URL,
           authHeader,

@@ -2677,9 +2677,8 @@ interface SseAdminClient {
  * Exported for unit testing; called by the registerBootstrapSsePublisher
  * callback wired inside startHttpAdminServer.
  *
- * Clients whose response is already ended (writableEnded) are silently skipped.
- * Write errors (dead connections) are caught and ignored — the caller's loop
- * continues to any remaining clients.
+ * Dead clients (writableEnded or write throws) are pruned from the passed
+ * array in place — mirrors the pushSse pattern so both stay consistent.
  */
 export function broadcastBootstrapSse(
   clients: Array<{ res: { writableEnded: boolean; write: (data: string) => void } }>,
@@ -2692,13 +2691,19 @@ export function broadcastBootstrapSse(
       .split('\n')
       .map((l) => `data: ${l}`)
       .join('\n') + '\n\n';
-  for (const c of [...clients]) {
+  const dead: typeof clients = [];
+  for (const c of clients) {
     try {
-      if (!c.res.writableEnded) c.res.write(lines);
+      if (c.res.writableEnded) {
+        dead.push(c);
+      } else {
+        c.res.write(lines);
+      }
     } catch {
-      // dead client — ignore
+      dead.push(c);
     }
   }
+  for (const c of dead) clients.splice(clients.indexOf(c), 1);
 }
 
 export function startHttpAdminServer(client?: OpenAI): void {

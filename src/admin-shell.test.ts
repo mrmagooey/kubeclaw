@@ -1365,7 +1365,7 @@ describe('broadcastBootstrapSse', () => {
     expect(parsed.text).toBe('Job timed out');
   });
 
-  it('skips clients whose response is already ended (writableEnded=true)', () => {
+  it('skips clients whose response is already ended (writableEnded=true) and removes them from the array', () => {
     const writes: string[] = [];
     const deadClient = {
       res: { writableEnded: true, write: (data: string) => { writes.push(data); } },
@@ -1375,9 +1375,34 @@ describe('broadcastBootstrapSse', () => {
       res: { writableEnded: false, write: (data: string) => { liveWrites.push(data); } },
     };
 
-    broadcastBootstrapSse([deadClient, liveClient], 'bootstrap', 'step done');
+    const clients = [deadClient, liveClient];
+    broadcastBootstrapSse(clients, 'bootstrap', 'step done');
 
-    expect(writes).toHaveLength(0); // dead client — skipped
+    expect(writes).toHaveLength(0); // dead client — skipped, not written to
     expect(liveWrites).toHaveLength(1); // live client — written
+    // Dead client must be pruned from the array in place.
+    expect(clients).toHaveLength(1);
+    expect(clients[0]).toBe(liveClient);
+  });
+
+  it('removes clients whose write() throws from the array', () => {
+    const throwingClient = {
+      res: {
+        writableEnded: false,
+        write: (_data: string) => { throw new Error('EPIPE'); },
+      },
+    };
+    const liveWrites: string[] = [];
+    const liveClient = {
+      res: { writableEnded: false, write: (data: string) => { liveWrites.push(data); } },
+    };
+
+    const clients = [throwingClient, liveClient];
+    broadcastBootstrapSse(clients, 'bootstrap', 'step done');
+
+    // Throwing client must be pruned; live client still receives the event.
+    expect(clients).toHaveLength(1);
+    expect(clients[0]).toBe(liveClient);
+    expect(liveWrites).toHaveLength(1);
   });
 });
