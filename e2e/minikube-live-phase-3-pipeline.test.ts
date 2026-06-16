@@ -403,7 +403,7 @@ describe.skipIf(!providerAvailable)(
           expect(
             logs,
             'tool pod must be web_fetch category (catalog tool name = category name)',
-          ).toMatch(/"category":"web_fetch"/);
+          ).toMatch(/"toolName":"web_fetch"/);
         } finally {
           sse.dispose();
         }

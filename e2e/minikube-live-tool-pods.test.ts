@@ -20,8 +20,8 @@
  *   getToolJobResultStream(jobId)               → kubeclaw:agent-job-result:<jobId>
  *
  * Tool-pod labels (src/k8s/job-runner.ts — createSidecarToolPodJob):
- *   Job metadata: app=kubeclaw-sidecar-tool, kubeclaw/category=<category>, kubeclaw/group, kubeclaw/agent-job
- *   Pod template:  app=kubeclaw-sidecar-tool  ← kubeclaw/category and kubeclaw/agent-job are NOT on the pod template
+ *   Job metadata: app=kubeclaw-sidecar-tool, kubeclaw/tool=<toolName>, kubeclaw/group, kubeclaw/agent-job
+ *   Pod template:  app=kubeclaw-sidecar-tool  ← kubeclaw/tool and kubeclaw/agent-job are NOT on the pod template
  *
  * Tool-job labels (src/k8s/job-runner.ts:167, 789-801):
  *   Job metadata: app=kubeclaw-agent, kubeclaw/group=<groupFolder>, kubeclaw/chat-jid=<sanitised>
@@ -310,7 +310,7 @@ describe('Minikube-live: tool pod and tool job spawning via Redis IPC (direct by
       // Hard assertion: a pod with the expected label must appear within 90 s.
       //
       // Label layout (job-runner.ts — createSidecarToolPodJob):
-      //   Job metadata labels: app=kubeclaw-sidecar-tool, kubeclaw/category, kubeclaw/group,
+      //   Job metadata labels: app=kubeclaw-sidecar-tool, kubeclaw/tool, kubeclaw/group,
       //                        kubeclaw/agent-job
       //   Pod TEMPLATE labels: app=kubeclaw-sidecar-tool
       //
