@@ -1844,7 +1844,9 @@ export class JobRunner {
             // and that both containers get GID 2000 as a supplementary group.
             // Without this, whichever container creates /shared/req first owns it
             // exclusively, and the other container's UID gets EACCES on rename().
-            securityContext: { fsGroup: 2000 },
+            // fsGroupChangePolicy: OnRootMismatch avoids a recursive chown on every
+            // pod start (which would otherwise chown the group PVC for bash_persist).
+            securityContext: { fsGroup: 2000, fsGroupChangePolicy: 'OnRootMismatch' },
             ...(cdpInitContainers && { initContainers: cdpInitContainers }),
             containers: [
               {

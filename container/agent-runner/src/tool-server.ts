@@ -410,7 +410,12 @@ export async function executeToolBridgeFile(
     const text = typeof v === 'string' ? v : JSON.stringify(v);
     fs.writeFileSync(path.join(tmpInput, field), text);
   }
-  fs.mkdirSync(path.join(sharedDir, 'req'), { recursive: true });
+  const reqParent = path.join(sharedDir, 'req');
+  fs.mkdirSync(reqParent, { recursive: true });
+  // Ensure /shared/req is writable by whichever container wins the creation race.
+  // If the bridge created it, chmod succeeds. If tool-wrapper.sh created it first
+  // (with umask 0000 → 0777), chmod throws EPERM and is safely ignored.
+  try { fs.chmodSync(reqParent, 0o777); } catch { /* not owner — already world-writable */ }
   fs.renameSync(tmpReq, reqDir); // atomic publish
 
   const deadline = Date.now() + idleTimeout;

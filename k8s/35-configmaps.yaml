@@ -26,6 +26,7 @@ data:
     # with $INPUT_DIR pointing at the request's per-field input files, and writes
     # the response (stdout/stderr/exit_code) back atomically. Uses only sh.
     S=/shared
+    umask 0000
     mkdir -p "$S/req" "$S/resp"
     : "${KUBECLAW_POLL_INTERVAL:=1}"
     : "${WORKDIR:=/tmp}"

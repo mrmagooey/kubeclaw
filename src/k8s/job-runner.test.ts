@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
+import * as fs from 'fs';
+import * as path from 'path';
 import { EventEmitter } from 'events';
 import type { RegisteredGroup } from '../types.js';
 import type {
@@ -1803,11 +1805,14 @@ describe('JobRunner', () => {
       expect(call.body.spec.activeDeadlineSeconds).toBe(90);
     });
 
-    it('file-bridge: pod-level securityContext.fsGroup=2000 is set so both containers can write /shared/req and /shared/resp', async () => {
+    it('file-bridge: pod-level securityContext has fsGroup=2000 AND fsGroupChangePolicy=OnRootMismatch', async () => {
       // Regression: without fsGroup the two containers ran under different UIDs;
       // whichever created /shared/req first owned it exclusively, causing the other
       // to get EACCES on rename().  fsGroup=2000 makes the emptyDir group-owned and
       // grants both containers GID 2000 as a supplementary group.
+      // fsGroupChangePolicy=OnRootMismatch prevents a recursive chown of the group
+      // PVC (bash_persist) on every pod start — only applies when the root already
+      // has the correct ownership.
       const fileSpec = {
         ...baseSpec,
         toolSpec: { ...baseSpec.toolSpec, pattern: 'file' as const },
@@ -1818,15 +1823,17 @@ describe('JobRunner', () => {
       const podSecCtx = call.body.spec.template.spec.securityContext;
       expect(podSecCtx).toBeDefined();
       expect(podSecCtx.fsGroup).toBe(2000);
+      expect(podSecCtx.fsGroupChangePolicy).toBe('OnRootMismatch');
     });
 
-    it('http-bridge: pod-level securityContext.fsGroup=2000 is set (fsGroup is harmless for non-file patterns)', async () => {
+    it('http-bridge: pod-level securityContext has fsGroup=2000 AND fsGroupChangePolicy=OnRootMismatch', async () => {
       await jobRunner.createSidecarToolPodJob(baseSpec);
 
       const call = mockBatchApi.createNamespacedJob.mock.calls.at(-1)![0];
       const podSecCtx = call.body.spec.template.spec.securityContext;
       expect(podSecCtx).toBeDefined();
       expect(podSecCtx.fsGroup).toBe(2000);
+      expect(podSecCtx.fsGroupChangePolicy).toBe('OnRootMismatch');
     });
   });
 
@@ -2304,5 +2311,40 @@ describe('JobRunner', () => {
       );
       expect(containerNames).not.toContain('credential-sidecar');
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ConfigMap content: tool-wrapper.sh must set umask 0000 before mkdir
+// ---------------------------------------------------------------------------
+// The file-bridge EACCES fix requires that whichever container (bridge or
+// user-tool) creates /shared/req and /shared/resp, it creates them with
+// 0777 permissions so the non-owning container can rename() into them.
+// The bridge does this via chmodSync (in tool-server.ts); the wrapper does
+// it by setting umask 0000 before mkdir.  These tests assert the wrapper
+// template in BOTH the Helm chart and the static k8s manifest contain the
+// umask line immediately before the mkdir.
+describe('tool-wrapper.sh ConfigMap: umask 0000 before mkdir', () => {
+  const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../..');
+
+  it('helm/kubeclaw/templates/configmaps.yaml: umask 0000 precedes mkdir -p "$S/req"', () => {
+    const helmCm = path.join(repoRoot, 'helm/kubeclaw/templates/configmaps.yaml');
+    const content = fs.readFileSync(helmCm, 'utf-8');
+    // Verify umask 0000 appears before the mkdir line
+    const umaskIdx = content.indexOf('umask 0000');
+    const mkdirIdx = content.indexOf('mkdir -p "$S/req" "$S/resp"');
+    expect(umaskIdx, 'umask 0000 not found in Helm configmaps.yaml').toBeGreaterThan(-1);
+    expect(mkdirIdx, 'mkdir line not found in Helm configmaps.yaml').toBeGreaterThan(-1);
+    expect(umaskIdx, 'umask 0000 must appear before the mkdir line').toBeLessThan(mkdirIdx);
+  });
+
+  it('k8s/35-configmaps.yaml: umask 0000 precedes mkdir -p "$S/req"', () => {
+    const staticCm = path.join(repoRoot, 'k8s/35-configmaps.yaml');
+    const content = fs.readFileSync(staticCm, 'utf-8');
+    const umaskIdx = content.indexOf('umask 0000');
+    const mkdirIdx = content.indexOf('mkdir -p "$S/req" "$S/resp"');
+    expect(umaskIdx, 'umask 0000 not found in k8s/35-configmaps.yaml').toBeGreaterThan(-1);
+    expect(mkdirIdx, 'mkdir line not found in k8s/35-configmaps.yaml').toBeGreaterThan(-1);
+    expect(umaskIdx, 'umask 0000 must appear before the mkdir line').toBeLessThan(mkdirIdx);
   });
 });
