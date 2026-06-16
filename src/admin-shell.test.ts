@@ -1482,6 +1482,12 @@ describe('bootstrap_channel_from_skill timeout_seconds handling', () => {
     expect(vi.mocked(mockBootstrapChannelFromSkill)).toHaveBeenCalledWith(
       expect.objectContaining({ timeoutSeconds: 120 }),
     );
+    expect(vi.mocked(mockWaitForBootstrapJobCompletion)).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ bootstrapTimeoutSeconds: 120 }),
+    );
     delete process.env.BOOTSTRAP_SKILL_TIMEOUT_SECONDS;
   });
 
@@ -1494,6 +1500,12 @@ describe('bootstrap_channel_from_skill timeout_seconds handling', () => {
     });
     expect(vi.mocked(mockBootstrapChannelFromSkill)).toHaveBeenCalledWith(
       expect.objectContaining({ timeoutSeconds: 900 }),
+    );
+    expect(vi.mocked(mockWaitForBootstrapJobCompletion)).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ bootstrapTimeoutSeconds: 900 }),
     );
   });
 });
