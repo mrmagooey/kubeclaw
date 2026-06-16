@@ -101,6 +101,10 @@ secrets:
   openrouterApiKey: ""
   # Optional: Voyage AI API key (https://www.voyageai.com/) — for Voyage embeddings.
   voyageApiKey: ""
+  # Optional: Brave Search API key (https://brave.com/search/api/) — operator fallback for the
+  # brave-search catalog entry; feeds kubeclaw-secrets[brave-search] used by the credential broker
+  # when resolving web_search egress in sidecar/istio mode.
+  braveApiKey: ""
   # Admin HTTP interface password. Auto-generated on first install if left empty.
   adminHttpPassword: ""
   # Set to use an existing Secret instead of creating one from the values above.
