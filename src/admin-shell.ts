@@ -100,6 +100,7 @@ import type {
 import {
   currentStepByJob,
   pendingBootstrapQuestionByJob,
+  registerBootstrapSsePublisher,
 } from './k8s/ipc-redis.js';
 import { jobRunner } from './k8s/job-runner.js';
 import { getRedisClient } from './k8s/redis-client.js';
@@ -2681,6 +2682,26 @@ export function startHttpAdminServer(client?: OpenAI): void {
   const histories = new Map<string, OpenAI.ChatCompletionMessageParam[]>();
   const inProgress = new Set<string>();
   const sseClients: SseAdminClient[] = [];
+
+  // Wire bootstrap event → admin SSE broadcast (all connected admins).
+  // Bootstrap events carry no per-admin username, and admins are a trusted
+  // single-user control plane, so broadcasting to all connected SSE clients
+  // is correct here.
+  registerBootstrapSsePublisher((type, text) => {
+    const payload = JSON.stringify({ type, text });
+    const lines =
+      payload
+        .split('\n')
+        .map((l) => `data: ${l}`)
+        .join('\n') + '\n\n';
+    for (const c of [...sseClients]) {
+      try {
+        if (!c.res.writableEnded) c.res.write(lines);
+      } catch {
+        // dead client — ignore
+      }
+    }
+  });
 
   function checkAuth(req: http.IncomingMessage): string | null {
     if (!password) return username; // no auth configured — accept all

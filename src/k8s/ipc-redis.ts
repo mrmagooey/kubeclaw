@@ -126,6 +126,22 @@ let _bootstrapCommitDeps: CommitChannelConfigDeps | null = null;
 let _channelBaseImage = 'kubeclaw-agent:latest';
 let _bootstrapNamespace = process.env.KUBECLAW_NAMESPACE || 'kubeclaw';
 
+// SSE publisher — set by registerBootstrapSsePublisher() called from admin-shell.ts
+// so that bootstrap Redis events can be forwarded to admin SSE clients without
+// creating a circular import (admin-shell → ipc-redis, not the reverse).
+let _bootstrapSsePublisher: ((type: string, text: string) => void) | null = null;
+
+/**
+ * Register a callback that will be invoked whenever a bootstrap event worth
+ * forwarding arrives on the kubeclaw:bootstrap:* Redis topic. Called from
+ * startHttpAdminServer() in admin-shell.ts to wire the event bridge.
+ */
+export function registerBootstrapSsePublisher(
+  fn: (type: string, text: string) => void,
+): void {
+  _bootstrapSsePublisher = fn;
+}
+
 // Story 180: in-memory map of most-recent step label per bootstrapJobId.
 // Updated by the bootstrap topic subscriber when a { type: "step" } message arrives.
 // Exported so bootstrap-runner.ts can read it when building active entries.
@@ -236,6 +252,7 @@ export function startBootstrapTaskWatcher(): void {
               { bootstrapJobId, label },
               'bootstrap step label recorded',
             );
+            _bootstrapSsePublisher?.('bootstrap', label);
           } else if (
             data.type === 'question' &&
             typeof data.text === 'string'
@@ -249,6 +266,13 @@ export function startBootstrapTaskWatcher(): void {
               { bootstrapJobId },
               'bootstrap admin question recorded (awaiting reply_to_bootstrap)',
             );
+            _bootstrapSsePublisher?.('bootstrap', text);
+          } else if (data.type === 'timeout' && typeof data.text === 'string') {
+            logger.info(
+              { bootstrapJobId },
+              'bootstrap timeout received; forwarding to admin SSE',
+            );
+            _bootstrapSsePublisher?.('bootstrap', data.text);
           }
         } catch (err) {
           logger.warn(

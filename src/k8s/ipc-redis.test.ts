@@ -207,6 +207,7 @@ import {
   startBootstrapTaskWatcher,
   currentStepByJob,
   pendingBootstrapQuestionByJob,
+  registerBootstrapSsePublisher,
 } from './ipc-redis.js';
 import type { RegisteredGroup } from '../types.js';
 
@@ -2391,5 +2392,81 @@ describe('startBootstrapTaskWatcher — bootstrap topic messages', () => {
 
     expect(currentStepByJob.has('job-1')).toBe(false);
     expect(pendingBootstrapQuestionByJob.has('job-1')).toBe(false);
+  });
+});
+
+describe('startBootstrapTaskWatcher — bootstrap topic messages → SSE forwarding', () => {
+  let capturedSseEvents: Array<{ type: string; text: string }>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    subscriberOnRef.pmessageHandler = null;
+    currentStepByJob.clear();
+    pendingBootstrapQuestionByJob.clear();
+    capturedSseEvents = [];
+    registerBootstrapSsePublisher((type, text) => {
+      capturedSseEvents.push({ type, text });
+    });
+  });
+
+  afterEach(() => {
+    // Reset to a no-op so the publisher does not bleed across test suites.
+    registerBootstrapSsePublisher(() => {});
+  });
+
+  it('forwards a { type: "timeout" } message to the SSE publisher', () => {
+    startBootstrapTaskWatcher();
+    subscriberOnRef.pmessageHandler!(
+      'kubeclaw:bootstrap:*',
+      'kubeclaw:bootstrap:job-timeout-1',
+      JSON.stringify({
+        type: 'timeout',
+        text: 'Bootstrap job-timeout-1 timed out; nothing was installed.',
+      }),
+    );
+
+    expect(capturedSseEvents).toHaveLength(1);
+    expect(capturedSseEvents[0].type).toBe('bootstrap');
+    expect(capturedSseEvents[0].text).toContain('timed out; nothing was installed');
+  });
+
+  it('forwards a { type: "step" } message to the SSE publisher', () => {
+    startBootstrapTaskWatcher();
+    subscriberOnRef.pmessageHandler!(
+      'kubeclaw:bootstrap:*',
+      'kubeclaw:bootstrap:job-step-2',
+      JSON.stringify({ type: 'step', label: 'Installing packages' }),
+    );
+
+    expect(capturedSseEvents).toHaveLength(1);
+    expect(capturedSseEvents[0].type).toBe('bootstrap');
+    expect(capturedSseEvents[0].text).toBe('Installing packages');
+  });
+
+  it('forwards a { type: "question" } message to the SSE publisher', () => {
+    startBootstrapTaskWatcher();
+    subscriberOnRef.pmessageHandler!(
+      'kubeclaw:bootstrap:*',
+      'kubeclaw:bootstrap:job-q-3',
+      JSON.stringify({
+        type: 'question',
+        text: 'Which port should the channel listen on?',
+      }),
+    );
+
+    expect(capturedSseEvents).toHaveLength(1);
+    expect(capturedSseEvents[0].type).toBe('bootstrap');
+    expect(capturedSseEvents[0].text).toBe('Which port should the channel listen on?');
+  });
+
+  it('does NOT forward messages of unknown type to the SSE publisher', () => {
+    startBootstrapTaskWatcher();
+    subscriberOnRef.pmessageHandler!(
+      'kubeclaw:bootstrap:*',
+      'kubeclaw:bootstrap:job-unk',
+      JSON.stringify({ type: 'commit_ack', text: 'done' }),
+    );
+
+    expect(capturedSseEvents).toHaveLength(0);
   });
 });

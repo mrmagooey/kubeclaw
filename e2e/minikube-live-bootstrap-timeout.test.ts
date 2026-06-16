@@ -147,88 +147,44 @@ async function waitForSseMessage(
 }
 
 /**
- * Call POST /chat and wait for the 202 accepted response (fire-and-forget style).
- */
-async function postChat(
-  adminUrl: string,
-  authHeader: string,
-  text: string,
-): Promise<void> {
-  const res = await fetch(`${adminUrl}/chat`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: authHeader },
-    body: JSON.stringify({ text }),
-    signal: AbortSignal.timeout(10_000),
-  });
-  if (res.status !== 202) {
-    throw new Error(`POST /chat returned ${res.status}`);
-  }
-}
-
-/**
  * Call bootstrap_channel_from_skill via the admin shell /chat endpoint.
- * Returns the assistant's reply text.
+ * Returns a confirmation string once the bootstrap Job appears in the cluster,
+ * or throws if the Job does not appear within 60s.
+ *
+ * We do NOT wait for the LLM assistant reply — LLM latency can exceed the
+ * test budget. The real outcome (Job created) is verified via kubectl.
  */
 async function callBootstrapChannelFromSkill(
   adminUrl: string,
   authHeader: string,
   instanceName: string,
 ): Promise<string> {
-  // Use the direct tool IPC path: send a message that invokes the tool.
-  // In the minikube-live environment the LLM is mocked; the tool is called
-  // directly via the admin-shell HTTP API.
-  const controller = new AbortController();
-  const eventsRes = await fetch(`${adminUrl}/events`, {
-    headers: { Authorization: authHeader, Accept: 'text/event-stream' },
-    signal: controller.signal,
+  // Fire the chat POST.
+  const res = await fetch(`${adminUrl}/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: authHeader },
+    body: JSON.stringify({
+      text: `Call bootstrap_channel_from_skill with skill_name="bootstrap-telegram", channel_type="telegram", instance_name="${instanceName}"`,
+    }),
+    signal: AbortSignal.timeout(10_000),
   });
-
-  await postChat(
-    adminUrl,
-    authHeader,
-    `Call bootstrap_channel_from_skill with skill_name="bootstrap-telegram", channel_type="telegram", instance_name="${instanceName}"`,
-  );
-
-  const reader = eventsRes.body!.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  const deadline = Date.now() + 30_000;
-  let reply = '';
-
-  try {
-    while (Date.now() < deadline) {
-      const result = await Promise.race([
-        reader.read(),
-        sleep(3000).then(() => ({ value: undefined, done: false as const })),
-      ]);
-      if (result.done) break;
-      if (result.value) {
-        buffer += decoder.decode(result.value, { stream: true });
-      }
-      const lines = buffer.split('\n');
-      buffer = lines.pop() ?? '';
-      for (const line of lines) {
-        if (line.startsWith('data:')) {
-          try {
-            const payload = JSON.parse(line.slice(5).trim()) as {
-              type?: string;
-              text?: string;
-            };
-            if (payload.type === 'assistant' && payload.text) {
-              reply = payload.text;
-            }
-          } catch {
-            // skip
-          }
-        }
-      }
-      if (reply) break;
-    }
-  } finally {
-    controller.abort();
+  if (res.status !== 202) {
+    throw new Error(`POST /chat returned ${res.status}`);
   }
 
-  return reply;
+  // Poll kubectl for the bootstrap Job to appear.
+  const jobName = `kubeclaw-bootstrap-${instanceName}`;
+  const deadline = Date.now() + 60_000;
+  while (Date.now() < deadline) {
+    const r = kubectl(
+      ['get', 'job', jobName, '-n', NAMESPACE, '--ignore-not-found=true', '-o', 'jsonpath={.metadata.name}'],
+    );
+    if (r.ok && r.stdout.trim() === jobName) {
+      return `Bootstrap started: Job ${jobName} exists in cluster`;
+    }
+    await sleep(2000);
+  }
+  throw new Error(`Bootstrap Job ${jobName} did not appear within 60s`);
 }
 
 describe(
@@ -334,7 +290,7 @@ describe(
           return;
         }
 
-        expect(bootstrapReply).toContain('Bootstrap started successfully');
+        expect(bootstrapReply).toContain('Bootstrap started');
 
         // Step 2: Wait for the timeout SSE message (type=timeout).
         // The Job's activeDeadlineSeconds=BOOTSTRAP_TIMEOUT_SECONDS will fire.
