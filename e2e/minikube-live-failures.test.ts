@@ -288,14 +288,17 @@ describe('Minikube-live: failure modes for tools, capabilities, and HTTP channel
   //
   // XADD spawn-tool-pod for `bash` with a command that exits 1 (via `false`).
   // The tool-pod runs the command and writes a result entry to the
-  // kubeclaw:toolresults:<agentJobId>:execution stream.
+  // kubeclaw:toolresults:<agentJobId>:bash stream.
   // The result field must be present (non-empty), proving the failure path
   // completes normally instead of hanging.
   //
-  // Per src/k8s/redis-client.ts, the execution tool results stream key is:
-  //   kubeclaw:toolresults:<agentJobId>:execution
+  // Post-unification: spawn-tool-pod resolves the `category` field AS THE TOOL
+  // NAME (via resolveTool in ipc-redis.ts). The result stream is keyed by that
+  // tool name, not a retired category. 'bash' is the catalog tool name
+  // (helm/kubeclaw/values.yaml). The old 'execution' category is retired.
+  //   kubeclaw:toolresults:<agentJobId>:bash
   it(
-    'bash tool: non-zero exit code produces a result entry on the execution results stream',
+    'bash tool: non-zero exit code produces a result entry on the bash results stream',
     async () => {
       expect(provisioned, 'globalSetup port-forward not live').toBe(true);
       expect(redis, 'Redis client not initialised').not.toBeNull();
@@ -303,7 +306,7 @@ describe('Minikube-live: failure modes for tools, capabilities, and HTTP channel
       const rand = randHex();
       const agentJobId = `fail-bash-${Date.now()}-${rand}`;
       const requestId = `${agentJobId}-req`;
-      const category = 'execution';
+      const category = 'bash';
 
       const toolCallsStream = `kubeclaw:toolcalls:${agentJobId}:${category}`;
       const toolResultsStream = `kubeclaw:toolresults:${agentJobId}:${category}`;
