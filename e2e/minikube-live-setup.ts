@@ -351,7 +351,110 @@ function waitForPod(labelSelector: string, timeoutMs: number): Promise<void> {
   });
 }
 
+/**
+ * Given the raw stdout of `kubectl get pvc -n <ns> -o json`, return the names
+ * of PVCs that are in Terminating state (i.e. have a non-empty deletionTimestamp).
+ *
+ * This is a pure, side-effect-free function exported for unit testing.
+ * Returns [] on any parse error — never throws.
+ */
+export function stuckTerminatingPvcNames(pvcListJson: string): string[] {
+  try {
+    if (!pvcListJson || !pvcListJson.trim()) return [];
+    const list = JSON.parse(pvcListJson) as {
+      items?: Array<{
+        metadata?: { name?: string; deletionTimestamp?: string | null };
+      }>;
+    };
+    if (!Array.isArray(list?.items)) return [];
+    const names: string[] = [];
+    for (const item of list.items) {
+      const ts = item?.metadata?.deletionTimestamp;
+      if (ts != null && ts !== '') {
+        const name = item?.metadata?.name;
+        if (name) names.push(name);
+      }
+    }
+    return names;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Pre-install guard: forcibly remove any PVCs in the Terminating state before
+ * helm upgrade --install runs.
+ *
+ * WHY THIS IS NEEDED:
+ * When a prior run left the namespace behind (e.g. KUBECLAW_LIVE_KEEP=1, or a
+ * teardown that only ran `helm uninstall` without waiting for PVC deletion), its
+ * PVCs can remain in Terminating state — the `kubernetes.io/pvc-protection`
+ * finalizer prevents deletion until all pods using the PVC are gone. The next
+ * run's helm install creates pods that attempt to bind those same-named PVCs,
+ * and the scheduler reports:
+ *   "0/1 nodes are available: persistentvolumeclaim "kubeclaw-channel-http-sessions"
+ *    is being deleted. not found"
+ * → the channel-http pod stays Pending forever → globalSetup readiness wait
+ * times out (240 s) → the whole suite aborts before a single test runs.
+ *
+ * Fix: strip the protection finalizer from each stuck PVC so Kubernetes can
+ * complete the deletion, then wait (up to 30 s per PVC) for them to disappear.
+ * No-op on a clean namespace or if the namespace does not exist yet.
+ */
+function clearStuckPvcs(): void {
+  // List PVCs; if namespace absent or any error, there is nothing to do.
+  const result = run('kubectl', ['get', 'pvc', '-n', NAMESPACE, '-o', 'json'], {
+    allowFail: true,
+  });
+  if (!result.ok) return;
+
+  const stuck = stuckTerminatingPvcNames(result.stdout);
+  if (stuck.length === 0) return;
+
+  console.log(`🧹 Clearing ${stuck.length} stuck Terminating PVC(s): ${stuck.join(', ')}`);
+
+  for (const name of stuck) {
+    // Strip the kubernetes.io/pvc-protection finalizer so the API server can
+    // complete the delete. allowFail: the PVC may disappear between list and patch.
+    run(
+      'kubectl',
+      [
+        'patch',
+        '-n',
+        NAMESPACE,
+        'pvc',
+        name,
+        '-p',
+        '{"metadata":{"finalizers":null}}',
+        '--type=merge',
+      ],
+      { allowFail: true },
+    );
+  }
+
+  // Wait for each PVC to actually disappear (up to 30 s each).
+  for (const name of stuck) {
+    run(
+      'kubectl',
+      [
+        'wait',
+        '--for=delete',
+        `pvc/${name}`,
+        '-n',
+        NAMESPACE,
+        '--timeout=30s',
+      ],
+      { allowFail: true, timeout: 35_000 },
+    );
+    console.log(`🧹   PVC ${name} deleted`);
+  }
+}
+
 async function helmInstall(): Promise<void> {
+  // Guard: remove any Terminating PVCs from a prior run before helm creates pods
+  // that would try to bind them (which would leave those pods Pending forever).
+  clearStuckPvcs();
+
   // Pre-create the namespace with Helm ownership metadata.
   run('kubectl', ['create', 'namespace', NAMESPACE], { allowFail: true });
   run('kubectl', [
