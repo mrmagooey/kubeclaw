@@ -5,6 +5,20 @@ import {
 import type { CatalogEntry } from '../credential-broker/resolver.js';
 import { logger } from '../logger.js';
 
+/** Returns true when a Kubernetes API error indicates the resource was not found (HTTP 404). */
+function isNotFound(err: unknown): boolean {
+  const e = err as {
+    statusCode?: number;
+    code?: number;
+    response?: { statusCode?: number };
+  };
+  return (
+    e?.statusCode === 404 ||
+    e?.response?.statusCode === 404 ||
+    e?.code === 404
+  );
+}
+
 export interface CatalogInformerOpts {
   namespace: string;
   configMapName: string;
@@ -37,6 +51,15 @@ export class CatalogInformer {
       const cfg: BrokerConfig = loadBrokerConfig(yamlText);
       this.catalog = cfg.catalog;
     } catch (err) {
+      if (isNotFound(err)) {
+        // ConfigMap absent — expected when credentialInjection.mode=off.
+        // Serve empty/previous catalog silently; this is not a problem.
+        logger.debug(
+          { configMapName: this.opts.configMapName },
+          'broker catalog ConfigMap not found; serving previous catalog (mode=off?)',
+        );
+        return;
+      }
       logger.warn({ err }, 'catalog sync failed; serving previous catalog');
     }
   }
