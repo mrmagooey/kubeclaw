@@ -1892,12 +1892,13 @@ describe('startToolJobSpawnWatcher', () => {
     expect(mockXread).not.toHaveBeenCalled();
   });
 
-  it('sends a close signal to kubeclaw:input:{jobName} via onProcess so the agent pod exits', async () => {
+  it('sends an end-of-input signal to kubeclaw:input:{jobName} via onProcess so the agent pod exits', async () => {
     // Regression test: startToolJobSpawnWatcher must pass an onProcess callback
-    // to runToolJob. The callback writes type=close to kubeclaw:input:{jobName}
-    // so the agent pod exits its follow-up loop and the K8s Job reaches Succeeded.
-    // Without this, waitForJobCompletion never resolves and the result stream is
-    // never written.
+    // to runToolJob. The callback writes type=eoi to kubeclaw:input:{jobName}
+    // so the agent pod exits its follow-up wait loop after completing its work
+    // (without aborting in-flight tool rounds). The K8s Job then reaches
+    // Succeeded. Without this, waitForJobCompletion never resolves and the
+    // result stream is never written.
     startIpcWatcher(createMockDeps());
 
     const capturedOnProcess: Array<(jobName: string) => void> = [];
@@ -1948,12 +1949,12 @@ describe('startToolJobSpawnWatcher', () => {
     // Verify onProcess was registered and fired
     expect(capturedOnProcess).toHaveLength(1);
 
-    // Verify the close signal was written to the correct input stream key
+    // Verify the end-of-input signal was written to the correct input stream key
     expect(mockXadd).toHaveBeenCalledWith(
       'kubeclaw:input:nc-test-group-abc123',
       '*',
       'type',
-      'close',
+      'eoi',
     );
   });
 });

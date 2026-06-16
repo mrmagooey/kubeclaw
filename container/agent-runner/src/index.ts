@@ -283,12 +283,12 @@ function loadSystemPrompt(assistantName?: string): string {
 
 // ---- Input stream manager ----
 
-interface InputEntry {
+export interface InputEntry {
   type: string;
   text?: string;
 }
 
-class InputStreamManager {
+export class InputStreamManager {
   private lastId = '0-0';
   private queue: InputEntry[] = [];
   private redis: RedisClientType;
@@ -338,7 +338,11 @@ class InputStreamManager {
     return this.queue.some((e) => e.type === 'close');
   }
 
-  private _enqueue(response: any): void {
+  hasEndOfInput(): boolean {
+    return this.queue.some((e) => e.type === 'eoi');
+  }
+
+  _enqueue(response: any): void {
     if (!response?.length) return;
     for (const stream of response) {
       for (const msg of (stream as any).messages ?? []) {
@@ -1143,13 +1147,18 @@ async function runAgentLoop(
     });
   }
 
-  // Wait for follow-up messages or close signal
+  // Wait for follow-up messages or close/eoi signal
   log('Waiting for follow-up messages...');
   while (true) {
     await inputStream.blockPoll(5000);
 
     if (inputStream.hasCloseSignal()) {
       log('Close signal received, exiting');
+      break;
+    }
+
+    if (inputStream.hasEndOfInput()) {
+      log('End-of-input signal received, exiting');
       break;
     }
 
@@ -1184,10 +1193,14 @@ async function runAgentLoop(
       writeOutput({ status: 'error', result: null, error: errorMsg });
     }
 
-    // Check for close signal after follow-up
+    // Check for close/eoi signal after follow-up
     await inputStream.poll();
     if (inputStream.hasCloseSignal()) {
       log('Close signal received after follow-up, exiting');
+      break;
+    }
+    if (inputStream.hasEndOfInput()) {
+      log('End-of-input signal received after follow-up, exiting');
       break;
     }
   }

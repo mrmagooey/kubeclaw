@@ -433,7 +433,7 @@ describe('Tool Call Round-Trip', () => {
 
     it('close signal is detected on agent input stream', async () => {
       // Verify the MemoryStreamStore correctly handles the close message type
-      // (the remaining input stream message the agent-runner polls for).
+      // (the cancel signal sent by job.cancel / sendCloseSignal).
       const store = new MemoryStreamStore();
       const agentJobId = 'agent-close-001';
       const inputStream = `kubeclaw:input:${agentJobId}`;
@@ -443,6 +443,25 @@ describe('Tool Call Round-Trip', () => {
       const entries = store.xreadAfter(inputStream, '0-0');
       const close = entries.find((e) => e.fields.type === 'close');
       expect(close).toBeDefined();
+    });
+
+    it('eoi signal is detected on agent input stream', async () => {
+      // Verify the MemoryStreamStore correctly handles the eoi (end-of-input)
+      // message type — the graceful "no more input" signal written by the
+      // onProcess callback for one-shot jobs. Unlike close, eoi does NOT abort
+      // the agent mid-loop; it only exits the post-completion wait loop.
+      const store = new MemoryStreamStore();
+      const agentJobId = 'agent-eoi-001';
+      const inputStream = `kubeclaw:input:${agentJobId}`;
+
+      store.xadd(inputStream, { type: 'eoi' });
+
+      const entries = store.xreadAfter(inputStream, '0-0');
+      const eoi = entries.find((e) => e.fields.type === 'eoi');
+      expect(eoi).toBeDefined();
+      // eoi must NOT be mistaken for a cancel close signal
+      const close = entries.find((e) => e.fields.type === 'close');
+      expect(close).toBeUndefined();
     });
   });
 

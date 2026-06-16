@@ -1170,12 +1170,14 @@ export async function startToolJobSpawnWatcher(): Promise<void> {
                 groupsPvc,
                 sessionsPvc,
               },
-              // onProcess: as soon as the K8s Job exists, write a close signal
-              // so the agent pod exits its follow-up loop after completing the
-              // initial prompt. Without this the pod waits indefinitely for a
-              // close message and the K8s Job never reaches Succeeded state,
-              // causing waitForJobCompletion — and therefore the result write to
-              // resultStream — to never fire.
+              // onProcess: as soon as the K8s Job exists, write an end-of-input
+              // (eoi) signal so the agent pod exits its follow-up wait loop after
+              // completing the initial prompt. Without this the pod waits
+              // indefinitely for further input and the K8s Job never reaches
+              // Succeeded state, causing waitForJobCompletion — and therefore the
+              // result write to resultStream — to never fire.
+              // NOTE: this is NOT a cancel signal — the agent must finish its
+              // current work (including in-flight tool rounds) before exiting.
               (jobName: string) => {
                 // Record the job so orphan reconciliation can detect it on restart.
                 // messageId is the user-facing ID from the POST /message
@@ -1198,17 +1200,17 @@ export async function startToolJobSpawnWatcher(): Promise<void> {
                 activeAgentJobsByGroup.set(groupFolder, jobName);
                 const inputStream = getInputStream(jobName);
                 redis
-                  .xadd(inputStream, '*', 'type', 'close')
+                  .xadd(inputStream, '*', 'type', 'eoi')
                   .then(() =>
                     logger.debug(
                       { agentJobId, jobName },
-                      'Sent close signal to single-prompt tool job',
+                      'Sent end-of-input signal to single-prompt tool job',
                     ),
                   )
                   .catch((err) =>
                     logger.warn(
                       { agentJobId, jobName, err },
-                      'Failed to send close signal to tool job',
+                      'Failed to send end-of-input signal to tool job',
                     ),
                   );
               },
