@@ -187,6 +187,42 @@ export function buildJobName(folder: string): string {
 }
 
 
+/** Markers written by the agent-runner to stdout to delimit the final JSON result block. */
+const KUBECLAW_OUTPUT_START_MARKER = '---KUBECLAW_OUTPUT_START---';
+const KUBECLAW_OUTPUT_END_MARKER = '---KUBECLAW_OUTPUT_END---';
+
+/**
+ * Extract the LAST KUBECLAW_OUTPUT block from agent pod logs and parse it as
+ * ContainerOutput. Returns null if absent/malformed. Never throws.
+ */
+export function parseContainerOutputFromLogs(
+  logs: string,
+): ContainerOutput | null {
+  try {
+    const startIdx = logs.lastIndexOf(KUBECLAW_OUTPUT_START_MARKER);
+    if (startIdx === -1) return null;
+    const contentStart = startIdx + KUBECLAW_OUTPUT_START_MARKER.length;
+    const endIdx = logs.indexOf(KUBECLAW_OUTPUT_END_MARKER, contentStart);
+    if (endIdx === -1) return null;
+    const content = logs.slice(contentStart, endIdx).trim();
+    const parsed = JSON.parse(content);
+    // Validate shape: must have status and result
+    if (
+      typeof parsed !== 'object' ||
+      parsed === null ||
+      typeof parsed.status !== 'string' ||
+      !('result' in parsed)
+    ) {
+      return null;
+    }
+    const result = parsed.result;
+    if (result !== null && typeof result !== 'string') return null;
+    return parsed as ContainerOutput;
+  } catch {
+    return null;
+  }
+}
+
 /** Sentinel stamped when a catalog entry has `allowOperatorFallback: true` and the group
  * has not registered its own credential. The broker maps this to the operator's key from
  * `kubeclaw-secrets` at request time. */
@@ -450,10 +486,27 @@ export class JobRunner {
         durationMs: duration,
       });
 
+      // Parse the agent's final result from pod logs (deterministic: agent
+      // always writes ---KUBECLAW_OUTPUT_START---…---KUBECLAW_OUTPUT_END--- to
+      // stdout before exiting). Falls back to null result if logs are
+      // unavailable or malformed — never lets a log-read failure break job
+      // completion.
+      let parsed: ContainerOutput | null = null;
+      try {
+        const logs = await this.getJobLogs(jobName);
+        parsed = parseContainerOutputFromLogs(logs);
+      } catch (logErr) {
+        logger.warn(
+          { jobName },
+          'runToolJob: could not parse agent output from logs; returning null result',
+        );
+      }
+
       return {
-        status: 'success',
-        result: null,
-        newSessionId: capturedSessionId,
+        status: parsed?.status ?? 'success',
+        result: parsed?.result ?? null,
+        newSessionId: parsed?.newSessionId ?? capturedSessionId,
+        error: parsed?.error,
         jobId,
       };
     } catch (error) {

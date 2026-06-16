@@ -132,7 +132,7 @@ vi.mock('@kubernetes/client-node', () => {
 });
 
 // Now import after mocks are set up
-import { JobRunner, buildJobName } from './job-runner.js';
+import { JobRunner, buildJobName, parseContainerOutputFromLogs } from './job-runner.js';
 import * as configModule from '../config.js';
 import { assertGroupMountAllowed } from '../config.js';
 
@@ -2384,5 +2384,188 @@ describe('tool-wrapper.sh ConfigMap: chmod 0777 resp dir after mktemp -d', () =>
     expect(chmodIdx, 'chmod 0777 must appear after mktemp -d').toBeGreaterThan(mktempIdx);
     const toolRunIdx = content.indexOf('sh -c "$KUBECLAW_TOOL_RUN"');
     expect(chmodIdx, 'chmod 0777 must appear before the tool-run write into $t').toBeLessThan(toolRunIdx);
+  });
+});
+
+// ── parseContainerOutputFromLogs unit tests ─────────────────────────────────
+
+describe('parseContainerOutputFromLogs', () => {
+  const START = '---KUBECLAW_OUTPUT_START---';
+  const END = '---KUBECLAW_OUTPUT_END---';
+
+  function block(json: string): string {
+    return `${START}\n${json}\n${END}`;
+  }
+
+  it('(a) parses a single valid block with result/status/newSessionId', () => {
+    const payload = JSON.stringify({
+      status: 'success',
+      result: 'HELLO-123',
+      newSessionId: 'sess-abc',
+    });
+    const logs = `[agent-runner] starting\n${block(payload)}\n[agent-runner] done`;
+    const out = parseContainerOutputFromLogs(logs);
+    expect(out).not.toBeNull();
+    expect(out!.status).toBe('success');
+    expect(out!.result).toBe('HELLO-123');
+    expect(out!.newSessionId).toBe('sess-abc');
+  });
+
+  it('(b) returns the LAST block when multiple blocks are present', () => {
+    const first = block(JSON.stringify({ status: 'success', result: 'FIRST' }));
+    const last = block(JSON.stringify({ status: 'success', result: 'LAST' }));
+    const logs = `${first}\nsome noise\n${last}`;
+    const out = parseContainerOutputFromLogs(logs);
+    expect(out).not.toBeNull();
+    expect(out!.result).toBe('LAST');
+  });
+
+  it('(c) extracts correctly when interleaved with other log lines', () => {
+    const payload = JSON.stringify({ status: 'success', result: 'marker-xyz' });
+    const logs = [
+      '[agent-runner] some stderr',
+      'INFO: catalog loaded',
+      START,
+      payload,
+      END,
+      '[agent-runner] exiting',
+    ].join('\n');
+    const out = parseContainerOutputFromLogs(logs);
+    expect(out).not.toBeNull();
+    expect(out!.result).toBe('marker-xyz');
+  });
+
+  it('(d) returns null when no block is present', () => {
+    const out = parseContainerOutputFromLogs('just some log output\nno markers here');
+    expect(out).toBeNull();
+  });
+
+  it('(e) returns null when start marker is present but no end marker', () => {
+    const logs = `${START}\n{"status":"success","result":"foo"}`;
+    const out = parseContainerOutputFromLogs(logs);
+    expect(out).toBeNull();
+  });
+
+  it('(f) returns null (no throw) when JSON between markers is malformed', () => {
+    const logs = `${START}\nnot-valid-json{{{${END}`;
+    expect(() => parseContainerOutputFromLogs(logs)).not.toThrow();
+    const out = parseContainerOutputFromLogs(logs);
+    expect(out).toBeNull();
+  });
+
+  it('(g) returns null when JSON shape is missing status field', () => {
+    const payload = JSON.stringify({ result: 'something' }); // no status
+    const logs = block(payload);
+    const out = parseContainerOutputFromLogs(logs);
+    expect(out).toBeNull();
+  });
+
+  it('(g2) returns null when JSON shape is missing result field', () => {
+    const payload = JSON.stringify({ status: 'success' }); // no result
+    const logs = block(payload);
+    const out = parseContainerOutputFromLogs(logs);
+    expect(out).toBeNull();
+  });
+
+  it('(g3) returns null when result is not string or null', () => {
+    const payload = JSON.stringify({ status: 'success', result: 42 });
+    const logs = block(payload);
+    const out = parseContainerOutputFromLogs(logs);
+    expect(out).toBeNull();
+  });
+
+  it('accepts result: null as valid', () => {
+    const payload = JSON.stringify({ status: 'success', result: null });
+    const logs = block(payload);
+    const out = parseContainerOutputFromLogs(logs);
+    expect(out).not.toBeNull();
+    expect(out!.result).toBeNull();
+  });
+
+  it('preserves optional error field when present', () => {
+    const payload = JSON.stringify({
+      status: 'error',
+      result: null,
+      error: 'something went wrong',
+    });
+    const logs = block(payload);
+    const out = parseContainerOutputFromLogs(logs);
+    expect(out).not.toBeNull();
+    expect(out!.status).toBe('error');
+    expect(out!.error).toBe('something went wrong');
+  });
+});
+
+// ── runToolJob result-capture integration tests ─────────────────────────────
+
+describe('runToolJob — result capture from pod logs', () => {
+  let runner: JobRunner;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+    runner = new JobRunner();
+
+    // Default happy-path: job creates, completes, has a pod with logs
+    mockBatchApi.createNamespacedJob.mockResolvedValue({
+      metadata: { name: 'nc-test-group-abc123' },
+    });
+    mockBatchApi.readNamespacedJob.mockResolvedValue({
+      status: { succeeded: 1 },
+    });
+    mockCoreApi.listNamespacedPod.mockResolvedValue({
+      items: [{ metadata: { name: 'nc-test-group-abc123-pod' } }],
+    });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('returns the parsed result from pod logs when a KUBECLAW_OUTPUT block is present', async () => {
+    const START = '---KUBECLAW_OUTPUT_START---';
+    const END = '---KUBECLAW_OUTPUT_END---';
+    const logContent = [
+      '[agent-runner] running',
+      START,
+      JSON.stringify({ status: 'success', result: 'HELLO-123', newSessionId: 'sess-42' }),
+      END,
+    ].join('\n');
+
+    mockCoreApi.readNamespacedPodLog.mockResolvedValue(logContent);
+
+    const result = await runner.runToolJob(testGroup, testInput);
+
+    expect(result.status).toBe('success');
+    expect(result.result).toBe('HELLO-123');
+    expect(result.newSessionId).toBe('sess-42');
+  });
+
+  it('falls back to result: null when getJobLogs throws, without propagating the error', async () => {
+    mockCoreApi.listNamespacedPod.mockRejectedValue(new Error('pod list failed'));
+
+    let caughtErr: unknown = undefined;
+    let result: Awaited<ReturnType<typeof runner.runToolJob>> | undefined;
+    try {
+      result = await runner.runToolJob(testGroup, testInput);
+    } catch (e) {
+      caughtErr = e;
+    }
+
+    expect(caughtErr).toBeUndefined();
+    expect(result).toBeDefined();
+    expect(result!.status).toBe('success');
+    expect(result!.result).toBeNull();
+  });
+
+  it('falls back to result: null when pod logs contain no KUBECLAW_OUTPUT block', async () => {
+    mockCoreApi.readNamespacedPodLog.mockResolvedValue(
+      '[agent-runner] exited without writing output block',
+    );
+
+    const result = await runner.runToolJob(testGroup, testInput);
+
+    expect(result.status).toBe('success');
+    expect(result.result).toBeNull();
   });
 });
