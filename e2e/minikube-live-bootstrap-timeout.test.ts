@@ -225,6 +225,32 @@ describe(
         }
         await sleep(2000);
       }
+
+      // Pre-test cleanup: remove any stale bootstrap Job or runtime PVC from a
+      // prior run so the test observes a FRESH Job created by this invocation.
+      // --ignore-not-found suppresses errors when the resource is absent.
+      kubectl(
+        [
+          'delete',
+          'job',
+          '-n',
+          NAMESPACE,
+          `kubeclaw-bootstrap-${INSTANCE_NAME}`,
+          '--ignore-not-found',
+        ],
+        { allowFail: true },
+      );
+      kubectl(
+        [
+          'delete',
+          'pvc',
+          '-n',
+          NAMESPACE,
+          `kubeclaw-channel-${INSTANCE_NAME}-runtime`,
+          '--ignore-not-found',
+        ],
+        { allowFail: true },
+      );
     }, 30_000);
 
     afterAll(() => {
@@ -278,18 +304,6 @@ describe(
           authHeader,
           INSTANCE_NAME,
         );
-        expect(bootstrapReply).toContain('Bootstrap');
-
-        // Determine if it started (not "already in progress").
-        const alreadyInProgress = bootstrapReply.includes('already in progress');
-        if (alreadyInProgress) {
-          // A previous test run left stale state — clean up and skip.
-          console.warn(
-            'bootstrap_channel_from_skill returned "already in progress"; stale state from prior run. Skipping test.',
-          );
-          return;
-        }
-
         expect(bootstrapReply).toContain('Bootstrap started');
 
         // Step 2: Wait for the timeout SSE message (type=timeout).

@@ -225,7 +225,7 @@ vi.mock('./k8s/redis-client.js', () => ({
 
 // ── Import after mocks ─────────────────────────────────────────────────────
 
-const { executeTool, TOOLS, activeBootstraps, buildPendingBootstrapNote } =
+const { executeTool, TOOLS, activeBootstraps, buildPendingBootstrapNote, broadcastBootstrapSse } =
   await import('./admin-shell.js');
 const { getRedisClient } = await import('./k8s/redis-client.js');
 const { pendingBootstrapQuestionByJob } = await import('./k8s/ipc-redis.js');
@@ -1327,5 +1327,57 @@ describe('buildPendingBootstrapNote', () => {
     const note = buildPendingBootstrapNote();
     expect(note).toContain('"waiting"');
     expect(note).not.toContain('"quiet"');
+  });
+});
+
+// ── broadcastBootstrapSse ────────────────────────────────────────────────────
+
+describe('broadcastBootstrapSse', () => {
+  it('writes a correctly-formatted SSE data line to each live client', () => {
+    const writes: string[] = [];
+    const liveClient = {
+      res: { writableEnded: false, write: (data: string) => { writes.push(data); } },
+    };
+    const writes2: string[] = [];
+    const liveClient2 = {
+      res: { writableEnded: false, write: (data: string) => { writes2.push(data); } },
+    };
+
+    broadcastBootstrapSse([liveClient, liveClient2], 'bootstrap', 'Job timed out');
+
+    // Both clients should receive exactly one write call.
+    expect(writes).toHaveLength(1);
+    expect(writes2).toHaveLength(1);
+
+    // The SSE line must end with \n\n and each data: line must be a valid JSON object.
+    const line = writes[0];
+    expect(line.endsWith('\n\n')).toBe(true);
+    // Strip trailing \n\n and split by \n to get individual data: lines.
+    const dataLines = line.slice(0, -2).split('\n');
+    expect(dataLines.length).toBeGreaterThanOrEqual(1);
+    for (const dl of dataLines) {
+      expect(dl.startsWith('data: ')).toBe(true);
+    }
+    // Re-assemble the JSON body (handle multi-line payloads).
+    const jsonStr = dataLines.map((dl) => dl.slice('data: '.length)).join('\n');
+    const parsed = JSON.parse(jsonStr) as { type: string; text: string };
+    expect(parsed.type).toBe('bootstrap');
+    expect(parsed.text).toBe('Job timed out');
+  });
+
+  it('skips clients whose response is already ended (writableEnded=true)', () => {
+    const writes: string[] = [];
+    const deadClient = {
+      res: { writableEnded: true, write: (data: string) => { writes.push(data); } },
+    };
+    const liveWrites: string[] = [];
+    const liveClient = {
+      res: { writableEnded: false, write: (data: string) => { liveWrites.push(data); } },
+    };
+
+    broadcastBootstrapSse([deadClient, liveClient], 'bootstrap', 'step done');
+
+    expect(writes).toHaveLength(0); // dead client — skipped
+    expect(liveWrites).toHaveLength(1); // live client — written
   });
 });

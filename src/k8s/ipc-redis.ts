@@ -272,7 +272,7 @@ export function startBootstrapTaskWatcher(): void {
               { bootstrapJobId },
               'bootstrap timeout received; forwarding to admin SSE',
             );
-            _bootstrapSsePublisher?.('bootstrap', data.text);
+            _bootstrapSsePublisher?.('bootstrap', data.text.slice(0, 500));
           }
         } catch (err) {
           logger.warn(

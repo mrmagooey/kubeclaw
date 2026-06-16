@@ -2672,6 +2672,35 @@ interface SseAdminClient {
   res: http.ServerResponse;
 }
 
+/**
+ * Broadcast a bootstrap SSE event to all live connected admin SSE clients.
+ * Exported for unit testing; called by the registerBootstrapSsePublisher
+ * callback wired inside startHttpAdminServer.
+ *
+ * Clients whose response is already ended (writableEnded) are silently skipped.
+ * Write errors (dead connections) are caught and ignored — the caller's loop
+ * continues to any remaining clients.
+ */
+export function broadcastBootstrapSse(
+  clients: Array<{ res: { writableEnded: boolean; write: (data: string) => void } }>,
+  type: string,
+  text: string,
+): void {
+  const payload = JSON.stringify({ type, text });
+  const lines =
+    payload
+      .split('\n')
+      .map((l) => `data: ${l}`)
+      .join('\n') + '\n\n';
+  for (const c of [...clients]) {
+    try {
+      if (!c.res.writableEnded) c.res.write(lines);
+    } catch {
+      // dead client — ignore
+    }
+  }
+}
+
 export function startHttpAdminServer(client?: OpenAI): void {
   if (!client) client = createLLMClient();
   const port = parseInt(process.env.ADMIN_HTTP_PORT!, 10);
@@ -2688,19 +2717,7 @@ export function startHttpAdminServer(client?: OpenAI): void {
   // single-user control plane, so broadcasting to all connected SSE clients
   // is correct here.
   registerBootstrapSsePublisher((type, text) => {
-    const payload = JSON.stringify({ type, text });
-    const lines =
-      payload
-        .split('\n')
-        .map((l) => `data: ${l}`)
-        .join('\n') + '\n\n';
-    for (const c of [...sseClients]) {
-      try {
-        if (!c.res.writableEnded) c.res.write(lines);
-      } catch {
-        // dead client — ignore
-      }
-    }
+    broadcastBootstrapSse(sseClients, type, text);
   });
 
   function checkAuth(req: http.IncomingMessage): string | null {
