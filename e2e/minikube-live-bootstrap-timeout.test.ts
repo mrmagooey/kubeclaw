@@ -181,7 +181,12 @@ async function callBootstrapChannelFromSkill(
         'get', 'job', jobName, '-n', NAMESPACE,
         '-o', 'jsonpath={.spec.activeDeadlineSeconds}',
       ]);
-      if (deadlineResult.ok && deadlineResult.stdout.trim() !== '25') {
+      if (!deadlineResult.ok) {
+        throw new Error(
+          `kubectl get job activeDeadlineSeconds failed: ${deadlineResult.stderr}`,
+        );
+      }
+      if (deadlineResult.stdout.trim() !== '25') {
         throw new Error(
           `Expected activeDeadlineSeconds=25 but got ${deadlineResult.stdout.trim()}; LLM may have ignored timeout_seconds param`,
         );

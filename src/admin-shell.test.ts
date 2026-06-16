@@ -1508,4 +1508,43 @@ describe('bootstrap_channel_from_skill timeout_seconds handling', () => {
       expect.objectContaining({ bootstrapTimeoutSeconds: 900 }),
     );
   });
+
+  it('falls back to env default when timeout_seconds is a float (non-integer)', async () => {
+    process.env.BOOTSTRAP_SKILL_TIMEOUT_SECONDS = '200';
+    await executeTool('bootstrap_channel_from_skill', {
+      skill_name: 'bootstrap-telegram',
+      channel_type: 'telegram',
+      instance_name: 'test-timeout-float',
+      timeout_seconds: 25.5 as unknown as number, // float — not an integer
+    });
+    expect(vi.mocked(mockBootstrapChannelFromSkill)).toHaveBeenCalledWith(
+      expect.objectContaining({ timeoutSeconds: 200 }),
+    );
+    expect(vi.mocked(mockWaitForBootstrapJobCompletion)).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ bootstrapTimeoutSeconds: 200 }),
+    );
+    delete process.env.BOOTSTRAP_SKILL_TIMEOUT_SECONDS;
+  });
+
+  it('falls back to 900 when BOOTSTRAP_SKILL_TIMEOUT_SECONDS is a non-numeric string', async () => {
+    process.env.BOOTSTRAP_SKILL_TIMEOUT_SECONDS = 'bad';
+    await executeTool('bootstrap_channel_from_skill', {
+      skill_name: 'bootstrap-telegram',
+      channel_type: 'telegram',
+      instance_name: 'test-timeout-badenv',
+    });
+    expect(vi.mocked(mockBootstrapChannelFromSkill)).toHaveBeenCalledWith(
+      expect.objectContaining({ timeoutSeconds: 900 }),
+    );
+    expect(vi.mocked(mockWaitForBootstrapJobCompletion)).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ bootstrapTimeoutSeconds: 900 }),
+    );
+    delete process.env.BOOTSTRAP_SKILL_TIMEOUT_SECONDS;
+  });
 });

@@ -1395,7 +1395,7 @@ async function handleBootstrapChannelFromSkill(
   if (rawTimeoutSeconds !== undefined) {
     const parsed = typeof rawTimeoutSeconds === 'number' ? rawTimeoutSeconds : parseInt(String(rawTimeoutSeconds), 10);
     if (!Number.isInteger(parsed) || parsed < 10 || parsed > 3600) {
-      // Fall back to env default rather than erroring — bad values are silently clamped
+      // Fall back to env default rather than erroring — bad values are silently discarded
       invocationTimeoutSeconds = undefined;
     } else {
       invocationTimeoutSeconds = parsed;
@@ -1403,7 +1403,7 @@ async function handleBootstrapChannelFromSkill(
   }
   const effectiveTimeoutSeconds =
     invocationTimeoutSeconds ??
-    parseInt(process.env.BOOTSTRAP_SKILL_TIMEOUT_SECONDS || '900', 10);
+    (parseInt(process.env.BOOTSTRAP_SKILL_TIMEOUT_SECONDS || '900', 10) || 900);
 
   if (!skillName || !channelType || !instanceName) {
     return 'Error: skill_name, channel_type, and instance_name are required.';
