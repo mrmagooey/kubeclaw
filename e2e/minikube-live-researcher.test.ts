@@ -84,7 +84,11 @@ async function probeProvider(): Promise<{ ok: boolean; reason: string }> {
       body: JSON.stringify({
         model,
         messages: [{ role: 'user', content: 'ping' }],
-        max_tokens: 8,
+        // 256 gives reasoning models (e.g. Kimi k2.5) room to emit actual
+        // content after their thinking budget, instead of exhausting a tiny
+        // budget on reasoning alone (mirrors the specialist-mention-routing
+        // probe). The content/reasoning fallback below remains as a safety net.
+        max_tokens: 256,
       }),
       signal: AbortSignal.timeout(15_000),
     });
