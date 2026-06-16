@@ -191,6 +191,9 @@ export function buildJobName(folder: string): string {
 const KUBECLAW_OUTPUT_START_MARKER = '---KUBECLAW_OUTPUT_START---';
 const KUBECLAW_OUTPUT_END_MARKER = '---KUBECLAW_OUTPUT_END---';
 
+/** Valid values for ContainerOutput.status. */
+const VALID_STATUSES = new Set(['success', 'error', 'timeout', 'oomkill']);
+
 /**
  * Extract the LAST KUBECLAW_OUTPUT block from agent pod logs and parse it as
  * ContainerOutput. Returns null if absent/malformed. Never throws.
@@ -215,6 +218,8 @@ export function parseContainerOutputFromLogs(
     ) {
       return null;
     }
+    // Enforce status is a known union member
+    if (!VALID_STATUSES.has(parsed.status)) return null;
     const result = parsed.result;
     if (result !== null && typeof result !== 'string') return null;
     return parsed as ContainerOutput;
@@ -486,21 +491,16 @@ export class JobRunner {
         durationMs: duration,
       });
 
-      // Parse the agent's final result from pod logs (deterministic: agent
-      // always writes ---KUBECLAW_OUTPUT_START---…---KUBECLAW_OUTPUT_END--- to
-      // stdout before exiting). Falls back to null result if logs are
-      // unavailable or malformed — never lets a log-read failure break job
-      // completion.
-      let parsed: ContainerOutput | null = null;
-      try {
-        const logs = await this.getJobLogs(jobName);
-        parsed = parseContainerOutputFromLogs(logs);
-      } catch (logErr) {
-        logger.warn(
+      // Parse the agent's final result from pod logs.  getJobLogs never throws
+      // (it returns an error string on failure); parseContainerOutputFromLogs
+      // returns null for any non-parseable string, so the fallback below is safe.
+      const logs = await this.getJobLogs(jobName);
+      const parsed = parseContainerOutputFromLogs(logs);
+      if (!parsed)
+        logger.debug(
           { jobName },
-          'runToolJob: could not parse agent output from logs; returning null result',
+          'runToolJob: no parseable agent output block in logs; returning null result',
         );
-      }
 
       return {
         status: parsed?.status ?? 'success',

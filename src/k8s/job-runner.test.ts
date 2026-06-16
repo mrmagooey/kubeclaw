@@ -2494,6 +2494,22 @@ describe('parseContainerOutputFromLogs', () => {
     expect(out!.status).toBe('error');
     expect(out!.error).toBe('something went wrong');
   });
+
+  it('(h) returns null when status is not in the valid union (e.g. "banana")', () => {
+    const payload = JSON.stringify({ status: 'banana', result: 'hi' });
+    const logs = block(payload);
+    const out = parseContainerOutputFromLogs(logs);
+    expect(out).toBeNull();
+  });
+
+  it('(i) returns null when END marker appears before the last START marker', () => {
+    // END comes before START — the indexOf search from contentStart will not find END
+    const payload = JSON.stringify({ status: 'success', result: 'hi' });
+    const logs = `${END}\nsome noise\n${START}\n${payload}`;
+    // lastIndexOf finds the START, but indexOf(END, contentStart) finds nothing after it
+    const out = parseContainerOutputFromLogs(logs);
+    expect(out).toBeNull();
+  });
 });
 
 // ── runToolJob result-capture integration tests ─────────────────────────────
@@ -2541,21 +2557,16 @@ describe('runToolJob — result capture from pod logs', () => {
     expect(result.newSessionId).toBe('sess-42');
   });
 
-  it('falls back to result: null when getJobLogs throws, without propagating the error', async () => {
+  it('falls back to result: null when pod log fetch fails internally / logs lack a parseable block', async () => {
+    // getJobLogs does NOT throw — it catches internally and returns an error
+    // string (e.g. "Error getting logs: …"). That string has no output block,
+    // so parseContainerOutputFromLogs returns null and runToolJob falls back.
     mockCoreApi.listNamespacedPod.mockRejectedValue(new Error('pod list failed'));
 
-    let caughtErr: unknown = undefined;
-    let result: Awaited<ReturnType<typeof runner.runToolJob>> | undefined;
-    try {
-      result = await runner.runToolJob(testGroup, testInput);
-    } catch (e) {
-      caughtErr = e;
-    }
+    const result = await runner.runToolJob(testGroup, testInput);
 
-    expect(caughtErr).toBeUndefined();
-    expect(result).toBeDefined();
-    expect(result!.status).toBe('success');
-    expect(result!.result).toBeNull();
+    expect(result.status).toBe('success');
+    expect(result.result).toBeNull();
   });
 
   it('falls back to result: null when pod logs contain no KUBECLAW_OUTPUT block', async () => {
@@ -2567,5 +2578,24 @@ describe('runToolJob — result capture from pod logs', () => {
 
     expect(result.status).toBe('success');
     expect(result.result).toBeNull();
+  });
+
+  it('propagates status:error and error field from the agent output block', async () => {
+    const START = '---KUBECLAW_OUTPUT_START---';
+    const END = '---KUBECLAW_OUTPUT_END---';
+    const logContent = [
+      '[agent-runner] running',
+      START,
+      JSON.stringify({ status: 'error', result: null, error: 'boom' }),
+      END,
+    ].join('\n');
+
+    mockCoreApi.readNamespacedPodLog.mockResolvedValue(logContent);
+
+    const result = await runner.runToolJob(testGroup, testInput);
+
+    expect(result.status).toBe('error');
+    expect(result.result).toBeNull();
+    expect(result.error).toBe('boom');
   });
 });
