@@ -7,7 +7,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: kubeclaw-channel-manifests-baseline
-  namespace: {{ .Values.namespace }}
+  namespace: {{ include "kubeclaw.namespace" . }}
   labels:
     app: kubeclaw
     component: channel-manifests-baseline
@@ -27,7 +27,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: kubeclaw-channel-manifests
-  namespace: {{ .Values.namespace }}
+  namespace: {{ include "kubeclaw.namespace" . }}
   labels:
     app: kubeclaw
     component: channel-manifests

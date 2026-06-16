@@ -770,3 +770,84 @@ describe('helm template — bootstrap.npmRegistry (Story 183)', () => {
     expect(matchNameLines, 'registry.npmjs.org must not appear as an allowed FQDN').toHaveLength(0);
   });
 });
+
+// ─── Story-174 regression: bootstrap RBAC namespace uses kubeclaw.namespace helper ───
+//
+// Before the fix, bootstrap-rbac.yaml used .Values.namespace directly, which
+// renders as an empty string when --set namespace=... is omitted. This causes
+// Role/RoleBinding/ServiceAccount to land in the wrong namespace.
+// After the fix, the helper is used, falling back to .Release.Namespace.
+describe('helm template — bootstrap RBAC namespace (story-174 regression)', () => {
+  it('bootstrap ServiceAccount, Role, and RoleBinding render with the release namespace, not empty', () => {
+    const result = spawnSync(
+      'helm',
+      [
+        'template', 'kubeclaw', 'helm/kubeclaw',
+        '--namespace', 'kubeclaw',
+        '--set', 'secrets.anthropicApiKey=test',
+        '--set', 'redis.password=test',
+      ],
+      { encoding: 'utf8', cwd: process.cwd() },
+    );
+    expect(result.status, result.stderr).toBe(0);
+
+    // Parse the output into per-document blocks for precise assertions.
+    const docs = result.stdout.split(/\n---\n/);
+
+    const saDoc = docs.find(
+      (d) => d.includes('kind: ServiceAccount') && d.includes('name: kubeclaw-bootstrap'),
+    );
+    expect(saDoc, 'kubeclaw-bootstrap ServiceAccount not found').toBeDefined();
+    expect(saDoc).toContain('namespace: kubeclaw');
+    expect(saDoc).not.toMatch(/namespace:\s*$/m);
+
+    const roleDoc = docs.find(
+      (d) => d.includes('kind: Role') && d.includes('name: kubeclaw-bootstrap-role'),
+    );
+    expect(roleDoc, 'kubeclaw-bootstrap-role Role not found').toBeDefined();
+    expect(roleDoc).toContain('namespace: kubeclaw');
+    expect(roleDoc).not.toMatch(/namespace:\s*$/m);
+
+    const rbDoc = docs.find(
+      (d) => d.includes('kind: RoleBinding') && d.includes('name: kubeclaw-bootstrap-rolebinding'),
+    );
+    expect(rbDoc, 'kubeclaw-bootstrap-rolebinding RoleBinding not found').toBeDefined();
+    expect(rbDoc).toContain('namespace: kubeclaw');
+    // The subjects[].namespace must also be set correctly.
+    expect(rbDoc).not.toMatch(/namespace:\s*$/m);
+  });
+
+  it('bootstrap RBAC resources use .Release.Namespace when .Values.namespace is unset', () => {
+    // When --namespace foobar is given but namespace= is NOT set via --set,
+    // the helper must fall back to .Release.Namespace == foobar.
+    const result = spawnSync(
+      'helm',
+      [
+        'template', 'kubeclaw', 'helm/kubeclaw',
+        '--namespace', 'foobar',
+        '--set', 'secrets.anthropicApiKey=test',
+        '--set', 'redis.password=test',
+        // NOTE: intentionally NOT setting --set namespace=...
+      ],
+      { encoding: 'utf8', cwd: process.cwd() },
+    );
+    expect(result.status, result.stderr).toBe(0);
+
+    // No empty namespace: lines anywhere in the output.
+    const emptyNsLines = result.stdout
+      .split('\n')
+      .filter((l) => /^\s+namespace:\s*$/.test(l));
+    expect(
+      emptyNsLines,
+      `Found empty namespace: lines: ${JSON.stringify(emptyNsLines)}`,
+    ).toHaveLength(0);
+
+    // Bootstrap resources must all be in 'foobar'.
+    const docs = result.stdout.split(/\n---\n/);
+    for (const name of ['kubeclaw-bootstrap', 'kubeclaw-bootstrap-role', 'kubeclaw-bootstrap-rolebinding']) {
+      const doc = docs.find((d) => d.includes(`name: ${name}`));
+      expect(doc, `${name} document not found`).toBeDefined();
+      expect(doc, `${name} should have namespace: foobar`).toContain('namespace: foobar');
+    }
+  });
+});
