@@ -308,10 +308,10 @@ describe.skipIf(!providerAvailable)(
               `Got: ${JSON.stringify(fullReply)}`,
           ).toContain(EXPECTED_FACT);
 
-          // 4. Secondary assertion: the orchestrator spawned a browser-category
-          //    tool pod AFTER our POST. The cluster-level orchestrator info
-          //    log emits `Tool pod job created` with `category: browser` for
-          //    any web_fetch/web_search/browser tool dispatch. Scoping by
+          // 4. Secondary assertion: the orchestrator spawned a sidecar tool
+          //    pod AFTER our POST. Post-unification the orchestrator info log
+          //    emits `Sidecar tool pod job created` with `toolName: web_fetch`
+          //    (tools route by NAME, not by a `category` field). Scoping by
           //    --since-time (captured immediately before our POST) is critical
           //    because kubeclaw-live is shared across the suite; an unscoped
           //    --since=Ns window would match earlier tests' tool pods as
@@ -320,16 +320,15 @@ describe.skipIf(!providerAvailable)(
           expect(
             logs,
             'orchestrator log between POST and SSE reply should record a ' +
-              'Tool pod job created entry — without it, the test cannot ' +
-              'prove the specialist invoked a tool rather than answering ' +
-              'from pretraining.',
-          ).toMatch(/Tool pod job created/);
+              'Sidecar tool pod job created entry — without it, the test ' +
+              'cannot prove the specialist invoked a tool rather than ' +
+              'answering from pretraining.',
+          ).toMatch(/Sidecar tool pod job created/);
           expect(
             logs,
-            'the tool pod should be browser-category — the only category ' +
-              'that contains web_fetch (the tool the Researcher must call ' +
-              'to read the Wikipedia URL).',
-          ).toMatch(/"category":"browser"/);
+            'the spawned tool pod should be web_fetch — the tool the ' +
+              'Researcher must call to read the Wikipedia URL.',
+          ).toMatch(/"toolName":"web_fetch"/);
 
           // 5. Tertiary assertion: the SSE reply itself echoes back the
           //    Wikipedia URL. The prompt instructed citation in a specific
