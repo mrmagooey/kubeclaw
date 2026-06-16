@@ -338,10 +338,12 @@ export class InputStreamManager {
     return this.queue.some((e) => e.type === 'close');
   }
 
+  /** 'eoi' is emitted by the one-shot onProcess callback in src/k8s/ipc-redis.ts. */
   hasEndOfInput(): boolean {
     return this.queue.some((e) => e.type === 'eoi');
   }
 
+  /** Public for unit testing only — not for production callers. */
   _enqueue(response: any): void {
     if (!response?.length) return;
     for (const stream of response) {

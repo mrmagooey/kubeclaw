@@ -10,13 +10,17 @@
 import { describe, it, expect } from 'vitest';
 import { InputStreamManager } from './index.js';
 
+// Deterministic message-id counter — avoids duplicate IDs when fakeXReadResponse
+// is called multiple times within the same millisecond.
+let _msgIdCounter = 0;
+
 // Build a minimal fake xRead response for a single message with given fields.
 function fakeXReadResponse(fields: Record<string, string>) {
   return [
     {
       messages: [
         {
-          id: `${Date.now()}-0`,
+          id: `1000000000000-${_msgIdCounter++}`,
           message: fields,
         },
       ],
@@ -76,5 +80,16 @@ describe('InputStreamManager signal distinction', () => {
 
     expect(manager.hasCloseSignal()).toBe(false);
     expect(manager.hasEndOfInput()).toBe(false);
+  });
+
+  it('both hasCloseSignal() and hasEndOfInput() are true when both eoi and close are enqueued (callers must check close first)', () => {
+    // @ts-expect-error — pass null for redis/jobId
+    const manager = new InputStreamManager(null as any, 'test-job-both-signals');
+    manager._enqueue(fakeXReadResponse({ type: 'eoi' }));
+    manager._enqueue(fakeXReadResponse({ type: 'close' }));
+
+    // Both signals are present; the wait-loop checks close before eoi, so close wins.
+    expect(manager.hasCloseSignal()).toBe(true);
+    expect(manager.hasEndOfInput()).toBe(true);
   });
 });

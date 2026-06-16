@@ -80,7 +80,7 @@ export interface AgentOutputMessage {
 }
 
 export interface HostInputMessage {
-  type: 'message' | 'close' | 'task_update';
+  type: 'message' | 'close' | 'eoi' | 'task_update';
   text?: string;
   taskId?: string;
   status?: 'paused' | 'resumed' | 'cancelled';
