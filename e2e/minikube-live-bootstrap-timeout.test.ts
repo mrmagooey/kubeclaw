@@ -5,8 +5,7 @@
  * because the admin abandoned the dialogue without responding.
  *
  * Strategy:
- *   - Deploy kubeclaw with BOOTSTRAP_SKILL_TIMEOUT_SECONDS=60 so the timeout
- *     fires in 60 s (configurable via helm --set bootstrap.timeoutSeconds=60).
+ *   - Per-invocation timeout_seconds=25 is passed via the prompt; no special deployment config needed.
  *   - Call bootstrap_channel_from_skill via the admin shell HTTP API.
  *   - Subscribe to the admin SSE stream and wait for the first bootstrap dialogue
  *     prompt (confirms the Job started).
@@ -21,7 +20,7 @@
  *   AC1: K8s resources deleted (Job + PVC; Secret defensively)
  *   AC2: SSE timeout notice delivered
  *   AC3: instance freed; retry succeeds
- *   AC5: BOOTSTRAP_SKILL_TIMEOUT_SECONDS=60 governs both Job deadline and orchestrator poll
+ *   AC5: timeout_seconds=25 per-invocation parameter governs both Job deadline and orchestrator poll
  *
  * AC4 (orphan reconcile restart idempotency) is covered at integration level in
  * bootstrap-runner.integration.test.ts — minikube restart is too expensive for e2e.
@@ -32,7 +31,7 @@
  *   - admin port-forward running on KUBECLAW_LIVE_ADMIN_LOCAL_PORT
  *
  * Run with:
- *   BOOTSTRAP_SKILL_TIMEOUT_SECONDS=60 npx vitest run --config vitest.minikube-live.config.ts \
+ *   npx vitest run --config vitest.minikube-live.config.ts \
  *     e2e/minikube-live-bootstrap-timeout.test.ts
  */
 
@@ -46,12 +45,9 @@ import {
 const NAMESPACE = 'kubeclaw-live';
 const ADMIN_URL = `http://127.0.0.1:${KUBECLAW_LIVE_ADMIN_LOCAL_PORT}`;
 const INSTANCE_NAME = 'e2e-timeout-tg';
-// Timeout override (seconds) — must match the helm-deployed value.
-// Default 60 to keep the test within a two-minute budget.
-const BOOTSTRAP_TIMEOUT_SECONDS = parseInt(
-  process.env.BOOTSTRAP_SKILL_TIMEOUT_SECONDS || '60',
-  10,
-);
+// Per-invocation timeout passed via the LLM prompt (timeout_seconds=25).
+// No deployment config needed — the parameter is sent with each call.
+const BOOTSTRAP_TIMEOUT_SECONDS = 25;
 // How long the test waits for the timeout SSE + cleanup to complete.
 // The Job fires at BOOTSTRAP_TIMEOUT_SECONDS; give 60 s overhead for
 // K8s condition propagation + orchestrator cleanup round-trip.
@@ -164,7 +160,7 @@ async function callBootstrapChannelFromSkill(
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: authHeader },
     body: JSON.stringify({
-      text: `Call bootstrap_channel_from_skill with skill_name="bootstrap-telegram", channel_type="telegram", instance_name="${instanceName}"`,
+      text: `Call bootstrap_channel_from_skill with skill_name="bootstrap-telegram", channel_type="telegram", instance_name="${instanceName}", timeout_seconds=25`,
     }),
     signal: AbortSignal.timeout(10_000),
   });
@@ -180,7 +176,17 @@ async function callBootstrapChannelFromSkill(
       ['get', 'job', jobName, '-n', NAMESPACE, '--ignore-not-found=true', '-o', 'jsonpath={.metadata.name}'],
     );
     if (r.ok && r.stdout.trim() === jobName) {
-      return `Bootstrap started: Job ${jobName} exists in cluster`;
+      // Verify the Job got the per-invocation deadline.
+      const deadlineResult = kubectl([
+        'get', 'job', jobName, '-n', NAMESPACE,
+        '-o', 'jsonpath={.spec.activeDeadlineSeconds}',
+      ]);
+      if (deadlineResult.ok && deadlineResult.stdout.trim() !== '25') {
+        throw new Error(
+          `Expected activeDeadlineSeconds=25 but got ${deadlineResult.stdout.trim()}; LLM may have ignored timeout_seconds param`,
+        );
+      }
+      return `Bootstrap started: Job ${jobName} exists in cluster (deadline=25s verified)`;
     }
     await sleep(2000);
   }

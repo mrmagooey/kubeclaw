@@ -705,6 +705,12 @@ export const TOOLS: OpenAI.ChatCompletionTool[] = [
             description:
               'Optional hint about credentials the admin already has (forwarded to the bootstrap agent).',
           },
+          timeout_seconds: {
+            type: 'integer',
+            description:
+              'Override the bootstrap Job\'s timeout in seconds (activeDeadlineSeconds + orchestrator poll). ' +
+              'Defaults to BOOTSTRAP_SKILL_TIMEOUT_SECONDS or 900. Valid range: 10–3600. Mainly for tests/short-lived bootstraps.',
+          },
         },
         required: ['skill_name', 'channel_type', 'instance_name'],
       },
@@ -1383,6 +1389,22 @@ async function handleBootstrapChannelFromSkill(
     | string
     | undefined;
 
+  const rawTimeoutSeconds = input.timeout_seconds as number | undefined;
+  // Validate per-invocation timeout if provided
+  let invocationTimeoutSeconds: number | undefined;
+  if (rawTimeoutSeconds !== undefined) {
+    const parsed = typeof rawTimeoutSeconds === 'number' ? rawTimeoutSeconds : parseInt(String(rawTimeoutSeconds), 10);
+    if (!Number.isInteger(parsed) || parsed < 10 || parsed > 3600) {
+      // Fall back to env default rather than erroring — bad values are silently clamped
+      invocationTimeoutSeconds = undefined;
+    } else {
+      invocationTimeoutSeconds = parsed;
+    }
+  }
+  const effectiveTimeoutSeconds =
+    invocationTimeoutSeconds ??
+    parseInt(process.env.BOOTSTRAP_SKILL_TIMEOUT_SECONDS || '900', 10);
+
   if (!skillName || !channelType || !instanceName) {
     return 'Error: skill_name, channel_type, and instance_name are required.';
   }
@@ -1416,10 +1438,7 @@ async function handleBootstrapChannelFromSkill(
       namespace: NAMESPACE,
       channelBaseImage,
       activeBootstraps,
-      timeoutSeconds: parseInt(
-        process.env.BOOTSTRAP_SKILL_TIMEOUT_SECONDS || '900',
-        10,
-      ),
+      timeoutSeconds: effectiveTimeoutSeconds,
       pvcSize: process.env.BOOTSTRAP_PVC_SIZE || '1Gi',
       redisUrl: process.env.REDIS_URL,
       redisUsername: process.env.REDIS_BOOTSTRAP_USERNAME,
@@ -1548,10 +1567,7 @@ async function handleBootstrapChannelFromSkill(
       },
     };
 
-    const timeoutSeconds = parseInt(
-      process.env.BOOTSTRAP_SKILL_TIMEOUT_SECONDS || '900',
-      10,
-    );
+    const timeoutSeconds = effectiveTimeoutSeconds;
     const bootstrapJobName = `kubeclaw-bootstrap-${instanceName}`;
     waitForBootstrapJobCompletion(
       bootstrapJobName,

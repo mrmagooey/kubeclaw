@@ -229,6 +229,8 @@ const { executeTool, TOOLS, activeBootstraps, buildPendingBootstrapNote, broadca
   await import('./admin-shell.js');
 const { getRedisClient } = await import('./k8s/redis-client.js');
 const { pendingBootstrapQuestionByJob } = await import('./k8s/ipc-redis.js');
+const { bootstrapChannelFromSkill: mockBootstrapChannelFromSkill, waitForBootstrapJobCompletion: mockWaitForBootstrapJobCompletion } =
+  await import('./k8s/bootstrap-runner.js');
 
 // ── Tests ───────────────────────────────────────────────────────────────────
 
@@ -1404,5 +1406,94 @@ describe('broadcastBootstrapSse', () => {
     expect(clients).toHaveLength(1);
     expect(clients[0]).toBe(liveClient);
     expect(liveWrites).toHaveLength(1);
+  });
+});
+
+// ── bootstrap_channel_from_skill timeout_seconds handling ────────────────────
+
+describe('bootstrap_channel_from_skill timeout_seconds handling', () => {
+  beforeEach(() => {
+    vi.mocked(mockBootstrapChannelFromSkill).mockResolvedValue({ bootstrapJobId: 'test-job-id' });
+    delete process.env.BOOTSTRAP_SKILL_TIMEOUT_SECONDS;
+  });
+
+  it('uses timeout_seconds when provided and passes it to both job creation and orchestrator poll', async () => {
+    await executeTool('bootstrap_channel_from_skill', {
+      skill_name: 'bootstrap-telegram',
+      channel_type: 'telegram',
+      instance_name: 'test-timeout-inv',
+      timeout_seconds: 25,
+    });
+    expect(vi.mocked(mockBootstrapChannelFromSkill)).toHaveBeenCalledWith(
+      expect.objectContaining({ timeoutSeconds: 25 }),
+    );
+    expect(vi.mocked(mockWaitForBootstrapJobCompletion)).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ bootstrapTimeoutSeconds: 25 }),
+    );
+  });
+
+  it('falls back to BOOTSTRAP_SKILL_TIMEOUT_SECONDS env when timeout_seconds not provided', async () => {
+    process.env.BOOTSTRAP_SKILL_TIMEOUT_SECONDS = '300';
+    await executeTool('bootstrap_channel_from_skill', {
+      skill_name: 'bootstrap-telegram',
+      channel_type: 'telegram',
+      instance_name: 'test-timeout-env',
+    });
+    expect(vi.mocked(mockBootstrapChannelFromSkill)).toHaveBeenCalledWith(
+      expect.objectContaining({ timeoutSeconds: 300 }),
+    );
+    expect(vi.mocked(mockWaitForBootstrapJobCompletion)).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ bootstrapTimeoutSeconds: 300 }),
+    );
+    delete process.env.BOOTSTRAP_SKILL_TIMEOUT_SECONDS;
+  });
+
+  it('falls back to 900 when neither timeout_seconds nor env is set', async () => {
+    await executeTool('bootstrap_channel_from_skill', {
+      skill_name: 'bootstrap-telegram',
+      channel_type: 'telegram',
+      instance_name: 'test-timeout-def',
+    });
+    expect(vi.mocked(mockBootstrapChannelFromSkill)).toHaveBeenCalledWith(
+      expect.objectContaining({ timeoutSeconds: 900 }),
+    );
+    expect(vi.mocked(mockWaitForBootstrapJobCompletion)).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ bootstrapTimeoutSeconds: 900 }),
+    );
+  });
+
+  it('falls back to env default when timeout_seconds is out of range (too low)', async () => {
+    process.env.BOOTSTRAP_SKILL_TIMEOUT_SECONDS = '120';
+    await executeTool('bootstrap_channel_from_skill', {
+      skill_name: 'bootstrap-telegram',
+      channel_type: 'telegram',
+      instance_name: 'test-timeout-low',
+      timeout_seconds: 5, // below 10, invalid
+    });
+    expect(vi.mocked(mockBootstrapChannelFromSkill)).toHaveBeenCalledWith(
+      expect.objectContaining({ timeoutSeconds: 120 }),
+    );
+    delete process.env.BOOTSTRAP_SKILL_TIMEOUT_SECONDS;
+  });
+
+  it('falls back to env default when timeout_seconds is out of range (too high)', async () => {
+    await executeTool('bootstrap_channel_from_skill', {
+      skill_name: 'bootstrap-telegram',
+      channel_type: 'telegram',
+      instance_name: 'test-timeout-high',
+      timeout_seconds: 9999, // above 3600, invalid
+    });
+    expect(vi.mocked(mockBootstrapChannelFromSkill)).toHaveBeenCalledWith(
+      expect.objectContaining({ timeoutSeconds: 900 }),
+    );
   });
 });
