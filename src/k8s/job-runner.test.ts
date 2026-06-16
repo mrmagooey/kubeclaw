@@ -2348,3 +2348,41 @@ describe('tool-wrapper.sh ConfigMap: umask 0000 before mkdir', () => {
     expect(umaskIdx, 'umask 0000 must appear before the mkdir line').toBeLessThan(mkdirIdx);
   });
 });
+
+// ---------------------------------------------------------------------------
+// ConfigMap content: tool-wrapper.sh must chmod 0777 the mktemp resp dir
+// ---------------------------------------------------------------------------
+// mktemp -d always creates dirs with mode 0700 regardless of umask.  The
+// bridge container (a different UID) then cannot scandir/rm the resp dir.
+// The fix is to chmod 0777 immediately after mktemp -d, before writing into
+// the dir.  These tests assert that fix is present in BOTH the Helm chart
+// and the static k8s manifest.
+describe('tool-wrapper.sh ConfigMap: chmod 0777 resp dir after mktemp -d', () => {
+  const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../..');
+
+  it('helm/kubeclaw/templates/configmaps.yaml: chmod 0777 "$t" immediately after mktemp -d', () => {
+    const helmCm = path.join(repoRoot, 'helm/kubeclaw/templates/configmaps.yaml');
+    const content = fs.readFileSync(helmCm, 'utf-8');
+    const mktempIdx = content.indexOf('mktemp -d "$S/.resp.$id.XXXXXX"');
+    expect(mktempIdx, 'mktemp -d line not found in Helm configmaps.yaml').toBeGreaterThan(-1);
+    // The chmod must appear after mktemp and before any write into $t
+    const chmodIdx = content.indexOf('chmod 0777 "$t"');
+    expect(chmodIdx, 'chmod 0777 "$t" not found in Helm configmaps.yaml').toBeGreaterThan(-1);
+    expect(chmodIdx, 'chmod 0777 must appear after mktemp -d').toBeGreaterThan(mktempIdx);
+    // And it must appear before the tool-run line that writes into $t
+    const toolRunIdx = content.indexOf('sh -c "$KUBECLAW_TOOL_RUN"');
+    expect(chmodIdx, 'chmod 0777 must appear before the tool-run write into $t').toBeLessThan(toolRunIdx);
+  });
+
+  it('k8s/35-configmaps.yaml: chmod 0777 "$t" immediately after mktemp -d', () => {
+    const staticCm = path.join(repoRoot, 'k8s/35-configmaps.yaml');
+    const content = fs.readFileSync(staticCm, 'utf-8');
+    const mktempIdx = content.indexOf('mktemp -d "$S/.resp.$id.XXXXXX"');
+    expect(mktempIdx, 'mktemp -d line not found in k8s/35-configmaps.yaml').toBeGreaterThan(-1);
+    const chmodIdx = content.indexOf('chmod 0777 "$t"');
+    expect(chmodIdx, 'chmod 0777 "$t" not found in k8s/35-configmaps.yaml').toBeGreaterThan(-1);
+    expect(chmodIdx, 'chmod 0777 must appear after mktemp -d').toBeGreaterThan(mktempIdx);
+    const toolRunIdx = content.indexOf('sh -c "$KUBECLAW_TOOL_RUN"');
+    expect(chmodIdx, 'chmod 0777 must appear before the tool-run write into $t').toBeLessThan(toolRunIdx);
+  });
+});

@@ -38,6 +38,7 @@ data:
         id=$(basename "$d")
         export INPUT_DIR="$d/input"
         t=$(mktemp -d "$S/.resp.$id.XXXXXX")
+        chmod 0777 "$t"
         (cd "$WORKDIR" && sh -c "$KUBECLAW_TOOL_RUN") >"$t/response" 2>"$t/stderr"; rc=$?
         printf '%s' "$rc" > "$t/exit_code"
         mv "$t" "$S/resp/$id"
