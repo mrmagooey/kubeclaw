@@ -1802,6 +1802,32 @@ describe('JobRunner', () => {
       const call = mockBatchApi.createNamespacedJob.mock.calls.at(-1)![0];
       expect(call.body.spec.activeDeadlineSeconds).toBe(90);
     });
+
+    it('file-bridge: pod-level securityContext.fsGroup=2000 is set so both containers can write /shared/req and /shared/resp', async () => {
+      // Regression: without fsGroup the two containers ran under different UIDs;
+      // whichever created /shared/req first owned it exclusively, causing the other
+      // to get EACCES on rename().  fsGroup=2000 makes the emptyDir group-owned and
+      // grants both containers GID 2000 as a supplementary group.
+      const fileSpec = {
+        ...baseSpec,
+        toolSpec: { ...baseSpec.toolSpec, pattern: 'file' as const },
+      };
+      await jobRunner.createSidecarToolPodJob(fileSpec);
+
+      const call = mockBatchApi.createNamespacedJob.mock.calls.at(-1)![0];
+      const podSecCtx = call.body.spec.template.spec.securityContext;
+      expect(podSecCtx).toBeDefined();
+      expect(podSecCtx.fsGroup).toBe(2000);
+    });
+
+    it('http-bridge: pod-level securityContext.fsGroup=2000 is set (fsGroup is harmless for non-file patterns)', async () => {
+      await jobRunner.createSidecarToolPodJob(baseSpec);
+
+      const call = mockBatchApi.createNamespacedJob.mock.calls.at(-1)![0];
+      const podSecCtx = call.body.spec.template.spec.securityContext;
+      expect(podSecCtx).toBeDefined();
+      expect(podSecCtx.fsGroup).toBe(2000);
+    });
   });
 
   // Shared fixture for credential injection tests

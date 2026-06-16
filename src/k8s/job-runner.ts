@@ -1840,6 +1840,11 @@ export class JobRunner {
             ...(credServiceAccount
               ? { automountServiceAccountToken: false }
               : {}),
+            // fsGroup ensures the emptyDir (/shared) is group-owned by GID 2000
+            // and that both containers get GID 2000 as a supplementary group.
+            // Without this, whichever container creates /shared/req first owns it
+            // exclusively, and the other container's UID gets EACCES on rename().
+            securityContext: { fsGroup: 2000 },
             ...(cdpInitContainers && { initContainers: cdpInitContainers }),
             containers: [
               {
