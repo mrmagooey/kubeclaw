@@ -221,11 +221,15 @@ describe('Minikube-live: bootstrap channel from skill (Story 174)', () => {
   });
 
   it('bootstrap ServiceAccount CAN get ConfigMaps (RBAC AC2)', () => {
+    // The bootstrap Role grants get/list on specific named ConfigMaps only
+    // (resourceNames: kubeclaw-bootstrap-skills, kubeclaw-channel-manifests).
+    // kubectl auth can-i for a generic resource returns "no" when the Role uses
+    // resourceNames — we must check the specific named resource to get "yes".
     const r = kubectl([
       'auth',
       'can-i',
       'get',
-      'configmaps',
+      'configmaps/kubeclaw-bootstrap-skills',
       '--namespace',
       NAMESPACE,
       '--as',
