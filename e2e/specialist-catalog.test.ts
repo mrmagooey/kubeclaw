@@ -10,9 +10,9 @@
  *   - No live LLM provider reachable at LIVE_LLM_BASE_URL (provider probe fails).
  *
  * Provider config (override via env vars):
- *   LIVE_LLM_BASE_URL   http://192.168.7.100:8080/v1  (default)
- *   LIVE_LLM_MODEL      gemma-4-E4B-it-Q4_0.gguf      (default)
- *   LIVE_LLM_API_KEY    no-key                         (default)
+ *   LIVE_LLM_BASE_URL   http://localhost:11434/v1  (default — set to override)
+ *   LIVE_LLM_MODEL      gemma-4-E4B-it-Q4_0.gguf  (default)
+ *   LIVE_LLM_API_KEY    no-key                     (default)
  *
  * Structure
  * ─────────
@@ -35,6 +35,8 @@ import {
 } from 'vitest';
 import { spawnSync, spawn, type ChildProcess } from 'node:child_process';
 import { isKubernetesAvailable } from './setup.js';
+import { LIVE_BASE_URL, LIVE_MODEL, LIVE_API_KEY, probeLiveLlm }
+  from './lib/live-llm.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -42,11 +44,6 @@ const NAMESPACE = 'kubeclaw-sc-test';
 const RELEASE = 'kubeclaw-sc-test';
 const CHART_DIR = './helm/kubeclaw';
 const HTTP_LOCAL_PORT = 14091; // unique port, does not clash with minikube-live
-const LIVE_BASE_URL =
-  process.env.LIVE_LLM_BASE_URL || 'http://192.168.7.100:8080/v1';
-const LIVE_MODEL =
-  process.env.LIVE_LLM_MODEL || 'gemma-4-E4B-it-Q4_0.gguf';
-const LIVE_API_KEY = process.env.LIVE_LLM_API_KEY || 'no-key';
 
 // Basic-auth credentials installed via secrets.httpChannelUsers helm value.
 const HTTP_USER = 'testuser';
@@ -72,43 +69,9 @@ async function probeProvider(): Promise<void> {
     providerSkipReason = 'no Kubernetes cluster';
     return;
   }
-  try {
-    const modelsRes = await fetch(`${LIVE_BASE_URL}/models`, {
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!modelsRes.ok) {
-      providerSkipReason = `GET /models returned HTTP ${modelsRes.status}`;
-      return;
-    }
-    const chatRes = await fetch(`${LIVE_BASE_URL}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${LIVE_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: LIVE_MODEL,
-        messages: [{ role: 'user', content: 'ping' }],
-        max_tokens: 4,
-      }),
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (!chatRes.ok) {
-      providerSkipReason = `POST /chat/completions returned HTTP ${chatRes.status}`;
-      return;
-    }
-    const payload = (await chatRes.json()) as {
-      choices?: { message?: { content?: string } }[];
-    };
-    if (typeof payload.choices?.[0]?.message?.content !== 'string') {
-      providerSkipReason = 'malformed chat response';
-      return;
-    }
-    providerAvailable = true;
-  } catch (err) {
-    providerSkipReason =
-      err instanceof Error ? err.message : String(err);
-  }
+  const result = await probeLiveLlm();
+  providerAvailable = result.ok;
+  providerSkipReason = result.reason;
 }
 
 // Top-level await: runs before any test or describe body.

@@ -29,6 +29,8 @@ import { mkdtempSync, writeFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
 import type { ChildProcess } from 'child_process';
+import { LIVE_BASE_URL, LIVE_MODEL, LIVE_API_KEY, probeLiveLlm }
+  from './lib/live-llm.js';
 
 const NS = 'kubeclaw-e2e-clear';
 const RELEASE = 'ke2e-clear';
@@ -53,12 +55,7 @@ const BOB_GROUP_FOLDER = 'http-http-bob';
 // DB path inside channel pod (channel type = "http")
 const DB_PATH = '/app/store/messages-http.db';
 
-// LIVE LLM probe (for AC2 skip guard)
-const LIVE_BASE_URL =
-  process.env.LIVE_LLM_BASE_URL || 'http://192.168.7.100:8080/v1';
-const LIVE_MODEL =
-  process.env.LIVE_LLM_MODEL || 'gemma-4-E4B-it-Q4_0.gguf';
-const LIVE_API_KEY = process.env.LIVE_LLM_API_KEY || 'no-key';
+// LIVE LLM probe (for AC2 skip guard) — configured via LIVE_LLM_BASE_URL env var.
 
 // Timeouts
 const INSTALL_TIMEOUT = 300_000;
@@ -86,51 +83,17 @@ const clusterReachable = (() => {
 let liveLlmAvailable = false;
 let liveLlmSkipReason = '';
 
-async function probeLiveLlm(): Promise<void> {
+async function runLlmProbe(): Promise<void> {
   if (!clusterReachable) {
     liveLlmSkipReason = 'no Kubernetes cluster';
     return;
   }
-  try {
-    const modelsRes = await fetch(`${LIVE_BASE_URL}/models`, {
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!modelsRes.ok) {
-      liveLlmSkipReason = `GET /models returned HTTP ${modelsRes.status}`;
-      return;
-    }
-    const chatRes = await fetch(`${LIVE_BASE_URL}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${LIVE_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: LIVE_MODEL,
-        messages: [{ role: 'user', content: 'ping' }],
-        max_tokens: 4,
-      }),
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (!chatRes.ok) {
-      liveLlmSkipReason = `POST /chat/completions returned HTTP ${chatRes.status}`;
-      return;
-    }
-    const payload = (await chatRes.json()) as {
-      choices?: { message?: { content?: string } }[];
-    };
-    if (typeof payload.choices?.[0]?.message?.content !== 'string') {
-      liveLlmSkipReason = 'malformed chat response';
-      return;
-    }
-    liveLlmAvailable = true;
-  } catch (err) {
-    liveLlmSkipReason =
-      err instanceof Error ? err.message : String(err);
-  }
+  const result = await probeLiveLlm();
+  liveLlmAvailable = result.ok;
+  liveLlmSkipReason = result.reason;
 }
 
-await probeLiveLlm();
+await runLlmProbe();
 
 const skipAc2 = !clusterReachable || !liveLlmAvailable;
 

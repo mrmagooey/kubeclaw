@@ -31,6 +31,8 @@ import { mkdtempSync, writeFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
 import type { ChildProcess } from 'child_process';
+import { LIVE_BASE_URL, LIVE_MODEL, LIVE_API_KEY, probeLiveLlm }
+  from './lib/live-llm.js';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -50,12 +52,7 @@ const ALICE_GROUP_FOLDER = 'http-http-alice';
 // DB path inside channel pod
 const DB_PATH = '/app/store/messages-http.db';
 
-// Live LLM provider (for AC1/AC2 skip guard)
-const LIVE_BASE_URL =
-  process.env.LIVE_LLM_BASE_URL || 'http://192.168.7.100:8080/v1';
-const LIVE_MODEL =
-  process.env.LIVE_LLM_MODEL || 'gemma-4-E4B-it-Q4_0.gguf';
-const LIVE_API_KEY = process.env.LIVE_LLM_API_KEY || 'no-key';
+// Live LLM provider (for AC1/AC2 skip guard) — configured via LIVE_LLM_BASE_URL env var.
 
 // Timeouts
 const INSTALL_TIMEOUT = 300_000;
@@ -85,7 +82,7 @@ const noLlmEnv = process.env.KUBECLAW_NO_LLM === 'true';
 let liveLlmAvailable = false;
 let liveLlmSkipReason = '';
 
-async function probeLiveLlm(): Promise<void> {
+async function runLlmProbe(): Promise<void> {
   if (noLlmEnv) {
     liveLlmSkipReason = 'KUBECLAW_NO_LLM=true';
     return;
@@ -94,45 +91,12 @@ async function probeLiveLlm(): Promise<void> {
     liveLlmSkipReason = 'no Kubernetes cluster';
     return;
   }
-  try {
-    const modelsRes = await fetch(`${LIVE_BASE_URL}/models`, {
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!modelsRes.ok) {
-      liveLlmSkipReason = `GET /models returned HTTP ${modelsRes.status}`;
-      return;
-    }
-    const chatRes = await fetch(`${LIVE_BASE_URL}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${LIVE_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: LIVE_MODEL,
-        messages: [{ role: 'user', content: 'ping' }],
-        max_tokens: 4,
-      }),
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (!chatRes.ok) {
-      liveLlmSkipReason = `POST /chat/completions returned HTTP ${chatRes.status}`;
-      return;
-    }
-    const payload = (await chatRes.json()) as {
-      choices?: { message?: { content?: string } }[];
-    };
-    if (typeof payload.choices?.[0]?.message?.content !== 'string') {
-      liveLlmSkipReason = 'malformed chat response';
-      return;
-    }
-    liveLlmAvailable = true;
-  } catch (err) {
-    liveLlmSkipReason = err instanceof Error ? err.message : String(err);
-  }
+  const result = await probeLiveLlm();
+  liveLlmAvailable = result.ok;
+  liveLlmSkipReason = result.reason;
 }
 
-await probeLiveLlm();
+await runLlmProbe();
 
 const skipLlmDep = !clusterReachable || !liveLlmAvailable;
 

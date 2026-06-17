@@ -38,6 +38,7 @@ import {
 } from 'vitest';
 import { spawnSync, spawn, type ChildProcess } from 'node:child_process';
 import { isKubernetesAvailable } from './setup.js';
+import { LIVE_BASE_URL, LIVE_MODEL, LIVE_API_KEY } from './lib/live-llm.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -57,10 +58,7 @@ const SPECIALIST_NAME = 'BrokenSpec';
 // Bogus endpoint that is unreachable and will not resolve.
 const BOGUS_LLM_URL = 'http://unreachable.invalid:11434';
 
-// A live LLM for the main channel (can be overridden by env).
-const LIVE_BASE_URL  = process.env.LIVE_LLM_BASE_URL  || 'http://192.168.7.100:8080/v1';
-const LIVE_MODEL     = process.env.LIVE_LLM_MODEL      || 'gemma-4-E4B-it-Q4_0.gguf';
-const LIVE_API_KEY   = process.env.LIVE_LLM_API_KEY    || 'no-key';
+// A live LLM for the main channel (can be overridden by LIVE_LLM_BASE_URL env var).
 
 // ─── Skip guards ─────────────────────────────────────────────────────────────
 

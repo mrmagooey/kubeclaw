@@ -12,7 +12,7 @@
  * tool call, and this small Gemma model is not expected to.
  *
  * Provider config (override via env vars):
- *   LIVE_LLM_BASE_URL   http://192.168.7.100:8080/v1
+ *   LIVE_LLM_BASE_URL   http://localhost:11434/v1  (default — set to override)
  *   LIVE_LLM_MODEL      gemma-4-E4B-it-Q4_0.gguf
  *   LIVE_LLM_API_KEY    no-key
  */
@@ -27,12 +27,8 @@ import {
 import fs from 'node:fs';
 import path from 'node:path';
 import net from 'node:net';
-
-const LIVE_BASE_URL =
-  process.env.LIVE_LLM_BASE_URL || 'http://192.168.7.100:8080/v1';
-const LIVE_MODEL =
-  process.env.LIVE_LLM_MODEL || 'gemma-4-E4B-it-Q4_0.gguf';
-const LIVE_API_KEY = process.env.LIVE_LLM_API_KEY || 'no-key';
+import { LIVE_BASE_URL, LIVE_MODEL, LIVE_API_KEY, probeLiveLlm }
+  from './lib/live-llm.js';
 
 const RUN_ID = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 const GROUP_PREFIX = `live-test-${RUN_ID}`;
@@ -91,53 +87,6 @@ function basicAuth(user: string): string {
   );
 }
 
-async function probeProvider(): Promise<{ ok: boolean; reason: string }> {
-  try {
-    const modelsRes = await fetch(`${LIVE_BASE_URL}/models`, {
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!modelsRes.ok) {
-      return {
-        ok: false,
-        reason: `GET /models returned HTTP ${modelsRes.status}`,
-      };
-    }
-
-    const chatRes = await fetch(`${LIVE_BASE_URL}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${LIVE_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: LIVE_MODEL,
-        messages: [{ role: 'user', content: 'ping' }],
-        max_tokens: 4,
-      }),
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (!chatRes.ok) {
-      const body = await chatRes.text().catch(() => '');
-      return {
-        ok: false,
-        reason: `POST /chat/completions returned HTTP ${chatRes.status}: ${body.slice(0, 200)}`,
-      };
-    }
-    const payload = (await chatRes.json()) as {
-      choices?: { message?: { content?: string } }[];
-    };
-    const content = payload.choices?.[0]?.message?.content;
-    if (typeof content !== 'string') {
-      return { ok: false, reason: 'malformed chat response' };
-    }
-    return { ok: true, reason: '' };
-  } catch (err) {
-    return {
-      ok: false,
-      reason: err instanceof Error ? err.message : String(err),
-    };
-  }
-}
 
 function ensureGroupFolder(folder: string): string {
   const full = path.join(groupsRoot, folder);
@@ -249,14 +198,41 @@ async function openSseStream(user: string): Promise<{
 // Probe the provider at module load (top-level await), so `it.skipIf` sees
 // the correct value when test definitions are evaluated.
 {
-  const probe = await probeProvider();
+  const probe = await probeLiveLlm(async (baseUrl, apiKey) => {
+    try {
+      const chatRes = await fetch(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: LIVE_MODEL,
+          messages: [{ role: 'user', content: 'ping' }],
+          max_tokens: 4,
+        }),
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!chatRes.ok) {
+        const body = await chatRes.text().catch(() => '');
+        return {
+          ok: false,
+          reason: `POST /chat/completions returned HTTP ${chatRes.status}: ${body.slice(0, 200)}`,
+        };
+      }
+      const payload = (await chatRes.json()) as {
+        choices?: { message?: { content?: string } }[];
+      };
+      if (typeof payload.choices?.[0]?.message?.content !== 'string') {
+        return { ok: false, reason: 'malformed chat response' };
+      }
+      return { ok: true, reason: '' };
+    } catch (err) {
+      return { ok: false, reason: err instanceof Error ? err.message : String(err) };
+    }
+  });
   providerAvailable = probe.ok;
   providerSkipReason = probe.reason;
-  if (!providerAvailable) {
-    console.warn(
-      `\n⚠️  Live LLM provider at ${LIVE_BASE_URL} is unreachable: ${probe.reason}\n   All live-LLM tests will be skipped.\n`,
-    );
-  }
 }
 
 // ── Suite ─────────────────────────────────────────────────────────────────

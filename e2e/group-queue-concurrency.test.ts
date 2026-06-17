@@ -51,6 +51,8 @@ import {
 } from 'vitest';
 import { spawnSync, spawn, type ChildProcess } from 'node:child_process';
 import { isKubernetesAvailable } from './setup.js';
+import { LIVE_BASE_URL, LIVE_MODEL, LIVE_API_KEY, probeLiveLlm }
+  from './lib/live-llm.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -61,12 +63,6 @@ const CHART_DIR = './helm/kubeclaw';
 /** Unique port — does not clash with minikube-live (14080–14083) or
  *  specialist-catalog (14091). */
 const HTTP_LOCAL_PORT = 14092;
-
-const LIVE_BASE_URL =
-  process.env.LIVE_LLM_BASE_URL || 'http://192.168.7.100:8080/v1';
-const LIVE_MODEL =
-  process.env.LIVE_LLM_MODEL || 'gemma-4-E4B-it-Q4_0.gguf';
-const LIVE_API_KEY = process.env.LIVE_LLM_API_KEY || 'no-key';
 
 // Three users → three independent groups (JIDs: http:groupA, http:groupB, http:groupC).
 const USERS = [
@@ -90,42 +86,9 @@ async function probeProvider(): Promise<void> {
     providerSkipReason = 'no Kubernetes cluster';
     return;
   }
-  try {
-    const modelsRes = await fetch(`${LIVE_BASE_URL}/models`, {
-      signal: AbortSignal.timeout(5_000),
-    });
-    if (!modelsRes.ok) {
-      providerSkipReason = `GET /models returned HTTP ${modelsRes.status}`;
-      return;
-    }
-    const chatRes = await fetch(`${LIVE_BASE_URL}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${LIVE_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: LIVE_MODEL,
-        messages: [{ role: 'user', content: 'ping' }],
-        max_tokens: 4,
-      }),
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (!chatRes.ok) {
-      providerSkipReason = `POST /chat/completions returned HTTP ${chatRes.status}`;
-      return;
-    }
-    const payload = (await chatRes.json()) as {
-      choices?: { message?: { content?: string } }[];
-    };
-    if (typeof payload.choices?.[0]?.message?.content !== 'string') {
-      providerSkipReason = 'malformed chat response';
-      return;
-    }
-    providerAvailable = true;
-  } catch (err) {
-    providerSkipReason = err instanceof Error ? err.message : String(err);
-  }
+  const result = await probeLiveLlm();
+  providerAvailable = result.ok;
+  providerSkipReason = result.reason;
 }
 
 await probeProvider();
