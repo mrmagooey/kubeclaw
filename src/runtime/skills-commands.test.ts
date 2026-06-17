@@ -223,4 +223,43 @@ describe('handleSkillsCommand', () => {
       expect(reply).toContain('/skills history');
     });
   });
+
+  describe('/skills prune', () => {
+    it('reports no stale skills when all were loaded recently', () => {
+      const id = writeCandidate(root, GROUP, mkSkill('fresh'));
+      acceptCandidate(root, GROUP, id);
+      // Record a load within the last 60 days
+      recordSkillLoad(GROUP, 'fresh', Date.now());
+      const reply = handleSkillsCommand(root, GROUP, JID, '/skills prune');
+      expect(reply).toMatch(/no stale skills/i);
+    });
+
+    it('lists stale skills when a skill has never been loaded', () => {
+      const id = writeCandidate(root, GROUP, mkSkill('stale-one'));
+      acceptCandidate(root, GROUP, id);
+      // No recordSkillLoad call — skill has never been loaded
+      const reply = handleSkillsCommand(root, GROUP, JID, '/skills prune');
+      expect(reply).toContain('stale-one');
+      expect(reply).toMatch(/prune-confirm/i);
+    });
+
+    it('lists only unloaded skills when some are fresh and some are stale', () => {
+      const id1 = writeCandidate(root, GROUP, mkSkill('loaded-skill'));
+      acceptCandidate(root, GROUP, id1);
+      recordSkillLoad(GROUP, 'loaded-skill', Date.now());
+
+      const id2 = writeCandidate(root, GROUP, mkSkill('stale-skill'));
+      acceptCandidate(root, GROUP, id2);
+      // stale-skill never loaded
+
+      const reply = handleSkillsCommand(root, GROUP, JID, '/skills prune');
+      expect(reply).toContain('stale-skill');
+      expect(reply).not.toContain('loaded-skill');
+    });
+
+    it('reports no stale skills when there are no accepted skills at all', () => {
+      const reply = handleSkillsCommand(root, GROUP, JID, '/skills prune');
+      expect(reply).toMatch(/no stale skills/i);
+    });
+  });
 });

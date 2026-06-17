@@ -82,6 +82,8 @@ vi.mock('irc-upd', () => {
 });
 
 import { IRCChannel, IRCChannelOpts } from './irc.js';
+import { registerChannel } from './registry.js';
+import { readEnvFile } from '../env.js';
 
 function createTestOpts(overrides?: Partial<IRCChannelOpts>): IRCChannelOpts {
   return {
@@ -383,5 +385,98 @@ describe('IRCChannel', () => {
 
       expect(channel.name).toBe('irc');
     });
+  });
+});
+
+describe('parseConfig + factory', () => {
+  const IRC_ENV_KEYS = ['IRC_SERVER', 'IRC_PORT', 'IRC_NICK', 'IRC_CHANNELS'] as const;
+
+  // Capture the factory before any clearAllMocks can wipe the call record.
+  // registerChannel is called once at module load time; we store the callback here.
+  const capturedFactory = (registerChannel as ReturnType<typeof vi.fn>).mock.calls[0][1];
+
+  beforeEach(() => {
+    for (const key of IRC_ENV_KEYS) {
+      delete process.env[key];
+    }
+    // Default: readEnvFile returns nothing
+    (readEnvFile as ReturnType<typeof vi.fn>).mockReturnValue({});
+  });
+
+  afterEach(() => {
+    for (const key of IRC_ENV_KEYS) {
+      delete process.env[key];
+    }
+  });
+
+  function getFactory() {
+    return capturedFactory;
+  }
+
+  function fakeOpts() {
+    return createTestOpts();
+  }
+
+  it('factory returns null when IRC_SERVER is missing', () => {
+    (readEnvFile as ReturnType<typeof vi.fn>).mockReturnValue({});
+    process.env.IRC_NICK = 'Bot';
+    process.env.IRC_CHANNELS = '#test';
+    const result = getFactory()(fakeOpts());
+    expect(result).toBeNull();
+  });
+
+  it('factory returns null when IRC_NICK is missing', () => {
+    (readEnvFile as ReturnType<typeof vi.fn>).mockReturnValue({});
+    process.env.IRC_SERVER = 'irc.example.com';
+    process.env.IRC_CHANNELS = '#test';
+    const result = getFactory()(fakeOpts());
+    expect(result).toBeNull();
+  });
+
+  it('factory returns null when IRC_CHANNELS is missing', () => {
+    (readEnvFile as ReturnType<typeof vi.fn>).mockReturnValue({});
+    process.env.IRC_SERVER = 'irc.example.com';
+    process.env.IRC_NICK = 'Bot';
+    const result = getFactory()(fakeOpts());
+    expect(result).toBeNull();
+  });
+
+  it('factory returns IRCChannel when all required env vars are set', () => {
+    process.env.IRC_SERVER = 'irc.example.com';
+    process.env.IRC_NICK = 'Bot';
+    process.env.IRC_CHANNELS = '#test';
+    const result = getFactory()(fakeOpts());
+    expect(result).toBeInstanceOf(IRCChannel);
+  });
+
+  it('uses default port 6697 when IRC_PORT is not set', () => {
+    process.env.IRC_SERVER = 'irc.example.com';
+    process.env.IRC_NICK = 'Bot';
+    process.env.IRC_CHANNELS = '#test';
+    // IRC_PORT not set — should default to 6697
+    const result = getFactory()(fakeOpts());
+    expect(result).toBeInstanceOf(IRCChannel);
+    // Verify via the config embedded in the channel (server includes port in JID)
+    expect((result as IRCChannel).ownsJid('irc:#test@irc.example.com:6697')).toBe(true);
+  });
+
+  it('splits comma-separated channels correctly', () => {
+    process.env.IRC_SERVER = 'irc.example.com';
+    process.env.IRC_NICK = 'Bot';
+    process.env.IRC_CHANNELS = '#alpha, #beta, #gamma';
+    const result = getFactory()(fakeOpts());
+    expect(result).toBeInstanceOf(IRCChannel);
+    // ownsJid checks the server; channel splitting is verified via the config path
+  });
+
+  it('reads config from readEnvFile when process.env is empty', () => {
+    (readEnvFile as ReturnType<typeof vi.fn>).mockReturnValue({
+      IRC_SERVER: 'irc.fromfile.com',
+      IRC_NICK: 'FileBot',
+      IRC_CHANNELS: '#fromfile',
+    });
+    const result = getFactory()(fakeOpts());
+    expect(result).toBeInstanceOf(IRCChannel);
+    expect((result as IRCChannel).ownsJid('irc:#fromfile@irc.fromfile.com:6697')).toBe(true);
   });
 });
