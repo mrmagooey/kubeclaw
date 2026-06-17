@@ -20,15 +20,18 @@
  * AC2: not provisioned  → SSE reply contains "not provisioned".
  * AC3: pending-schema   → SSE reply contains "schema not yet available".
  */
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { spawnSync, spawn } from 'node:child_process';
+import { isKubernetesAvailable } from './setup.js';
 
 const PORT = parseInt(process.env.CAP_TOOLS_HTTP_PORT ?? '14137', 10);
 const HTTP_URL = `http://127.0.0.1:${PORT}`;
 const TEST_USER = process.env.CAP_TOOLS_USER ?? 'e2e';
 const TEST_PASS = process.env.CAP_TOOLS_PASS ?? 'e2e-secret';
 const CAP_TYPE = process.env.CAP_TOOLS_TYPE ?? 'echo';
-// Set to '1' to run these tests; they require a live cluster.
-const RUN_E2E = process.env.CAP_TOOLS_E2E === '1';
+const NAMESPACE = 'kubeclaw-e2e-cap-tools';
+const RELEASE = 'kubeclaw-cap-tools';
+const K8S_AVAILABLE = isKubernetesAvailable();
 
 function basicAuth(user: string, pass: string): string {
   return 'Basic ' + Buffer.from(`${user}:${pass}`).toString('base64');
@@ -107,16 +110,125 @@ async function sendAndCollect(text: string, timeoutMs = 30_000): Promise<string[
   return lines;
 }
 
-describe.skipIf(!RUN_E2E)('/capabilities tools — e2e', () => {
+describe.skipIf(!K8S_AVAILABLE)('/capabilities tools — e2e', () => {
+  let portForwardProc: ReturnType<typeof spawn> | null = null;
+  let helmInstalledByTest = false;
+
   beforeAll(async () => {
-    // Verify the HTTP channel is reachable.
-    const res = await fetch(`${HTTP_URL}/healthz`).catch(() => null);
-    if (!res?.ok) {
-      throw new Error(
-        `HTTP channel not reachable at ${HTTP_URL}/healthz — is the port-forward running?`,
+    // 1. Build the echo-mcp image into minikube so the orchestrator can pull it.
+    const buildResult = spawnSync(
+      'bash',
+      [
+        '-c',
+        'eval $(minikube docker-env 2>/dev/null || true) && bash container/echo-mcp/build.sh kubeclaw-echo-mcp:cap-tools-test',
+      ],
+      { encoding: 'utf8', stdio: 'pipe', timeout: 300_000 },
+    );
+    if (buildResult.status !== 0) {
+      console.warn('echo-mcp build failed — test may fail AC1:', buildResult.stderr);
+    }
+
+    // 2. Install kubeclaw into the dedicated namespace (idempotent).
+    const existingRelease = spawnSync(
+      'helm',
+      ['status', RELEASE, '--namespace', NAMESPACE],
+      { encoding: 'utf8', stdio: 'pipe' },
+    );
+    if (existingRelease.status !== 0) {
+      spawnSync(
+        'kubectl',
+        ['apply', '-f', '-'],
+        {
+          input: `apiVersion: v1\nkind: Namespace\nmetadata:\n  name: ${NAMESPACE}\n`,
+          encoding: 'utf8',
+          stdio: 'pipe',
+        },
+      );
+      const installResult = spawnSync(
+        'helm',
+        [
+          'upgrade', '--install', RELEASE, './helm/kubeclaw',
+          '--namespace', NAMESPACE,
+          '--timeout', '120s',
+          '--set', `namespace=${NAMESPACE}`,
+          '--set', 'secrets.anthropicApiKey=test-key',
+          '--set', 'channels.http.enabled=true',
+          '--set', 'channels.http.users[0].username=e2e',
+          '--set', 'channels.http.users[0].password=e2e-secret',
+          '--set-json', `perGroupCapabilities=[{"type":"echo","image":"kubeclaw-echo-mcp:cap-tools-test","scaleDownAfterIdleSeconds":60}]`,
+        ],
+        { encoding: 'utf8', stdio: 'pipe', timeout: 150_000 },
+      );
+      if (installResult.status !== 0) {
+        throw new Error(`helm install failed: ${installResult.stderr}`);
+      }
+      helmInstalledByTest = true;
+
+      // Wait for orchestrator to be ready.
+      spawnSync(
+        'kubectl',
+        [
+          'wait', '--namespace', NAMESPACE,
+          '--for=condition=available', 'deployment/kubeclaw-orchestrator',
+          '--timeout=120s',
+        ],
+        { encoding: 'utf8', stdio: 'pipe' },
       );
     }
-  }, 10_000);
+
+    // 3. Kill any stale port-forward, then start a fresh one.
+    spawnSync('pkill', ['-f', `port-forward.*${PORT}:.*${NAMESPACE}`], { stdio: 'pipe' });
+    await new Promise((r) => setTimeout(r, 500));
+
+    portForwardProc = spawn(
+      'kubectl',
+      ['port-forward', '-n', NAMESPACE, 'svc/kubeclaw-http', `${PORT}:80`],
+      { stdio: 'ignore', detached: true },
+    );
+    portForwardProc.unref();
+
+    // Wait up to 30 s for port-forward to be ready.
+    const deadline = Date.now() + 30_000;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 2000));
+      const nc = spawnSync('nc', ['-z', '127.0.0.1', String(PORT)], { stdio: 'pipe' });
+      if (nc.status === 0) break;
+    }
+
+    // 4. Wait for the echo capability schema to be scraped (up to 60 s).
+    //    The orchestrator's schema-scraper runs shortly after startup.
+    const schemaDeadline = Date.now() + 60_000;
+    while (Date.now() < schemaDeadline) {
+      await new Promise((r) => setTimeout(r, 5_000));
+      // Probe: send "/capabilities tools echo" and check if schema is available.
+      try {
+        const probe = await sendAndCollect(`/capabilities tools ${CAP_TYPE}`, 8_000);
+        const combined = probe.join('\n');
+        if (!combined.includes('schema not yet available')) break;
+      } catch {
+        // not ready yet
+      }
+    }
+  }, 300_000);
+
+  afterAll(async () => {
+    if (portForwardProc) {
+      try { portForwardProc.kill(); } catch { /* ignore */ }
+    }
+    spawnSync('pkill', ['-f', `port-forward.*${PORT}:.*${NAMESPACE}`], { stdio: 'pipe' });
+    if (helmInstalledByTest) {
+      spawnSync(
+        'helm',
+        ['uninstall', RELEASE, '--namespace', NAMESPACE],
+        { encoding: 'utf8', stdio: 'pipe' },
+      );
+      spawnSync(
+        'kubectl',
+        ['delete', 'namespace', NAMESPACE, '--ignore-not-found', '--timeout=60s'],
+        { encoding: 'utf8', stdio: 'pipe' },
+      );
+    }
+  }, 120_000);
 
   it('AC1: /capabilities tools <type> lists MCP tools when schema is available', async () => {
     const lines = await sendAndCollect(`/capabilities tools ${CAP_TYPE}`);
