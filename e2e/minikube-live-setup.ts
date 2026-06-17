@@ -607,11 +607,6 @@ async function helmInstall(): Promise<void> {
     `channels.http.envVars[1].key=port`,
     '--set',
     `channels.http.envVars[1].optional=true`,
-    // Enable RAG (deploys Qdrant via the chart's StatefulSet and sets
-    // QDRANT_URL on the channel pod at startup so RAG_ENABLED=true at
-    // module load).
-    '--set',
-    'rag.enabled=true',
     // Use the chart's `capabilities:` helm-time templates to deploy our
     // test embedding server as a Deployment+Service at
     // kubeclaw-capability-test-embed:8080 — channel pods reach it by name.
@@ -1106,8 +1101,6 @@ export default async function setup() {
   await waitForPod('app=kubeclaw-redis', 180_000);
   console.log('⏳ Waiting for channel pod Ready...');
   await waitForPod('app=kubeclaw-channel-http', 240_000);
-  console.log('⏳ Waiting for qdrant pod Ready...');
-  await waitForPod('app=kubeclaw-qdrant', 240_000);
   console.log('⏳ Waiting for test embedding pod Ready...');
   await waitForPod('app=kubeclaw-capability-test-embed', 240_000);
   console.log('⏳ Waiting for test ircd pod Ready...');

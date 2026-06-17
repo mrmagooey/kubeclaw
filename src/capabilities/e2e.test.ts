@@ -256,7 +256,10 @@ describe('capabilities subsystem — end-to-end', () => {
           name: 'test-rag',
           kind: 'rag',
           endpoint: 'http://kubeclaw-cap-test-rag:6333',
-          kindMetadata: { backend: 'qdrant' },
+          kindMetadata: {
+            backend: 'qdrant',
+            provider: { adapter: 'vector-store', embedding: { provider: 'openai' } },
+          },
         },
       ]),
     };
@@ -287,7 +290,10 @@ describe('capabilities subsystem — end-to-end', () => {
           name: 'old-rag',
           kind: 'rag',
           endpoint: 'http://kubeclaw-cap-old-rag:6333',
-          kindMetadata: { backend: 'qdrant' },
+          kindMetadata: {
+            backend: 'qdrant',
+            provider: { adapter: 'vector-store', embedding: { provider: 'openai' } },
+          },
         },
       ]),
     };

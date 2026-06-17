@@ -27,6 +27,7 @@ import {
   listCapabilities,
   getEntriesForChannel,
   notifyAllChannels,
+  specToDiscoveryEntry,
 } from './registry.js';
 import { _initTestDatabase, __resetDbForTest } from '../db.js';
 
@@ -187,6 +188,103 @@ describe('registry', () => {
     // mockPublish was called for each targeted channel, including mychan.
     const publishedChannels = mockPublish.mock.calls.map((c) => c[0] as string);
     expect(publishedChannels).toContain('kubeclaw:control:mychan');
+  });
+
+  describe('endpoint scheme', () => {
+    it('defaults to http://', () => {
+      const entry = specToDiscoveryEntry({
+        kind: 'http', name: 'web', image: 'nginx', port: 8080,
+      });
+      expect(entry.endpoint).toBe('http://kubeclaw-cap-web:8080');
+    });
+
+    it('honors endpointScheme', () => {
+      const entry = specToDiscoveryEntry({
+        kind: 'http', name: 'maindb', image: 'postgres:16', port: 5432,
+        endpointScheme: 'postgresql',
+      });
+      expect(entry.endpoint).toBe('postgresql://kubeclaw-cap-maindb:5432');
+    });
+  });
+
+  describe('rag discovery entry', () => {
+    it('emits backend + normalized provider in kindMetadata for a legacy spec', () => {
+      const entry = specToDiscoveryEntry({
+        kind: 'rag', backend: 'qdrant', name: 'r', image: 'qdrant/qdrant',
+      });
+      if (entry.kind !== 'rag') throw new Error('expected rag entry');
+      expect(entry.kindMetadata.backend).toBe('qdrant');
+      expect(entry.kindMetadata.provider.adapter).toBe('vector-store');
+      expect(entry.endpoint).toBe('http://kubeclaw-cap-r:6333');
+    });
+
+    it('passes an explicit provider through to kindMetadata', () => {
+      const entry = specToDiscoveryEntry({
+        kind: 'rag', backend: 'lightrag', name: 'lr', image: 'lightrag', port: 9621,
+        provider: { adapter: 'remote', queryMode: 'naive' },
+      });
+      if (entry.kind !== 'rag') throw new Error('expected rag entry');
+      expect(entry.kindMetadata.provider.adapter).toBe('remote');
+      expect(entry.endpoint).toBe('http://kubeclaw-cap-lr:9621');
+    });
+  });
+
+  describe('transcription discovery entry', () => {
+    it('emits the normalized provider in kindMetadata with NO secrets', () => {
+      const entry = specToDiscoveryEntry({
+        kind: 'transcription',
+        name: 'whisper',
+        image: 'onerahmet/openai-whisper-asr-webservice:latest',
+      });
+      if (entry.kind !== 'transcription') throw new Error('expected transcription entry');
+      expect(entry.kindMetadata.provider.transcribePath).toBe('/v1/audio/transcriptions');
+      expect(entry.kindMetadata.provider.responseField).toBe('text');
+      expect(entry.endpoint).toBe('http://kubeclaw-cap-whisper:9000');
+      // No secret/key fields exist on the entry — provider config is the whole shape.
+      expect(JSON.stringify(entry)).not.toMatch(/apiKey|secret|token/i);
+    });
+
+    it('honours an explicit port', () => {
+      const entry = specToDiscoveryEntry({
+        kind: 'transcription', name: 'w', image: 'img', port: 8080,
+      });
+      if (entry.kind !== 'transcription') throw new Error('expected transcription entry');
+      expect(entry.endpoint).toBe('http://kubeclaw-cap-w:8080');
+    });
+  });
+
+  describe('one-per-channel transcription guard', () => {
+    it('rejects a second universal transcription on the same (all) channels', async () => {
+      await installCapability({
+        kind: 'transcription', name: 't1', image: 'img',
+      });
+      await expect(
+        installCapability({ kind: 'transcription', name: 't2', image: 'img' }),
+      ).rejects.toThrow(/transcription/i);
+    });
+
+    it('allows two transcriptions with disjoint channel ACLs', async () => {
+      await installCapability({
+        kind: 'transcription', name: 't1', image: 'img', channels: ['telegram'],
+      });
+      await expect(
+        installCapability({ kind: 'transcription', name: 't2', image: 'img', channels: ['slack'] }),
+      ).resolves.toBeUndefined();
+    });
+
+    it('allows updating an existing transcription (same name) even when unscoped', async () => {
+      await installCapability({ kind: 'transcription', name: 't1', image: 'img:1' });
+      await installCapability({ kind: 'transcription', name: 't1', image: 'img:2' });
+      const list = listCapabilities().filter((c) => c.kind === 'transcription');
+      expect(list).toHaveLength(1);
+      expect(list[0].image).toBe('img:2');
+    });
+
+    it('does not block an MCP install when a transcription is present', async () => {
+      await installCapability({ kind: 'transcription', name: 't1', image: 'img' });
+      await installCapability({ kind: 'mcp', name: 'weather', image: 'mcp/weather:1.0' });
+      expect(listCapabilities()).toHaveLength(2);
+    });
   });
 
   describe('notifyAllChannels — group-scoped capabilities', () => {

@@ -4,13 +4,6 @@ vi.mock('../logger.js', () => ({
   logger: { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-// EMBEDDING_DIM drives collection creation — mock the client module so tests
-// don't depend on which provider env vars are set.
-vi.mock('../runtime/embedding-client.js', () => ({
-  EMBEDDING_DIM: 3,
-  RAG_ENABLED: true,
-}));
-
 // ── Fetch stub helpers ─────────────────────────────────────────────────────
 
 type FetchResponse = {
@@ -48,16 +41,16 @@ function qdrantNotFound(): FetchResponse {
 
 // ── Tests ──────────────────────────────────────────────────────────────────
 
+const OPTS = { endpoint: 'http://qdrant-test:6333', dim: 3 };
+
 describe('rag/store', () => {
   beforeEach(() => {
     vi.resetModules();
-    process.env.QDRANT_URL = 'http://qdrant-test:6333';
   });
 
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.clearAllMocks();
-    delete process.env.QDRANT_URL;
   });
 
   // ── ensureCollection ────────────────────────────────────────────────────
@@ -66,7 +59,7 @@ describe('rag/store', () => {
     it('skips creation if collection already exists', async () => {
       stubFetch(() => qdrantOk());
       const { ensureCollection } = await import('./store.js');
-      await ensureCollection('mygroup');
+      await ensureCollection(OPTS, 'mygroup');
 
       const calls = (fetch as ReturnType<typeof vi.fn>).mock.calls;
       // Only the GET check — no PUT
@@ -82,7 +75,7 @@ describe('rag/store', () => {
       });
 
       const { ensureCollection } = await import('./store.js');
-      await ensureCollection('newgroup');
+      await ensureCollection(OPTS, 'newgroup');
 
       const calls = (fetch as ReturnType<typeof vi.fn>).mock.calls;
       expect(calls).toHaveLength(2);
@@ -101,7 +94,7 @@ describe('rag/store', () => {
       });
 
       const { ensureCollection } = await import('./store.js');
-      await ensureCollection('g');
+      await ensureCollection(OPTS, 'g');
 
       expect(created).toBe(true);
       const putBody = JSON.parse(
@@ -109,8 +102,16 @@ describe('rag/store', () => {
           ([, o]: [string, RequestInit]) => o?.method === 'PUT',
         )[1].body as string,
       );
-      expect(putBody.vectors.size).toBe(3); // mocked EMBEDDING_DIM
+      expect(putBody.vectors.size).toBe(3); // OPTS.dim
       expect(putBody.vectors.distance).toBe('Cosine');
+    });
+
+    it('targets the endpoint from opts (not env)', async () => {
+      stubFetch(() => qdrantOk());
+      const { ensureCollection } = await import('./store.js');
+      await ensureCollection({ endpoint: 'http://custom:9999', dim: 4 }, 'g');
+      const url = (fetch as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+      expect(url.startsWith('http://custom:9999')).toBe(true);
     });
   });
 
@@ -120,7 +121,7 @@ describe('rag/store', () => {
     it('does nothing for empty points array', async () => {
       stubFetch(() => qdrantOk());
       const { upsertPoints } = await import('./store.js');
-      await upsertPoints('g', []);
+      await upsertPoints(OPTS, 'g', []);
       expect(fetch).not.toHaveBeenCalled();
     });
 
@@ -128,7 +129,7 @@ describe('rag/store', () => {
       stubFetch(() => qdrantOk());
       const { upsertPoints } = await import('./store.js');
 
-      await upsertPoints('mygroup', [
+      await upsertPoints(OPTS, 'mygroup', [
         {
           id: 'abc',
           vector: [0.1, 0.2, 0.3],
@@ -169,7 +170,7 @@ describe('rag/store', () => {
       );
 
       const { search } = await import('./store.js');
-      const results = await search('g', [0.1, 0.2, 0.3], 5, 0.5);
+      const results = await search(OPTS, 'g', [0.1, 0.2, 0.3], 5, 0.5);
 
       expect(results).toHaveLength(2);
       expect(results[0]).toEqual({
@@ -187,14 +188,14 @@ describe('rag/store', () => {
     it('returns empty array when collection does not exist (graceful)', async () => {
       stubFetch(() => qdrantNotFound());
       const { search } = await import('./store.js');
-      const results = await search('g', [0.1, 0.2, 0.3]);
+      const results = await search(OPTS, 'g', [0.1, 0.2, 0.3]);
       expect(results).toEqual([]);
     });
 
     it('sends correct search payload', async () => {
       stubFetch(() => qdrantOk({ result: [] }));
       const { search } = await import('./store.js');
-      await search('mygroup', [0.1, 0.2, 0.3], 3, 0.6);
+      await search(OPTS, 'mygroup', [0.1, 0.2, 0.3], 3, 0.6);
 
       const body = JSON.parse(
         (fetch as ReturnType<typeof vi.fn>).mock.calls[0][1].body as string,
@@ -208,7 +209,7 @@ describe('rag/store', () => {
     it('uses collection name kubeclaw-{groupFolder}', async () => {
       stubFetch(() => qdrantOk({ result: [] }));
       const { search } = await import('./store.js');
-      await search('family', [0.1]);
+      await search(OPTS, 'family', [0.1]);
 
       const url = (fetch as ReturnType<typeof vi.fn>).mock
         .calls[0][0] as string;
@@ -222,7 +223,7 @@ describe('rag/store', () => {
     it('sends DELETE request for the collection', async () => {
       stubFetch(() => qdrantOk());
       const { deleteGroup } = await import('./store.js');
-      await deleteGroup('oldgroup');
+      await deleteGroup(OPTS, 'oldgroup');
 
       const call = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
       expect(call[0]).toContain('/collections/kubeclaw-oldgroup');
@@ -232,7 +233,7 @@ describe('rag/store', () => {
     it('ignores errors (collection may not exist)', async () => {
       stubFetch(() => qdrantNotFound());
       const { deleteGroup } = await import('./store.js');
-      await expect(deleteGroup('ghost')).resolves.not.toThrow();
+      await expect(deleteGroup(OPTS, 'ghost')).resolves.not.toThrow();
     });
   });
 });

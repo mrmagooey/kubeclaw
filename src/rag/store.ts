@@ -3,18 +3,19 @@
  *
  * Uses Qdrant's REST API via native fetch. No extra SDK dependency.
  *
- * Environment variables:
- *   QDRANT_URL — e.g. http://kubeclaw-qdrant:6333 (required for RAG)
+ * All config (endpoint, dim) is passed explicitly via VectorStoreOpts —
+ * no process.env reads.
  *
  * Collections are named kubeclaw-{groupFolder}, one per group.
  * Points carry a payload of { text, source, timestamp }.
  */
 
-import { EMBEDDING_DIM } from '../runtime/embedding-client.js';
 import { logger } from '../logger.js';
 
-const QDRANT_URL = () =>
-  process.env.QDRANT_URL ?? 'http://kubeclaw-qdrant:6333';
+export interface VectorStoreOpts {
+  endpoint: string;
+  dim: number;
+}
 
 export interface QdrantPoint {
   id: string; // deterministic UUID derived from content hash
@@ -38,19 +39,18 @@ function collectionName(groupFolder: string): string {
 }
 
 async function qdrantFetch(
+  opts: VectorStoreOpts,
   path: string,
-  opts: RequestInit = {},
+  init: RequestInit = {},
 ): Promise<unknown> {
-  const url = `${QDRANT_URL()}${path}`;
+  const url = `${opts.endpoint.replace(/\/$/, '')}${path}`;
   const res = await fetch(url, {
     headers: { 'Content-Type': 'application/json' },
-    ...opts,
+    ...init,
   });
   if (!res.ok) {
     const body = await res.text().catch(() => '');
-    throw new Error(
-      `Qdrant ${opts.method ?? 'GET'} ${path} → ${res.status}: ${body}`,
-    );
+    throw new Error(`Qdrant ${init.method ?? 'GET'} ${path} → ${res.status}: ${body}`);
   }
   return res.json();
 }
@@ -59,19 +59,17 @@ async function qdrantFetch(
  * Ensure the collection for a group exists with the correct vector dimension.
  * Idempotent — safe to call before every upsert.
  */
-export async function ensureCollection(groupFolder: string): Promise<void> {
+export async function ensureCollection(opts: VectorStoreOpts, groupFolder: string): Promise<void> {
   const name = collectionName(groupFolder);
   try {
-    await qdrantFetch(`/collections/${name}`);
+    await qdrantFetch(opts, `/collections/${name}`);
     return; // already exists
   } catch {
     // 404 — create it
   }
-  await qdrantFetch(`/collections/${name}`, {
+  await qdrantFetch(opts, `/collections/${name}`, {
     method: 'PUT',
-    body: JSON.stringify({
-      vectors: { size: EMBEDDING_DIM, distance: 'Cosine' },
-    }),
+    body: JSON.stringify({ vectors: { size: opts.dim, distance: 'Cosine' } }),
   });
   logger.info({ collection: name }, 'Qdrant collection created');
 }
@@ -80,30 +78,25 @@ export async function ensureCollection(groupFolder: string): Promise<void> {
  * Upsert a batch of points. Creates the collection if it doesn't exist.
  *
  * Uses `?wait=true` so Qdrant validates and applies the upsert synchronously.
- * Without it, Qdrant returns 200/acknowledged immediately and processes the
- * upsert asynchronously — and silently drops the points on any validation
- * issue (dimension mismatch, payload error). The 200 response makes the
- * failure invisible to the channel pod, so subsequent searches return empty.
  */
 export async function upsertPoints(
+  opts: VectorStoreOpts,
   groupFolder: string,
   points: QdrantPoint[],
 ): Promise<void> {
   if (points.length === 0) return;
-  await ensureCollection(groupFolder);
-  await qdrantFetch(
-    `/collections/${collectionName(groupFolder)}/points?wait=true`,
-    {
-      method: 'PUT',
-      body: JSON.stringify({ points }),
-    },
-  );
+  await ensureCollection(opts, groupFolder);
+  await qdrantFetch(opts, `/collections/${collectionName(groupFolder)}/points?wait=true`, {
+    method: 'PUT',
+    body: JSON.stringify({ points }),
+  });
 }
 
 /**
  * Search for the top-k most similar chunks to queryVector.
  */
 export async function search(
+  opts: VectorStoreOpts,
   groupFolder: string,
   queryVector: number[],
   topK = 5,
@@ -112,7 +105,7 @@ export async function search(
   const name = collectionName(groupFolder);
   let raw: unknown;
   try {
-    raw = await qdrantFetch(`/collections/${name}/points/search`, {
+    raw = await qdrantFetch(opts, `/collections/${name}/points/search`, {
       method: 'POST',
       body: JSON.stringify({
         vector: queryVector,
@@ -140,10 +133,10 @@ export async function search(
 /**
  * Delete all points for a group (e.g. when a group is removed).
  */
-export async function deleteGroup(groupFolder: string): Promise<void> {
+export async function deleteGroup(opts: VectorStoreOpts, groupFolder: string): Promise<void> {
   const name = collectionName(groupFolder);
   try {
-    await qdrantFetch(`/collections/${name}`, { method: 'DELETE' });
+    await qdrantFetch(opts, `/collections/${name}`, { method: 'DELETE' });
     logger.info({ collection: name }, 'Qdrant collection deleted');
   } catch {
     // ignore — collection may not exist

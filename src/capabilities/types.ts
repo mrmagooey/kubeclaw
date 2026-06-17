@@ -13,6 +13,23 @@ export interface CapabilityResources {
   memoryLimit?: string;
   cpuRequest?: string;
   cpuLimit?: string;
+  /** Whole-number GPUs; renders nvidia.com/gpu into requests AND limits. */
+  gpu?: number;
+}
+
+export interface CapabilityScheduling {
+  nodeSelector?: Record<string, string>;
+  /** Raw K8s toleration objects, rendered verbatim. */
+  tolerations?: Array<Record<string, unknown>>;
+  runtimeClassName?: string;
+}
+
+export interface CapabilityPodSecurity {
+  runAsUser?: number;
+  runAsGroup?: number;
+  /** Pod-level fsGroup — required for stateful images to own a mounted PVC. */
+  fsGroup?: number;
+  runAsNonRoot?: boolean;
 }
 
 export interface CapabilityStorage {
@@ -20,6 +37,26 @@ export interface CapabilityStorage {
   sizeGi: number;
   /** Container path the PVC mounts to. */
   mountPath: string;
+}
+
+export interface ProbeConfig {
+  /** Probe mechanism. Default 'http'. */
+  type?: 'http' | 'tcp';
+  /** HTTP path (http type only). Default '/health'. */
+  path?: string;
+  /** Probe port. Default: the container port. */
+  port?: number;
+  /** Applies to BOTH readiness and liveness; unset keeps per-probe defaults. */
+  initialDelaySeconds?: number;
+  periodSeconds?: number;
+  failureThreshold?: number;
+  timeoutSeconds?: number;
+  /** Optional startupProbe — guards liveness/readiness during warm-up. */
+  startup?: {
+    initialDelaySeconds?: number;
+    periodSeconds?: number;
+    failureThreshold?: number;
+  };
 }
 
 export interface CapabilityBase {
@@ -39,12 +76,21 @@ export interface CapabilityBase {
   resources?: CapabilityResources;
   /** Optional PVC. */
   storage?: CapabilityStorage;
-  /** HTTP path the orchestrator probes for liveness. Default: '/health'. */
+  /**
+   * @deprecated Use `probe.path`. HTTP path the orchestrator probes for
+   * liveness. Default: '/health'. Honored only when `probe` is absent.
+   */
   healthPath?: string;
+  /** Probe configuration. Overrides `healthPath` when present. */
+  probe?: ProbeConfig;
   /** Optional command override. */
   command?: string[];
   /** Optional args. */
   args?: string[];
+  /** Pod scheduling controls (GPU nodes, taints, runtime class). */
+  scheduling?: CapabilityScheduling;
+  /** Pod/container security context overrides. */
+  podSecurity?: CapabilityPodSecurity;
   /** Deployment scope. Default 'cluster'. */
   scope?: 'cluster' | 'group';
   /** Group-scope only: seconds of idle before scale-to-zero. Min 60. Default 600. */
@@ -53,6 +99,8 @@ export interface CapabilityBase {
   volumeFromGroupPvc?: boolean;
   /** Group-scope only: where per-group credentials come from. Default 'none'. */
   credentialsFrom?: 'none' | 'secret';
+  /** URL scheme for the discovery endpoint. Default 'http'. */
+  endpointScheme?: string;
 }
 
 export interface McpCapabilitySpec extends CapabilityBase {
@@ -63,10 +111,70 @@ export interface McpCapabilitySpec extends CapabilityBase {
   allowedTools?: string[];
 }
 
+export interface EmbeddingConfig {
+  provider: 'openai' | 'voyage';
+  /** Model name. Default per provider (openai text-embedding-3-small, voyage voyage-3). */
+  model?: string;
+  /** Vector dimension. Default per provider (openai 1536, voyage 1024). */
+  dim?: number;
+  /** Optional separate embedding endpoint base URL. */
+  baseUrl?: string;
+  /** Name of the channel-pod env var holding the API key. Default per provider. */
+  apiKeyEnv?: string;
+}
+
+export interface VectorStoreProviderConfig {
+  adapter: 'vector-store';
+  embedding: EmbeddingConfig;
+  /** Characters per chunk. Default 1800. */
+  chunkSize?: number;
+  /** Character overlap between chunks. Default 200. */
+  chunkOverlap?: number;
+  /** Max chunks retrieved per query. Default 5. */
+  topK?: number;
+  /** Minimum cosine similarity (0–1). Default 0.5. */
+  scoreThreshold?: number;
+}
+
+export interface RemoteProviderConfig {
+  adapter: 'remote';
+  /** Index endpoint path. Default '/documents/text'. */
+  indexPath?: string;
+  /** Query endpoint path. Default '/query'. */
+  queryPath?: string;
+  /** Query mode passed to the backend. Default 'hybrid'. */
+  queryMode?: string;
+  /** Request timeout in ms. Default 30000 index / 15000 query. */
+  timeoutMs?: number;
+}
+
+export type RagProviderConfig =
+  | VectorStoreProviderConfig
+  | RemoteProviderConfig;
+
 export interface RagCapabilitySpec extends CapabilityBase {
   kind: 'rag';
-  /** RAG backend implementation. */
-  backend: 'qdrant' | 'lightrag';
+  /** Free-form backend label ('qdrant', 'weaviate', 'lightrag'…) — not behaviour-bearing. */
+  backend: string;
+  /** Adapter + embedding/retrieval config. Optional on persisted legacy rows; filled by normalizeRagSpec(). */
+  provider?: RagProviderConfig;
+}
+
+export interface TranscriptionProviderConfig {
+  /** Multipart upload endpoint path. Default '/v1/audio/transcriptions'. */
+  transcribePath?: string;
+  /** Model name; sent as a multipart field when set. */
+  model?: string;
+  /** JSON field holding the transcript in the response. Default 'text'. */
+  responseField?: string;
+  /** Request timeout in ms. Default 60000 (Whisper-class can be slow). */
+  timeoutMs?: number;
+}
+
+export interface TranscriptionCapabilitySpec extends CapabilityBase {
+  kind: 'transcription';
+  /** Optional; defaults filled by normalizeTranscriptionSpec() on read. */
+  provider?: TranscriptionProviderConfig;
 }
 
 export interface HttpCapabilitySpec extends CapabilityBase {
@@ -76,6 +184,7 @@ export interface HttpCapabilitySpec extends CapabilityBase {
 export type CapabilitySpec =
   | McpCapabilitySpec
   | RagCapabilitySpec
+  | TranscriptionCapabilitySpec
   | HttpCapabilitySpec;
 
 export type CapabilityKind = CapabilitySpec['kind'];
@@ -124,7 +233,7 @@ export type CapabilityDiscoveryEntry =
       name: string;
       kind: 'rag';
       endpoint: string;
-      kindMetadata: { backend: 'qdrant' | 'lightrag' };
+      kindMetadata: { backend: string; provider: RagProviderConfig };
       state?: 'ready' | 'warming' | 'failed';
       error?: string;
     }
@@ -133,6 +242,14 @@ export type CapabilityDiscoveryEntry =
       kind: 'http';
       endpoint: string;
       kindMetadata: Record<string, never>;
+      state?: 'ready' | 'warming' | 'failed';
+      error?: string;
+    }
+  | {
+      name: string;
+      kind: 'transcription';
+      endpoint: string;
+      kindMetadata: { provider: TranscriptionProviderConfig };
       state?: 'ready' | 'warming' | 'failed';
       error?: string;
     }

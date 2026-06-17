@@ -46,10 +46,12 @@ describe('workloadEnvForSidecar', () => {
     expect(noProxy.split(',')).toContain('ollama');
   });
 
-  it('NO_PROXY includes kubeclaw-qdrant', () => {
+  it('NO_PROXY does NOT hardcode kubeclaw-qdrant (capabilities bypass via .svc)', () => {
     const env = workloadEnvForSidecar({ port: 8443 });
     const noProxy = env.find((e) => e.name === ENV_NO_PROXY)?.value ?? '';
-    expect(noProxy.split(',')).toContain('kubeclaw-qdrant');
+    expect(noProxy.split(',')).not.toContain('kubeclaw-qdrant');
+    // In-cluster capability traffic still bypasses the broker via the .svc suffix.
+    expect(noProxy.split(',')).toContain('.svc.cluster.local');
   });
 
   it('NO_PROXY includes .svc.cluster.local', () => {
@@ -69,7 +71,7 @@ describe('helm chart NO_PROXY parity', () => {
       { cwd: process.cwd(), encoding: 'utf8' },
     );
     const expectedNoProxy =
-      'localhost,127.0.0.1,kubeclaw-redis,kubeclaw-credential-broker,ollama,kubeclaw-qdrant,.svc,.svc.cluster.local,.cluster.local';
+      'localhost,127.0.0.1,kubeclaw-redis,kubeclaw-credential-broker,ollama,.svc,.svc.cluster.local,.cluster.local';
     expect(rendered).toContain(expectedNoProxy);
 
     // Verify the TS constant matches too

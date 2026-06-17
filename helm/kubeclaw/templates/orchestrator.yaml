@@ -214,27 +214,6 @@ spec:
                   name: {{ include "kubeclaw.secretName" . }}
                   key: direct-llm-model
                   optional: true
-            {{- if .Values.rag.enabled }}
-            - name: QDRANT_URL
-              value: "http://kubeclaw-qdrant:6333"
-            - name: EMBEDDING_PROVIDER
-              value: {{ .Values.rag.provider | quote }}
-            {{- if .Values.rag.model }}
-            - name: EMBEDDING_MODEL
-              value: {{ .Values.rag.model | quote }}
-            {{- end }}
-            - name: RAG_TOP_K
-              value: {{ .Values.rag.topK | quote }}
-            - name: RAG_SCORE_THRESHOLD
-              value: {{ .Values.rag.scoreThreshold | quote }}
-            {{- if eq .Values.rag.provider "voyage" }}
-            - name: VOYAGE_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "kubeclaw.secretName" . }}
-                  key: voyage-api-key
-            {{- end }}
-            {{- end }}
             {{- if .Values.orchestrator.admin.enabled }}
             - name: ADMIN_HTTP_PORT
               value: {{ .Values.orchestrator.admin.port | quote }}

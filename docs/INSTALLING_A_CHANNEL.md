@@ -80,9 +80,10 @@ Capabilities are configured via Helm values and applied with `helm upgrade`. The
 
 | If the capability is... | Install via... |
 |---|---|
-| A separate model server you'd run anyway (Whisper STT, Ollama LLM, image vision API) | Helm values `capabilities:` map |
+| A separate model server you'd run anyway (Ollama LLM, image vision API) | Helm values `capabilities:` map |
 | An MCP server exposing tools (calendar, weather, your own service) | Helm values `mcpServers:` map |
-| An inline preprocessing pipeline (image resize, PDF text extraction, voice transcription) that runs inside channel/orchestrator pods | Source code change via `/customize` (see ADDING_A_CHANNEL.md for the markers contract) |
+| Voice transcription (Whisper-class STT) | A `transcription` capability — install the spec via the admin shell (see "Installing voice transcription" below). The channel-side preprocessor reads the `[VoiceAttachment: …]` marker and calls it automatically. |
+| An inline preprocessing pipeline (image resize, PDF text extraction) that runs inside channel/orchestrator pods | Source code change via `/customize` (see ADDING_A_CHANNEL.md for the markers contract) |
 
 ### `capabilities:` example — `use-local-whisper`
 
@@ -139,25 +140,141 @@ These previously had `/add-*` Claude skills that modified source files directly.
 |---|---|---|
 | `image-vision` | Reads `[ImageAttachment: ...]` markers, resizes images, rewrites to `[Image: ...]` | New module `src/preprocessing/image-vision.ts` called from the orchestrator's preprocessing job |
 | `pdf-reader` | Extracts text from PDF attachments before the agent sees them | New module `src/preprocessing/pdf-reader.ts` |
-| `voice-transcription` | Transcribes audio attachments to text inline | `src/transcription.ts` exporting `transcribeBuffer()`; called from channel implementations that set `inboundVoice: true` (see ADDING_A_CHANNEL.md) |
 | `parallel` | Parallel skill execution support | Orchestrator router/runtime change |
 
 Use the `/customize` Claude Code skill to add these; it'll ask the right questions and write the code following the existing patterns.
 
-### RAG (special case)
+### Installing Qdrant as a RAG capability
 
-RAG can be deployed either via Helm values (legacy) or as a capability (recommended). For the **capability-based approach**, install it via the admin shell after the orchestrator boots (see Task 3.1+ in docs/superpowers/plans). For the **legacy Helm approach**:
+RAG is no longer baked into the chart. Install Qdrant as a `rag` capability with
+an embedded `provider` block. The `vector-store` adapter embeds + chunks in the
+channel pod and upserts/searches Qdrant's REST API.
 
-```yaml
-rag:
-  enabled: true
-  provider: openai          # or "voyage"
-  storage: 20Gi
-  topK: 5
-  scoreThreshold: "0.5"
+Spec (passed to the admin shell `install_capability` tool):
+
+```json
+{
+  "kind": "rag",
+  "name": "main-rag",
+  "backend": "qdrant",
+  "image": "qdrant/qdrant:latest",
+  "port": 6333,
+  "healthPath": "/healthz",
+  "storage": { "sizeGi": 20, "mountPath": "/qdrant/storage" },
+  "podSecurity": { "fsGroup": 1000, "runAsUser": 1000 },
+  "provider": {
+    "adapter": "vector-store",
+    "embedding": { "provider": "openai", "apiKeyEnv": "OPENAI_API_KEY" },
+    "topK": 5,
+    "scoreThreshold": 0.5
+  }
+}
 ```
 
-This deploys a Qdrant StatefulSet and wires the orchestrator to embed + retrieve before each agent invocation. See `helm/kubeclaw/values.yaml` for the full schema.
+The `healthPath`, `storage`, and `port` values above match the RAG builder
+defaults, so they can be omitted; they are shown here for clarity. The
+`podSecurity` block (`fsGroup: 1000`) is required for Qdrant to own the mounted
+PVC.
+
+The embedding API key is read from the channel pod's `OPENAI_API_KEY`
+(or `VOYAGE_API_KEY` for `provider: "voyage"`) — the raw key never appears in the
+spec. To install a backend that embeds server-side (e.g. LightRAG), use the
+`remote` adapter instead:
+
+```json
+{
+  "kind": "rag",
+  "name": "lightrag",
+  "backend": "lightrag",
+  "image": "ghcr.io/hkuds/lightrag:latest",
+  "port": 9621,
+  "healthPath": "/health",
+  "provider": { "adapter": "remote", "queryMode": "hybrid" }
+}
+```
+
+**Note:** the RAG builder probes `/healthz` by default. Backends that expose a
+different health endpoint (e.g. LightRAG at `/health`) must set `healthPath`
+explicitly, as shown above.
+
+A backend speaking either protocol installs as pure config — no code change.
+
+To invoke from the admin shell, describe what you want and the LLM will call
+`install_capability` with the spec. You can also pass the spec directly in
+a message: `install_capability(spec=<json above>)`.
+
+After install, use `list_capabilities` to confirm the lifecycle reaches `ready`,
+or `get_capability_logs(name="main-rag")` to diagnose startup issues.
+
+### Installing voice transcription as a `transcription` capability
+
+Voice notes arrive at channels as an audio file on the group PVC plus a
+`[VoiceAttachment: attachments/raw/<file>]` marker in the message text. Install a
+Whisper-class STT server as a `transcription` capability; the channel-side
+inbound-preprocessor chain detects the marker, reads the audio from the group PVC,
+POSTs it to the capability, and replaces the marker with `[Voice: <transcript>]`
+BEFORE the LLM turn — so the model, stored history, and RAG all see the spoken
+words, not the raw marker.
+
+Spec (passed to the admin shell `install_capability` tool / Redis IPC). This uses
+an OpenAI-compatible image, so it installs as pure config:
+
+```json
+{
+  "kind": "transcription",
+  "name": "whisper",
+  "image": "onerahmet/openai-whisper-asr-webservice:latest",
+  "port": 9000,
+  "env": { "ASR_ENGINE": "faster_whisper", "ASR_MODEL": "base.en" },
+  "resources": { "gpu": 1, "memoryRequest": "2Gi", "memoryLimit": "4Gi" },
+  "scheduling": { "runtimeClassName": "nvidia" },
+  "probe": {
+    "type": "http",
+    "path": "/health",
+    "startup": { "failureThreshold": 60, "periodSeconds": 5 }
+  },
+  "endpointScheme": "http",
+  "provider": {
+    "transcribePath": "/v1/audio/transcriptions",
+    "model": "base.en",
+    "responseField": "text",
+    "timeoutMs": 60000
+  }
+}
+```
+
+Notes:
+
+- **`port` and `probe.path`** — the builder defaults both to `9000` and `/health`
+  respectively, so they can be omitted; they are shown here for clarity.
+- **`scheduling.runtimeClassName: "nvidia"`** — required for GPU scheduling on most
+  clusters. Add `nodeSelector` and `tolerations` if your GPU nodes carry taints.
+- **`probe.startup`** (SP1) — guards liveness/readiness while the model warms up.
+  GPU images can take a minute to load weights; `failureThreshold * periodSeconds`
+  = 300 s of grace time before Kubernetes marks the pod unhealthy.
+- **`provider.transcribePath`** defaults to `/v1/audio/transcriptions` (OpenAI
+  audio API shape). For images that expose `/asr` (e.g. the ASR webservice's native
+  route), set `"transcribePath": "/asr"` and set `responseField` to match its JSON
+  response key.
+- **`provider.responseField`** defaults to `"text"`; `provider.timeoutMs` defaults
+  to `60000`. Both can be omitted when using the OpenAI-compatible shape.
+- **One transcription capability per channel** — the preprocessor picks the first
+  matching entry for the channel. To run different STT servers for different
+  channels, use disjoint `channels` ACL lists on each spec (empty/absent means all
+  channels).
+- **No raw secrets in the spec** — in-cluster STT needs no API key. If a hosted STT
+  backend requires one, store it as a K8s Secret and reference it via
+  `"envFromSecrets": ["my-stt-secret"]`; the key never appears in the spec or the
+  discovery entry.
+
+A backend speaking the OpenAI audio shape installs with no code change.
+
+To invoke from the admin shell, describe what you want and the LLM will call
+`install_capability` with the spec. You can also pass the spec directly:
+`install_capability(spec=<json above>)`.
+
+After install, use `list_capabilities` to confirm the lifecycle reaches `ready`,
+or `get_capability_logs(name="whisper")` to diagnose startup issues.
 
 ---
 

@@ -102,4 +102,16 @@ describe('buildMcpYaml', () => {
       expect(container.args).toEqual(['--port', '3000']);
     });
   });
+
+  it('forwards probe, scheduling, and podSecurity to the renderer', () => {
+    const yaml = buildMcpYaml({
+      kind: 'mcp', name: 'm', image: 'img', port: 3000,
+      probe: { type: 'tcp', port: 3000 },
+      scheduling: { runtimeClassName: 'nvidia' },
+      podSecurity: { fsGroup: 1000 },
+    });
+    expect(yaml).toContain('tcpSocket:');
+    expect(yaml).toContain('runtimeClassName: nvidia');
+    expect(yaml).toContain('fsGroup: 1000');
+  });
 });

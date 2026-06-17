@@ -297,26 +297,6 @@ capabilityPod:
 #         memoryLimit: 256Mi
 mcpServers: {}
 
-# RAG (Retrieval-Augmented Generation) — vector memory for agents.
-# Deploys a Qdrant StatefulSet and wires the orchestrator to embed + retrieve
-# context before each agent invocation.
-#
-# Providers:
-#   openai  — text-embedding-3-small. Reuses OPENAI_API_KEY. No new secrets.
-#   voyage  — voyage-3. Requires VOYAGE_API_KEY in secrets.
-rag:
-  enabled: false
-  provider: openai           # "openai" | "voyage"
-  model: ""                  # uses provider default if empty
-  storage: 20Gi              # Qdrant PVC size
-  qdrantVersion: latest
-  topK: 5                    # chunks injected per message
-  scoreThreshold: "0.5"      # minimum cosine similarity (0–1)
-  resources:
-    limits:
-      memory: 1Gi
-      cpu: "1"
-
 # CiliumNetworkPolicy — FQDN-based egress control for tool jobs and orchestrator.
 # Requires Cilium as the cluster CNI. Disabled by default (uses standard NetworkPolicy).
 # Enable in values-minikube.yaml or any Cilium-enabled environment.

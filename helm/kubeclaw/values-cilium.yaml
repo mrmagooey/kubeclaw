@@ -40,8 +40,8 @@ ciliumNetworkPolicy:
       - api.anthropic.com      # Anthropic API
       - statsig.anthropic.com  # Anthropic SDK feature flags
       # RAG embedding providers (add whichever you use):
-      # - api.openai.com         # rag.provider=openai
-      # - api.voyageai.com       # rag.provider=voyage
+      # - api.openai.com         # openai embeddings
+      # - api.voyageai.com       # voyage embeddings
       # Channel and LLM provider FQDNs:
       # - openrouter.ai
       # - api.telegram.org

@@ -3,17 +3,20 @@
  *
  * The globalSetup at e2e/minikube-live-setup.ts helm-installs kubeclaw into
  * namespace `kubeclaw-live` with:
- *   - rag.enabled=true (deploys kubeclaw-qdrant StatefulSet)
  *   - capabilities.test-embed.{image,port} (deploys kubeclaw-capability-test-embed)
  *   - secrets.embeddingBaseUrl=http://kubeclaw-capability-test-embed:8080/v1
  *   - secrets.embeddingDim=1536
  *
- * The channel pod starts with QDRANT_URL and EMBEDDING_BASE_URL set, but
- * getRagProvider() returns NullRagProvider until a RAG capability is
- * registered in the orchestrator.
+ * RAG capability is installed at runtime via Redis IPC (no `rag.enabled` helm
+ * flag, no StatefulSet). The install spec includes
+ * `podSecurity: { fsGroup: 1000, runAsUser: 1000 }` so the Qdrant pod
+ * actually becomes Ready (Qdrant requires write access to its WORKDIR, which
+ * the generic capability builder's default UID 1000 grants when fsGroup is
+ * also set).
  *
- * These tests install a RAG capability at runtime via Redis IPC, then verify:
- *   1. Provider switches from none → Qdrant after capabilities_update.
+ * These tests verify:
+ *   1. Test waits for the capability Qdrant pod to be Ready, then asserts the
+ *      Deployment + Service exist and the pod is Ready.
  *   2. A POST message causes a Qdrant collection to be created and populated.
  *   3. The indexed content can be retrieved via direct Qdrant search (uses
  *      the deterministic test embedding server so query and index vectors match).
@@ -146,6 +149,57 @@ async function postMessage(text: string): Promise<Response> {
   });
 }
 
+// ── Cleanup helper ───────────────────────────────────────────────────────────
+
+/**
+ * Poll until the named Deployment no longer exists in the given namespace,
+ * or until the timeout elapses.  Returns true if the deployment is gone,
+ * false if it still exists after the timeout.
+ */
+async function waitForDeploymentGone(
+  name: string,
+  namespace: string,
+  timeoutMs: number,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const r = kubectl([
+      'get', 'deployment', name, '-n', namespace,
+      '-o', 'jsonpath={.metadata.name}',
+    ]);
+    if (!r.ok) return true; // 404 — gone
+    await new Promise((res) => setTimeout(res, 3000));
+  }
+  return false;
+}
+
+/**
+ * Send a remove_capability XADD and wait (up to timeoutMs) for its Deployment
+ * to disappear.  Returns true if the deployment is confirmed gone (or was
+ * never present), false on timeout.  Swallows Redis errors so it is safe to
+ * call from finally blocks.
+ */
+async function cleanupCapability(
+  redisClient: Redis,
+  name: string,
+  namespace: string,
+  timeoutMs = 60_000,
+): Promise<boolean> {
+  try {
+    await redisClient.xadd(
+      'kubeclaw:task-requests',
+      '*',
+      'type', 'remove_capability',
+      'groupFolder', 'http',
+      'isMain', 'true',
+      'name', name,
+    );
+  } catch {
+    /* best-effort */
+  }
+  return waitForDeploymentGone(`kubeclaw-cap-${name}`, namespace, timeoutMs);
+}
+
 // ── Suite ────────────────────────────────────────────────────────────────────
 
 describe('Minikube-live: RAG capability installed at runtime + indexing verified', () => {
@@ -221,6 +275,18 @@ describe('Minikube-live: RAG capability installed at runtime + indexing verified
             backend: 'qdrant',
             image: 'qdrant/qdrant:latest',
             port: 6333,
+            healthPath: '/healthz',
+            storage: { sizeGi: 5, mountPath: '/qdrant/storage' },
+            podSecurity: { fsGroup: 1000, runAsUser: 1000 },
+            provider: {
+              adapter: 'vector-store',
+              embedding: {
+                provider: 'openai',
+                apiKeyEnv: 'OPENAI_API_KEY',
+                baseUrl: 'http://kubeclaw-capability-test-embed:8080/v1',
+                dim: 1536,
+              },
+            },
           }),
         );
         xaddOk = true;
@@ -235,40 +301,31 @@ describe('Minikube-live: RAG capability installed at runtime + indexing verified
       throw new Error('failed to XADD install_capability after 5 attempts');
     }
 
-    // 4. Wait for the orchestrator's post-install capabilities_update push
-    //    to reach the channel pod and trigger resetRagProvider().
-    //    src/channel-runner.ts:120 calls resetRagProvider() on receipt.
-    //
-    //    NOTE: we deliberately do NOT wait for the capability-installed
-    //    Qdrant pod (kubeclaw-cap-test-rag) to be Ready. The generic
-    //    capability builder runs containers as UID 1000 by default which
-    //    prevents Qdrant from writing to its WORKDIR — the pod
-    //    CrashLoopBackOffs. That side-effect pod isn't used at runtime:
-    //    QdrantRagProvider routes to the pre-existing `QDRANT_URL` env
-    //    (provider.ts:171), which points at the helm-managed kubeclaw-qdrant
-    //    StatefulSet. The capability entry's sole purpose here is to register
-    //    in the orchestrator's registry so getRagProvider() returns
-    //    QdrantRagProvider instead of NullRagProvider.
-    //
-    // Poll for the Deployment to exist (proves the orchestrator's
-    // task-request watcher processed the XADD and ran applySpec).
-    const deployDeadline = Date.now() + 120_000;
-    while (Date.now() < deployDeadline) {
+    // 4. Wait for the capability Qdrant pod to be Ready.
+    //    podSecurity.fsGroup/runAsUser=1000 allows Qdrant to own its PVC, so
+    //    the pod actually becomes Ready (unlike the old UID-1000 CrashLoop).
+    const capReadyDeadline = Date.now() + 240_000;
+    let capReady = false;
+    while (Date.now() < capReadyDeadline) {
       const r = kubectl([
-        'get', 'deployment', RAG_CAP_SERVICE,
-        '-n', NAMESPACE, '-o', 'jsonpath={.metadata.name}',
+        'get', 'pods', '-n', NAMESPACE, '-l', RAG_CAP_LABEL,
+        '-o', 'jsonpath={.items[*].status.conditions[?(@.type=="Ready")].status}',
       ]);
-      if (r.ok && r.stdout.trim() === RAG_CAP_SERVICE) break;
-      await new Promise((res) => setTimeout(res, 2000));
+      if (r.ok && r.stdout.trim() && r.stdout.trim().split(/\s+/).every((s) => s === 'True')) {
+        capReady = true;
+        break;
+      }
+      await new Promise((res) => setTimeout(res, 3000));
     }
+    expect(
+      capReady,
+      `Capability Qdrant pod (${RAG_CAP_LABEL}) was not Ready within 240 s. ` +
+      'Check pod events and logs: podSecurity.fsGroup/runAsUser must be set so ' +
+      'Qdrant can write to its PVC. Failing here to avoid confusing Qdrant-unreachable errors later.',
+    ).toBe(true);
 
-    // Then poll the channel pod's logs for evidence that it has SYNCED
-    // the new RAG capability into its local SQLite. The orchestrator
-    // publishes capabilities_update via Redis pub/sub AFTER applySpec
-    // returns, but delivery to the channel pod is not synchronous — if
-    // tests POST before the sync runs, `getRagProvider()` returns
-    // NullRagProvider (caches it) and the next message never reaches
-    // QdrantRagProvider. Wait until we see our cap name in a sync log.
+    // 5. Wait for the channel pod to sync the new RAG capability.
+    //    src/channel-runner.ts calls resetRagProvider() on receipt of capabilities_update.
     const syncDeadline = Date.now() + 60_000;
     let synced = false;
     while (Date.now() < syncDeadline) {
@@ -295,6 +352,11 @@ describe('Minikube-live: RAG capability installed at runtime + indexing verified
   }, 360_000);
 
   afterAll(async () => {
+    // Remove the test-rag capability so it does not leak a pod/PVC into
+    // subsequent test files or conflict with assertNoConflictingRag.
+    if (redis) {
+      await cleanupCapability(redis, RAG_CAPABILITY_NAME, NAMESPACE, 60_000);
+    }
     if (redis) {
       try {
         await redis.quit();
@@ -304,36 +366,36 @@ describe('Minikube-live: RAG capability installed at runtime + indexing verified
     }
   });
 
-  // ── 1. RAG capability install switches the channel pod's provider to Qdrant ──
+  // ── 1. RAG capability install: cap pod Ready + Deployment + Service exist ─────
   it(
-    'runtime RAG capability install switches channel pod provider to Qdrant',
+    'runtime RAG capability install: cap pod Ready and Deployment + Service exist',
     () => {
       expect(provisioned, 'globalSetup port-forward not live').toBe(true);
 
-      // Hard assertion: the K8s Deployment for the capability was created
-      // by the orchestrator's applySpec path. We don't require the cap pod
-      // to be Ready — the capability builder's UID 1000 default CrashLoops
-      // Qdrant, and at runtime QdrantRagProvider routes to the helm-managed
-      // kubeclaw-qdrant via the channel pod's pre-set QDRANT_URL env. The
-      // Deployment existence proves applySpec ran end-to-end.
       const dep = kubectl([
         'get', 'deployment', RAG_CAP_SERVICE, '-n', NAMESPACE,
         '-o', 'jsonpath={.metadata.name}',
       ]);
-      expect(
-        dep.ok,
-        `expected Deployment ${RAG_CAP_SERVICE} to exist: ${dep.stderr}`,
-      ).toBe(true);
+      expect(dep.ok, `expected Deployment ${RAG_CAP_SERVICE} to exist: ${dep.stderr}`).toBe(true);
       expect(dep.stdout.trim()).toBe(RAG_CAP_SERVICE);
 
-      // Note: we intentionally do NOT check for the 'RAG provider: Qdrant'
-      // log here. That log line is emitted only when getRagProvider() is
-      // first called, which happens inside DirectLLMRunner.runAgent
-      // (src/runtime/direct-llm-runner.ts:959 — `void
-      // getRagProvider().indexConversationTurn(...)`). Until a user message
-      // is posted, the cached provider stays `undefined` and no log fires.
-      // Test 2 below performs the provider-selection assertion AFTER its
-      // POST has flushed through.
+      const svc = kubectl([
+        'get', 'service', RAG_CAP_SERVICE, '-n', NAMESPACE,
+        '-o', 'jsonpath={.metadata.name}',
+      ]);
+      expect(svc.ok, `expected Service ${RAG_CAP_SERVICE} to exist: ${svc.stderr}`).toBe(true);
+      expect(svc.stdout.trim()).toBe(RAG_CAP_SERVICE);
+
+      // The pod must be Ready: podSecurity.fsGroup/runAsUser=1000 gives Qdrant
+      // write access to its PVC so it starts cleanly (no CrashLoopBackOff).
+      const podReady = kubectl([
+        'get', 'pods', '-n', NAMESPACE, '-l', RAG_CAP_LABEL,
+        '-o', 'jsonpath={.items[*].status.conditions[?(@.type=="Ready")].status}',
+      ]);
+      const allReady = podReady.ok &&
+        podReady.stdout.trim().length > 0 &&
+        podReady.stdout.trim().split(/\s+/).every((s) => s === 'True');
+      expect(allReady, `capability Qdrant pod not Ready: ${podReady.stdout}`).toBe(true);
     },
     180_000,
   );
@@ -389,12 +451,12 @@ describe('Minikube-live: RAG capability installed at runtime + indexing verified
         'deployment/kubeclaw-channel-http', '--tail=5000',
       ]);
       const ragLogAlreadySeen =
-        earlyLogs.ok && earlyLogs.stdout.includes('RAG provider: Qdrant');
+        earlyLogs.ok && earlyLogs.stdout.includes('RAG provider: vector-store');
       if (ragLogAlreadySeen) {
-        console.log('✅ channel pod logged "RAG provider: Qdrant" before polling');
+        console.log('✅ channel pod logged "RAG provider: vector-store" before polling');
       } else {
         console.log(
-          'ℹ️  "RAG provider: Qdrant" not yet logged — will keep polling Qdrant directly',
+          'ℹ️  "RAG provider: vector-store" not yet logged — will keep polling Qdrant directly',
         );
       }
 
@@ -421,7 +483,7 @@ describe('Minikube-live: RAG capability installed at runtime + indexing verified
       //   b) Once the collection exists, poll its point count until > 0.
       const listScript = `
         const http = require('node:http');
-        http.get('http://kubeclaw-qdrant:6333/collections', (res) => {
+        http.get('http://${RAG_CAP_SERVICE}:6333/collections', (res) => {
           let data = '';
           res.on('data', (c) => data += c);
           res.on('end', () => { console.log('COLLECTIONS:' + data); });
@@ -434,7 +496,7 @@ describe('Minikube-live: RAG capability installed at runtime + indexing verified
         // get a "wrong input" error and no result.count field.
         const body = JSON.stringify({ exact: true });
         const req = http.request({
-          host: 'kubeclaw-qdrant',
+          host: '${RAG_CAP_SERVICE}',
           port: 6333,
           path: '/collections/${collName}/points/count',
           method: 'POST',
@@ -531,7 +593,7 @@ describe('Minikube-live: RAG capability installed at runtime + indexing verified
 
   // ── 3. Indexed content retrievable via direct Qdrant search ──────────────────
   it(
-    'indexed phrase purple-orchid-7392 is retrievable via Qdrant vector search',
+    'indexed phrase purple-orchid-7392 is retrievable via Qdrant vector search (reads from the capability Qdrant service)',
     () => {
       expect(provisioned, 'globalSetup port-forward not live').toBe(true);
 
@@ -551,7 +613,7 @@ describe('Minikube-live: RAG capability installed at runtime + indexing verified
       //   1. POST to the deterministic test embedding server to get a vector
       //      for "purple-orchid-7392". Because the embedding server is
       //      deterministic, the same input always produces the same vector.
-      //   2. Use that vector to search Qdrant for the top-5 closest points.
+      //   2. Use that vector to search the capability Qdrant service for the top-5 closest points.
       //   3. Assert at least one result exists and its payload.text contains
       //      the phrase "purple-orchid-7392".
       //
@@ -611,9 +673,10 @@ describe('Minikube-live: RAG capability installed at runtime + indexing verified
 
           // Step 2: Discover the collection name. Try the known name first,
           //         then fall back to listing all collections.
+          //         Reads from the capability Qdrant service (not a helm StatefulSet).
           let collectionName = '${EXPECTED_COLLECTION}';
           const listRes = await httpRequest({
-            host: 'kubeclaw-qdrant',
+            host: '${RAG_CAP_SERVICE}',
             port: 6333,
             path: '/collections',
             method: 'GET',
@@ -636,7 +699,7 @@ describe('Minikube-live: RAG capability installed at runtime + indexing verified
             with_payload: true,
           });
           const searchRes = await httpRequest({
-            host: 'kubeclaw-qdrant',
+            host: '${RAG_CAP_SERVICE}',
             port: 6333,
             path: '/collections/' + collectionName + '/points/search',
             method: 'POST',
@@ -699,6 +762,16 @@ describe('Minikube-live: RAG capability installed at runtime + indexing verified
         `phrase 'purple-orchid-7392' was not found in top Qdrant results.\n` +
         `stdout: ${exec.stdout}\nstderr: ${exec.stderr}`,
       ).toContain('SEARCH_OK:phrase_found=true');
+
+      // Assert the retrieval path was used: channel pod should have logged the RAG provider name.
+      const channelLogs = kubectl([
+        'logs', '-n', NAMESPACE, 'deployment/kubeclaw-channel-http', '--tail=5000',
+      ]);
+      expect(
+        channelLogs.ok && channelLogs.stdout.includes('RAG provider: vector-store'),
+        `expected channel pod to log 'RAG provider: vector-store' confirming retrieval was wired; ` +
+        `got: ${channelLogs.stdout.slice(-500)}`,
+      ).toBe(true);
 
       console.log(
         'RAG end-to-end verified:',

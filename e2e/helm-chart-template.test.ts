@@ -851,3 +851,34 @@ describe('helm template — bootstrap RBAC namespace (story-174 regression)', ()
     }
   });
 });
+
+// ─── SP2 Task 7: Qdrant StatefulSet removed from Helm chart ──────────────────
+//
+// Qdrant is now an installable capability, not baked into the chart.
+// Verify that neither the default render nor --set rag.enabled=true resurrects it.
+
+describe('helm template — no baked Qdrant StatefulSet (SP2 task 7)', () => {
+  it('does not render a baked Qdrant StatefulSet', () => {
+    const result = spawnSync(
+      'helm',
+      ['template', 'smoke', CHART_DIR,
+       '--set', 'secrets.anthropicApiKey=test', '--set', 'redis.password=test'],
+      { encoding: 'utf8' },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).not.toContain('name: kubeclaw-qdrant');
+    expect(result.stdout).not.toContain('QDRANT_URL');
+  });
+
+  it('rag.enabled=true no longer resurrects a baked Qdrant (value is gone)', () => {
+    const result = spawnSync(
+      'helm',
+      ['template', 'smoke', CHART_DIR,
+       '--set', 'secrets.anthropicApiKey=test', '--set', 'redis.password=test',
+       '--set', 'rag.enabled=true'],
+      { encoding: 'utf8' },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).not.toContain('name: kubeclaw-qdrant');
+  });
+});

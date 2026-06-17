@@ -36,7 +36,8 @@ export async function deleteSpec(spec: CapabilitySpec): Promise<void> {
     logger.warn({ err, dep, ns }, 'Failed to delete Service');
   }
   // RAG kinds always render a PVC (the builders default storage when the spec
-  // doesn't declare it); HTTP/MCP only when the spec explicitly declares it.
+  // doesn't declare it); all other kinds (mcp/http/transcription) only when
+  // the spec explicitly declares storage.
   const hasPvc = spec.kind === 'rag' || !!spec.storage;
   if (hasPvc) {
     try {

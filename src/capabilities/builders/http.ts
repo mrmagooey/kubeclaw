@@ -18,5 +18,8 @@ export function buildHttpYaml(spec: HttpCapabilitySpec): string {
     resources: spec.resources,
     healthPath: spec.healthPath,
     storage: spec.storage,
+    probe: spec.probe,
+    scheduling: spec.scheduling,
+    podSecurity: spec.podSecurity,
   });
 }
