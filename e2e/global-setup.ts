@@ -283,6 +283,10 @@ export default async function setup() {
         '--set', `namespace=${NAMESPACE}`,
         '--set', 'secrets.anthropicApiKey=test-key',
         '--set', `redis.password=${E2E_REDIS_PASSWORD}`,
+        // Override the broker image so it resolves to the locally-built
+        // kubeclaw-orchestrator image rather than the ghcr.io registry image
+        // (which is private/unpullable in minikube with pullPolicy=Never).
+        '--set', 'credentialInjection.broker.image=kubeclaw-orchestrator:latest',
       ],
       { encoding: 'utf8', stdio: 'pipe' },
     );
@@ -346,51 +350,63 @@ export default async function setup() {
   // Redis that the in-cluster adapter containers use (kubeclaw-redis).
   // Without this, host-side subscribers connect to a host-local Redis while
   // adapter pods publish to the in-cluster Redis, so pub/sub never matches.
-  try {
-    console.log(
-      `🔌 Starting kubectl port-forward kubeclaw-redis → localhost:${KUBECLAW_REDIS_LOCAL_PORT}`,
-    );
-    portForwardProcess = spawn(
-      'kubectl',
-      [
-        'port-forward',
-        '-n',
-        NAMESPACE,
-        'svc/kubeclaw-redis',
-        `${KUBECLAW_REDIS_LOCAL_PORT}:6379`,
-      ],
-      { stdio: 'ignore', detached: false },
-    );
+  //
+  // This is FATAL: tests that require Redis (e.g. sidecar-tool-pod.test.ts)
+  // will hard-throw if Redis is null. Fail fast here with a clear message
+  // rather than letting test workers surface an obscure "Redis not available"
+  // error mid-run.
+  console.log(
+    `🔌 Starting kubectl port-forward kubeclaw-redis → localhost:${KUBECLAW_REDIS_LOCAL_PORT}`,
+  );
+  // Kill any stale port-forward from a previous run that might be holding the port.
+  spawnSync('pkill', ['-f', `port-forward.*${KUBECLAW_REDIS_LOCAL_PORT}:6379`], { stdio: 'pipe' });
+  await sleep(500);
 
-    // Wait for port-forward to establish (retry up to 10s)
-    let portReady = false;
-    for (let i = 0; i < 5; i++) {
-      await sleep(2000);
-      const ncResult = spawnSync('nc', ['-z', 'localhost', String(KUBECLAW_REDIS_LOCAL_PORT)], { stdio: 'pipe' });
-      if (ncResult.status === 0) {
-        portReady = true;
-        break;
-      }
-      console.log(`   Port-forward not ready yet, retrying... (${i + 1}/5)`);
-    }
-    if (!portReady) {
-      throw new Error(`Port-forward to localhost:${KUBECLAW_REDIS_LOCAL_PORT} failed after 10s`);
-    }
-    console.log(
-      `✅ kubeclaw-redis port-forward active on localhost:${KUBECLAW_REDIS_LOCAL_PORT}\n`,
-    );
+  portForwardProcess = spawn(
+    'kubectl',
+    [
+      'port-forward',
+      '-n',
+      NAMESPACE,
+      'svc/kubeclaw-redis',
+      `${KUBECLAW_REDIS_LOCAL_PORT}:6379`,
+    ],
+    // detached:true + unref() makes the kubectl process independent of the
+    // Vitest main process so it survives Vitest's internal fork transitions
+    // when spawning test worker processes.  Teardown kills it by PID.
+    { stdio: 'ignore', detached: true },
+  );
+  portForwardProcess.unref();
 
-    // Tell all test files to use this forwarded Redis.
-    // Use the "orchestrator" ACL user which has full permissions.
-    process.env.KUBECLAW_REDIS_URL = `redis://orchestrator:${E2E_REDIS_PASSWORD}@localhost:${KUBECLAW_REDIS_LOCAL_PORT}`;
-    // Also set REDIS_URL so tests that use process.env.REDIS_URL pick up the same instance
-    process.env.REDIS_URL = process.env.KUBECLAW_REDIS_URL;
-  } catch (err) {
-    console.warn(
-      `⚠️  Could not set up kubeclaw-redis port-forward: ${err}\n`,
-    );
-    // Non-fatal — tests that need it will still run but pub/sub tests may fail
+  // Wait for port-forward to establish (retry up to 30s — under fork
+  // contention or a slow pod-scheduler the first few attempts may fail).
+  let portReady = false;
+  for (let i = 0; i < 15; i++) {
+    await sleep(2000);
+    const ncResult = spawnSync('nc', ['-z', 'localhost', String(KUBECLAW_REDIS_LOCAL_PORT)], { stdio: 'pipe' });
+    if (ncResult.status === 0) {
+      portReady = true;
+      break;
+    }
+    console.log(`   Port-forward not ready yet, retrying... (${i + 1}/15)`);
   }
+  if (!portReady) {
+    portForwardProcess.kill();
+    portForwardProcess = null;
+    throw new Error(
+      `Redis port-forward to localhost:${KUBECLAW_REDIS_LOCAL_PORT} failed after 30s. ` +
+      `Check that the kubeclaw-redis pod is Running and svc/kubeclaw-redis exists in namespace ${NAMESPACE}.`,
+    );
+  }
+  console.log(
+    `✅ kubeclaw-redis port-forward active on localhost:${KUBECLAW_REDIS_LOCAL_PORT}\n`,
+  );
+
+  // Tell all test files to use this forwarded Redis.
+  // Use the "orchestrator" ACL user which has full permissions.
+  process.env.KUBECLAW_REDIS_URL = `redis://orchestrator:${E2E_REDIS_PASSWORD}@localhost:${KUBECLAW_REDIS_LOCAL_PORT}`;
+  // Also set REDIS_URL so tests that use process.env.REDIS_URL pick up the same instance
+  process.env.REDIS_URL = process.env.KUBECLAW_REDIS_URL;
 
   console.log('✅ E2E Global Setup complete\n');
 }
@@ -400,9 +416,16 @@ export default async function setup() {
  */
 export async function teardown() {
   if (portForwardProcess) {
-    portForwardProcess.kill();
+    try {
+      portForwardProcess.kill();
+    } catch {
+      // Best-effort — process may have already exited
+    }
     portForwardProcess = null;
   }
+  // Belt-and-suspenders: pkill any stale kubectl port-forward for our port
+  // in case the process handle was lost (e.g. after detached + unref).
+  spawnSync('pkill', ['-f', `port-forward.*${KUBECLAW_REDIS_LOCAL_PORT}:6379`], { stdio: 'pipe' });
 
   // Only uninstall kubeclaw if global-setup installed it — never tear down a
   // pre-existing user installation.

@@ -74,6 +74,21 @@ function curlPod(podName: string, curlArgs: string, timeoutMs = 60_000): string 
 
 describe('credential broker /authz endpoint (Story 4)', { timeout: 300_000 }, () => {
   beforeAll(() => {
+    // ── 0. Pre-tag broker image ──────────────────────────────────────────────
+    // The broker Deployment uses kubeclaw-orchestrator:e2e-test (pullPolicy=Never).
+    // Ensure the tag exists in minikube's Docker daemon before the helm install,
+    // so the broker pod starts cleanly rather than failing with ErrImageNeverPull.
+    try {
+      execSync(
+        `eval $(minikube docker-env) && docker tag kubeclaw-orchestrator:latest ${BROKER_IMAGE}`,
+        { stdio: 'pipe', shell: true },
+      );
+    } catch (err) {
+      // Non-fatal: if the tag already exists or minikube docker-env is not
+      // available, the subsequent rollout-status will catch the real failure.
+      console.warn(`⚠️  Could not pre-tag ${BROKER_IMAGE}: ${err}`);
+    }
+
     // ── 1. Clean namespace ───────────────────────────────────────────────────
     // If a previous run left the namespace in a Terminating state, wait for it
     // to disappear before creating it fresh.
