@@ -301,6 +301,30 @@ function syncCapabilitiesToLocalDb(entries: DiscoveryEntryLite[]): void {
       case 'http':
         spec = { ...common, kind: 'http' };
         break;
+      case 'transcription': {
+        // The shared kindMetadata lite type declares provider? as RagProviderConfig
+        // (used by the 'rag' case). Transcription entries also use kindMetadata.provider
+        // but carry a TranscriptionProviderConfig (no 'adapter' field). We do NOT
+        // widen the shared field — that would collapse two distinct types onto one key
+        // and mislead future readers. Instead, read the provider via a local guarded cast.
+        const provider = (
+          entry.kindMetadata as {
+            provider?: import('./capabilities/types.js').TranscriptionProviderConfig;
+          }
+        ).provider;
+        // Skip a malformed entry (no provider block) rather than write a bad row.
+        // The 'adapter' in provider check is belt-and-suspenders: RAG providers always
+        // carry 'adapter'; transcription providers never do.
+        if (!provider || typeof provider !== 'object' || 'adapter' in provider) {
+          continue;
+        }
+        spec = {
+          ...common,
+          kind: 'transcription',
+          provider,
+        };
+        break;
+      }
       default:
         continue;
     }

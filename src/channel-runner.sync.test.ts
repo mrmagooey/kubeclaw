@@ -237,3 +237,28 @@ describe('handleCapabilitiesUpdate — adapter-aware rag sync', () => {
     expect(getAllCapabilities().filter((c) => c.kind === 'rag')).toHaveLength(0);
   });
 });
+
+describe('handleCapabilitiesUpdate — transcription sync', () => {
+  it('mirrors a transcription entry with its provider config into local DB', async () => {
+    await handleCapabilitiesUpdate({
+      capabilities: JSON.stringify([{
+        name: 'whisper', kind: 'transcription', endpoint: 'http://kubeclaw-cap-whisper:9000',
+        kindMetadata: { provider: { transcribePath: '/v1/audio/transcriptions', responseField: 'text', timeoutMs: 60000 } },
+      }]),
+    } as never);
+    const rows = getAllCapabilities().filter((c) => c.kind === 'transcription');
+    expect(rows).toHaveLength(1);
+    expect((rows[0] as { provider?: { transcribePath?: string } }).provider?.transcribePath)
+      .toBe('/v1/audio/transcriptions');
+  });
+
+  it('skips a transcription entry missing its provider block', async () => {
+    await handleCapabilitiesUpdate({
+      capabilities: JSON.stringify([{
+        name: 'bad', kind: 'transcription', endpoint: 'http://x:9000',
+        kindMetadata: {},
+      }]),
+    } as never);
+    expect(getAllCapabilities().filter((c) => c.kind === 'transcription')).toHaveLength(0);
+  });
+});
