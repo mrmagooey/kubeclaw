@@ -1364,4 +1364,70 @@ describe('Minikube-live: capability installed at runtime + used by channel', () 
     },
     240_000,
   );
+
+  // ── TCP-probe: deploys a TCP-probed capability and it becomes Ready ──────────
+  // Installs an `http`-kind capability backed by redis:7-alpine (which opens
+  // port 6379) and a tcpSocket readiness probe. The probe passing proves that
+  // the deployment-layer TCP-probe rendering path works end-to-end.
+  it(
+    'deploys a TCP-probed capability and it becomes Ready',
+    async () => {
+      expect(provisioned).toBe(true);
+      expect(redis, 'redis client should be initialised by beforeAll').not.toBeNull();
+
+      const tcpProbeName = 'tcp-probe-e2e';
+
+      // Pre-test idempotency: remove any stale capability from a prior failed run.
+      await cleanupCapability(redis!, tcpProbeName, NAMESPACE, 30_000);
+
+      const spec = {
+        kind: 'http',
+        name: tcpProbeName,
+        image: 'redis:7-alpine',
+        port: 6379,
+        probe: { type: 'tcp', port: 6379, initialDelaySeconds: 2 },
+      };
+
+      try {
+        // Install the TCP-probed capability via Redis IPC.
+        // `isMain` MUST be the literal string 'true' — see src/k8s/ipc-redis.ts.
+        await redis!.xadd(
+          'kubeclaw:task-requests',
+          '*',
+          'type', 'install_capability',
+          'groupFolder', 'http',
+          'isMain', 'true',
+          'spec', JSON.stringify(spec),
+        );
+
+        // Poll until the pod is Ready (tcpSocket probe must pass).
+        const deadline = Date.now() + 120_000;
+        let ready = false;
+        while (Date.now() < deadline) {
+          const r = kubectl([
+            'get', 'pods', '-n', NAMESPACE,
+            '-l', `app=kubeclaw-cap-${tcpProbeName}`,
+            '-o', 'jsonpath={.items[*].status.conditions[?(@.type=="Ready")].status}',
+          ]);
+          if (
+            r.ok &&
+            r.stdout.trim() &&
+            r.stdout.trim().split(/\s+/).every((s) => s === 'True')
+          ) {
+            ready = true;
+            break;
+          }
+          await new Promise((res) => setTimeout(res, 3000));
+        }
+        expect(
+          ready,
+          `Pod app=kubeclaw-cap-${tcpProbeName} did not reach Ready within 120 s`,
+        ).toBe(true);
+      } finally {
+        // Always clean up so the capability does not leak into subsequent tests.
+        await cleanupCapability(redis!, tcpProbeName, NAMESPACE, 60_000);
+      }
+    },
+    180_000,
+  );
 });
