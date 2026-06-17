@@ -99,6 +99,8 @@ export interface CapabilityBase {
   volumeFromGroupPvc?: boolean;
   /** Group-scope only: where per-group credentials come from. Default 'none'. */
   credentialsFrom?: 'none' | 'secret';
+  /** URL scheme for the discovery endpoint. Default 'http'. */
+  endpointScheme?: string;
 }
 
 export interface McpCapabilitySpec extends CapabilityBase {

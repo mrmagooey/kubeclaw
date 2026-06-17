@@ -27,6 +27,7 @@ import {
   listCapabilities,
   getEntriesForChannel,
   notifyAllChannels,
+  specToDiscoveryEntry,
 } from './registry.js';
 import { _initTestDatabase, __resetDbForTest } from '../db.js';
 
@@ -187,6 +188,23 @@ describe('registry', () => {
     // mockPublish was called for each targeted channel, including mychan.
     const publishedChannels = mockPublish.mock.calls.map((c) => c[0] as string);
     expect(publishedChannels).toContain('kubeclaw:control:mychan');
+  });
+
+  describe('endpoint scheme', () => {
+    it('defaults to http://', () => {
+      const entry = specToDiscoveryEntry({
+        kind: 'http', name: 'web', image: 'nginx', port: 8080,
+      });
+      expect(entry.endpoint).toBe('http://kubeclaw-cap-web:8080');
+    });
+
+    it('honors endpointScheme', () => {
+      const entry = specToDiscoveryEntry({
+        kind: 'http', name: 'maindb', image: 'postgres:16', port: 5432,
+        endpointScheme: 'postgresql',
+      });
+      expect(entry.endpoint).toBe('postgresql://kubeclaw-cap-maindb:5432');
+    });
   });
 
   describe('notifyAllChannels — group-scoped capabilities', () => {

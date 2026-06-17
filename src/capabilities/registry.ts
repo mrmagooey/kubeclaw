@@ -48,7 +48,8 @@ function defaultPort(spec: CapabilitySpec): number {
 }
 
 function endpointFor(spec: CapabilitySpec): string {
-  return `http://${deploymentName(spec.name)}:${defaultPort(spec)}`;
+  const scheme = spec.endpointScheme ?? 'http';
+  return `${scheme}://${deploymentName(spec.name)}:${defaultPort(spec)}`;
 }
 
 export function specToDiscoveryEntry(
