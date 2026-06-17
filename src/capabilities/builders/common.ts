@@ -1,4 +1,4 @@
-import type { CapabilityResources, CapabilityStorage } from '../types.js';
+import type { CapabilityResources, CapabilityStorage, ProbeConfig } from '../types.js';
 
 export function deploymentName(name: string): string {
   return `kubeclaw-cap-${name}`;
@@ -16,7 +16,64 @@ export interface CommonRenderArgs {
   args?: string[];
   resources?: CapabilityResources;
   healthPath?: string;
+  probe?: ProbeConfig;
   storage?: CapabilityStorage;
+}
+
+const TARGET_INDENT = '            '; // 12 spaces (under <probe>: at 10)
+const PROBE_INDENT = '          '; // 10 spaces (container-level)
+
+function renderProbeTarget(
+  probe: ProbeConfig | undefined,
+  healthPath: string | undefined,
+  containerPort: number,
+): string {
+  const port = probe?.port ?? containerPort;
+  if ((probe?.type ?? 'http') === 'tcp') {
+    return `${TARGET_INDENT}tcpSocket:\n${TARGET_INDENT}  port: ${port}`;
+  }
+  const path = probe?.path ?? healthPath ?? '/health';
+  return `${TARGET_INDENT}httpGet:\n${TARGET_INDENT}  path: ${path}\n${TARGET_INDENT}  port: ${port}`;
+}
+
+function renderTiming(
+  probe: ProbeConfig | undefined,
+  fallback: { initialDelaySeconds: number; periodSeconds: number },
+): string {
+  const lines = [
+    `${TARGET_INDENT}initialDelaySeconds: ${probe?.initialDelaySeconds ?? fallback.initialDelaySeconds}`,
+    `${TARGET_INDENT}periodSeconds: ${probe?.periodSeconds ?? fallback.periodSeconds}`,
+  ];
+  if (probe?.failureThreshold !== undefined)
+    lines.push(`${TARGET_INDENT}failureThreshold: ${probe.failureThreshold}`);
+  if (probe?.timeoutSeconds !== undefined)
+    lines.push(`${TARGET_INDENT}timeoutSeconds: ${probe.timeoutSeconds}`);
+  return lines.join('\n');
+}
+
+function renderProbes(
+  probe: ProbeConfig | undefined,
+  healthPath: string | undefined,
+  containerPort: number,
+): string {
+  const target = renderProbeTarget(probe, healthPath, containerPort);
+  const readiness =
+    `${PROBE_INDENT}readinessProbe:\n${target}\n` +
+    renderTiming(probe, { initialDelaySeconds: 5, periodSeconds: 10 });
+  const liveness =
+    `${PROBE_INDENT}livenessProbe:\n${target}\n` +
+    renderTiming(probe, { initialDelaySeconds: 15, periodSeconds: 30 });
+  let startup = '';
+  if (probe?.startup) {
+    const s = probe.startup;
+    const t = [
+      `${TARGET_INDENT}initialDelaySeconds: ${s.initialDelaySeconds ?? 0}`,
+      `${TARGET_INDENT}periodSeconds: ${s.periodSeconds ?? 10}`,
+      `${TARGET_INDENT}failureThreshold: ${s.failureThreshold ?? 30}`,
+    ].join('\n');
+    startup = `\n${PROBE_INDENT}startupProbe:\n${target}\n${t}`;
+  }
+  return `${readiness}\n${liveness}${startup}`;
 }
 
 export function renderDeploymentAndService(a: CommonRenderArgs): string {
@@ -24,8 +81,6 @@ export function renderDeploymentAndService(a: CommonRenderArgs): string {
   const memLim = a.resources?.memoryLimit ?? '256Mi';
   const cpuReq = a.resources?.cpuRequest ?? '50m';
   const cpuLim = a.resources?.cpuLimit ?? '500m';
-  const healthPath = a.healthPath ?? '/health';
-
   const envBlock = a.env
     ? Object.entries(a.env)
         .map(
@@ -114,18 +169,7 @@ ${envBlock ? `          env:\n${envBlock}\n` : ''}${envFromBlock}          resou
             limits:
               memory: ${memLim}
               cpu: ${cpuLim}
-${volumeMounts}          readinessProbe:
-            httpGet:
-              path: ${healthPath}
-              port: ${a.port}
-            initialDelaySeconds: 5
-            periodSeconds: 10
-          livenessProbe:
-            httpGet:
-              path: ${healthPath}
-              port: ${a.port}
-            initialDelaySeconds: 15
-            periodSeconds: 30
+${volumeMounts}${renderProbes(a.probe, a.healthPath, a.port)}
           securityContext:
             runAsUser: 1000
             runAsGroup: 1000

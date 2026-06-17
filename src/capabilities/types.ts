@@ -22,6 +22,26 @@ export interface CapabilityStorage {
   mountPath: string;
 }
 
+export interface ProbeConfig {
+  /** Probe mechanism. Default 'http'. */
+  type?: 'http' | 'tcp';
+  /** HTTP path (http type only). Default '/health'. */
+  path?: string;
+  /** Probe port. Default: the container port. */
+  port?: number;
+  /** Applies to BOTH readiness and liveness; unset keeps per-probe defaults. */
+  initialDelaySeconds?: number;
+  periodSeconds?: number;
+  failureThreshold?: number;
+  timeoutSeconds?: number;
+  /** Optional startupProbe — guards liveness/readiness during warm-up. */
+  startup?: {
+    initialDelaySeconds?: number;
+    periodSeconds?: number;
+    failureThreshold?: number;
+  };
+}
+
 export interface CapabilityBase {
   /** Cluster-unique identifier. Becomes part of the Deployment name. */
   name: string;
@@ -39,8 +59,13 @@ export interface CapabilityBase {
   resources?: CapabilityResources;
   /** Optional PVC. */
   storage?: CapabilityStorage;
-  /** HTTP path the orchestrator probes for liveness. Default: '/health'. */
+  /**
+   * @deprecated Use `probe.path`. HTTP path the orchestrator probes for
+   * liveness. Default: '/health'. Honored only when `probe` is absent.
+   */
   healthPath?: string;
+  /** Probe configuration. Overrides `healthPath` when present. */
+  probe?: ProbeConfig;
   /** Optional command override. */
   command?: string[];
   /** Optional args. */
