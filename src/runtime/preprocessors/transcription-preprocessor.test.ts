@@ -125,4 +125,26 @@ describe('TranscriptionPreprocessor', () => {
     await p.apply({ groupFolder: 'g', prompt: '[VoiceAttachment: attachments/raw/a.ogg]' });
     expect(getTranscriptionEntry).toHaveBeenCalledWith('*');
   });
+
+  it('path traversal marker is skipped (marker left intact, no transcribe call)', async () => {
+    getTranscriptionEntry.mockReturnValue(ENTRY);
+    const transcribeSpy = vi.fn().mockResolvedValue('should not be called');
+    const p = makePreprocessor(transcribeSpy);
+    const maliciousPrompt = '[VoiceAttachment: attachments/raw/../../../etc/passwd]';
+    const out = await p.apply({ groupFolder: 'g', prompt: maliciousPrompt });
+    expect(out.prompt).toBe(maliciousPrompt);
+    expect(out.persistedContent).toBeUndefined();
+    expect(transcribeSpy).not.toHaveBeenCalled();
+  });
+
+  it('empty transcript leaves marker intact and does not set persistedContent', async () => {
+    getTranscriptionEntry.mockReturnValue(ENTRY);
+    const transcribeSpy = vi.fn().mockResolvedValue('');
+    const p = makePreprocessor(transcribeSpy);
+    const prompt = '[VoiceAttachment: attachments/raw/a.ogg]';
+    const out = await p.apply({ groupFolder: 'g', prompt });
+    expect(out.prompt).toBe(prompt);
+    expect(out.persistedContent).toBeUndefined();
+    expect(transcribeSpy).toHaveBeenCalledOnce();
+  });
 });

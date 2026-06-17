@@ -10,7 +10,7 @@
  * against. Non-fatal (D4): no entry, or any per-marker failure, leaves that
  * marker in place and the turn continues.
  */
-import { join } from 'node:path';
+import { join, resolve, sep } from 'node:path';
 import { logger } from '../../logger.js';
 import { GROUPS_DIR } from '../../config.js';
 import { VOICE_ATTACHMENT_PATTERN } from '../../attachment-markers.js';
@@ -56,9 +56,18 @@ export class TranscriptionPreprocessor implements InboundPreprocessor {
     for (const m of markers) {
       const marker = m[0];
       const rawPath = m[1];
-      const absPath = join(GROUPS_DIR, groupFolder, rawPath);
+      const absPath = resolve(GROUPS_DIR, groupFolder, rawPath);
+      const allowedBase = resolve(GROUPS_DIR, groupFolder, 'attachments');
+      if (absPath !== allowedBase && !absPath.startsWith(allowedBase + sep)) {
+        logger.warn({ groupFolder, rawPath }, 'voice marker path escapes attachments dir; skipping');
+        continue;
+      }
       try {
         const transcript = await client.transcribeFile(absPath);
+        if (!transcript.trim()) {
+          logger.warn({ groupFolder, rawPath }, 'transcription returned empty transcript; leaving marker in place');
+          continue;
+        }
         // Use split/join instead of String.prototype.replace to avoid `$`
         // sequences in the transcript (e.g. "costs $20") being interpreted as
         // replacement-pattern specials ($&, $1, $', …) and corrupting the output.
