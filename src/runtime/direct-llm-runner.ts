@@ -25,7 +25,7 @@ import {
 } from '../db.js';
 import { estimateMessagesTokens } from './compression/token-estimate.js';
 import { summarize } from './compression/summarizer.js';
-import { getRagProvider } from '../rag/provider.js';
+import { getRagProvider, augmentPrompt } from '../rag/provider.js';
 import { logger } from '../logger.js';
 import { RegisteredGroup } from '../types.js';
 import {
@@ -1123,13 +1123,25 @@ export class DirectLLMRunner implements MessageRunner {
       ? rawHistory.slice(Math.max(0, rawHistory.length - keepWindow))
       : rawHistory;
 
+    // RAG retrieval (non-fatal): prefix any retrieved context onto the user
+    // turn. augmentPrompt returns the original prompt unchanged when RAG is
+    // disabled or retrieval fails. We augment ONLY the live LLM turn — the
+    // persisted history (persistedUserContent below) keeps the original text
+    // so stored conversation is not polluted with ephemeral context.
+    let augmentedPrompt: string;
+    try {
+      augmentedPrompt = await augmentPrompt(input.groupFolder, input.prompt);
+    } catch {
+      augmentedPrompt = input.prompt;
+    }
+
     const messages: OpenAI.ChatCompletionMessageParam[] = [
       { role: 'system', content: systemPrompt },
       ...(activeSummaryMarker
         ? [{ role: 'system' as const, content: activeSummaryMarker }]
         : []),
       ...history.map(({ role, content }) => ({ role, content })),
-      { role: 'user', content: input.prompt },
+      { role: 'user', content: augmentedPrompt },
     ];
 
     const toolJobId = `direct-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
