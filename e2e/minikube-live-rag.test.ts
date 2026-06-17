@@ -149,6 +149,57 @@ async function postMessage(text: string): Promise<Response> {
   });
 }
 
+// ── Cleanup helper ───────────────────────────────────────────────────────────
+
+/**
+ * Poll until the named Deployment no longer exists in the given namespace,
+ * or until the timeout elapses.  Returns true if the deployment is gone,
+ * false if it still exists after the timeout.
+ */
+async function waitForDeploymentGone(
+  name: string,
+  namespace: string,
+  timeoutMs: number,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const r = kubectl([
+      'get', 'deployment', name, '-n', namespace,
+      '-o', 'jsonpath={.metadata.name}',
+    ]);
+    if (!r.ok) return true; // 404 — gone
+    await new Promise((res) => setTimeout(res, 3000));
+  }
+  return false;
+}
+
+/**
+ * Send a remove_capability XADD and wait (up to timeoutMs) for its Deployment
+ * to disappear.  Returns true if the deployment is confirmed gone (or was
+ * never present), false on timeout.  Swallows Redis errors so it is safe to
+ * call from finally blocks.
+ */
+async function cleanupCapability(
+  redisClient: Redis,
+  name: string,
+  namespace: string,
+  timeoutMs = 60_000,
+): Promise<boolean> {
+  try {
+    await redisClient.xadd(
+      'kubeclaw:task-requests',
+      '*',
+      'type', 'remove_capability',
+      'groupFolder', 'http',
+      'isMain', 'true',
+      'name', name,
+    );
+  } catch {
+    /* best-effort */
+  }
+  return waitForDeploymentGone(`kubeclaw-cap-${name}`, namespace, timeoutMs);
+}
+
 // ── Suite ────────────────────────────────────────────────────────────────────
 
 describe('Minikube-live: RAG capability installed at runtime + indexing verified', () => {
@@ -266,12 +317,12 @@ describe('Minikube-live: RAG capability installed at runtime + indexing verified
       }
       await new Promise((res) => setTimeout(res, 3000));
     }
-    if (!capReady) {
-      console.warn(
-        `⚠️  Capability Qdrant pod (${RAG_CAP_LABEL}) not Ready within 240 s; ` +
-        'subsequent tests may fail if Qdrant is not available.',
-      );
-    }
+    expect(
+      capReady,
+      `Capability Qdrant pod (${RAG_CAP_LABEL}) was not Ready within 240 s. ` +
+      'Check pod events and logs: podSecurity.fsGroup/runAsUser must be set so ' +
+      'Qdrant can write to its PVC. Failing here to avoid confusing Qdrant-unreachable errors later.',
+    ).toBe(true);
 
     // 5. Wait for the channel pod to sync the new RAG capability.
     //    src/channel-runner.ts calls resetRagProvider() on receipt of capabilities_update.
@@ -301,6 +352,11 @@ describe('Minikube-live: RAG capability installed at runtime + indexing verified
   }, 360_000);
 
   afterAll(async () => {
+    // Remove the test-rag capability so it does not leak a pod/PVC into
+    // subsequent test files or conflict with assertNoConflictingRag.
+    if (redis) {
+      await cleanupCapability(redis, RAG_CAPABILITY_NAME, NAMESPACE, 60_000);
+    }
     if (redis) {
       try {
         await redis.quit();
