@@ -705,6 +705,11 @@ describe('Minikube-live: transcription capability install → voice marker → t
         console.log(
           `Transcription preprocessor invoked (post-turn log evidence): ${preprocessorInvoked}`,
         );
+        expect(
+          transcriptionLogSeen || voiceMarkerSubstituted,
+          'Transcription preprocessor must have been invoked (transcriptionLogSeen or voiceMarkerSubstituted). ' +
+          'If this fails, the capability never synced to the channel pod.',
+        ).toBe(true);
       }
     },
     240_000,

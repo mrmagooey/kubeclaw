@@ -6,7 +6,7 @@
  * by absolute path and POSTs it as multipart/form-data to a Whisper-class /
  * OpenAI-compatible audio endpoint, returning the transcript text.
  */
-import { readFile } from 'fs/promises';
+import { readFile } from 'node:fs/promises';
 import { basename } from 'node:path';
 import { logger } from '../logger.js';
 import { DEFAULT_TRANSCRIPTION_CONFIG } from '../capabilities/transcription-config.js';

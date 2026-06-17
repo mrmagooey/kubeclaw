@@ -41,4 +41,21 @@ describe('generic transcription builder', () => {
     expect(yaml).toContain('startupProbe:');
     expect(yaml).toContain('runAsNonRoot: true');
   });
+
+  it('passes scheduling fields (nodeSelector, tolerations, runtimeClassName) through to pod spec', () => {
+    const docs = parseAllDocuments(buildYaml({
+      ...base,
+      scheduling: {
+        nodeSelector: { 'kubernetes.io/gpu': 'true' },
+        tolerations: [{ key: 'gpu', operator: 'Exists', effect: 'NoSchedule' }],
+        runtimeClassName: 'nvidia',
+      },
+    })).map((d) => d.toJSON());
+    const dep = docs.find((d) => d.kind === 'Deployment');
+    expect(dep, 'Deployment document should exist').toBeTruthy();
+    const podSpec = dep.spec.template.spec;
+    expect(podSpec.nodeSelector).toMatchObject({ 'kubernetes.io/gpu': 'true' });
+    expect(Array.isArray(podSpec.tolerations) && podSpec.tolerations.length > 0).toBe(true);
+    expect(podSpec.runtimeClassName).toBe('nvidia');
+  });
 });

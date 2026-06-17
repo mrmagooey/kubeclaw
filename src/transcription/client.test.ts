@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const readFile = vi.hoisted(() => vi.fn());
-vi.mock('fs/promises', () => ({ readFile }));
+vi.mock('node:fs/promises', () => ({ readFile }));
 vi.mock('../logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
@@ -37,6 +37,7 @@ describe('TranscriptionClient', () => {
     expect(init.method).toBe('POST');
     expect(init.body).toBeInstanceOf(FormData);
     expect((init.body as FormData).has('file')).toBe(true);
+    expect(init.signal).toBeTruthy();
   });
 
   it('sends the model multipart field when provider.model is set', async () => {

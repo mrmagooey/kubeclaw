@@ -80,7 +80,7 @@ Capabilities are configured via Helm values and applied with `helm upgrade`. The
 
 | If the capability is... | Install via... |
 |---|---|
-| A separate model server you'd run anyway (Whisper STT, Ollama LLM, image vision API) | Helm values `capabilities:` map |
+| A separate model server you'd run anyway (Ollama LLM, image vision API) | Helm values `capabilities:` map |
 | An MCP server exposing tools (calendar, weather, your own service) | Helm values `mcpServers:` map |
 | Voice transcription (Whisper-class STT) | A `transcription` capability — install the spec via the admin shell (see "Installing voice transcription" below). The channel-side preprocessor reads the `[VoiceAttachment: …]` marker and calls it automatically. |
 | An inline preprocessing pipeline (image resize, PDF text extraction) that runs inside channel/orchestrator pods | Source code change via `/customize` (see ADDING_A_CHANNEL.md for the markers contract) |
@@ -140,7 +140,6 @@ These previously had `/add-*` Claude skills that modified source files directly.
 |---|---|---|
 | `image-vision` | Reads `[ImageAttachment: ...]` markers, resizes images, rewrites to `[Image: ...]` | New module `src/preprocessing/image-vision.ts` called from the orchestrator's preprocessing job |
 | `pdf-reader` | Extracts text from PDF attachments before the agent sees them | New module `src/preprocessing/pdf-reader.ts` |
-| `voice-transcription` | Transcribes audio attachments to text inline | `src/transcription.ts` exporting `transcribeBuffer()`; called from channel implementations that set `inboundVoice: true` (see ADDING_A_CHANNEL.md) |
 | `parallel` | Parallel skill execution support | Orchestrator router/runtime change |
 
 Use the `/customize` Claude Code skill to add these; it'll ask the right questions and write the code following the existing patterns.
