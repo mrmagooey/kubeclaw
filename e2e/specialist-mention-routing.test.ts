@@ -48,6 +48,8 @@ import {
   afterAll,
 } from 'vitest';
 import { spawnSync, spawn, type ChildProcess } from 'node:child_process';
+import { LIVE_BASE_URL, LIVE_MODEL, LIVE_API_KEY, probeLiveLlm }
+  from './lib/live-llm.js';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -56,12 +58,6 @@ const NAMESPACE = 'kubeclaw-e2e-specialist';
 const RELEASE = 'kubeclaw-e2e-specialist';
 const CHART_DIR = './helm/kubeclaw';
 const HTTP_LOCAL_PORT = 14098; // unique: specialist-mention-routing
-
-const LIVE_BASE_URL =
-  process.env.LIVE_LLM_BASE_URL || 'http://192.168.7.100:8080/v1';
-const LIVE_MODEL =
-  process.env.LIVE_LLM_MODEL || 'gemma-4-E4B-it-Q4_0.gguf';
-const LIVE_API_KEY = process.env.LIVE_LLM_API_KEY || 'no-key';
 
 // Extract the LLM port so we can open it in the NetworkPolicy egress allowlist.
 // The channel NetworkPolicy (networkpolicies.yaml) only permits 53/UDP, 6379/TCP to
@@ -99,60 +95,57 @@ async function probeProvider(): Promise<void> {
     providerSkipReason = 'kind cluster "kubeclaw-e2e-istio" not found in kubeconfig';
     return;
   }
-  try {
-    const modelsRes = await fetch(`${LIVE_BASE_URL}/models`, {
-      signal: AbortSignal.timeout(5_000),
-    });
-    if (!modelsRes.ok) {
-      providerSkipReason = `GET /models returned HTTP ${modelsRes.status}`;
-      return;
-    }
-    const chatRes = await fetch(`${LIVE_BASE_URL}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${LIVE_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: LIVE_MODEL,
-        messages: [{ role: 'user', content: 'ping' }],
-        // 256 tokens lets reasoning-style models (Nemotron, etc.) exhaust
-        // their hidden reasoning chain and still emit non-null content.
-        // Non-reasoning models stop at EOS far earlier, so this is harmless.
-        max_tokens: 256,
-      }),
-      signal: AbortSignal.timeout(30_000),
-    });
-    if (!chatRes.ok) {
-      providerSkipReason = `POST /chat/completions returned HTTP ${chatRes.status}`;
-      return;
-    }
-    const payload = (await chatRes.json()) as {
-      choices?: {
-        message?: {
-          content?: string | null;
-          reasoning?: string | null;
-          reasoning_content?: string | null;
+  const result = await probeLiveLlm(async (baseUrl, apiKey) => {
+    try {
+      const chatRes = await fetch(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: LIVE_MODEL,
+          messages: [{ role: 'user', content: 'ping' }],
+          // 256 tokens lets reasoning-style models (Nemotron, etc.) exhaust
+          // their hidden reasoning chain and still emit non-null content.
+          // Non-reasoning models stop at EOS far earlier, so this is harmless.
+          max_tokens: 256,
+        }),
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (!chatRes.ok) {
+        return {
+          ok: false,
+          reason: `POST /chat/completions returned HTTP ${chatRes.status}`,
         };
-      }[];
-    };
-    const msg = payload.choices?.[0]?.message;
-    // Some reasoning models (e.g. Nemotron via OpenRouter) return the answer
-    // in `reasoning` or `reasoning_content` when `content` is null. Accept any
-    // non-empty string in any of these fields as a valid response.
-    const hasContent =
-      typeof msg?.content === 'string' ||
-      typeof msg?.reasoning === 'string' ||
-      typeof msg?.reasoning_content === 'string';
-    if (!hasContent) {
-      providerSkipReason = 'malformed chat response from provider (no content/reasoning field)';
-      return;
+      }
+      const payload = (await chatRes.json()) as {
+        choices?: {
+          message?: {
+            content?: string | null;
+            reasoning?: string | null;
+            reasoning_content?: string | null;
+          };
+        }[];
+      };
+      const msg = payload.choices?.[0]?.message;
+      // Some reasoning models (e.g. Nemotron via OpenRouter) return the answer
+      // in `reasoning` or `reasoning_content` when `content` is null. Accept any
+      // non-empty string in any of these fields as a valid response.
+      const hasContent =
+        typeof msg?.content === 'string' ||
+        typeof msg?.reasoning === 'string' ||
+        typeof msg?.reasoning_content === 'string';
+      if (!hasContent) {
+        return { ok: false, reason: 'malformed chat response from provider (no content/reasoning field)' };
+      }
+      return { ok: true, reason: '' };
+    } catch (err) {
+      return { ok: false, reason: err instanceof Error ? err.message : String(err) };
     }
-    providerAvailable = true;
-  } catch (err) {
-    providerSkipReason =
-      err instanceof Error ? err.message : String(err);
-  }
+  });
+  providerAvailable = result.ok;
+  providerSkipReason = result.reason;
 }
 
 await probeProvider();

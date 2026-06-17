@@ -13,7 +13,7 @@
  * Auth: HTTP Basic with username=admin, password read from kubeclaw-secrets.
  *
  * Provider config (override via env vars):
- *   LIVE_LLM_BASE_URL   http://192.168.7.100:8080/v1
+ *   LIVE_LLM_BASE_URL   http://localhost:11434/v1  (default — set to override)
  *   LIVE_LLM_MODEL      gemma-4-E4B-it-Q4_0.gguf
  */
 import { describe, it, expect, beforeAll } from 'vitest';

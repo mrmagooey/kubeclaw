@@ -7,7 +7,7 @@
  * install used by the regular e2e suite.
  *
  * Provider config (override via env vars):
- *   LIVE_LLM_BASE_URL   http://192.168.7.100:8080/v1
+ *   LIVE_LLM_BASE_URL   http://localhost:11434/v1  (default — set to override)
  *   LIVE_LLM_MODEL      gemma-4-E4B-it-Q4_0.gguf
  *   LIVE_LLM_API_KEY    no-key
  *
@@ -22,6 +22,7 @@ import { spawn, spawnSync, type ChildProcess } from 'child_process';
 import { readdirSync, statSync } from 'fs';
 import { join } from 'path';
 import { installCertManager } from '../setup/cert-manager.js';
+import { LIVE_BASE_URL, LIVE_MODEL, LIVE_API_KEY } from './lib/live-llm.js';
 
 const NAMESPACE = 'kubeclaw-live';
 const RELEASE = 'kubeclaw-live';
@@ -61,11 +62,6 @@ export const KUBECLAW_LIVE_OAUTH_WEBCHAT_COOKIE_SECRET =
 
 // Read from a Secret at runtime (initialised inside setup()).
 export let KUBECLAW_LIVE_REDIS_URL = '';
-
-const LIVE_BASE_URL =
-  process.env.LIVE_LLM_BASE_URL || 'http://192.168.7.100:8080/v1';
-const LIVE_MODEL = process.env.LIVE_LLM_MODEL || 'gemma-4-E4B-it-Q4_0.gguf';
-const LIVE_API_KEY = process.env.LIVE_LLM_API_KEY || 'no-key';
 
 let portForwardProcess: ChildProcess | null = null;
 let redisPortForwardProcess: ChildProcess | null = null;

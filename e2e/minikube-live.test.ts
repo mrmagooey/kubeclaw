@@ -8,7 +8,7 @@
  * exactly like a real user would.
  *
  * Provider config (override via env vars):
- *   LIVE_LLM_BASE_URL   http://192.168.7.100:8080/v1
+ *   LIVE_LLM_BASE_URL   http://localhost:11434/v1  (default — set to override)
  *   LIVE_LLM_MODEL      gemma-4-E4B-it-Q4_0.gguf
  */
 import { describe, it, expect, beforeAll } from 'vitest';
@@ -19,10 +19,9 @@ import {
   KUBECLAW_LIVE_PASS,
   restartChannelPortForward,
 } from './minikube-live-setup.js';
+import { LIVE_BASE_URL } from './lib/live-llm.js';
 
 const NAMESPACE = 'kubeclaw-live';
-const LIVE_BASE_URL =
-  process.env.LIVE_LLM_BASE_URL || 'http://192.168.7.100:8080/v1';
 const HTTP_URL = `http://127.0.0.1:${KUBECLAW_LIVE_HTTP_LOCAL_PORT}`;
 
 function basicAuth(user: string, pass: string): string {
@@ -192,8 +191,8 @@ describe('Minikube-live: real-user flow through helm-deployed kubeclaw', () => {
   // ── 3. LLM egress from the channel pod ────────────────────────────────
   // Uses `kubectl exec` to make the channel pod open a TCP connection to
   // LIVE_LLM_BASE_URL. This proves both that the NetworkPolicy permits
-  // egress on port 8080 (via extraEgressPorts), and that routing host →
-  // pod → 192.168.7.100 actually works.
+  // egress on the provider port (via extraEgressPorts), and that routing
+  // host → pod → the LLM host actually works.
   it('channel pod has TCP egress to the live LLM provider', () => {
     expect(provisioned).toBe(true);
     // Pull host & port out of LIVE_BASE_URL.
