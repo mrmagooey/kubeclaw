@@ -6,6 +6,7 @@ import { loadConfigOrThrow, makeReloadCallback } from './index.js';
 import { handleExtAuthz, type Deps } from './ext-authz.js';
 import { Resolver } from './resolver.js';
 import { K8sSecretSource } from './k8s-secret-source.js';
+import { PodInformer } from './pod-informer.js';
 import { Registry } from 'prom-client';
 import { createMetrics } from './metrics.js';
 
@@ -758,5 +759,374 @@ describe('makeReloadCallback — integration', () => {
     expect(
       resolver.find({ destination: 'api.voyage.com', identity: 'sa/tool' }),
     ).toBeDefined();
+  });
+});
+
+// ─── startBroker handler logic — inline unit tests ────────────────────────────
+//
+// startBroker() calls kc.loadFromCluster() which requires a real cluster.
+// We test the handler closures directly by reconstructing them in test scope —
+// they are short pure closures over PodInformer and K8sSecretSource instances.
+
+// Helper: build a valid base64-encoded group-secret data value
+function makeGroupSecretData(
+  fields: Record<string, { value: string; placeholder: string }>,
+): string {
+  return Buffer.from(JSON.stringify({ fields, registeredAt: '2026-01-01' })).toString('base64');
+}
+
+// ─── Pod upsert handler ───────────────────────────────────────────────────────
+
+describe('startBroker pod-informer handler logic — handlePodUpsert', () => {
+  let podInformer: PodInformer;
+
+  // Reconstructed from startBroker in index.ts
+  function handlePodUpsert(pod: {
+    metadata?: {
+      uid?: string;
+      name?: string;
+      deletionTimestamp?: string;
+      annotations?: Record<string, string>;
+    };
+    status?: { podIP?: string };
+  }) {
+    const uid = pod.metadata?.uid;
+    const podIP = pod.status?.podIP;
+    if (!uid || !podIP) return;
+    podInformer.upsert({
+      uid,
+      name: pod.metadata?.name ?? '',
+      podIP,
+      terminating: pod.metadata?.deletionTimestamp != null,
+      annotations: (pod.metadata?.annotations as Record<string, string>) ?? {},
+    });
+  }
+
+  beforeEach(() => {
+    podInformer = new PodInformer();
+  });
+
+  it('upserts pod with uid and podIP', () => {
+    handlePodUpsert({
+      metadata: { uid: 'uid-1', name: 'my-pod' },
+      status: { podIP: '10.0.0.1' },
+    });
+    expect(podInformer.resolveOwnerGroupByIP('10.0.0.1')).toBeNull(); // no annotation yet
+    // Verify pod was stored by checking UID lookup works (terminating=false, no annotation → null)
+    // Upsert itself doesn't throw — indirect verification via resolveOwnerGroupByUID
+    const result = podInformer.resolveOwnerGroupByUID('uid-1');
+    expect(result).toBeNull(); // no owner-group annotation → null, but pod was stored
+  });
+
+  it('stores pod that is retrievable by IP after upsert', () => {
+    handlePodUpsert({
+      metadata: {
+        uid: 'uid-2',
+        name: 'annotated-pod',
+        annotations: { 'kubeclaw.io/owner-group': 'family' },
+      },
+      status: { podIP: '10.0.0.2' },
+    });
+    const result = podInformer.resolveOwnerGroupByIP('10.0.0.2');
+    expect(result).not.toBeNull();
+    expect(result!.ownerGroup).toBe('family');
+    expect(result!.podUid).toBe('uid-2');
+  });
+
+  it('ignores pod missing uid', () => {
+    handlePodUpsert({
+      metadata: { name: 'no-uid', annotations: { 'kubeclaw.io/owner-group': 'family' } },
+      status: { podIP: '10.0.0.3' },
+    });
+    // Nothing upserted — IP lookup returns null
+    expect(podInformer.resolveOwnerGroupByIP('10.0.0.3')).toBeNull();
+  });
+
+  it('ignores pod missing podIP', () => {
+    handlePodUpsert({
+      metadata: {
+        uid: 'uid-4',
+        name: 'no-ip',
+        annotations: { 'kubeclaw.io/owner-group': 'family' },
+      },
+      status: {},
+    });
+    expect(podInformer.resolveOwnerGroupByUID('uid-4')).toBeNull();
+  });
+
+  it('sets terminating=true when deletionTimestamp is set', () => {
+    handlePodUpsert({
+      metadata: {
+        uid: 'uid-5',
+        name: 'terminating-pod',
+        deletionTimestamp: '2026-01-01T00:00:00Z',
+        annotations: { 'kubeclaw.io/owner-group': 'family' },
+      },
+      status: { podIP: '10.0.0.5' },
+    });
+    // terminating pods return null from owner-group resolution
+    expect(podInformer.resolveOwnerGroupByIP('10.0.0.5')).toBeNull();
+    expect(podInformer.resolveOwnerGroupByUID('uid-5')).toBeNull();
+  });
+
+  it('sets terminating=false when deletionTimestamp is absent', () => {
+    handlePodUpsert({
+      metadata: {
+        uid: 'uid-6',
+        name: 'live-pod',
+        annotations: { 'kubeclaw.io/owner-group': 'work' },
+      },
+      status: { podIP: '10.0.0.6' },
+    });
+    // Not terminating — owner-group should resolve
+    const result = podInformer.resolveOwnerGroupByUID('uid-6');
+    expect(result).not.toBeNull();
+    expect(result!.ownerGroup).toBe('work');
+  });
+
+  it('captures annotations from pod metadata', () => {
+    handlePodUpsert({
+      metadata: {
+        uid: 'uid-7',
+        name: 'annotated',
+        annotations: {
+          'kubeclaw.io/owner-group': 'friends',
+          'some.other/annotation': 'value',
+        },
+      },
+      status: { podIP: '10.0.0.7' },
+    });
+    const result = podInformer.resolveOwnerGroupByUID('uid-7');
+    expect(result).not.toBeNull();
+    expect(result!.ownerGroup).toBe('friends');
+  });
+});
+
+// ─── Pod DELETE handler ───────────────────────────────────────────────────────
+
+describe('startBroker pod-informer handler logic — DELETE handler', () => {
+  let podInformer: PodInformer;
+
+  function handlePodDelete(pod: { metadata?: { uid?: string } }) {
+    const uid = pod.metadata?.uid;
+    if (uid) podInformer.delete(uid);
+  }
+
+  beforeEach(() => {
+    podInformer = new PodInformer();
+    // Pre-load a pod to delete
+    podInformer.upsert({
+      uid: 'uid-del-1',
+      name: 'to-delete',
+      podIP: '10.1.0.1',
+      terminating: false,
+      annotations: { 'kubeclaw.io/owner-group': 'family' },
+    });
+  });
+
+  it('deletes pod by uid when uid is present', () => {
+    // Verify it exists first
+    expect(podInformer.resolveOwnerGroupByUID('uid-del-1')).not.toBeNull();
+
+    handlePodDelete({ metadata: { uid: 'uid-del-1' } });
+
+    expect(podInformer.resolveOwnerGroupByUID('uid-del-1')).toBeNull();
+    expect(podInformer.resolveOwnerGroupByIP('10.1.0.1')).toBeNull();
+  });
+
+  it('ignores delete event when uid is absent', () => {
+    // The pre-loaded pod should still be there
+    handlePodDelete({ metadata: {} });
+
+    expect(podInformer.resolveOwnerGroupByUID('uid-del-1')).not.toBeNull();
+  });
+});
+
+// ─── Secret handler factory ───────────────────────────────────────────────────
+
+describe('startBroker secret-informer handler logic — makeSecretHandler', () => {
+  let secretSource: K8sSecretSource;
+
+  function makeSecretHandler(type: 'ADDED' | 'MODIFIED' | 'DELETED') {
+    return (secret: {
+      metadata?: { name?: string; labels?: Record<string, string> };
+      data?: Record<string, string>;
+    }) => {
+      secretSource.applyGroupSecretEvent({
+        type,
+        secret: {
+          metadata: {
+            name: secret.metadata?.name,
+            labels: secret.metadata?.labels as Record<string, string> | undefined,
+          },
+          data: secret.data ?? {},
+        },
+      });
+    };
+  }
+
+  beforeEach(() => {
+    secretSource = new K8sSecretSource({ readSecret: vi.fn(), cacheTtlMs: 0 });
+  });
+
+  it('ADDED event registers group credentials in K8sSecretSource', () => {
+    const handler = makeSecretHandler('ADDED');
+    handler({
+      metadata: {
+        name: 'kubeclaw-group-secrets-family',
+        labels: { 'kubeclaw.io/group-secrets': 'true' },
+      },
+      data: {
+        replicate: makeGroupSecretData({
+          token: { value: 'r8_secret', placeholder: 'KC_PH_token_aabb' },
+        }),
+      },
+    });
+
+    const cred = secretSource.getGroupCredential('family', 'replicate');
+    expect(cred).not.toBeNull();
+    expect(cred!.fields.token.value).toBe('r8_secret');
+  });
+
+  it('MODIFIED event updates group credentials', () => {
+    const addHandler = makeSecretHandler('ADDED');
+    addHandler({
+      metadata: {
+        name: 'kubeclaw-group-secrets-family',
+        labels: { 'kubeclaw.io/group-secrets': 'true' },
+      },
+      data: {
+        replicate: makeGroupSecretData({
+          token: { value: 'old-secret', placeholder: 'KC_PH_token_aabb' },
+        }),
+      },
+    });
+
+    const modHandler = makeSecretHandler('MODIFIED');
+    modHandler({
+      metadata: {
+        name: 'kubeclaw-group-secrets-family',
+        labels: { 'kubeclaw.io/group-secrets': 'true' },
+      },
+      data: {
+        replicate: makeGroupSecretData({
+          token: { value: 'new-secret', placeholder: 'KC_PH_token_aabb' },
+        }),
+      },
+    });
+
+    const cred = secretSource.getGroupCredential('family', 'replicate');
+    expect(cred).not.toBeNull();
+    expect(cred!.fields.token.value).toBe('new-secret');
+  });
+
+  it('DELETED event removes group credentials', () => {
+    const addHandler = makeSecretHandler('ADDED');
+    addHandler({
+      metadata: {
+        name: 'kubeclaw-group-secrets-family',
+        labels: { 'kubeclaw.io/group-secrets': 'true' },
+      },
+      data: {
+        replicate: makeGroupSecretData({
+          token: { value: 'r8_secret', placeholder: 'KC_PH_token_aabb' },
+        }),
+      },
+    });
+
+    expect(secretSource.getGroupCredential('family', 'replicate')).not.toBeNull();
+
+    const delHandler = makeSecretHandler('DELETED');
+    delHandler({
+      metadata: {
+        name: 'kubeclaw-group-secrets-family',
+        labels: { 'kubeclaw.io/group-secrets': 'true' },
+      },
+      data: {},
+    });
+
+    expect(secretSource.getGroupCredential('family', 'replicate')).toBeNull();
+    expect(secretSource.listGroups()).not.toContain('family');
+  });
+
+  it('ignores secrets not named kubeclaw-group-secrets-*', () => {
+    const handler = makeSecretHandler('ADDED');
+    handler({
+      metadata: {
+        name: 'some-other-secret',
+        labels: { 'kubeclaw.io/group-secrets': 'true' },
+      },
+      data: {
+        replicate: makeGroupSecretData({
+          token: { value: 'r8_secret', placeholder: 'KC_PH_token_aabb' },
+        }),
+      },
+    });
+
+    expect(secretSource.listGroups()).toHaveLength(0);
+  });
+});
+
+// ─── operatorSecretReader ─────────────────────────────────────────────────────
+
+describe('startBroker operatorSecretReader', () => {
+  it('returns the credential value when the key exists', async () => {
+    const readSecret = vi.fn().mockResolvedValue({
+      metadata: { name: 'kubeclaw-secrets' },
+      data: { myKey: Buffer.from('my-api-value').toString('base64') },
+    });
+    const secretSource = new K8sSecretSource({ readSecret, cacheTtlMs: 0 });
+
+    // Reconstruct operatorSecretReader from startBroker
+    const operatorSecretReader = async (catalogId: string): Promise<string | null> => {
+      try {
+        return await secretSource.read({ kind: 'Secret', name: 'kubeclaw-secrets', key: catalogId });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes('has no key')) return null;
+        throw err;
+      }
+    };
+
+    const result = await operatorSecretReader('myKey');
+    expect(result).toBe('my-api-value');
+  });
+
+  it('returns null when error message contains "has no key"', async () => {
+    const readSecret = vi.fn().mockResolvedValue({
+      metadata: { name: 'kubeclaw-secrets' },
+      data: {}, // no key named 'missingKey'
+    });
+    const secretSource = new K8sSecretSource({ readSecret, cacheTtlMs: 0 });
+
+    const operatorSecretReader = async (catalogId: string): Promise<string | null> => {
+      try {
+        return await secretSource.read({ kind: 'Secret', name: 'kubeclaw-secrets', key: catalogId });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes('has no key')) return null;
+        throw err;
+      }
+    };
+
+    const result = await operatorSecretReader('missingKey');
+    expect(result).toBeNull();
+  });
+
+  it('rethrows errors that do not contain "has no key"', async () => {
+    const readSecret = vi.fn().mockRejectedValue(new Error('network timeout'));
+    const secretSource = new K8sSecretSource({ readSecret, cacheTtlMs: 0 });
+
+    const operatorSecretReader = async (catalogId: string): Promise<string | null> => {
+      try {
+        return await secretSource.read({ kind: 'Secret', name: 'kubeclaw-secrets', key: catalogId });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes('has no key')) return null;
+        throw err;
+      }
+    };
+
+    await expect(operatorSecretReader('someKey')).rejects.toThrow('network timeout');
   });
 });
