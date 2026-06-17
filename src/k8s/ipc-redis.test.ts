@@ -89,6 +89,7 @@ vi.mock('./job-runner.js', () => ({
     stopJob: vi.fn().mockResolvedValue(undefined),
     runToolJob: vi.fn().mockResolvedValue({ status: 'success', result: 'ok' }),
     applyYamlToK8s: vi.fn().mockResolvedValue(undefined),
+    getJobLogs: vi.fn().mockResolvedValue('log output'),
   },
 }));
 
@@ -99,6 +100,7 @@ vi.mock('../db.js', () => ({
   getTasksForGroup: vi.fn().mockReturnValue([]),
   getAllRegisteredGroups: vi.fn().mockReturnValue({}),
   updateTask: vi.fn(),
+  getToolJobByIdForGroup: vi.fn().mockReturnValue(null),
 }));
 
 vi.mock('../logger.js', () => ({
@@ -162,6 +164,9 @@ vi.mock('./redis-client.js', () => ({
   getToolJobResultStream: vi.fn(
     (id: string) => `kubeclaw:agent-job-result:${id}`,
   ),
+  getControlChannel: vi.fn(
+    (name: string) => `kubeclaw:control:${name}`,
+  ),
 }));
 
 vi.mock('cron-parser', () => ({
@@ -208,7 +213,11 @@ import {
   currentStepByJob,
   pendingBootstrapQuestionByJob,
   registerBootstrapSsePublisher,
+  startControlChannelWatcher,
 } from './ipc-redis.js';
+import { getToolJobByIdForGroup } from '../db.js';
+import { jobRunner } from './job-runner.js';
+import { logger } from '../logger.js';
 import type { RegisteredGroup } from '../types.js';
 
 const mockSendMessage = vi.fn().mockResolvedValue(undefined);
@@ -2098,7 +2107,7 @@ describe('startTaskRequestWatcher: group auto-registration', () => {
 
 // ── Secret / catalog IPC handler tests ─────────────────────────────────────
 
-import { registerSecretDeps } from './ipc-redis.js';
+import { registerSecretDeps, _testSetActiveAgentJob } from './ipc-redis.js';
 
 /** Build a single-message XREAD response for the task-request stream. */
 function makeTaskStreamMsg(
@@ -2468,5 +2477,282 @@ describe('startBootstrapTaskWatcher — bootstrap topic messages → SSE forward
     );
 
     expect(capturedSseEvents).toHaveLength(0);
+  });
+});
+
+// ─── A1: job.cancel error path (stopJob throws) ──────────────────────────────
+
+describe('job.cancel: stopJob throws → error response', () => {
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    await stopIpcWatcher();
+    mockRegisteredGroups.mockReturnValue({});
+    mockXadd.mockResolvedValue('mock-id');
+    mockXread.mockResolvedValue(null);
+    vi.mocked(isValidGroupFolder).mockReturnValue(true);
+  });
+
+  afterEach(async () => {
+    await stopIpcWatcher();
+  });
+
+  it('clears map entry and xadds { ok: false } when stopJob throws', async () => {
+    startIpcWatcher(createMockDeps());
+
+    // Seed the active job so the handler finds it
+    _testSetActiveAgentJob('mygroup', 'job-xyz');
+
+    // Make stopJob throw
+    vi.mocked(jobRunner.stopJob).mockRejectedValueOnce(
+      new Error('pod not found'),
+    );
+
+    const cancelResultStream = 'kubeclaw:result:xyz';
+
+    let callCount = 0;
+    mockXread.mockImplementation(async () => {
+      if (callCount++ === 0) {
+        // The handler reads `obj.resultStream` (not `obj.cancelResultStream`)
+        // and `obj.jobId` (not `obj.jobName`). The jobName in the legacy path
+        // comes from activeAgentJobsByGroup.get(groupFolder), not the message.
+        return makeTaskStreamMsg('20-0', {
+          type: 'job.cancel',
+          groupFolder: 'mygroup',
+          resultStream: cancelResultStream,
+          // No jobId → legacy path (Story 49), which uses activeAgentJobsByGroup
+        });
+      }
+      await stopIpcWatcher();
+      return null;
+    });
+
+    await startTaskRequestWatcher();
+
+    // Map entry must be cleared even on error
+    // (we can't inspect the private map directly, but we verify the xadd response)
+    expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+      expect.objectContaining({ groupFolder: 'mygroup', jobName: 'job-xyz' }),
+      'job.cancel: failed to stop job',
+    );
+    expect(mockXadd).toHaveBeenCalledWith(
+      cancelResultStream,
+      '*',
+      'result',
+      JSON.stringify({ ok: false, error: 'pod not found' }),
+    );
+  });
+});
+
+// ─── A2: job.logs handler ─────────────────────────────────────────────────────
+
+describe('job.logs handler via startTaskRequestWatcher', () => {
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    await stopIpcWatcher();
+    mockRegisteredGroups.mockReturnValue({});
+    mockXadd.mockResolvedValue('mock-id');
+    mockXread.mockResolvedValue(null);
+    vi.mocked(isValidGroupFolder).mockReturnValue(true);
+    // Default: getJobLogs returns 'log output'
+    vi.mocked(jobRunner.getJobLogs).mockResolvedValue('log output');
+  });
+
+  afterEach(async () => {
+    await stopIpcWatcher();
+  });
+
+  it('ownership check fails (cross-group) → xadd { ok: false, error: not_found }', async () => {
+    startIpcWatcher(createMockDeps());
+
+    // getToolJobByIdForGroup returns null → not found / not owned
+    vi.mocked(getToolJobByIdForGroup).mockReturnValue(null);
+
+    const resultStream = 'kubeclaw:logs-result:cross';
+
+    let callCount = 0;
+    mockXread.mockImplementation(async () => {
+      if (callCount++ === 0) {
+        return makeTaskStreamMsg('30-0', {
+          type: 'job.logs',
+          groupFolder: 'group-a',
+          jobId: 'tool-job-123',
+          resultStream,
+        });
+      }
+      await stopIpcWatcher();
+      return null;
+    });
+
+    await startTaskRequestWatcher();
+
+    expect(getToolJobByIdForGroup).toHaveBeenCalledWith('tool-job-123', 'group-a');
+    expect(jobRunner.getJobLogs).not.toHaveBeenCalled();
+    expect(mockXadd).toHaveBeenCalledWith(
+      resultStream,
+      '*',
+      'result',
+      JSON.stringify({ ok: false, error: 'not_found' }),
+    );
+  });
+
+  it('success: owned job → xadd { ok: true, result: logs }', async () => {
+    startIpcWatcher(createMockDeps());
+
+    // Simulate an owned row returned
+    vi.mocked(getToolJobByIdForGroup).mockReturnValue({
+      id: 'tool-job-123',
+      group_folder: 'group-b',
+    } as any);
+    vi.mocked(jobRunner.getJobLogs).mockResolvedValue('pod logs here');
+
+    const resultStream = 'kubeclaw:logs-result:success';
+
+    let callCount = 0;
+    mockXread.mockImplementation(async () => {
+      if (callCount++ === 0) {
+        return makeTaskStreamMsg('31-0', {
+          type: 'job.logs',
+          groupFolder: 'group-b',
+          jobId: 'tool-job-123',
+          resultStream,
+        });
+      }
+      await stopIpcWatcher();
+      return null;
+    });
+
+    await startTaskRequestWatcher();
+
+    expect(jobRunner.getJobLogs).toHaveBeenCalledWith('tool-job-123');
+    expect(mockXadd).toHaveBeenCalledWith(
+      resultStream,
+      '*',
+      'result',
+      JSON.stringify({ ok: true, result: 'pod logs here' }),
+    );
+  });
+
+  it('getJobLogs throws → xadd { ok: false, error: <message> }', async () => {
+    startIpcWatcher(createMockDeps());
+
+    vi.mocked(getToolJobByIdForGroup).mockReturnValue({
+      id: 'tool-job-456',
+      group_folder: 'group-c',
+    } as any);
+    vi.mocked(jobRunner.getJobLogs).mockRejectedValueOnce(
+      new Error('k8s unavailable'),
+    );
+
+    const resultStream = 'kubeclaw:logs-result:error';
+
+    let callCount = 0;
+    mockXread.mockImplementation(async () => {
+      if (callCount++ === 0) {
+        return makeTaskStreamMsg('32-0', {
+          type: 'job.logs',
+          groupFolder: 'group-c',
+          jobId: 'tool-job-456',
+          resultStream,
+        });
+      }
+      await stopIpcWatcher();
+      return null;
+    });
+
+    await startTaskRequestWatcher();
+
+    expect(mockXadd).toHaveBeenCalledWith(
+      resultStream,
+      '*',
+      'result',
+      JSON.stringify({ ok: false, error: 'k8s unavailable' }),
+    );
+  });
+});
+
+// ─── A3: startControlChannelWatcher ──────────────────────────────────────────
+
+describe('startControlChannelWatcher', () => {
+  let capturedSubscribeCb: ((err: Error | null) => void) | null = null;
+  let capturedMessageHandler: ((ch: string, message: string) => void) | null =
+    null;
+  const onCommand = vi.fn().mockResolvedValue(undefined);
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    capturedSubscribeCb = null;
+    capturedMessageHandler = null;
+
+    // Override the subscribe mock to capture its callback
+    mockSubscribe.mockImplementation(
+      (_channel: string, cb: (err: Error | null) => void) => {
+        capturedSubscribeCb = cb;
+      },
+    );
+
+    // The subscriber.on mock already stores message handler in subscriberOnRef.
+    // We reset it here so each test starts fresh.
+    subscriberOnRef.messageHandler = null;
+  });
+
+  const callSubscribeCb = (err: Error | null) => {
+    capturedSubscribeCb?.(err);
+  };
+
+  const fireMessage = (ch: string, msg: string) => {
+    subscriberOnRef.messageHandler?.(ch, msg);
+  };
+
+  it('subscribe error callback → logger.error called with "Failed to subscribe to control channel"', () => {
+    startControlChannelWatcher('my-channel', onCommand);
+
+    const err = new Error('connection refused');
+    callSubscribeCb(err);
+
+    expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+      expect.objectContaining({ err, channel: 'kubeclaw:control:my-channel' }),
+      'Failed to subscribe to control channel',
+    );
+  });
+
+  it('subscribe success callback → logger.info called with "Subscribed to control channel"', () => {
+    startControlChannelWatcher('my-channel', onCommand);
+
+    callSubscribeCb(null);
+
+    expect(vi.mocked(logger.error)).not.toHaveBeenCalled();
+  });
+
+  it('non-matching channel → onCommand NOT called', () => {
+    startControlChannelWatcher('my-channel', onCommand);
+
+    // Fire a message on a different channel
+    fireMessage('kubeclaw:control:other-channel', JSON.stringify({ command: 'reload' }));
+
+    expect(onCommand).not.toHaveBeenCalled();
+  });
+
+  it('malformed JSON → logger.error called with "Failed to parse control channel message"', () => {
+    startControlChannelWatcher('my-channel', onCommand);
+
+    fireMessage('kubeclaw:control:my-channel', 'not-json{{{');
+
+    expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+      expect.objectContaining({ err: expect.any(Error) }),
+      'Failed to parse control channel message',
+    );
+    expect(onCommand).not.toHaveBeenCalled();
+  });
+
+  it('valid message → onCommand called with parsed ControlMessage', async () => {
+    startControlChannelWatcher('my-channel', onCommand);
+
+    const msg = { command: 'reload' };
+    fireMessage('kubeclaw:control:my-channel', JSON.stringify(msg));
+
+    // Allow promise microtasks to settle
+    await Promise.resolve();
+
+    expect(onCommand).toHaveBeenCalledWith(msg);
   });
 });
