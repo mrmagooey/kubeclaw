@@ -38,7 +38,18 @@ import {
   getConcurrencyKey,
   getQueueKey,
   getSessionKey,
+  getToolCallsStream,
+  getToolResultsStream,
+  getSpawnToolPodStream,
+  getSpawnToolJobStream,
+  getToolJobResultStream,
+  getTaskRequestStream,
+  getControlChannel,
+  getChannelStatusChannel,
+  getDiscoveryRequestStream,
+  getDiscoveryResponseKey,
 } from './redis-client.js';
+import { logger } from '../logger.js';
 
 describe('getRedisConfig', () => {
   it('returns default config when REDIS_URL is not set', () => {
@@ -270,5 +281,148 @@ describe('Channel key generators', () => {
     it('generates correct session key', () => {
       expect(getSessionKey('my-group')).toBe('kubeclaw:sessions:my-group');
     });
+  });
+});
+
+describe('IPC key generators', () => {
+  it('getToolCallsStream returns correct key', () => {
+    expect(getToolCallsStream('job-abc', 'search')).toBe(
+      'kubeclaw:toolcalls:job-abc:search',
+    );
+  });
+
+  it('getToolResultsStream returns correct key', () => {
+    expect(getToolResultsStream('job-abc', 'search')).toBe(
+      'kubeclaw:toolresults:job-abc:search',
+    );
+  });
+
+  it('getSpawnToolPodStream returns static key', () => {
+    expect(getSpawnToolPodStream()).toBe('kubeclaw:spawn-tool-pod');
+  });
+
+  it('getSpawnToolJobStream returns static key', () => {
+    expect(getSpawnToolJobStream()).toBe('kubeclaw:spawn-agent-job');
+  });
+
+  it('getToolJobResultStream returns correct key', () => {
+    expect(getToolJobResultStream('tool-789')).toBe(
+      'kubeclaw:agent-job-result:tool-789',
+    );
+  });
+
+  it('getTaskRequestStream returns static key', () => {
+    expect(getTaskRequestStream()).toBe('kubeclaw:task-requests');
+  });
+
+  it('getControlChannel returns correct key', () => {
+    expect(getControlChannel('telegram')).toBe('kubeclaw:control:telegram');
+  });
+
+  it('getChannelStatusChannel returns correct key', () => {
+    expect(getChannelStatusChannel('irc')).toBe(
+      'kubeclaw:channel-status:irc',
+    );
+  });
+
+  it('getDiscoveryRequestStream returns static key', () => {
+    expect(getDiscoveryRequestStream()).toBe('kubeclaw:discovery:request');
+  });
+
+  it('getDiscoveryResponseKey returns correct key', () => {
+    expect(getDiscoveryResponseKey('req-001')).toBe(
+      'kubeclaw:discovery:response:req-001',
+    );
+  });
+});
+
+describe('createRedisClient event handlers (A5)', () => {
+  it('ready event fires logger.debug', async () => {
+    vi.resetModules();
+    vi.clearAllMocks();
+
+    // Set up a fresh mock that stores event handlers by name
+    const handlers: Record<string, (...args: unknown[]) => void> = {};
+    vi.doMock('ioredis', () => {
+      class MockRedisWithHandlers {
+        on(event: string, cb: (...args: unknown[]) => void) {
+          handlers[event] = cb;
+        }
+        quit = vi.fn().mockResolvedValue('OK');
+      }
+      return { Redis: MockRedisWithHandlers };
+    });
+
+    const { createRedisClient, closeRedisConnections } =
+      await import('./redis-client.js');
+    const { logger: freshLogger } = await import('../logger.js');
+
+    createRedisClient();
+
+    // Fire the ready event
+    handlers['ready']?.();
+
+    expect(vi.mocked(freshLogger.debug)).toHaveBeenCalled();
+
+    await closeRedisConnections();
+    vi.doUnmock('ioredis');
+  });
+
+  it('error event fires logger.error', async () => {
+    vi.resetModules();
+    vi.clearAllMocks();
+
+    const handlers: Record<string, (...args: unknown[]) => void> = {};
+    vi.doMock('ioredis', () => {
+      class MockRedisWithHandlers {
+        on(event: string, cb: (...args: unknown[]) => void) {
+          handlers[event] = cb;
+        }
+        quit = vi.fn().mockResolvedValue('OK');
+      }
+      return { Redis: MockRedisWithHandlers };
+    });
+
+    const { createRedisClient, closeRedisConnections } =
+      await import('./redis-client.js');
+    const { logger: freshLogger } = await import('../logger.js');
+
+    createRedisClient();
+
+    handlers['error']?.(new Error('connection failed'));
+
+    expect(vi.mocked(freshLogger.error)).toHaveBeenCalled();
+
+    await closeRedisConnections();
+    vi.doUnmock('ioredis');
+  });
+
+  it('close event fires logger.warn', async () => {
+    vi.resetModules();
+    vi.clearAllMocks();
+
+    const handlers: Record<string, (...args: unknown[]) => void> = {};
+    vi.doMock('ioredis', () => {
+      class MockRedisWithHandlers {
+        on(event: string, cb: (...args: unknown[]) => void) {
+          handlers[event] = cb;
+        }
+        quit = vi.fn().mockResolvedValue('OK');
+      }
+      return { Redis: MockRedisWithHandlers };
+    });
+
+    const { createRedisClient, closeRedisConnections } =
+      await import('./redis-client.js');
+    const { logger: freshLogger } = await import('../logger.js');
+
+    createRedisClient();
+
+    handlers['close']?.();
+
+    expect(vi.mocked(freshLogger.warn)).toHaveBeenCalled();
+
+    await closeRedisConnections();
+    vi.doUnmock('ioredis');
   });
 });

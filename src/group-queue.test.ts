@@ -1,11 +1,21 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 
 import { GroupQueue } from './group-queue.js';
+import { logger } from './logger.js';
 
 // Mock config to control concurrency limit
 vi.mock('./config.js', () => ({
   DATA_DIR: '/tmp/kubeclaw-test-data',
   MAX_CONCURRENT_JOBS: 2,
+}));
+
+vi.mock('./logger.js', () => ({
+  logger: {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  },
 }));
 
 describe('GroupQueue', () => {
@@ -262,5 +272,108 @@ describe('GroupQueue', () => {
 
     // Only one execution total
     expect(taskCallCount).toBe(1);
+  });
+
+  // --- queueDepth ---
+
+  it('queueDepth returns 0 for unknown group', () => {
+    expect(queue.queueDepth('nonexistent@g.us')).toBe(0);
+  });
+
+  it('queueDepth returns 0 for group with no pending items', () => {
+    // Touch the group so it exists in the map by checking something
+    // but it should have no pending tasks or messages
+    const processMessages = vi.fn(async () => true);
+    queue.setProcessMessagesFn(processMessages);
+    queue.enqueueMessageCheck('group1@g.us');
+    // At this point the group is active but pendingMessages is false
+    // queueDepth = pendingTasks.length (0) + (pendingMessages ? 1 : 0) (0) = 0
+    expect(queue.queueDepth('group1@g.us')).toBe(0);
+  });
+
+  it('queueDepth returns 1 when pendingMessages is true', async () => {
+    // Block the first slot to make subsequent enqueues pend
+    let releaseFirst: () => void;
+    const processMessages = vi.fn(async () => {
+      await new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+      return true;
+    });
+    queue.setProcessMessagesFn(processMessages);
+
+    // First enqueue → starts running (active = true)
+    queue.enqueueMessageCheck('group1@g.us');
+    await vi.advanceTimersByTimeAsync(10);
+
+    // Second enqueue while active → pendingMessages = true
+    queue.enqueueMessageCheck('group1@g.us');
+
+    expect(queue.queueDepth('group1@g.us')).toBe(1);
+
+    // Clean up
+    releaseFirst!();
+    await vi.advanceTimersByTimeAsync(10);
+  });
+
+  it('queueDepth returns 2 when two tasks are queued', async () => {
+    // Block the first slot so tasks queue up
+    let releaseFirst: () => void;
+    const processMessages = vi.fn(async () => {
+      await new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+      return true;
+    });
+    queue.setProcessMessagesFn(processMessages);
+
+    // Start a message run to occupy the group slot
+    queue.enqueueMessageCheck('group1@g.us');
+    await vi.advanceTimersByTimeAsync(10);
+
+    // Queue two tasks while the group is active
+    queue.enqueueTask('group1@g.us', 'task-a', vi.fn(async () => {}));
+    queue.enqueueTask('group1@g.us', 'task-b', vi.fn(async () => {}));
+
+    // pendingTasks.length = 2, pendingMessages = false → depth = 2
+    expect(queue.queueDepth('group1@g.us')).toBe(2);
+
+    // Clean up
+    releaseFirst!();
+    await vi.advanceTimersByTimeAsync(10);
+  });
+
+  // --- shutdown timeout expiry ---
+
+  it('logs warning when grace period expires while jobs are still running', async () => {
+    let releaseJob: () => void;
+    const processMessages = vi.fn(async () => {
+      await new Promise<void>((resolve) => {
+        releaseJob = resolve;
+      });
+      return true;
+    });
+    queue.setProcessMessagesFn(processMessages);
+
+    // Start a long-running job
+    queue.enqueueMessageCheck('group1@g.us');
+    await vi.advanceTimersByTimeAsync(10);
+
+    // Shutdown with a very short grace period (100ms) while the job is still running
+    const shutdownPromise = queue.shutdown(100);
+
+    // Advance past the grace period without releasing the job
+    await vi.advanceTimersByTimeAsync(500);
+
+    await shutdownPromise;
+
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+      expect.objectContaining({ activeCount: 1 }),
+      'Grace period expired with active jobs',
+    );
+
+    // Clean up the running job
+    releaseJob!();
+    await vi.advanceTimersByTimeAsync(10);
   });
 });
