@@ -25,7 +25,10 @@ import {
 } from '../db.js';
 import { estimateMessagesTokens } from './compression/token-estimate.js';
 import { summarize } from './compression/summarizer.js';
-import { getRagProvider, augmentPrompt } from '../rag/provider.js';
+import { getRagProvider } from '../rag/provider.js';
+import { runPreprocessorChain } from './preprocessors/chain.js';
+import { buildDefaultPreprocessors } from './preprocessors/registry.js';
+import type { InboundPreprocessor } from './preprocessors/types.js';
 import { logger } from '../logger.js';
 import { RegisteredGroup } from '../types.js';
 import {
@@ -945,6 +948,12 @@ export class DirectLLMRunner implements MessageRunner {
     this.toolCatalog = c;
   }
 
+  /**
+   * Inbound preprocessor chain (transcription → RAG). Injectable for tests;
+   * defaults to buildDefaultPreprocessors() lazily in runAgent.
+   */
+  preprocessors?: InboundPreprocessor[];
+
   constructor(client?: OpenAI) {
     this.client = client ?? createLLMClient();
     this.registerLocalTool(
@@ -1123,17 +1132,17 @@ export class DirectLLMRunner implements MessageRunner {
       ? rawHistory.slice(Math.max(0, rawHistory.length - keepWindow))
       : rawHistory;
 
-    // RAG retrieval (non-fatal): prefix any retrieved context onto the user
-    // turn. augmentPrompt returns the original prompt unchanged when RAG is
-    // disabled or retrieval fails. We augment ONLY the live LLM turn — the
-    // persisted history (persistedUserContent below) keeps the original text
-    // so stored conversation is not polluted with ephemeral context.
-    let augmentedPrompt: string;
-    try {
-      augmentedPrompt = await augmentPrompt(input.groupFolder, input.prompt);
-    } catch {
-      augmentedPrompt = input.prompt;
-    }
+    // Inbound-preprocessor chain (non-fatal): content transforms (e.g. voice →
+    // text) run first and define the canonical user content; prompt augmenters
+    // (e.g. RAG <retrieved_context>) run after, prefixing the LLM-facing prompt
+    // only. The chain returns:
+    //   - augmentedPrompt    → the live LLM turn (post-transform, post-augment)
+    //   - canonicalUserText  → persisted + indexed (post-transform, PRE-augment)
+    // The chain never throws; on any per-preprocessor failure that stage is a
+    // no-op, so a broken capability degrades gracefully.
+    const chain = this.preprocessors ?? buildDefaultPreprocessors();
+    const { prompt: augmentedPrompt, persistedContent: canonicalUserText } =
+      await runPreprocessorChain(chain, input.groupFolder, input.prompt);
 
     const messages: OpenAI.ChatCompletionMessageParam[] = [
       { role: 'system', content: systemPrompt },
@@ -1407,7 +1416,12 @@ export class DirectLLMRunner implements MessageRunner {
 
       // Strip the ephemeral <context current_time="…" /> header before
       // persisting — timestamps belong in the LLM turn, not in stored history.
-      const persistedUserContent = stripContextHeader(input.prompt);
+      // Persist the canonical user content produced by the preprocessor chain
+      // (the transcript when voice was present; otherwise the original prompt),
+      // with the ephemeral <context …/> header stripped. When no transform
+      // fired, canonicalUserText === input.prompt, so this is byte-identical to
+      // the prior behaviour.
+      const persistedUserContent = stripContextHeader(canonicalUserText);
 
       if (useHistory) {
         if (overrides.sessionKey) {
