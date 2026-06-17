@@ -1,80 +1,93 @@
 /**
  * Provider-agnostic embedding client.
  *
- * Supported providers (EMBEDDING_PROVIDER env var):
- *   openai  — OpenAI text-embedding-3-small (default). Reuses OPENAI_API_KEY.
- *   voyage  — Voyage AI voyage-3. Requires VOYAGE_API_KEY.
+ * Preferred API: embed(texts, config) where config is an EmbeddingConfig from a
+ * RAG capability spec. The model/dim/apiKeyEnv defaults come from
+ * resolveEmbeddingDefaults() — a pure function of the config. The raw key is
+ * read from process.env[apiKeyEnv] at embed time only; it never lives in a spec.
  *
- * Environment variables:
- *   EMBEDDING_PROVIDER — "openai" | "voyage" (default: "openai")
- *   EMBEDDING_MODEL    — model name (uses provider default if empty)
- *   EMBEDDING_BASE_URL — optional separate endpoint for embeddings (OpenAI
- *                        provider only). Useful when the chat endpoint
- *                        doesn't serve embeddings (e.g. self-hosted LLM).
- *                        Defaults to OPENAI_BASE_URL if unset.
- *   OPENAI_API_KEY     — reused for OpenAI embeddings
- *   VOYAGE_API_KEY     — required when EMBEDDING_PROVIDER=voyage
- *   VOYAGE_BASE_URL    — optional base URL for Voyage AI (bare host, no
- *                        trailing slash). Defaults to https://api.voyageai.com.
- *                        Set by the credential broker to route traffic through
- *                        the Envoy proxy.
+ * A back-compat embed(texts) form (no config) derives the config from the
+ * EMBEDDING_PROVIDER/EMBEDDING_MODEL/OPENAI_BASE_URL env vars for callers not
+ * yet migrated.
  */
-
 import OpenAI from 'openai';
 import { logger } from '../logger.js';
+import { DEFAULT_EMBEDDING_BY_PROVIDER } from '../capabilities/rag-config.js';
+import type { EmbeddingConfig } from '../capabilities/types.js';
 
 export type EmbeddingProvider = 'openai' | 'voyage';
 
-const PROVIDER = (process.env.EMBEDDING_PROVIDER ||
-  'openai') as EmbeddingProvider;
+export interface ResolvedEmbedding {
+  provider: EmbeddingProvider;
+  model: string;
+  dim: number;
+  baseUrl?: string;
+  apiKey: string;
+  /** The env-var name that the apiKey was read from. */
+  apiKeyEnv: string;
+}
 
-const DEFAULT_MODELS: Record<EmbeddingProvider, string> = {
-  openai: 'text-embedding-3-small',
-  voyage: 'voyage-3',
-};
+/** Pure: fill model/dim/baseUrl/apiKey from config + provider defaults + env key. */
+export function resolveEmbeddingDefaults(config: EmbeddingConfig): ResolvedEmbedding {
+  const defaults = DEFAULT_EMBEDDING_BY_PROVIDER[config.provider];
+  const apiKeyEnv = config.apiKeyEnv ?? defaults.apiKeyEnv;
+  return {
+    provider: config.provider,
+    model: config.model || defaults.model,
+    dim: config.dim ?? defaults.dim,
+    baseUrl: config.baseUrl,
+    apiKey: process.env[apiKeyEnv] || '',
+    apiKeyEnv,
+  };
+}
 
-const DEFAULT_DIMS: Record<EmbeddingProvider, number> = {
-  openai: 1536,
-  voyage: 1024,
-};
+/** Derive an EmbeddingConfig from env (back-compat path for callers without a config). */
+function envEmbeddingConfig(): EmbeddingConfig {
+  const provider = (process.env.EMBEDDING_PROVIDER || 'openai') as EmbeddingProvider;
+  return {
+    provider,
+    model: process.env.EMBEDDING_MODEL || undefined,
+    dim: process.env.EMBEDDING_DIM ? parseInt(process.env.EMBEDDING_DIM, 10) : undefined,
+    baseUrl:
+      provider === 'openai'
+        ? process.env.EMBEDDING_BASE_URL || process.env.OPENAI_BASE_URL || undefined
+        : process.env.VOYAGE_BASE_URL || undefined,
+  };
+}
 
-export const EMBEDDING_MODEL =
-  process.env.EMBEDDING_MODEL || DEFAULT_MODELS[PROVIDER];
+/** @deprecated Use resolveEmbeddingDefaults(config).dim. Env-derived; removed once all callers thread config. */
 export const EMBEDDING_DIM = process.env.EMBEDDING_DIM
   ? parseInt(process.env.EMBEDDING_DIM, 10)
-  : DEFAULT_DIMS[PROVIDER];
+  : DEFAULT_EMBEDDING_BY_PROVIDER[
+      (process.env.EMBEDDING_PROVIDER === 'voyage' ? 'voyage' : 'openai')
+    ].dim;
+
+/** @deprecated Use resolveEmbeddingDefaults(config).model. */
+export const EMBEDDING_MODEL =
+  process.env.EMBEDDING_MODEL ||
+  DEFAULT_EMBEDDING_BY_PROVIDER[
+    (process.env.EMBEDDING_PROVIDER === 'voyage' ? 'voyage' : 'openai')
+  ].model;
+
+/** @deprecated Removed in SP2 — retrieval gating now comes from provider presence. */
 export const RAG_ENABLED = !!(
   process.env.QDRANT_URL && process.env.EMBEDDING_PROVIDER !== 'none'
 );
 
-// ── OpenAI ────────────────────────────────────────────────────────────────────
+// ── OpenAI ──────────────────────────────────────────────────────────────────
 
-let _openaiClient: OpenAI | undefined;
-function getOpenAIClient(): OpenAI {
-  if (!_openaiClient) {
-    // Prefer a dedicated embedding endpoint if configured, so a self-hosted
-    // chat LLM that doesn't serve embeddings can still be paired with a
-    // separate OpenAI-compatible embedding server.
-    const baseURL =
-      process.env.EMBEDDING_BASE_URL || process.env.OPENAI_BASE_URL;
-    _openaiClient = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY || 'no-key',
-      ...(baseURL ? { baseURL } : {}),
-    });
-  }
-  return _openaiClient;
-}
-
-async function embedOpenAI(texts: string[]): Promise<number[][]> {
-  const client = getOpenAIClient();
-  // Force `encoding_format: 'float'` because the OpenAI SDK defaults to
-  // 'base64' in recent versions for wire efficiency, then decodes on the
-  // client. Self-hosted OpenAI-compatible servers that don't implement
-  // base64 will return a plain float array; the SDK's auto-decode then
-  // mis-interprets the floats as packed bytes, yielding a smaller and
-  // garbage vector. Asking for floats explicitly avoids that whole path.
+async function embedOpenAI(
+  texts: string[],
+  resolved: ResolvedEmbedding,
+): Promise<number[][]> {
+  const client = new OpenAI({
+    apiKey: resolved.apiKey || 'no-key',
+    ...(resolved.baseUrl ? { baseURL: resolved.baseUrl } : {}),
+  });
+  // Force float encoding — see history; the SDK defaults to base64 and self-hosted
+  // servers that return plain floats get mis-decoded otherwise.
   const response = await client.embeddings.create({
-    model: EMBEDDING_MODEL,
+    model: resolved.model,
     input: texts,
     encoding_format: 'float',
   });
@@ -83,29 +96,26 @@ async function embedOpenAI(texts: string[]): Promise<number[][]> {
 
 // ── Voyage AI ─────────────────────────────────────────────────────────────────
 
-async function embedVoyage(texts: string[]): Promise<number[][]> {
-  const apiKey = process.env.VOYAGE_API_KEY;
-  if (!apiKey)
-    throw new Error(
-      'VOYAGE_API_KEY is required when EMBEDDING_PROVIDER=voyage',
-    );
-
-  const base =
-    process.env.VOYAGE_BASE_URL ?? 'https://api.voyageai.com';
+async function embedVoyage(
+  texts: string[],
+  resolved: ResolvedEmbedding,
+): Promise<number[][]> {
+  if (!resolved.apiKey) {
+    throw new Error(`${resolved.apiKeyEnv} is required for Voyage embeddings`);
+  }
+  const base = resolved.baseUrl ?? 'https://api.voyageai.com';
   const response = await fetch(`${base}/v1/embeddings`, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${apiKey}`,
+      Authorization: `Bearer ${resolved.apiKey}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ model: EMBEDDING_MODEL, input: texts }),
+    body: JSON.stringify({ model: resolved.model, input: texts }),
   });
-
   if (!response.ok) {
     const err = await response.text();
     throw new Error(`Voyage API error ${response.status}: ${err}`);
   }
-
   const json = (await response.json()) as { data: { embedding: number[] }[] };
   return json.data.map((d) => d.embedding);
 }
@@ -113,23 +123,27 @@ async function embedVoyage(texts: string[]): Promise<number[][]> {
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /**
- * Embed a batch of texts. Returns one vector per input string.
- * Logs and rethrows on provider error.
+ * Embed a batch of texts. Pass the RAG spec's EmbeddingConfig; if omitted the
+ * config is derived from env (back-compat). Returns one vector per input.
  */
-export async function embed(texts: string[]): Promise<number[][]> {
+export async function embed(
+  texts: string[],
+  config?: EmbeddingConfig,
+): Promise<number[][]> {
   if (texts.length === 0) return [];
+  const resolved = resolveEmbeddingDefaults(config ?? envEmbeddingConfig());
   try {
-    switch (PROVIDER) {
+    switch (resolved.provider) {
       case 'openai':
-        return await embedOpenAI(texts);
+        return await embedOpenAI(texts, resolved);
       case 'voyage':
-        return await embedVoyage(texts);
+        return await embedVoyage(texts, resolved);
       default:
-        throw new Error(`Unknown EMBEDDING_PROVIDER: ${PROVIDER}`);
+        throw new Error(`Unknown embedding provider: ${resolved.provider}`);
     }
   } catch (err) {
     logger.error(
-      { err, provider: PROVIDER, count: texts.length },
+      { err, provider: resolved.provider, count: texts.length },
       'Embedding failed',
     );
     throw err;
