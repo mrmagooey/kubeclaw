@@ -229,6 +229,64 @@ describe('registry', () => {
     });
   });
 
+  describe('transcription discovery entry', () => {
+    it('emits the normalized provider in kindMetadata with NO secrets', () => {
+      const entry = specToDiscoveryEntry({
+        kind: 'transcription',
+        name: 'whisper',
+        image: 'onerahmet/openai-whisper-asr-webservice:latest',
+      });
+      if (entry.kind !== 'transcription') throw new Error('expected transcription entry');
+      expect(entry.kindMetadata.provider.transcribePath).toBe('/v1/audio/transcriptions');
+      expect(entry.kindMetadata.provider.responseField).toBe('text');
+      expect(entry.endpoint).toBe('http://kubeclaw-cap-whisper:9000');
+      // No secret/key fields exist on the entry — provider config is the whole shape.
+      expect(JSON.stringify(entry)).not.toMatch(/apiKey|secret|token/i);
+    });
+
+    it('honours an explicit port', () => {
+      const entry = specToDiscoveryEntry({
+        kind: 'transcription', name: 'w', image: 'img', port: 8080,
+      });
+      if (entry.kind !== 'transcription') throw new Error('expected transcription entry');
+      expect(entry.endpoint).toBe('http://kubeclaw-cap-w:8080');
+    });
+  });
+
+  describe('one-per-channel transcription guard', () => {
+    it('rejects a second universal transcription on the same (all) channels', async () => {
+      await installCapability({
+        kind: 'transcription', name: 't1', image: 'img',
+      });
+      await expect(
+        installCapability({ kind: 'transcription', name: 't2', image: 'img' }),
+      ).rejects.toThrow(/transcription/i);
+    });
+
+    it('allows two transcriptions with disjoint channel ACLs', async () => {
+      await installCapability({
+        kind: 'transcription', name: 't1', image: 'img', channels: ['telegram'],
+      });
+      await expect(
+        installCapability({ kind: 'transcription', name: 't2', image: 'img', channels: ['slack'] }),
+      ).resolves.toBeUndefined();
+    });
+
+    it('allows updating an existing transcription (same name) even when unscoped', async () => {
+      await installCapability({ kind: 'transcription', name: 't1', image: 'img:1' });
+      await installCapability({ kind: 'transcription', name: 't1', image: 'img:2' });
+      const list = listCapabilities().filter((c) => c.kind === 'transcription');
+      expect(list).toHaveLength(1);
+      expect(list[0].image).toBe('img:2');
+    });
+
+    it('does not block an MCP install when a transcription is present', async () => {
+      await installCapability({ kind: 'transcription', name: 't1', image: 'img' });
+      await installCapability({ kind: 'mcp', name: 'weather', image: 'mcp/weather:1.0' });
+      expect(listCapabilities()).toHaveLength(2);
+    });
+  });
+
   describe('notifyAllChannels — group-scoped capabilities', () => {
     it('includes mcp-group entries in the published payload', async () => {
       // Setup: install a group-scoped echo capability + cache its schemas.

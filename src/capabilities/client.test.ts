@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 import { _initTestDatabase, __resetDbForTest } from '../db.js';
 import { setCapability } from './db.js';
-import { getMcpEntriesAsync } from './client.js';
+import { getMcpEntriesAsync, getTranscriptionEntry } from './client.js';
 import { cacheSchemas } from '../per-group-capabilities/schema-cache.js';
 
 beforeAll(async () => {
@@ -10,6 +10,39 @@ beforeAll(async () => {
 
 beforeEach(() => {
   __resetDbForTest();
+});
+
+describe('getTranscriptionEntry', () => {
+  it('returns the first transcription entry for the channel', () => {
+    setCapability({ kind: 'mcp', name: 'r', image: 'img-r' });
+    setCapability({ kind: 'transcription', name: 't', image: 'img-t' });
+    const entry = getTranscriptionEntry('*');
+    expect(entry?.name).toBe('t');
+    expect(entry?.kind).toBe('transcription');
+  });
+
+  it('returns undefined when no transcription entry exists', () => {
+    setCapability({ kind: 'http', name: 'h', image: 'img-h' });
+    expect(getTranscriptionEntry('*')).toBeUndefined();
+  });
+
+  it('respects channel ACL — excludes entry scoped to a different channel', () => {
+    setCapability({
+      kind: 'transcription',
+      name: 't-discord',
+      image: 'img',
+      channels: ['discord'],
+    });
+    expect(getTranscriptionEntry('telegram')).toBeUndefined();
+    expect(getTranscriptionEntry('discord')?.name).toBe('t-discord');
+  });
+
+  it('does not leak apiKey/secret/token fields in the discovery entry', () => {
+    setCapability({ kind: 'transcription', name: 'whisper', image: 'img' });
+    const entry = getTranscriptionEntry('*');
+    expect(entry).toBeDefined();
+    expect(JSON.stringify(entry)).not.toMatch(/apiKey|secret|token/i);
+  });
 });
 
 describe('getMcpEntriesAsync', () => {

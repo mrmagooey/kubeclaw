@@ -156,8 +156,47 @@ function assertNoConflictingRag(spec: CapabilitySpec): void {
   }
 }
 
+/**
+ * One-per-channel guard for transcription (D6). getTranscriptionEntry() returns
+ * the first match, so a second transcription on the same channel silently
+ * orphans a pod. Two may coexist only with disjoint `channels` ACLs; an empty/
+ * absent ACL means "all channels" and conflicts with any other. Updates to an
+ * existing spec (matched by name) are exempt.
+ */
+function assertNoConflictingTranscription(spec: CapabilitySpec): void {
+  if (spec.kind !== 'transcription') return;
+  const others = listCapabilitiesByKind('transcription').filter(
+    (c) => c.name !== spec.name,
+  );
+  if (others.length === 0) return;
+
+  const incoming = spec.channels?.length ? new Set(spec.channels) : null;
+  for (const other of others) {
+    const otherChannels = other.channels?.length ? new Set(other.channels) : null;
+    if (incoming === null || otherChannels === null) {
+      const universal = incoming === null ? spec.name : other.name;
+      throw new Error(
+        `Transcription '${spec.name}' conflicts with already-installed transcription '${other.name}': ` +
+          `'${universal}' is unscoped (applies to all channels). ` +
+          'Each channel may bind at most one transcription. Give both specs disjoint `channels` ACLs, ' +
+          `or remove '${other.name}' first.`,
+      );
+    }
+    const overlap = [...incoming].filter((c) => otherChannels.has(c));
+    if (overlap.length > 0) {
+      throw new Error(
+        `Transcription '${spec.name}' conflicts with already-installed transcription '${other.name}' ` +
+          `on channel(s): ${overlap.join(', ')}. ` +
+          'Each channel may bind at most one transcription. Adjust the `channels` ACLs so they are disjoint, ' +
+          `or remove '${other.name}' first.`,
+      );
+    }
+  }
+}
+
 export async function installCapability(spec: CapabilitySpec): Promise<void> {
   assertNoConflictingRag(spec);
+  assertNoConflictingTranscription(spec);
   setCapability(spec);
   await applySpec(spec);
   logger.info(
