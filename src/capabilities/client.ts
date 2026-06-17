@@ -12,6 +12,15 @@ export function getRagEntry(
   );
 }
 
+export function getTranscriptionEntry(
+  channelName: string,
+): Extract<CapabilityDiscoveryEntry, { kind: 'transcription' }> | undefined {
+  return getEntriesForChannel(channelName).find(
+    (e): e is Extract<CapabilityDiscoveryEntry, { kind: 'transcription' }> =>
+      e.kind === 'transcription',
+  );
+}
+
 export function getHttpEntry(
   channelName: string,
   name: string,
