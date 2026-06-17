@@ -1249,6 +1249,284 @@ describe('recommendation pattern — integration', () => {
   });
 });
 
+// ---- Import propose-skill mock for use in later describes ----
+import { proposeSkill } from './tools/propose-skill.js';
+
+describe('DirectLLMRunner — propose_skill dispatch', () => {
+  const baseGroup = {
+    name: 'test-group',
+    folder: 'test-group',
+    trigger: '',
+    added_at: new Date().toISOString(),
+  };
+
+  const baseInput = {
+    groupFolder: 'test-group',
+    chatJid: 'user@test',
+    isMain: true,
+    prompt: 'Hello!',
+    sessionId: undefined,
+    assistantName: 'TestBot',
+    secrets: undefined,
+  };
+
+  const proposeToolCall = {
+    id: 'call-1',
+    type: 'function',
+    function: {
+      name: 'propose_skill',
+      arguments: JSON.stringify({
+        proposed_name: 'test-skill',
+        description: 'A test skill',
+        body: '# test\nDo things',
+        rationale: 'useful',
+      }),
+    },
+  };
+
+  const finalAnswer = {
+    choices: [
+      { message: { role: 'assistant', content: 'Skill noted.', tool_calls: [] } },
+    ],
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockRedisInstance.xread.mockResolvedValue(null);
+  });
+
+  it('propose_skill "staged" result — message contains "Staged candidate"', async () => {
+    vi.mocked(proposeSkill).mockResolvedValueOnce({
+      kind: 'staged',
+      candidateId: 'cand-abc',
+      preview: 'preview text',
+    });
+
+    mockCreate
+      .mockResolvedValueOnce({
+        choices: [
+          {
+            message: {
+              role: 'assistant',
+              content: null,
+              tool_calls: [proposeToolCall],
+            },
+          },
+        ],
+      })
+      .mockResolvedValueOnce(finalAnswer);
+
+    const { DirectLLMRunner } = await import('./direct-llm-runner.js');
+    const runner = new DirectLLMRunner();
+    const result = await runner.runAgent(baseGroup, baseInput);
+
+    expect(result.status).toBe('success');
+    // The tool result fed back to the LLM should mention "Staged candidate"
+    const secondCallMessages = mockCreate.mock.calls[1][0].messages;
+    const toolMsg = secondCallMessages.find((m: any) => m.role === 'tool');
+    expect(toolMsg).toBeDefined();
+    expect(toolMsg.content).toContain('Staged candidate');
+    expect(toolMsg.content).toContain('cand-abc');
+  });
+
+  it('propose_skill "duplicate" result — message contains duplicate info', async () => {
+    vi.mocked(proposeSkill).mockResolvedValueOnce({
+      kind: 'duplicate',
+      existing: 'existing-skill',
+      suggestion: 'edit the existing one',
+    });
+
+    mockCreate
+      .mockResolvedValueOnce({
+        choices: [
+          {
+            message: {
+              role: 'assistant',
+              content: null,
+              tool_calls: [proposeToolCall],
+            },
+          },
+        ],
+      })
+      .mockResolvedValueOnce(finalAnswer);
+
+    const { DirectLLMRunner } = await import('./direct-llm-runner.js');
+    const runner = new DirectLLMRunner();
+    const result = await runner.runAgent(baseGroup, baseInput);
+
+    expect(result.status).toBe('success');
+    const secondCallMessages = mockCreate.mock.calls[1][0].messages;
+    const toolMsg = secondCallMessages.find((m: any) => m.role === 'tool');
+    expect(toolMsg).toBeDefined();
+    expect(toolMsg.content).toContain('existing-skill');
+    expect(toolMsg.content).toContain('edit the existing one');
+  });
+
+  it('propose_skill "error" result — message contains "Error:"', async () => {
+    vi.mocked(proposeSkill).mockResolvedValueOnce({
+      kind: 'error',
+      message: 'invalid slug (use kebab-case): Bad Name',
+    });
+
+    mockCreate
+      .mockResolvedValueOnce({
+        choices: [
+          {
+            message: {
+              role: 'assistant',
+              content: null,
+              tool_calls: [proposeToolCall],
+            },
+          },
+        ],
+      })
+      .mockResolvedValueOnce(finalAnswer);
+
+    const { DirectLLMRunner } = await import('./direct-llm-runner.js');
+    const runner = new DirectLLMRunner();
+    const result = await runner.runAgent(baseGroup, baseInput);
+
+    expect(result.status).toBe('success');
+    const secondCallMessages = mockCreate.mock.calls[1][0].messages;
+    const toolMsg = secondCallMessages.find((m: any) => m.role === 'tool');
+    expect(toolMsg).toBeDefined();
+    expect(toolMsg.content).toContain('Error:');
+    expect(toolMsg.content).toContain('invalid slug');
+  });
+
+  it('dupCheck — returns {duplicate: false} without calling LLM when existing list is empty', async () => {
+    // Restore the real proposeSkill so dupCheck actually runs
+    vi.mocked(proposeSkill).mockImplementationOnce(async (_root, _group, args, dupCheck) => {
+      const result = await dupCheck(args, []);
+      // dupCheck with empty list should be {duplicate: false} without any LLM call
+      expect(result).toEqual({ duplicate: false });
+      // The mockCreate should not have been called by dupCheck
+      return { kind: 'staged', candidateId: 'c1', preview: 'preview' };
+    });
+
+    mockCreate
+      .mockResolvedValueOnce({
+        choices: [
+          {
+            message: {
+              role: 'assistant',
+              content: null,
+              tool_calls: [proposeToolCall],
+            },
+          },
+        ],
+      })
+      .mockResolvedValueOnce(finalAnswer);
+
+    const { DirectLLMRunner } = await import('./direct-llm-runner.js');
+    const runner = new DirectLLMRunner();
+    await runner.runAgent(baseGroup, baseInput);
+
+    // Only the two main LLM calls (tool call + final answer), no extra call from dupCheck
+    expect(mockCreate).toHaveBeenCalledTimes(2);
+  });
+
+  it('dupCheck — calls LLM and returns parsed result when existing skills are present', async () => {
+    const existingSkill = {
+      frontmatter: {
+        name: 'my-existing-skill',
+        description: 'Does existing things',
+        created: '2026-01-01',
+        source: 'manual',
+      },
+      body: 'Skill body here.\n',
+    };
+
+    vi.mocked(proposeSkill).mockImplementationOnce(async (_root, _group, args, dupCheck) => {
+      // Mock the dupCheck LLM call to return a non-duplicate
+      mockCreate.mockResolvedValueOnce({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({ duplicate: false, existing: null, suggestion: null }),
+            },
+          },
+        ],
+      });
+
+      const result = await dupCheck(args, [existingSkill as any]);
+      expect(result.duplicate).toBe(false);
+      return { kind: 'staged', candidateId: 'c2', preview: 'p' };
+    });
+
+    mockCreate
+      .mockResolvedValueOnce({
+        choices: [
+          {
+            message: {
+              role: 'assistant',
+              content: null,
+              tool_calls: [proposeToolCall],
+            },
+          },
+        ],
+      })
+      .mockResolvedValueOnce(finalAnswer);
+
+    const { DirectLLMRunner } = await import('./direct-llm-runner.js');
+    const runner = new DirectLLMRunner();
+    await runner.runAgent(baseGroup, baseInput);
+
+    // 3 LLM calls: initial tool call + dupCheck + final answer
+    expect(mockCreate).toHaveBeenCalledTimes(3);
+  });
+
+  it('dupCheck — parse failure returns {duplicate: false}', async () => {
+    const existingSkill = {
+      frontmatter: {
+        name: 'my-existing-skill',
+        description: 'Does existing things',
+        created: '2026-01-01',
+        source: 'manual',
+      },
+      body: 'Skill body here.\n',
+    };
+
+    vi.mocked(proposeSkill).mockImplementationOnce(async (_root, _group, args, dupCheck) => {
+      // Mock the dupCheck LLM call to return null content (unparseable)
+      mockCreate.mockResolvedValueOnce({
+        choices: [
+          {
+            message: {
+              content: null, // null — JSON.parse will fall back to '{"duplicate":false}'
+            },
+          },
+        ],
+      });
+
+      const result = await dupCheck(args, [existingSkill as any]);
+      // null content → falls back to {"duplicate":false}
+      expect(result).toEqual({ duplicate: false });
+      return { kind: 'staged', candidateId: 'c3', preview: 'p' };
+    });
+
+    mockCreate
+      .mockResolvedValueOnce({
+        choices: [
+          {
+            message: {
+              role: 'assistant',
+              content: null,
+              tool_calls: [proposeToolCall],
+            },
+          },
+        ],
+      })
+      .mockResolvedValueOnce(finalAnswer);
+
+    const { DirectLLMRunner } = await import('./direct-llm-runner.js');
+    const runner = new DirectLLMRunner();
+    const result = await runner.runAgent(baseGroup, baseInput);
+
+    expect(result.status).toBe('success');
+  });
+});
+
 describe('DirectLLMRunner — direct-mode custom-tool dispatch (Fix 1 + Fix 2)', () => {
   const baseGroup = {
     name: 'test-group',
