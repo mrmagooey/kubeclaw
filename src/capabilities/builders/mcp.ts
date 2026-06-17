@@ -17,5 +17,8 @@ export function buildMcpYaml(spec: McpCapabilitySpec): string {
     args: spec.args,
     resources: spec.resources,
     healthPath: spec.healthPath,
+    probe: spec.probe,
+    scheduling: spec.scheduling,
+    podSecurity: spec.podSecurity,
   });
 }

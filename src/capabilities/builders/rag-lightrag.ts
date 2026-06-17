@@ -23,5 +23,8 @@ export function buildRagLightRagYaml(spec: RagCapabilitySpec): string {
     resources: spec.resources,
     healthPath: spec.healthPath ?? DEFAULT_HEALTH_PATH,
     storage: spec.storage ?? DEFAULT_STORAGE,
+    probe: spec.probe,
+    scheduling: spec.scheduling,
+    podSecurity: spec.podSecurity,
   });
 }
