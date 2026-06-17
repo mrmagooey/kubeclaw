@@ -29,8 +29,7 @@ const KNOWN_CHANNELS = [
 
 const MCP_DEFAULT_PORT = 3000;
 const HTTP_DEFAULT_PORT = 8080;
-const RAG_QDRANT_DEFAULT_PORT = 6333;
-const RAG_LIGHTRAG_DEFAULT_PORT = 9621;
+const RAG_DEFAULT_PORT = 6333;
 
 function defaultPort(spec: CapabilitySpec): number {
   switch (spec.kind) {
@@ -39,12 +38,7 @@ function defaultPort(spec: CapabilitySpec): number {
     case 'http':
       return spec.port ?? HTTP_DEFAULT_PORT;
     case 'rag':
-      return (
-        spec.port ??
-        (spec.backend === 'qdrant'
-          ? RAG_QDRANT_DEFAULT_PORT
-          : RAG_LIGHTRAG_DEFAULT_PORT)
-      );
+      return spec.port ?? RAG_DEFAULT_PORT;
   }
 }
 

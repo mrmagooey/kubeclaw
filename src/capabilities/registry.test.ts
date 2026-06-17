@@ -207,6 +207,28 @@ describe('registry', () => {
     });
   });
 
+  describe('rag discovery entry', () => {
+    it('emits backend + normalized provider in kindMetadata for a legacy spec', () => {
+      const entry = specToDiscoveryEntry({
+        kind: 'rag', backend: 'qdrant', name: 'r', image: 'qdrant/qdrant',
+      });
+      if (entry.kind !== 'rag') throw new Error('expected rag entry');
+      expect(entry.kindMetadata.backend).toBe('qdrant');
+      expect(entry.kindMetadata.provider.adapter).toBe('vector-store');
+      expect(entry.endpoint).toBe('http://kubeclaw-cap-r:6333');
+    });
+
+    it('passes an explicit provider through to kindMetadata', () => {
+      const entry = specToDiscoveryEntry({
+        kind: 'rag', backend: 'lightrag', name: 'lr', image: 'lightrag', port: 9621,
+        provider: { adapter: 'remote', queryMode: 'naive' },
+      });
+      if (entry.kind !== 'rag') throw new Error('expected rag entry');
+      expect(entry.kindMetadata.provider.adapter).toBe('remote');
+      expect(entry.endpoint).toBe('http://kubeclaw-cap-lr:9621');
+    });
+  });
+
   describe('notifyAllChannels — group-scoped capabilities', () => {
     it('includes mcp-group entries in the published payload', async () => {
       // Setup: install a group-scoped echo capability + cache its schemas.
