@@ -78,68 +78,75 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
- * Subscribe to the admin /events SSE stream and wait for a message whose text
- * matches the given predicate, up to timeoutMs. Returns the matching text or
- * throws on timeout.
+ * Open the admin /events SSE stream and buffer incoming messages.
+ * Returns a `waitFor` poller that checks the buffer, and a `dispose`
+ * function that aborts the stream.
+ *
+ * Call this BEFORE triggering any operation whose SSE event you want to
+ * capture — opening the stream first eliminates the race between "event
+ * emitted" and "connection established".
  */
-async function waitForSseMessage(
+async function openAdminSseStream(
   adminUrl: string,
   authHeader: string,
-  predicate: (text: string) => boolean,
-  timeoutMs: number,
-): Promise<string> {
+): Promise<{
+  texts: string[];
+  waitFor: (predicate: (text: string) => boolean, timeoutMs: number) => Promise<string>;
+  dispose: () => void;
+}> {
   const controller = new AbortController();
-  const eventsRes = await fetch(`${adminUrl}/events`, {
+  const res = await fetch(`${adminUrl}/events`, {
     headers: { Authorization: authHeader, Accept: 'text/event-stream' },
     signal: controller.signal,
   });
-  if (eventsRes.status !== 200) {
-    throw new Error(`SSE /events returned ${eventsRes.status}`);
+  if (res.status !== 200 || !res.body) {
+    throw new Error(`SSE /events returned ${res.status}`);
   }
 
-  const reader = eventsRes.body!.getReader();
+  const texts: string[] = [];
+  const reader = res.body.getReader();
   const decoder = new TextDecoder();
-  let buffer = '';
-  const deadline = Date.now() + timeoutMs;
+  let buf = '';
 
-  try {
-    while (Date.now() < deadline) {
-      const readTimeout = Math.min(5000, deadline - Date.now());
-      const result = await Promise.race([
-        reader.read(),
-        sleep(readTimeout).then(() => ({ value: undefined, done: false as const })),
-      ]);
-      if (result.done) break;
-      if (result.value) {
-        buffer += decoder.decode(result.value, { stream: true });
-      }
-
-      const lines = buffer.split('\n');
-      buffer = lines.pop() ?? '';
-      for (const line of lines) {
-        if (line.startsWith('data:')) {
-          try {
-            const payload = JSON.parse(line.slice(5).trim()) as {
-              type?: string;
-              text?: string;
-            };
-            const text = payload.text ?? '';
-            if (predicate(text)) {
-              return text;
-            }
-          } catch {
-            // not JSON — check raw line for plain-text SSE
+  (async () => {
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let nl: number;
+        while ((nl = buf.indexOf('\n')) !== -1) {
+          const line = buf.slice(0, nl);
+          buf = buf.slice(nl + 1);
+          if (line.startsWith('data:')) {
             const raw = line.slice(5).trim();
-            if (predicate(raw)) return raw;
+            try {
+              const payload = JSON.parse(raw) as { type?: string; text?: string };
+              texts.push(payload.text ?? '');
+            } catch {
+              texts.push(raw);
+            }
           }
         }
       }
+    } catch {
+      // aborted — expected on dispose()
     }
-  } finally {
-    controller.abort();
-  }
+  })().catch(() => {});
 
-  throw new Error(`No matching SSE message within ${timeoutMs}ms`);
+  return {
+    texts,
+    waitFor: async (predicate, timeoutMs) => {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        const match = texts.find(predicate);
+        if (match !== undefined) return match;
+        await new Promise<void>((r) => setTimeout(r, 300));
+      }
+      throw new Error(`No matching SSE message within ${timeoutMs}ms`);
+    },
+    dispose: () => controller.abort(),
+  };
 }
 
 /**
@@ -309,87 +316,85 @@ describe(
           return;
         }
 
-        // Step 1: Call bootstrap_channel_from_skill — expect "Bootstrap started successfully".
-        const bootstrapReply = await callBootstrapChannelFromSkill(
-          ADMIN_URL,
-          authHeader,
-          INSTANCE_NAME,
-        );
-        expect(bootstrapReply).toContain('Bootstrap started');
+        // SSE stream is opened BEFORE triggering the bootstrap, so any timeout
+        // event emitted after Job creation is guaranteed to be captured regardless
+        // of how quickly the 25s deadline fires.
+        const sse = await openAdminSseStream(ADMIN_URL, authHeader);
+        try {
+          // Step 1: Call bootstrap_channel_from_skill — expect "Bootstrap started successfully".
+          const bootstrapReply = await callBootstrapChannelFromSkill(
+            ADMIN_URL,
+            authHeader,
+            INSTANCE_NAME,
+          );
+          expect(bootstrapReply).toContain('Bootstrap started');
 
-        // Step 2: Wait for the timeout SSE message (type=timeout).
-        // The Job's activeDeadlineSeconds=BOOTSTRAP_TIMEOUT_SECONDS will fire.
-        // The orchestrator observes DeadlineExceeded and calls cleanupBootstrapResources.
-        //
-        // Note: there is an acceptable race window here — callBootstrapChannelFromSkill
-        // polls kubectl until the Job appears, and only then does waitForSseMessage open
-        // the /events SSE connection. Any SSE events emitted between "Job appears" and
-        // "SSE opens" would be missed. For the default BOOTSTRAP_TIMEOUT_SECONDS value
-        // (~60 s) the timeout event fires well after the SSE connection is established,
-        // so the window is harmless in practice. Only a very short timeout (< ~5 s)
-        // would make this a real concern.
-        const timeoutMsg = await waitForSseMessage(
-          ADMIN_URL,
-          authHeader,
-          (text) =>
-            text.includes('timed out; nothing was installed') ||
-            text.includes('timed out'),
-          TEST_TIMEOUT_MS,
-        );
+          // Step 2: Wait for the timeout SSE message (type=timeout).
+          // The Job's activeDeadlineSeconds=BOOTSTRAP_TIMEOUT_SECONDS will fire.
+          // The orchestrator observes DeadlineExceeded and calls cleanupBootstrapResources.
+          const timeoutMsg = await sse.waitFor(
+            (text) =>
+              text.includes('timed out; nothing was installed') ||
+              text.includes('timed out'),
+            TEST_TIMEOUT_MS,
+          );
 
-        expect(timeoutMsg).toContain('timed out');
-        expect(timeoutMsg).toContain('nothing was installed');
+          expect(timeoutMsg).toContain('timed out');
+          expect(timeoutMsg).toContain('nothing was installed');
 
-        // Wait a moment for cleanup to settle before querying K8s.
-        await sleep(5_000);
+          // Wait a moment for cleanup to settle before querying K8s.
+          await sleep(5_000);
 
-        // Step 3: Assert no PVC remains.
-        const pvcResult = kubectl(
-          [
-            'get',
-            'pvc',
-            '-n',
-            NAMESPACE,
-            `kubeclaw-channel-${INSTANCE_NAME}-runtime`,
-          ],
-          { allowFail: true },
-        );
-        expect(pvcResult.ok).toBe(false); // 404 → kubectl exits non-zero
+          // Step 3: Assert no PVC remains.
+          const pvcResult = kubectl(
+            [
+              'get',
+              'pvc',
+              '-n',
+              NAMESPACE,
+              `kubeclaw-channel-${INSTANCE_NAME}-runtime`,
+            ],
+            { allowFail: true },
+          );
+          expect(pvcResult.ok).toBe(false); // 404 → kubectl exits non-zero
 
-        // Step 4: Assert no Job remains.
-        const jobResult = kubectl(
-          [
-            'get',
-            'job',
-            '-n',
-            NAMESPACE,
-            `kubeclaw-bootstrap-${INSTANCE_NAME}`,
-          ],
-          { allowFail: true },
-        );
-        expect(jobResult.ok).toBe(false); // 404 → kubectl exits non-zero
+          // Step 4: Assert no Job remains.
+          const jobResult = kubectl(
+            [
+              'get',
+              'job',
+              '-n',
+              NAMESPACE,
+              `kubeclaw-bootstrap-${INSTANCE_NAME}`,
+            ],
+            { allowFail: true },
+          );
+          expect(jobResult.ok).toBe(false); // 404 → kubectl exits non-zero
 
-        // Step 5: Assert retry with the same instance name succeeds (not "already in progress").
-        const retryReply = await callBootstrapChannelFromSkill(
-          ADMIN_URL,
-          authHeader,
-          INSTANCE_NAME,
-        );
-        expect(retryReply).not.toContain('already in progress');
-        expect(retryReply).toContain('Bootstrap started');
+          // Step 5: Assert retry with the same instance name succeeds (not "already in progress").
+          const retryReply = await callBootstrapChannelFromSkill(
+            ADMIN_URL,
+            authHeader,
+            INSTANCE_NAME,
+          );
+          expect(retryReply).not.toContain('already in progress');
+          expect(retryReply).toContain('Bootstrap started');
 
-        // Cleanup: delete the retry Job immediately so afterAll has less to do.
-        kubectl(
-          [
-            'delete',
-            'job',
-            '-n',
-            NAMESPACE,
-            `kubeclaw-bootstrap-${INSTANCE_NAME}`,
-            '--ignore-not-found',
-          ],
-          { allowFail: true },
-        );
+          // Cleanup: delete the retry Job immediately so afterAll has less to do.
+          kubectl(
+            [
+              'delete',
+              'job',
+              '-n',
+              NAMESPACE,
+              `kubeclaw-bootstrap-${INSTANCE_NAME}`,
+              '--ignore-not-found',
+            ],
+            { allowFail: true },
+          );
+        } finally {
+          sse.dispose();
+        }
       },
       // Overall test timeout: Job deadline + grace + buffer
       TEST_TIMEOUT_MS + 30_000,

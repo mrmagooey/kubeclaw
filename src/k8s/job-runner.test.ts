@@ -132,7 +132,7 @@ vi.mock('@kubernetes/client-node', () => {
 });
 
 // Now import after mocks are set up
-import { JobRunner, buildJobName, parseContainerOutputFromLogs } from './job-runner.js';
+import { JobRunner, buildJobName, parseContainerOutputFromLogs, DeadlineExceededError } from './job-runner.js';
 import * as configModule from '../config.js';
 import { assertGroupMountAllowed } from '../config.js';
 
@@ -811,6 +811,100 @@ describe('JobRunner', () => {
       await expectation;
 
       vi.useRealTimers();
+    });
+
+    it('should throw DeadlineExceededError when startTime/elapsed exceeds activeDeadlineSeconds (poll race fallback)', async () => {
+      // Simulate a job that has been running 35s against a 30s deadline.
+      // The Failed condition has no reason yet (poll race), but elapsed >= deadline-2.
+      mockBatchApi.readNamespacedJob.mockResolvedValue({
+        spec: {
+          activeDeadlineSeconds: 30,
+        },
+        status: {
+          failed: 1,
+          startTime: new Date(Date.now() - 35_000),
+          conditions: [
+            {
+              type: 'Failed',
+              reason: 'Unknown',
+              message: 'Job failed',
+            },
+          ],
+        },
+      });
+      mockCoreApi.listNamespacedPod.mockResolvedValue({ items: [] });
+
+      await expect(jobRunner.waitForJobCompletion('test-job')).rejects.toThrow(
+        DeadlineExceededError,
+      );
+    });
+
+    it('should throw generic error when job fails early (elapsed < deadline threshold)', async () => {
+      // Job failed after only 5s — well within the 30s deadline.
+      // The elapsed check must NOT fire; we should get the generic error.
+      mockBatchApi.readNamespacedJob.mockResolvedValue({
+        spec: {
+          activeDeadlineSeconds: 30,
+        },
+        status: {
+          failed: 1,
+          startTime: new Date(Date.now() - 5_000),
+          conditions: [
+            {
+              type: 'Failed',
+              reason: 'Unknown',
+              message: 'Job failed',
+            },
+          ],
+        },
+      });
+      mockCoreApi.listNamespacedPod.mockResolvedValue({ items: [] });
+
+      await expect(jobRunner.waitForJobCompletion('test-job')).rejects.toThrow(
+        'Unknown',
+      );
+      await expect(
+        jobRunner.waitForJobCompletion('test-job'),
+      ).rejects.not.toThrow(DeadlineExceededError);
+    });
+
+    it('should throw DeadlineExceededError when reason is explicitly DeadlineExceeded', async () => {
+      mockBatchApi.readNamespacedJob.mockResolvedValue({
+        status: {
+          failed: 1,
+          conditions: [
+            {
+              type: 'Failed',
+              reason: 'DeadlineExceeded',
+              message: 'Job was active longer than specified deadline',
+            },
+          ],
+        },
+      });
+
+      await expect(jobRunner.waitForJobCompletion('test-job')).rejects.toThrow(
+        DeadlineExceededError,
+      );
+    });
+
+    it('should throw DeadlineExceededError when message contains "deadline" even if reason is Unknown', async () => {
+      mockBatchApi.readNamespacedJob.mockResolvedValue({
+        status: {
+          failed: 1,
+          conditions: [
+            {
+              type: 'Failed',
+              reason: 'Unknown',
+              message: 'Job was active longer than specified deadline',
+            },
+          ],
+        },
+      });
+      mockCoreApi.listNamespacedPod.mockResolvedValue({ items: [] });
+
+      await expect(jobRunner.waitForJobCompletion('test-job')).rejects.toThrow(
+        DeadlineExceededError,
+      );
     });
   });
 

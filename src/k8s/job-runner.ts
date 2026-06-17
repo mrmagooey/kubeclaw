@@ -1325,6 +1325,33 @@ export class JobRunner {
             throw new DeadlineExceededError(jobName);
           }
 
+          // K8s poll race: reason may still be 'Unknown' when the Failed
+          // condition message already contains the deadline indicator.
+          if (message.toLowerCase().includes('deadline')) {
+            throw new DeadlineExceededError(jobName);
+          }
+
+          // K8s poll race fallback: reason and message may not yet reflect
+          // DeadlineExceeded, so use elapsed wall-clock time as a tiebreaker.
+          // Only fires when activeDeadlineSeconds is configured AND the job
+          // has been running at least (activeDeadlineSeconds - 2) seconds.
+          // Log at warn so operators can distinguish K8s-race classification
+          // from a potential false positive (a job that legitimately failed
+          // near its deadline).
+          if (job.spec?.activeDeadlineSeconds && job.status?.startTime) {
+            const deadlineSeconds = job.spec.activeDeadlineSeconds;
+            const startMs = new Date(job.status.startTime).getTime();
+            const elapsedSeconds = (Date.now() - startMs) / 1000;
+            if (elapsedSeconds >= deadlineSeconds - 2) {
+              logger.warn(
+                { jobName, elapsedSeconds, deadlineSeconds, reason },
+                'waitForJobCompletion: elapsed-time fallback detected DeadlineExceeded ' +
+                  '(K8s condition reason not yet populated)',
+              );
+              throw new DeadlineExceededError(jobName);
+            }
+          }
+
           // Story 46: Check if the job failure was due to an OOMKilled container.
           // The Job-level condition won't say "OOMKilled" — it typically says
           // "BackoffLimitExceeded".  We must inspect pod containerStatuses to
