@@ -173,6 +173,7 @@ export async function handleCapabilitiesUpdate(
         path?: string;
         allowedTools?: string[];
         backend?: string;
+        provider?: import('./capabilities/types.js').RagProviderConfig;
       };
     }>;
 
@@ -241,6 +242,7 @@ interface DiscoveryEntryLite {
     path?: string;
     allowedTools?: string[];
     backend?: string;
+    provider?: import('./capabilities/types.js').RagProviderConfig;
   };
 }
 
@@ -280,11 +282,20 @@ function syncCapabilitiesToLocalDb(entries: DiscoveryEntryLite[]): void {
         break;
       case 'rag': {
         const backend = entry.kindMetadata.backend;
-        if (backend !== 'qdrant' && backend !== 'lightrag') {
-          // Unknown backend — skip rather than write a malformed row.
+        const provider = entry.kindMetadata.provider;
+        // Validate the adapter; skip unknown shapes rather than write a bad row.
+        if (
+          !provider ||
+          (provider.adapter !== 'vector-store' && provider.adapter !== 'remote')
+        ) {
           continue;
         }
-        spec = { ...common, kind: 'rag', backend };
+        spec = {
+          ...common,
+          kind: 'rag',
+          backend: backend ?? 'unknown',
+          provider,
+        };
         break;
       }
       case 'http':
