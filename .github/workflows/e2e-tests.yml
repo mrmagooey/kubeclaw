@@ -148,38 +148,44 @@ jobs:
           minikube image load ${{ needs.build-images.outputs.orchestrator_tag }}
           minikube image load ${{ needs.build-images.outputs.agent_tag }}
 
-      - name: Create namespace
-        run: kubectl create namespace kubeclaw
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: "v3.16.0"
 
-      - name: Apply Kubernetes manifests
+      - name: Install cert-manager
         run: |
-          kubectl apply -f k8s/00-namespace.yaml || true
-          kubectl apply -f k8s/10-redis.yaml
-          kubectl apply -f k8s/20-storage.yaml
-          kubectl apply -f k8s/30-orchestrator.yaml
-          kubectl apply -f k8s/40-agent-job-template.yaml
-          kubectl apply -f k8s/01-network-policy.yaml || true
+          helm repo add jetstack https://charts.jetstack.io --force-update
+          helm upgrade --install cert-manager jetstack/cert-manager \
+            --namespace cert-manager \
+            --create-namespace \
+            --set installCRDs=true \
+            --timeout 120s \
+            --wait
+          kubectl wait --namespace cert-manager \
+            --for=condition=Ready pods --all --timeout=120s
 
-      - name: Wait for Redis
+      - name: Pre-create namespace for Helm ownership
         run: |
-          kubectl wait --namespace=kubeclaw --for=condition=ready pod -l app=kubeclaw-redis --timeout=120s
+          kubectl create namespace kubeclaw --dry-run=client -o yaml | kubectl apply -f -
+          kubectl label namespace kubeclaw app.kubernetes.io/managed-by=Helm --overwrite
+          kubectl annotate namespace kubeclaw \
+            meta.helm.sh/release-name=kubeclaw \
+            meta.helm.sh/release-namespace=kubeclaw \
+            --overwrite
 
-      - name: Deploy orchestrator
+      - name: Install kubeclaw via Helm
         run: |
-          # Update image tag in orchestrator deployment
-          sed -i 's|image: kubeclaw-orchestrator:latest|image: ${{ needs.build-images.outputs.orchestrator_tag }}|' k8s/30-orchestrator.yaml
-
-          # Create secrets
-          kubectl create secret generic kubeclaw-secrets \
-            --namespace=kubeclaw \
-            --from-literal=anthropic-api-key=${{ secrets.ANTHROPIC_API_KEY }} \
-            --dry-run=client -o yaml | kubectl apply -f -
-
-          kubectl apply -f k8s/30-orchestrator.yaml
-
-      - name: Wait for orchestrator
-        run: |
-          kubectl wait --namespace=kubeclaw --for=condition=available deployment/kubeclaw-orchestrator --timeout=180s
+          helm upgrade --install kubeclaw helm/kubeclaw \
+            --namespace kubeclaw \
+            --timeout 180s \
+            --set namespace=kubeclaw \
+            --set secrets.anthropicApiKey=${{ secrets.ANTHROPIC_API_KEY }} \
+            --set redis.password=kubeclaw-e2e-redis-pass \
+            --set image.tag=${{ github.sha }} \
+            --set image.pullPolicy=Never \
+            --set credentialInjection.broker.image=kubeclaw-orchestrator:${{ github.sha }} \
+            --wait
 
       - name: Run E2E tests - ${{ matrix.test-phase }}
         id: test
@@ -201,7 +207,8 @@ jobs:
               || touch e2e/results/test-failed
           fi
         env:
-          REDIS_URL: redis://kubeclaw-redis.kubeclaw.svc.cluster.local:6379
+          KUBECLAW_REDIS_URL: redis://orchestrator:kubeclaw-e2e-redis-pass@localhost:16379
+          REDIS_URL: redis://orchestrator:kubeclaw-e2e-redis-pass@localhost:16379
           KUBECONFIG: ${{ github.workspace }}/kubeconfig
           DEBUG: ${{ github.event.inputs.debug_mode && 'true' || 'false' }}
 
