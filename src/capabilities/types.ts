@@ -160,6 +160,23 @@ export interface RagCapabilitySpec extends CapabilityBase {
   provider?: RagProviderConfig;
 }
 
+export interface TranscriptionProviderConfig {
+  /** Multipart upload endpoint path. Default '/v1/audio/transcriptions'. */
+  transcribePath?: string;
+  /** Model name; sent as a multipart field when set. */
+  model?: string;
+  /** JSON field holding the transcript in the response. Default 'text'. */
+  responseField?: string;
+  /** Request timeout in ms. Default 60000 (Whisper-class can be slow). */
+  timeoutMs?: number;
+}
+
+export interface TranscriptionCapabilitySpec extends CapabilityBase {
+  kind: 'transcription';
+  /** Optional; defaults filled by normalizeTranscriptionSpec() on read. */
+  provider?: TranscriptionProviderConfig;
+}
+
 export interface HttpCapabilitySpec extends CapabilityBase {
   kind: 'http';
 }
@@ -167,6 +184,7 @@ export interface HttpCapabilitySpec extends CapabilityBase {
 export type CapabilitySpec =
   | McpCapabilitySpec
   | RagCapabilitySpec
+  | TranscriptionCapabilitySpec
   | HttpCapabilitySpec;
 
 export type CapabilityKind = CapabilitySpec['kind'];
@@ -224,6 +242,14 @@ export type CapabilityDiscoveryEntry =
       kind: 'http';
       endpoint: string;
       kindMetadata: Record<string, never>;
+      state?: 'ready' | 'warming' | 'failed';
+      error?: string;
+    }
+  | {
+      name: string;
+      kind: 'transcription';
+      endpoint: string;
+      kindMetadata: { provider: TranscriptionProviderConfig };
       state?: 'ready' | 'warming' | 'failed';
       error?: string;
     }

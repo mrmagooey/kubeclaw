@@ -10,6 +10,7 @@ const DEFAULT_PORTS: Record<CapabilitySpec['kind'], number> = {
   mcp: 3000,
   rag: 6333, // qdrant default; lightrag overrides via spec.port
   http: 8080,
+  transcription: 9000,
 };
 
 function probeUrl(spec: CapabilitySpec): string {

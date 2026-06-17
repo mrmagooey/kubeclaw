@@ -14,6 +14,7 @@ import type {
   CapabilityDiscoveryEntry,
 } from './types.js';
 import { normalizeRagSpec } from './rag-config.js';
+import { normalizeTranscriptionSpec } from './transcription-config.js';
 import { deploymentName } from './builders/common.js';
 const KNOWN_CHANNELS = [
   'http',
@@ -30,6 +31,7 @@ const KNOWN_CHANNELS = [
 const MCP_DEFAULT_PORT = 3000;
 const HTTP_DEFAULT_PORT = 8080;
 const RAG_DEFAULT_PORT = 6333;
+const TRANSCRIPTION_DEFAULT_PORT = 9000;
 
 function defaultPort(spec: CapabilitySpec): number {
   switch (spec.kind) {
@@ -39,6 +41,8 @@ function defaultPort(spec: CapabilitySpec): number {
       return spec.port ?? HTTP_DEFAULT_PORT;
     case 'rag':
       return spec.port ?? RAG_DEFAULT_PORT;
+    case 'transcription':
+      return spec.port ?? TRANSCRIPTION_DEFAULT_PORT;
   }
 }
 
@@ -78,6 +82,15 @@ export function specToDiscoveryEntry(
         endpoint,
         kindMetadata: {},
       };
+    case 'transcription': {
+      const normalized = normalizeTranscriptionSpec(spec);
+      return {
+        name: spec.name,
+        kind: 'transcription',
+        endpoint,
+        kindMetadata: { provider: normalized.provider },
+      };
+    }
   }
 }
 
