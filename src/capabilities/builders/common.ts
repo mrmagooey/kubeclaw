@@ -1,4 +1,11 @@
-import type { CapabilityResources, CapabilityStorage, ProbeConfig } from '../types.js';
+import { stringify } from 'yaml';
+import type {
+  CapabilityResources,
+  CapabilityStorage,
+  ProbeConfig,
+  CapabilityScheduling,
+  CapabilityPodSecurity,
+} from '../types.js';
 
 export function deploymentName(name: string): string {
   return `kubeclaw-cap-${name}`;
@@ -18,6 +25,8 @@ export interface CommonRenderArgs {
   healthPath?: string;
   probe?: ProbeConfig;
   storage?: CapabilityStorage;
+  scheduling?: CapabilityScheduling;
+  podSecurity?: CapabilityPodSecurity;
 }
 
 const TARGET_INDENT = '            '; // 12 spaces (under <probe>: at 10)
@@ -76,11 +85,48 @@ function renderProbes(
   return `${readiness}\n${liveness}${startup}`;
 }
 
+function renderPodLevel(
+  scheduling: CapabilityScheduling | undefined,
+  podSecurity: CapabilityPodSecurity | undefined,
+): string {
+  let out = '';
+  if (podSecurity?.fsGroup !== undefined) {
+    out += `      securityContext:\n        fsGroup: ${podSecurity.fsGroup}\n`;
+  }
+  if (scheduling?.runtimeClassName) {
+    out += `      runtimeClassName: ${scheduling.runtimeClassName}\n`;
+  }
+  if (scheduling?.nodeSelector && Object.keys(scheduling.nodeSelector).length) {
+    out += '      nodeSelector:\n';
+    for (const [k, v] of Object.entries(scheduling.nodeSelector)) {
+      out += `        ${JSON.stringify(k)}: ${JSON.stringify(v)}\n`;
+    }
+  }
+  if (scheduling?.tolerations?.length) {
+    out += '      tolerations:\n';
+    for (const line of stringify(scheduling.tolerations).trimEnd().split('\n')) {
+      out += `        ${line}\n`;
+    }
+  }
+  return out;
+}
+
+function renderContainerSecurity(ps: CapabilityPodSecurity | undefined): string {
+  return `          securityContext:
+            runAsUser: ${ps?.runAsUser ?? 1000}
+            runAsGroup: ${ps?.runAsGroup ?? 1000}
+            runAsNonRoot: ${ps?.runAsNonRoot ?? true}
+            allowPrivilegeEscalation: false`;
+}
+
 export function renderDeploymentAndService(a: CommonRenderArgs): string {
   const memReq = a.resources?.memoryRequest ?? '128Mi';
   const memLim = a.resources?.memoryLimit ?? '256Mi';
   const cpuReq = a.resources?.cpuRequest ?? '50m';
   const cpuLim = a.resources?.cpuLimit ?? '500m';
+  const gpuLine = a.resources?.gpu
+    ? `\n              nvidia.com/gpu: ${a.resources.gpu}`
+    : '';
   const envBlock = a.env
     ? Object.entries(a.env)
         .map(
@@ -155,7 +201,7 @@ spec:
         kubeclaw-component: ${a.component}
     spec:
       automountServiceAccountToken: false
-      containers:
+${renderPodLevel(a.scheduling, a.podSecurity)}      containers:
         - name: ${a.component}
           image: ${a.image}
           imagePullPolicy: IfNotPresent
@@ -165,16 +211,12 @@ ${commandBlock}${argsBlock}          ports:
 ${envBlock ? `          env:\n${envBlock}\n` : ''}${envFromBlock}          resources:
             requests:
               memory: ${memReq}
-              cpu: ${cpuReq}
+              cpu: ${cpuReq}${gpuLine}
             limits:
               memory: ${memLim}
-              cpu: ${cpuLim}
+              cpu: ${cpuLim}${gpuLine}
 ${volumeMounts}${renderProbes(a.probe, a.healthPath, a.port)}
-          securityContext:
-            runAsUser: 1000
-            runAsGroup: 1000
-            runAsNonRoot: true
-            allowPrivilegeEscalation: false
+${renderContainerSecurity(a.podSecurity)}
 ${volumes}---
 apiVersion: v1
 kind: Service

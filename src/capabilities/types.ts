@@ -13,6 +13,23 @@ export interface CapabilityResources {
   memoryLimit?: string;
   cpuRequest?: string;
   cpuLimit?: string;
+  /** Whole-number GPUs; renders nvidia.com/gpu into requests AND limits. */
+  gpu?: number;
+}
+
+export interface CapabilityScheduling {
+  nodeSelector?: Record<string, string>;
+  /** Raw K8s toleration objects, rendered verbatim. */
+  tolerations?: Array<Record<string, unknown>>;
+  runtimeClassName?: string;
+}
+
+export interface CapabilityPodSecurity {
+  runAsUser?: number;
+  runAsGroup?: number;
+  /** Pod-level fsGroup — required for stateful images to own a mounted PVC. */
+  fsGroup?: number;
+  runAsNonRoot?: boolean;
 }
 
 export interface CapabilityStorage {
@@ -70,6 +87,10 @@ export interface CapabilityBase {
   command?: string[];
   /** Optional args. */
   args?: string[];
+  /** Pod scheduling controls (GPU nodes, taints, runtime class). */
+  scheduling?: CapabilityScheduling;
+  /** Pod/container security context overrides. */
+  podSecurity?: CapabilityPodSecurity;
   /** Deployment scope. Default 'cluster'. */
   scope?: 'cluster' | 'group';
   /** Group-scope only: seconds of idle before scale-to-zero. Min 60. Default 600. */
