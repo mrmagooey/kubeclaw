@@ -21,7 +21,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import type { Redis } from 'ioredis';
-import { getSharedRedis, getRedisUrlForTests } from './setup.js';
+import { getSharedRedis, getRedisUrlForTests, redisAvailable } from './setup.js';
 
 // ── Hoisted refs: real Redis connections injected before module load ──────────
 // vi.hoisted runs before vi.mock factories, so the refs are populated by the
@@ -195,25 +195,21 @@ async function pollUntil<T>(
 
 // ── Test suite ────────────────────────────────────────────────────────────────
 
-describe('tool-catalog-spawn (real Redis integration)', () => {
+// Evaluated at module-load time (after global setup.ts beforeAll has run).
+// When false, describe.skipIf reports all tests as SKIPPED, not passed.
+const redisIsUp = redisAvailable();
+
+describe.skipIf(!redisIsUp)('tool-catalog-spawn (real Redis integration)', () => {
   // Own Redis connections (not the shared setup.ts one — we need to control
   // their lifecycle independently from the global setup).
   let redis: Redis;
   let streamWatcher: Redis;
-  let redisAvailable = false;
 
   // Track the watcher promise so afterEach can always stop and await it.
   let activeWatcherPromise: Promise<void> | null = null;
 
   beforeAll(async () => {
-    const shared = getSharedRedis();
-    if (!shared) {
-      console.warn(
-        '[tool-catalog-spawn] Redis not available — all tests in this file will be skipped',
-      );
-      return;
-    }
-
+    // Redis is guaranteed available (describe.skipIf ensures this).
     const { default: Redis } = await import('ioredis');
     const url = getRedisUrlForTests();
 
@@ -237,8 +233,6 @@ describe('tool-catalog-spawn (real Redis integration)', () => {
     // Inject into hoisted holders — the vi.mock factory returns these.
     redisClientHolder.client = redis;
     streamWatcherHolder.client = streamWatcher;
-
-    redisAvailable = true;
   });
 
   afterAll(async () => {
@@ -283,8 +277,7 @@ describe('tool-catalog-spawn (real Redis integration)', () => {
 
   it(
     'resolves a catalog tool by name and calls createSidecarToolPodJob (real Redis round-trip)',
-    async (ctx) => {
-      if (!redisAvailable) return ctx.skip();
+    async () => {
 
       const { jobRunner } = await import('../src/k8s/job-runner.js');
       vi.mocked(jobRunner.createSidecarToolPodJob).mockClear();
@@ -367,8 +360,7 @@ describe('tool-catalog-spawn (real Redis integration)', () => {
 
   it(
     'rejects a catalog tool not scoped to the requesting channel and writes an error result',
-    async (ctx) => {
-      if (!redisAvailable) return ctx.skip();
+    async () => {
 
       const { jobRunner } = await import('../src/k8s/job-runner.js');
       vi.mocked(jobRunner.createSidecarToolPodJob).mockClear();
@@ -431,8 +423,7 @@ describe('tool-catalog-spawn (real Redis integration)', () => {
 
   it(
     'writes an error result when the catalog tool name is unknown',
-    async (ctx) => {
-      if (!redisAvailable) return ctx.skip();
+    async () => {
 
       const { jobRunner } = await import('../src/k8s/job-runner.js');
       vi.mocked(jobRunner.createSidecarToolPodJob).mockClear();

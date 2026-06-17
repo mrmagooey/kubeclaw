@@ -8,7 +8,7 @@ import {
   beforeEach,
 } from 'vitest';
 import {
-  isRedisAvailable,
+  redisAvailable,
   getSharedRedis,
   getNamespace,
   createTestNamespace,
@@ -19,6 +19,10 @@ import {
 const NAMESPACE = getNamespace();
 const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
 
+// Evaluated at module-load time (after global setup.ts beforeAll has run).
+// When false, describe.skipIf reports all tests as SKIPPED, not passed.
+const redisIsUp = redisAvailable();
+
 interface TestMessage {
   id: string;
   type: string;
@@ -26,43 +30,29 @@ interface TestMessage {
   timestamp: number;
 }
 
-describe('Message Queue Integration', () => {
-  let redis: import('ioredis').Redis;
+describe.skipIf(!redisIsUp)('Message Queue Integration', () => {
+  // Redis is guaranteed available here; describe.skipIf ensures this.
+  const redis = getSharedRedis()!;
   let testGroup: string;
 
   beforeAll(async () => {
-    redis = getSharedRedis()!;
-    if (!redis) {
-      console.warn('⚠️  Redis not available, skipping tests');
-      return;
-    }
     testGroup = createTestNamespace();
   }, 30000);
 
   beforeEach(async () => {
-    if (redis) {
-      await flushTestKeys(redis, `*:${testGroup}`);
-    }
+    await flushTestKeys(redis, `*:${testGroup}`);
   }, 10000);
 
   afterEach(async () => {
-    if (redis) {
-      await flushTestKeys(redis, `*:${testGroup}`);
-    }
+    await flushTestKeys(redis, `*:${testGroup}`);
   }, 10000);
 
   afterAll(async () => {
-    if (redis) {
-      await flushTestKeys(redis, `*:${testGroup}`);
-    }
+    await flushTestKeys(redis, `*:${testGroup}`);
   }, 10000);
 
   describe('Redis Queue Publishing', () => {
     it('should publish messages to kubeclaw:tasks queue', async () => {
-      if (!redis) {
-        console.warn('⚠️  Redis not available, skipping test');
-        return;
-      }
       const queueKey = `${NAMESPACE}:tasks:${testGroup}`;
 
       const message = {
@@ -83,10 +73,6 @@ describe('Message Queue Integration', () => {
     });
 
     it('should publish messages to group-scoped messages queue', async () => {
-      if (!redis) {
-        console.warn('⚠️  Redis not available, skipping test');
-        return;
-      }
       const queueKey = `${NAMESPACE}:messages:${testGroup}`;
 
       const message = {
@@ -103,10 +89,6 @@ describe('Message Queue Integration', () => {
     });
 
     it('should handle multiple messages in queue', async () => {
-      if (!redis) {
-        console.warn('⚠️  Redis not available, skipping test');
-        return;
-      }
       const queueKey = `${NAMESPACE}:tasks:${testGroup}`;
 
       const messages = [
@@ -126,11 +108,6 @@ describe('Message Queue Integration', () => {
 
   describe('JSON Serialization/Deserialization', () => {
     it('should serialize and deserialize messages correctly', async () => {
-      if (!redis) {
-        console.warn('⚠️  Redis not available, skipping test');
-        return;
-      }
-
       const original: TestMessage = {
         id: 'test-id',
         type: 'test-type',
@@ -145,11 +122,6 @@ describe('Message Queue Integration', () => {
     });
 
     it('should handle special characters in JSON', async () => {
-      if (!redis) {
-        console.warn('⚠️  Redis not available, skipping test');
-        return;
-      }
-
       const queueKey = `${NAMESPACE}:tasks:${testGroup}`;
       const message = {
         id: 'special-chars',
@@ -173,10 +145,6 @@ describe('Message Queue Integration', () => {
     });
 
     it('should preserve data integrity through round-trip', async () => {
-      if (!redis) {
-        console.warn('⚠️  Redis not available, skipping test');
-        return;
-      }
       const queueKey = `${NAMESPACE}:tasks:${testGroup}`;
 
       const original = { id: 'round-trip', data: { nested: { value: 42 } } };
@@ -192,10 +160,6 @@ describe('Message Queue Integration', () => {
 
   describe('Queue Consumer Pattern Simulation', () => {
     it('should implement FIFO queue behavior', async () => {
-      if (!redis) {
-        console.warn('⚠️  Redis not available, skipping test');
-        return;
-      }
       const queueKey = `${NAMESPACE}:fifo:${testGroup}`;
 
       await redis.rpush(queueKey, 'first', 'second', 'third');
@@ -210,10 +174,6 @@ describe('Message Queue Integration', () => {
     });
 
     it('should support blocking pop for consumer pattern', async () => {
-      if (!redis) {
-        console.warn('⚠️  Redis not available, skipping test');
-        return;
-      }
       const queueKey = `${NAMESPACE}:blocking:${testGroup}`;
 
       const result = await redis.blpop(queueKey, 1);
@@ -221,10 +181,6 @@ describe('Message Queue Integration', () => {
     });
 
     it('should handle producer-consumer with multiple items', async () => {
-      if (!redis) {
-        console.warn('⚠️  Redis not available, skipping test');
-        return;
-      }
       const queueKey = `${NAMESPACE}:tasks:${testGroup}`;
 
       const producer = async () => {
@@ -253,10 +209,6 @@ describe('Message Queue Integration', () => {
     }, 10000);
 
     it('should handle pub/sub for real-time messaging', async () => {
-      if (!redis) {
-        console.warn('⚠️  Redis not available, skipping test');
-        return;
-      }
       const channel = `${NAMESPACE}:realtime:${testGroup}`;
       const received: string[] = [];
 
@@ -297,10 +249,6 @@ describe('Message Queue Integration', () => {
 
   describe('Error Handling', () => {
     it('should handle invalid JSON gracefully', async () => {
-      if (!redis) {
-        console.warn('⚠️  Redis not available, skipping test');
-        return;
-      }
       const queueKey = `${NAMESPACE}:tasks:${testGroup}`;
 
       await redis.rpush(queueKey, 'not-valid-json');
@@ -310,10 +258,6 @@ describe('Message Queue Integration', () => {
     }, 10000);
 
     it('should handle empty queue', async () => {
-      if (!redis) {
-        console.warn('⚠️  Redis not available, skipping test');
-        return;
-      }
       const queueKey = `${NAMESPACE}:empty:${testGroup}`;
 
       const result = await redis.lpop(queueKey);
@@ -321,10 +265,6 @@ describe('Message Queue Integration', () => {
     });
 
     it('should handle large messages', async () => {
-      if (!redis) {
-        console.warn('⚠️  Redis not available, skipping test');
-        return;
-      }
       const queueKey = `${NAMESPACE}:tasks:${testGroup}`;
 
       const largeMessage = {
