@@ -111,10 +111,53 @@ export interface McpCapabilitySpec extends CapabilityBase {
   allowedTools?: string[];
 }
 
+export interface EmbeddingConfig {
+  provider: 'openai' | 'voyage';
+  /** Model name. Default per provider (openai text-embedding-3-small, voyage voyage-3). */
+  model?: string;
+  /** Vector dimension. Default per provider (openai 1536, voyage 1024). */
+  dim?: number;
+  /** Optional separate embedding endpoint base URL. */
+  baseUrl?: string;
+  /** Name of the channel-pod env var holding the API key. Default per provider. */
+  apiKeyEnv?: string;
+}
+
+export interface VectorStoreProviderConfig {
+  adapter: 'vector-store';
+  embedding: EmbeddingConfig;
+  /** Characters per chunk. Default 1800. */
+  chunkSize?: number;
+  /** Character overlap between chunks. Default 200. */
+  chunkOverlap?: number;
+  /** Max chunks retrieved per query. Default 5. */
+  topK?: number;
+  /** Minimum cosine similarity (0–1). Default 0.5. */
+  scoreThreshold?: number;
+}
+
+export interface RemoteProviderConfig {
+  adapter: 'remote';
+  /** Index endpoint path. Default '/documents/text'. */
+  indexPath?: string;
+  /** Query endpoint path. Default '/query'. */
+  queryPath?: string;
+  /** Query mode passed to the backend. Default 'hybrid'. */
+  queryMode?: string;
+  /** Request timeout in ms. Default 30000 index / 15000 query. */
+  timeoutMs?: number;
+}
+
+export type RagProviderConfig =
+  | VectorStoreProviderConfig
+  | RemoteProviderConfig;
+
 export interface RagCapabilitySpec extends CapabilityBase {
   kind: 'rag';
-  /** RAG backend implementation. */
-  backend: 'qdrant' | 'lightrag';
+  /** Free-form backend label ('qdrant', 'weaviate', 'lightrag'…) — not behaviour-bearing. */
+  backend: string;
+  /** Adapter + embedding/retrieval config. Optional on persisted legacy rows; filled by normalizeRagSpec(). */
+  provider?: RagProviderConfig;
 }
 
 export interface HttpCapabilitySpec extends CapabilityBase {
@@ -172,7 +215,7 @@ export type CapabilityDiscoveryEntry =
       name: string;
       kind: 'rag';
       endpoint: string;
-      kindMetadata: { backend: 'qdrant' | 'lightrag' };
+      kindMetadata: { backend: string; provider: RagProviderConfig };
       state?: 'ready' | 'warming' | 'failed';
       error?: string;
     }

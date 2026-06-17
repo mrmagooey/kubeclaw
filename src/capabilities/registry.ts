@@ -13,6 +13,7 @@ import type {
   CapabilityKind,
   CapabilityDiscoveryEntry,
 } from './types.js';
+import { normalizeRagSpec } from './rag-config.js';
 import { deploymentName } from './builders/common.js';
 const KNOWN_CHANNELS = [
   'http',
@@ -67,13 +68,15 @@ export function specToDiscoveryEntry(
           allowedTools: spec.allowedTools,
         },
       };
-    case 'rag':
+    case 'rag': {
+      const normalized = normalizeRagSpec(spec);
       return {
         name: spec.name,
         kind: 'rag',
         endpoint,
-        kindMetadata: { backend: spec.backend },
+        kindMetadata: { backend: normalized.backend, provider: normalized.provider },
       };
+    }
     case 'http':
       return {
         name: spec.name,
