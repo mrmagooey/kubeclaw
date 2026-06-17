@@ -30,6 +30,11 @@ export function getSharedRedis(): import('ioredis').Redis | null {
   return sharedRedis;
 }
 
+/** Synchronous check: returns true when the global Redis connection succeeded. */
+export function redisAvailable(): boolean {
+  return sharedRedis !== null;
+}
+
 export function getTestNamespace(): string {
   return testNamespace;
 }

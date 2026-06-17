@@ -20,7 +20,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execSync, spawnSync } from 'child_process';
-import { requireKubernetes, getSharedRedis, getNamespace } from './setup.js';
+import { requireKubernetes, getSharedRedis, getNamespace, redisAvailable } from './setup.js';
 
 const NAMESPACE = getNamespace();
 const ORCHESTRATOR_APP = 'kubeclaw-orchestrator';
@@ -28,6 +28,10 @@ const TEST_LABEL = 'e2e-test=true';
 
 let orchestratorAvailable = false;
 let orchestratorPodName = '';
+
+// Evaluated at module-load time (after global setup.ts beforeAll has run).
+// When false, describe.skipIf reports all tests as SKIPPED, not passed.
+const redisIsUp = redisAvailable();
 
 interface KubernetesPod {
   metadata: {
@@ -336,18 +340,15 @@ async function getOrchestratorStartupLogs(namespace: string): Promise<string> {
   }
 }
 
-describe('Real Orchestrator E2E', () => {
-  let redis: import('ioredis').Redis;
+describe.skipIf(!redisIsUp)('Real Orchestrator E2E', () => {
+  // Redis is guaranteed available here; describe.skipIf ensures this.
+  const redis = getSharedRedis()!;
 
   beforeAll(async () => {
     // Require Kubernetes - will throw and fail all tests if not available
     requireKubernetes();
 
-    redis = getSharedRedis()!;
-    if (!redis) {
-      console.warn('⚠️  Redis not available, orchestrator tests will be skipped');
-      return;
-    }
+    // redis is available (describe.skipIf ensures this), so no null guard needed.
 
     console.log('🔍 Checking if orchestrator is already running...');
     let orchestratorRunning = false;
@@ -564,7 +565,6 @@ describe('Real Orchestrator E2E', () => {
   });
 
   it('should have orchestrator pod running', async () => {
-    if (!redis) return;
     if (!orchestratorAvailable) {
       console.log(
         '⚠️  Orchestrator not fully running (missing channel credentials)',
@@ -623,8 +623,6 @@ describe('Real Orchestrator E2E', () => {
   });
 
   it('should create Kubernetes jobs for agent execution', async (ctx) => {
-    if (!redis) return;
-
     if (!orchestratorAvailable) {
       ctx.skip();
     }
@@ -685,8 +683,6 @@ describe('Real Orchestrator E2E', () => {
   });
 
   it('should handle scheduled tasks via Redis', async (ctx) => {
-    if (!redis) return;
-
     if (!orchestratorAvailable) {
       ctx.skip();
     }
@@ -720,8 +716,6 @@ describe('Real Orchestrator E2E', () => {
   });
 
   it('should handle IPC communication via Redis pub/sub', async (ctx) => {
-    if (!redis) return;
-
     if (!orchestratorAvailable) {
       ctx.skip();
     }
@@ -781,8 +775,6 @@ describe('Real Orchestrator E2E', () => {
 
   describe('Full Pipeline', () => {
     it('should handle complete message to job pipeline', async (ctx) => {
-      if (!redis) return;
-
       if (!orchestratorAvailable) {
         ctx.skip();
       }
@@ -914,8 +906,6 @@ describe('Real Orchestrator E2E', () => {
     }, 30000);
 
     it('should flow IRC message through orchestrator to Kubernetes job', async (ctx) => {
-      if (!redis) return;
-
       if (!orchestratorAvailable) {
         ctx.skip();
       }
@@ -1071,8 +1061,6 @@ describe('Real Orchestrator E2E', () => {
     }, 180000);
 
     it('should handle multiple IRC messages in sequence', async (ctx) => {
-      if (!redis) return;
-
       if (!orchestratorAvailable) {
         ctx.skip();
       }
