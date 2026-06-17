@@ -1,3 +1,9 @@
+# IMPORTANT: These manifests are reference material only. They are NOT used
+# by the e2e test suite (which deploys via helm/kubeclaw) or CI.
+# They are provided as a minimal bootstrap reference for manual cluster setup.
+# They do not reflect the full resource set deployed by the Helm chart
+# (missing: ACL init container, per-role Redis secrets, credential-broker,
+# baseline ConfigMaps, bootstrap RBAC, networkpolicies).
 apiVersion: v1
 kind: Namespace
 metadata:
