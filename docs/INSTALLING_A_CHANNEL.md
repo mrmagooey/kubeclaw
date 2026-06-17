@@ -144,20 +144,67 @@ These previously had `/add-*` Claude skills that modified source files directly.
 
 Use the `/customize` Claude Code skill to add these; it'll ask the right questions and write the code following the existing patterns.
 
-### RAG (special case)
+### Installing Qdrant as a RAG capability
 
-RAG can be deployed either via Helm values (legacy) or as a capability (recommended). For the **capability-based approach**, install it via the admin shell after the orchestrator boots (see Task 3.1+ in docs/superpowers/plans). For the **legacy Helm approach**:
+RAG is no longer baked into the chart. Install Qdrant as a `rag` capability with
+an embedded `provider` block. The `vector-store` adapter embeds + chunks in the
+channel pod and upserts/searches Qdrant's REST API.
 
-```yaml
-rag:
-  enabled: true
-  provider: openai          # or "voyage"
-  storage: 20Gi
-  topK: 5
-  scoreThreshold: "0.5"
+Spec (passed to the admin shell `install_capability` tool):
+
+```json
+{
+  "kind": "rag",
+  "name": "main-rag",
+  "backend": "qdrant",
+  "image": "qdrant/qdrant:latest",
+  "port": 6333,
+  "healthPath": "/healthz",
+  "storage": { "sizeGi": 20, "mountPath": "/qdrant/storage" },
+  "podSecurity": { "fsGroup": 1000, "runAsUser": 1000 },
+  "provider": {
+    "adapter": "vector-store",
+    "embedding": { "provider": "openai", "apiKeyEnv": "OPENAI_API_KEY" },
+    "topK": 5,
+    "scoreThreshold": 0.5
+  }
+}
 ```
 
-This deploys a Qdrant StatefulSet and wires the orchestrator to embed + retrieve before each agent invocation. See `helm/kubeclaw/values.yaml` for the full schema.
+The `healthPath`, `storage`, and `port` values above match the RAG builder
+defaults, so they can be omitted; they are shown here for clarity. The
+`podSecurity` block (`fsGroup: 1000`) is required for Qdrant to own the mounted
+PVC.
+
+The embedding API key is read from the channel pod's `OPENAI_API_KEY`
+(or `VOYAGE_API_KEY` for `provider: "voyage"`) — the raw key never appears in the
+spec. To install a backend that embeds server-side (e.g. LightRAG), use the
+`remote` adapter instead:
+
+```json
+{
+  "kind": "rag",
+  "name": "lightrag",
+  "backend": "lightrag",
+  "image": "ghcr.io/hkuds/lightrag:latest",
+  "port": 9621,
+  "healthPath": "/health",
+  "provider": { "adapter": "remote", "queryMode": "hybrid" }
+}
+```
+
+**Note:** the RAG builder probes `/healthz` by default. Backends that expose a
+different health endpoint (e.g. LightRAG at `/health`) must set `healthPath`
+explicitly, as shown above.
+
+A backend speaking either protocol installs as pure config — no code change.
+
+To invoke from the admin shell, describe what you want and the LLM will call
+`install_capability` with the spec. You can also pass the spec directly in
+a message: `install_capability(spec=<json above>)`.
+
+After install, use `list_capabilities` to confirm the lifecycle reaches `ready`,
+or `get_capability_logs(name="main-rag")` to diagnose startup issues.
 
 ---
 
