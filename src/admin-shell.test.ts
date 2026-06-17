@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // ── Hoist mocks ────────────────────────────────────────────────────────────
 
@@ -1546,5 +1546,318 @@ describe('bootstrap_channel_from_skill timeout_seconds handling', () => {
       expect.objectContaining({ bootstrapTimeoutSeconds: 900 }),
     );
     delete process.env.BOOTSTRAP_SKILL_TIMEOUT_SECONDS;
+  });
+});
+
+// ── Additional imports used by new test blocks ────────────────────────────────
+
+const { setGroupCredential: mockSetGroupCredential, unsetGroupCredential: mockUnsetGroupCredential } =
+  await import('./per-group-capabilities/credentials.js');
+const { bootstrapStatus: mockBootstrapStatus } = await import('./k8s/bootstrap-runner.js');
+
+// ── set_group_credential ──────────────────────────────────────────────────────
+
+describe('set_group_credential', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(mockSetGroupCredential).mockResolvedValue(undefined);
+  });
+
+  it('calls setGroupCredential and returns success message', async () => {
+    const result = await executeTool('set_group_credential', {
+      group_folder: 'my-group',
+      capability_name: 'brave-search',
+      env_name: 'BRAVE_API_KEY',
+      value: 'abc123',
+    });
+    expect(vi.mocked(mockSetGroupCredential)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        groupFolder: 'my-group',
+        capabilityName: 'brave-search',
+        envName: 'BRAVE_API_KEY',
+        value: 'abc123',
+      }),
+    );
+    expect(result).toContain('BRAVE_API_KEY');
+    expect(result).toContain('brave-search');
+  });
+
+  it('returns error when group_folder is missing', async () => {
+    const result = await executeTool('set_group_credential', {
+      capability_name: 'brave-search',
+      env_name: 'BRAVE_API_KEY',
+      value: 'abc123',
+    });
+    expect(result).toContain('required');
+    expect(vi.mocked(mockSetGroupCredential)).not.toHaveBeenCalled();
+  });
+
+  it('returns error when capability_name is missing', async () => {
+    const result = await executeTool('set_group_credential', {
+      group_folder: 'my-group',
+      env_name: 'BRAVE_API_KEY',
+      value: 'abc123',
+    });
+    expect(result).toContain('required');
+    expect(vi.mocked(mockSetGroupCredential)).not.toHaveBeenCalled();
+  });
+
+  it('returns error when env_name is missing', async () => {
+    const result = await executeTool('set_group_credential', {
+      group_folder: 'my-group',
+      capability_name: 'brave-search',
+      value: 'abc123',
+    });
+    expect(result).toContain('required');
+    expect(vi.mocked(mockSetGroupCredential)).not.toHaveBeenCalled();
+  });
+
+  it('returns error when value is missing', async () => {
+    const result = await executeTool('set_group_credential', {
+      group_folder: 'my-group',
+      capability_name: 'brave-search',
+      env_name: 'BRAVE_API_KEY',
+    });
+    expect(result).toContain('required');
+    expect(vi.mocked(mockSetGroupCredential)).not.toHaveBeenCalled();
+  });
+
+  it('propagates error from setGroupCredential', async () => {
+    vi.mocked(mockSetGroupCredential).mockRejectedValue(new Error('K8s secret conflict'));
+    const result = await executeTool('set_group_credential', {
+      group_folder: 'my-group',
+      capability_name: 'brave-search',
+      env_name: 'BRAVE_API_KEY',
+      value: 'abc123',
+    });
+    expect(result).toContain('Error');
+    expect(result).toContain('K8s secret conflict');
+  });
+});
+
+// ── unset_group_credential ────────────────────────────────────────────────────
+
+describe('unset_group_credential', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(mockUnsetGroupCredential).mockResolvedValue(undefined);
+  });
+
+  it('calls unsetGroupCredential and returns success message containing env_name', async () => {
+    const result = await executeTool('unset_group_credential', {
+      group_folder: 'my-group',
+      capability_name: 'brave-search',
+      env_name: 'BRAVE_API_KEY',
+    });
+    expect(vi.mocked(mockUnsetGroupCredential)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        groupFolder: 'my-group',
+        capabilityName: 'brave-search',
+        envName: 'BRAVE_API_KEY',
+      }),
+    );
+    expect(result).toContain('BRAVE_API_KEY');
+  });
+
+  it('returns error when group_folder is missing', async () => {
+    const result = await executeTool('unset_group_credential', {
+      capability_name: 'brave-search',
+      env_name: 'BRAVE_API_KEY',
+    });
+    expect(result).toContain('required');
+    expect(vi.mocked(mockUnsetGroupCredential)).not.toHaveBeenCalled();
+  });
+
+  it('returns error when capability_name is missing', async () => {
+    const result = await executeTool('unset_group_credential', {
+      group_folder: 'my-group',
+      env_name: 'BRAVE_API_KEY',
+    });
+    expect(result).toContain('required');
+    expect(vi.mocked(mockUnsetGroupCredential)).not.toHaveBeenCalled();
+  });
+
+  it('returns error when env_name is missing', async () => {
+    const result = await executeTool('unset_group_credential', {
+      group_folder: 'my-group',
+      capability_name: 'brave-search',
+    });
+    expect(result).toContain('required');
+    expect(vi.mocked(mockUnsetGroupCredential)).not.toHaveBeenCalled();
+  });
+
+  it('propagates error from unsetGroupCredential', async () => {
+    vi.mocked(mockUnsetGroupCredential).mockRejectedValue(new Error('credential not found'));
+    const result = await executeTool('unset_group_credential', {
+      group_folder: 'my-group',
+      capability_name: 'brave-search',
+      env_name: 'BRAVE_API_KEY',
+    });
+    expect(result).toContain('Error');
+    expect(result).toContain('credential not found');
+  });
+});
+
+// ── bootstrap_status ──────────────────────────────────────────────────────────
+
+describe('bootstrap_status', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(mockBootstrapStatus).mockResolvedValue({ active: [], recent: [] });
+  });
+
+  it('returns parseable JSON output containing active and recent arrays', async () => {
+    const result = await executeTool('bootstrap_status', {});
+    const parsed = JSON.parse(result) as { active: unknown[]; recent: unknown[] };
+    expect(Array.isArray(parsed.active)).toBe(true);
+    expect(Array.isArray(parsed.recent)).toBe(true);
+  });
+
+  it('passes limit parameter through to bootstrapStatus', async () => {
+    await executeTool('bootstrap_status', { limit: 5 });
+    expect(vi.mocked(mockBootstrapStatus)).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ limit: 5 }),
+    );
+  });
+
+  it('passes channel_type_filter through to bootstrapStatus', async () => {
+    await executeTool('bootstrap_status', { channel_type_filter: 'telegram' });
+    expect(vi.mocked(mockBootstrapStatus)).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ channelTypeFilter: 'telegram' }),
+    );
+  });
+
+  it('passes include_logs: true through to bootstrapStatus', async () => {
+    await executeTool('bootstrap_status', { include_logs: true });
+    expect(vi.mocked(mockBootstrapStatus)).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ includeLogs: true }),
+    );
+  });
+});
+
+// ── report_step ───────────────────────────────────────────────────────────────
+
+describe('report_step', () => {
+  const originalEnv = process.env.KUBECLAW_BOOTSTRAP_JOB_ID;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    delete process.env.KUBECLAW_BOOTSTRAP_JOB_ID;
+    vi.mocked(getRedisClient).mockReturnValue({
+      publish: vi.fn().mockResolvedValue(1),
+    } as unknown as ReturnType<typeof getRedisClient>);
+  });
+
+  afterEach(() => {
+    if (originalEnv !== undefined) {
+      process.env.KUBECLAW_BOOTSTRAP_JOB_ID = originalEnv;
+    } else {
+      delete process.env.KUBECLAW_BOOTSTRAP_JOB_ID;
+    }
+  });
+
+  it('returns error when label is missing', async () => {
+    process.env.KUBECLAW_BOOTSTRAP_JOB_ID = 'job-abc';
+    const result = await executeTool('report_step', {});
+    expect(result).toContain('label is required');
+  });
+
+  it('returns error when KUBECLAW_BOOTSTRAP_JOB_ID env is not set', async () => {
+    const result = await executeTool('report_step', { label: 'Installing packages' });
+    expect(result).toContain('KUBECLAW_BOOTSTRAP_JOB_ID not set');
+  });
+
+  it('publishes to the correct Redis topic and returns confirmation', async () => {
+    process.env.KUBECLAW_BOOTSTRAP_JOB_ID = 'job-xyz';
+    const mockPublish = vi.fn().mockResolvedValue(1);
+    vi.mocked(getRedisClient).mockReturnValue({
+      publish: mockPublish,
+    } as unknown as ReturnType<typeof getRedisClient>);
+
+    const result = await executeTool('report_step', { label: 'Installing packages' });
+
+    expect(mockPublish).toHaveBeenCalledWith(
+      'kubeclaw:bootstrap:job-xyz',
+      expect.stringContaining('"step"'),
+    );
+    expect(result).toContain('Installing packages');
+  });
+
+  it('truncates labels longer than 200 chars to 200 chars', async () => {
+    process.env.KUBECLAW_BOOTSTRAP_JOB_ID = 'job-truncate';
+    const longLabel = 'A'.repeat(250);
+    const mockPublish = vi.fn().mockResolvedValue(1);
+    vi.mocked(getRedisClient).mockReturnValue({
+      publish: mockPublish,
+    } as unknown as ReturnType<typeof getRedisClient>);
+
+    await executeTool('report_step', { label: longLabel });
+
+    const publishCall = mockPublish.mock.calls[0];
+    const payload = JSON.parse(publishCall[1] as string) as { label: string };
+    expect(payload.label.length).toBe(200);
+    expect(payload.label).toBe('A'.repeat(200));
+  });
+
+  it('returns error containing "Error publishing step" when publish throws', async () => {
+    process.env.KUBECLAW_BOOTSTRAP_JOB_ID = 'job-fail';
+    vi.mocked(getRedisClient).mockReturnValue({
+      publish: vi.fn().mockRejectedValue(new Error('Redis connection lost')),
+    } as unknown as ReturnType<typeof getRedisClient>);
+
+    const result = await executeTool('report_step', { label: 'step label' });
+    expect(result).toContain('Error publishing step');
+    expect(result).toContain('Redis connection lost');
+  });
+});
+
+// ── bootstrap_channel_from_skill extra paths ──────────────────────────────────
+
+describe('bootstrap_channel_from_skill — alreadyInProgress and instance_name validation', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('returns "already in progress" message when bootstrapChannelFromSkill signals alreadyInProgress', async () => {
+    vi.mocked(mockBootstrapChannelFromSkill).mockResolvedValue({
+      bootstrapJobId: 'job-running',
+      alreadyInProgress: true,
+    });
+    const result = await executeTool('bootstrap_channel_from_skill', {
+      skill_name: 'bootstrap-telegram',
+      channel_type: 'telegram',
+      instance_name: 'my-tg',
+    });
+    expect(result).toContain('already in progress');
+    expect(result).toContain('job-running');
+  });
+
+  it('returns success message containing "Bootstrap started successfully" and bootstrapJobId', async () => {
+    vi.mocked(mockBootstrapChannelFromSkill).mockResolvedValue({
+      bootstrapJobId: 'job-new',
+    });
+    const result = await executeTool('bootstrap_channel_from_skill', {
+      skill_name: 'bootstrap-telegram',
+      channel_type: 'telegram',
+      instance_name: 'my-tg',
+    });
+    expect(result).toContain('Bootstrap started successfully');
+    expect(result).toContain('job-new');
+  });
+
+  it('returns error with suggested sanitized version when instance_name contains uppercase', async () => {
+    const result = await executeTool('bootstrap_channel_from_skill', {
+      skill_name: 'bootstrap-telegram',
+      channel_type: 'telegram',
+      instance_name: 'My-Telegram-Channel',
+    });
+    expect(result).toContain('Error');
+    expect(result).toContain('my-telegram-channel');
   });
 });

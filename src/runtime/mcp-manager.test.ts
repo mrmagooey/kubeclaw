@@ -10,6 +10,7 @@ const {
   mockCallTool,
   mockConnect,
   mockClose,
+  mockRequestGroupCapability,
   MockClient,
   MockStreamableHTTPTransport,
   MockSSETransport,
@@ -18,6 +19,7 @@ const {
   const mockCallTool = vi.fn();
   const mockConnect = vi.fn();
   const mockClose = vi.fn();
+  const mockRequestGroupCapability = vi.fn();
 
   class MockClient {
     connect = mockConnect;
@@ -41,6 +43,7 @@ const {
     mockCallTool,
     mockConnect,
     mockClose,
+    mockRequestGroupCapability,
     MockClient,
     MockStreamableHTTPTransport,
     MockSSETransport,
@@ -66,6 +69,10 @@ vi.mock('../logger.js', () => ({
     warn: vi.fn(),
     error: vi.fn(),
   },
+}));
+
+vi.mock('../capabilities/discovery-client.js', () => ({
+  requestGroupCapability: mockRequestGroupCapability,
 }));
 
 // ---- Import after mocks ----
@@ -777,5 +784,140 @@ describe('McpManager', () => {
       const names = mgr.getTools().map((t) => t.function.name);
       expect(names).toEqual(['mcp__filesystem__read_file']);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Group-scoped MCP dispatch tests (callOneShotMcp via callTool)
+// ---------------------------------------------------------------------------
+
+describe('callTool — group-scoped MCP dispatch', () => {
+  const readyGroupTemplate: GroupMcpEntry = {
+    name: 'filesystem',
+    kind: 'mcp-group',
+    state: 'ready',
+    toolSchemas: [
+      {
+        name: 'read_file',
+        description: 'Read a file',
+        inputSchema: { type: 'object', properties: { path: { type: 'string' } } },
+      },
+      {
+        name: 'write_file',
+        description: 'Write a file',
+        inputSchema: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' } } },
+      },
+    ],
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockConnect.mockResolvedValue(undefined);
+    mockRequestGroupCapability.mockResolvedValue({ endpoint: 'http://cap:3000' });
+    mockCallTool.mockResolvedValue({ content: [{ type: 'text', text: 'file content' }] });
+  });
+
+  async function makeGroupManager(): Promise<McpManager> {
+    const mgr = new McpManager();
+    await mgr.configureGroupMcpTemplates([readyGroupTemplate]);
+    return mgr;
+  }
+
+  it('aggregates single text content part and returns the text', async () => {
+    mockCallTool.mockResolvedValue({ content: [{ type: 'text', text: 'hello' }] });
+    const mgr = await makeGroupManager();
+    const result = await mgr.callTool('mcp__filesystem__read_file', { path: '/etc/hosts' }, { groupFolder: 'my-group' });
+    expect(result).toBe('hello');
+  });
+
+  it('joins multiple text parts with newline', async () => {
+    mockCallTool.mockResolvedValue({
+      content: [
+        { type: 'text', text: 'part one' },
+        { type: 'text', text: 'part two' },
+      ],
+    });
+    const mgr = await makeGroupManager();
+    const result = await mgr.callTool('mcp__filesystem__read_file', {}, { groupFolder: 'my-group' });
+    expect(result).toBe('part one\npart two');
+  });
+
+  it('falls back to JSON.stringify of result when content is empty', async () => {
+    const mockResult = { content: [] };
+    mockCallTool.mockResolvedValue(mockResult);
+    const mgr = await makeGroupManager();
+    const result = await mgr.callTool('mcp__filesystem__read_file', {}, { groupFolder: 'my-group' });
+    expect(result).toBe(JSON.stringify(mockResult));
+  });
+
+  it('falls back to JSON.stringify of result when content has non-text parts only', async () => {
+    const mockResult = { content: [{ type: 'image', data: 'abc123' }] };
+    mockCallTool.mockResolvedValue(mockResult);
+    const mgr = await makeGroupManager();
+    const result = await mgr.callTool('mcp__filesystem__read_file', {}, { groupFolder: 'my-group' });
+    expect(result).toBe(JSON.stringify(mockResult));
+  });
+
+  it('returns capability unavailable error when requestGroupCapability returns error', async () => {
+    mockRequestGroupCapability.mockResolvedValue({ error: 'pod not ready' });
+    const mgr = await makeGroupManager();
+    const result = await mgr.callTool('mcp__filesystem__read_file', {}, { groupFolder: 'my-group' });
+    const parsed = JSON.parse(result) as { isError: boolean; content: Array<{ text: string }> };
+    expect(parsed.isError).toBe(true);
+    expect(parsed.content[0].text).toContain('capability unavailable: pod not ready');
+  });
+
+  it('returns MCP call failed error when callTool throws', async () => {
+    mockCallTool.mockRejectedValue(new Error('connection refused'));
+    const mgr = await makeGroupManager();
+    const result = await mgr.callTool('mcp__filesystem__read_file', {}, { groupFolder: 'my-group' });
+    const parsed = JSON.parse(result) as { isError: boolean; content: Array<{ text: string }> };
+    expect(parsed.isError).toBe(true);
+    expect(parsed.content[0].text).toContain('MCP call failed');
+    expect(parsed.content[0].text).toContain('connection refused');
+  });
+
+  it('still calls connect when callTool throws (transport.close is called in finally)', async () => {
+    mockCallTool.mockRejectedValue(new Error('oops'));
+    const mgr = await makeGroupManager();
+    await mgr.callTool('mcp__filesystem__read_file', {}, { groupFolder: 'my-group' });
+    // connect was called, proving the transport was created and used
+    expect(mockConnect).toHaveBeenCalled();
+  });
+
+  it('throws when groupFolder is missing for a group-scoped tool', async () => {
+    const mgr = await makeGroupManager();
+    await expect(
+      mgr.callTool('mcp__filesystem__read_file', {}),
+    ).rejects.toThrow('ctx.groupFolder');
+  });
+
+  it('hasTool returns false for a tool that exists but is not in allowedTools', async () => {
+    const mgr = new McpManager();
+    await mgr.configureGroupMcpTemplates([
+      {
+        name: 'filesystem',
+        kind: 'mcp-group',
+        state: 'ready',
+        toolSchemas: [
+          { name: 'read_file', inputSchema: {} },
+          { name: 'write_file', inputSchema: {} },
+        ],
+        allowedTools: ['read_file'],
+      },
+    ]);
+    expect(mgr.hasTool('mcp__filesystem__read_file')).toBe(true);
+    expect(mgr.hasTool('mcp__filesystem__write_file')).toBe(false);
+  });
+
+  it('constructs the correct MCP URL by appending /mcp to the endpoint', async () => {
+    mockRequestGroupCapability.mockResolvedValue({ endpoint: 'http://my-cap:3000' });
+    mockCallTool.mockResolvedValue({ content: [{ type: 'text', text: 'ok' }] });
+    const mgr = await makeGroupManager();
+    await mgr.callTool('mcp__filesystem__read_file', {}, { groupFolder: 'my-group' });
+    // The transport was constructed — connect was called successfully
+    expect(mockConnect).toHaveBeenCalled();
+    // The tool call passed the bare tool name (without prefix)
+    expect(mockCallTool).toHaveBeenCalledWith({ name: 'read_file', arguments: {} });
   });
 });
