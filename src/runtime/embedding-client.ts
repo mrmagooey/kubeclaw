@@ -55,20 +55,6 @@ function envEmbeddingConfig(): EmbeddingConfig {
   };
 }
 
-/** @deprecated Use resolveEmbeddingDefaults(config).dim. Env-derived; removed once all callers thread config. */
-export const EMBEDDING_DIM = process.env.EMBEDDING_DIM
-  ? parseInt(process.env.EMBEDDING_DIM, 10)
-  : DEFAULT_EMBEDDING_BY_PROVIDER[
-      (process.env.EMBEDDING_PROVIDER === 'voyage' ? 'voyage' : 'openai')
-    ].dim;
-
-/** @deprecated Use resolveEmbeddingDefaults(config).model. */
-export const EMBEDDING_MODEL =
-  process.env.EMBEDDING_MODEL ||
-  DEFAULT_EMBEDDING_BY_PROVIDER[
-    (process.env.EMBEDDING_PROVIDER === 'voyage' ? 'voyage' : 'openai')
-  ].model;
-
 // ── OpenAI ──────────────────────────────────────────────────────────────────
 
 async function embedOpenAI(

@@ -154,11 +154,13 @@ vi.mock('./router.js', async (importOriginal) => {
 
 import { getAllCapabilities } from './capabilities/db.js';
 import { handleCapabilitiesUpdate } from './channel-runner.js';
+import { resetRagProvider } from './rag/provider.js';
 
 // ── Test suite ────────────────────────────────────────────────────────────────
 
 beforeEach(() => {
   capStore.clear();
+  vi.clearAllMocks();
 });
 
 describe('handleCapabilitiesUpdate — adapter-aware rag sync', () => {
@@ -182,6 +184,7 @@ describe('handleCapabilitiesUpdate — adapter-aware rag sync', () => {
     expect((rows[0] as { provider?: { adapter: string } }).provider?.adapter).toBe(
       'vector-store',
     );
+    expect(resetRagProvider).toHaveBeenCalledTimes(1);
   });
 
   it('skips an unknown adapter without writing a malformed row', async () => {
