@@ -78,6 +78,31 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
+ * Poll until a K8s resource is cleaned up: either fully gone (kubectl 404) or
+ * Terminating (a deletionTimestamp is set — the delete was issued and is just
+ * draining behind a finalizer). Deletion of the runtime PVC is async: the
+ * pvc-protection finalizer holds it in Terminating until the bootstrap pod is
+ * gone, so an immediate check after the timeout SSE races the cascade.
+ * `getArgs` should be `['get', '<kind>', '-n', ns, name]`.
+ */
+async function waitForResourceCleanup(
+  getArgs: string[],
+  timeoutMs: number,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const r = kubectl(
+      [...getArgs, '-o', 'jsonpath={.metadata.deletionTimestamp}'],
+      { allowFail: true },
+    );
+    if (!r.ok) return true; // 404 → fully gone
+    if (r.stdout.trim() !== '') return true; // Terminating → delete issued
+    await sleep(2_000);
+  }
+  return false;
+}
+
+/**
  * Open the admin /events SSE stream and buffer incoming messages.
  * Returns a `waitFor` poller that checks the buffer, and a `dispose`
  * function that aborts the stream.
@@ -342,11 +367,10 @@ describe(
           expect(timeoutMsg).toContain('timed out');
           expect(timeoutMsg).toContain('nothing was installed');
 
-          // Wait a moment for cleanup to settle before querying K8s.
-          await sleep(5_000);
-
-          // Step 3: Assert no PVC remains.
-          const pvcResult = kubectl(
+          // Step 3: Assert the runtime PVC is cleaned up (gone or Terminating).
+          // Deletion is async — poll rather than checking once, since the PVC
+          // drains behind the pvc-protection finalizer after the pod is removed.
+          const pvcCleaned = await waitForResourceCleanup(
             [
               'get',
               'pvc',
@@ -354,12 +378,15 @@ describe(
               NAMESPACE,
               `kubeclaw-channel-${INSTANCE_NAME}-runtime`,
             ],
-            { allowFail: true },
+            60_000,
           );
-          expect(pvcResult.ok).toBe(false); // 404 → kubectl exits non-zero
+          expect(
+            pvcCleaned,
+            'runtime PVC should be deleted (or Terminating) after timeout cleanup',
+          ).toBe(true);
 
-          // Step 4: Assert no Job remains.
-          const jobResult = kubectl(
+          // Step 4: Assert the bootstrap Job is cleaned up (gone or Terminating).
+          const jobCleaned = await waitForResourceCleanup(
             [
               'get',
               'job',
@@ -367,9 +394,12 @@ describe(
               NAMESPACE,
               `kubeclaw-bootstrap-${INSTANCE_NAME}`,
             ],
-            { allowFail: true },
+            60_000,
           );
-          expect(jobResult.ok).toBe(false); // 404 → kubectl exits non-zero
+          expect(
+            jobCleaned,
+            'bootstrap Job should be deleted (or Terminating) after timeout cleanup',
+          ).toBe(true);
 
           // Step 5: Assert retry with the same instance name succeeds (not "already in progress").
           const retryReply = await callBootstrapChannelFromSkill(
