@@ -1,12 +1,25 @@
 /**
  * RAG provider interface.
  *
- * Channels program against this interface. The concrete backend (Qdrant,
- * LightRAG, or none) is selected at startup based on capability discovery.
+ * Channels program against this interface. The concrete backend (VectorStore,
+ * Remote, or none) is selected at startup based on capability discovery.
+ *
+ * VectorStoreProvider and RemoteProvider are constructed from the discovery
+ * entry's `kindMetadata.provider` config — no process.env reads for endpoint
+ * or adapter config.
  */
 
 import { logger } from '../logger.js';
 import { getRagEntry } from '../capabilities/client.js';
+import {
+  DEFAULT_VECTOR_STORE_CONFIG,
+  DEFAULT_REMOTE_CONFIG,
+} from '../capabilities/rag-config.js';
+import { resolveEmbeddingDefaults } from '../runtime/embedding-client.js';
+import type {
+  VectorStoreProviderConfig,
+  RemoteProviderConfig,
+} from '../capabilities/types.js';
 
 export interface RagProvider {
   /** Human-readable name for logging */
@@ -44,10 +57,39 @@ class NullRagProvider implements RagProvider {
 
 /**
  * Qdrant-backed RAG provider.
- * Uses the existing src/rag/store.ts + src/runtime/embedding-client.ts.
+ * Built from the discovery entry's VectorStoreProviderConfig.
  */
-class QdrantRagProvider implements RagProvider {
-  readonly name = 'qdrant';
+class VectorStoreProvider implements RagProvider {
+  readonly name = 'vector-store';
+  private readonly endpoint: string;
+  private readonly cfg: VectorStoreProviderConfig;
+  private readonly dim: number;
+
+  constructor(endpoint: string, cfg: VectorStoreProviderConfig) {
+    this.endpoint = endpoint.replace(/\/$/, '');
+    this.cfg = cfg;
+    this.dim = resolveEmbeddingDefaults(cfg.embedding).dim;
+  }
+
+  private indexerConfig() {
+    return {
+      endpoint: this.endpoint,
+      embedding: this.cfg.embedding,
+      dim: this.dim,
+      chunkSize: this.cfg.chunkSize ?? DEFAULT_VECTOR_STORE_CONFIG.chunkSize,
+      chunkOverlap: this.cfg.chunkOverlap ?? DEFAULT_VECTOR_STORE_CONFIG.chunkOverlap,
+    };
+  }
+
+  private retrieverConfig() {
+    return {
+      endpoint: this.endpoint,
+      embedding: this.cfg.embedding,
+      dim: this.dim,
+      topK: this.cfg.topK ?? DEFAULT_VECTOR_STORE_CONFIG.topK,
+      scoreThreshold: this.cfg.scoreThreshold ?? DEFAULT_VECTOR_STORE_CONFIG.scoreThreshold,
+    };
+  }
 
   async indexConversationTurn(
     groupFolder: string,
@@ -56,33 +98,35 @@ class QdrantRagProvider implements RagProvider {
   ): Promise<void> {
     try {
       const { indexConversationTurn } = await import('./indexer.js');
-      await indexConversationTurn(groupFolder, userMessage, agentResponse);
+      await indexConversationTurn(this.indexerConfig(), groupFolder, userMessage, agentResponse);
     } catch (err) {
-      logger.warn({ err, groupFolder }, 'Qdrant RAG indexing failed');
+      logger.warn({ err, groupFolder }, 'vector-store RAG indexing failed');
     }
   }
 
   async retrieveContext(groupFolder: string, query: string): Promise<string> {
     try {
       const { retrieveContext } = await import('./retriever.js');
-      return await retrieveContext(groupFolder, query);
+      return await retrieveContext(this.retrieverConfig(), groupFolder, query);
     } catch (err) {
-      logger.warn({ err, groupFolder }, 'Qdrant RAG retrieval failed');
+      logger.warn({ err, groupFolder }, 'vector-store RAG retrieval failed');
       return '';
     }
   }
 }
 
 /**
- * LightRAG-backed provider.
- * Calls the LightRAG REST API (no local embedding — LightRAG handles it).
+ * Remote (LightRAG-style) HTTP provider.
+ * Built from the discovery entry's RemoteProviderConfig.
  */
-class LightRagProvider implements RagProvider {
-  readonly name = 'lightrag';
+class RemoteProvider implements RagProvider {
+  readonly name = 'remote';
   private readonly baseUrl: string;
+  private readonly cfg: RemoteProviderConfig;
 
-  constructor(baseUrl: string) {
-    this.baseUrl = baseUrl.replace(/\/$/, '');
+  constructor(endpoint: string, cfg: RemoteProviderConfig) {
+    this.baseUrl = endpoint.replace(/\/$/, '');
+    this.cfg = cfg;
   }
 
   async indexConversationTurn(
@@ -91,47 +135,43 @@ class LightRagProvider implements RagProvider {
     agentResponse: string,
   ): Promise<void> {
     const text = `[Group: ${groupFolder}]\nUser: ${userMessage}\nAssistant: ${agentResponse}`;
+    const path = this.cfg.indexPath ?? DEFAULT_REMOTE_CONFIG.indexPath;
     try {
-      const res = await fetch(`${this.baseUrl}/documents/text`, {
+      const res = await fetch(`${this.baseUrl}${path}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text }),
-        signal: AbortSignal.timeout(30_000),
+        signal: AbortSignal.timeout(this.cfg.timeoutMs ?? DEFAULT_REMOTE_CONFIG.indexTimeoutMs),
       });
       if (!res.ok) {
         const body = await res.text().catch(() => '');
-        logger.warn(
-          { status: res.status, body, groupFolder },
-          'LightRAG indexing failed',
-        );
+        logger.warn({ status: res.status, body, groupFolder }, 'remote RAG indexing failed');
       }
     } catch (err) {
-      logger.warn({ err, groupFolder }, 'LightRAG indexing failed');
+      logger.warn({ err, groupFolder }, 'remote RAG indexing failed');
     }
   }
 
   async retrieveContext(groupFolder: string, query: string): Promise<string> {
+    const path = this.cfg.queryPath ?? DEFAULT_REMOTE_CONFIG.queryPath;
+    const mode = this.cfg.queryMode ?? DEFAULT_REMOTE_CONFIG.queryMode;
     try {
-      const res = await fetch(`${this.baseUrl}/query`, {
+      const res = await fetch(`${this.baseUrl}${path}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query, mode: 'hybrid' }),
-        signal: AbortSignal.timeout(15_000),
+        body: JSON.stringify({ query, mode }),
+        signal: AbortSignal.timeout(this.cfg.timeoutMs ?? DEFAULT_REMOTE_CONFIG.queryTimeoutMs),
       });
       if (!res.ok) {
-        logger.debug(
-          { status: res.status, groupFolder },
-          'LightRAG query failed',
-        );
+        logger.debug({ status: res.status, groupFolder }, 'remote RAG query failed');
         return '';
       }
       const json = (await res.json()) as { response?: string };
       const response = json.response?.trim();
       if (!response) return '';
-
       return `<retrieved_context>\n${response}\n</retrieved_context>\n\n`;
     } catch (err) {
-      logger.warn({ err, groupFolder }, 'LightRAG retrieval failed');
+      logger.warn({ err, groupFolder }, 'remote RAG retrieval failed');
       return '';
     }
   }
@@ -146,47 +186,33 @@ let _provider: RagProvider | undefined;
  *
  * Selection order:
  *   1. Capability registry — consults getRagEntry() for the current channel
- *      pod, then selects LightRagProvider or QdrantRagProvider based on the
- *      backend field.
+ *      pod, then selects RemoteProvider or VectorStoreProvider based on the
+ *      kindMetadata.provider.adapter field.
  *   2. No capability registered → NullRagProvider (no-op)
  */
 export function getRagProvider(): RagProvider {
-  if (!_provider) {
-    // 1. Capability registry (preferred). Falls back to env vars if registry is empty.
-    try {
-      const channelName = process.env.KUBECLAW_CHANNEL ?? '*';
-      const entry = getRagEntry(channelName);
-      if (entry) {
-        if (entry.kindMetadata.backend === 'lightrag') {
-          _provider = new LightRagProvider(entry.endpoint);
-          logger.info(
-            { url: entry.endpoint, source: 'capability' },
-            'RAG provider: LightRAG',
-          );
-          return _provider;
-        }
-        if (entry.kindMetadata.backend === 'qdrant') {
-          // QdrantRagProvider reads QDRANT_URL internally; populate it from the
-          // capability endpoint so the existing indexer/retriever pipeline works.
-          process.env.QDRANT_URL = process.env.QDRANT_URL ?? entry.endpoint;
-          _provider = new QdrantRagProvider();
-          logger.info(
-            { url: entry.endpoint, source: 'capability' },
-            'RAG provider: Qdrant',
-          );
-          return _provider;
-        }
+  if (_provider) return _provider;
+  try {
+    const channelName = process.env.KUBECLAW_CHANNEL ?? '*';
+    const entry = getRagEntry(channelName);
+    if (entry) {
+      const provider = entry.kindMetadata.provider;
+      if (provider.adapter === 'remote') {
+        _provider = new RemoteProvider(entry.endpoint, provider);
+        logger.info({ url: entry.endpoint }, 'RAG provider: remote');
+        return _provider;
       }
-    } catch (err) {
-      logger.debug({ err }, 'Capability lookup unavailable');
+      if (provider.adapter === 'vector-store') {
+        _provider = new VectorStoreProvider(entry.endpoint, provider);
+        logger.info({ url: entry.endpoint }, 'RAG provider: vector-store');
+        return _provider;
+      }
     }
-
-    // No capability registered → no-op provider.
-    if (!_provider) {
-      _provider = new NullRagProvider();
-      logger.info('RAG provider: none (disabled)');
-    }
+  } catch (err) {
+    logger.debug({ err }, 'Capability lookup unavailable');
   }
+  _provider = new NullRagProvider();
+  logger.info('RAG provider: none (disabled)');
   return _provider;
 }
 

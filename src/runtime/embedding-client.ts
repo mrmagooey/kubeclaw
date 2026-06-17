@@ -69,11 +69,6 @@ export const EMBEDDING_MODEL =
     (process.env.EMBEDDING_PROVIDER === 'voyage' ? 'voyage' : 'openai')
   ].model;
 
-/** @deprecated Removed in SP2 — retrieval gating now comes from provider presence. */
-export const RAG_ENABLED = !!(
-  process.env.QDRANT_URL && process.env.EMBEDDING_PROVIDER !== 'none'
-);
-
 // ── OpenAI ──────────────────────────────────────────────────────────────────
 
 async function embedOpenAI(

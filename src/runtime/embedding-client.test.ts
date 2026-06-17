@@ -285,26 +285,4 @@ describe('embedding-client', () => {
     });
   });
 
-  // ── RAG_ENABLED flag ─────────────────────────────────────────────────────
-
-  describe('RAG_ENABLED', () => {
-    it('is false when QDRANT_URL is not set', async () => {
-      delete process.env.QDRANT_URL;
-      const { RAG_ENABLED } = await import('./embedding-client.js');
-      expect(RAG_ENABLED).toBe(false);
-    });
-
-    it('is true when QDRANT_URL is set', async () => {
-      process.env.QDRANT_URL = 'http://kubeclaw-qdrant:6333';
-      const { RAG_ENABLED } = await import('./embedding-client.js');
-      expect(RAG_ENABLED).toBe(true);
-    });
-
-    it('is false when EMBEDDING_PROVIDER is "none"', async () => {
-      process.env.QDRANT_URL = 'http://kubeclaw-qdrant:6333';
-      process.env.EMBEDDING_PROVIDER = 'none';
-      const { RAG_ENABLED } = await import('./embedding-client.js');
-      expect(RAG_ENABLED).toBe(false);
-    });
-  });
 });

@@ -1,42 +1,37 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-vi.mock('../capabilities/client.js', () => ({
-  getRagEntry: vi.fn(),
-}));
+vi.mock('../capabilities/client.js', () => ({ getRagEntry: vi.fn() }));
 vi.mock('../logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
-import { getRagProvider, __resetRagProviderForTest } from './provider.js';
+import { getRagProvider, resetRagProvider } from './provider.js';
 import { getRagEntry } from '../capabilities/client.js';
 
 beforeEach(() => {
-  __resetRagProviderForTest();
+  resetRagProvider();
   vi.mocked(getRagEntry).mockReset();
   delete process.env.KUBECLAW_CHANNEL;
-  delete process.env.QDRANT_URL;
 });
 
-describe('getRagProvider', () => {
-  it('returns LightRAG when capability registry has lightrag', () => {
+describe('getRagProvider (adapter-based)', () => {
+  it('returns the remote provider for a remote adapter entry', () => {
     vi.mocked(getRagEntry).mockReturnValue({
-      kind: 'rag',
-      name: 'lr',
-      endpoint: 'http://lr',
-      kindMetadata: { backend: 'lightrag' },
+      kind: 'rag', name: 'lr', endpoint: 'http://lr',
+      kindMetadata: { backend: 'lightrag', provider: { adapter: 'remote' } },
     } as never);
-    expect(getRagProvider().name).toBe('lightrag');
+    expect(getRagProvider().name).toBe('remote');
   });
 
-  it('returns Qdrant when capability registry has qdrant', () => {
+  it('returns the vector-store provider for a vector-store adapter entry', () => {
     vi.mocked(getRagEntry).mockReturnValue({
-      kind: 'rag',
-      name: 'q',
-      endpoint: 'http://q',
-      kindMetadata: { backend: 'qdrant' },
+      kind: 'rag', name: 'q', endpoint: 'http://q',
+      kindMetadata: {
+        backend: 'qdrant',
+        provider: { adapter: 'vector-store', embedding: { provider: 'openai' } },
+      },
     } as never);
-    expect(getRagProvider().name).toBe('qdrant');
-    expect(process.env.QDRANT_URL).toBe('http://q');
+    expect(getRagProvider().name).toBe('vector-store');
   });
 
   it('returns NullRagProvider when nothing configured', () => {
@@ -44,7 +39,7 @@ describe('getRagProvider', () => {
     expect(getRagProvider().name).toBe('none');
   });
 
-  it('passes KUBECLAW_CHANNEL env var to getRagEntry (not CHANNEL_NAME)', () => {
+  it('passes KUBECLAW_CHANNEL to getRagEntry', () => {
     process.env.KUBECLAW_CHANNEL = 'telegram';
     vi.mocked(getRagEntry).mockReturnValue(undefined);
     getRagProvider();

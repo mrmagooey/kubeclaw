@@ -3,6 +3,9 @@
  *
  * Chunks text with a sliding window, embeds each chunk, and upserts into
  * the group's Qdrant collection.
+ *
+ * All config (endpoint, embedding, chunkSize, chunkOverlap, dim) is passed
+ * explicitly via IndexerConfig — no process.env reads.
  */
 
 import crypto from 'crypto';
@@ -10,22 +13,28 @@ import { embed } from '../runtime/embedding-client.js';
 import { upsertPoints, QdrantPoint } from './store.js';
 import { logger } from '../logger.js';
 import type { RagMetrics } from '../metrics/rag.js';
+import type { EmbeddingConfig } from '../capabilities/types.js';
 
-const CHUNK_SIZE = 1800; // characters (~450 tokens for English text)
-const CHUNK_OVERLAP = 200; // characters of overlap between consecutive chunks
+export interface IndexerConfig {
+  endpoint: string;
+  embedding: EmbeddingConfig;
+  dim: number;
+  chunkSize: number;
+  chunkOverlap: number;
+}
 
 /**
  * Split text into overlapping chunks.
  */
-function chunk(text: string): string[] {
+function chunk(text: string, chunkSize: number, chunkOverlap: number): string[] {
   const chunks: string[] = [];
   let start = 0;
   while (start < text.length) {
-    const end = Math.min(start + CHUNK_SIZE, text.length);
+    const end = Math.min(start + chunkSize, text.length);
     const slice = text.slice(start, end).trim();
     if (slice.length > 50) chunks.push(slice); // skip tiny trailing fragments
     if (end >= text.length) break;
-    start = end - CHUNK_OVERLAP;
+    start = end - chunkOverlap;
   }
   return chunks;
 }
@@ -52,21 +61,23 @@ function chunkId(groupFolder: string, text: string): string {
  * Index a piece of text into the group's Qdrant collection.
  * Idempotent — re-indexing the same text overwrites the existing point.
  *
+ * @param config      - indexer config (endpoint, embedding, dim, chunkSize, chunkOverlap)
  * @param groupFolder - the group this content belongs to
  * @param text        - raw text to chunk and embed
  * @param source      - label for provenance (e.g. "conversation", "document")
  */
 export async function indexText(
+  config: IndexerConfig,
   groupFolder: string,
   text: string,
   source: string,
   metrics?: RagMetrics,
 ): Promise<void> {
-  const chunks = chunk(text);
+  const chunks = chunk(text, config.chunkSize, config.chunkOverlap);
   if (chunks.length === 0) return;
 
   const start = Date.now();
-  const vectors = await embed(chunks);
+  const vectors = await embed(chunks, config.embedding);
   const now = Date.now();
 
   const points: QdrantPoint[] = chunks.map((c, i) => ({
@@ -75,16 +86,13 @@ export async function indexText(
     payload: { text: c, source, timestamp: now, groupFolder },
   }));
 
-  await upsertPoints(groupFolder, points);
+  await upsertPoints({ endpoint: config.endpoint, dim: config.dim }, groupFolder, points);
   metrics?.recordIndex({
     group: groupFolder,
     chunks: chunks.length,
     durationMs: Date.now() - start,
   });
-  logger.debug(
-    { groupFolder, source, chunks: chunks.length },
-    'Indexed text chunks',
-  );
+  logger.debug({ groupFolder, source, chunks: chunks.length }, 'Indexed text chunks');
 }
 
 /**
@@ -92,12 +100,13 @@ export async function indexText(
  * retrieved in future sessions.
  */
 export async function indexConversationTurn(
+  config: IndexerConfig,
   groupFolder: string,
   userMessage: string,
   agentResponse: string,
 ): Promise<void> {
   const turn = `User: ${userMessage}\nAssistant: ${agentResponse}`;
-  await indexText(groupFolder, turn, 'conversation').catch((err) => {
+  await indexText(config, groupFolder, turn, 'conversation').catch((err) => {
     // Non-fatal — log and continue; don't break the conversation flow
     logger.warn({ err, groupFolder }, 'Failed to index conversation turn');
   });
