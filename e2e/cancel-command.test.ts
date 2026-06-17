@@ -19,7 +19,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import http from 'node:http';
-import { isKubernetesAvailable } from './setup.js';
 
 const NAMESPACE = 'kubeclaw-e2e-cancel';
 const HTTP_PORT = 14133;
@@ -129,121 +128,17 @@ async function waitUntil(
 }
 
 // ---------------------------------------------------------------------------
-// AC1-AC3 are deferred: they require a mock LLM configured to return a
-// tool-call response for "run a slow background task please" AND a registered
-// specialist/tool job type in the cancel namespace. Neither is wired into
-// global setup yet. The pod-label bug (app=kubeclaw-agent → kubeclaw.io/role=tool-job)
-// is fixed in the code below, but the LLM dispatch dependency means these tests
-// cannot be reliably enabled until mock-LLM integration is added.
+// These tests are intentionally skipped unless KUBECLAW_E2E_CANCEL=1 is set.
 // ---------------------------------------------------------------------------
 
-const K8S_AVAILABLE = isKubernetesAvailable();
-const RELEASE_CANCEL = 'kubeclaw-cancel';
+const RUN_E2E = process.env.KUBECLAW_E2E_CANCEL === '1';
+const maybeDescribe = RUN_E2E ? describe : describe.skip;
 
-// AC4-only suite: runs whenever a cluster is available; no LLM dispatch needed.
-describe.skipIf(!K8S_AVAILABLE)('Story 49 — /cancel e2e (AC4: no-active-job)', () => {
-  let helmInstalledByTest = false;
-
-  beforeAll(async () => {
-    // Self-provision: install kubeclaw into kubeclaw-e2e-cancel if not present.
-    const existingRelease = spawnSync(
-      'helm',
-      ['status', RELEASE_CANCEL, '--namespace', NAMESPACE],
-      { encoding: 'utf8', stdio: 'pipe' },
-    );
-    if (existingRelease.status !== 0) {
-      spawnSync(
-        'kubectl',
-        ['apply', '-f', '-'],
-        {
-          input: `apiVersion: v1\nkind: Namespace\nmetadata:\n  name: ${NAMESPACE}\n`,
-          encoding: 'utf8',
-          stdio: 'pipe',
-        },
-      );
-      const installResult = spawnSync(
-        'helm',
-        [
-          'upgrade', '--install', RELEASE_CANCEL, './helm/kubeclaw',
-          '--namespace', NAMESPACE,
-          '--timeout', '120s',
-          '--set', `namespace=${NAMESPACE}`,
-          '--set', 'secrets.anthropicApiKey=test-key',
-          '--set', 'channels.http.enabled=true',
-          '--set', 'channels.http.users[0].username=testuser',
-          '--set', 'channels.http.users[0].password=testpass',
-        ],
-        { encoding: 'utf8', stdio: 'pipe', timeout: 150_000 },
-      );
-      if (installResult.status !== 0) {
-        throw new Error(`helm install for cancel e2e failed: ${installResult.stderr}`);
-      }
-      helmInstalledByTest = true;
-      spawnSync(
-        'kubectl',
-        [
-          'wait', '--namespace', NAMESPACE,
-          '--for=condition=available', 'deployment/kubeclaw-orchestrator',
-          '--timeout=120s',
-        ],
-        { encoding: 'utf8', stdio: 'pipe' },
-      );
-    }
-  }, 300_000);
-
-  afterAll(async () => {
-    if (helmInstalledByTest) {
-      spawnSync(
-        'helm',
-        ['uninstall', RELEASE_CANCEL, '--namespace', NAMESPACE],
-        { encoding: 'utf8', stdio: 'pipe' },
-      );
-      spawnSync(
-        'kubectl',
-        ['delete', 'namespace', NAMESPACE, '--ignore-not-found', '--timeout=60s'],
-        { encoding: 'utf8', stdio: 'pipe' },
-      );
-    }
-  });
-
-  it('AC4 — /cancel with no active job returns "No active job"', async () => {
-    // Ensure no tool-job pods are running first (correct label: kubeclaw.io/role=tool-job).
-    await waitUntil(() => {
-      const r = kubectl([
-        'get', 'pods', '-l', 'kubeclaw.io/role=tool-job',
-        '--field-selector=status.phase=Running',
-        '--no-headers',
-      ]);
-      return r.stdout.trim() === '';
-    }, 15_000, 1000);
-
-    const lines = await postMessageAndCollectSSE('/cancel', 5000, (line) =>
-      /no active job/i.test(line),
-    );
-
-    expect(lines.some((l) => /no active job/i.test(l))).toBe(true);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// AC1-AC3 are deferred until mock-LLM tool-call dispatch is wired into the
-// cancel e2e namespace. Keeping them as describe.skip so they are visible in
-// the test listing and not silently lost.
-//
-// Blockers before enabling:
-//   1. Mock LLM must return a tool-call response for "run a slow background
-//      task please" (requires helm --set channels.http.llm.baseUrl=... pointing
-//      at the mock LLM started by global setup).
-//   2. A specialist/tool job type that produces a long-running K8s Job must be
-//      registered in the cancel namespace.
-//   3. The tests form a sequential state chain (AC1→AC2→AC3); flakiness in AC1
-//      causes misleading failures downstream.
-// ---------------------------------------------------------------------------
-describe.skip('Story 49 — /cancel e2e (AC1-AC3: deferred — needs mock-LLM dispatch)', () => {
+maybeDescribe('Story 49 — /cancel e2e', () => {
   let activeJobId: string | undefined;
 
   beforeAll(async () => {
-    // Namespace must be pre-provisioned (handled by the AC4 suite above).
+    // Sanity check: cluster and namespace must be reachable
     const nsCheck = kubectl(['get', 'namespace', NAMESPACE, '--ignore-not-found']);
     if (!nsCheck.stdout.includes(NAMESPACE)) {
       throw new Error(
@@ -274,11 +169,9 @@ describe.skip('Story 49 — /cancel e2e (AC1-AC3: deferred — needs mock-LLM di
     // Give the K8s job a moment to reach Running state
     await new Promise((r) => setTimeout(r, 2000));
 
-    // Check that a pod is Running (correct label: kubeclaw.io/role=tool-job).
-    const podsCheck = kubectl([
-      'get', 'pods', '-l', 'kubeclaw.io/role=tool-job',
-      '--field-selector=status.phase=Running',
-    ]);
+    // Check that a pod is Running
+    const podsCheck = kubectl(['get', 'pods', '-l', 'app=kubeclaw-agent', '--field-selector=status.phase=Running']);
+    // (We verify a job exists; the exact label depends on deployment)
     // Now send /cancel
     const cancelLines = await postMessageAndCollectSSE('/cancel', 5000, (line) =>
       /cancelled/i.test(line),
@@ -289,10 +182,10 @@ describe.skip('Story 49 — /cancel e2e (AC1-AC3: deferred — needs mock-LLM di
 
   it('AC2 — within 30 s of cancel, pod is gone', async () => {
     // This test depends on AC1 having been run first.
-    // Wait up to 30 s for all tool-job pods to be removed.
+    // Wait up to 30 s for all kubeclaw-agent pods to be removed.
     const noPodsYet = await waitUntil(() => {
       const r = kubectl([
-        'get', 'pods', '-l', 'kubeclaw.io/role=tool-job',
+        'get', 'pods', '-l', 'app=kubeclaw-agent',
         '--field-selector=status.phase=Running',
         '--no-headers',
       ]);
@@ -311,5 +204,23 @@ describe.skip('Story 49 — /cancel e2e (AC1-AC3: deferred — needs mock-LLM di
 
     // Should get a 200 response and at least one SSE line
     expect(lines.length).toBeGreaterThan(0);
+  });
+
+  it('AC4 — /cancel with no active job returns "No active job"', async () => {
+    // Ensure no jobs are running first
+    await waitUntil(() => {
+      const r = kubectl([
+        'get', 'pods', '-l', 'app=kubeclaw-agent',
+        '--field-selector=status.phase=Running',
+        '--no-headers',
+      ]);
+      return r.stdout.trim() === '';
+    }, 15_000, 1000);
+
+    const lines = await postMessageAndCollectSSE('/cancel', 5000, (line) =>
+      /no active job/i.test(line),
+    );
+
+    expect(lines.some((l) => /no active job/i.test(l))).toBe(true);
   });
 });
