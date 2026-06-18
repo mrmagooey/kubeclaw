@@ -4,6 +4,9 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 // ── Mocks ──────────────────────────────────────────────────────────────────
 
 vi.mock('./registry.js', () => ({ registerChannel: vi.fn() }));
+// Mutable flag read by the config mock — set per-test to override DEBUG_ENDPOINTS_ENABLED.
+let _debugEndpointsEnabled = false;
+
 vi.mock('../db.js', () => {
   const dbExec = vi.fn(() => []);
   return {
@@ -27,19 +30,25 @@ vi.mock('../db.js', () => {
     pauseTask: vi.fn(() => false),
     resumeTask: vi.fn(() => false),
     searchConversations: vi.fn(() => []),
+    insertToolJobForDebug: vi.fn(),
     writeAuditEntry: vi.fn(),
     db: { exec: dbExec },
   };
 });
 vi.mock('../env.js', () => ({ readEnvFile: vi.fn(() => ({})) }));
-vi.mock('../config.js', () => ({
-  ASSISTANT_NAME: 'Andy',
-  TRIGGER_PATTERN: /^@Andy\b/i,
-  GROUPS_DIR: '/tmp/test-groups',
-  RATE_LIMIT_WINDOW_MS: 60000,
-  TIMEZONE: 'UTC',
-  TOOL_JOBS_RETENTION_DAYS: 30,
-}));
+vi.mock('../config.js', () => {
+  return {
+    ASSISTANT_NAME: 'Andy',
+    TRIGGER_PATTERN: /^@Andy\b/i,
+    GROUPS_DIR: '/tmp/test-groups',
+    RATE_LIMIT_WINDOW_MS: 60000,
+    TIMEZONE: 'UTC',
+    TOOL_JOBS_RETENTION_DAYS: 30,
+    get DEBUG_ENDPOINTS_ENABLED() {
+      return _debugEndpointsEnabled;
+    },
+  };
+});
 vi.mock('../logger.js', () => ({
   logger: {
     debug: vi.fn(),
@@ -142,6 +151,7 @@ import {
   resumeTask,
   searchConversations,
   writeAuditEntry,
+  insertToolJobForDebug,
 } from '../db.js';
 import type { ConversationHistoryRow } from '../db.js';
 import {
@@ -7805,6 +7815,152 @@ describe('PATCH /history/:id — edited_at (Story 84)', () => {
     const req = makeReq({
       method: 'PUT',
       url: '/history/msg-1',
+      auth: 'alice:secret',
+    });
+    const res = makeRes();
+    await dispatch(channel, req, res);
+
+    expect(res._status).toBe(405);
+    await channel.disconnect();
+  });
+});
+
+// ── POST /debug/tool-jobs/inject ──────────────────────────────────────────────
+
+describe('POST /debug/tool-jobs/inject', () => {
+  beforeEach(() => {
+    _debugEndpointsEnabled = false;
+    vi.mocked(insertToolJobForDebug).mockReset();
+  });
+
+  afterEach(() => {
+    _debugEndpointsEnabled = false;
+  });
+
+  it('returns 404 when KUBECLAW_DEBUG_ENDPOINTS is false (default)', async () => {
+    _debugEndpointsEnabled = false;
+    const channel = new HttpChannel(makeConfig(), makeOpts());
+    await channel.connect();
+    const req = makeReq({
+      method: 'POST',
+      url: '/debug/tool-jobs/inject',
+      auth: 'alice:secret',
+      body: JSON.stringify({ job_id: 'j1', group_folder: 'http:alice', status: 'completed' }),
+    });
+    const res = makeRes();
+    await dispatch(channel, req, res);
+
+    expect(res._status).toBe(404);
+    expect(vi.mocked(insertToolJobForDebug)).not.toHaveBeenCalled();
+    await channel.disconnect();
+  });
+
+  it('returns 401 when not authenticated (flag on)', async () => {
+    _debugEndpointsEnabled = true;
+    const channel = new HttpChannel(makeConfig(), makeOpts());
+    await channel.connect();
+    const req = makeReq({
+      method: 'POST',
+      url: '/debug/tool-jobs/inject',
+      auth: null,
+      body: JSON.stringify({ job_id: 'j1', group_folder: 'http:alice', status: 'completed' }),
+    });
+    const res = makeRes();
+    await dispatch(channel, req, res);
+
+    expect(res._status).toBe(401);
+    expect(vi.mocked(insertToolJobForDebug)).not.toHaveBeenCalled();
+    await channel.disconnect();
+  });
+
+  it('returns 400 when body is missing required fields (flag on)', async () => {
+    _debugEndpointsEnabled = true;
+    const channel = new HttpChannel(makeConfig(), makeOpts());
+    await channel.connect();
+    const req = makeReq({
+      method: 'POST',
+      url: '/debug/tool-jobs/inject',
+      auth: 'alice:secret',
+      body: '{}',
+    });
+    const res = makeRes();
+    await dispatch(channel, req, res);
+
+    expect(res._status).toBe(400);
+    expect(vi.mocked(insertToolJobForDebug)).not.toHaveBeenCalled();
+    await channel.disconnect();
+  });
+
+  it('inserts the row and returns 200 for a valid payload (flag on)', async () => {
+    _debugEndpointsEnabled = true;
+    const channel = new HttpChannel(makeConfig(), makeOpts());
+    await channel.connect();
+    const payload = {
+      job_id: 'test-job-1',
+      group_folder: 'http:alice',
+      status: 'completed',
+      resolved_at: '2026-01-01T00:00:00.000Z',
+    };
+    const req = makeReq({
+      method: 'POST',
+      url: '/debug/tool-jobs/inject',
+      auth: 'alice:secret',
+      body: JSON.stringify(payload),
+    });
+    const res = makeRes();
+    await dispatch(channel, req, res);
+
+    expect(res._status).toBe(200);
+    const body = JSON.parse(res._body) as { ok: boolean; job_id: string };
+    expect(body.ok).toBe(true);
+    expect(body.job_id).toBe('test-job-1');
+    expect(vi.mocked(insertToolJobForDebug)).toHaveBeenCalledWith({
+      jobId: 'test-job-1',
+      groupFolder: 'http:alice',
+      status: 'completed',
+      createdAt: undefined,
+      resolvedAt: '2026-01-01T00:00:00.000Z',
+    });
+    await channel.disconnect();
+  });
+
+  it('inserts with created_at override (flag on)', async () => {
+    _debugEndpointsEnabled = true;
+    const channel = new HttpChannel(makeConfig(), makeOpts());
+    await channel.connect();
+    const payload = {
+      job_id: 'test-job-2',
+      group_folder: 'http:bob',
+      status: 'active',
+      created_at: '2025-01-01T00:00:00.000Z',
+    };
+    const req = makeReq({
+      method: 'POST',
+      url: '/debug/tool-jobs/inject',
+      auth: 'alice:secret',
+      body: JSON.stringify(payload),
+    });
+    const res = makeRes();
+    await dispatch(channel, req, res);
+
+    expect(res._status).toBe(200);
+    expect(vi.mocked(insertToolJobForDebug)).toHaveBeenCalledWith({
+      jobId: 'test-job-2',
+      groupFolder: 'http:bob',
+      status: 'active',
+      createdAt: '2025-01-01T00:00:00.000Z',
+      resolvedAt: null,
+    });
+    await channel.disconnect();
+  });
+
+  it('returns 405 for GET /debug/tool-jobs/inject (flag on)', async () => {
+    _debugEndpointsEnabled = true;
+    const channel = new HttpChannel(makeConfig(), makeOpts());
+    await channel.connect();
+    const req = makeReq({
+      method: 'GET',
+      url: '/debug/tool-jobs/inject',
       auth: 'alice:secret',
     });
     const res = makeRes();
