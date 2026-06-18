@@ -694,6 +694,185 @@ describe('HttpChannel', () => {
     });
   });
 
+  // ── POST /message — out-of-band /cancel ──────────────────────────────────
+
+  describe('POST /message — out-of-band /cancel', () => {
+    it('calls cancelGroupJobFn and does NOT call onMessage when status=cancelled', async () => {
+      const cancelGroupJobFn = vi.fn(async () => ({
+        ok: true,
+        status: 'cancelled' as const,
+      }));
+      const opts = makeOpts({ cancelGroupJobFn });
+      const channel = new HttpChannel(makeConfig(), opts);
+      await channel.connect();
+
+      // Spy on sendMessage to ensure no Cancelled message is pushed by the handler
+      const sendMessageSpy = vi.spyOn(channel, 'sendMessage');
+
+      const req = makeReq({
+        method: 'POST',
+        url: '/message',
+        auth: 'alice:secret',
+        body: '{"text":"/cancel"}',
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      // cancelGroupJobFn must be called with resolved groupFolder and jid
+      expect(cancelGroupJobFn).toHaveBeenCalledTimes(1);
+      expect(cancelGroupJobFn).toHaveBeenCalledWith('alice', 'http:alice');
+
+      // Queue bypassed — onMessage must NOT be called
+      expect(opts.onMessage).not.toHaveBeenCalled();
+
+      // Handler must respond 200 with {id:null}
+      expect(res._status).toBe(200);
+      expect(JSON.parse(res._body)).toEqual({ id: null });
+
+      // Handler must NOT push a "Cancelled" string (orchestrator does it)
+      expect(sendMessageSpy).not.toHaveBeenCalledWith(
+        'http:alice',
+        expect.stringContaining('Cancelled'),
+      );
+
+      await channel.disconnect();
+    });
+
+    it('sends "No active job" when status=no_active_job', async () => {
+      const cancelGroupJobFn = vi.fn(async () => ({
+        ok: true,
+        status: 'no_active_job' as const,
+      }));
+      const opts = makeOpts({ cancelGroupJobFn });
+      const channel = new HttpChannel(makeConfig(), opts);
+      await channel.connect();
+
+      // Register an SSE client so sendMessage can write
+      const sseReq = makeReq({ url: '/stream', auth: 'alice:secret' });
+      const closeHandlers: Array<() => void> = [];
+      (sseReq.on as ReturnType<typeof vi.fn>).mockImplementation(
+        (event: string, cb: () => void) => {
+          if (event === 'close') closeHandlers.push(cb);
+        },
+      );
+      const sseRes = makeRes();
+      await dispatch(channel, sseReq, sseRes);
+
+      const req = makeReq({
+        method: 'POST',
+        url: '/message',
+        auth: 'alice:secret',
+        body: '{"text":"/cancel"}',
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      expect(opts.onMessage).not.toHaveBeenCalled();
+
+      const sseData = (sseRes.write as ReturnType<typeof vi.fn>).mock.calls
+        .map(([d]: [string]) => d)
+        .join('');
+      expect(sseData).toContain('No active job');
+
+      closeHandlers.forEach((h) => h());
+      await channel.disconnect();
+    });
+
+    it('sends "Cancel failed" when ok=false', async () => {
+      const cancelGroupJobFn = vi.fn(async () => ({
+        ok: false,
+        error: 'boom',
+      }));
+      const opts = makeOpts({ cancelGroupJobFn });
+      const channel = new HttpChannel(makeConfig(), opts);
+      await channel.connect();
+
+      // Register an SSE client so sendMessage can write
+      const sseReq = makeReq({ url: '/stream', auth: 'alice:secret' });
+      const closeHandlers: Array<() => void> = [];
+      (sseReq.on as ReturnType<typeof vi.fn>).mockImplementation(
+        (event: string, cb: () => void) => {
+          if (event === 'close') closeHandlers.push(cb);
+        },
+      );
+      const sseRes = makeRes();
+      await dispatch(channel, sseReq, sseRes);
+
+      const req = makeReq({
+        method: 'POST',
+        url: '/message',
+        auth: 'alice:secret',
+        body: '{"text":"/cancel"}',
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(res._status).toBe(200);
+      expect(opts.onMessage).not.toHaveBeenCalled();
+
+      const sseData = (sseRes.write as ReturnType<typeof vi.fn>).mock.calls
+        .map(([d]: [string]) => d)
+        .join('');
+      expect(sseData).toContain('Cancel failed: boom');
+
+      closeHandlers.forEach((h) => h());
+      await channel.disconnect();
+    });
+
+    it('does NOT intercept a normal message like "hello"', async () => {
+      const cancelGroupJobFn = vi.fn(async () => ({
+        ok: true,
+        status: 'cancelled' as const,
+      }));
+      const opts = makeOpts({ cancelGroupJobFn });
+      const channel = new HttpChannel(makeConfig(), opts);
+      await channel.connect();
+
+      const req = makeReq({
+        method: 'POST',
+        url: '/message',
+        auth: 'alice:secret',
+        body: '{"text":"hello"}',
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(cancelGroupJobFn).not.toHaveBeenCalled();
+      expect(opts.onMessage).toHaveBeenCalled();
+      expect(res._status).toBe(200);
+      const body = JSON.parse(res._body);
+      expect(body.id).not.toBeNull();
+
+      await channel.disconnect();
+    });
+
+    it('does NOT intercept "/cancellation" (no space/end boundary)', async () => {
+      const cancelGroupJobFn = vi.fn(async () => ({
+        ok: true,
+        status: 'cancelled' as const,
+      }));
+      const opts = makeOpts({ cancelGroupJobFn });
+      const channel = new HttpChannel(makeConfig(), opts);
+      await channel.connect();
+
+      const req = makeReq({
+        method: 'POST',
+        url: '/message',
+        auth: 'alice:secret',
+        body: '{"text":"/cancellation"}',
+      });
+      const res = makeRes();
+      await dispatch(channel, req, res);
+
+      expect(cancelGroupJobFn).not.toHaveBeenCalled();
+      expect(opts.onMessage).toHaveBeenCalled();
+      expect(res._status).toBe(200);
+
+      await channel.disconnect();
+    });
+  });
+
   // ── sendMessage() via SSE ────────────────────────────────────────────────
 
   describe('sendMessage()', () => {
