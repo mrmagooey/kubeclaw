@@ -146,6 +146,33 @@ export default async function setup() {
     }
   }
 
+  // ── Build mock-llm container image into minikube Docker daemon ──────────
+  console.log('🐳 Checking for kubeclaw-mock-llm:latest in minikube...');
+  try {
+    const checkResult = spawnSync(
+      'bash',
+      ['-c', 'eval $(minikube docker-env) && docker image inspect kubeclaw-mock-llm:latest -f "{{.Id}}" 2>/dev/null'],
+      { encoding: 'utf8', stdio: 'pipe' },
+    );
+    if (checkResult.status === 0 && checkResult.stdout.trim()) {
+      console.log('✅ kubeclaw-mock-llm:latest already present, skipping build\n');
+    } else {
+      console.log('🔨 Building kubeclaw-mock-llm:latest inside minikube Docker daemon...');
+      const buildResult = spawnSync(
+        'bash',
+        ['-c', 'eval $(minikube docker-env) && docker build -t kubeclaw-mock-llm:latest container/mock-llm'],
+        { encoding: 'utf8', stdio: 'inherit', timeout: 120_000 },
+      );
+      if (buildResult.status !== 0) {
+        throw new Error(`Mock LLM image build failed with exit code ${buildResult.status}`);
+      }
+      console.log('✅ kubeclaw-mock-llm:latest built\n');
+    }
+  } catch (err) {
+    console.warn(`⚠️  Could not build mock-llm image: ${err}\n`);
+    // Non-fatal — tests that require the in-cluster mock LLM will skip or fail gracefully
+  }
+
   // ── Build agent container image into minikube Docker daemon ─────────────
   // The tool-server and agent runner are both served from kubeclaw-agent:latest.
   // We skip the build if the image already exists in the minikube daemon.
