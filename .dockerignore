@@ -1,0 +1,20 @@
+# Dependencies are installed fresh inside the image (RUN npm install), so the
+# host copy must never enter the build context. In a git worktree node_modules
+# is a symlink, which otherwise breaks `COPY . .` ("cannot replace to directory
+# … with file").
+node_modules
+
+# Build output is regenerated inside the image (RUN npm run build).
+dist
+
+# VCS / worktrees / agent state — never needed at runtime, and bulky.
+.git
+.worktrees
+.claude
+
+# Local test artifacts and logs.
+e2e/results
+*.log
+
+# Editor / OS cruft.
+.DS_Store
