@@ -2,11 +2,30 @@
 
 ## Overview
 
-Each sidecar tool pod is a two-container Kubernetes Job: `kubeclaw-tool-bridge` (running `tool-server.js`) and `user-tool` (an arbitrary container supplied by the tool author). The bridge is the only container that touches Redis; `user-tool` never sees Redis credentials.
+Each sidecar tool pod is a two-container Kubernetes Job: `kubeclaw-tool-bridge` (running `tool-server.js`) and `user-tool` (an arbitrary container supplied by the tool author — typically a **standard third-party image**). The bridge is the only container that touches Redis; `user-tool` never sees Redis credentials.
 
-The bridge reads tool calls from the stream `kubeclaw:toolcalls:{agentJobId}:{toolName}` (the `{toolName}` segment is passed to the bridge container as `KUBECLAW_CATEGORY`) and writes results to `kubeclaw:toolresults:{agentJobId}:{toolName}`. Between those two stream operations, the bridge forwards the call to `user-tool` using one of three IPC patterns, selected by `ToolSpec.pattern`.
+The bridge reads tool calls from the stream `kubeclaw:toolcalls:{agentJobId}:{toolName}` (the `{toolName}` segment — the tool's catalog name — is passed to the bridge container as `KUBECLAW_CATEGORY`) and writes results to `kubeclaw:toolresults:{agentJobId}:{toolName}`. Between those two stream operations, the bridge forwards the call to `user-tool` using one of three IPC patterns (`http`, `file`, `acp`), selected by `ToolSpec.pattern`. A fourth pattern, `cdp`, has no `user-tool` container — it drives a browser sidecar directly (see [CDP pattern](#cdp-pattern-browser-tools)).
 
 Regardless of pattern, the user container receives a single injected env var, `PORT`, set to the value of `ToolSpec.port` (default `8080`).
+
+## Tool catalog
+
+Tools are defined once in a cluster-wide **tool catalog**; nothing about a tool is hard-coded into the agent. Each entry is a `ToolSpec` (`name`, `description`, `parameters`, `image`, `pattern`, and pattern-specific fields). The live catalog is merged from two sources:
+
+- **Helm baseline** — the `tools:` list in `values.yaml`, mounted into the orchestrator at `/etc/kubeclaw/tools-baseline/tools.json`.
+- **Runtime overrides** — the `tool_overrides` SQLite table, managed from the orchestrator admin shell with `register_tool` / `edit_tool` / `remove_tool` / `list_tools`.
+
+The orchestrator's `ToolReconciler` merges baseline + overrides and writes the result to the `kubeclaw-tools` ConfigMap. Channel pods mount that ConfigMap (hot-reloaded) to build the LLM tool list. When a tool is invoked, the caller sends only the tool **name** on `kubeclaw:spawn-tool-pod`; the orchestrator resolves the full `ToolSpec` by name, re-checks the tool's `channels` ACL against the requesting channel, and spawns the pod with the resolved image/pattern/port. The orchestrator is the single authority on what image a tool name maps to — see [REDIS_IPC_PROTOCOL.md](./REDIS_IPC_PROTOCOL.md#spawn-tool-pod-stream).
+
+Every tool in the Helm baseline runs on a **standard third-party image** — no first-party tool images are required:
+
+| Tool                                       | Image                            | Pattern |
+| ------------------------------------------ | -------------------------------- | ------- |
+| `bash`, `bash_persist`                     | `alpine:latest`                  | `file`  |
+| `web_fetch`, `web_search`, `places_search` | `curlimages/curl:latest`         | `file`  |
+| `browser`                                  | `chromedp/headless-shell:latest` | `cdp`   |
+
+In production, tool images are gated by `TOOL_IMAGE_ALLOWLIST` (and `mount: group` separately by `TOOL_GROUP_MOUNT_ALLOWLIST`).
 
 ## The Three Patterns
 
@@ -35,14 +54,14 @@ When `ToolSpec.requestMapping` is set, the bridge builds the real HTTP request t
 
 **Schema** (`requestMapping` fields):
 
-| Field | Type | Required | Notes |
-|---|---|---|---|
-| `method` | `GET\|POST\|PUT\|PATCH\|DELETE` | yes | |
-| `path` | string | yes | Must begin with `/`; `{field}` tokens are URL-encoded |
-| `query` | `Record<string, string>` | no | Values are literals or `{field}` (URL-encoded) |
-| `headers` | `Record<string, string>` | no | Values are literals or `{field}`; CR/LF stripped to prevent header injection |
-| `body` | JSON template | no | Omit for GET/DELETE; see substitution rules below |
-| `responsePath` | string | no | Dot-separated path into a JSON response, e.g. `current.temp_c` |
+| Field          | Type                            | Required | Notes                                                                        |
+| -------------- | ------------------------------- | -------- | ---------------------------------------------------------------------------- |
+| `method`       | `GET\|POST\|PUT\|PATCH\|DELETE` | yes      |                                                                              |
+| `path`         | string                          | yes      | Must begin with `/`; `{field}` tokens are URL-encoded                        |
+| `query`        | `Record<string, string>`        | no       | Values are literals or `{field}` (URL-encoded)                               |
+| `headers`      | `Record<string, string>`        | no       | Values are literals or `{field}`; CR/LF stripped to prevent header injection |
+| `body`         | JSON template                   | no       | Omit for GET/DELETE; see substitution rules below                            |
+| `responsePath` | string                          | no       | Dot-separated path into a JSON response, e.g. `current.temp_c`               |
 
 **Substitution rules:**
 
@@ -70,14 +89,14 @@ tools:
         city: { type: string }
         units: { type: string }
       required: [city]
-    image: ghcr.io/example/weather-api:1      # must also be in TOOL_IMAGE_ALLOWLIST
+    image: ghcr.io/example/weather-api:1 # must also be in TOOL_IMAGE_ALLOWLIST
     pattern: http
     port: 8080
     requestMapping:
       method: GET
       path: /v1/weather/{city}
       query:
-        units: "{units}"
+        units: '{units}'
       responsePath: current.summary
 ```
 
@@ -93,13 +112,14 @@ For each incoming tool call the bridge builds a request directory under `/shared
 
 `user-tool` must write a response atomically (mktemp + mv) to `/shared/resp/{requestId}/`. The response directory must contain three files:
 
-| File | Content |
-|---|---|
+| File        | Content                                    |
+| ----------- | ------------------------------------------ |
 | `exit_code` | Exit status as a decimal string (e.g. `0`) |
-| `response` | Stdout (may be absent; treated as empty) |
-| `stderr` | Stderr (may be absent; treated as empty) |
+| `response`  | Stdout (may be absent; treated as empty)   |
+| `stderr`    | Stderr (may be absent; treated as empty)   |
 
 The bridge polls for the response directory on a 500 ms schedule. When it appears:
+
 - Exit code `0` → returns the contents of `response`, truncated to `KUBECLAW_MAX_TOOL_OUTPUT_BYTES` (default 50 kB).
 - Any other exit code → returns an error: `exit {code}: {stderr}` (stderr truncated to the same cap).
 
@@ -111,10 +131,10 @@ The bridge deletes the response directory after reading. Timeout (idle timeout r
 
 When `ToolSpec.run` is set (file pattern only), there is no need to write custom bridge code. The orchestrator sets the user-tool container's command to `/bin/sh /kubeclaw/tool-wrapper.sh` and injects two env vars into the **user-tool** container:
 
-| Variable | Container | Content |
-|---|---|---|
+| Variable            | Container | Content                                                                                |
+| ------------------- | --------- | -------------------------------------------------------------------------------------- |
 | `KUBECLAW_TOOL_RUN` | user-tool | The `run` string from the ToolSpec — executed verbatim as `sh -c "$KUBECLAW_TOOL_RUN"` |
-| `WORKDIR` | user-tool | Working directory (see Mounts below) |
+| `WORKDIR`           | user-tool | Working directory (see Mounts below)                                                   |
 
 `KUBECLAW_TOOL_FIELDS` (comma-separated declared parameter names) is injected into the **`kubeclaw-tool-bridge`** container — the bridge reads it at startup to know which declared input fields to write into `/shared/req/{id}/input/`. It is not present on the user-tool container.
 
@@ -140,11 +160,11 @@ $(cat "$INPUT_DIR/<fieldname>")
 
 File-pattern tools can optionally receive a writable working directory via `ToolSpec.mount`:
 
-| `mount` value | `WORKDIR` | Volume type | Notes |
-|---|---|---|---|
-| `none` (default) | `/tmp` | — | No persistent storage |
-| `scratch` | `/work` | emptyDir | Ephemeral; lives only for the duration of the job |
-| `group` | `/work` | Group PVC (`kubeclaw-groups`), subPath = groupFolder | Persistent; scoped to the calling group |
+| `mount` value    | `WORKDIR` | Volume type                                          | Notes                                             |
+| ---------------- | --------- | ---------------------------------------------------- | ------------------------------------------------- |
+| `none` (default) | `/tmp`    | —                                                    | No persistent storage                             |
+| `scratch`        | `/work`   | emptyDir                                             | Ephemeral; lives only for the duration of the job |
+| `group`          | `/work`   | Group PVC (`kubeclaw-groups`), subPath = groupFolder | Persistent; scoped to the calling group           |
 
 The `group` mount is gated by **`TOOL_GROUP_MOUNT_ALLOWLIST`** (default-deny). This is separate from `TOOL_IMAGE_ALLOWLIST`. When the allowlist is empty, no image may use `mount: group`. The Helm default ships `alpine:*`, enabling the stock `bash_persist` tool. The group PVC is **never** mounted on the bridge container — only on user-tool.
 
@@ -184,11 +204,11 @@ http://localhost:{port}{healthPath}
 
 Any HTTP response — including `404` — counts as ready. The contract is that the port is listening, not that the health endpoint returns a specific status code. Connection errors (ECONNREFUSED, ETIMEDOUT) mean not-ready; polling continues until the deadline.
 
-| Parameter | Default | Override |
-|---|---|---|
-| `healthPath` | `/` | `ToolSpec.healthPath` (must begin with `/`) or env `KUBECLAW_TOOL_HEALTH_PATH` |
-| Ready timeout | `30000` ms | `KUBECLAW_TOOL_READY_TIMEOUT` |
-| Poll interval | `1000` ms | `KUBECLAW_TOOL_READY_INTERVAL_MS` |
+| Parameter     | Default    | Override                                                                       |
+| ------------- | ---------- | ------------------------------------------------------------------------------ |
+| `healthPath`  | `/`        | `ToolSpec.healthPath` (must begin with `/`) or env `KUBECLAW_TOOL_HEALTH_PATH` |
+| Ready timeout | `30000` ms | `KUBECLAW_TOOL_READY_TIMEOUT`                                                  |
+| Poll interval | `1000` ms  | `KUBECLAW_TOOL_READY_INTERVAL_MS`                                              |
 
 ## Retry and timeouts
 
@@ -198,10 +218,10 @@ HTTP `/invoke` calls (http pattern) and ACP `/runs` POSTs and polls (acp pattern
 
 **Retry policy**:
 
-| Response | Behavior |
-|---|---|
-| 4xx | `ToolClientError` — fail fast, no retry. Error message: `Tool HTTP {status}: {body}` |
-| 5xx, network error, or timeout | Exponential backoff retry |
+| Response                       | Behavior                                                                             |
+| ------------------------------ | ------------------------------------------------------------------------------------ |
+| 4xx                            | `ToolClientError` — fail fast, no retry. Error message: `Tool HTTP {status}: {body}` |
+| 5xx, network error, or timeout | Exponential backoff retry                                                            |
 
 Backoff formula: `delay = KUBECLAW_TOOL_RETRY_BASE_MS × 2^(attempt-1)`
 
@@ -236,17 +256,17 @@ Each id must correspond to an entry in `credentialInjection.catalog` in `values.
 
 When `toolSpec.credentials` is non-empty and `CREDENTIAL_INJECTION_MODE != off`, `createSidecarToolPodJob` builds:
 
-| What | How |
-|---|---|
-| `credential-sidecar` container | Envoy proxy; runs at `CREDENTIAL_SIDECAR_PORT`; substitutes the real credential at egress via `ext_authz` |
-| `envoy-config` volume | ConfigMap `kubeclaw-envoy-sidecar`; mounted at `/etc/envoy` on the sidecar |
-| `broker-token` volume | Projected service-account token (audience `kubeclaw-credential-broker`, 10 min TTL); mounted at `/var/run/secrets/tokens` on the sidecar |
-| `egress-ca` volume | Secret `kubeclaw-egress-ca-tls` (key `ca.crt` → path `kubeclaw-egress-ca.crt`); mounted at `/etc/ssl/certs` on the sidecar |
-| Proxy env on `user-tool` | `HTTPS_PROXY`, `HTTP_PROXY` → `http://127.0.0.1:{port}`; `NO_PROXY` → `localhost,127.0.0.1,kubeclaw-redis,credential-broker`; `NODE_EXTRA_CA_CERTS` and `SSL_CERT_FILE` → `/etc/ssl/certs/kubeclaw-egress-ca.crt` |
-| Placeholder env on `user-tool` | One env var per `credentialFields` entry for each declared id (e.g. `BRAVE_API_KEY`); value is the group's registered placeholder, the operator-fallback sentinel, or `injected-by-broker` |
-| `serviceAccountName: kubeclaw-tool-job` | Set whenever injection is active (`mode != off`) |
-| `automountServiceAccountToken: false` | Set alongside the SA |
-| `kubeclaw.io/owner-group` annotation | Set on the pod template so the broker can resolve the group for identity propagation |
+| What                                    | How                                                                                                                                                                                                               |
+| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `credential-sidecar` container          | Envoy proxy; runs at `CREDENTIAL_SIDECAR_PORT`; substitutes the real credential at egress via `ext_authz`                                                                                                         |
+| `envoy-config` volume                   | ConfigMap `kubeclaw-envoy-sidecar`; mounted at `/etc/envoy` on the sidecar                                                                                                                                        |
+| `broker-token` volume                   | Projected service-account token (audience `kubeclaw-credential-broker`, 10 min TTL); mounted at `/var/run/secrets/tokens` on the sidecar                                                                          |
+| `egress-ca` volume                      | Secret `kubeclaw-egress-ca-tls` (key `ca.crt` → path `kubeclaw-egress-ca.crt`); mounted at `/etc/ssl/certs` on the sidecar                                                                                        |
+| Proxy env on `user-tool`                | `HTTPS_PROXY`, `HTTP_PROXY` → `http://127.0.0.1:{port}`; `NO_PROXY` → `localhost,127.0.0.1,kubeclaw-redis,credential-broker`; `NODE_EXTRA_CA_CERTS` and `SSL_CERT_FILE` → `/etc/ssl/certs/kubeclaw-egress-ca.crt` |
+| Placeholder env on `user-tool`          | One env var per `credentialFields` entry for each declared id (e.g. `BRAVE_API_KEY`); value is the group's registered placeholder, the operator-fallback sentinel, or `injected-by-broker`                        |
+| `serviceAccountName: kubeclaw-tool-job` | Set whenever injection is active (`mode != off`)                                                                                                                                                                  |
+| `automountServiceAccountToken: false`   | Set alongside the SA                                                                                                                                                                                              |
+| `kubeclaw.io/owner-group` annotation    | Set on the pod template so the broker can resolve the group for identity propagation                                                                                                                              |
 
 The `kubeclaw-tool-bridge` container receives none of the credential env vars or the proxy env — only the `user-tool` container does.
 
@@ -299,9 +319,9 @@ No `credentials` declared, so no sidecar is attached and the request goes direct
 
 Declares `credentials: [brave-search]`, which maps to the `brave-search` catalog entry (`BRAVE_API_KEY` placeholder env, `allowOperatorFallback: true`). In sidecar mode the `credential-sidecar` Envoy intercepts the outbound HTTPS request and the broker substitutes the real Brave API key. The tool script reads `$BRAVE_API_KEY` (the placeholder) at request time; the real value is inserted at egress. The result is the raw Brave JSON response.
 
-### Note: `browser` and the legacy agent-runner
+### Note: the legacy agent-runner
 
-`browser` is not a catalog tool — it remains a built-in (its own follow-on spec). The legacy agent-runner (non-direct-llm path) keeps `web_fetch` and `web_search` as in-process built-ins alongside their catalog counterparts, matching the same dual-existence pattern as `bash`. The channel's direct-llm path resolves `web_fetch` and `web_search` from the catalog.
+`browser` is now a catalog tool (`pattern: cdp`, on a stock Chromium image — see the [CDP pattern](#cdp-pattern-browser-tools) below). The legacy agent-runner (the non-direct-LLM execution path) keeps in-process built-in versions of `bash`, `web_fetch`, `web_search`, and `browser` alongside their catalog counterparts. The channel's direct-LLM path always resolves these from the catalog; the in-process built-ins are a backward-compatibility fallback for the legacy path. The first-party `kubeclaw-browser-sidecar` image is used only by the legacy path and is built opt-in via `./container/build.sh --browser` (it is not part of `--all`).
 
 ## CDP pattern (browser tools)
 
@@ -309,8 +329,8 @@ Declares `credentials: [brave-search]`, which maps to the `brave-search` catalog
 
 The `cdp` pattern attaches the operator's stock Chromium-CDP image as a K8s
 native sidecar and wires a Playwright-over-CDP connection from the bridge to
-it.  `port` (the CDP port) is **required** — `validateTool` rejects the
-catalog entry if it is absent.  No `run`, `mount`, `requestMapping`, or
+it. `port` (the CDP port) is **required** — `validateTool` rejects the
+catalog entry if it is absent. No `run`, `mount`, `requestMapping`, or
 `credentials` fields are used; `command` may be omitted if the image's
 default entrypoint already exposes CDP on the declared port.
 
@@ -318,10 +338,10 @@ default entrypoint already exposes CDP on the declared port.
 
 A `cdp` tool pod contains:
 
-| Container | Role |
-|---|---|
-| `kubeclaw-tool-bridge` | Bridge (kubeclaw-agent, `KUBECLAW_TOOL_MODE=cdp-bridge`) |
-| `chromium` init container (`restartPolicy: Always`) | Operator's Chromium image; exposed on `toolSpec.port` |
+| Container                                           | Role                                                     |
+| --------------------------------------------------- | -------------------------------------------------------- |
+| `kubeclaw-tool-bridge`                              | Bridge (kubeclaw-agent, `KUBECLAW_TOOL_MODE=cdp-bridge`) |
+| `chromium` init container (`restartPolicy: Always`) | Operator's Chromium image; exposed on `toolSpec.port`    |
 
 There is **no `user-tool` container** for the `cdp` pattern.
 
@@ -330,42 +350,42 @@ requires shared memory for its renderer processes.
 
 **Readiness**: the `chromium` init container has an `httpGet` readiness probe
 on `/json/version` at `toolSpec.port` (`initialDelaySeconds: 2`,
-`periodSeconds: 2`, `failureThreshold: 15`).  `connectOverCDP` internally
+`periodSeconds: 2`, `failureThreshold: 15`). `connectOverCDP` internally
 fetches `/json/version`, so the Playwright connect call itself also acts as a
 readiness gate.
 
 **Connection lifecycle**: the bridge holds one persistent `playwright-core`
-`connectOverCDP` connection (cached `Browser` + `Page`).  On the first call
+`connectOverCDP` connection (cached `Browser` + `Page`). On the first call
 (or after a stale connection is detected) the bridge reconnects with up to 30 s
-of retry/backoff.  State — open tabs, cookies, page position — persists across
+of retry/backoff. State — open tabs, cookies, page position — persists across
 tool calls within the pod's lifetime and is reset only when the pod exits (idle
 timeout or job completion).
 
 **Env vars stamped on the bridge container**:
 
-| Variable | Value |
-|---|---|
-| `KUBECLAW_TOOL_MODE` | `cdp-bridge` |
-| `KUBECLAW_CDP_URL` | `http://localhost:{port}` |
+| Variable             | Value                     |
+| -------------------- | ------------------------- |
+| `KUBECLAW_TOOL_MODE` | `cdp-bridge`              |
+| `KUBECLAW_CDP_URL`   | `http://localhost:{port}` |
 
 ### The `action` contract
 
-Every call must include an `action` field.  The supported actions are:
+Every call must include an `action` field. The supported actions are:
 
-| Action | Required fields | Effect |
-|---|---|---|
-| `navigate` | `url` | Loads the URL (`domcontentloaded`, 30 s timeout); returns URL + title |
-| `snapshot` | — | Injects `data-kc-ref="eN"` on visible interactive elements; returns URL, title, element list, and up to 4 000 chars of visible body text |
-| `click` | `ref` | Clicks the element with `[data-kc-ref="{ref}"]` (10 s timeout) |
-| `type` | `ref`, `text` | Fills the element; if `submit: true` also presses Enter |
-| `press` | `key` | Fires `keyboard.press(key)` on the page |
-| `back` | — | Navigates back (`domcontentloaded`, 30 s timeout) |
-| `wait` | `for` | If `for` is all digits, waits that many milliseconds (capped at 30 000); otherwise waits for the CSS selector to appear (30 s timeout) |
+| Action     | Required fields | Effect                                                                                                                                   |
+| ---------- | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `navigate` | `url`           | Loads the URL (`domcontentloaded`, 30 s timeout); returns URL + title                                                                    |
+| `snapshot` | —               | Injects `data-kc-ref="eN"` on visible interactive elements; returns URL, title, element list, and up to 4 000 chars of visible body text |
+| `click`    | `ref`           | Clicks the element with `[data-kc-ref="{ref}"]` (10 s timeout)                                                                           |
+| `type`     | `ref`, `text`   | Fills the element; if `submit: true` also presses Enter                                                                                  |
+| `press`    | `key`           | Fires `keyboard.press(key)` on the page                                                                                                  |
+| `back`     | —               | Navigates back (`domcontentloaded`, 30 s timeout)                                                                                        |
+| `wait`     | `for`           | If `for` is all digits, waits that many milliseconds (capped at 30 000); otherwise waits for the CSS selector to appear (30 s timeout)   |
 
 **Snapshot and refs**: `snapshot` stamps `data-kc-ref` attributes on every
 visible interactive element (links, buttons, inputs, selects, textareas, ARIA
-roles, `tabindex`, `onclick`).  Each ref is of the form `eN` (e.g. `e1`,
-`e2`).  `click` and `type` target `[data-kc-ref="…"]`.  If the element is
+roles, `tabindex`, `onclick`). Each ref is of the form `eN` (e.g. `e1`,
+`e2`). `click` and `type` target `[data-kc-ref="…"]`. If the element is
 stale or not found the bridge returns:
 
 ```
@@ -395,13 +415,17 @@ The image's default entrypoint already exposes CDP on port 9222, so no
   parameters:
     type: object
     properties:
-      action: { type: string, enum: [navigate, snapshot, click, type, press, back, wait] }
-      url:    { type: string }
-      ref:    { type: string }
-      text:   { type: string }
+      action:
+        {
+          type: string,
+          enum: [navigate, snapshot, click, type, press, back, wait],
+        }
+      url: { type: string }
+      ref: { type: string }
+      text: { type: string }
       submit: { type: boolean }
-      key:    { type: string }
-      for:    { type: string }
+      key: { type: string }
+      for: { type: string }
     required: [action]
   image: chromedp/headless-shell:latest
   pattern: cdp
@@ -409,16 +433,16 @@ The image's default entrypoint already exposes CDP on port 9222, so no
   memoryRequest: 256Mi
   memoryLimit: 1Gi
   cpuRequest: 100m
-  cpuLimit: "1"
+  cpuLimit: '1'
 ```
 
-No `credentials`, `mount`, `run`, or `command` are set.  The per-tool resource
+No `credentials`, `mount`, `run`, or `command` are set. The per-tool resource
 fields (`memoryRequest`, `memoryLimit`, `cpuRequest`, `cpuLimit`) are applied
 to the `chromium` init container; the bridge container uses fixed defaults
 (64 Mi request / 128 Mi limit, 50 m / 200 m CPU).
 
 **Dual existence note**: `browser` also remains a built-in tool in the legacy
-agent-runner (the non-direct-LLM path).  The catalog entry and the built-in
+agent-runner (the non-direct-LLM path). The catalog entry and the built-in
 coexist; the channel's direct-LLM path resolves `browser` from the catalog.
 The first-party `kubeclaw-browser-sidecar` image used by the legacy
 agent-runner's browser sidecar is separate and unchanged.

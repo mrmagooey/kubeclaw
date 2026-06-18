@@ -27,12 +27,12 @@ KubeClaw uses a four-tier pod architecture with clear privilege separation. Each
 
 ### Tiers
 
-| Tier | Privilege | Lifecycle | Role |
-|------|-----------|-----------|------|
-| **Orchestrator** | High (superuser) | Permanent | Central coordinator. Only pod with K8s API access. Manages all pod lifecycles, mediates discovery and authorization between tiers. Redis is architecturally part of this tier. |
-| **Channel** | Low | Permanent | User-facing communication (HTTP, WhatsApp, Signal, Telegram, etc.). Runs its own LLM conversation directly against provider endpoints. The channel *is* the agent. |
-| **Capability** | Low | Long-lived | Long-lived feature pods (RAG, MCP servers, generic HTTP services). Declared as a `CapabilitySpec` and persisted in the orchestrator's SQLite. The orchestrator reconciles the spec to a Deployment + Service + optional PVC, health-probes the endpoint, and answers channel discovery requests with a typed entry per kind. |
-| **Tool Job** | None | Short-lived | Specialist output on demand (web search, browser, formatting). Created by the orchestrator when a channel requests one. Can use external container images paired with IPC sidecars. |
+| Tier             | Privilege        | Lifecycle   | Role                                                                                                                                                                                                                                                                                                                                                                                    |
+| ---------------- | ---------------- | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Orchestrator** | High (superuser) | Permanent   | Central coordinator. Only pod with K8s API access. Manages all pod lifecycles, mediates discovery and authorization between tiers. Redis is architecturally part of this tier.                                                                                                                                                                                                          |
+| **Channel**      | Low              | Permanent   | User-facing communication (HTTP, WhatsApp, Signal, Telegram, etc.). Runs its own LLM conversation directly against provider endpoints. The channel _is_ the agent.                                                                                                                                                                                                                      |
+| **Capability**   | Low              | Long-lived  | Long-lived feature pods (RAG, MCP servers, generic HTTP services). Declared as a `CapabilitySpec` and persisted in the orchestrator's SQLite. The orchestrator reconciles the spec to a Deployment + Service + optional PVC, health-probes the endpoint, and answers channel discovery requests with a typed entry per kind.                                                            |
+| **Tool Job**     | None             | Short-lived | Specialist output on demand (web search, browser, formatting). Defined in a cluster-wide **tool catalog** (Helm baseline + admin-shell overrides) and spawned by the orchestrator, by name, when a channel requests one. Each entry wraps a standard third-party container image with an IPC bridge sidecar (`http`/`file`/`acp`/`cdp` patterns). See [TOOL_BRIDGE.md](TOOL_BRIDGE.md). |
 
 ### Communication Model
 
@@ -73,6 +73,7 @@ KubeClaw uses a four-tier pod architecture with clear privilege separation. Each
 ```
 
 **Key points:**
+
 - The orchestrator never relays data between tiers — it handles discovery and authorization, then channels communicate directly with capabilities and tool jobs.
 - Channels run their own LLM conversations directly against provider endpoints (Anthropic, OpenAI, OpenRouter, Ollama, etc.). There is no Claude Code or Agent SDK dependency at runtime.
 - Tool jobs can wrap external container images (e.g. a third-party web search container) by pairing them with an IPC sidecar so the KubeClaw communication system can reach them.
@@ -80,15 +81,15 @@ KubeClaw uses a four-tier pod architecture with clear privilege separation. Each
 
 ### Technology Stack
 
-| Component          | Technology                 | Purpose                                             |
-| ------------------ | -------------------------- | --------------------------------------------------- |
-| Orchestrator       | Node.js 20+               | Central coordinator, pod lifecycle, IPC              |
-| IPC                | Redis Pub/Sub + Streams    | Inter-tier communication and discovery               |
-| Message Storage    | SQLite (better-sqlite3)    | Messages, groups, sessions, tasks                    |
-| Channel Pods       | Per-channel container      | User I/O, LLM conversation against provider APIs     |
-| Capability Pods    | Per-capability container   | Long-lived features (RAG, MCP, memory)               |
-| Tool Jobs          | K8s Jobs (`batch/v1`)      | Short-lived specialist tasks, external images + IPC  |
-| Browser Automation | agent-browser + Chromium   | Web interaction and screenshots (tool job)            |
+| Component          | Technology                   | Purpose                                                                                                          |
+| ------------------ | ---------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| Orchestrator       | Node.js 20+                  | Central coordinator, pod lifecycle, IPC                                                                          |
+| IPC                | Redis Pub/Sub + Streams      | Inter-tier communication and discovery                                                                           |
+| Message Storage    | SQLite (better-sqlite3)      | Messages, groups, sessions, tasks                                                                                |
+| Channel Pods       | Per-channel container        | User I/O, LLM conversation against provider APIs                                                                 |
+| Capability Pods    | Per-capability container     | Long-lived features (RAG, MCP, memory)                                                                           |
+| Tool Jobs          | K8s Jobs (`batch/v1`)        | Short-lived specialist tasks, external images + IPC                                                              |
+| Browser Automation | `browser` catalog tool (CDP) | Web interaction via a stock Chromium image (`chromedp/headless-shell`) driven over CDP — `pattern: cdp` tool job |
 
 ---
 
@@ -147,6 +148,7 @@ graph LR
 ### Channel Pod Responsibilities
 
 A channel pod:
+
 - Owns the LLM conversation — talks directly to provider endpoints (Anthropic, OpenAI, OpenRouter, Ollama, etc.)
 - Handles user I/O for its platform (receiving and sending messages)
 - Requests capabilities and tool jobs through the orchestrator (discovery and authorization)
@@ -271,11 +273,11 @@ spec validation, K8s reconciliation, health probing, and channel discovery.
 
 Defined at `src/capabilities/types.ts`. The discriminator is `kind`:
 
-| `kind`  | Backend defaults | Use case |
-|---------|------------------|----------|
-| `mcp`   | port 3000, path `/mcp` | Model Context Protocol servers exposing tools to channels |
-| `rag`   | port 6333 (qdrant) / 9621 (lightrag); per-backend storage defaults | Vector or graph-vector retrieval backends |
-| `http`  | port 8080, path `/health` | Generic third-party HTTP service (escape hatch for any long-lived pod that doesn't need a first-class kind) |
+| `kind` | Backend defaults                                                   | Use case                                                                                                    |
+| ------ | ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------- |
+| `mcp`  | port 3000, path `/mcp`                                             | Model Context Protocol servers exposing tools to channels                                                   |
+| `rag`  | port 6333 (qdrant) / 9621 (lightrag); per-backend storage defaults | Vector or graph-vector retrieval backends                                                                   |
+| `http` | port 8080, path `/health`                                          | Generic third-party HTTP service (escape hatch for any long-lived pod that doesn't need a first-class kind) |
 
 Each variant extends a shared `CapabilityBase` with `name`, `image`,
 `port`, `env`, `envFromSecrets`, `channels` (ACL), `resources`, `storage`
@@ -307,12 +309,12 @@ Each variant extends a shared `CapabilityBase` with `name`, `image`,
 
 ### Admin-shell tools
 
-| Tool | Purpose |
-|---|---|
-| `install_capability` | Install or update a capability from a `CapabilitySpec` JSON object |
-| `remove_capability` | Tear down by name |
-| `list_capabilities` | Show installed specs with lifecycle status |
-| `get_capability_logs` | Tail the pod logs |
+| Tool                  | Purpose                                                            |
+| --------------------- | ------------------------------------------------------------------ |
+| `install_capability`  | Install or update a capability from a `CapabilitySpec` JSON object |
+| `remove_capability`   | Tear down by name                                                  |
+| `list_capabilities`   | Show installed specs with lifecycle status                         |
+| `get_capability_logs` | Tail the pod logs                                                  |
 
 ### Adding a new capability kind
 
@@ -329,17 +331,17 @@ Each variant extends a shared `CapabilityBase` with `name`, `image`,
 
 ### Key files
 
-| File | Purpose |
-|---|---|
-| `src/capabilities/types.ts` | `CapabilitySpec` discriminated union and discovery types |
-| `src/capabilities/db.ts` | SQLite CRUD for the `capabilities` table |
-| `src/capabilities/builders/` | Per-kind YAML rendering (MCP, RAG-Qdrant, RAG-LightRAG, HTTP) and shared `renderDeploymentAndService` |
-| `src/capabilities/reconciler.ts` | `applySpec`, `deleteSpec`, `reconcileAllOnStartup` |
-| `src/capabilities/registry.ts` | Public install/remove/list/notify; `getEntriesForChannel`; subsystem startup |
-| `src/capabilities/discovery.ts` | Redis stream watcher answering channel discovery requests |
-| `src/capabilities/health.ts` | Periodic HTTP health probes; updates DB status |
-| `src/capabilities/client.ts` | Channel-side typed accessors (`getRagEntry`, `getMcpEntries`, `getHttpEntry`) |
-| `src/capabilities/index.ts` | Barrel export |
+| File                             | Purpose                                                                                               |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `src/capabilities/types.ts`      | `CapabilitySpec` discriminated union and discovery types                                              |
+| `src/capabilities/db.ts`         | SQLite CRUD for the `capabilities` table                                                              |
+| `src/capabilities/builders/`     | Per-kind YAML rendering (MCP, RAG-Qdrant, RAG-LightRAG, HTTP) and shared `renderDeploymentAndService` |
+| `src/capabilities/reconciler.ts` | `applySpec`, `deleteSpec`, `reconcileAllOnStartup`                                                    |
+| `src/capabilities/registry.ts`   | Public install/remove/list/notify; `getEntriesForChannel`; subsystem startup                          |
+| `src/capabilities/discovery.ts`  | Redis stream watcher answering channel discovery requests                                             |
+| `src/capabilities/health.ts`     | Periodic HTTP health probes; updates DB status                                                        |
+| `src/capabilities/client.ts`     | Channel-side typed accessors (`getRagEntry`, `getMcpEntries`, `getHttpEntry`)                         |
+| `src/capabilities/index.ts`      | Barrel export                                                                                         |
 
 ---
 
@@ -783,7 +785,7 @@ Security is enforced through the four-tier privilege model:
 - **Orchestrator (High Priv)**: Only pod with K8s API access. Controls all pod lifecycles and mediates discovery. Redis is part of this tier.
 - **Channel (Low Priv)**: No K8s API access. Handles user I/O and LLM conversations. Can only reach capabilities and tool jobs after orchestrator-mediated discovery.
 - **Capability (Low Priv)**: No K8s API access. Provides features to channels. Cannot create or destroy other pods.
-- **Tool Job (No Priv)**: No K8s API access. Ephemeral. Can use external container images paired with IPC sidecars. Auto-deleted after completion.
+- **Tool Job (No Priv)**: No K8s API access. Ephemeral. Instantiated from a tool-catalog entry — a standard third-party container image wrapped with an IPC bridge sidecar. Auto-deleted after completion.
 
 All non-orchestrator pods run as unprivileged users with filesystem isolation — they can only access explicitly mounted directories.
 

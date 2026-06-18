@@ -104,7 +104,7 @@ kubeclaw:input:{jobId}
 - `type: "message"` — Text message to the agent
 - `type: "close"` — Graceful shutdown request
 - `type: "task_update"` — Task status change (paused/resumed/cancelled)
-- `type: "tool_pod_ack"` — Acknowledgement that a tool pod was spawned
+- `type: "eoi"` — End-of-input: tells a one-shot tool job to exit after it finishes the initial prompt (used by single-prompt agent jobs)
 
 **Wire format** (Redis stream field pairs):
 
@@ -118,9 +118,7 @@ type: task_update
 taskId: "task-123"
 status: paused|resumed|cancelled
 ---
-type: tool_pod_ack
-category: execution|browser
-podJobId: "pod-123"
+type: eoi
 ```
 
 ### Tool Calls Streams
@@ -208,9 +206,9 @@ assistantName: "Assistant"
 kubeclaw:spawn-tool-pod
 ```
 
-**Purpose**: Queue of tool pod specs for the orchestrator to create.
+**Purpose**: Queue of catalog-tool spawn requests for the orchestrator to turn into sidecar tool pods.
 
-**Who writes**: Tool containers and channel pods.
+**Who writes**: Tool containers (agent-runner) and channel pods (direct-LLM runner).
 **Who reads**: Orchestrator (`startToolPodSpawnWatcher`).
 
 **Wire format** (Redis stream fields):
@@ -218,13 +216,23 @@ kubeclaw:spawn-tool-pod
 ```
 agentJobId: "agent-123"
 groupFolder: my-group
-category: execution|browser
+category: web_search          # the tool NAME from the catalog (not a category)
 timeout: "60000"
-channel: "telegram"  // optional: for channel-specific PVC override
-toolImage: "myrepo/mytool:latest"  // optional: for sidecar tool pods
-toolPattern: http|file|acp  // optional: for sidecar tool pods
-toolPort: "8080"  // optional: for sidecar tool pods
+channel: "telegram"           # optional: for channel-specific PVC override
+maxToolOutputBytes: "51200"   # optional: per-call output cap
 ```
+
+The caller sends only the tool **name** (the `category` field, named for
+historical reasons). The orchestrator resolves the full `ToolSpec` — image, IPC
+pattern (`http`/`file`/`acp`/`cdp`), port, credentials, mounts, resources — by
+name from the merged tool catalog (Helm baseline + admin-shell overrides). It is
+the single authority on what image a tool name maps to; the caller never sends
+`image`/`pattern`/`port`. The orchestrator also re-checks the resolved tool's
+`channels` ACL against the requesting `channel`. If the name is unknown or the
+channel is out of scope, it writes an error to
+`kubeclaw:toolresults:{agentJobId}:{name}` instead of spawning. See
+[TOOL_BRIDGE.md](./TOOL_BRIDGE.md) for the catalog model and the per-pattern IPC
+contracts.
 
 ### Tool Job Result Stream
 
@@ -282,12 +290,10 @@ Messages sent _to_ tool containers via streams:
 
 ```typescript
 interface HostInputMessage {
-  type: 'message' | 'close' | 'task_update' | 'tool_pod_ack';
+  type: 'message' | 'close' | 'task_update' | 'eoi';
   text?: string; // for 'message' type
   taskId?: string; // for 'task_update' type
   status?: 'paused' | 'resumed' | 'cancelled'; // for 'task_update' type
-  category?: string; // for 'tool_pod_ack' type (execution|browser)
-  podJobId?: string; // for 'tool_pod_ack' type
 }
 ```
 
@@ -305,7 +311,6 @@ interface TaskRequest {
     | 'update_task'
     | 'register_group'
     | 'refresh_groups'
-    | 'tool_pod_request'
     | 'deploy_channel'
     | 'control_channel'
     | 'deploy_mcp_server'
@@ -330,11 +335,6 @@ interface TaskRequest {
   trigger?: string;
   requiresTrigger?: boolean;
   containerConfig?: Record<string, unknown>;
-
-  // For tool_pod_request
-  category?: 'execution' | 'browser';
-  agentJobId?: string;
-  groupFolder?: string;
 
   // For deploy_channel
   yaml?: string; // Kubernetes YAML to apply
@@ -424,13 +424,10 @@ interface LogMessage {
 
 ### Tool Pod Lifecycle
 
-1. **Request**: Agent publishes to `kubeclaw:toolcalls:{jobId}:{category}` stream
-2. **Spawn**:
-   - For built-in tools (execution, browser): Agent publishes to `kubeclaw:spawn-tool-pod` stream, orchestrator spawns K8s Job
-   - For sidecar tools: Include `toolImage`, `toolPattern`, `toolPort` in spawn request
-3. **Acknowledgement**: Orchestrator sends `tool_pod_ack` to `kubeclaw:input:{jobId}` with spawned `podJobId`
-4. **Communication**: Agent writes tool calls to stream, tool pod reads and responds via results stream
-5. **Cleanup**: Tool pod exits, orchestrator removes associated K8s Job. Orchestrator cleans up via `cleanupToolPods(agentJobId)`
+1. **Request**: Agent writes a tool call to `kubeclaw:toolcalls:{jobId}:{toolName}` and, the first time it uses a tool, publishes a spawn request (with the tool **name** only) to `kubeclaw:spawn-tool-pod`.
+2. **Resolve + spawn**: The orchestrator resolves the tool name to its `ToolSpec` from the catalog, re-checks the tool's `channels` ACL, and spawns a K8s Job — a `kubeclaw-tool-bridge` container plus the catalog-specified image (the `user-tool` container, or a Chromium sidecar for `cdp`). Unknown name / ACL miss → an error is written to the tool's results stream instead.
+3. **Communication**: The bridge reads tool calls from the stream and forwards them to the co-located container via the tool's IPC pattern (`http`/`file`/`acp`/`cdp`), writing results back to `kubeclaw:toolresults:{jobId}:{toolName}`.
+4. **Cleanup**: Tool pod exits, orchestrator removes the associated K8s Job. Orchestrator cleans up via `cleanupToolPods(agentJobId)`.
 
 ### Task Scheduling
 
