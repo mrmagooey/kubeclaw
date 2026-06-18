@@ -30,3 +30,8 @@ For changes touching K8s manifests or the orchestrator's pod-spec construction:
 ```bash
 npm run test:e2e -- <relevant-test-file>
 ```
+
+The e2e suites run against a real minikube cluster and have non-obvious setup
+(image build/tagging, rebuild env vars, and the sidecar-vs-istio
+credential-injection run order). See [docs/TESTING.md](docs/TESTING.md) for the
+full workflow.

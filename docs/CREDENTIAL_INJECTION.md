@@ -34,14 +34,14 @@ Set in your Helm values file or as a `--set` override:
 
 ```yaml
 credentialInjection:
-  mode: "sidecar"   # default
+  mode: 'sidecar' # default
 ```
 
-| Mode | Behavior | Requirement |
-|---|---|---|
-| `off` | No broker. API keys injected as env vars (legacy). | None. |
+| Mode      | Behavior                                                                    | Requirement                   |
+| --------- | --------------------------------------------------------------------------- | ----------------------------- |
+| `off`     | No broker. API keys injected as env vars (legacy).                          | None.                         |
 | `sidecar` | Per-pod Envoy sidecar intercepts outbound HTTPS. Broker stamps credentials. | cert-manager for internal CA. |
-| `istio` | Istio egress gateway routes traffic through broker. No per-pod sidecar. | Istio CRDs already installed. |
+| `istio`   | Istio egress gateway routes traffic through broker. No per-pod sidecar.     | Istio CRDs already installed. |
 
 The orchestrator pod is intentionally excluded from all modes — it is the trusted tier and retains credentials in environment variables.
 
@@ -58,22 +58,23 @@ Mapping schema:
 ```yaml
 mappings:
   - id: <unique-identifier>
-    destinations: ["<hostname>"]        # exact hostname(s) to match
-    identities: ["*"]                   # "*" = any KubeClaw SA; or list specific SAs
+    destinations: ['<hostname>'] # exact hostname(s) to match
+    identities: ['*'] # "*" = any KubeClaw SA; or list specific SAs
     credentialRef:
       kind: Secret
-      name: kubeclaw-secrets            # always this Secret
+      name: kubeclaw-secrets # always this Secret
       key: <secret-key-name>
-    headerScheme: bearer                # currently the only supported scheme
+    headerScheme: bearer # currently the only supported scheme
 ```
 
 Example — adding Replicate:
 
 ```yaml
 - id: replicate
-  destinations: ["api.replicate.com"]
-  identities: ["sa/kubeclaw-channel-http"]
-  credentialRef: { kind: Secret, name: kubeclaw-secrets, key: replicate-api-key }
+  destinations: ['api.replicate.com']
+  identities: ['sa/kubeclaw-channel-http']
+  credentialRef:
+    { kind: Secret, name: kubeclaw-secrets, key: replicate-api-key }
   headerScheme: bearer
 ```
 
@@ -114,14 +115,14 @@ If you bring your own CA, set `internalCA.autoProvision: false` and create the `
 
 ## Troubleshooting
 
-| Symptom | Likely cause | Fix |
-|---|---|---|
-| Sidecar stuck `CrashLoopBackOff` | Envoy config schema error or missing ConfigMap | `kubectl logs <pod> -c credential-sidecar -n kubeclaw` |
-| Workload gets `401` from broker | SA token rejected — wrong audience or namespace | Check `BROKER_AUDIENCE` env on broker pod; verify `serviceAccountName` on workload pod |
-| Workload gets `403` | No mapping matches `(identity, destination)` | Check broker logs for `authz decision`; add or correct a mapping entry |
-| Workload gets `503` | Broker cannot read the underlying Secret | RBAC issue or Secret deleted; check broker pod logs |
-| `x509: certificate signed by unknown authority` | CA cert mount missing or env vars not set | Verify volume mount and `NODE_EXTRA_CA_CERTS`/`SSL_CERT_FILE` env vars on the pod |
-| Broker pod not created | `credentialInjection.mode` is `"off"` | Confirm values; run `helm upgrade` after changing mode |
+| Symptom                                         | Likely cause                                    | Fix                                                                                    |
+| ----------------------------------------------- | ----------------------------------------------- | -------------------------------------------------------------------------------------- |
+| Sidecar stuck `CrashLoopBackOff`                | Envoy config schema error or missing ConfigMap  | `kubectl logs <pod> -c credential-sidecar -n kubeclaw`                                 |
+| Workload gets `401` from broker                 | SA token rejected — wrong audience or namespace | Check `BROKER_AUDIENCE` env on broker pod; verify `serviceAccountName` on workload pod |
+| Workload gets `403`                             | No mapping matches `(identity, destination)`    | Check broker logs for `authz decision`; add or correct a mapping entry                 |
+| Workload gets `503`                             | Broker cannot read the underlying Secret        | RBAC issue or Secret deleted; check broker pod logs                                    |
+| `x509: certificate signed by unknown authority` | CA cert mount missing or env vars not set       | Verify volume mount and `NODE_EXTRA_CA_CERTS`/`SSL_CERT_FILE` env vars on the pod      |
+| Broker pod not created                          | `credentialInjection.mode` is `"off"`           | Confirm values; run `helm upgrade` after changing mode                                 |
 
 Useful commands:
 
@@ -138,6 +139,21 @@ kubectl get pod <pod-name> -n kubeclaw -o yaml | grep -A5 serviceAccountToken
 # Verify CA cert is mounted
 kubectl exec <pod-name> -n kubeclaw -- ls -la /etc/ssl/certs/kubeclaw-egress-ca.crt
 ```
+
+## Testing locally (minikube)
+
+Both `mode=sidecar` and `mode=istio` have live e2e suites that run on minikube.
+They cannot share cluster state and must be run separately (sidecar first, then
+clean the `kubeclaw` namespace, then istio). See
+[TESTING.md](TESTING.md#credential-injection-e2e-sidecar-vs-istio) for the exact
+image build/tag steps and run order.
+
+> When exercising the broker against an **in-cluster** test upstream or mock LLM
+> that is not a kubeclaw-role pod, the default channel/agent egress
+> NetworkPolicy will block the connection. Disable it for the test install with
+> `--set networkPolicy.enabled=false`. This is safe: the chart renders the
+> channel `Service` independently of `networkPolicy.enabled`, so the channel
+> stays reachable when network policies are off.
 
 ## Migration from `mode: off` to `mode: sidecar`
 
@@ -341,18 +357,19 @@ namespace-level egress gateway, which gives:
 
 ```yaml
 credentialInjection:
-  mode: "istio"
+  mode: 'istio'
   istio:
     gateway:
-      replicas: 2  # Set to 1 for dev, 2+ for production HA
+      replicas: 2 # Set to 1 for dev, 2+ for production HA
       resources:
         requests: { cpu: 100m, memory: 128Mi }
-        limits:   { cpu: 500m, memory: 256Mi }
-    ambientMode: false   # Must remain false — see below
-    additionalDestinations: []  # Add extra hostnames if needed
+        limits: { cpu: 500m, memory: 256Mi }
+    ambientMode: false # Must remain false — see below
+    additionalDestinations: [] # Add extra hostnames if needed
 ```
 
 After `helm upgrade`, verify:
+
 ```bash
 kubectl -n kubeclaw get sidecar
 kubectl -n kubeclaw get serviceentry
@@ -416,9 +433,9 @@ Each entry is `"host[:upstreamPort]"`. The workload-facing listener is
 always HTTP on port 80; `upstreamPort` (default 443) is what the
 gateway originates TLS to. Examples:
 
-| Value | Meaning |
-|---|---|
-| `"my-mcp.internal"` | HTTP on port 80 (workload), HTTPS on port 443 (upstream) |
+| Value                    | Meaning                                                   |
+| ------------------------ | --------------------------------------------------------- |
+| `"my-mcp.internal"`      | HTTP on port 80 (workload), HTTPS on port 443 (upstream)  |
 | `"my-mcp.internal:8443"` | HTTP on port 80 (workload), HTTPS on port 8443 (upstream) |
 
 Workloads targeting a custom destination must use `http://my-mcp.internal/`
@@ -434,16 +451,16 @@ Do not set `ambientMode: true` — it is accepted by the chart but has no effect
 
 ### Troubleshooting
 
-| Symptom | Likely cause | Fix |
-|---|---|---|
-| `helm upgrade` fails: "credentialInjection.mode=istio requires Istio CRDs" | Istio not installed in cluster | Run `istioctl install --set profile=minimal -y` first |
-| Egress gateway pod in `CrashLoopBackOff` | istiod not available or CRDs not ready | Check `kubectl get pods -n istio-system`; wait for istiod |
-| Gateway 5xx responses | `EnvoyFilter` misconfigured or broker unreachable | Check `kubectl logs -n kubeclaw -l istio=kubeclaw-egressgateway`; verify `credential-broker` Service resolves |
-| Broker returns 401 for XFCC requests | XFCC header not forwarded by Istio | Verify Istio version >= 1.24; check `EnvoyFilter` `allowed_headers` includes `x-forwarded-client-cert` |
-| `Sidecar` resource hosts mismatch | ServiceEntry missing for a destination | Add host to `credentialInjection.istio.additionalDestinations` |
-| Missing `VirtualService` after upgrade | Helm render error (Istio CRDs absent at template time) | Run `helm template` and check for errors; ensure CRDs present |
-| Workload pod missing `istio-proxy` container | Namespace label not applied | Check `kubectl get namespace kubeclaw -o yaml`; re-run `helm upgrade` |
-| Broker shows `no credentials: both authorization and xfcc are absent` | Traffic not going through Istio proxy | Verify iptables redirection: `kubectl exec <pod> -c istio-proxy -- pilot-agent request GET /config_dump` |
+| Symptom                                                                    | Likely cause                                           | Fix                                                                                                           |
+| -------------------------------------------------------------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
+| `helm upgrade` fails: "credentialInjection.mode=istio requires Istio CRDs" | Istio not installed in cluster                         | Run `istioctl install --set profile=minimal -y` first                                                         |
+| Egress gateway pod in `CrashLoopBackOff`                                   | istiod not available or CRDs not ready                 | Check `kubectl get pods -n istio-system`; wait for istiod                                                     |
+| Gateway 5xx responses                                                      | `EnvoyFilter` misconfigured or broker unreachable      | Check `kubectl logs -n kubeclaw -l istio=kubeclaw-egressgateway`; verify `credential-broker` Service resolves |
+| Broker returns 401 for XFCC requests                                       | XFCC header not forwarded by Istio                     | Verify Istio version >= 1.24; check `EnvoyFilter` `allowed_headers` includes `x-forwarded-client-cert`        |
+| `Sidecar` resource hosts mismatch                                          | ServiceEntry missing for a destination                 | Add host to `credentialInjection.istio.additionalDestinations`                                                |
+| Missing `VirtualService` after upgrade                                     | Helm render error (Istio CRDs absent at template time) | Run `helm template` and check for errors; ensure CRDs present                                                 |
+| Workload pod missing `istio-proxy` container                               | Namespace label not applied                            | Check `kubectl get namespace kubeclaw -o yaml`; re-run `helm upgrade`                                         |
+| Broker shows `no credentials: both authorization and xfcc are absent`      | Traffic not going through Istio proxy                  | Verify iptables redirection: `kubectl exec <pod> -c istio-proxy -- pilot-agent request GET /config_dump`      |
 
 ## Per-group user-supplied credentials
 
@@ -499,20 +516,20 @@ credentialInjection:
       credentialFields:
         - { name: token, envVar: REPLICATE_API_TOKEN }
       baseUrlEnvs:
-        REPLICATE_API_URL: "http://api.replicate.com"
+        REPLICATE_API_URL: 'http://api.replicate.com'
       allowOperatorFallback: false
       allowedPositions: [header, body]
-      apiKeyShape: { prefix: "r8_", minLength: 30 }
+      apiKeyShape: { prefix: 'r8_', minLength: 30 }
 
     # Multi-field Basic auth (e.g. Jenkins)
     - id: jenkins
       host: jenkins.example.com
       upstreamPort: 8080
       credentialFields:
-        - { name: user,     envVar: JENKINS_USER }
+        - { name: user, envVar: JENKINS_USER }
         - { name: password, envVar: JENKINS_PASSWORD }
       baseUrlEnvs:
-        JENKINS_URL: "http://jenkins.example.com"
+        JENKINS_URL: 'http://jenkins.example.com'
       allowOperatorFallback: false
       allowedPositions: [header, body]
 
@@ -523,24 +540,24 @@ credentialInjection:
       credentialFields:
         - { name: token, envVar: INTERNAL_API_TOKEN }
       baseUrlEnvs:
-        INTERNAL_API_BASE_URL: "http://api.internal.example.com"
-      allowOperatorFallback: true   # must be single-field; kubeclaw-secrets["internal-api"] used when no per-group key
-      allowedPositions: [header]    # token goes in a custom header; body substitution not needed
-      apiKeyShape: { prefix: "iat_", minLength: 40 }
+        INTERNAL_API_BASE_URL: 'http://api.internal.example.com'
+      allowOperatorFallback: true # must be single-field; kubeclaw-secrets["internal-api"] used when no per-group key
+      allowedPositions: [header] # token goes in a custom header; body substitution not needed
+      apiKeyShape: { prefix: 'iat_', minLength: 40 }
 ```
 
 **Catalog field reference:**
 
-| Field | Required | Description |
-|---|---|---|
-| `id` | Yes | Unique identifier; lowercase alphanumeric + hyphens. User-visible in `/secret` commands. |
-| `host` | Yes | Exact destination hostname matched at the broker. |
-| `upstreamPort` | No (default 443) | TLS origination port for mode=sidecar and DestinationRule in mode=istio. |
-| `credentialFields` | Yes | One or more `{ name, envVar }` pairs. `name` is the key users supply in `/secret add`; `envVar` is the env variable stamped on tool-job pods. |
-| `baseUrlEnvs` | No | Env vars stamped unconditionally on tool-job pods pointing the SDK at the right base URL (always `http://` in mode=istio; Envoy handles TLS). |
-| `allowOperatorFallback` | No (default false) | Single-field entries only. When true and no per-group key is registered, the broker substitutes the operator's value from `kubeclaw-secrets.data["<id>"]`. |
-| `allowedPositions` | No (default `[header, body]`) | Restricts where the Lua filter may substitute: `header`, `body`, or both. |
-| `apiKeyShape` | No | `{ prefix, minLength }` — teaches the channel-runner's backstop regex to redact credential-shaped strings before any LLM call. |
+| Field                   | Required                      | Description                                                                                                                                                |
+| ----------------------- | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`                    | Yes                           | Unique identifier; lowercase alphanumeric + hyphens. User-visible in `/secret` commands.                                                                   |
+| `host`                  | Yes                           | Exact destination hostname matched at the broker.                                                                                                          |
+| `upstreamPort`          | No (default 443)              | TLS origination port for mode=sidecar and DestinationRule in mode=istio.                                                                                   |
+| `credentialFields`      | Yes                           | One or more `{ name, envVar }` pairs. `name` is the key users supply in `/secret add`; `envVar` is the env variable stamped on tool-job pods.              |
+| `baseUrlEnvs`           | No                            | Env vars stamped unconditionally on tool-job pods pointing the SDK at the right base URL (always `http://` in mode=istio; Envoy handles TLS).              |
+| `allowOperatorFallback` | No (default false)            | Single-field entries only. When true and no per-group key is registered, the broker substitutes the operator's value from `kubeclaw-secrets.data["<id>"]`. |
+| `allowedPositions`      | No (default `[header, body]`) | Restricts where the Lua filter may substitute: `header`, `body`, or both.                                                                                  |
+| `apiKeyShape`           | No                            | `{ prefix, minLength }` — teaches the channel-runner's backstop regex to redact credential-shaped strings before any LLM call.                             |
 
 `allowOperatorFallback` requires exactly one `credentialField` (enforced at schema parse time). Multi-field entries cannot use fallback.
 
@@ -548,14 +565,14 @@ credentialInjection:
 
 The `/secret` command is intercepted by the channel-runner strictly upstream of any LLM call. The user's raw line is removed from transcript memory; a system event is inserted describing the registration (catalog ID, host, env var names — never the value). The assistant's reply is a templated string generated by the channel-runner; the LLM is not involved.
 
-| Command | Description |
-|---|---|
-| `/secret add <id> <value>` | Single-field shorthand. `<value>` is the credential. |
-| `/secret add <id> <field>=<value> [<field>=<value> ...]` | Multi-field form. All required fields must be present; missing fields are rejected with a list of expected names. |
-| `/secret remove <id>` | Remove the named credential. Pods created after this lose the placeholder envs; in-flight pods using stale placeholders fail closed (upstream rejects the literal placeholder text). |
-| `/secret list` | List registered catalog IDs for the current group with `registeredAt` timestamps. Never returns values. |
-| `/secret catalog` | List the full operator-curated catalog: destinations, field names, and whether a credential is registered. |
-| `/secret help` | Print usage. |
+| Command                                                  | Description                                                                                                                                                                          |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `/secret add <id> <value>`                               | Single-field shorthand. `<value>` is the credential.                                                                                                                                 |
+| `/secret add <id> <field>=<value> [<field>=<value> ...]` | Multi-field form. All required fields must be present; missing fields are rejected with a list of expected names.                                                                    |
+| `/secret remove <id>`                                    | Remove the named credential. Pods created after this lose the placeholder envs; in-flight pods using stale placeholders fail closed (upstream rejects the literal placeholder text). |
+| `/secret list`                                           | List registered catalog IDs for the current group with `registeredAt` timestamps. Never returns values.                                                                              |
+| `/secret catalog`                                        | List the full operator-curated catalog: destinations, field names, and whether a credential is registered.                                                                           |
+| `/secret help`                                           | Print usage.                                                                                                                                                                         |
 
 **Backstop:** independent of the parser, every inbound user message is scanned for strings matching known API-key shapes (catalog-driven via `apiKeyShape`, plus built-in patterns for common providers). Matches are replaced with `[possible secret redacted]` before any LLM call. The backstop is intentionally conservative.
 
@@ -576,7 +593,7 @@ Placeholders are stored in a per-group Kubernetes Secret named `kubeclaw-group-s
 ```json
 {
   "fields": {
-    "user":     { "value": "alice",   "placeholder": "KC_PH_u_<64 hex chars>" },
+    "user": { "value": "alice", "placeholder": "KC_PH_u_<64 hex chars>" },
     "password": { "value": "hunter2", "placeholder": "KC_PH_p_<64 hex chars>" }
   },
   "registeredAt": "2026-05-16T14:22:11Z"
@@ -607,7 +624,7 @@ The `per=10` limit means any single placeholder may appear at most 10 times in o
 
 ### Operator fallback
 
-For catalog entries with `allowOperatorFallback: true` (single-field entries only), the operator may place a default credential in `kubeclaw-secrets.data["<catalogId>"]` (the same Secret that holds the built-in LLM keys). Tool-job pods belonging to groups that have *not* registered their own credential are stamped with the stable sentinel `KC_PH_FALLBACK_<catalogId>` as the env value. The broker maps this sentinel to the operator's value at request time. The source is recorded in the audit log as `keySource: operatorFallback`.
+For catalog entries with `allowOperatorFallback: true` (single-field entries only), the operator may place a default credential in `kubeclaw-secrets.data["<catalogId>"]` (the same Secret that holds the built-in LLM keys). Tool-job pods belonging to groups that have _not_ registered their own credential are stamped with the stable sentinel `KC_PH_FALLBACK_<catalogId>` as the env value. The broker maps this sentinel to the operator's value at request time. The source is recorded in the audit log as `keySource: operatorFallback`.
 
 Groups that have registered their own credential always use it in preference to the operator fallback; the operator value is not visible to them.
 

@@ -5,6 +5,7 @@ KubeClaw uses Redis pub/sub channels and streams for inter-process communication
 ## Overview
 
 The Redis IPC system handles:
+
 - **Pub/sub channels**: Broadcast messages from agents to group channels, task requests to the orchestrator
 - **Streams**: Persistent, ordered message queues for agent input/output and tool pod communication
 - **Atomic operations**: Coordinated job spawning and tool pod lifecycle management
@@ -14,6 +15,7 @@ All Redis names follow the `kubeclaw:` prefix convention to isolate KubeClaw dat
 ## Channel Naming Scheme
 
 Pub/sub channels are used for:
+
 1. Broadcasting messages to group chats
 2. Routing task requests to the orchestrator
 3. Publishing control commands to channel pods
@@ -30,6 +32,7 @@ kubeclaw:messages:{groupFolder}
 **Who reads**: Orchestrator (in main mode) or channel pod (in channel mode).
 
 **Wire format**: JSON object with fields `type`, `chatJid`, `text`:
+
 ```json
 {
   "type": "message",
@@ -38,7 +41,8 @@ kubeclaw:messages:{groupFolder}
 }
 ```
 
-**Authorization**: 
+**Authorization**:
+
 - Main group agents can publish to any group's output channel
 - Non-main agents can only publish to their own group's output channel
 
@@ -56,6 +60,7 @@ kubeclaw:tasks:{groupFolder}
 **Wire format**: JSON object matching `TaskRequest` interface (see below).
 
 **Authorization**:
+
 - Main group agents can schedule tasks for any group
 - Non-main agents can only modify their own group's tasks
 
@@ -71,10 +76,11 @@ kubeclaw:control:{channelName}
 **Who reads**: Channel pod identified by `{channelName}`.
 
 **Wire format**: JSON object:
+
 ```json
 {
   "command": "reload|mcp_update",
-  "servers": "[{...}]"  // only for mcp_update
+  "servers": "[{...}]" // only for mcp_update
 }
 ```
 
@@ -94,12 +100,14 @@ kubeclaw:input:{jobId}
 **Who reads**: Tool container.
 
 **Message types**:
+
 - `type: "message"` — Text message to the agent
 - `type: "close"` — Graceful shutdown request
 - `type: "task_update"` — Task status change (paused/resumed/cancelled)
 - `type: "tool_pod_ack"` — Acknowledgement that a tool pod was spawned
 
 **Wire format** (Redis stream field pairs):
+
 ```
 type: message
 text: "User message text"
@@ -127,10 +135,12 @@ kubeclaw:toolcalls:{jobId}:{category}
 **Who reads**: Tool pod (execution or browser service).
 
 **Message types**:
+
 - `browser` — Browser automation requests
 - `execution` — Command execution requests
 
 **Wire format** (example for execution tool):
+
 ```
 toolName: bash
 input: "ls -la /workspace"
@@ -148,6 +158,7 @@ kubeclaw:toolresults:{jobId}:{category}
 **Who reads**: Tool container.
 
 **Wire format** (example):
+
 ```
 toolName: bash
 result: "file.txt\ndir/"
@@ -180,6 +191,7 @@ kubeclaw:spawn-agent-job
 **Who reads**: Orchestrator (`startToolJobSpawnWatcher`).
 
 **Wire format** (Redis stream fields):
+
 ```
 prompt: "What is 2+2?"
 groupFolder: my-group
@@ -202,6 +214,7 @@ kubeclaw:spawn-tool-pod
 **Who reads**: Orchestrator (`startToolPodSpawnWatcher`).
 
 **Wire format** (Redis stream fields):
+
 ```
 agentJobId: "agent-123"
 groupFolder: my-group
@@ -256,6 +269,7 @@ interface AgentOutputMessage {
 ```
 
 **Fields**:
+
 - `type`: Message category
 - `jobId`: Identifier of the sending tool job
 - `groupFolder`: Group folder name for authorization/routing
@@ -269,11 +283,11 @@ Messages sent _to_ tool containers via streams:
 ```typescript
 interface HostInputMessage {
   type: 'message' | 'close' | 'task_update' | 'tool_pod_ack';
-  text?: string;          // for 'message' type
-  taskId?: string;        // for 'task_update' type
-  status?: 'paused' | 'resumed' | 'cancelled';  // for 'task_update' type
-  category?: string;      // for 'tool_pod_ack' type (execution|browser)
-  podJobId?: string;      // for 'tool_pod_ack' type
+  text?: string; // for 'message' type
+  taskId?: string; // for 'task_update' type
+  status?: 'paused' | 'resumed' | 'cancelled'; // for 'task_update' type
+  category?: string; // for 'tool_pod_ack' type (execution|browser)
+  podJobId?: string; // for 'tool_pod_ack' type
 }
 ```
 
@@ -296,18 +310,19 @@ interface TaskRequest {
     | 'control_channel'
     | 'deploy_mcp_server'
     | 'remove_mcp_server'
-    | 'list_mcp_servers';
-  
+    | 'list_mcp_servers'
+    | 'job.cancel';
+
   // Common fields
   taskId?: string;
-  
+
   // For schedule_task, update_task
   prompt?: string;
   schedule_type?: 'cron' | 'interval' | 'once';
-  schedule_value?: string;  // cron expression, ms, or ISO 8601 date
+  schedule_value?: string; // cron expression, ms, or ISO 8601 date
   context_mode?: 'group' | 'isolated';
   targetJid?: string;
-  
+
   // For register_group
   jid?: string;
   name?: string;
@@ -315,32 +330,61 @@ interface TaskRequest {
   trigger?: string;
   requiresTrigger?: boolean;
   containerConfig?: Record<string, unknown>;
-  
+
   // For tool_pod_request
   category?: 'execution' | 'browser';
   agentJobId?: string;
   groupFolder?: string;
-  
+
   // For deploy_channel
-  yaml?: string;  // Kubernetes YAML to apply
-  
+  yaml?: string; // Kubernetes YAML to apply
+
   // For control_channel
   channelName?: string;
   command?: 'reload' | 'mcp_update';
-  
+
   // For deploy_mcp_server
   image?: string;
   port?: string;
   path?: string;
-  env?: string;  // JSON-encoded
-  channels?: string;  // JSON-encoded string[]
-  allowedTools?: string;  // JSON-encoded string[]
-  resources?: string;  // JSON-encoded
-  
-  // For list_mcp_servers
-  resultStream?: string;  // stream to write results to
+  env?: string; // JSON-encoded
+  channels?: string; // JSON-encoded string[]
+  allowedTools?: string; // JSON-encoded string[]
+  resources?: string; // JSON-encoded
+
+  // For list_mcp_servers, job.cancel
+  resultStream?: string; // stream to write results to
+
+  // For job.cancel
+  chatJid?: string; // chat to deliver the "Cancelled" notice to
+  jobId?: string; // optional: targeted cancel of a specific tool job
 }
 ```
+
+### job.cancel
+
+Cancels a **running tool job** (not a scheduled task — that is `cancel_task`).
+Sent on the `kubeclaw:task-requests` stream and handled by the orchestrator's
+`startTaskRequestWatcher`.
+
+**Who writes**: Channel pods. The `/cancel` slash command is intercepted in the
+shared channel inbound path (`onMessage`) and fires this IPC immediately,
+out-of-band, so it interrupts a job whose `execute_agent` turn is currently
+blocking the per-group message loop.
+
+**Two forms**:
+
+- **Group-level** (no `jobId`): the orchestrator looks up the group's active
+  agent job, deletes it, and — on success — publishes a `"Cancelled"` notice to
+  the group's output channel (which reaches the user's SSE stream). The channel
+  does **not** also send "Cancelled" (single source). If no job is active it
+  returns `{ ok: true, status: 'no_active_job' }` and the channel replies
+  "No active job".
+- **Targeted** (`jobId` present): cancels a specific job after a DB
+  group-ownership check (the `DELETE /jobs/<id>` path).
+
+**Result** (written to `resultStream`): JSON `{ ok, status?, jobName?, error? }`
+where `status` is `'cancelled'` or `'no_active_job'`.
 
 ### StatusUpdate
 
@@ -381,7 +425,7 @@ interface LogMessage {
 ### Tool Pod Lifecycle
 
 1. **Request**: Agent publishes to `kubeclaw:toolcalls:{jobId}:{category}` stream
-2. **Spawn**: 
+2. **Spawn**:
    - For built-in tools (execution, browser): Agent publishes to `kubeclaw:spawn-tool-pod` stream, orchestrator spawns K8s Job
    - For sidecar tools: Include `toolImage`, `toolPattern`, `toolPort` in spawn request
 3. **Acknowledgement**: Orchestrator sends `tool_pod_ack` to `kubeclaw:input:{jobId}` with spawned `podJobId`
@@ -400,16 +444,16 @@ interface LogMessage {
 
 Tasks and messages are subject to group-based authorization:
 
-| Operation | Main Group | Non-Main Group |
-|-----------|-----------|---------|
-| Send to any group's output channel | Yes | No (self only) |
-| Schedule task for any group | Yes | No (self only) |
-| Pause/resume/cancel/update any task | Yes | Only own group's tasks |
-| Register new group | Yes | No |
-| Refresh group list | Yes | No |
-| Deploy channel | Yes | No |
-| Control channel | Yes | No |
-| Deploy/remove MCP server | Yes | No |
+| Operation                           | Main Group | Non-Main Group         |
+| ----------------------------------- | ---------- | ---------------------- |
+| Send to any group's output channel  | Yes        | No (self only)         |
+| Schedule task for any group         | Yes        | No (self only)         |
+| Pause/resume/cancel/update any task | Yes        | Only own group's tasks |
+| Register new group                  | Yes        | No                     |
+| Refresh group list                  | Yes        | No                     |
+| Deploy channel                      | Yes        | No                     |
+| Control channel                     | Yes        | No                     |
+| Deploy/remove MCP server            | Yes        | No                     |
 
 Channel pods bypass pub/sub authorization since they use direct function calls for inbound messages.
 
@@ -428,6 +472,7 @@ The Redis client singleton (`redis-client.ts`) provides two connections:
 2. **Subscriber client** (`getRedisSubscriber()`): Dedicated to pub/sub subscriptions (required by ioredis)
 
 Both are configured with:
+
 - Automatic reconnection with exponential backoff
 - Username/password authentication (if `REDIS_USERNAME`/`REDIS_ADMIN_PASSWORD` set)
 - Retry strategy with max 3 retries per request
@@ -445,6 +490,7 @@ await redis.xread('COUNT', 1, 'BLOCK', 5000, 'STREAMS', streamKey, lastId);
 ### Race Condition Prevention
 
 To avoid race conditions when watching streams (e.g., in `startToolPodSpawnWatcher`), the protocol avoids using `$` as a stream ID. Instead:
+
 1. Resolve the actual last-entry ID at startup via `xrevrange`
 2. Resume from that ID to catch any messages added between watcher restarts
 

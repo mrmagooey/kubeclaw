@@ -58,7 +58,34 @@ All notable changes to KubeClaw will be documented in this file.
   orchestrator reconciler. Prevents double-deployment of group-scoped
   capabilities.
 
+### Fixes
+
+- **`/cancel` now preempts a running tool job.** Previously the command was
+  processed inside the per-group message loop, which blocks while an
+  `execute_agent` tool job runs — so `/cancel` queued behind the running turn
+  and could not interrupt it. It is now intercepted out-of-band in the shared
+  channel inbound path (`onMessage`) for **all** channels and fires the
+  `job.cancel` IPC immediately, interrupting a running job within seconds. The
+  success "Cancelled" reply is now emitted once (by the orchestrator's published
+  notice) instead of twice.
+- **Helm: channel `Service` no longer disappears when `networkPolicy.enabled=false`.**
+  The channel `Service` and metrics `Service` were rendered inside the
+  `networkPolicy.enabled` conditional, so disabling network policies (a
+  documented troubleshooting toggle) deleted the channel Service and made the
+  channel unreachable via its Service. Now only the ingress `NetworkPolicy`
+  depends on `networkPolicy.enabled`; the channel Service renders whenever the
+  channel has an `httpPort`, and the metrics Service always renders.
+- **e2e harness fixes.** The `tool-job-prune` and `/cancel` e2e suites were
+  rewritten against the real HTTP channel API (`POST /message {text}`,
+  `GET /stream`, `GET /jobs`, `/debug/tool-jobs/inject`) — they previously
+  targeted a non-existent request/response shape. `e2e/global-setup.ts` now
+  rebuilds the orchestrator image when `src/` is newer than the image (set
+  `KC_E2E_REBUILD=1` to force), closing a silent stale-image trap; a root
+  `.dockerignore` was added so `docker build` works from a git worktree. See
+  `docs/TESTING.md`.
+
 ## [1.2.0](https://github.com/qwibitai/kubeclaw/compare/v1.1.6...v1.2.0)
 
 [BREAKING] WhatsApp removed from core, now a skill. Run `/add-whatsapp` to re-add (existing auth/groups preserved).
+
 - **fix:** Prevent scheduled tasks from executing twice when container runtime exceeds poll interval (#138, #669)
