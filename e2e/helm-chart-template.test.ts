@@ -1090,7 +1090,23 @@ describe('channel Service independent of networkPolicy', () => {
       { encoding: 'utf8' },
     );
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toContain('name: kubeclaw-channel-http');
+
+    // Assert the channel Service document exists (kind:Service + name match),
+    // not just the name string which also appears on Deployment/SA/Secret.
+    const docs = result.stdout.split(/\n---\n/);
+    const channelSvcDoc = docs.find(
+      (d) =>
+        /^kind: Service$/m.test(d) &&
+        /^\s+name: kubeclaw-channel-http$/m.test(d),
+    );
+    expect(
+      channelSvcDoc,
+      'channel Service (kind: Service, name: kubeclaw-channel-http) not found',
+    ).toBeDefined();
+    // The channel Service must expose the http port mapping.
+    expect(channelSvcDoc).toContain('port: 80');
+    expect(channelSvcDoc).toContain('targetPort: http');
+
     expect(result.stdout).toContain('name: kubeclaw-channel-http-metrics');
     expect(result.stdout).not.toContain('name: kubeclaw-channel-http-ingress');
     expect(result.stdout).not.toContain('kind: NetworkPolicy');
@@ -1110,7 +1126,23 @@ describe('channel Service independent of networkPolicy', () => {
       { encoding: 'utf8' },
     );
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toContain('name: kubeclaw-channel-http');
+
+    // Assert the channel Service document exists (kind:Service + name match),
+    // not just the name string which also appears on Deployment/SA/Secret.
+    const docs = result.stdout.split(/\n---\n/);
+    const channelSvcDoc = docs.find(
+      (d) =>
+        /^kind: Service$/m.test(d) &&
+        /^\s+name: kubeclaw-channel-http$/m.test(d),
+    );
+    expect(
+      channelSvcDoc,
+      'channel Service (kind: Service, name: kubeclaw-channel-http) not found',
+    ).toBeDefined();
+    // The channel Service must expose the http port mapping.
+    expect(channelSvcDoc).toContain('port: 80');
+    expect(channelSvcDoc).toContain('targetPort: http');
+
     expect(result.stdout).toContain('name: kubeclaw-channel-http-metrics');
     expect(result.stdout).toContain('name: kubeclaw-channel-http-ingress');
     expect(result.stdout).toContain('kind: NetworkPolicy');
