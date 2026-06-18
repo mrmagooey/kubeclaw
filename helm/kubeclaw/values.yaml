@@ -196,6 +196,12 @@ httpChannel:
   # Resolved rows older than this are deleted once per hour.
   # Set to 0 to disable pruning entirely.
   toolJobsRetentionDays: 30
+  # Override the prune interval in milliseconds (default: 3600000 = 1 hour).
+  # Set to a lower value in e2e test deployments so the prune tick fires quickly.
+  toolJobsPruneIntervalMs: "3600000"
+  # Enable /debug/* endpoints. MUST be false in production.
+  # Set to true only in e2e test deployments.
+  debugEndpointsEnabled: false
 
 # Default resource limits for channel pods.
 channelPod:

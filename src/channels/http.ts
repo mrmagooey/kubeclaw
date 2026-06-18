@@ -12,6 +12,7 @@ import path from 'node:path';
 
 import {
   ASSISTANT_NAME,
+  DEBUG_ENDPOINTS_ENABLED,
   GROUPS_DIR,
   RATE_LIMIT_WINDOW_MS,
   STORE_DIR,
@@ -43,6 +44,7 @@ import {
   resumeTask,
   searchConversations,
   storeMessageDirect,
+  insertToolJobForDebug,
   writeAuditEntry,
 } from '../db.js';
 import { readEnvFile } from '../env.js';
@@ -840,6 +842,7 @@ export class HttpChannel implements Channel {
     '/skills/': ['POST'], // prefix — candidates/<id>/accept|reject
     '/diag': ['GET', 'HEAD'],
     '/audit': ['GET', 'HEAD'],
+    '/debug/tool-jobs/inject': ['POST'],
   };
 
   private async handleRequest(
@@ -3314,6 +3317,92 @@ export class HttpChannel implements Channel {
           }),
         );
         res.end('Method Not Allowed');
+        return;
+      }
+    }
+
+    // ── Debug-only: POST /debug/tool-jobs/inject ──────────────────────────────
+    // Active only when KUBECLAW_DEBUG_ENDPOINTS=true.
+    // Used by e2e/tool-job-prune.test.ts to seed tool_jobs rows with arbitrary
+    // timestamps so the prune logic can be exercised without waiting for real
+    // jobs to age naturally.
+    if (url.pathname === '/debug/tool-jobs/inject') {
+      if (!DEBUG_ENDPOINTS_ENABLED) {
+        // Treat as unknown path — fall through to 404 below.
+      } else {
+        if (req.method !== 'POST') {
+          res.writeHead(
+            405,
+            this.addCorsHeaders({
+              'Content-Type': 'text/plain',
+              Allow: 'POST',
+            }),
+          );
+          res.end('Method Not Allowed');
+          return;
+        }
+
+        const username = this.authenticate(req);
+        if (!username) {
+          this.sendUnauthorized(res);
+          return;
+        }
+
+        const chunks: Buffer[] = [];
+        req.on('data', (chunk: Buffer) => chunks.push(chunk));
+        await new Promise<void>((resolve) => req.on('end', resolve));
+        const rawBody = Buffer.concat(chunks).toString('utf8');
+
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(rawBody);
+        } catch {
+          res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+          res.end(JSON.stringify({ error: 'Invalid JSON body' }));
+          return;
+        }
+
+        if (
+          typeof parsed !== 'object' ||
+          parsed === null ||
+          Array.isArray(parsed)
+        ) {
+          res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+          res.end(JSON.stringify({ error: 'Body must be a JSON object' }));
+          return;
+        }
+
+        const body = parsed as Record<string, unknown>;
+        const jobId = body['job_id'];
+        const groupFolder = body['group_folder'];
+        const status = body['status'];
+
+        if (
+          typeof jobId !== 'string' || !jobId ||
+          typeof groupFolder !== 'string' || !groupFolder ||
+          typeof status !== 'string' || !status
+        ) {
+          res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+          res.end(JSON.stringify({ error: 'job_id, group_folder, and status are required strings' }));
+          return;
+        }
+
+        const createdAt =
+          typeof body['created_at'] === 'string' ? body['created_at'] : undefined;
+        const resolvedAt =
+          typeof body['resolved_at'] === 'string' ? body['resolved_at'] : null;
+
+        try {
+          insertToolJobForDebug({ jobId, groupFolder, status, createdAt, resolvedAt });
+        } catch (err) {
+          logger.error({ err }, 'debug inject: insertToolJobForDebug failed');
+          res.writeHead(500, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+          res.end(JSON.stringify({ error: 'Internal server error' }));
+          return;
+        }
+
+        res.writeHead(200, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+        res.end(JSON.stringify({ ok: true, job_id: jobId }));
         return;
       }
     }

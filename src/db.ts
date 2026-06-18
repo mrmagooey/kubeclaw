@@ -2527,6 +2527,36 @@ export function storeToolJob(jobId: string, groupFolder: string): void {
 }
 
 /**
+ * Test/debug-only: insert a tool_jobs row with explicit timestamp overrides.
+ * Intended for the /debug/tool-jobs/inject HTTP endpoint only.
+ * All fields are required; chat_jid defaults to group_folder when omitted.
+ */
+export function insertToolJobForDebug(args: {
+  jobId: string;
+  groupFolder: string;
+  chatJid?: string;
+  status: string;
+  createdAt?: string;
+  resolvedAt?: string | null;
+}): void {
+  const now = new Date().toISOString();
+  db.run(
+    `INSERT OR REPLACE INTO tool_jobs
+       (job_id, group_folder, chat_jid, status, created_at, resolved_at, message_id, specialist_name)
+     VALUES (?, ?, ?, ?, ?, ?, NULL, '')`,
+    [
+      args.jobId,
+      args.groupFolder,
+      args.chatJid ?? args.groupFolder,
+      args.status,
+      args.createdAt ?? now,
+      args.resolvedAt ?? null,
+    ],
+  );
+  saveDatabase();
+}
+
+/**
  * Delete resolved tool_jobs rows older than `retentionDays`.
  *
  * Rules:

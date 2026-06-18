@@ -87,6 +87,9 @@ export const TOOL_JOBS_RETENTION_DAYS = parseInt(
   10,
 );
 
+export const DEBUG_ENDPOINTS_ENABLED =
+  process.env.KUBECLAW_DEBUG_ENDPOINTS === 'true';
+
 function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

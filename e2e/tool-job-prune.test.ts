@@ -41,7 +41,7 @@ async function get(path: string): Promise<Response> {
   });
 }
 
-describe.skip('tool-job prune E2E (Story 55)', () => {
+describe('tool-job prune E2E (Story 55)', () => {
   // ── AC1: rows older than toolJobsRetentionDays are absent after prune ──────
 
   it('AC1: resolved rows older than retention window are absent after prune interval fires', async () => {
