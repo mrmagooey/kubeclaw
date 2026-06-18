@@ -1,8 +1,59 @@
 import { execSync, spawn, spawnSync } from 'child_process';
-import { existsSync, mkdirSync } from 'fs';
+import { existsSync, mkdirSync, readdirSync, statSync } from 'fs';
 import { join } from 'path';
 
 import { installCertManager } from '../setup/cert-manager.js';
+
+/**
+ * Newest mtime (ms since epoch) across the given files/directories, recursing
+ * into directories. Missing paths are skipped. Returns 0 if nothing matched.
+ */
+function newestMtimeMs(paths: string[]): number {
+  let newest = 0;
+  const walk = (p: string): void => {
+    let st;
+    try {
+      st = statSync(p);
+    } catch {
+      return; // vanished mid-walk — ignore
+    }
+    if (st.isDirectory()) {
+      for (const entry of readdirSync(p)) {
+        if (entry === 'node_modules' || entry === '.git') continue;
+        walk(join(p, entry));
+      }
+    } else if (st.mtimeMs > newest) {
+      newest = st.mtimeMs;
+    }
+  };
+  for (const p of paths) walk(p);
+  return newest;
+}
+
+/**
+ * Decide whether a `:latest` image in the minikube daemon needs rebuilding.
+ *
+ * Returns true when the image is absent, when any tracked source path is newer
+ * than the image's build time, or when KC_E2E_REBUILD=1 forces it. This closes
+ * the silent-staleness trap where an out-of-date `:latest` (built before a code
+ * change) is reused, so pods run stale code and tests fail for reasons that look
+ * nothing like a stale image (e.g. a new route 404ing).
+ */
+function imageNeedsRebuild(imageRef: string, sourcePaths: string[]): boolean {
+  if (process.env.KC_E2E_REBUILD === '1') return true;
+  const inspect = spawnSync(
+    'bash',
+    [
+      '-c',
+      `eval $(minikube docker-env) && docker image inspect ${imageRef} -f "{{.Created}}" 2>/dev/null`,
+    ],
+    { encoding: 'utf8', stdio: 'pipe' },
+  );
+  if (inspect.status !== 0 || !inspect.stdout.trim()) return true; // absent
+  const createdMs = Date.parse(inspect.stdout.trim());
+  if (!Number.isFinite(createdMs)) return true; // unparseable — rebuild to be safe
+  return newestMtimeMs(sourcePaths) > createdMs;
+}
 
 // Port used to forward kubeclaw-redis to the host for e2e tests
 // We use a non-standard port to avoid colliding with any host-local Redis.
@@ -32,10 +83,14 @@ async function waitForRedisPod(): Promise<void> {
     const result = spawnSync(
       'kubectl',
       [
-        'get', 'pods',
-        '-n', NAMESPACE,
-        '-l', 'app=kubeclaw-redis',
-        '-o', 'jsonpath={.items[0].status.phase}',
+        'get',
+        'pods',
+        '-n',
+        NAMESPACE,
+        '-l',
+        'app=kubeclaw-redis',
+        '-o',
+        'jsonpath={.items[0].status.phase}',
       ],
       { encoding: 'utf8' },
     );
@@ -77,7 +132,9 @@ export default async function setup() {
       execSync('which minikube', { stdio: 'pipe' });
       minikubeInstalled = true;
     } catch {
-      console.log('❌ Minikube is not installed. Please install minikube first:');
+      console.log(
+        '❌ Minikube is not installed. Please install minikube first:',
+      );
       console.log('   See: https://minikube.sigs.k8s.io/docs/start/\n');
     }
 
@@ -151,20 +208,32 @@ export default async function setup() {
   try {
     const checkResult = spawnSync(
       'bash',
-      ['-c', 'eval $(minikube docker-env) && docker image inspect kubeclaw-mock-llm:latest -f "{{.Id}}" 2>/dev/null'],
+      [
+        '-c',
+        'eval $(minikube docker-env) && docker image inspect kubeclaw-mock-llm:latest -f "{{.Id}}" 2>/dev/null',
+      ],
       { encoding: 'utf8', stdio: 'pipe' },
     );
     if (checkResult.status === 0 && checkResult.stdout.trim()) {
-      console.log('✅ kubeclaw-mock-llm:latest already present, skipping build\n');
+      console.log(
+        '✅ kubeclaw-mock-llm:latest already present, skipping build\n',
+      );
     } else {
-      console.log('🔨 Building kubeclaw-mock-llm:latest inside minikube Docker daemon...');
+      console.log(
+        '🔨 Building kubeclaw-mock-llm:latest inside minikube Docker daemon...',
+      );
       const buildResult = spawnSync(
         'bash',
-        ['-c', 'eval $(minikube docker-env) && docker build -t kubeclaw-mock-llm:latest container/mock-llm'],
+        [
+          '-c',
+          'eval $(minikube docker-env) && docker build -t kubeclaw-mock-llm:latest container/mock-llm',
+        ],
         { encoding: 'utf8', stdio: 'inherit', timeout: 120_000 },
       );
       if (buildResult.status !== 0) {
-        throw new Error(`Mock LLM image build failed with exit code ${buildResult.status}`);
+        throw new Error(
+          `Mock LLM image build failed with exit code ${buildResult.status}`,
+        );
       }
       console.log('✅ kubeclaw-mock-llm:latest built\n');
     }
@@ -180,20 +249,30 @@ export default async function setup() {
   try {
     const checkResult = spawnSync(
       'bash',
-      ['-c', 'eval $(minikube docker-env) && docker image inspect kubeclaw-agent:latest -f "{{.Id}}" 2>/dev/null'],
+      [
+        '-c',
+        'eval $(minikube docker-env) && docker image inspect kubeclaw-agent:latest -f "{{.Id}}" 2>/dev/null',
+      ],
       { encoding: 'utf8', stdio: 'pipe' },
     );
     if (checkResult.status === 0 && checkResult.stdout.trim()) {
       console.log('✅ kubeclaw-agent:latest already present, skipping build\n');
     } else {
-      console.log('🔨 Building kubeclaw-agent:latest inside minikube Docker daemon...');
+      console.log(
+        '🔨 Building kubeclaw-agent:latest inside minikube Docker daemon...',
+      );
       const buildResult = spawnSync(
         'bash',
-        ['-c', 'eval $(minikube docker-env) && docker build -t kubeclaw-agent:latest -f container/Dockerfile .'],
+        [
+          '-c',
+          'eval $(minikube docker-env) && docker build -t kubeclaw-agent:latest -f container/Dockerfile .',
+        ],
         { encoding: 'utf8', stdio: 'inherit', timeout: 300_000 },
       );
       if (buildResult.status !== 0) {
-        throw new Error(`Agent image build failed with exit code ${buildResult.status}`);
+        throw new Error(
+          `Agent image build failed with exit code ${buildResult.status}`,
+        );
       }
       console.log('✅ kubeclaw-agent:latest built\n');
     }
@@ -203,24 +282,41 @@ export default async function setup() {
   }
 
   // ── Build orchestrator container image into minikube Docker daemon ───────
+  // The orchestrator image also runs channel pods (dist/channel-runner.js), so
+  // it carries the bulk of the application code that changes during dev. Unlike
+  // the agent/mock-llm images, we rebuild it whenever the source tree is newer
+  // than the existing image — reusing a stale `:latest` silently runs old code.
   console.log('🐳 Checking for kubeclaw-orchestrator:latest in minikube...');
   try {
-    const checkResult = spawnSync(
-      'bash',
-      ['-c', 'eval $(minikube docker-env) && docker image inspect kubeclaw-orchestrator:latest -f "{{.Id}}" 2>/dev/null'],
-      { encoding: 'utf8', stdio: 'pipe' },
-    );
-    if (checkResult.status === 0 && checkResult.stdout.trim()) {
-      console.log('✅ kubeclaw-orchestrator:latest already present, skipping build\n');
+    const orchestratorSources = [
+      'src',
+      'package.json',
+      'package-lock.json',
+      'tsconfig.json',
+      'Dockerfile',
+    ];
+    if (
+      !imageNeedsRebuild('kubeclaw-orchestrator:latest', orchestratorSources)
+    ) {
+      console.log(
+        '✅ kubeclaw-orchestrator:latest is up to date, skipping build\n',
+      );
     } else {
-      console.log('🔨 Building kubeclaw-orchestrator:latest inside minikube Docker daemon...');
+      console.log(
+        '🔨 Building kubeclaw-orchestrator:latest inside minikube Docker daemon (absent or source changed; set KC_E2E_REBUILD=1 to force)...',
+      );
       const buildResult = spawnSync(
         'bash',
-        ['-c', 'eval $(minikube docker-env) && docker build -t kubeclaw-orchestrator:latest .'],
+        [
+          '-c',
+          'eval $(minikube docker-env) && docker build -t kubeclaw-orchestrator:latest .',
+        ],
         { encoding: 'utf8', stdio: 'inherit', timeout: 600_000 },
       );
       if (buildResult.status !== 0) {
-        throw new Error(`Orchestrator image build failed with exit code ${buildResult.status}`);
+        throw new Error(
+          `Orchestrator image build failed with exit code ${buildResult.status}`,
+        );
       }
       console.log('✅ kubeclaw-orchestrator:latest built\n');
     }
@@ -270,15 +366,26 @@ export default async function setup() {
     // every fork uses the same one the orchestrator pod is using.
     const livePwdLookup = spawnSync(
       'kubectl',
-      ['get', 'secret', '-n', NAMESPACE, 'kubeclaw-redis',
-       '-o', 'jsonpath={.data.admin-password}'],
+      [
+        'get',
+        'secret',
+        '-n',
+        NAMESPACE,
+        'kubeclaw-redis',
+        '-o',
+        'jsonpath={.data.admin-password}',
+      ],
       { encoding: 'utf8', stdio: 'pipe' },
     );
     if (livePwdLookup.status === 0 && livePwdLookup.stdout) {
-      const decoded = Buffer.from(livePwdLookup.stdout, 'base64').toString('utf8');
+      const decoded = Buffer.from(livePwdLookup.stdout, 'base64').toString(
+        'utf8',
+      );
       if (decoded) {
         E2E_REDIS_PASSWORD = decoded;
-        console.log('🔑 Using live kubeclaw-redis admin password from secret\n');
+        console.log(
+          '🔑 Using live kubeclaw-redis admin password from secret\n',
+        );
       }
     }
   } else if (process.env.KUBECLAW_SKIP_HELM_INSTALL === 'true') {
@@ -290,37 +397,57 @@ export default async function setup() {
     // Pre-create the namespace with Helm ownership metadata so that helm can
     // manage it (the chart's namespace.yaml PATCHes it with pod-security labels).
     console.log('📦 Installing kubeclaw helm chart into kubeclaw namespace...');
-    spawnSync('kubectl', ['create', 'namespace', NAMESPACE], { encoding: 'utf8' });
-    spawnSync('kubectl', ['label', 'namespace', NAMESPACE,
-      'app.kubernetes.io/managed-by=Helm',
-    ], { encoding: 'utf8' });
-    spawnSync('kubectl', ['annotate', 'namespace', NAMESPACE,
-      `meta.helm.sh/release-name=${RELEASE}`,
-      `meta.helm.sh/release-namespace=${NAMESPACE}`,
-    ], { encoding: 'utf8' });
+    spawnSync('kubectl', ['create', 'namespace', NAMESPACE], {
+      encoding: 'utf8',
+    });
+    spawnSync(
+      'kubectl',
+      ['label', 'namespace', NAMESPACE, 'app.kubernetes.io/managed-by=Helm'],
+      { encoding: 'utf8' },
+    );
+    spawnSync(
+      'kubectl',
+      [
+        'annotate',
+        'namespace',
+        NAMESPACE,
+        `meta.helm.sh/release-name=${RELEASE}`,
+        `meta.helm.sh/release-namespace=${NAMESPACE}`,
+      ],
+      { encoding: 'utf8' },
+    );
 
     const installResult = spawnSync(
       'helm',
       [
-        'upgrade', '--install',
+        'upgrade',
+        '--install',
         RELEASE,
         CHART_DIR,
-        '--namespace', NAMESPACE,
-        '--timeout', '120s',
-        '--set', `namespace=${NAMESPACE}`,
-        '--set', 'secrets.anthropicApiKey=test-key',
-        '--set', `redis.password=${E2E_REDIS_PASSWORD}`,
+        '--namespace',
+        NAMESPACE,
+        '--timeout',
+        '120s',
+        '--set',
+        `namespace=${NAMESPACE}`,
+        '--set',
+        'secrets.anthropicApiKey=test-key',
+        '--set',
+        `redis.password=${E2E_REDIS_PASSWORD}`,
         // Override the broker image so it resolves to the locally-built
         // kubeclaw-orchestrator image rather than the ghcr.io registry image
         // (which is private/unpullable in minikube with pullPolicy=Never).
-        '--set', 'credentialInjection.broker.image=kubeclaw-orchestrator:latest',
+        '--set',
+        'credentialInjection.broker.image=kubeclaw-orchestrator:latest',
       ],
       { encoding: 'utf8', stdio: 'pipe' },
     );
 
     if (installResult.status !== 0) {
       console.error('helm install stderr:', installResult.stderr);
-      throw new Error(`helm install failed with exit code ${installResult.status}`);
+      throw new Error(
+        `helm install failed with exit code ${installResult.status}`,
+      );
     }
     console.log('✅ kubeclaw helm chart installed\n');
     kubeclawInstalledBySetup = true;
@@ -359,15 +486,26 @@ export default async function setup() {
     const aclCheck = spawnSync(
       'kubectl',
       [
-        'exec', '-n', NAMESPACE, 'kubeclaw-redis-0', '--',
-        'redis-cli', '--user', 'orchestrator', '-a', E2E_REDIS_PASSWORD, 'PING',
+        'exec',
+        '-n',
+        NAMESPACE,
+        'kubeclaw-redis-0',
+        '--',
+        'redis-cli',
+        '--user',
+        'orchestrator',
+        '-a',
+        E2E_REDIS_PASSWORD,
+        'PING',
       ],
       { encoding: 'utf8', stdio: 'pipe' },
     );
     if (aclCheck.stdout?.trim() === 'PONG') {
       console.log('✅ Redis ACL verified (orchestrator user)\n');
     } else {
-      console.warn(`⚠️  Redis ACL check returned: ${aclCheck.stdout?.trim()}\n`);
+      console.warn(
+        `⚠️  Redis ACL check returned: ${aclCheck.stdout?.trim()}\n`,
+      );
     }
   } catch (err) {
     console.warn(`⚠️  Could not verify Redis ACL: ${err}\n`);
@@ -386,7 +524,11 @@ export default async function setup() {
     `🔌 Starting kubectl port-forward kubeclaw-redis → localhost:${KUBECLAW_REDIS_LOCAL_PORT}`,
   );
   // Kill any stale port-forward from a previous run that might be holding the port.
-  spawnSync('pkill', ['-f', `port-forward.*${KUBECLAW_REDIS_LOCAL_PORT}:6379`], { stdio: 'pipe' });
+  spawnSync(
+    'pkill',
+    ['-f', `port-forward.*${KUBECLAW_REDIS_LOCAL_PORT}:6379`],
+    { stdio: 'pipe' },
+  );
   await sleep(500);
 
   portForwardProcess = spawn(
@@ -410,7 +552,11 @@ export default async function setup() {
   let portReady = false;
   for (let i = 0; i < 15; i++) {
     await sleep(2000);
-    const ncResult = spawnSync('nc', ['-z', 'localhost', String(KUBECLAW_REDIS_LOCAL_PORT)], { stdio: 'pipe' });
+    const ncResult = spawnSync(
+      'nc',
+      ['-z', 'localhost', String(KUBECLAW_REDIS_LOCAL_PORT)],
+      { stdio: 'pipe' },
+    );
     if (ncResult.status === 0) {
       portReady = true;
       break;
@@ -422,7 +568,7 @@ export default async function setup() {
     portForwardProcess = null;
     throw new Error(
       `Redis port-forward to localhost:${KUBECLAW_REDIS_LOCAL_PORT} failed after 30s. ` +
-      `Check that the kubeclaw-redis pod is Running and svc/kubeclaw-redis exists in namespace ${NAMESPACE}.`,
+        `Check that the kubeclaw-redis pod is Running and svc/kubeclaw-redis exists in namespace ${NAMESPACE}.`,
     );
   }
   console.log(
@@ -452,7 +598,11 @@ export async function teardown() {
   }
   // Belt-and-suspenders: pkill any stale kubectl port-forward for our port
   // in case the process handle was lost (e.g. after detached + unref).
-  spawnSync('pkill', ['-f', `port-forward.*${KUBECLAW_REDIS_LOCAL_PORT}:6379`], { stdio: 'pipe' });
+  spawnSync(
+    'pkill',
+    ['-f', `port-forward.*${KUBECLAW_REDIS_LOCAL_PORT}:6379`],
+    { stdio: 'pipe' },
+  );
 
   // Only uninstall kubeclaw if global-setup installed it — never tear down a
   // pre-existing user installation.
