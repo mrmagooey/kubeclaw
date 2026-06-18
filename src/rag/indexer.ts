@@ -26,7 +26,11 @@ export interface IndexerConfig {
 /**
  * Split text into overlapping chunks.
  */
-function chunk(text: string, chunkSize: number, chunkOverlap: number): string[] {
+function chunk(
+  text: string,
+  chunkSize: number,
+  chunkOverlap: number,
+): string[] {
   const chunks: string[] = [];
   let start = 0;
   while (start < text.length) {
@@ -86,13 +90,20 @@ export async function indexText(
     payload: { text: c, source, timestamp: now, groupFolder },
   }));
 
-  await upsertPoints({ endpoint: config.endpoint, dim: config.dim }, groupFolder, points);
+  await upsertPoints(
+    { endpoint: config.endpoint, dim: config.dim },
+    groupFolder,
+    points,
+  );
   metrics?.recordIndex({
     group: groupFolder,
     chunks: chunks.length,
     durationMs: Date.now() - start,
   });
-  logger.debug({ groupFolder, source, chunks: chunks.length }, 'Indexed text chunks');
+  logger.debug(
+    { groupFolder, source, chunks: chunks.length },
+    'Indexed text chunks',
+  );
 }
 
 /**

@@ -225,12 +225,19 @@ vi.mock('./k8s/redis-client.js', () => ({
 
 // ── Import after mocks ─────────────────────────────────────────────────────
 
-const { executeTool, TOOLS, activeBootstraps, buildPendingBootstrapNote, broadcastBootstrapSse } =
-  await import('./admin-shell.js');
+const {
+  executeTool,
+  TOOLS,
+  activeBootstraps,
+  buildPendingBootstrapNote,
+  broadcastBootstrapSse,
+} = await import('./admin-shell.js');
 const { getRedisClient } = await import('./k8s/redis-client.js');
 const { pendingBootstrapQuestionByJob } = await import('./k8s/ipc-redis.js');
-const { bootstrapChannelFromSkill: mockBootstrapChannelFromSkill, waitForBootstrapJobCompletion: mockWaitForBootstrapJobCompletion } =
-  await import('./k8s/bootstrap-runner.js');
+const {
+  bootstrapChannelFromSkill: mockBootstrapChannelFromSkill,
+  waitForBootstrapJobCompletion: mockWaitForBootstrapJobCompletion,
+} = await import('./k8s/bootstrap-runner.js');
 
 // ── Tests ───────────────────────────────────────────────────────────────────
 
@@ -1338,14 +1345,28 @@ describe('broadcastBootstrapSse', () => {
   it('writes a correctly-formatted SSE data line to each live client', () => {
     const writes: string[] = [];
     const liveClient = {
-      res: { writableEnded: false, write: (data: string) => { writes.push(data); } },
+      res: {
+        writableEnded: false,
+        write: (data: string) => {
+          writes.push(data);
+        },
+      },
     };
     const writes2: string[] = [];
     const liveClient2 = {
-      res: { writableEnded: false, write: (data: string) => { writes2.push(data); } },
+      res: {
+        writableEnded: false,
+        write: (data: string) => {
+          writes2.push(data);
+        },
+      },
     };
 
-    broadcastBootstrapSse([liveClient, liveClient2], 'bootstrap', 'Job timed out');
+    broadcastBootstrapSse(
+      [liveClient, liveClient2],
+      'bootstrap',
+      'Job timed out',
+    );
 
     // Both clients should receive exactly one write call.
     expect(writes).toHaveLength(1);
@@ -1370,11 +1391,21 @@ describe('broadcastBootstrapSse', () => {
   it('skips clients whose response is already ended (writableEnded=true) and removes them from the array', () => {
     const writes: string[] = [];
     const deadClient = {
-      res: { writableEnded: true, write: (data: string) => { writes.push(data); } },
+      res: {
+        writableEnded: true,
+        write: (data: string) => {
+          writes.push(data);
+        },
+      },
     };
     const liveWrites: string[] = [];
     const liveClient = {
-      res: { writableEnded: false, write: (data: string) => { liveWrites.push(data); } },
+      res: {
+        writableEnded: false,
+        write: (data: string) => {
+          liveWrites.push(data);
+        },
+      },
     };
 
     const clients = [deadClient, liveClient];
@@ -1391,12 +1422,19 @@ describe('broadcastBootstrapSse', () => {
     const throwingClient = {
       res: {
         writableEnded: false,
-        write: (_data: string) => { throw new Error('EPIPE'); },
+        write: (_data: string) => {
+          throw new Error('EPIPE');
+        },
       },
     };
     const liveWrites: string[] = [];
     const liveClient = {
-      res: { writableEnded: false, write: (data: string) => { liveWrites.push(data); } },
+      res: {
+        writableEnded: false,
+        write: (data: string) => {
+          liveWrites.push(data);
+        },
+      },
     };
 
     const clients = [throwingClient, liveClient];
@@ -1413,7 +1451,9 @@ describe('broadcastBootstrapSse', () => {
 
 describe('bootstrap_channel_from_skill timeout_seconds handling', () => {
   beforeEach(() => {
-    vi.mocked(mockBootstrapChannelFromSkill).mockResolvedValue({ bootstrapJobId: 'test-job-id' });
+    vi.mocked(mockBootstrapChannelFromSkill).mockResolvedValue({
+      bootstrapJobId: 'test-job-id',
+    });
     delete process.env.BOOTSTRAP_SKILL_TIMEOUT_SECONDS;
   });
 
@@ -1551,9 +1591,12 @@ describe('bootstrap_channel_from_skill timeout_seconds handling', () => {
 
 // ── Additional imports used by new test blocks ────────────────────────────────
 
-const { setGroupCredential: mockSetGroupCredential, unsetGroupCredential: mockUnsetGroupCredential } =
-  await import('./per-group-capabilities/credentials.js');
-const { bootstrapStatus: mockBootstrapStatus } = await import('./k8s/bootstrap-runner.js');
+const {
+  setGroupCredential: mockSetGroupCredential,
+  unsetGroupCredential: mockUnsetGroupCredential,
+} = await import('./per-group-capabilities/credentials.js');
+const { bootstrapStatus: mockBootstrapStatus } =
+  await import('./k8s/bootstrap-runner.js');
 
 // ── set_group_credential ──────────────────────────────────────────────────────
 
@@ -1623,7 +1666,9 @@ describe('set_group_credential', () => {
   });
 
   it('propagates error from setGroupCredential', async () => {
-    vi.mocked(mockSetGroupCredential).mockRejectedValue(new Error('K8s secret conflict'));
+    vi.mocked(mockSetGroupCredential).mockRejectedValue(
+      new Error('K8s secret conflict'),
+    );
     const result = await executeTool('set_group_credential', {
       group_folder: 'my-group',
       capability_name: 'brave-search',
@@ -1687,7 +1732,9 @@ describe('unset_group_credential', () => {
   });
 
   it('propagates error from unsetGroupCredential', async () => {
-    vi.mocked(mockUnsetGroupCredential).mockRejectedValue(new Error('credential not found'));
+    vi.mocked(mockUnsetGroupCredential).mockRejectedValue(
+      new Error('credential not found'),
+    );
     const result = await executeTool('unset_group_credential', {
       group_folder: 'my-group',
       capability_name: 'brave-search',
@@ -1703,12 +1750,18 @@ describe('unset_group_credential', () => {
 describe('bootstrap_status', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(mockBootstrapStatus).mockResolvedValue({ active: [], recent: [] });
+    vi.mocked(mockBootstrapStatus).mockResolvedValue({
+      active: [],
+      recent: [],
+    });
   });
 
   it('returns parseable JSON output containing active and recent arrays', async () => {
     const result = await executeTool('bootstrap_status', {});
-    const parsed = JSON.parse(result) as { active: unknown[]; recent: unknown[] };
+    const parsed = JSON.parse(result) as {
+      active: unknown[];
+      recent: unknown[];
+    };
     expect(Array.isArray(parsed.active)).toBe(true);
     expect(Array.isArray(parsed.recent)).toBe(true);
   });
@@ -1769,7 +1822,9 @@ describe('report_step', () => {
   });
 
   it('returns error when KUBECLAW_BOOTSTRAP_JOB_ID env is not set', async () => {
-    const result = await executeTool('report_step', { label: 'Installing packages' });
+    const result = await executeTool('report_step', {
+      label: 'Installing packages',
+    });
     expect(result).toContain('KUBECLAW_BOOTSTRAP_JOB_ID not set');
   });
 
@@ -1780,7 +1835,9 @@ describe('report_step', () => {
       publish: mockPublish,
     } as unknown as ReturnType<typeof getRedisClient>);
 
-    const result = await executeTool('report_step', { label: 'Installing packages' });
+    const result = await executeTool('report_step', {
+      label: 'Installing packages',
+    });
 
     expect(mockPublish).toHaveBeenCalledWith(
       'kubeclaw:bootstrap:job-xyz',

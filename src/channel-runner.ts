@@ -315,7 +315,11 @@ function syncCapabilitiesToLocalDb(entries: DiscoveryEntryLite[]): void {
         // Skip a malformed entry (no provider block) rather than write a bad row.
         // The 'adapter' in provider check is belt-and-suspenders: RAG providers always
         // carry 'adapter'; transcription providers never do.
-        if (!provider || typeof provider !== 'object' || 'adapter' in provider) {
+        if (
+          !provider ||
+          typeof provider !== 'object' ||
+          'adapter' in provider
+        ) {
           continue;
         }
         spec = {

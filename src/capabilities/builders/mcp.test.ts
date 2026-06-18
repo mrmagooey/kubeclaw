@@ -105,7 +105,10 @@ describe('buildMcpYaml', () => {
 
   it('forwards probe, scheduling, and podSecurity to the renderer', () => {
     const yaml = buildMcpYaml({
-      kind: 'mcp', name: 'm', image: 'img', port: 3000,
+      kind: 'mcp',
+      name: 'm',
+      image: 'img',
+      port: 3000,
       probe: { type: 'tcp', port: 3000 },
       scheduling: { runtimeClassName: 'nvidia' },
       podSecurity: { fsGroup: 1000 },

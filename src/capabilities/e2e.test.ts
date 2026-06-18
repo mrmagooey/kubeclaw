@@ -258,7 +258,10 @@ describe('capabilities subsystem — end-to-end', () => {
           endpoint: 'http://kubeclaw-cap-test-rag:6333',
           kindMetadata: {
             backend: 'qdrant',
-            provider: { adapter: 'vector-store', embedding: { provider: 'openai' } },
+            provider: {
+              adapter: 'vector-store',
+              embedding: { provider: 'openai' },
+            },
           },
         },
       ]),
@@ -292,7 +295,10 @@ describe('capabilities subsystem — end-to-end', () => {
           endpoint: 'http://kubeclaw-cap-old-rag:6333',
           kindMetadata: {
             backend: 'qdrant',
-            provider: { adapter: 'vector-store', embedding: { provider: 'openai' } },
+            provider: {
+              adapter: 'vector-store',
+              embedding: { provider: 'openai' },
+            },
           },
         },
       ]),

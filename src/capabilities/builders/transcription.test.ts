@@ -22,7 +22,9 @@ describe('generic transcription builder', () => {
 
   it('parses to exactly Deployment + Service (no PVC by default)', () => {
     const docs = parseAllDocuments(buildYaml(base)).map((d) => d.toJSON());
-    expect(docs.map((d) => d.kind).sort()).toEqual(['Deployment', 'Service'].sort());
+    expect(docs.map((d) => d.kind).sort()).toEqual(
+      ['Deployment', 'Service'].sort(),
+    );
   });
 
   it('honours an explicit port', () => {
@@ -34,7 +36,11 @@ describe('generic transcription builder', () => {
     const yaml = buildYaml({
       ...base,
       resources: { gpu: 1 },
-      probe: { type: 'http', path: '/health', startup: { failureThreshold: 60, periodSeconds: 5 } },
+      probe: {
+        type: 'http',
+        path: '/health',
+        startup: { failureThreshold: 60, periodSeconds: 5 },
+      },
       podSecurity: { runAsNonRoot: true },
     });
     expect(yaml).toContain('nvidia.com/gpu');
@@ -43,19 +49,25 @@ describe('generic transcription builder', () => {
   });
 
   it('passes scheduling fields (nodeSelector, tolerations, runtimeClassName) through to pod spec', () => {
-    const docs = parseAllDocuments(buildYaml({
-      ...base,
-      scheduling: {
-        nodeSelector: { 'kubernetes.io/gpu': 'true' },
-        tolerations: [{ key: 'gpu', operator: 'Exists', effect: 'NoSchedule' }],
-        runtimeClassName: 'nvidia',
-      },
-    })).map((d) => d.toJSON());
+    const docs = parseAllDocuments(
+      buildYaml({
+        ...base,
+        scheduling: {
+          nodeSelector: { 'kubernetes.io/gpu': 'true' },
+          tolerations: [
+            { key: 'gpu', operator: 'Exists', effect: 'NoSchedule' },
+          ],
+          runtimeClassName: 'nvidia',
+        },
+      }),
+    ).map((d) => d.toJSON());
     const dep = docs.find((d) => d.kind === 'Deployment');
     expect(dep, 'Deployment document should exist').toBeTruthy();
     const podSpec = dep.spec.template.spec;
     expect(podSpec.nodeSelector).toMatchObject({ 'kubernetes.io/gpu': 'true' });
-    expect(Array.isArray(podSpec.tolerations) && podSpec.tolerations.length > 0).toBe(true);
+    expect(
+      Array.isArray(podSpec.tolerations) && podSpec.tolerations.length > 0,
+    ).toBe(true);
     expect(podSpec.runtimeClassName).toBe('nvidia');
   });
 });

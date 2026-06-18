@@ -772,7 +772,9 @@ describe('makeReloadCallback — integration', () => {
 function makeGroupSecretData(
   fields: Record<string, { value: string; placeholder: string }>,
 ): string {
-  return Buffer.from(JSON.stringify({ fields, registeredAt: '2026-01-01' })).toString('base64');
+  return Buffer.from(
+    JSON.stringify({ fields, registeredAt: '2026-01-01' }),
+  ).toString('base64');
 }
 
 // ─── Pod upsert handler ───────────────────────────────────────────────────────
@@ -835,7 +837,10 @@ describe('startBroker pod-informer handler logic — handlePodUpsert', () => {
 
   it('ignores pod missing uid', () => {
     handlePodUpsert({
-      metadata: { name: 'no-uid', annotations: { 'kubeclaw.io/owner-group': 'family' } },
+      metadata: {
+        name: 'no-uid',
+        annotations: { 'kubeclaw.io/owner-group': 'family' },
+      },
       status: { podIP: '10.0.0.3' },
     });
     // Nothing upserted — IP lookup returns null
@@ -957,7 +962,9 @@ describe('startBroker secret-informer handler logic — makeSecretHandler', () =
         secret: {
           metadata: {
             name: secret.metadata?.name,
-            labels: secret.metadata?.labels as Record<string, string> | undefined,
+            labels: secret.metadata?.labels as
+              | Record<string, string>
+              | undefined,
           },
           data: secret.data ?? {},
         },
@@ -1034,7 +1041,9 @@ describe('startBroker secret-informer handler logic — makeSecretHandler', () =
       },
     });
 
-    expect(secretSource.getGroupCredential('family', 'replicate')).not.toBeNull();
+    expect(
+      secretSource.getGroupCredential('family', 'replicate'),
+    ).not.toBeNull();
 
     const delHandler = makeSecretHandler('DELETED');
     delHandler({
@@ -1078,9 +1087,15 @@ describe('startBroker operatorSecretReader', () => {
     const secretSource = new K8sSecretSource({ readSecret, cacheTtlMs: 0 });
 
     // Reconstruct operatorSecretReader from startBroker
-    const operatorSecretReader = async (catalogId: string): Promise<string | null> => {
+    const operatorSecretReader = async (
+      catalogId: string,
+    ): Promise<string | null> => {
       try {
-        return await secretSource.read({ kind: 'Secret', name: 'kubeclaw-secrets', key: catalogId });
+        return await secretSource.read({
+          kind: 'Secret',
+          name: 'kubeclaw-secrets',
+          key: catalogId,
+        });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         if (msg.includes('has no key')) return null;
@@ -1099,9 +1114,15 @@ describe('startBroker operatorSecretReader', () => {
     });
     const secretSource = new K8sSecretSource({ readSecret, cacheTtlMs: 0 });
 
-    const operatorSecretReader = async (catalogId: string): Promise<string | null> => {
+    const operatorSecretReader = async (
+      catalogId: string,
+    ): Promise<string | null> => {
       try {
-        return await secretSource.read({ kind: 'Secret', name: 'kubeclaw-secrets', key: catalogId });
+        return await secretSource.read({
+          kind: 'Secret',
+          name: 'kubeclaw-secrets',
+          key: catalogId,
+        });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         if (msg.includes('has no key')) return null;
@@ -1117,9 +1138,15 @@ describe('startBroker operatorSecretReader', () => {
     const readSecret = vi.fn().mockRejectedValue(new Error('network timeout'));
     const secretSource = new K8sSecretSource({ readSecret, cacheTtlMs: 0 });
 
-    const operatorSecretReader = async (catalogId: string): Promise<string | null> => {
+    const operatorSecretReader = async (
+      catalogId: string,
+    ): Promise<string | null> => {
       try {
-        return await secretSource.read({ kind: 'Secret', name: 'kubeclaw-secrets', key: catalogId });
+        return await secretSource.read({
+          kind: 'Secret',
+          name: 'kubeclaw-secrets',
+          key: catalogId,
+        });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         if (msg.includes('has no key')) return null;
@@ -1127,6 +1154,8 @@ describe('startBroker operatorSecretReader', () => {
       }
     };
 
-    await expect(operatorSecretReader('someKey')).rejects.toThrow('network timeout');
+    await expect(operatorSecretReader('someKey')).rejects.toThrow(
+      'network timeout',
+    );
   });
 });

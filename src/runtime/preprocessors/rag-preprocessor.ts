@@ -19,11 +19,17 @@ export class RagPreprocessor implements InboundPreprocessor {
   readonly name = 'rag';
   readonly effect = 'augment' as const;
 
-  async apply({ groupFolder, prompt }: PreprocessorInput): Promise<PreprocessorResult> {
+  async apply({
+    groupFolder,
+    prompt,
+  }: PreprocessorInput): Promise<PreprocessorResult> {
     try {
       return { prompt: await augmentPrompt(groupFolder, prompt) };
     } catch (err) {
-      logger.warn({ err, groupFolder }, 'RAG augment failed; continuing without context');
+      logger.warn(
+        { err, groupFolder },
+        'RAG augment failed; continuing without context',
+      );
       return { prompt };
     }
   }

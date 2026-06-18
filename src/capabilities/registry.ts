@@ -72,7 +72,10 @@ export function specToDiscoveryEntry(
         name: spec.name,
         kind: 'rag',
         endpoint,
-        kindMetadata: { backend: normalized.backend, provider: normalized.provider },
+        kindMetadata: {
+          backend: normalized.backend,
+          provider: normalized.provider,
+        },
       };
     }
     case 'http':
@@ -172,7 +175,9 @@ function assertNoConflictingTranscription(spec: CapabilitySpec): void {
 
   const incoming = spec.channels?.length ? new Set(spec.channels) : null;
   for (const other of others) {
-    const otherChannels = other.channels?.length ? new Set(other.channels) : null;
+    const otherChannels = other.channels?.length
+      ? new Set(other.channels)
+      : null;
     if (incoming === null || otherChannels === null) {
       const universal = incoming === null ? spec.name : other.name;
       throw new Error(

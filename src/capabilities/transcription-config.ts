@@ -29,9 +29,11 @@ export function normalizeTranscriptionSpec(
   return {
     ...spec,
     provider: {
-      transcribePath: p.transcribePath ?? DEFAULT_TRANSCRIPTION_CONFIG.transcribePath,
+      transcribePath:
+        p.transcribePath ?? DEFAULT_TRANSCRIPTION_CONFIG.transcribePath,
       ...(p.model !== undefined ? { model: p.model } : {}),
-      responseField: p.responseField ?? DEFAULT_TRANSCRIPTION_CONFIG.responseField,
+      responseField:
+        p.responseField ?? DEFAULT_TRANSCRIPTION_CONFIG.responseField,
       timeoutMs: p.timeoutMs ?? DEFAULT_TRANSCRIPTION_CONFIG.timeoutMs,
     },
   };

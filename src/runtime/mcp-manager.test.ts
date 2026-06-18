@@ -800,12 +800,18 @@ describe('callTool — group-scoped MCP dispatch', () => {
       {
         name: 'read_file',
         description: 'Read a file',
-        inputSchema: { type: 'object', properties: { path: { type: 'string' } } },
+        inputSchema: {
+          type: 'object',
+          properties: { path: { type: 'string' } },
+        },
       },
       {
         name: 'write_file',
         description: 'Write a file',
-        inputSchema: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' } } },
+        inputSchema: {
+          type: 'object',
+          properties: { path: { type: 'string' }, content: { type: 'string' } },
+        },
       },
     ],
   };
@@ -813,8 +819,12 @@ describe('callTool — group-scoped MCP dispatch', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockConnect.mockResolvedValue(undefined);
-    mockRequestGroupCapability.mockResolvedValue({ endpoint: 'http://cap:3000' });
-    mockCallTool.mockResolvedValue({ content: [{ type: 'text', text: 'file content' }] });
+    mockRequestGroupCapability.mockResolvedValue({
+      endpoint: 'http://cap:3000',
+    });
+    mockCallTool.mockResolvedValue({
+      content: [{ type: 'text', text: 'file content' }],
+    });
   });
 
   async function makeGroupManager(): Promise<McpManager> {
@@ -824,9 +834,15 @@ describe('callTool — group-scoped MCP dispatch', () => {
   }
 
   it('aggregates single text content part and returns the text', async () => {
-    mockCallTool.mockResolvedValue({ content: [{ type: 'text', text: 'hello' }] });
+    mockCallTool.mockResolvedValue({
+      content: [{ type: 'text', text: 'hello' }],
+    });
     const mgr = await makeGroupManager();
-    const result = await mgr.callTool('mcp__filesystem__read_file', { path: '/etc/hosts' }, { groupFolder: 'my-group' });
+    const result = await mgr.callTool(
+      'mcp__filesystem__read_file',
+      { path: '/etc/hosts' },
+      { groupFolder: 'my-group' },
+    );
     expect(result).toBe('hello');
   });
 
@@ -838,7 +854,11 @@ describe('callTool — group-scoped MCP dispatch', () => {
       ],
     });
     const mgr = await makeGroupManager();
-    const result = await mgr.callTool('mcp__filesystem__read_file', {}, { groupFolder: 'my-group' });
+    const result = await mgr.callTool(
+      'mcp__filesystem__read_file',
+      {},
+      { groupFolder: 'my-group' },
+    );
     expect(result).toBe('part one\npart two');
   });
 
@@ -846,7 +866,11 @@ describe('callTool — group-scoped MCP dispatch', () => {
     const mockResult = { content: [] };
     mockCallTool.mockResolvedValue(mockResult);
     const mgr = await makeGroupManager();
-    const result = await mgr.callTool('mcp__filesystem__read_file', {}, { groupFolder: 'my-group' });
+    const result = await mgr.callTool(
+      'mcp__filesystem__read_file',
+      {},
+      { groupFolder: 'my-group' },
+    );
     expect(result).toBe(JSON.stringify(mockResult));
   });
 
@@ -854,24 +878,44 @@ describe('callTool — group-scoped MCP dispatch', () => {
     const mockResult = { content: [{ type: 'image', data: 'abc123' }] };
     mockCallTool.mockResolvedValue(mockResult);
     const mgr = await makeGroupManager();
-    const result = await mgr.callTool('mcp__filesystem__read_file', {}, { groupFolder: 'my-group' });
+    const result = await mgr.callTool(
+      'mcp__filesystem__read_file',
+      {},
+      { groupFolder: 'my-group' },
+    );
     expect(result).toBe(JSON.stringify(mockResult));
   });
 
   it('returns capability unavailable error when requestGroupCapability returns error', async () => {
     mockRequestGroupCapability.mockResolvedValue({ error: 'pod not ready' });
     const mgr = await makeGroupManager();
-    const result = await mgr.callTool('mcp__filesystem__read_file', {}, { groupFolder: 'my-group' });
-    const parsed = JSON.parse(result) as { isError: boolean; content: Array<{ text: string }> };
+    const result = await mgr.callTool(
+      'mcp__filesystem__read_file',
+      {},
+      { groupFolder: 'my-group' },
+    );
+    const parsed = JSON.parse(result) as {
+      isError: boolean;
+      content: Array<{ text: string }>;
+    };
     expect(parsed.isError).toBe(true);
-    expect(parsed.content[0].text).toContain('capability unavailable: pod not ready');
+    expect(parsed.content[0].text).toContain(
+      'capability unavailable: pod not ready',
+    );
   });
 
   it('returns MCP call failed error when callTool throws', async () => {
     mockCallTool.mockRejectedValue(new Error('connection refused'));
     const mgr = await makeGroupManager();
-    const result = await mgr.callTool('mcp__filesystem__read_file', {}, { groupFolder: 'my-group' });
-    const parsed = JSON.parse(result) as { isError: boolean; content: Array<{ text: string }> };
+    const result = await mgr.callTool(
+      'mcp__filesystem__read_file',
+      {},
+      { groupFolder: 'my-group' },
+    );
+    const parsed = JSON.parse(result) as {
+      isError: boolean;
+      content: Array<{ text: string }>;
+    };
     expect(parsed.isError).toBe(true);
     expect(parsed.content[0].text).toContain('MCP call failed');
     expect(parsed.content[0].text).toContain('connection refused');
@@ -880,7 +924,11 @@ describe('callTool — group-scoped MCP dispatch', () => {
   it('still calls connect when callTool throws (transport.close is called in finally)', async () => {
     mockCallTool.mockRejectedValue(new Error('oops'));
     const mgr = await makeGroupManager();
-    await mgr.callTool('mcp__filesystem__read_file', {}, { groupFolder: 'my-group' });
+    await mgr.callTool(
+      'mcp__filesystem__read_file',
+      {},
+      { groupFolder: 'my-group' },
+    );
     // connect was called, proving the transport was created and used
     expect(mockConnect).toHaveBeenCalled();
   });
@@ -911,13 +959,22 @@ describe('callTool — group-scoped MCP dispatch', () => {
   });
 
   it('constructs the correct MCP URL by appending /mcp to the endpoint', async () => {
-    mockRequestGroupCapability.mockResolvedValue({ endpoint: 'http://my-cap:3000' });
+    mockRequestGroupCapability.mockResolvedValue({
+      endpoint: 'http://my-cap:3000',
+    });
     mockCallTool.mockResolvedValue({ content: [{ type: 'text', text: 'ok' }] });
     const mgr = await makeGroupManager();
-    await mgr.callTool('mcp__filesystem__read_file', {}, { groupFolder: 'my-group' });
+    await mgr.callTool(
+      'mcp__filesystem__read_file',
+      {},
+      { groupFolder: 'my-group' },
+    );
     // The transport was constructed — connect was called successfully
     expect(mockConnect).toHaveBeenCalled();
     // The tool call passed the bare tool name (without prefix)
-    expect(mockCallTool).toHaveBeenCalledWith({ name: 'read_file', arguments: {} });
+    expect(mockCallTool).toHaveBeenCalledWith({
+      name: 'read_file',
+      arguments: {},
+    });
   });
 });

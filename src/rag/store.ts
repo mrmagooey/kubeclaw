@@ -50,7 +50,9 @@ async function qdrantFetch(
   });
   if (!res.ok) {
     const body = await res.text().catch(() => '');
-    throw new Error(`Qdrant ${init.method ?? 'GET'} ${path} → ${res.status}: ${body}`);
+    throw new Error(
+      `Qdrant ${init.method ?? 'GET'} ${path} → ${res.status}: ${body}`,
+    );
   }
   return res.json();
 }
@@ -59,7 +61,10 @@ async function qdrantFetch(
  * Ensure the collection for a group exists with the correct vector dimension.
  * Idempotent — safe to call before every upsert.
  */
-export async function ensureCollection(opts: VectorStoreOpts, groupFolder: string): Promise<void> {
+export async function ensureCollection(
+  opts: VectorStoreOpts,
+  groupFolder: string,
+): Promise<void> {
   const name = collectionName(groupFolder);
   try {
     await qdrantFetch(opts, `/collections/${name}`);
@@ -86,10 +91,14 @@ export async function upsertPoints(
 ): Promise<void> {
   if (points.length === 0) return;
   await ensureCollection(opts, groupFolder);
-  await qdrantFetch(opts, `/collections/${collectionName(groupFolder)}/points?wait=true`, {
-    method: 'PUT',
-    body: JSON.stringify({ points }),
-  });
+  await qdrantFetch(
+    opts,
+    `/collections/${collectionName(groupFolder)}/points?wait=true`,
+    {
+      method: 'PUT',
+      body: JSON.stringify({ points }),
+    },
+  );
 }
 
 /**
@@ -133,7 +142,10 @@ export async function search(
 /**
  * Delete all points for a group (e.g. when a group is removed).
  */
-export async function deleteGroup(opts: VectorStoreOpts, groupFolder: string): Promise<void> {
+export async function deleteGroup(
+  opts: VectorStoreOpts,
+  groupFolder: string,
+): Promise<void> {
   const name = collectionName(groupFolder);
   try {
     await qdrantFetch(opts, `/collections/${name}`, { method: 'DELETE' });

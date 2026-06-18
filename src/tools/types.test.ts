@@ -56,7 +56,12 @@ describe('validateTool', () => {
   });
 
   it('rejects catalog tools named after agent-runner IPC built-ins', () => {
-    for (const n of ['send_message', 'resume_task', 'update_task', 'register_group']) {
+    for (const n of [
+      'send_message',
+      'resume_task',
+      'update_task',
+      'register_group',
+    ]) {
       const r = validateTool({ ...base, name: n });
       expect(r.ok, `expected ${n} to be rejected`).toBe(false);
     }
@@ -70,7 +75,12 @@ describe('validateTool', () => {
   });
 
   it('rejects catalog tools named after locally-registered built-ins', () => {
-    for (const n of ['set_reminder', 'list_credentials', 'update_profile', 'read_user_profile']) {
+    for (const n of [
+      'set_reminder',
+      'list_credentials',
+      'update_profile',
+      'read_user_profile',
+    ]) {
       const r = validateTool({ ...base, name: n });
       expect(r.ok, `expected ${n} to be rejected`).toBe(false);
     }

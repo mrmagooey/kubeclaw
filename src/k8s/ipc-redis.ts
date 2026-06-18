@@ -129,7 +129,8 @@ let _bootstrapNamespace = process.env.KUBECLAW_NAMESPACE || 'kubeclaw';
 // SSE publisher — set by registerBootstrapSsePublisher() called from admin-shell.ts
 // so that bootstrap Redis events can be forwarded to admin SSE clients without
 // creating a circular import (admin-shell → ipc-redis, not the reverse).
-let _bootstrapSsePublisher: ((type: string, text: string) => void) | null = null;
+let _bootstrapSsePublisher: ((type: string, text: string) => void) | null =
+  null;
 
 /**
  * Register a callback that will be invoked whenever a bootstrap event worth
@@ -299,7 +300,6 @@ function channelPvcNames(channel: string): {
 
 // Track tool pod jobs per tool job for cleanup
 const toolPodsByAgent = new Map<string, Set<string>>();
-
 
 /**
  * Active K8s agent-job names keyed by groupFolder.

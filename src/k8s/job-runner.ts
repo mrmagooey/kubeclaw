@@ -186,7 +186,6 @@ export function buildJobName(folder: string): string {
   return `${prefix}-${truncated}-${suffix}`;
 }
 
-
 /** Markers written by the agent-runner to stdout to delimit the final JSON result block. */
 const KUBECLAW_OUTPUT_START_MARKER = '---KUBECLAW_OUTPUT_START---';
 const KUBECLAW_OUTPUT_END_MARKER = '---KUBECLAW_OUTPUT_END---';
@@ -1926,7 +1925,10 @@ export class JobRunner {
             // exclusively, and the other container's UID gets EACCES on rename().
             // fsGroupChangePolicy: OnRootMismatch avoids a recursive chown on every
             // pod start (which would otherwise chown the group PVC for bash_persist).
-            securityContext: { fsGroup: 2000, fsGroupChangePolicy: 'OnRootMismatch' },
+            securityContext: {
+              fsGroup: 2000,
+              fsGroupChangePolicy: 'OnRootMismatch',
+            },
             ...(cdpInitContainers && { initContainers: cdpInitContainers }),
             containers: [
               {

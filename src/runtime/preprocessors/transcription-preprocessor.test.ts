@@ -13,14 +13,21 @@ const ENTRY = {
   kind: 'transcription',
   name: 't',
   endpoint: 'http://cap:9000',
-  kindMetadata: { provider: { transcribePath: '/v1/audio/transcriptions', responseField: 'text', timeoutMs: 60000 } },
+  kindMetadata: {
+    provider: {
+      transcribePath: '/v1/audio/transcriptions',
+      responseField: 'text',
+      timeoutMs: 60000,
+    },
+  },
 };
 
 // Build a preprocessor whose client is a fake.
 function makePreprocessor(transcribe: (abs: string) => Promise<string>) {
   const p = new TranscriptionPreprocessor();
-  (p as unknown as { makeClient: () => { transcribeFile: typeof transcribe } }).makeClient =
-    () => ({ transcribeFile: transcribe });
+  (
+    p as unknown as { makeClient: () => { transcribeFile: typeof transcribe } }
+  ).makeClient = () => ({ transcribeFile: transcribe });
   return p;
 }
 
@@ -78,7 +85,8 @@ describe('TranscriptionPreprocessor', () => {
     );
     const out = await p.apply({
       groupFolder: 'g',
-      prompt: '[VoiceAttachment: attachments/raw/a.ogg] and [VoiceAttachment: attachments/raw/b.ogg]',
+      prompt:
+        '[VoiceAttachment: attachments/raw/a.ogg] and [VoiceAttachment: attachments/raw/b.ogg]',
     });
     expect(out.prompt).toBe('[Voice: first] and [Voice: second]');
     expect(out.persistedContent).toBe('[Voice: first] and [Voice: second]');
@@ -104,25 +112,36 @@ describe('TranscriptionPreprocessor', () => {
     });
     const out = await p.apply({
       groupFolder: 'g',
-      prompt: '[VoiceAttachment: attachments/raw/a.ogg] x [VoiceAttachment: attachments/raw/b.ogg]',
+      prompt:
+        '[VoiceAttachment: attachments/raw/a.ogg] x [VoiceAttachment: attachments/raw/b.ogg]',
     });
-    expect(out.prompt).toBe('[VoiceAttachment: attachments/raw/a.ogg] x [Voice: ok]');
+    expect(out.prompt).toBe(
+      '[VoiceAttachment: attachments/raw/a.ogg] x [Voice: ok]',
+    );
     // a transform fired (b succeeded) so persistedContent is set to the substituted text
-    expect(out.persistedContent).toBe('[VoiceAttachment: attachments/raw/a.ogg] x [Voice: ok]');
+    expect(out.persistedContent).toBe(
+      '[VoiceAttachment: attachments/raw/a.ogg] x [Voice: ok]',
+    );
   });
 
   it('reads KUBECLAW_CHANNEL when resolving the entry', async () => {
     process.env.KUBECLAW_CHANNEL = 'telegram';
     getTranscriptionEntry.mockReturnValue(undefined);
     const p = makePreprocessor(async () => 'X');
-    await p.apply({ groupFolder: 'g', prompt: '[VoiceAttachment: attachments/raw/a.ogg]' });
+    await p.apply({
+      groupFolder: 'g',
+      prompt: '[VoiceAttachment: attachments/raw/a.ogg]',
+    });
     expect(getTranscriptionEntry).toHaveBeenCalledWith('telegram');
   });
 
   it('falls back to wildcard channel when KUBECLAW_CHANNEL is unset', async () => {
     getTranscriptionEntry.mockReturnValue(undefined);
     const p = makePreprocessor(async () => 'X');
-    await p.apply({ groupFolder: 'g', prompt: '[VoiceAttachment: attachments/raw/a.ogg]' });
+    await p.apply({
+      groupFolder: 'g',
+      prompt: '[VoiceAttachment: attachments/raw/a.ogg]',
+    });
     expect(getTranscriptionEntry).toHaveBeenCalledWith('*');
   });
 
@@ -130,7 +149,8 @@ describe('TranscriptionPreprocessor', () => {
     getTranscriptionEntry.mockReturnValue(ENTRY);
     const transcribeSpy = vi.fn().mockResolvedValue('should not be called');
     const p = makePreprocessor(transcribeSpy);
-    const maliciousPrompt = '[VoiceAttachment: attachments/raw/../../../etc/passwd]';
+    const maliciousPrompt =
+      '[VoiceAttachment: attachments/raw/../../../etc/passwd]';
     const out = await p.apply({ groupFolder: 'g', prompt: maliciousPrompt });
     expect(out.prompt).toBe(maliciousPrompt);
     expect(out.persistedContent).toBeUndefined();

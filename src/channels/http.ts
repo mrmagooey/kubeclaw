@@ -3357,7 +3357,10 @@ export class HttpChannel implements Channel {
         try {
           parsed = JSON.parse(rawBody);
         } catch {
-          res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+          res.writeHead(
+            400,
+            this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+          );
           res.end(JSON.stringify({ error: 'Invalid JSON body' }));
           return;
         }
@@ -3367,7 +3370,10 @@ export class HttpChannel implements Channel {
           parsed === null ||
           Array.isArray(parsed)
         ) {
-          res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+          res.writeHead(
+            400,
+            this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+          );
           res.end(JSON.stringify({ error: 'Body must be a JSON object' }));
           return;
         }
@@ -3378,30 +3384,54 @@ export class HttpChannel implements Channel {
         const status = body['status'];
 
         if (
-          typeof jobId !== 'string' || !jobId ||
-          typeof groupFolder !== 'string' || !groupFolder ||
-          typeof status !== 'string' || !status
+          typeof jobId !== 'string' ||
+          !jobId ||
+          typeof groupFolder !== 'string' ||
+          !groupFolder ||
+          typeof status !== 'string' ||
+          !status
         ) {
-          res.writeHead(400, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
-          res.end(JSON.stringify({ error: 'job_id, group_folder, and status are required strings' }));
+          res.writeHead(
+            400,
+            this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+          );
+          res.end(
+            JSON.stringify({
+              error: 'job_id, group_folder, and status are required strings',
+            }),
+          );
           return;
         }
 
         const createdAt =
-          typeof body['created_at'] === 'string' ? body['created_at'] : undefined;
+          typeof body['created_at'] === 'string'
+            ? body['created_at']
+            : undefined;
         const resolvedAt =
           typeof body['resolved_at'] === 'string' ? body['resolved_at'] : null;
 
         try {
-          insertToolJobForDebug({ jobId, groupFolder, status, createdAt, resolvedAt });
+          insertToolJobForDebug({
+            jobId,
+            groupFolder,
+            status,
+            createdAt,
+            resolvedAt,
+          });
         } catch (err) {
           logger.error({ err }, 'debug inject: insertToolJobForDebug failed');
-          res.writeHead(500, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+          res.writeHead(
+            500,
+            this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+          );
           res.end(JSON.stringify({ error: 'Internal server error' }));
           return;
         }
 
-        res.writeHead(200, this.addCorsHeaders({ 'Content-Type': 'application/json' }));
+        res.writeHead(
+          200,
+          this.addCorsHeaders({ 'Content-Type': 'application/json' }),
+        );
         res.end(JSON.stringify({ ok: true, job_id: jobId }));
         return;
       }

@@ -34,9 +34,13 @@ describe('normalizeRagSpec', () => {
     process.env.EMBEDDING_PROVIDER = 'voyage';
     try {
       const out = normalizeRagSpec({
-        kind: 'rag', backend: 'qdrant', name: 'q', image: 'qdrant/qdrant',
+        kind: 'rag',
+        backend: 'qdrant',
+        name: 'q',
+        image: 'qdrant/qdrant',
       } as RagCapabilitySpec);
-      if (out.provider.adapter !== 'vector-store') throw new Error('unreachable');
+      if (out.provider.adapter !== 'vector-store')
+        throw new Error('unreachable');
       expect(out.provider.embedding.provider).toBe('voyage');
     } finally {
       if (prev === undefined) delete process.env.EMBEDDING_PROVIDER;
@@ -46,7 +50,10 @@ describe('normalizeRagSpec', () => {
 
   it('passes through a spec that already has a provider unchanged', () => {
     const modern = {
-      kind: 'rag', backend: 'weaviate', name: 'w', image: 'weaviate:1',
+      kind: 'rag',
+      backend: 'weaviate',
+      name: 'w',
+      image: 'weaviate:1',
       provider: {
         adapter: 'vector-store',
         embedding: { provider: 'voyage', model: 'voyage-3', dim: 1024 },
@@ -59,7 +66,10 @@ describe('normalizeRagSpec', () => {
 
   it('defaults an unknown legacy backend to vector-store', () => {
     const out = normalizeRagSpec({
-      kind: 'rag', backend: 'mystery', name: 'm', image: 'x',
+      kind: 'rag',
+      backend: 'mystery',
+      name: 'm',
+      image: 'x',
     } as RagCapabilitySpec);
     expect(out.provider.adapter).toBe('vector-store');
   });

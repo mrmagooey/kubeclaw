@@ -40,10 +40,7 @@ describe('stuckTerminatingPvcNames', () => {
   });
 
   it('returns empty array when no PVCs are terminating', () => {
-    const json = makePvcList([
-      { name: 'pvc-a' },
-      { name: 'pvc-b' },
-    ]);
+    const json = makePvcList([{ name: 'pvc-a' }, { name: 'pvc-b' }]);
     expect(stuckTerminatingPvcNames(json)).toEqual([]);
   });
 

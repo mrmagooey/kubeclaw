@@ -68,7 +68,11 @@ describe('PinoAudit.record', () => {
   });
 
   it('includes optional identity field when present', () => {
-    audit.record({ destination: 'api.example.com', status: 200, identity: 'sa/kubeclaw-tool-job' });
+    audit.record({
+      destination: 'api.example.com',
+      status: 200,
+      identity: 'sa/kubeclaw-tool-job',
+    });
     expect(logger.info).toHaveBeenCalledWith(
       expect.objectContaining({ identity: 'sa/kubeclaw-tool-job' }),
       'authz decision',
@@ -76,7 +80,11 @@ describe('PinoAudit.record', () => {
   });
 
   it('includes optional ownerGroup field when present', () => {
-    audit.record({ destination: 'api.example.com', status: 200, ownerGroup: 'family' });
+    audit.record({
+      destination: 'api.example.com',
+      status: 200,
+      ownerGroup: 'family',
+    });
     expect(logger.info).toHaveBeenCalledWith(
       expect.objectContaining({ ownerGroup: 'family' }),
       'authz decision',
@@ -84,7 +92,11 @@ describe('PinoAudit.record', () => {
   });
 
   it('includes optional catalogId field when present', () => {
-    audit.record({ destination: 'api.replicate.com', status: 200, catalogId: 'replicate' });
+    audit.record({
+      destination: 'api.replicate.com',
+      status: 200,
+      catalogId: 'replicate',
+    });
     expect(logger.info).toHaveBeenCalledWith(
       expect.objectContaining({ catalogId: 'replicate' }),
       'authz decision',
@@ -92,7 +104,11 @@ describe('PinoAudit.record', () => {
   });
 
   it('includes optional keySource=groupSecret when present', () => {
-    audit.record({ destination: 'api.example.com', status: 200, keySource: 'groupSecret' });
+    audit.record({
+      destination: 'api.example.com',
+      status: 200,
+      keySource: 'groupSecret',
+    });
     expect(logger.info).toHaveBeenCalledWith(
       expect.objectContaining({ keySource: 'groupSecret' }),
       'authz decision',
@@ -100,7 +116,11 @@ describe('PinoAudit.record', () => {
   });
 
   it('includes optional keySource=operatorFallback when present', () => {
-    audit.record({ destination: 'api.example.com', status: 200, keySource: 'operatorFallback' });
+    audit.record({
+      destination: 'api.example.com',
+      status: 200,
+      keySource: 'operatorFallback',
+    });
     expect(logger.info).toHaveBeenCalledWith(
       expect.objectContaining({ keySource: 'operatorFallback' }),
       'authz decision',
@@ -108,7 +128,11 @@ describe('PinoAudit.record', () => {
   });
 
   it('includes optional substitutionCount when present', () => {
-    audit.record({ destination: 'api.example.com', status: 200, substitutionCount: 3 });
+    audit.record({
+      destination: 'api.example.com',
+      status: 200,
+      substitutionCount: 3,
+    });
     expect(logger.info).toHaveBeenCalledWith(
       expect.objectContaining({ substitutionCount: 3 }),
       'authz decision',
@@ -116,7 +140,12 @@ describe('PinoAudit.record', () => {
   });
 
   it('includes optional auditOnly and wouldStamp fields', () => {
-    audit.record({ destination: 'api.example.com', status: 200, auditOnly: true, wouldStamp: false });
+    audit.record({
+      destination: 'api.example.com',
+      status: 200,
+      auditOnly: true,
+      wouldStamp: false,
+    });
     expect(logger.info).toHaveBeenCalledWith(
       expect.objectContaining({ auditOnly: true, wouldStamp: false }),
       'authz decision',
@@ -124,7 +153,11 @@ describe('PinoAudit.record', () => {
   });
 
   it('includes optional mappingId when present', () => {
-    audit.record({ destination: 'api.anthropic.com', status: 200, mappingId: 'anthropic' });
+    audit.record({
+      destination: 'api.anthropic.com',
+      status: 200,
+      mappingId: 'anthropic',
+    });
     expect(logger.info).toHaveBeenCalledWith(
       expect.objectContaining({ mappingId: 'anthropic' }),
       'authz decision',

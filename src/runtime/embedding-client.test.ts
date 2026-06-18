@@ -252,7 +252,8 @@ describe('embedding-client', () => {
 
     it('resolveEmbeddingDefaults fills model/dim/apiKey from provider defaults', async () => {
       process.env.OPENAI_API_KEY = 'sk-test';
-      const { resolveEmbeddingDefaults } = await import('./embedding-client.js');
+      const { resolveEmbeddingDefaults } =
+        await import('./embedding-client.js');
       const r = resolveEmbeddingDefaults({ provider: 'openai' });
       expect(r.model).toBe('text-embedding-3-small');
       expect(r.dim).toBe(1536);
@@ -261,18 +262,25 @@ describe('embedding-client', () => {
 
     it('resolveEmbeddingDefaults reads the key from a custom apiKeyEnv', async () => {
       process.env.MY_EMBED_KEY = 'sk-custom';
-      const { resolveEmbeddingDefaults } = await import('./embedding-client.js');
-      const r = resolveEmbeddingDefaults({ provider: 'openai', apiKeyEnv: 'MY_EMBED_KEY' });
+      const { resolveEmbeddingDefaults } =
+        await import('./embedding-client.js');
+      const r = resolveEmbeddingDefaults({
+        provider: 'openai',
+        apiKeyEnv: 'MY_EMBED_KEY',
+      });
       expect(r.apiKey).toBe('sk-custom');
       delete process.env.MY_EMBED_KEY;
     });
 
     it('voyage config posts to the voyage endpoint with the config key', async () => {
       process.env.VOYAGE_API_KEY = 'pa-cfg';
-      vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ data: [{ embedding: [0.2] }] }),
-      }));
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ data: [{ embedding: [0.2] }] }),
+        }),
+      );
       const { embed } = await import('./embedding-client.js');
       await embed(['t'], { provider: 'voyage', apiKeyEnv: 'VOYAGE_API_KEY' });
       expect(fetch).toHaveBeenCalledWith(
@@ -284,5 +292,4 @@ describe('embedding-client', () => {
       vi.unstubAllGlobals();
     });
   });
-
 });

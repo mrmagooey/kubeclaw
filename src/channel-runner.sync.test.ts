@@ -25,7 +25,9 @@ vi.mock('./capabilities/db.js', () => ({
   setCapability: vi.fn((spec: CapabilitySpec) => {
     capStore.set(spec.name, spec);
   }),
-  getAllCapabilities: vi.fn((): CapabilitySpec[] => Array.from(capStore.values())),
+  getAllCapabilities: vi.fn((): CapabilitySpec[] =>
+    Array.from(capStore.values()),
+  ),
   deleteCapability: vi.fn((name: string) => {
     capStore.delete(name);
   }),
@@ -143,9 +145,11 @@ vi.mock('./router.js', async (importOriginal) => {
   const actual = await importOriginal();
   return {
     ...(actual as object),
-    formatMessages: vi.fn().mockImplementation((msgs: Array<{ content: string }>) =>
-      msgs.map((m) => m.content).join('\n'),
-    ),
+    formatMessages: vi
+      .fn()
+      .mockImplementation((msgs: Array<{ content: string }>) =>
+        msgs.map((m) => m.content).join('\n'),
+      ),
     findChannel: vi.fn(),
   };
 });
@@ -173,7 +177,10 @@ describe('handleCapabilitiesUpdate — adapter-aware rag sync', () => {
           endpoint: 'http://kubeclaw-cap-r:6333',
           kindMetadata: {
             backend: 'qdrant',
-            provider: { adapter: 'vector-store', embedding: { provider: 'openai' } },
+            provider: {
+              adapter: 'vector-store',
+              embedding: { provider: 'openai' },
+            },
           },
         },
       ]),
@@ -181,9 +188,9 @@ describe('handleCapabilitiesUpdate — adapter-aware rag sync', () => {
 
     const rows = getAllCapabilities().filter((c) => c.kind === 'rag');
     expect(rows).toHaveLength(1);
-    expect((rows[0] as { provider?: { adapter: string } }).provider?.adapter).toBe(
-      'vector-store',
-    );
+    expect(
+      (rows[0] as { provider?: { adapter: string } }).provider?.adapter,
+    ).toBe('vector-store');
     expect(resetRagProvider).toHaveBeenCalledTimes(1);
   });
 
@@ -199,7 +206,9 @@ describe('handleCapabilitiesUpdate — adapter-aware rag sync', () => {
       ]),
     } as never);
 
-    expect(getAllCapabilities().filter((c) => c.kind === 'rag')).toHaveLength(0);
+    expect(getAllCapabilities().filter((c) => c.kind === 'rag')).toHaveLength(
+      0,
+    );
   });
 
   it('accepts a remote adapter and writes the row', async () => {
@@ -219,7 +228,9 @@ describe('handleCapabilitiesUpdate — adapter-aware rag sync', () => {
 
     const rows = getAllCapabilities().filter((c) => c.kind === 'rag');
     expect(rows).toHaveLength(1);
-    expect((rows[0] as { provider?: { adapter: string } }).provider?.adapter).toBe('remote');
+    expect(
+      (rows[0] as { provider?: { adapter: string } }).provider?.adapter,
+    ).toBe('remote');
   });
 
   it('skips a rag entry with no provider field', async () => {
@@ -234,31 +245,51 @@ describe('handleCapabilitiesUpdate — adapter-aware rag sync', () => {
       ]),
     } as never);
 
-    expect(getAllCapabilities().filter((c) => c.kind === 'rag')).toHaveLength(0);
+    expect(getAllCapabilities().filter((c) => c.kind === 'rag')).toHaveLength(
+      0,
+    );
   });
 });
 
 describe('handleCapabilitiesUpdate — transcription sync', () => {
   it('mirrors a transcription entry with its provider config into local DB', async () => {
     await handleCapabilitiesUpdate({
-      capabilities: JSON.stringify([{
-        name: 'whisper', kind: 'transcription', endpoint: 'http://kubeclaw-cap-whisper:9000',
-        kindMetadata: { provider: { transcribePath: '/v1/audio/transcriptions', responseField: 'text', timeoutMs: 60000 } },
-      }]),
+      capabilities: JSON.stringify([
+        {
+          name: 'whisper',
+          kind: 'transcription',
+          endpoint: 'http://kubeclaw-cap-whisper:9000',
+          kindMetadata: {
+            provider: {
+              transcribePath: '/v1/audio/transcriptions',
+              responseField: 'text',
+              timeoutMs: 60000,
+            },
+          },
+        },
+      ]),
     } as never);
     const rows = getAllCapabilities().filter((c) => c.kind === 'transcription');
     expect(rows).toHaveLength(1);
-    expect((rows[0] as { provider?: { transcribePath?: string } }).provider?.transcribePath)
-      .toBe('/v1/audio/transcriptions');
+    expect(
+      (rows[0] as { provider?: { transcribePath?: string } }).provider
+        ?.transcribePath,
+    ).toBe('/v1/audio/transcriptions');
   });
 
   it('skips a transcription entry missing its provider block', async () => {
     await handleCapabilitiesUpdate({
-      capabilities: JSON.stringify([{
-        name: 'bad', kind: 'transcription', endpoint: 'http://x:9000',
-        kindMetadata: {},
-      }]),
+      capabilities: JSON.stringify([
+        {
+          name: 'bad',
+          kind: 'transcription',
+          endpoint: 'http://x:9000',
+          kindMetadata: {},
+        },
+      ]),
     } as never);
-    expect(getAllCapabilities().filter((c) => c.kind === 'transcription')).toHaveLength(0);
+    expect(
+      getAllCapabilities().filter((c) => c.kind === 'transcription'),
+    ).toHaveLength(0);
   });
 });

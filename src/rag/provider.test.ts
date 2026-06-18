@@ -1,14 +1,20 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Hoisted mocks for dynamic imports used inside VectorStoreProvider
-const mockIndexConversationTurn = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
-const mockRetrieveContext = vi.hoisted(() => vi.fn().mockResolvedValue('retrieved'));
+const mockIndexConversationTurn = vi.hoisted(() =>
+  vi.fn().mockResolvedValue(undefined),
+);
+const mockRetrieveContext = vi.hoisted(() =>
+  vi.fn().mockResolvedValue('retrieved'),
+);
 
 vi.mock('../capabilities/client.js', () => ({ getRagEntry: vi.fn() }));
 vi.mock('../logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
-vi.mock('./indexer.js', () => ({ indexConversationTurn: mockIndexConversationTurn }));
+vi.mock('./indexer.js', () => ({
+  indexConversationTurn: mockIndexConversationTurn,
+}));
 vi.mock('./retriever.js', () => ({ retrieveContext: mockRetrieveContext }));
 
 import { getRagProvider, resetRagProvider } from './provider.js';
@@ -25,7 +31,9 @@ beforeEach(() => {
 describe('getRagProvider (adapter-based)', () => {
   it('returns the remote provider for a remote adapter entry', () => {
     vi.mocked(getRagEntry).mockReturnValue({
-      kind: 'rag', name: 'lr', endpoint: 'http://lr',
+      kind: 'rag',
+      name: 'lr',
+      endpoint: 'http://lr',
       kindMetadata: { backend: 'lightrag', provider: { adapter: 'remote' } },
     } as never);
     expect(getRagProvider().name).toBe('remote');
@@ -33,10 +41,15 @@ describe('getRagProvider (adapter-based)', () => {
 
   it('returns the vector-store provider for a vector-store adapter entry', () => {
     vi.mocked(getRagEntry).mockReturnValue({
-      kind: 'rag', name: 'q', endpoint: 'http://q',
+      kind: 'rag',
+      name: 'q',
+      endpoint: 'http://q',
       kindMetadata: {
         backend: 'qdrant',
-        provider: { adapter: 'vector-store', embedding: { provider: 'openai' } },
+        provider: {
+          adapter: 'vector-store',
+          embedding: { provider: 'openai' },
+        },
       },
     } as never);
     expect(getRagProvider().name).toBe('vector-store');
@@ -93,7 +106,10 @@ describe('VectorStoreProvider config threading', () => {
     await provider.indexConversationTurn('grp', 'hello', 'world');
 
     expect(mockIndexConversationTurn).toHaveBeenCalledOnce();
-    const [cfg] = mockIndexConversationTurn.mock.calls[0] as [Record<string, unknown>, ...unknown[]];
+    const [cfg] = mockIndexConversationTurn.mock.calls[0] as [
+      Record<string, unknown>,
+      ...unknown[],
+    ];
     // endpoint has trailing slash stripped
     expect(cfg.endpoint).toBe('http://qdrant:6333');
     expect(cfg.chunkSize).toBe(512);
@@ -116,7 +132,10 @@ describe('VectorStoreProvider config threading', () => {
     await provider.retrieveContext('grp', 'what is kubernetes?');
 
     expect(mockRetrieveContext).toHaveBeenCalledOnce();
-    const [cfg] = mockRetrieveContext.mock.calls[0] as [Record<string, unknown>, ...unknown[]];
+    const [cfg] = mockRetrieveContext.mock.calls[0] as [
+      Record<string, unknown>,
+      ...unknown[],
+    ];
     expect(cfg.endpoint).toBe('http://qdrant:6333');
     expect(cfg.topK).toBe(10);
     expect(cfg.scoreThreshold).toBe(0.75);
@@ -130,7 +149,10 @@ describe('VectorStoreProvider config threading', () => {
     const provider = getRagProvider();
     await provider.indexConversationTurn('grp', 'hello', 'world');
 
-    const [cfg] = mockIndexConversationTurn.mock.calls[0] as [Record<string, unknown>, ...unknown[]];
+    const [cfg] = mockIndexConversationTurn.mock.calls[0] as [
+      Record<string, unknown>,
+      ...unknown[],
+    ];
     expect(cfg.chunkSize).toBe(1800);
     expect(cfg.chunkOverlap).toBe(200);
     // openai default dim
@@ -143,7 +165,10 @@ describe('VectorStoreProvider config threading', () => {
     const provider = getRagProvider();
     await provider.retrieveContext('grp', 'query');
 
-    const [cfg] = mockRetrieveContext.mock.calls[0] as [Record<string, unknown>, ...unknown[]];
+    const [cfg] = mockRetrieveContext.mock.calls[0] as [
+      Record<string, unknown>,
+      ...unknown[],
+    ];
     expect(cfg.topK).toBe(5);
     expect(cfg.scoreThreshold).toBe(0.5);
     expect(cfg.dim).toBe(1536);
@@ -241,7 +266,9 @@ describe('RemoteProvider config threading', () => {
 
   it('uses configured timeoutMs for the AbortSignal on index calls', async () => {
     const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
-    vi.mocked(getRagEntry).mockReturnValue(makeRemoteEntry({ timeoutMs: 5000 }));
+    vi.mocked(getRagEntry).mockReturnValue(
+      makeRemoteEntry({ timeoutMs: 5000 }),
+    );
 
     const provider = getRagProvider();
     await provider.indexConversationTurn('grp', 'u', 'a');
@@ -263,7 +290,9 @@ describe('RemoteProvider config threading', () => {
 
   it('uses configured timeoutMs for the AbortSignal on query calls', async () => {
     const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
-    vi.mocked(getRagEntry).mockReturnValue(makeRemoteEntry({ timeoutMs: 8000 }));
+    vi.mocked(getRagEntry).mockReturnValue(
+      makeRemoteEntry({ timeoutMs: 8000 }),
+    );
 
     const provider = getRagProvider();
     await provider.retrieveContext('grp', 'q');

@@ -11,7 +11,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // ---- Hoisted mock state ----
 
 const augmentPrompt = vi.hoisted(() =>
-  vi.fn(async (_g: string, p: string) => `<retrieved_context>\nMEM\n</retrieved_context>\n\n${p}`),
+  vi.fn(
+    async (_g: string, p: string) =>
+      `<retrieved_context>\nMEM\n</retrieved_context>\n\n${p}`,
+  ),
 );
 const indexConversationTurn = vi.hoisted(() => vi.fn(async () => {}));
 
@@ -57,8 +60,12 @@ vi.mock('../k8s/redis-client.js', () => ({
     xread: vi.fn().mockResolvedValue(null),
     quit: vi.fn().mockResolvedValue(undefined),
   })),
-  getToolCallsStream: vi.fn((id: string, cat: string) => `tool-calls:${id}:${cat}`),
-  getToolResultsStream: vi.fn((id: string, cat: string) => `tool-results:${id}:${cat}`),
+  getToolCallsStream: vi.fn(
+    (id: string, cat: string) => `tool-calls:${id}:${cat}`,
+  ),
+  getToolResultsStream: vi.fn(
+    (id: string, cat: string) => `tool-results:${id}:${cat}`,
+  ),
   getSpawnToolPodStream: vi.fn(() => 'spawn-tool-pod'),
   getSpawnToolJobStream: vi.fn(() => 'spawn-agent-job'),
   getToolJobResultStream: vi.fn((id: string) => `agent-job-result:${id}`),
@@ -79,7 +86,9 @@ vi.mock('./compression/token-estimate.js', () => ({
 }));
 
 vi.mock('./compression/summarizer.js', () => ({
-  summarize: vi.fn().mockResolvedValue({ text: 'Summary text.', tokenCount: 10 }),
+  summarize: vi
+    .fn()
+    .mockResolvedValue({ text: 'Summary text.', tokenCount: 10 }),
 }));
 
 vi.mock('../config.js', () => ({
@@ -180,7 +189,10 @@ describe('RAG retrieval wired into the agent loop', () => {
     expect(result.status).toBe('success');
 
     // augmentPrompt was called with the group folder and the original prompt
-    expect(augmentPrompt).toHaveBeenCalledWith('test-group', expect.stringContaining('hello'));
+    expect(augmentPrompt).toHaveBeenCalledWith(
+      'test-group',
+      expect.stringContaining('hello'),
+    );
 
     // The messages array sent to the LLM must contain the augmented user message
     const callArgs = mockCreate.mock.calls[0][0];

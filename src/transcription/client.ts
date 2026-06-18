@@ -29,9 +29,13 @@ export class TranscriptionClient {
   /** Read the file at absPath and POST it; returns the transcript string. */
   async transcribeFile(absPath: string): Promise<string> {
     const bytes = await readFile(absPath);
-    const path = this.provider.transcribePath ?? DEFAULT_TRANSCRIPTION_CONFIG.transcribePath;
-    const responseField = this.provider.responseField ?? DEFAULT_TRANSCRIPTION_CONFIG.responseField;
-    const timeoutMs = this.provider.timeoutMs ?? DEFAULT_TRANSCRIPTION_CONFIG.timeoutMs;
+    const path =
+      this.provider.transcribePath ??
+      DEFAULT_TRANSCRIPTION_CONFIG.transcribePath;
+    const responseField =
+      this.provider.responseField ?? DEFAULT_TRANSCRIPTION_CONFIG.responseField;
+    const timeoutMs =
+      this.provider.timeoutMs ?? DEFAULT_TRANSCRIPTION_CONFIG.timeoutMs;
 
     const form = new FormData();
     form.append('file', new Blob([bytes]), basename(absPath));
@@ -49,7 +53,9 @@ export class TranscriptionClient {
     const json = (await res.json()) as Record<string, unknown>;
     const value = json[responseField];
     if (typeof value !== 'string' || value.length === 0) {
-      throw new Error(`Transcription response missing string field '${responseField}'`);
+      throw new Error(
+        `Transcription response missing string field '${responseField}'`,
+      );
     }
     logger.debug({ path, chars: value.length }, 'Transcription succeeded');
     return value;

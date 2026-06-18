@@ -41,7 +41,10 @@ export async function runPreprocessorChain(
         persistedContent = result.persistedContent;
       }
     } catch (err) {
-      logger.warn({ err, preprocessor: pp.name, groupFolder }, 'transform preprocessor failed; skipping');
+      logger.warn(
+        { err, preprocessor: pp.name, groupFolder },
+        'transform preprocessor failed; skipping',
+      );
     }
   }
 
@@ -56,7 +59,10 @@ export async function runPreprocessorChain(
       }
       running = result.prompt;
     } catch (err) {
-      logger.warn({ err, preprocessor: pp.name, groupFolder }, 'augment preprocessor failed; skipping');
+      logger.warn(
+        { err, preprocessor: pp.name, groupFolder },
+        'augment preprocessor failed; skipping',
+      );
     }
   }
 

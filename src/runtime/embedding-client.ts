@@ -28,7 +28,9 @@ export interface ResolvedEmbedding {
 }
 
 /** Pure: fill model/dim/baseUrl/apiKey from config + provider defaults + env key. */
-export function resolveEmbeddingDefaults(config: EmbeddingConfig): ResolvedEmbedding {
+export function resolveEmbeddingDefaults(
+  config: EmbeddingConfig,
+): ResolvedEmbedding {
   const defaults = DEFAULT_EMBEDDING_BY_PROVIDER[config.provider];
   const apiKeyEnv = config.apiKeyEnv ?? defaults.apiKeyEnv;
   return {
@@ -43,14 +45,19 @@ export function resolveEmbeddingDefaults(config: EmbeddingConfig): ResolvedEmbed
 
 /** Derive an EmbeddingConfig from env (back-compat path for callers without a config). */
 function envEmbeddingConfig(): EmbeddingConfig {
-  const provider = (process.env.EMBEDDING_PROVIDER || 'openai') as EmbeddingProvider;
+  const provider = (process.env.EMBEDDING_PROVIDER ||
+    'openai') as EmbeddingProvider;
   return {
     provider,
     model: process.env.EMBEDDING_MODEL || undefined,
-    dim: process.env.EMBEDDING_DIM ? parseInt(process.env.EMBEDDING_DIM, 10) : undefined,
+    dim: process.env.EMBEDDING_DIM
+      ? parseInt(process.env.EMBEDDING_DIM, 10)
+      : undefined,
     baseUrl:
       provider === 'openai'
-        ? process.env.EMBEDDING_BASE_URL || process.env.OPENAI_BASE_URL || undefined
+        ? process.env.EMBEDDING_BASE_URL ||
+          process.env.OPENAI_BASE_URL ||
+          undefined
         : process.env.VOYAGE_BASE_URL || undefined,
   };
 }

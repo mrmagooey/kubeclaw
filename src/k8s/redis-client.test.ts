@@ -320,9 +320,7 @@ describe('IPC key generators', () => {
   });
 
   it('getChannelStatusChannel returns correct key', () => {
-    expect(getChannelStatusChannel('irc')).toBe(
-      'kubeclaw:channel-status:irc',
-    );
+    expect(getChannelStatusChannel('irc')).toBe('kubeclaw:channel-status:irc');
   });
 
   it('getDiscoveryRequestStream returns static key', () => {

@@ -71,7 +71,11 @@ describe('runPreprocessorChain', () => {
         return { prompt: `CTX\n${prompt}` };
       },
     };
-    await runPreprocessorChain([t, a], 'g', '[VoiceAttachment: attachments/raw/a.ogg]');
+    await runPreprocessorChain(
+      [t, a],
+      'g',
+      '[VoiceAttachment: attachments/raw/a.ogg]',
+    );
     expect(seenByAugmenter).toBe('TRANSCRIPT');
   });
 
@@ -88,7 +92,10 @@ describe('runPreprocessorChain', () => {
       name: 'bad-aug',
       effect: 'augment',
       async apply({ prompt }) {
-        return { prompt: `AUG(${prompt})`, persistedContent: 'SHOULD_BE_IGNORED' };
+        return {
+          prompt: `AUG(${prompt})`,
+          persistedContent: 'SHOULD_BE_IGNORED',
+        };
       },
     };
     const out = await runPreprocessorChain([a], 'g', 'x');

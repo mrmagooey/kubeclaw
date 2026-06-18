@@ -58,8 +58,12 @@ vi.mock('../k8s/redis-client.js', () => ({
     xread: vi.fn().mockResolvedValue(null),
     quit: vi.fn().mockResolvedValue(undefined),
   })),
-  getToolCallsStream: vi.fn((id: string, cat: string) => `tool-calls:${id}:${cat}`),
-  getToolResultsStream: vi.fn((id: string, cat: string) => `tool-results:${id}:${cat}`),
+  getToolCallsStream: vi.fn(
+    (id: string, cat: string) => `tool-calls:${id}:${cat}`,
+  ),
+  getToolResultsStream: vi.fn(
+    (id: string, cat: string) => `tool-results:${id}:${cat}`,
+  ),
   getSpawnToolPodStream: vi.fn(() => 'spawn-tool-pod'),
   getSpawnToolJobStream: vi.fn(() => 'spawn-agent-job'),
   getToolJobResultStream: vi.fn((id: string) => `agent-job-result:${id}`),
@@ -80,7 +84,9 @@ vi.mock('./compression/token-estimate.js', () => ({
 }));
 
 vi.mock('./compression/summarizer.js', () => ({
-  summarize: vi.fn().mockResolvedValue({ text: 'Summary text.', tokenCount: 10 }),
+  summarize: vi
+    .fn()
+    .mockResolvedValue({ text: 'Summary text.', tokenCount: 10 }),
 }));
 
 vi.mock('../config.js', () => ({
@@ -144,7 +150,10 @@ const fakeTranscription: InboundPreprocessor = {
   effect: 'transform',
   async apply({ prompt }) {
     if (!prompt.includes('[VoiceAttachment:')) return { prompt };
-    const out = prompt.replace(/\[VoiceAttachment:[^\]]+\]/, '[Voice: hello world]');
+    const out = prompt.replace(
+      /\[VoiceAttachment:[^\]]+\]/,
+      '[Voice: hello world]',
+    );
     return { prompt: out, persistedContent: out };
   },
 };
@@ -154,7 +163,9 @@ const fakeRag: InboundPreprocessor = {
   name: 'rag',
   effect: 'augment',
   async apply({ prompt }) {
-    return { prompt: `<retrieved_context>\nMEM\n</retrieved_context>\n\n${prompt}` };
+    return {
+      prompt: `<retrieved_context>\nMEM\n</retrieved_context>\n\n${prompt}`,
+    };
   },
 };
 
@@ -197,7 +208,10 @@ describe('preprocessor chain wired into the agent loop', () => {
     const runner = new DirectLLMRunner();
     runner.preprocessors = [fakeTranscription, fakeRag];
 
-    const result = await runner.runAgent(baseGroup, baseInput('[VoiceAttachment: attachments/raw/a.ogg]'));
+    const result = await runner.runAgent(
+      baseGroup,
+      baseInput('[VoiceAttachment: attachments/raw/a.ogg]'),
+    );
     expect(result.status).toBe('success');
 
     const callArgs = mockCreate.mock.calls[0][0];
@@ -215,7 +229,10 @@ describe('preprocessor chain wired into the agent loop', () => {
     const runner = new DirectLLMRunner();
     runner.preprocessors = [fakeTranscription, fakeRag];
 
-    await runner.runAgent(baseGroup, baseInput('[VoiceAttachment: attachments/raw/a.ogg]'));
+    await runner.runAgent(
+      baseGroup,
+      baseInput('[VoiceAttachment: attachments/raw/a.ogg]'),
+    );
 
     // Check what was persisted for the user turn
     const userPersistCall = mockAppendConversationMessage.mock.calls.find(
@@ -229,7 +246,11 @@ describe('preprocessor chain wired into the agent loop', () => {
     expect(persistedUser).not.toContain('[VoiceAttachment:');
 
     // Check what was indexed
-    expect(indexConversationTurn).toHaveBeenCalledWith('g', '[Voice: hello world]', 'Indexed.');
+    expect(indexConversationTurn).toHaveBeenCalledWith(
+      'g',
+      '[Voice: hello world]',
+      'Indexed.',
+    );
   });
 
   it('REGRESSION: no voice marker → byte-identical to SP2 (augmented prompt to LLM, original persisted)', async () => {
@@ -245,7 +266,9 @@ describe('preprocessor chain wired into the agent loop', () => {
     const callArgs = mockCreate.mock.calls[0][0];
     const userMsg = callArgs.messages.find((m: any) => m.role === 'user');
     expect(userMsg).toBeDefined();
-    expect(userMsg.content).toBe('<retrieved_context>\nMEM\n</retrieved_context>\n\nhello');
+    expect(userMsg.content).toBe(
+      '<retrieved_context>\nMEM\n</retrieved_context>\n\nhello',
+    );
 
     // Persisted is the original 'hello' (no augment prefix)
     const userPersistCall = mockAppendConversationMessage.mock.calls.find(
@@ -256,6 +279,10 @@ describe('preprocessor chain wired into the agent loop', () => {
     expect(persistedUser).toBe('hello');
 
     // Indexed is also 'hello'
-    expect(indexConversationTurn).toHaveBeenCalledWith('g', 'hello', 'Replied.');
+    expect(indexConversationTurn).toHaveBeenCalledWith(
+      'g',
+      'hello',
+      'Replied.',
+    );
   });
 });

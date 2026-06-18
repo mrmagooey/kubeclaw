@@ -13,9 +13,7 @@ function isNotFound(err: unknown): boolean {
     response?: { statusCode?: number };
   };
   return (
-    e?.statusCode === 404 ||
-    e?.response?.statusCode === 404 ||
-    e?.code === 404
+    e?.statusCode === 404 || e?.response?.statusCode === 404 || e?.code === 404
   );
 }
 

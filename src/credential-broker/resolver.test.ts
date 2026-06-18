@@ -333,7 +333,10 @@ describe('Resolver — LLM catalog entries supersede mappings', () => {
     expect(result.keySource).toBe('groupSecret');
     expect(result.catalogId).toBe('openai');
     expect(result.substitutions).toEqual([
-      { placeholder: 'KC_PH_api_key_myteam_1234', value: 'sk-group-key-abcdef' },
+      {
+        placeholder: 'KC_PH_api_key_myteam_1234',
+        value: 'sk-group-key-abcdef',
+      },
     ]);
     // Operator reader should NOT be called — group key wins.
     expect(reader).not.toHaveBeenCalled();
@@ -350,7 +353,10 @@ describe('Resolver — LLM catalog entries supersede mappings', () => {
     });
 
     // find() is the legacy mappings path — should return undefined for openai
-    const mapping = r.find({ destination: 'api.openai.com', identity: 'sa/kubeclaw-tool-job' });
+    const mapping = r.find({
+      destination: 'api.openai.com',
+      identity: 'sa/kubeclaw-tool-job',
+    });
     expect(mapping).toBeUndefined();
 
     // The catalog path should recognise the host

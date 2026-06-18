@@ -134,7 +134,11 @@ vi.mock('../tools/reconciler.js', () => ({
       return {
         name: 'web_fetch',
         description: 'Fetch a URL',
-        parameters: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] },
+        parameters: {
+          type: 'object',
+          properties: { url: { type: 'string' } },
+          required: ['url'],
+        },
         image: 'kubeclaw-agent:latest',
         pattern: 'http',
       };

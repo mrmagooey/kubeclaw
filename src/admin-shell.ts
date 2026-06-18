@@ -708,7 +708,7 @@ export const TOOLS: OpenAI.ChatCompletionTool[] = [
           timeout_seconds: {
             type: 'integer',
             description:
-              'Override the bootstrap Job\'s timeout in seconds (activeDeadlineSeconds + orchestrator poll). ' +
+              "Override the bootstrap Job's timeout in seconds (activeDeadlineSeconds + orchestrator poll). " +
               'Defaults to BOOTSTRAP_SKILL_TIMEOUT_SECONDS or 900. Valid range: 10–3600. Mainly for tests/short-lived bootstraps.',
           },
         },
@@ -1393,7 +1393,10 @@ async function handleBootstrapChannelFromSkill(
   // Validate per-invocation timeout if provided
   let invocationTimeoutSeconds: number | undefined;
   if (rawTimeoutSeconds !== undefined) {
-    const parsed = typeof rawTimeoutSeconds === 'number' ? rawTimeoutSeconds : parseInt(String(rawTimeoutSeconds), 10);
+    const parsed =
+      typeof rawTimeoutSeconds === 'number'
+        ? rawTimeoutSeconds
+        : parseInt(String(rawTimeoutSeconds), 10);
     if (!Number.isInteger(parsed) || parsed < 10 || parsed > 3600) {
       // Fall back to env default rather than erroring — bad values are silently discarded
       invocationTimeoutSeconds = undefined;
@@ -2697,7 +2700,9 @@ interface SseAdminClient {
  * array in place — mirrors the pushSse pattern so both stay consistent.
  */
 export function broadcastBootstrapSse(
-  clients: Array<{ res: { writableEnded: boolean; write: (data: string) => void } }>,
+  clients: Array<{
+    res: { writableEnded: boolean; write: (data: string) => void };
+  }>,
   type: string,
   text: string,
 ): void {

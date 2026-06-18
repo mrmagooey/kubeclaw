@@ -1,7 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
 
 vi.mock('../../rag/provider.js', () => ({ augmentPrompt: vi.fn() }));
-vi.mock('../../capabilities/client.js', () => ({ getTranscriptionEntry: vi.fn() }));
+vi.mock('../../capabilities/client.js', () => ({
+  getTranscriptionEntry: vi.fn(),
+}));
 vi.mock('../../config.js', () => ({ GROUPS_DIR: '/groups' }));
 vi.mock('../../logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },

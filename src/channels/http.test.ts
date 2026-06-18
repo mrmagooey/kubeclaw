@@ -7845,7 +7845,11 @@ describe('POST /debug/tool-jobs/inject', () => {
       method: 'POST',
       url: '/debug/tool-jobs/inject',
       auth: 'alice:secret',
-      body: JSON.stringify({ job_id: 'j1', group_folder: 'http:alice', status: 'completed' }),
+      body: JSON.stringify({
+        job_id: 'j1',
+        group_folder: 'http:alice',
+        status: 'completed',
+      }),
     });
     const res = makeRes();
     await dispatch(channel, req, res);
@@ -7863,7 +7867,11 @@ describe('POST /debug/tool-jobs/inject', () => {
       method: 'POST',
       url: '/debug/tool-jobs/inject',
       auth: null,
-      body: JSON.stringify({ job_id: 'j1', group_folder: 'http:alice', status: 'completed' }),
+      body: JSON.stringify({
+        job_id: 'j1',
+        group_folder: 'http:alice',
+        status: 'completed',
+      }),
     });
     const res = makeRes();
     await dispatch(channel, req, res);

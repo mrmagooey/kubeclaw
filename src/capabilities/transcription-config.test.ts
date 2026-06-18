@@ -12,8 +12,12 @@ describe('normalizeTranscriptionSpec', () => {
       name: 'whisper',
       image: 'onerahmet/openai-whisper-asr-webservice:latest',
     } as TranscriptionCapabilitySpec);
-    expect(out.provider.transcribePath).toBe(DEFAULT_TRANSCRIPTION_CONFIG.transcribePath);
-    expect(out.provider.responseField).toBe(DEFAULT_TRANSCRIPTION_CONFIG.responseField);
+    expect(out.provider.transcribePath).toBe(
+      DEFAULT_TRANSCRIPTION_CONFIG.transcribePath,
+    );
+    expect(out.provider.responseField).toBe(
+      DEFAULT_TRANSCRIPTION_CONFIG.responseField,
+    );
     expect(out.provider.timeoutMs).toBe(DEFAULT_TRANSCRIPTION_CONFIG.timeoutMs);
     expect(out.provider.model).toBeUndefined();
   });

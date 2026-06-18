@@ -23,29 +23,42 @@ import type {
   PreprocessorResult,
 } from './types.js';
 
-type TranscriptionEntry = Extract<CapabilityDiscoveryEntry, { kind: 'transcription' }>;
+type TranscriptionEntry = Extract<
+  CapabilityDiscoveryEntry,
+  { kind: 'transcription' }
+>;
 
 export class TranscriptionPreprocessor implements InboundPreprocessor {
   readonly name = 'transcription';
   readonly effect = 'transform' as const;
 
   /** Overridable in tests. */
-  protected makeClient(entry: TranscriptionEntry): { transcribeFile(abs: string): Promise<string> } {
+  protected makeClient(entry: TranscriptionEntry): {
+    transcribeFile(abs: string): Promise<string>;
+  } {
     return new TranscriptionClient({
       endpoint: entry.endpoint,
       provider: entry.kindMetadata.provider,
     });
   }
 
-  async apply({ groupFolder, prompt }: PreprocessorInput): Promise<PreprocessorResult> {
+  async apply({
+    groupFolder,
+    prompt,
+  }: PreprocessorInput): Promise<PreprocessorResult> {
     // Fast path: collect markers without consuming the global regex's lastIndex.
-    const markers = [...prompt.matchAll(new RegExp(VOICE_ATTACHMENT_PATTERN.source, 'g'))];
+    const markers = [
+      ...prompt.matchAll(new RegExp(VOICE_ATTACHMENT_PATTERN.source, 'g')),
+    ];
     if (markers.length === 0) return { prompt };
 
     const channel = process.env.KUBECLAW_CHANNEL ?? '*';
     const entry = getTranscriptionEntry(channel);
     if (!entry) {
-      logger.warn({ groupFolder, channel }, 'voice marker present but no transcription capability; leaving marker');
+      logger.warn(
+        { groupFolder, channel },
+        'voice marker present but no transcription capability; leaving marker',
+      );
       return { prompt };
     }
 
@@ -59,13 +72,19 @@ export class TranscriptionPreprocessor implements InboundPreprocessor {
       const absPath = resolve(GROUPS_DIR, groupFolder, rawPath);
       const allowedBase = resolve(GROUPS_DIR, groupFolder, 'attachments');
       if (absPath !== allowedBase && !absPath.startsWith(allowedBase + sep)) {
-        logger.warn({ groupFolder, rawPath }, 'voice marker path escapes attachments dir; skipping');
+        logger.warn(
+          { groupFolder, rawPath },
+          'voice marker path escapes attachments dir; skipping',
+        );
         continue;
       }
       try {
         const transcript = await client.transcribeFile(absPath);
         if (!transcript.trim()) {
-          logger.warn({ groupFolder, rawPath }, 'transcription returned empty transcript; leaving marker in place');
+          logger.warn(
+            { groupFolder, rawPath },
+            'transcription returned empty transcript; leaving marker in place',
+          );
           continue;
         }
         // Use split/join instead of String.prototype.replace to avoid `$`
@@ -74,7 +93,10 @@ export class TranscriptionPreprocessor implements InboundPreprocessor {
         result = result.split(marker).join(`[Voice: ${transcript}]`);
         anySucceeded = true;
       } catch (err) {
-        logger.warn({ err, groupFolder, rawPath }, 'transcription failed for marker; leaving it in place');
+        logger.warn(
+          { err, groupFolder, rawPath },
+          'transcription failed for marker; leaving it in place',
+        );
       }
     }
 

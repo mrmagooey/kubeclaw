@@ -164,9 +164,7 @@ vi.mock('./redis-client.js', () => ({
   getToolJobResultStream: vi.fn(
     (id: string) => `kubeclaw:agent-job-result:${id}`,
   ),
-  getControlChannel: vi.fn(
-    (name: string) => `kubeclaw:control:${name}`,
-  ),
+  getControlChannel: vi.fn((name: string) => `kubeclaw:control:${name}`),
 }));
 
 vi.mock('cron-parser', () => ({
@@ -1113,7 +1111,6 @@ describe('processTaskIpc', () => {
       );
     });
   });
-
 });
 
 describe('cleanupToolPods', () => {
@@ -1805,7 +1802,6 @@ describe('startToolPodSpawnWatcher', () => {
       'Unknown tool: execution',
     );
   });
-
 });
 
 describe('startToolJobSpawnWatcher', () => {
@@ -2436,7 +2432,9 @@ describe('startBootstrapTaskWatcher — bootstrap topic messages → SSE forward
 
     expect(capturedSseEvents).toHaveLength(1);
     expect(capturedSseEvents[0].type).toBe('bootstrap');
-    expect(capturedSseEvents[0].text).toContain('timed out; nothing was installed');
+    expect(capturedSseEvents[0].text).toContain(
+      'timed out; nothing was installed',
+    );
   });
 
   it('forwards a { type: "step" } message to the SSE publisher', () => {
@@ -2465,7 +2463,9 @@ describe('startBootstrapTaskWatcher — bootstrap topic messages → SSE forward
 
     expect(capturedSseEvents).toHaveLength(1);
     expect(capturedSseEvents[0].type).toBe('bootstrap');
-    expect(capturedSseEvents[0].text).toBe('Which port should the channel listen on?');
+    expect(capturedSseEvents[0].text).toBe(
+      'Which port should the channel listen on?',
+    );
   });
 
   it('does NOT forward messages of unknown type to the SSE publisher', () => {
@@ -2585,7 +2585,10 @@ describe('job.logs handler via startTaskRequestWatcher', () => {
 
     await startTaskRequestWatcher();
 
-    expect(getToolJobByIdForGroup).toHaveBeenCalledWith('tool-job-123', 'group-a');
+    expect(getToolJobByIdForGroup).toHaveBeenCalledWith(
+      'tool-job-123',
+      'group-a',
+    );
     expect(jobRunner.getJobLogs).not.toHaveBeenCalled();
     expect(mockXadd).toHaveBeenCalledWith(
       resultStream,
@@ -2727,7 +2730,10 @@ describe('startControlChannelWatcher', () => {
     startControlChannelWatcher('my-channel', onCommand);
 
     // Fire a message on a different channel
-    fireMessage('kubeclaw:control:other-channel', JSON.stringify({ command: 'reload' }));
+    fireMessage(
+      'kubeclaw:control:other-channel',
+      JSON.stringify({ command: 'reload' }),
+    );
 
     expect(onCommand).not.toHaveBeenCalled();
   });

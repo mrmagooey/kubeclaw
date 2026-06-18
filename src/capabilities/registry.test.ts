@@ -193,14 +193,20 @@ describe('registry', () => {
   describe('endpoint scheme', () => {
     it('defaults to http://', () => {
       const entry = specToDiscoveryEntry({
-        kind: 'http', name: 'web', image: 'nginx', port: 8080,
+        kind: 'http',
+        name: 'web',
+        image: 'nginx',
+        port: 8080,
       });
       expect(entry.endpoint).toBe('http://kubeclaw-cap-web:8080');
     });
 
     it('honors endpointScheme', () => {
       const entry = specToDiscoveryEntry({
-        kind: 'http', name: 'maindb', image: 'postgres:16', port: 5432,
+        kind: 'http',
+        name: 'maindb',
+        image: 'postgres:16',
+        port: 5432,
         endpointScheme: 'postgresql',
       });
       expect(entry.endpoint).toBe('postgresql://kubeclaw-cap-maindb:5432');
@@ -210,7 +216,10 @@ describe('registry', () => {
   describe('rag discovery entry', () => {
     it('emits backend + normalized provider in kindMetadata for a legacy spec', () => {
       const entry = specToDiscoveryEntry({
-        kind: 'rag', backend: 'qdrant', name: 'r', image: 'qdrant/qdrant',
+        kind: 'rag',
+        backend: 'qdrant',
+        name: 'r',
+        image: 'qdrant/qdrant',
       });
       if (entry.kind !== 'rag') throw new Error('expected rag entry');
       expect(entry.kindMetadata.backend).toBe('qdrant');
@@ -220,7 +229,11 @@ describe('registry', () => {
 
     it('passes an explicit provider through to kindMetadata', () => {
       const entry = specToDiscoveryEntry({
-        kind: 'rag', backend: 'lightrag', name: 'lr', image: 'lightrag', port: 9621,
+        kind: 'rag',
+        backend: 'lightrag',
+        name: 'lr',
+        image: 'lightrag',
+        port: 9621,
         provider: { adapter: 'remote', queryMode: 'naive' },
       });
       if (entry.kind !== 'rag') throw new Error('expected rag entry');
@@ -236,8 +249,11 @@ describe('registry', () => {
         name: 'whisper',
         image: 'onerahmet/openai-whisper-asr-webservice:latest',
       });
-      if (entry.kind !== 'transcription') throw new Error('expected transcription entry');
-      expect(entry.kindMetadata.provider.transcribePath).toBe('/v1/audio/transcriptions');
+      if (entry.kind !== 'transcription')
+        throw new Error('expected transcription entry');
+      expect(entry.kindMetadata.provider.transcribePath).toBe(
+        '/v1/audio/transcriptions',
+      );
       expect(entry.kindMetadata.provider.responseField).toBe('text');
       expect(entry.endpoint).toBe('http://kubeclaw-cap-whisper:9000');
       // No secret/key fields exist on the entry — provider config is the whole shape.
@@ -246,9 +262,13 @@ describe('registry', () => {
 
     it('honours an explicit port', () => {
       const entry = specToDiscoveryEntry({
-        kind: 'transcription', name: 'w', image: 'img', port: 8080,
+        kind: 'transcription',
+        name: 'w',
+        image: 'img',
+        port: 8080,
       });
-      if (entry.kind !== 'transcription') throw new Error('expected transcription entry');
+      if (entry.kind !== 'transcription')
+        throw new Error('expected transcription entry');
       expect(entry.endpoint).toBe('http://kubeclaw-cap-w:8080');
     });
   });
@@ -256,7 +276,9 @@ describe('registry', () => {
   describe('one-per-channel transcription guard', () => {
     it('rejects a second universal transcription on the same (all) channels', async () => {
       await installCapability({
-        kind: 'transcription', name: 't1', image: 'img',
+        kind: 'transcription',
+        name: 't1',
+        image: 'img',
       });
       await expect(
         installCapability({ kind: 'transcription', name: 't2', image: 'img' }),
@@ -265,24 +287,48 @@ describe('registry', () => {
 
     it('allows two transcriptions with disjoint channel ACLs', async () => {
       await installCapability({
-        kind: 'transcription', name: 't1', image: 'img', channels: ['telegram'],
+        kind: 'transcription',
+        name: 't1',
+        image: 'img',
+        channels: ['telegram'],
       });
       await expect(
-        installCapability({ kind: 'transcription', name: 't2', image: 'img', channels: ['slack'] }),
+        installCapability({
+          kind: 'transcription',
+          name: 't2',
+          image: 'img',
+          channels: ['slack'],
+        }),
       ).resolves.toBeUndefined();
     });
 
     it('allows updating an existing transcription (same name) even when unscoped', async () => {
-      await installCapability({ kind: 'transcription', name: 't1', image: 'img:1' });
-      await installCapability({ kind: 'transcription', name: 't1', image: 'img:2' });
+      await installCapability({
+        kind: 'transcription',
+        name: 't1',
+        image: 'img:1',
+      });
+      await installCapability({
+        kind: 'transcription',
+        name: 't1',
+        image: 'img:2',
+      });
       const list = listCapabilities().filter((c) => c.kind === 'transcription');
       expect(list).toHaveLength(1);
       expect(list[0].image).toBe('img:2');
     });
 
     it('does not block an MCP install when a transcription is present', async () => {
-      await installCapability({ kind: 'transcription', name: 't1', image: 'img' });
-      await installCapability({ kind: 'mcp', name: 'weather', image: 'mcp/weather:1.0' });
+      await installCapability({
+        kind: 'transcription',
+        name: 't1',
+        image: 'img',
+      });
+      await installCapability({
+        kind: 'mcp',
+        name: 'weather',
+        image: 'mcp/weather:1.0',
+      });
       expect(listCapabilities()).toHaveLength(2);
     });
   });

@@ -104,14 +104,18 @@ function renderPodLevel(
   }
   if (scheduling?.tolerations?.length) {
     out += '      tolerations:\n';
-    for (const line of stringify(scheduling.tolerations).trimEnd().split('\n')) {
+    for (const line of stringify(scheduling.tolerations)
+      .trimEnd()
+      .split('\n')) {
       out += `        ${line}\n`;
     }
   }
   return out;
 }
 
-function renderContainerSecurity(ps: CapabilityPodSecurity | undefined): string {
+function renderContainerSecurity(
+  ps: CapabilityPodSecurity | undefined,
+): string {
   return `          securityContext:
             runAsUser: ${ps?.runAsUser ?? 1000}
             runAsGroup: ${ps?.runAsGroup ?? 1000}

@@ -7,7 +7,10 @@ import { buildYaml } from './index.js';
 import type { RagCapabilitySpec } from '../types.js';
 
 const base: RagCapabilitySpec = {
-  kind: 'rag', backend: 'qdrant', name: 'main-rag', image: 'qdrant/qdrant:latest',
+  kind: 'rag',
+  backend: 'qdrant',
+  name: 'main-rag',
+  image: 'qdrant/qdrant:latest',
 };
 
 describe('generic rag builder', () => {
@@ -30,7 +33,9 @@ describe('generic rag builder', () => {
 
   it('honours an explicit port and storage', () => {
     const yaml = buildYaml({
-      ...base, backend: 'weaviate', port: 8080,
+      ...base,
+      backend: 'weaviate',
+      port: 8080,
       storage: { sizeGi: 5, mountPath: '/data' },
     });
     expect(yaml).toContain('containerPort: 8080');
@@ -40,7 +45,8 @@ describe('generic rag builder', () => {
 
   it('applies SP1 probe + podSecurity fields', () => {
     const yaml = buildYaml({
-      ...base, probe: { type: 'tcp', port: 6333 },
+      ...base,
+      probe: { type: 'tcp', port: 6333 },
       podSecurity: { fsGroup: 1000 },
     });
     expect(yaml).toContain('tcpSocket:');

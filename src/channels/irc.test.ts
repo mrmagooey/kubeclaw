@@ -389,11 +389,17 @@ describe('IRCChannel', () => {
 });
 
 describe('parseConfig + factory', () => {
-  const IRC_ENV_KEYS = ['IRC_SERVER', 'IRC_PORT', 'IRC_NICK', 'IRC_CHANNELS'] as const;
+  const IRC_ENV_KEYS = [
+    'IRC_SERVER',
+    'IRC_PORT',
+    'IRC_NICK',
+    'IRC_CHANNELS',
+  ] as const;
 
   // Capture the factory before any clearAllMocks can wipe the call record.
   // registerChannel is called once at module load time; we store the callback here.
-  const capturedFactory = (registerChannel as ReturnType<typeof vi.fn>).mock.calls[0][1];
+  const capturedFactory = (registerChannel as ReturnType<typeof vi.fn>).mock
+    .calls[0][1];
 
   beforeEach(() => {
     for (const key of IRC_ENV_KEYS) {
@@ -457,7 +463,9 @@ describe('parseConfig + factory', () => {
     const result = getFactory()(fakeOpts());
     expect(result).toBeInstanceOf(IRCChannel);
     // Verify via the config embedded in the channel (server includes port in JID)
-    expect((result as IRCChannel).ownsJid('irc:#test@irc.example.com:6697')).toBe(true);
+    expect(
+      (result as IRCChannel).ownsJid('irc:#test@irc.example.com:6697'),
+    ).toBe(true);
   });
 
   it('splits comma-separated channels correctly', () => {
@@ -477,6 +485,8 @@ describe('parseConfig + factory', () => {
     });
     const result = getFactory()(fakeOpts());
     expect(result).toBeInstanceOf(IRCChannel);
-    expect((result as IRCChannel).ownsJid('irc:#fromfile@irc.fromfile.com:6697')).toBe(true);
+    expect(
+      (result as IRCChannel).ownsJid('irc:#fromfile@irc.fromfile.com:6697'),
+    ).toBe(true);
   });
 });

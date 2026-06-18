@@ -86,8 +86,12 @@ catalog:
     let errorSpy: ReturnType<typeof vi.spyOn>;
 
     beforeEach(() => {
-      warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => undefined as never);
-      errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => undefined as never);
+      warnSpy = vi
+        .spyOn(logger, 'warn')
+        .mockImplementation(() => undefined as never);
+      errorSpy = vi
+        .spyOn(logger, 'error')
+        .mockImplementation(() => undefined as never);
     });
 
     afterEach(() => {
@@ -147,7 +151,10 @@ catalog:
     });
 
     it('still logs warn for 500 errors', async () => {
-      mockReadCM.mockRejectedValueOnce({ statusCode: 500, message: 'Internal Server Error' });
+      mockReadCM.mockRejectedValueOnce({
+        statusCode: 500,
+        message: 'Internal Server Error',
+      });
       await informer.sync();
       expect(warnSpy).toHaveBeenCalledTimes(1);
     });

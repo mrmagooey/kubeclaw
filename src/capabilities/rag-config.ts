@@ -17,7 +17,11 @@ export const DEFAULT_EMBEDDING_BY_PROVIDER: Record<
   EmbeddingConfig['provider'],
   { model: string; dim: number; apiKeyEnv: string }
 > = {
-  openai: { model: 'text-embedding-3-small', dim: 1536, apiKeyEnv: 'OPENAI_API_KEY' },
+  openai: {
+    model: 'text-embedding-3-small',
+    dim: 1536,
+    apiKeyEnv: 'OPENAI_API_KEY',
+  },
   voyage: { model: 'voyage-3', dim: 1024, apiKeyEnv: 'VOYAGE_API_KEY' },
 };
 

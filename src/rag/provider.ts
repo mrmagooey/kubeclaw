@@ -77,7 +77,8 @@ class VectorStoreProvider implements RagProvider {
       embedding: this.cfg.embedding,
       dim: this.dim,
       chunkSize: this.cfg.chunkSize ?? DEFAULT_VECTOR_STORE_CONFIG.chunkSize,
-      chunkOverlap: this.cfg.chunkOverlap ?? DEFAULT_VECTOR_STORE_CONFIG.chunkOverlap,
+      chunkOverlap:
+        this.cfg.chunkOverlap ?? DEFAULT_VECTOR_STORE_CONFIG.chunkOverlap,
     };
   }
 
@@ -87,7 +88,8 @@ class VectorStoreProvider implements RagProvider {
       embedding: this.cfg.embedding,
       dim: this.dim,
       topK: this.cfg.topK ?? DEFAULT_VECTOR_STORE_CONFIG.topK,
-      scoreThreshold: this.cfg.scoreThreshold ?? DEFAULT_VECTOR_STORE_CONFIG.scoreThreshold,
+      scoreThreshold:
+        this.cfg.scoreThreshold ?? DEFAULT_VECTOR_STORE_CONFIG.scoreThreshold,
     };
   }
 
@@ -98,7 +100,12 @@ class VectorStoreProvider implements RagProvider {
   ): Promise<void> {
     try {
       const { indexConversationTurn } = await import('./indexer.js');
-      await indexConversationTurn(this.indexerConfig(), groupFolder, userMessage, agentResponse);
+      await indexConversationTurn(
+        this.indexerConfig(),
+        groupFolder,
+        userMessage,
+        agentResponse,
+      );
     } catch (err) {
       logger.warn({ err, groupFolder }, 'vector-store RAG indexing failed');
     }
@@ -141,11 +148,16 @@ class RemoteProvider implements RagProvider {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text }),
-        signal: AbortSignal.timeout(this.cfg.timeoutMs ?? DEFAULT_REMOTE_CONFIG.indexTimeoutMs),
+        signal: AbortSignal.timeout(
+          this.cfg.timeoutMs ?? DEFAULT_REMOTE_CONFIG.indexTimeoutMs,
+        ),
       });
       if (!res.ok) {
         const body = await res.text().catch(() => '');
-        logger.warn({ status: res.status, body, groupFolder }, 'remote RAG indexing failed');
+        logger.warn(
+          { status: res.status, body, groupFolder },
+          'remote RAG indexing failed',
+        );
       }
     } catch (err) {
       logger.warn({ err, groupFolder }, 'remote RAG indexing failed');
@@ -160,10 +172,15 @@ class RemoteProvider implements RagProvider {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query, mode }),
-        signal: AbortSignal.timeout(this.cfg.timeoutMs ?? DEFAULT_REMOTE_CONFIG.queryTimeoutMs),
+        signal: AbortSignal.timeout(
+          this.cfg.timeoutMs ?? DEFAULT_REMOTE_CONFIG.queryTimeoutMs,
+        ),
       });
       if (!res.ok) {
-        logger.debug({ status: res.status, groupFolder }, 'remote RAG query failed');
+        logger.debug(
+          { status: res.status, groupFolder },
+          'remote RAG query failed',
+        );
         return '';
       }
       const json = (await res.json()) as { response?: string };

@@ -332,8 +332,16 @@ describe('GroupQueue', () => {
     await vi.advanceTimersByTimeAsync(10);
 
     // Queue two tasks while the group is active
-    queue.enqueueTask('group1@g.us', 'task-a', vi.fn(async () => {}));
-    queue.enqueueTask('group1@g.us', 'task-b', vi.fn(async () => {}));
+    queue.enqueueTask(
+      'group1@g.us',
+      'task-a',
+      vi.fn(async () => {}),
+    );
+    queue.enqueueTask(
+      'group1@g.us',
+      'task-b',
+      vi.fn(async () => {}),
+    );
 
     // pendingTasks.length = 2, pendingMessages = false → depth = 2
     expect(queue.queueDepth('group1@g.us')).toBe(2);

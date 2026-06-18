@@ -108,7 +108,11 @@ import { logger } from '../logger.js';
 
 // ---- Test helpers ----
 
-function makeDeps(overrides: Partial<Parameters<typeof initPerGroupCapabilityLifecycle>[0]> = {}) {
+function makeDeps(
+  overrides: Partial<
+    Parameters<typeof initPerGroupCapabilityLifecycle>[0]
+  > = {},
+) {
   return {
     client: {} as any,
     namespace: 'test-ns',
@@ -275,7 +279,9 @@ describe('sweeper timer', () => {
   });
 
   it('logs a warning and schedules the next tick when sweeper throws', async () => {
-    vi.mocked(sweepIdleInstances).mockRejectedValueOnce(new Error('sweep failed'));
+    vi.mocked(sweepIdleInstances).mockRejectedValueOnce(
+      new Error('sweep failed'),
+    );
 
     const deps = makeDeps({ sweepIntervalMs: 1_000 });
     await initPerGroupCapabilityLifecycle(deps);

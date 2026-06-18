@@ -1286,7 +1286,9 @@ describe('DirectLLMRunner — propose_skill dispatch', () => {
 
   const finalAnswer = {
     choices: [
-      { message: { role: 'assistant', content: 'Skill noted.', tool_calls: [] } },
+      {
+        message: { role: 'assistant', content: 'Skill noted.', tool_calls: [] },
+      },
     ],
   };
 
@@ -1396,13 +1398,15 @@ describe('DirectLLMRunner — propose_skill dispatch', () => {
 
   it('dupCheck — returns {duplicate: false} without calling LLM when existing list is empty', async () => {
     // Restore the real proposeSkill so dupCheck actually runs
-    vi.mocked(proposeSkill).mockImplementationOnce(async (_root, _group, args, dupCheck) => {
-      const result = await dupCheck(args, []);
-      // dupCheck with empty list should be {duplicate: false} without any LLM call
-      expect(result).toEqual({ duplicate: false });
-      // The mockCreate should not have been called by dupCheck
-      return { kind: 'staged', candidateId: 'c1', preview: 'preview' };
-    });
+    vi.mocked(proposeSkill).mockImplementationOnce(
+      async (_root, _group, args, dupCheck) => {
+        const result = await dupCheck(args, []);
+        // dupCheck with empty list should be {duplicate: false} without any LLM call
+        expect(result).toEqual({ duplicate: false });
+        // The mockCreate should not have been called by dupCheck
+        return { kind: 'staged', candidateId: 'c1', preview: 'preview' };
+      },
+    );
 
     mockCreate
       .mockResolvedValueOnce({
@@ -1437,22 +1441,28 @@ describe('DirectLLMRunner — propose_skill dispatch', () => {
       body: 'Skill body here.\n',
     };
 
-    vi.mocked(proposeSkill).mockImplementationOnce(async (_root, _group, args, dupCheck) => {
-      // Mock the dupCheck LLM call to return a non-duplicate
-      mockCreate.mockResolvedValueOnce({
-        choices: [
-          {
-            message: {
-              content: JSON.stringify({ duplicate: false, existing: null, suggestion: null }),
+    vi.mocked(proposeSkill).mockImplementationOnce(
+      async (_root, _group, args, dupCheck) => {
+        // Mock the dupCheck LLM call to return a non-duplicate
+        mockCreate.mockResolvedValueOnce({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  duplicate: false,
+                  existing: null,
+                  suggestion: null,
+                }),
+              },
             },
-          },
-        ],
-      });
+          ],
+        });
 
-      const result = await dupCheck(args, [existingSkill as any]);
-      expect(result.duplicate).toBe(false);
-      return { kind: 'staged', candidateId: 'c2', preview: 'p' };
-    });
+        const result = await dupCheck(args, [existingSkill as any]);
+        expect(result.duplicate).toBe(false);
+        return { kind: 'staged', candidateId: 'c2', preview: 'p' };
+      },
+    );
 
     mockCreate
       .mockResolvedValueOnce({
@@ -1487,23 +1497,25 @@ describe('DirectLLMRunner — propose_skill dispatch', () => {
       body: 'Skill body here.\n',
     };
 
-    vi.mocked(proposeSkill).mockImplementationOnce(async (_root, _group, args, dupCheck) => {
-      // Mock the dupCheck LLM call to return null content (unparseable)
-      mockCreate.mockResolvedValueOnce({
-        choices: [
-          {
-            message: {
-              content: null, // null — JSON.parse will fall back to '{"duplicate":false}'
+    vi.mocked(proposeSkill).mockImplementationOnce(
+      async (_root, _group, args, dupCheck) => {
+        // Mock the dupCheck LLM call to return null content (unparseable)
+        mockCreate.mockResolvedValueOnce({
+          choices: [
+            {
+              message: {
+                content: null, // null — JSON.parse will fall back to '{"duplicate":false}'
+              },
             },
-          },
-        ],
-      });
+          ],
+        });
 
-      const result = await dupCheck(args, [existingSkill as any]);
-      // null content → falls back to {"duplicate":false}
-      expect(result).toEqual({ duplicate: false });
-      return { kind: 'staged', candidateId: 'c3', preview: 'p' };
-    });
+        const result = await dupCheck(args, [existingSkill as any]);
+        // null content → falls back to {"duplicate":false}
+        expect(result).toEqual({ duplicate: false });
+        return { kind: 'staged', candidateId: 'c3', preview: 'p' };
+      },
+    );
 
     mockCreate
       .mockResolvedValueOnce({

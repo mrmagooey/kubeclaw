@@ -17,25 +17,39 @@ describe('RagPreprocessor', () => {
   });
 
   it('delegates to augmentPrompt and never sets persistedContent', async () => {
-    augmentPrompt.mockResolvedValueOnce('<retrieved_context>\nMEM\n</retrieved_context>\n\nhello');
-    const result = await new RagPreprocessor().apply({ groupFolder: 'g', prompt: 'hello' });
+    augmentPrompt.mockResolvedValueOnce(
+      '<retrieved_context>\nMEM\n</retrieved_context>\n\nhello',
+    );
+    const result = await new RagPreprocessor().apply({
+      groupFolder: 'g',
+      prompt: 'hello',
+    });
     expect(augmentPrompt).toHaveBeenCalledWith('g', 'hello');
-    expect(result.prompt).toBe('<retrieved_context>\nMEM\n</retrieved_context>\n\nhello');
+    expect(result.prompt).toBe(
+      '<retrieved_context>\nMEM\n</retrieved_context>\n\nhello',
+    );
     expect(result.persistedContent).toBeUndefined();
   });
 
   it('is non-fatal: returns the input prompt when augmentPrompt throws', async () => {
     augmentPrompt.mockRejectedValueOnce(new Error('qdrant down'));
-    const result = await new RagPreprocessor().apply({ groupFolder: 'g', prompt: 'hello' });
+    const result = await new RagPreprocessor().apply({
+      groupFolder: 'g',
+      prompt: 'hello',
+    });
     expect(result.prompt).toBe('hello');
     expect(result.persistedContent).toBeUndefined();
   });
 
   // Regression: a chain with only RAG reproduces the SP2 seam byte-for-byte.
   it('chain with only RagPreprocessor: prompt=augmented, persistedContent=original', async () => {
-    augmentPrompt.mockResolvedValueOnce('<retrieved_context>\nM\n</retrieved_context>\n\nhi');
+    augmentPrompt.mockResolvedValueOnce(
+      '<retrieved_context>\nM\n</retrieved_context>\n\nhi',
+    );
     const out = await runPreprocessorChain([new RagPreprocessor()], 'g', 'hi');
-    expect(out.prompt).toBe('<retrieved_context>\nM\n</retrieved_context>\n\nhi');
+    expect(out.prompt).toBe(
+      '<retrieved_context>\nM\n</retrieved_context>\n\nhi',
+    );
     expect(out.persistedContent).toBe('hi');
   });
 });

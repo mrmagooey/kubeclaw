@@ -110,7 +110,8 @@ describe('rag/store', () => {
       stubFetch(() => qdrantOk());
       const { ensureCollection } = await import('./store.js');
       await ensureCollection({ endpoint: 'http://custom:9999', dim: 4 }, 'g');
-      const url = (fetch as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+      const url = (fetch as ReturnType<typeof vi.fn>).mock
+        .calls[0][0] as string;
       expect(url.startsWith('http://custom:9999')).toBe(true);
     });
   });

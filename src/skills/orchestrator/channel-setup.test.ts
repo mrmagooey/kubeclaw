@@ -209,12 +209,18 @@ describe('buildSecretData — non-webchat channel types', () => {
   });
 
   it('whatsapp: maps phoneNumber to WHATSAPP_PHONE_NUMBER', () => {
-    const data = buildSecretData({ type: 'whatsapp', phoneNumber: '+15551234567' });
+    const data = buildSecretData({
+      type: 'whatsapp',
+      phoneNumber: '+15551234567',
+    });
     expect(data).toEqual({ WHATSAPP_PHONE_NUMBER: '+15551234567' });
   });
 
   it('signal: maps phoneNumber to SIGNAL_PHONE_NUMBER', () => {
-    const data = buildSecretData({ type: 'signal', phoneNumber: '+15559876543' });
+    const data = buildSecretData({
+      type: 'signal',
+      phoneNumber: '+15559876543',
+    });
     expect(data).toEqual({ SIGNAL_PHONE_NUMBER: '+15559876543' });
   });
 
@@ -240,7 +246,11 @@ describe('buildSecretData — non-webchat channel types', () => {
   });
 
   it('http with httpUsers and httpPort: maps both fields', () => {
-    const data = buildSecretData({ type: 'http', httpUsers: 'admin:pass', httpPort: 8080 });
+    const data = buildSecretData({
+      type: 'http',
+      httpUsers: 'admin:pass',
+      httpPort: 8080,
+    });
     expect(data).toEqual({
       HTTP_CHANNEL_USERS: 'admin:pass',
       HTTP_CHANNEL_PORT: '8080',
@@ -277,7 +287,9 @@ describe('validateChannelCredentials — non-webchat types', () => {
   });
 
   it('telegram missing token: returns TELEGRAM_BOT_TOKEN is required', async () => {
-    globalThis.fetch = vi.fn(() => { throw new Error('should not be called'); }) as unknown as typeof fetch;
+    globalThis.fetch = vi.fn(() => {
+      throw new Error('should not be called');
+    }) as unknown as typeof fetch;
     const result = await validateChannelCredentials('telegram', {});
     expect(result).toBe('TELEGRAM_BOT_TOKEN is required');
   });
@@ -287,7 +299,9 @@ describe('validateChannelCredentials — non-webchat types', () => {
       ok: true,
       json: async () => ({ ok: true }),
     })) as unknown as typeof fetch;
-    const result = await validateChannelCredentials('telegram', { TELEGRAM_BOT_TOKEN: 'valid-token' });
+    const result = await validateChannelCredentials('telegram', {
+      TELEGRAM_BOT_TOKEN: 'valid-token',
+    });
     expect(result).toBeNull();
   });
 
@@ -296,12 +310,16 @@ describe('validateChannelCredentials — non-webchat types', () => {
       ok: true,
       json: async () => ({ ok: false, description: 'Unauthorized' }),
     })) as unknown as typeof fetch;
-    const result = await validateChannelCredentials('telegram', { TELEGRAM_BOT_TOKEN: 'bad-token' });
+    const result = await validateChannelCredentials('telegram', {
+      TELEGRAM_BOT_TOKEN: 'bad-token',
+    });
     expect(result).toBe('Unauthorized');
   });
 
   it('discord missing token: returns DISCORD_BOT_TOKEN is required', async () => {
-    globalThis.fetch = vi.fn(() => { throw new Error('should not be called'); }) as unknown as typeof fetch;
+    globalThis.fetch = vi.fn(() => {
+      throw new Error('should not be called');
+    }) as unknown as typeof fetch;
     const result = await validateChannelCredentials('discord', {});
     expect(result).toBe('DISCORD_BOT_TOKEN is required');
   });
@@ -311,7 +329,9 @@ describe('validateChannelCredentials — non-webchat types', () => {
       ok: true,
       json: async () => ({}),
     })) as unknown as typeof fetch;
-    const result = await validateChannelCredentials('discord', { DISCORD_BOT_TOKEN: 'valid-disc' });
+    const result = await validateChannelCredentials('discord', {
+      DISCORD_BOT_TOKEN: 'valid-disc',
+    });
     expect(result).toBeNull();
   });
 
@@ -321,13 +341,17 @@ describe('validateChannelCredentials — non-webchat types', () => {
       status: 401,
       json: async () => ({}),
     })) as unknown as typeof fetch;
-    const result = await validateChannelCredentials('discord', { DISCORD_BOT_TOKEN: 'bad-disc' });
+    const result = await validateChannelCredentials('discord', {
+      DISCORD_BOT_TOKEN: 'bad-disc',
+    });
     expect(result).toContain('Discord');
     expect(result).toContain('401');
   });
 
   it('slack missing token: returns SLACK_BOT_TOKEN is required', async () => {
-    globalThis.fetch = vi.fn(() => { throw new Error('should not be called'); }) as unknown as typeof fetch;
+    globalThis.fetch = vi.fn(() => {
+      throw new Error('should not be called');
+    }) as unknown as typeof fetch;
     const result = await validateChannelCredentials('slack', {});
     expect(result).toBe('SLACK_BOT_TOKEN is required');
   });
@@ -337,7 +361,9 @@ describe('validateChannelCredentials — non-webchat types', () => {
       ok: true,
       json: async () => ({ ok: true }),
     })) as unknown as typeof fetch;
-    const result = await validateChannelCredentials('slack', { SLACK_BOT_TOKEN: 'xoxb-valid' });
+    const result = await validateChannelCredentials('slack', {
+      SLACK_BOT_TOKEN: 'xoxb-valid',
+    });
     expect(result).toBeNull();
   });
 
@@ -346,33 +372,49 @@ describe('validateChannelCredentials — non-webchat types', () => {
       ok: true,
       json: async () => ({ ok: false, error: 'invalid_auth' }),
     })) as unknown as typeof fetch;
-    const result = await validateChannelCredentials('slack', { SLACK_BOT_TOKEN: 'xoxb-bad' });
+    const result = await validateChannelCredentials('slack', {
+      SLACK_BOT_TOKEN: 'xoxb-bad',
+    });
     expect(result).toBe('invalid_auth');
   });
 
   it('irc: returns null without calling fetch', async () => {
-    globalThis.fetch = vi.fn(() => { throw new Error('should not be called'); }) as unknown as typeof fetch;
-    const result = await validateChannelCredentials('irc', { IRC_SERVER: 'irc.libera.chat' });
+    globalThis.fetch = vi.fn(() => {
+      throw new Error('should not be called');
+    }) as unknown as typeof fetch;
+    const result = await validateChannelCredentials('irc', {
+      IRC_SERVER: 'irc.libera.chat',
+    });
     expect(result).toBeNull();
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
   it('http: returns null without calling fetch', async () => {
-    globalThis.fetch = vi.fn(() => { throw new Error('should not be called'); }) as unknown as typeof fetch;
-    const result = await validateChannelCredentials('http', { HTTP_CHANNEL_PORT: '8080' });
+    globalThis.fetch = vi.fn(() => {
+      throw new Error('should not be called');
+    }) as unknown as typeof fetch;
+    const result = await validateChannelCredentials('http', {
+      HTTP_CHANNEL_PORT: '8080',
+    });
     expect(result).toBeNull();
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
   it('signal: returns null without calling fetch', async () => {
-    globalThis.fetch = vi.fn(() => { throw new Error('should not be called'); }) as unknown as typeof fetch;
-    const result = await validateChannelCredentials('signal', { SIGNAL_PHONE_NUMBER: '+15551234567' });
+    globalThis.fetch = vi.fn(() => {
+      throw new Error('should not be called');
+    }) as unknown as typeof fetch;
+    const result = await validateChannelCredentials('signal', {
+      SIGNAL_PHONE_NUMBER: '+15551234567',
+    });
     expect(result).toBeNull();
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
   it('unknown type: returns null without calling fetch', async () => {
-    globalThis.fetch = vi.fn(() => { throw new Error('should not be called'); }) as unknown as typeof fetch;
+    globalThis.fetch = vi.fn(() => {
+      throw new Error('should not be called');
+    }) as unknown as typeof fetch;
     const result = await validateChannelCredentials('unknown-type', {});
     expect(result).toBeNull();
     expect(globalThis.fetch).not.toHaveBeenCalled();
@@ -392,8 +434,12 @@ describe('validateChannelCredentials — outer catch path', () => {
   });
 
   it('returns "Could not reach the channel API" when fetch throws synchronously for telegram', async () => {
-    globalThis.fetch = (() => { throw new Error('network error'); }) as unknown as typeof fetch;
-    const result = await validateChannelCredentials('telegram', { TELEGRAM_BOT_TOKEN: 'some-token' });
+    globalThis.fetch = (() => {
+      throw new Error('network error');
+    }) as unknown as typeof fetch;
+    const result = await validateChannelCredentials('telegram', {
+      TELEGRAM_BOT_TOKEN: 'some-token',
+    });
     expect(result).toContain('Could not reach the channel API');
     expect(result).toContain('network error');
   });
