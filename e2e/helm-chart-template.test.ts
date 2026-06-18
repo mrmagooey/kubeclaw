@@ -29,17 +29,27 @@ describe('helm chart static checks', () => {
     const result = spawnSync(
       'helm',
       [
-        'template', 'smoke', CHART_DIR,
-        '--set', 'secrets.anthropicApiKey=test',
-        '--set', 'redis.password=test',
+        'template',
+        'smoke',
+        CHART_DIR,
+        '--set',
+        'secrets.anthropicApiKey=test',
+        '--set',
+        'redis.password=test',
       ],
       { encoding: 'utf8' },
     );
     expect(result.status, result.stderr).toBe(0);
     for (const kind of [
-      'StatefulSet', 'Deployment', 'NetworkPolicy',
-      'PersistentVolumeClaim', 'ConfigMap', 'Secret',
-      'ServiceAccount', 'Role', 'RoleBinding',
+      'StatefulSet',
+      'Deployment',
+      'NetworkPolicy',
+      'PersistentVolumeClaim',
+      'ConfigMap',
+      'Secret',
+      'ServiceAccount',
+      'Role',
+      'RoleBinding',
     ]) {
       expect(result.stdout, `missing kind: ${kind}`).toContain(`kind: ${kind}`);
     }
@@ -49,14 +59,20 @@ describe('helm chart static checks', () => {
     const result = spawnSync(
       'helm',
       [
-        'template', 'smoke', CHART_DIR,
-        '--set', 'image.registry=registry.example.com',
-        '--set', 'secrets.anthropicApiKey=test',
+        'template',
+        'smoke',
+        CHART_DIR,
+        '--set',
+        'image.registry=registry.example.com',
+        '--set',
+        'secrets.anthropicApiKey=test',
       ],
       { encoding: 'utf8' },
     );
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain('registry.example.com/kubeclaw-orchestrator');
+    expect(result.stdout).toContain(
+      'registry.example.com/kubeclaw-orchestrator',
+    );
     expect(result.stdout).toContain('imagePullPolicy: Always');
   });
 
@@ -64,8 +80,11 @@ describe('helm chart static checks', () => {
     const result = spawnSync(
       'helm',
       [
-        'template', 'smoke', CHART_DIR,
-        '--set', 'secrets.existingSecret=my-secret',
+        'template',
+        'smoke',
+        CHART_DIR,
+        '--set',
+        'secrets.existingSecret=my-secret',
       ],
       { encoding: 'utf8' },
     );
@@ -78,9 +97,13 @@ describe('helm chart static checks', () => {
     const result = spawnSync(
       'helm',
       [
-        'template', 'smoke', CHART_DIR,
-        '--set', 'networkPolicy.enabled=false',
-        '--set', 'secrets.anthropicApiKey=test',
+        'template',
+        'smoke',
+        CHART_DIR,
+        '--set',
+        'networkPolicy.enabled=false',
+        '--set',
+        'secrets.anthropicApiKey=test',
       ],
       { encoding: 'utf8' },
     );
@@ -92,9 +115,13 @@ describe('helm chart static checks', () => {
     const result = spawnSync(
       'helm',
       [
-        'template', 'smoke', CHART_DIR,
-        '--set', 'storage.storageClass=efs-sc',
-        '--set', 'secrets.anthropicApiKey=test',
+        'template',
+        'smoke',
+        CHART_DIR,
+        '--set',
+        'storage.storageClass=efs-sc',
+        '--set',
+        'secrets.anthropicApiKey=test',
       ],
       { encoding: 'utf8' },
     );
@@ -106,9 +133,13 @@ describe('helm chart static checks', () => {
     const result = spawnSync(
       'helm',
       [
-        'template', 'smoke', CHART_DIR,
-        '--set', 'storage.accessMode=ReadWriteMany',
-        '--set', 'secrets.anthropicApiKey=test',
+        'template',
+        'smoke',
+        CHART_DIR,
+        '--set',
+        'storage.accessMode=ReadWriteMany',
+        '--set',
+        'secrets.anthropicApiKey=test',
       ],
       { encoding: 'utf8' },
     );
@@ -124,17 +155,27 @@ describe('ClusterRoleBinding name is release-scoped (collision regression)', () 
     const result = spawnSync(
       'helm',
       [
-        'template', 'my-release', CHART_DIR,
-        '--set', 'credentialInjection.mode=sidecar',
-        '--set', 'namespace=kubeclaw',
-        '--set', 'secrets.anthropicApiKey=test',
-        '--set', 'redis.password=test',
+        'template',
+        'my-release',
+        CHART_DIR,
+        '--set',
+        'credentialInjection.mode=sidecar',
+        '--set',
+        'namespace=kubeclaw',
+        '--set',
+        'secrets.anthropicApiKey=test',
+        '--set',
+        'redis.password=test',
       ],
       { encoding: 'utf8' },
     );
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toContain('name: my-release-credential-broker-tokenreview');
-    expect(result.stdout).not.toContain('name: kubeclaw-credential-broker-tokenreview');
+    expect(result.stdout).toContain(
+      'name: my-release-credential-broker-tokenreview',
+    );
+    expect(result.stdout).not.toContain(
+      'name: kubeclaw-credential-broker-tokenreview',
+    );
   });
 
   it('two different release names produce two different CRB names', () => {
@@ -142,11 +183,17 @@ describe('ClusterRoleBinding name is release-scoped (collision regression)', () 
       spawnSync(
         'helm',
         [
-          'template', releaseName, CHART_DIR,
-          '--set', 'credentialInjection.mode=sidecar',
-          '--set', 'namespace=kubeclaw',
-          '--set', 'secrets.anthropicApiKey=test',
-          '--set', 'redis.password=test',
+          'template',
+          releaseName,
+          CHART_DIR,
+          '--set',
+          'credentialInjection.mode=sidecar',
+          '--set',
+          'namespace=kubeclaw',
+          '--set',
+          'secrets.anthropicApiKey=test',
+          '--set',
+          'redis.password=test',
         ],
         { encoding: 'utf8' },
       );
@@ -157,12 +204,20 @@ describe('ClusterRoleBinding name is release-scoped (collision regression)', () 
     expect(alpha.status, alpha.stderr).toBe(0);
     expect(beta.status, beta.stderr).toBe(0);
 
-    expect(alpha.stdout).toContain('name: alpha-release-credential-broker-tokenreview');
-    expect(beta.stdout).toContain('name: beta-release-credential-broker-tokenreview');
+    expect(alpha.stdout).toContain(
+      'name: alpha-release-credential-broker-tokenreview',
+    );
+    expect(beta.stdout).toContain(
+      'name: beta-release-credential-broker-tokenreview',
+    );
 
     // The two CRB names must differ so sibling installs never collide.
-    expect(alpha.stdout).not.toContain('name: beta-release-credential-broker-tokenreview');
-    expect(beta.stdout).not.toContain('name: alpha-release-credential-broker-tokenreview');
+    expect(alpha.stdout).not.toContain(
+      'name: beta-release-credential-broker-tokenreview',
+    );
+    expect(beta.stdout).not.toContain(
+      'name: alpha-release-credential-broker-tokenreview',
+    );
   });
 });
 
@@ -177,10 +232,15 @@ describe('helm template — namespace isolation (story-165 regression)', () => {
     const result = spawnSync(
       'helm',
       [
-        'template', 'kubeclaw-helm-test', CHART_DIR,
-        '--namespace', 'foobar-test',
-        '--set', 'secrets.anthropicApiKey=test',
-        '--set', 'redis.password=test',
+        'template',
+        'kubeclaw-helm-test',
+        CHART_DIR,
+        '--namespace',
+        'foobar-test',
+        '--set',
+        'secrets.anthropicApiKey=test',
+        '--set',
+        'redis.password=test',
       ],
       { encoding: 'utf8' },
     );
@@ -210,10 +270,15 @@ describe('helm template — namespace isolation (story-165 regression)', () => {
       spawnSync(
         'helm',
         [
-          'template', releaseName, CHART_DIR,
-          '--namespace', ns,
-          '--set', 'secrets.anthropicApiKey=test',
-          '--set', 'redis.password=test',
+          'template',
+          releaseName,
+          CHART_DIR,
+          '--namespace',
+          ns,
+          '--set',
+          'secrets.anthropicApiKey=test',
+          '--set',
+          'redis.password=test',
         ],
         { encoding: 'utf8' },
       );
@@ -350,7 +415,9 @@ describe('helm template — mode=istio', () => {
       expect(out).toContain(`kubeclaw-egress-tls-${slug}`);
     }
     expect(out).toMatch(/mode:\s*SIMPLE/);
-    expect(out).toMatch(/caCertificates:\s*\/etc\/ssl\/certs\/ca-certificates\.crt/);
+    expect(out).toMatch(
+      /caCertificates:\s*\/etc\/ssl\/certs\/ca-certificates\.crt/,
+    );
   });
 
   it('renders ServiceEntry with two ports per destination (workload http + upstream tls)', () => {
@@ -376,7 +443,9 @@ describe('helm template — mode=istio', () => {
     expect(out).toContain('value: "http://openrouter.ai"');
     // Both pod families must carry them; the simplest check is two distinct
     // occurrences of OPENAI_BASE_URL in the rendered output.
-    expect((out.match(/OPENAI_BASE_URL/g) ?? []).length).toBeGreaterThanOrEqual(2);
+    expect((out.match(/OPENAI_BASE_URL/g) ?? []).length).toBeGreaterThanOrEqual(
+      2,
+    );
   });
 
   describe('with testFixture.enabled=true', () => {
@@ -414,12 +483,16 @@ describe('helm template — mode=istio', () => {
 
     it('renders test-mock-token in the kubeclaw-secrets Secret', () => {
       const out = renderWithFixture();
-      expect(out).toMatch(/test-mock-token:\s*"?(test-token-12345|dGVzdC10b2tlbi0xMjM0NQ==)"?/);
+      expect(out).toMatch(
+        /test-mock-token:\s*"?(test-token-12345|dGVzdC10b2tlbi0xMjM0NQ==)"?/,
+      );
     });
 
     it('does NOT render a DestinationRule for the mock (HTTP upstream)', () => {
       const out = renderWithFixture();
-      expect(out).not.toContain('kubeclaw-egress-tls-mock-upstream-kubeclaw-test');
+      expect(out).not.toContain(
+        'kubeclaw-egress-tls-mock-upstream-kubeclaw-test',
+      );
     });
   });
 });
@@ -535,9 +608,13 @@ describe('helm template — story-182 RWX/RWO replica guardrail', () => {
     spawnSync(
       'helm',
       [
-        'template', 'smoke', CHART_DIR,
-        '--set', 'secrets.anthropicApiKey=test',
-        '--set', 'redis.password=test',
+        'template',
+        'smoke',
+        CHART_DIR,
+        '--set',
+        'secrets.anthropicApiKey=test',
+        '--set',
+        'redis.password=test',
         ...extraArgs,
       ],
       { encoding: 'utf8' },
@@ -560,7 +637,8 @@ describe('helm template — story-182 RWX/RWO replica guardrail', () => {
 
   it('does NOT render HPA guardrail when accessModes is RWX', () => {
     const result = renderWith([
-      '--set', 'bootstrap.runtimePvc.accessModes[0]=ReadWriteMany',
+      '--set',
+      'bootstrap.runtimePvc.accessModes[0]=ReadWriteMany',
     ]);
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).not.toContain('kind: HorizontalPodAutoscaler');
@@ -575,8 +653,10 @@ describe('helm template — story-182 RWX/RWO replica guardrail', () => {
 
   it('RWX render includes BOOTSTRAP_STEADY_STATE_REPLICAS env var with custom value', () => {
     const result = renderWith([
-      '--set', 'bootstrap.runtimePvc.accessModes[0]=ReadWriteMany',
-      '--set', 'bootstrap.steadyState.defaultReplicas=3',
+      '--set',
+      'bootstrap.runtimePvc.accessModes[0]=ReadWriteMany',
+      '--set',
+      'bootstrap.steadyState.defaultReplicas=3',
     ]);
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain('BOOTSTRAP_STEADY_STATE_REPLICAS');
@@ -588,17 +668,22 @@ describe('helm template — story-182 RWX/RWO replica guardrail', () => {
 
 describe('helm template — bootstrap.npmRegistry (Story 183)', () => {
   const baseArgs = [
-    '--set', 'secrets.anthropicApiKey=test',
-    '--set', 'redis.password=test',
+    '--set',
+    'secrets.anthropicApiKey=test',
+    '--set',
+    'redis.password=test',
   ];
 
   it('orchestrator Deployment gets BOOTSTRAP_NPM_REGISTRY env when npmRegistry is set', () => {
     const result = spawnSync(
       'helm',
       [
-        'template', 'smoke', CHART_DIR,
+        'template',
+        'smoke',
+        CHART_DIR,
         ...baseArgs,
-        '--set', 'bootstrap.npmRegistry=https://npm.internal.corp',
+        '--set',
+        'bootstrap.npmRegistry=https://npm.internal.corp',
       ],
       { encoding: 'utf8' },
     );
@@ -621,10 +706,14 @@ describe('helm template — bootstrap.npmRegistry (Story 183)', () => {
     const result = spawnSync(
       'helm',
       [
-        'template', 'smoke', CHART_DIR,
+        'template',
+        'smoke',
+        CHART_DIR,
         ...baseArgs,
-        '--set', 'bootstrap.npmRegistry=https://npm.internal.corp',
-        '--set', 'bootstrap.npmRegistryAuth.secretRef=my-npm-secret',
+        '--set',
+        'bootstrap.npmRegistry=https://npm.internal.corp',
+        '--set',
+        'bootstrap.npmRegistryAuth.secretRef=my-npm-secret',
       ],
       { encoding: 'utf8' },
     );
@@ -649,33 +738,48 @@ describe('helm template — bootstrap.npmRegistry (Story 183)', () => {
     const result = spawnSync(
       'helm',
       [
-        'template', 'smoke', CHART_DIR,
+        'template',
+        'smoke',
+        CHART_DIR,
         ...baseArgs,
-        '--set', 'bootstrap.npmRegistry=https://npm.internal.corp',
-        '--set', 'ciliumNetworkPolicy.enabled=true',
+        '--set',
+        'bootstrap.npmRegistry=https://npm.internal.corp',
+        '--set',
+        'ciliumNetworkPolicy.enabled=true',
       ],
       { encoding: 'utf8' },
     );
     expect(result.status, result.stderr).toBe(0);
     const sections = result.stdout.split('---');
     const bootstrapSection = sections.find(
-      (s) => s.includes('kubeclaw-bootstrap-policy') && s.includes('kind: NetworkPolicy'),
+      (s) =>
+        s.includes('kubeclaw-bootstrap-policy') &&
+        s.includes('kind: NetworkPolicy'),
     );
-    expect(bootstrapSection, 'kubeclaw-bootstrap-policy not found').toBeTruthy();
+    expect(
+      bootstrapSection,
+      'kubeclaw-bootstrap-policy not found',
+    ).toBeTruthy();
     // Should have no port: 443 rule when Cilium handles it
-    const portLines = (bootstrapSection ?? '').split('\n').filter(
-      (l) => /^\s+port:\s+443\s*$/.test(l),
-    );
-    expect(portLines, 'Expected no port: 443 in bootstrap NetworkPolicy when Cilium+mirror active').toHaveLength(0);
+    const portLines = (bootstrapSection ?? '')
+      .split('\n')
+      .filter((l) => /^\s+port:\s+443\s*$/.test(l));
+    expect(
+      portLines,
+      'Expected no port: 443 in bootstrap NetworkPolicy when Cilium+mirror active',
+    ).toHaveLength(0);
   });
 
   it('bootstrap NetworkPolicy keeps broad port-443 rule when mirror set but Cilium disabled', () => {
     const result = spawnSync(
       'helm',
       [
-        'template', 'smoke', CHART_DIR,
+        'template',
+        'smoke',
+        CHART_DIR,
         ...baseArgs,
-        '--set', 'bootstrap.npmRegistry=https://npm.internal.corp',
+        '--set',
+        'bootstrap.npmRegistry=https://npm.internal.corp',
         // ciliumNetworkPolicy.enabled defaults to false
       ],
       { encoding: 'utf8' },
@@ -683,9 +787,14 @@ describe('helm template — bootstrap.npmRegistry (Story 183)', () => {
     expect(result.status, result.stderr).toBe(0);
     const sections = result.stdout.split('---');
     const bootstrapSection = sections.find(
-      (s) => s.includes('kubeclaw-bootstrap-policy') && s.includes('kind: NetworkPolicy'),
+      (s) =>
+        s.includes('kubeclaw-bootstrap-policy') &&
+        s.includes('kind: NetworkPolicy'),
     );
-    expect(bootstrapSection, 'kubeclaw-bootstrap-policy not found').toBeTruthy();
+    expect(
+      bootstrapSection,
+      'kubeclaw-bootstrap-policy not found',
+    ).toBeTruthy();
     expect(bootstrapSection).toContain('port: 443');
   });
 
@@ -698,9 +807,14 @@ describe('helm template — bootstrap.npmRegistry (Story 183)', () => {
     expect(result.status, result.stderr).toBe(0);
     const sections = result.stdout.split('---');
     const bootstrapSection = sections.find(
-      (s) => s.includes('kubeclaw-bootstrap-policy') && s.includes('kind: NetworkPolicy'),
+      (s) =>
+        s.includes('kubeclaw-bootstrap-policy') &&
+        s.includes('kind: NetworkPolicy'),
     );
-    expect(bootstrapSection, 'kubeclaw-bootstrap-policy not found').toBeTruthy();
+    expect(
+      bootstrapSection,
+      'kubeclaw-bootstrap-policy not found',
+    ).toBeTruthy();
     expect(bootstrapSection).toContain('port: 443');
   });
 
@@ -708,10 +822,14 @@ describe('helm template — bootstrap.npmRegistry (Story 183)', () => {
     const result = spawnSync(
       'helm',
       [
-        'template', 'smoke', CHART_DIR,
+        'template',
+        'smoke',
+        CHART_DIR,
         ...baseArgs,
-        '--set', 'ciliumNetworkPolicy.enabled=true',
-        '--set', 'bootstrap.npmRegistry=https://npm.internal.corp',
+        '--set',
+        'ciliumNetworkPolicy.enabled=true',
+        '--set',
+        'bootstrap.npmRegistry=https://npm.internal.corp',
       ],
       { encoding: 'utf8' },
     );
@@ -725,9 +843,12 @@ describe('helm template — bootstrap.npmRegistry (Story 183)', () => {
     const result = spawnSync(
       'helm',
       [
-        'template', 'smoke', CHART_DIR,
+        'template',
+        'smoke',
+        CHART_DIR,
         ...baseArgs,
-        '--set', 'bootstrap.npmRegistry=https://npm.internal.corp',
+        '--set',
+        'bootstrap.npmRegistry=https://npm.internal.corp',
         // ciliumNetworkPolicy.enabled defaults to false
       ],
       { encoding: 'utf8' },
@@ -741,9 +862,12 @@ describe('helm template — bootstrap.npmRegistry (Story 183)', () => {
     const result = spawnSync(
       'helm',
       [
-        'template', 'smoke', CHART_DIR,
+        'template',
+        'smoke',
+        CHART_DIR,
         ...baseArgs,
-        '--set', 'ciliumNetworkPolicy.enabled=true',
+        '--set',
+        'ciliumNetworkPolicy.enabled=true',
       ],
       { encoding: 'utf8' },
     );
@@ -755,10 +879,14 @@ describe('helm template — bootstrap.npmRegistry (Story 183)', () => {
     const result = spawnSync(
       'helm',
       [
-        'template', 'smoke', CHART_DIR,
+        'template',
+        'smoke',
+        CHART_DIR,
         ...baseArgs,
-        '--set', 'ciliumNetworkPolicy.enabled=true',
-        '--set', 'bootstrap.npmRegistry=https://npm.internal.corp',
+        '--set',
+        'ciliumNetworkPolicy.enabled=true',
+        '--set',
+        'bootstrap.npmRegistry=https://npm.internal.corp',
       ],
       { encoding: 'utf8' },
     );
@@ -767,7 +895,10 @@ describe('helm template — bootstrap.npmRegistry (Story 183)', () => {
     const matchNameLines = lines.filter(
       (l) => l.includes('matchName') && l.includes('registry.npmjs.org'),
     );
-    expect(matchNameLines, 'registry.npmjs.org must not appear as an allowed FQDN').toHaveLength(0);
+    expect(
+      matchNameLines,
+      'registry.npmjs.org must not appear as an allowed FQDN',
+    ).toHaveLength(0);
   });
 });
 
@@ -782,10 +913,15 @@ describe('helm template — bootstrap RBAC namespace (story-174 regression)', ()
     const result = spawnSync(
       'helm',
       [
-        'template', 'kubeclaw', 'helm/kubeclaw',
-        '--namespace', 'kubeclaw',
-        '--set', 'secrets.anthropicApiKey=test',
-        '--set', 'redis.password=test',
+        'template',
+        'kubeclaw',
+        'helm/kubeclaw',
+        '--namespace',
+        'kubeclaw',
+        '--set',
+        'secrets.anthropicApiKey=test',
+        '--set',
+        'redis.password=test',
       ],
       { encoding: 'utf8', cwd: process.cwd() },
     );
@@ -795,23 +931,31 @@ describe('helm template — bootstrap RBAC namespace (story-174 regression)', ()
     const docs = result.stdout.split(/\n---\n/);
 
     const saDoc = docs.find(
-      (d) => d.includes('kind: ServiceAccount') && d.includes('name: kubeclaw-bootstrap'),
+      (d) =>
+        d.includes('kind: ServiceAccount') &&
+        d.includes('name: kubeclaw-bootstrap'),
     );
     expect(saDoc, 'kubeclaw-bootstrap ServiceAccount not found').toBeDefined();
     expect(saDoc).toContain('namespace: kubeclaw');
     expect(saDoc).not.toMatch(/namespace:\s*$/m);
 
     const roleDoc = docs.find(
-      (d) => d.includes('kind: Role') && d.includes('name: kubeclaw-bootstrap-role'),
+      (d) =>
+        d.includes('kind: Role') && d.includes('name: kubeclaw-bootstrap-role'),
     );
     expect(roleDoc, 'kubeclaw-bootstrap-role Role not found').toBeDefined();
     expect(roleDoc).toContain('namespace: kubeclaw');
     expect(roleDoc).not.toMatch(/namespace:\s*$/m);
 
     const rbDoc = docs.find(
-      (d) => d.includes('kind: RoleBinding') && d.includes('name: kubeclaw-bootstrap-rolebinding'),
+      (d) =>
+        d.includes('kind: RoleBinding') &&
+        d.includes('name: kubeclaw-bootstrap-rolebinding'),
     );
-    expect(rbDoc, 'kubeclaw-bootstrap-rolebinding RoleBinding not found').toBeDefined();
+    expect(
+      rbDoc,
+      'kubeclaw-bootstrap-rolebinding RoleBinding not found',
+    ).toBeDefined();
     expect(rbDoc).toContain('namespace: kubeclaw');
     // The subjects[].namespace must also be set correctly.
     expect(rbDoc).not.toMatch(/namespace:\s*$/m);
@@ -823,10 +967,15 @@ describe('helm template — bootstrap RBAC namespace (story-174 regression)', ()
     const result = spawnSync(
       'helm',
       [
-        'template', 'kubeclaw', 'helm/kubeclaw',
-        '--namespace', 'foobar',
-        '--set', 'secrets.anthropicApiKey=test',
-        '--set', 'redis.password=test',
+        'template',
+        'kubeclaw',
+        'helm/kubeclaw',
+        '--namespace',
+        'foobar',
+        '--set',
+        'secrets.anthropicApiKey=test',
+        '--set',
+        'redis.password=test',
         // NOTE: intentionally NOT setting --set namespace=...
       ],
       { encoding: 'utf8', cwd: process.cwd() },
@@ -844,10 +993,16 @@ describe('helm template — bootstrap RBAC namespace (story-174 regression)', ()
 
     // Bootstrap resources must all be in 'foobar'.
     const docs = result.stdout.split(/\n---\n/);
-    for (const name of ['kubeclaw-bootstrap', 'kubeclaw-bootstrap-role', 'kubeclaw-bootstrap-rolebinding']) {
+    for (const name of [
+      'kubeclaw-bootstrap',
+      'kubeclaw-bootstrap-role',
+      'kubeclaw-bootstrap-rolebinding',
+    ]) {
       const doc = docs.find((d) => d.includes(`name: ${name}`));
       expect(doc, `${name} document not found`).toBeDefined();
-      expect(doc, `${name} should have namespace: foobar`).toContain('namespace: foobar');
+      expect(doc, `${name} should have namespace: foobar`).toContain(
+        'namespace: foobar',
+      );
     }
   });
 });
@@ -861,8 +1016,15 @@ describe('helm template — no baked Qdrant StatefulSet (SP2 task 7)', () => {
   it('does not render a baked Qdrant StatefulSet', () => {
     const result = spawnSync(
       'helm',
-      ['template', 'smoke', CHART_DIR,
-       '--set', 'secrets.anthropicApiKey=test', '--set', 'redis.password=test'],
+      [
+        'template',
+        'smoke',
+        CHART_DIR,
+        '--set',
+        'secrets.anthropicApiKey=test',
+        '--set',
+        'redis.password=test',
+      ],
       { encoding: 'utf8' },
     );
     expect(result.status, result.stderr).toBe(0);
@@ -873,12 +1035,84 @@ describe('helm template — no baked Qdrant StatefulSet (SP2 task 7)', () => {
   it('rag.enabled=true no longer resurrects a baked Qdrant (value is gone)', () => {
     const result = spawnSync(
       'helm',
-      ['template', 'smoke', CHART_DIR,
-       '--set', 'secrets.anthropicApiKey=test', '--set', 'redis.password=test',
-       '--set', 'rag.enabled=true'],
+      [
+        'template',
+        'smoke',
+        CHART_DIR,
+        '--set',
+        'secrets.anthropicApiKey=test',
+        '--set',
+        'redis.password=test',
+        '--set',
+        'rag.enabled=true',
+      ],
       { encoding: 'utf8' },
     );
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).not.toContain('name: kubeclaw-qdrant');
+  });
+});
+
+// ─── channel Service independent of networkPolicy (bug-fix regression) ────────
+//
+// Before the fix, the channel Service and metrics Service were nested inside
+// {{- if and $cfg.httpPort $.Values.networkPolicy.enabled }}, so disabling
+// networkPolicy deleted the channel Service and made the channel unreachable.
+// After the fix: only the ingress NetworkPolicy depends on networkPolicy.enabled;
+// the channel Service renders whenever httpPort is set; the metrics Service
+// always renders (per enabled channel).
+
+describe('channel Service independent of networkPolicy', () => {
+  const baseArgs = [
+    '--set',
+    'secrets.anthropicApiKey=test',
+    '--set',
+    'redis.password=test',
+    '--set',
+    'channels.http.enabled=true',
+    '--set',
+    'channels.http.type=http',
+    '--set',
+    'channels.http.httpPort=8080',
+  ];
+
+  it('with networkPolicy.enabled=false: renders channel Service and metrics Service, no ingress NetworkPolicy', () => {
+    const result = spawnSync(
+      'helm',
+      [
+        'template',
+        'smoke',
+        CHART_DIR,
+        ...baseArgs,
+        '--set',
+        'networkPolicy.enabled=false',
+      ],
+      { encoding: 'utf8' },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain('name: kubeclaw-channel-http');
+    expect(result.stdout).toContain('name: kubeclaw-channel-http-metrics');
+    expect(result.stdout).not.toContain('name: kubeclaw-channel-http-ingress');
+    expect(result.stdout).not.toContain('kind: NetworkPolicy');
+  });
+
+  it('with networkPolicy.enabled=true: renders channel Service, metrics Service, AND ingress NetworkPolicy', () => {
+    const result = spawnSync(
+      'helm',
+      [
+        'template',
+        'smoke',
+        CHART_DIR,
+        ...baseArgs,
+        '--set',
+        'networkPolicy.enabled=true',
+      ],
+      { encoding: 'utf8' },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain('name: kubeclaw-channel-http');
+    expect(result.stdout).toContain('name: kubeclaw-channel-http-metrics');
+    expect(result.stdout).toContain('name: kubeclaw-channel-http-ingress');
+    expect(result.stdout).toContain('kind: NetworkPolicy');
   });
 });

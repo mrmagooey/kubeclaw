@@ -233,6 +233,8 @@ spec:
       ports:
         - protocol: TCP
           port: {{ $cfg.httpPort }}
+{{- end }}
+{{- if $cfg.httpPort }}
 ---
 apiVersion: v1
 kind: Service
@@ -280,6 +282,8 @@ spec:
                 port:
                   name: http
 {{- end }}
+{{- end }}
+{{- end }}
 ---
 # Metrics Service for channel: {{ $name }}
 apiVersion: v1
@@ -299,7 +303,5 @@ spec:
       targetPort: metrics
       protocol: TCP
   type: ClusterIP
-{{- end }}
-{{- end }}
 {{- end }}
 {{- end }}
