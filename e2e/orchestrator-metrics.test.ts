@@ -21,6 +21,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawnSync, spawn, type ChildProcess } from 'node:child_process';
+import { join } from 'node:path';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -28,6 +29,7 @@ const KUBE_CONTEXT = 'kind-kubeclaw-e2e-istio';
 const NAMESPACE = 'kubeclaw';
 const CHART_DIR = './helm/kubeclaw';
 const RELEASE = 'kubeclaw';
+const MANIFESTS_DIR = join(process.cwd(), 'e2e', 'manifests');
 
 /**
  * Local port for the metrics port-forward.
@@ -38,6 +40,14 @@ const RELEASE = 'kubeclaw';
  *   19090 = credential-injection.test.ts broker metrics
  */
 const METRICS_LOCAL_PORT = 19091;
+
+/**
+ * Local ports for AC3 in-cluster mock LLM:
+ *   19201 = mock-llm control (kind cluster)
+ *   19202 = channel-http HTTP (kind cluster)
+ */
+const MOCK_LLM_CTRL_PORT = 19201;
+const CHANNEL_HTTP_PORT = 19202;
 
 const ORCHESTRATOR_READY_TIMEOUT_MS = 120_000;
 const METRICS_TIMEOUT_MS = 60_000;
@@ -228,13 +238,133 @@ describe.skipIf(!contextAvailable)(
       METRICS_TIMEOUT_MS,
     );
 
-    it.skip(
-      // AC3: spawn-counter check requires LLM dispatch to trigger a real tool-job.
-      // Skipped until a mock-LLM dispatch path is wired for kind e2e — see follow-up.
+    it.skipIf(!contextAvailable || process.env.KUBECLAW_E2E_METRICS_SPAWN !== '1')(
       'AC3: kubeclaw_tool_job_spawned_total increments after a tool-job spawn',
-      () => {
-        throw new Error('not implemented — requires LLM dispatch');
+      async () => {
+        // ── 1. Deploy mock LLM into the kubeclaw namespace (kind cluster). ──
+        const applyResult = spawnSync(
+          'kubectl',
+          [
+            '--context', KUBE_CONTEXT,
+            'apply', '-f', join(MANIFESTS_DIR, 'mock-llm.yaml'),
+            '-n', NAMESPACE,
+          ],
+          { encoding: 'utf8', stdio: 'pipe', timeout: 30_000 },
+        );
+        if (applyResult.status !== 0) {
+          throw new Error(`Failed to apply mock-llm.yaml: ${applyResult.stderr}`);
+        }
+
+        // Wait for mock LLM pod to be ready.
+        await waitUntil(
+          () => {
+            const r = kc([
+              'get', 'pod', '-n', NAMESPACE, '-l', 'app=kubeclaw-mock-llm',
+              '-o', 'jsonpath={.items[0].status.phase}',
+            ]);
+            return r.ok && r.stdout.trim() === 'Running';
+          },
+          60_000,
+          'mock-llm pod Running',
+        );
+
+        // ── 2. Point channel-http at the in-cluster mock LLM. ─────────────
+        const patchResult = kc([
+          'set', 'env', 'deployment/kubeclaw-channel-http',
+          '-n', NAMESPACE,
+          `OPENAI_BASE_URL=http://kubeclaw-mock-llm.${NAMESPACE}.svc:11434/v1`,
+        ], { timeout: 30_000 });
+        if (!patchResult.ok) {
+          throw new Error(`kubectl set env failed: ${patchResult.stderr}`);
+        }
+
+        // Wait for rollout.
+        kc([
+          'rollout', 'status', 'deployment/kubeclaw-channel-http',
+          '-n', NAMESPACE, '--timeout=60s',
+        ], { timeout: 70_000 });
+
+        // ── 3. Port-forward mock LLM control port and channel-http. ───────
+        const mockFwd = spawn(
+          'kubectl',
+          [
+            '--context', KUBE_CONTEXT,
+            'port-forward', '-n', NAMESPACE,
+            'svc/kubeclaw-mock-llm',
+            `${MOCK_LLM_CTRL_PORT}:11434`,
+          ],
+          { stdio: 'pipe' },
+        );
+
+        const channelFwd = spawn(
+          'kubectl',
+          [
+            '--context', KUBE_CONTEXT,
+            'port-forward', '-n', NAMESPACE,
+            'svc/kubeclaw-channel-http',
+            `${CHANNEL_HTTP_PORT}:80`,
+          ],
+          { stdio: 'pipe' },
+        );
+
+        try {
+          // Wait for port-forwards to establish.
+          await sleep(3000);
+
+          // ── 4. Scrape baseline counter. ───────────────────────────────
+          const { body: baselineBody } = await scrapeMetrics(METRICS_LOCAL_PORT);
+          const baselineMatch = baselineBody.match(
+            /kubeclaw_tool_job_spawned_total\s+(\d+(?:\.\d+)?)/,
+          );
+          const baseline = baselineMatch ? parseFloat(baselineMatch[1]) : 0;
+
+          // ── 5. Queue a tool call on the mock LLM. ─────────────────────
+          await fetch(`http://localhost:${MOCK_LLM_CTRL_PORT}/control/queue-tool-call`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: 'execute_agent', arguments: { task: 'echo hello' } }),
+          });
+
+          // ── 6. Trigger a message to the channel. ──────────────────────
+          // The channel calls mock LLM → gets tool_calls → orchestrator spawns a job.
+          fetch(`http://localhost:${CHANNEL_HTTP_PORT}/message`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: 'Basic ' + Buffer.from('testuser:testpass').toString('base64'),
+              Accept: 'text/event-stream',
+            },
+            body: JSON.stringify({
+              content: 'trigger tool job',
+              sender: 'testuser',
+              chat_jid: 'http:testuser',
+            }),
+          }).catch(() => { /* fire-and-forget */ });
+
+          // ── 7. Poll metrics until the counter increments. ─────────────
+          let spawned = false;
+          const deadline = Date.now() + 60_000;
+          while (Date.now() < deadline) {
+            await sleep(3000);
+            try {
+              const { body } = await scrapeMetrics(METRICS_LOCAL_PORT);
+              const match = body.match(/kubeclaw_tool_job_spawned_total\s+(\d+(?:\.\d+)?)/);
+              if (match && parseFloat(match[1]) > baseline) {
+                spawned = true;
+                break;
+              }
+            } catch {
+              // port-forward may blip
+            }
+          }
+
+          expect(spawned, 'kubeclaw_tool_job_spawned_total did not increment within 60s').toBe(true);
+        } finally {
+          mockFwd.kill();
+          channelFwd.kill();
+        }
       },
+      120_000,
     );
 
     it(

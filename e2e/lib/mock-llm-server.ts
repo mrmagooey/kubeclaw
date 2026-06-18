@@ -12,6 +12,23 @@ export interface MockResponseTemplate {
   content: string;
 }
 
+export interface MockToolCallDef {
+  name: string;
+  arguments: Record<string, unknown>;
+}
+
+let pendingToolCalls: MockToolCallDef[] = [];
+let toolCallIdCounter = 0;
+
+export function queueToolCallResponse(def: MockToolCallDef): void {
+  pendingToolCalls.push(def);
+}
+
+export function clearToolCallQueue(): void {
+  pendingToolCalls = [];
+  toolCallIdCounter = 0;
+}
+
 export interface MockLLMConfig {
   port: number;
   responses: Record<string, MockResponseTemplate>;
@@ -92,25 +109,63 @@ function handleChatCompletions(
       const data = JSON.parse(body);
       const messages = data.messages || [];
 
-      const responseContent = findMatchingResponse(messages);
-      const response = {
-        id: `mock-chat-${Date.now()}`,
-        object: 'chat.completion',
-        created: Math.floor(Date.now() / 1000),
-        model: data.model || 'test/model',
-        choices: [
-          {
-            index: 0,
-            message: JSON.parse(responseContent),
-            finish_reason: 'stop',
+      let response: object;
+
+      if (pendingToolCalls.length > 0) {
+        const toolCall = pendingToolCalls.shift()!;
+        const callId = `call_mock_${String(++toolCallIdCounter).padStart(3, '0')}`;
+        response = {
+          id: `mock-chat-${Date.now()}`,
+          object: 'chat.completion',
+          created: Math.floor(Date.now() / 1000),
+          model: data.model || 'test/model',
+          choices: [
+            {
+              index: 0,
+              message: {
+                role: 'assistant',
+                content: null,
+                tool_calls: [
+                  {
+                    id: callId,
+                    type: 'function',
+                    function: {
+                      name: toolCall.name,
+                      arguments: JSON.stringify(toolCall.arguments),
+                    },
+                  },
+                ],
+              },
+              finish_reason: 'tool_calls',
+            },
+          ],
+          usage: {
+            prompt_tokens: 10,
+            completion_tokens: 20,
+            total_tokens: 30,
           },
-        ],
-        usage: {
-          prompt_tokens: 10,
-          completion_tokens: 20,
-          total_tokens: 30,
-        },
-      };
+        };
+      } else {
+        const responseContent = findMatchingResponse(messages);
+        response = {
+          id: `mock-chat-${Date.now()}`,
+          object: 'chat.completion',
+          created: Math.floor(Date.now() / 1000),
+          model: data.model || 'test/model',
+          choices: [
+            {
+              index: 0,
+              message: JSON.parse(responseContent),
+              finish_reason: 'stop',
+            },
+          ],
+          usage: {
+            prompt_tokens: 10,
+            completion_tokens: 20,
+            total_tokens: 30,
+          },
+        };
+      }
 
       const sendResponse = () => {
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -279,6 +334,24 @@ export async function startMockLLMServer(
       } else if (url.pathname === '/health' && req.method === 'GET') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ status: 'ok' }));
+      } else if (url.pathname === '/control/queue-tool-call' && req.method === 'POST') {
+        let body = '';
+        req.on('data', (chunk) => (body += chunk));
+        req.on('end', () => {
+          try {
+            const def = JSON.parse(body) as MockToolCallDef;
+            queueToolCallResponse(def);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ queued: true, queueLength: pendingToolCalls.length }));
+          } catch {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Invalid request body' }));
+          }
+        });
+      } else if (url.pathname === '/control/clear' && req.method === 'POST') {
+        clearResponseTemplates();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ cleared: true }));
       } else {
         res.writeHead(404, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Not found' }));
@@ -358,4 +431,5 @@ export function clearResponseTemplates(): void {
   if (config) {
     config.responses = { ...DEFAULT_RESPONSES };
   }
+  clearToolCallQueue();
 }
