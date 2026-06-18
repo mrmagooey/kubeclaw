@@ -1044,12 +1044,28 @@ export async function handleCancelCommand(
 }
 
 /**
- * Build a production-wired cancel function backed by the task-request stream.
- * Sends a job.cancel IPC to the orchestrator and awaits the result with a
- * 5-second timeout.
+ * Structured result returned by buildCancelFnStructured().
+ * Callers that need fine-grained control (e.g. dedup logic) use this instead
+ * of the plain-string variant.
  */
-export function buildCancelFn(): CancelCommandDeps['cancelFn'] {
-  return async (groupFolder: string, chatJid: string): Promise<string> => {
+export interface CancelResult {
+  status: 'cancelled' | 'no_active_job' | 'error' | 'timeout';
+  message: string; // Human-readable reply text
+}
+
+/**
+ * Build a production-wired cancel function backed by the task-request stream.
+ * Returns a structured CancelResult so callers can act on the status without
+ * string-matching.
+ */
+export function buildCancelFnStructured(): (
+  groupFolder: string,
+  chatJid: string,
+) => Promise<CancelResult> {
+  return async (
+    groupFolder: string,
+    chatJid: string,
+  ): Promise<CancelResult> => {
     const redis = getRedisClient();
     const resultStream = `kubeclaw:cancel-result:${Date.now()}-${randomBytes(4).toString('hex')}`;
 
@@ -1092,16 +1108,37 @@ export function buildCancelFn(): CancelCommandDeps['cancelFn'] {
               status?: string;
               error?: string;
             };
-            if (!parsed.ok)
-              return `Cancel failed: ${parsed.error ?? 'unknown error'}`;
-            return parsed.status === 'no_active_job'
-              ? 'No active job'
-              : 'Cancelled';
+            if (!parsed.ok) {
+              return {
+                status: 'error',
+                message: `Cancel failed: ${parsed.error ?? 'unknown error'}`,
+              };
+            }
+            if (parsed.status === 'no_active_job') {
+              return { status: 'no_active_job', message: 'No active job' };
+            }
+            return { status: 'cancelled', message: 'Cancelled' };
           }
         }
       }
     }
-    return 'Cancel timed out — orchestrator did not respond';
+    return {
+      status: 'timeout',
+      message: 'Cancel timed out — orchestrator did not respond',
+    };
+  };
+}
+
+/**
+ * Build a production-wired cancel function backed by the task-request stream.
+ * Sends a job.cancel IPC to the orchestrator and awaits the result with a
+ * 5-second timeout. Returns a plain string for backwards compatibility.
+ */
+export function buildCancelFn(): CancelCommandDeps['cancelFn'] {
+  const structured = buildCancelFnStructured();
+  return async (groupFolder: string, chatJid: string): Promise<string> => {
+    const result = await structured(groupFolder, chatJid);
+    return result.message;
   };
 }
 
@@ -2405,25 +2442,6 @@ export async function processGroupMessages(chatJid: string): Promise<boolean> {
       continue;
     }
 
-    // /cancel command: abort the currently running tool job for this group.
-    if (isCancelCommand(content)) {
-      const cancelDeps: CancelCommandDeps = { cancelFn: buildCancelFn() };
-      const reply = await handleCancelCommand(
-        group.folder,
-        chatJid,
-        cancelDeps,
-      );
-      lastAgentTimestamp[chatJid] = msg.timestamp;
-      saveState();
-      await channel.setTyping?.(chatJid, true);
-      try {
-        await channel.sendMessage(chatJid, reply);
-      } finally {
-        await channel.setTyping?.(chatJid, false);
-      }
-      continue;
-    }
-
     // /jobs command: list active/recent jobs, fetch pod logs, or kill a job via IPC (Stories 50 + 59 + 66).
     if (isJobsCommand(content)) {
       const jobsDeps: JobsCommandDeps = {
@@ -3267,6 +3285,50 @@ export function registerProfileTool(
   logger.debug('Registered update_profile local tool');
 }
 
+// ── Out-of-band /cancel helper ────────────────────────────────────────────────
+
+/**
+ * Core logic for the shared onMessage /cancel intercept.
+ *
+ * Extracted so it can be unit-tested without calling main().
+ * Production callers wrap this in `void _handleInboundCancel(...).catch(...)`.
+ *
+ * @internal Exported for testing only — do not call from production code.
+ */
+export async function _handleInboundCancel(
+  chatJid: string,
+  msg: NewMessage,
+  opts: {
+    groupFolder: string;
+    cancelFn: (gf: string, jid: string) => Promise<CancelResult>;
+    sendReply: (jid: string, text: string) => Promise<void>;
+    updateTimestamp: (jid: string, ts: string) => void;
+  },
+): Promise<void> {
+  try {
+    const result = await opts.cancelFn(opts.groupFolder, chatJid);
+    // Dedup: on success the orchestrator already publishes a "Cancelled" notice
+    // to the group output channel — don't double-send.
+    if (result.status !== 'cancelled') {
+      await opts.sendReply(chatJid, result.message);
+    }
+    opts.updateTimestamp(chatJid, msg.timestamp);
+  } catch (err) {
+    logger.error({ err, chatJid }, 'Out-of-band /cancel failed');
+    try {
+      await opts.sendReply(
+        chatJid,
+        `Cancel failed: ${err instanceof Error ? err.message : 'unknown error'}`,
+      );
+    } catch (sendErr) {
+      logger.error(
+        { err: sendErr, chatJid },
+        'Failed to send /cancel error reply',
+      );
+    }
+  }
+}
+
 // ── Test-only exports ────────────────────────────────────────────────────────
 // These are prefixed with _ and must not be called in production code.
 
@@ -3404,6 +3466,39 @@ async function main(): Promise<void> {
           );
           return;
         }
+      }
+      // Out-of-band /cancel: intercept genuine user /cancel messages before
+      // storeMessage, so they preempt a blocked execute_agent turn for any
+      // channel type. The message is NOT stored and NOT enqueued — the
+      // _handleInboundCancel helper fires the IPC and sends the reply.
+      if (
+        !msg.is_from_me &&
+        !msg.is_bot_message &&
+        isCancelCommand(msg.content)
+      ) {
+        const groupFolder = registeredGroups[chatJid]?.folder ?? chatJid;
+        void _handleInboundCancel(chatJid, msg, {
+          groupFolder,
+          cancelFn: buildCancelFnStructured(),
+          sendReply: async (jid, text) => {
+            const ch = findChannel(channels, jid);
+            if (ch) {
+              await ch.sendMessage(jid, text);
+            } else {
+              logger.warn({ jid }, '/cancel reply: no channel owns JID');
+            }
+          },
+          updateTimestamp: (jid, ts) => {
+            lastAgentTimestamp[jid] = ts;
+            saveState();
+          },
+        }).catch((err) => {
+          logger.error(
+            { err, chatJid },
+            'Out-of-band /cancel failed unexpectedly',
+          );
+        });
+        return; // Do NOT storeMessage or enqueue
       }
       storeMessage(msg);
       // Record inbound message after allowlist check passes

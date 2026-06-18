@@ -168,14 +168,6 @@ export interface HttpChannelOpts {
     currentStatus?: string;
     error?: string;
   }>;
-  /**
-   * Override the POST /message /cancel out-of-band IPC for testing.
-   * Defaults to sending a group-level job.cancel IPC (no jobId) to the orchestrator via Redis.
-   */
-  cancelGroupJobFn?: (
-    groupFolder: string,
-    chatJid: string,
-  ) => Promise<{ ok: boolean; status?: string; error?: string }>;
   /** Injectable for listing group secrets. Defaults to IPC-backed implementation. */
   listSecretsFn?: ListSecretsFn;
   /** Injectable for removing a group secret. Defaults to IPC-backed implementation. */
@@ -523,10 +515,6 @@ export class HttpChannel implements Channel {
     currentStatus?: string;
     error?: string;
   }>;
-  private cancelGroupJobFn: (
-    groupFolder: string,
-    chatJid: string,
-  ) => Promise<{ ok: boolean; status?: string; error?: string }>;
   /** Per-user token buckets for POST /message rate limiting. */
   private rateBuckets: Map<string, Bucket> = new Map();
 
@@ -624,66 +612,6 @@ export class HttpChannel implements Channel {
         throw new Error(
           'DELETE /jobs/<id> kill timed out — orchestrator did not respond',
         );
-      });
-
-    this.cancelGroupJobFn =
-      opts.cancelGroupJobFn ??
-      (async (groupFolder: string, chatJid: string) => {
-        // Lazy import so unit tests that mock the module don't pull in ioredis.
-        const { getRedisClient } = await import('../k8s/redis-client.js');
-        const { getTaskRequestStream } = await import('../k8s/redis-client.js');
-        const { randomBytes } = await import('node:crypto');
-        const redis = getRedisClient();
-        const resultStream = `kubeclaw:cancel-result:${Date.now()}-${randomBytes(4).toString('hex')}`;
-        await redis.xadd(
-          getTaskRequestStream(),
-          '*',
-          'type',
-          'job.cancel',
-          'groupFolder',
-          groupFolder,
-          'chatJid',
-          chatJid,
-          'resultStream',
-          resultStream,
-        );
-        const deadline = Date.now() + 5000;
-        let lastId = '0-0';
-        while (Date.now() < deadline) {
-          const remaining = deadline - Date.now();
-          if (remaining <= 0) break;
-          const response = await redis.xread(
-            'COUNT',
-            1,
-            'BLOCK',
-            Math.min(remaining, 1000),
-            'STREAMS',
-            resultStream,
-            lastId,
-          );
-          if (!response) continue;
-          for (const [, messages] of response as [
-            string,
-            [string, string[]][],
-          ][]) {
-            for (const [, flds] of messages) {
-              const obj: Record<string, string> = {};
-              for (let i = 0; i < flds.length; i += 2)
-                obj[flds[i]] = flds[i + 1];
-              if (obj.result) {
-                return JSON.parse(obj.result) as {
-                  ok: boolean;
-                  status?: string;
-                  error?: string;
-                };
-              }
-            }
-          }
-        }
-        return {
-          ok: false,
-          error: 'Cancel timed out — orchestrator did not respond',
-        };
       });
   }
 
@@ -1425,51 +1353,6 @@ export class HttpChannel implements Channel {
                   this.addCorsHeaders({ 'Content-Type': 'text/plain' }),
                 );
                 res.end('Missing text');
-                return;
-              }
-              // Out-of-band /cancel: fire immediately, bypassing the per-group
-              // message queue (which blocks on a running execute_agent tool call).
-              if (/^\/cancel(\s|$)/.test(text.trim())) {
-                const jid = `http:${username}`;
-                // Trigger auto-registration before group resolution (mirrors
-                // the multipart path and handleInbound behaviour).
-                this.opts.onChatMetadata(
-                  jid,
-                  new Date().toISOString(),
-                  username,
-                  'http',
-                  false,
-                );
-                const groupFolder =
-                  this.opts.registeredGroups()[jid]?.folder ?? jid;
-                try {
-                  const result = await this.cancelGroupJobFn(groupFolder, jid);
-                  if (result.ok && result.status === 'cancelled') {
-                    // Orchestrator publishes the "Cancelled" notice itself —
-                    // do NOT double-send here.
-                  } else if (result.ok && result.status === 'no_active_job') {
-                    await this.sendMessage(jid, 'No active job');
-                  } else {
-                    await this.sendMessage(
-                      jid,
-                      `Cancel failed: ${result.error ?? 'unknown error'}`,
-                    );
-                  }
-                } catch (cancelErr) {
-                  logger.error(
-                    { err: cancelErr },
-                    'cancelGroupJobFn threw unexpectedly',
-                  );
-                  await this.sendMessage(
-                    jid,
-                    `Cancel failed: ${cancelErr instanceof Error ? cancelErr.message : 'unknown error'}`,
-                  );
-                }
-                res.writeHead(
-                  200,
-                  this.addCorsHeaders({ 'Content-Type': 'application/json' }),
-                );
-                res.end(JSON.stringify({ id: null }));
                 return;
               }
               // Return the message ID so clients can correlate tool-job

@@ -3219,7 +3219,9 @@ describe('handleScheduleCommand — history (Story 60)', () => {
 import {
   isCancelCommand,
   handleCancelCommand,
+  _handleInboundCancel,
   type CancelCommandDeps,
+  type CancelResult,
 } from './channel-runner.js';
 
 describe('/cancel — isCancelCommand parser', () => {
@@ -3261,102 +3263,195 @@ describe('/cancel — handleCancelCommand delegates to cancelFn', () => {
   });
 });
 
-describe('/cancel — processGroupMessages intercept', () => {
-  const CANCEL_JID = 'cancel-test@g.us';
-  const CANCEL_FOLDER = 'tg_cancel-test';
-  const sendMessageSpy = vi.fn().mockResolvedValue(undefined);
-  let cancelFakeRunner: {
-    runAgent: ReturnType<typeof vi.fn>;
-    writeTasksSnapshot: ReturnType<typeof vi.fn>;
-    writeGroupsSnapshot: ReturnType<typeof vi.fn>;
-  };
+describe('/cancel — _handleInboundCancel (shared onMessage intercept)', () => {
+  const CHAT_JID = 'cancel-test@g.us';
+  const GROUP_FOLDER = 'tg_cancel-test';
 
-  beforeEach(() => {
-    vi.clearAllMocks();
-    _resetStateForTesting();
-    sendMessageSpy.mockClear();
-
-    cancelFakeRunner = {
-      runAgent: vi.fn().mockResolvedValue({ status: 'success', result: null }),
-      writeTasksSnapshot: vi.fn(),
-      writeGroupsSnapshot: vi.fn(),
+  function makeMsg(
+    content = '/cancel',
+  ): Parameters<typeof _handleInboundCancel>[1] {
+    return {
+      id: 'msg-1',
+      chat_jid: CHAT_JID,
+      sender: 'user123',
+      sender_name: 'Alice',
+      content,
+      timestamp: new Date(Date.now() - 1000).toISOString(),
+      is_from_me: false,
+      is_bot_message: false,
     };
-    mockGetDirectLLMRunner.mockReturnValue(cancelFakeRunner);
+  }
+
+  it('calls cancelFn with groupFolder and chatJid', async () => {
+    const cancelFn = vi
+      .fn<(gf: string, jid: string) => Promise<CancelResult>>()
+      .mockResolvedValue({
+        status: 'cancelled',
+        message: 'Cancelled',
+      });
+    const sendReply = vi
+      .fn<(jid: string, text: string) => Promise<void>>()
+      .mockResolvedValue(undefined);
+    const updateTimestamp = vi.fn<(jid: string, ts: string) => void>();
+    const msg = makeMsg();
+
+    await _handleInboundCancel(CHAT_JID, msg, {
+      groupFolder: GROUP_FOLDER,
+      cancelFn,
+      sendReply,
+      updateTimestamp,
+    });
+
+    expect(cancelFn).toHaveBeenCalledOnce();
+    expect(cancelFn).toHaveBeenCalledWith(GROUP_FOLDER, CHAT_JID);
   });
 
-  afterEach(() => {
-    _testResetState();
-    vi.restoreAllMocks();
+  it('does NOT call sendReply when status=cancelled (dedup — orchestrator sends notice)', async () => {
+    const cancelFn = vi
+      .fn<(gf: string, jid: string) => Promise<CancelResult>>()
+      .mockResolvedValue({
+        status: 'cancelled',
+        message: 'Cancelled',
+      });
+    const sendReply = vi
+      .fn<(jid: string, text: string) => Promise<void>>()
+      .mockResolvedValue(undefined);
+    const updateTimestamp = vi.fn<(jid: string, ts: string) => void>();
+
+    await _handleInboundCancel(CHAT_JID, makeMsg(), {
+      groupFolder: GROUP_FOLDER,
+      cancelFn,
+      sendReply,
+      updateTimestamp,
+    });
+
+    expect(sendReply).not.toHaveBeenCalled();
   });
 
-  it('intercepts /cancel and sends the cancel reply without invoking the LLM runner', async () => {
-    const { _initTestDatabase } = await import('./db.js');
-    await _initTestDatabase();
+  it('sends "No active job" when status=no_active_job', async () => {
+    const cancelFn = vi
+      .fn<(gf: string, jid: string) => Promise<CancelResult>>()
+      .mockResolvedValue({
+        status: 'no_active_job',
+        message: 'No active job',
+      });
+    const sendReply = vi
+      .fn<(jid: string, text: string) => Promise<void>>()
+      .mockResolvedValue(undefined);
+    const updateTimestamp = vi.fn<(jid: string, ts: string) => void>();
 
-    // Return a /cancel message from getMessagesSince
-    const msgTimestamp = new Date(Date.now() - 1000).toISOString();
-    mockGetMessagesSince.mockReturnValueOnce([
-      {
-        id: 'cancel-msg-1',
-        chat_jid: CANCEL_JID,
-        sender: 'user123',
-        sender_name: 'Alice',
-        content: '/cancel',
-        timestamp: msgTimestamp,
-        is_from_me: false,
-      },
-    ]);
+    await _handleInboundCancel(CHAT_JID, makeMsg(), {
+      groupFolder: GROUP_FOLDER,
+      cancelFn,
+      sendReply,
+      updateTimestamp,
+    });
 
-    const fakeChannel = {
-      ownsJid: (jid: string) => jid === CANCEL_JID,
-      sendMessage: sendMessageSpy,
-      setTyping: vi.fn().mockResolvedValue(undefined),
-    };
-    mockFindChannel.mockReturnValueOnce(fakeChannel);
+    expect(sendReply).toHaveBeenCalledOnce();
+    expect(sendReply).toHaveBeenCalledWith(CHAT_JID, 'No active job');
+  });
 
-    // Mock Redis xadd + xread so buildCancelFn() gets a "no_active_job" response
-    const mockRedis = vi.mocked(
-      (await import('./k8s/redis-client.js')).getRedisClient(),
+  it('sends error message when status=error', async () => {
+    const cancelFn = vi
+      .fn<(gf: string, jid: string) => Promise<CancelResult>>()
+      .mockResolvedValue({
+        status: 'error',
+        message: 'Cancel failed: boom',
+      });
+    const sendReply = vi
+      .fn<(jid: string, text: string) => Promise<void>>()
+      .mockResolvedValue(undefined);
+    const updateTimestamp = vi.fn<(jid: string, ts: string) => void>();
+
+    await _handleInboundCancel(CHAT_JID, makeMsg(), {
+      groupFolder: GROUP_FOLDER,
+      cancelFn,
+      sendReply,
+      updateTimestamp,
+    });
+
+    expect(sendReply).toHaveBeenCalledOnce();
+    expect(sendReply).toHaveBeenCalledWith(CHAT_JID, 'Cancel failed: boom');
+  });
+
+  it('sends timeout message when status=timeout', async () => {
+    const cancelFn = vi
+      .fn<(gf: string, jid: string) => Promise<CancelResult>>()
+      .mockResolvedValue({
+        status: 'timeout',
+        message: 'Cancel timed out — orchestrator did not respond',
+      });
+    const sendReply = vi
+      .fn<(jid: string, text: string) => Promise<void>>()
+      .mockResolvedValue(undefined);
+    const updateTimestamp = vi.fn<(jid: string, ts: string) => void>();
+
+    await _handleInboundCancel(CHAT_JID, makeMsg(), {
+      groupFolder: GROUP_FOLDER,
+      cancelFn,
+      sendReply,
+      updateTimestamp,
+    });
+
+    expect(sendReply).toHaveBeenCalledOnce();
+    expect(sendReply).toHaveBeenCalledWith(
+      CHAT_JID,
+      'Cancel timed out — orchestrator did not respond',
     );
-    // xadd returns a stream ID; xread returns the result immediately
-    (mockRedis as any).xadd = vi.fn().mockResolvedValue('1-0');
-    (mockRedis as any).xread = vi
-      .fn()
-      .mockResolvedValue([
-        [
-          'kubeclaw:cancel-result:test',
-          [
-            [
-              '1-0',
-              ['result', JSON.stringify({ ok: true, status: 'no_active_job' })],
-            ],
-          ],
-        ],
-      ]);
+  });
 
-    _testInjectState(
-      {
-        [CANCEL_JID]: {
-          jid: CANCEL_JID,
-          name: 'Cancel Test Group',
-          folder: CANCEL_FOLDER,
-          trigger: '@Claude',
-          added_at: new Date().toISOString(),
-          requiresTrigger: false,
-        },
-      },
-      [fakeChannel as any],
+  it('always calls updateTimestamp regardless of status', async () => {
+    const msg = makeMsg();
+    for (const status of [
+      'cancelled',
+      'no_active_job',
+      'error',
+      'timeout',
+    ] as const) {
+      const cancelFn = vi
+        .fn<(gf: string, jid: string) => Promise<CancelResult>>()
+        .mockResolvedValue({
+          status,
+          message: 'x',
+        });
+      const sendReply = vi
+        .fn<(jid: string, text: string) => Promise<void>>()
+        .mockResolvedValue(undefined);
+      const updateTimestamp = vi.fn<(jid: string, ts: string) => void>();
+
+      await _handleInboundCancel(CHAT_JID, msg, {
+        groupFolder: GROUP_FOLDER,
+        cancelFn,
+        sendReply,
+        updateTimestamp,
+      });
+
+      expect(updateTimestamp).toHaveBeenCalledOnce();
+      expect(updateTimestamp).toHaveBeenCalledWith(CHAT_JID, msg.timestamp);
+    }
+  });
+
+  it('calls sendReply with error text when cancelFn throws', async () => {
+    const cancelFn = vi
+      .fn<(gf: string, jid: string) => Promise<CancelResult>>()
+      .mockRejectedValue(new Error('redis connection refused'));
+    const sendReply = vi
+      .fn<(jid: string, text: string) => Promise<void>>()
+      .mockResolvedValue(undefined);
+    const updateTimestamp = vi.fn<(jid: string, ts: string) => void>();
+
+    await _handleInboundCancel(CHAT_JID, makeMsg(), {
+      groupFolder: GROUP_FOLDER,
+      cancelFn,
+      sendReply,
+      updateTimestamp,
+    });
+
+    expect(sendReply).toHaveBeenCalledOnce();
+    expect(sendReply).toHaveBeenCalledWith(
+      CHAT_JID,
+      'Cancel failed: redis connection refused',
     );
-
-    const result = await processGroupMessages(CANCEL_JID);
-
-    expect(result).toBe(true);
-    // sendMessage was called with the cancel reply
-    expect(sendMessageSpy).toHaveBeenCalledOnce();
-    const sentText: string = sendMessageSpy.mock.calls[0][1];
-    expect(sentText).toMatch(/no active job/i);
-    // LLM runner was NOT invoked
-    expect(cancelFakeRunner.runAgent).not.toHaveBeenCalled();
   });
 });
 
