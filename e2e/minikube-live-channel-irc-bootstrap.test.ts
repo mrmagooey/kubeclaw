@@ -442,7 +442,13 @@ describe('Minikube-live: bootstrap IRC channel end-to-end (channel-runner host p
         `job/kubeclaw-bootstrap-${INSTANCE_NAME}`,
         '--tail=300',
       ]);
-      if (logs.ok && /server|hostname|IRC/i.test(logs.stdout)) {
+      // Match the DISTINCTIVE question phrasing ("hostname"), not bare "IRC"
+      // or "server" — the bootstrap pod logs the word "IRC" constantly
+      // (installing irc-upd, the skill title), which would fire this detector
+      // on noise and post the answer BEFORE the agent actually asks via
+      // ask_admin, desyncing the whole dialogue. "hostname" only appears when
+      // the agent issues the first question.
+      if (logs.ok && /hostname/i.test(logs.stdout)) {
         askAppeared = true;
         break;
       }
@@ -488,7 +494,7 @@ describe('Minikube-live: bootstrap IRC channel end-to-end (channel-runner host p
         `job/kubeclaw-bootstrap-${INSTANCE_NAME}`,
         '--tail=300',
       ]);
-      if (logs.ok && /nick/i.test(logs.stdout)) break;
+      if (logs.ok && /nickname/i.test(logs.stdout)) break;
       await sleep(3000);
     }
     // Answer Q3: bot nickname.
@@ -507,7 +513,7 @@ describe('Minikube-live: bootstrap IRC channel end-to-end (channel-runner host p
         `job/kubeclaw-bootstrap-${INSTANCE_NAME}`,
         '--tail=300',
       ]);
-      if (logs.ok && /channel/i.test(logs.stdout)) break;
+      if (logs.ok && /channels to join/i.test(logs.stdout)) break;
       await sleep(3000);
     }
     // Answer Q4: channels to join.
