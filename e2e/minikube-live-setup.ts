@@ -675,6 +675,23 @@ async function bootstrapHttpChannel(): Promise<void> {
 
   console.log(`🤖 Bootstrapping http channel (instance=${HTTP_BOOTSTRAP_INSTANCE})...`);
 
+  // Pre-clean any stale bootstrap leftovers from a reused (KUBECLAW_LIVE_KEEP=1)
+  // namespace — a surviving bootstrap Job or steady-state resources would make
+  // the orchestrator reject the new bootstrap or the dialogue race against old
+  // logs. The orchestrator restart earlier in setup already cleared its
+  // in-memory activeBootstraps; this clears the cluster-side objects.
+  for (const [kind, name] of [
+    ['job', `kubeclaw-bootstrap-${HTTP_BOOTSTRAP_INSTANCE}`],
+    ['deployment', `kubeclaw-channel-${HTTP_BOOTSTRAP_INSTANCE}`],
+    ['service', `kubeclaw-channel-${HTTP_BOOTSTRAP_INSTANCE}`],
+    ['networkpolicy', `kubeclaw-channel-${HTTP_BOOTSTRAP_INSTANCE}-ingress`],
+    ['secret', `kubeclaw-channel-${HTTP_BOOTSTRAP_INSTANCE}-credentials`],
+  ] as const) {
+    run('kubectl', ['delete', kind, name, '-n', NAMESPACE, '--ignore-not-found'], {
+      allowFail: true,
+    });
+  }
+
   const prompt =
     `Please bootstrap a new channel using the bootstrap-http skill. ` +
     `The channel type is http and the instance name is ${HTTP_BOOTSTRAP_INSTANCE}.`;
@@ -731,7 +748,7 @@ async function bootstrapHttpChannel(): Promise<void> {
 
   // Wait for the bootstrap Job to Complete.
   let complete = false;
-  const completeDeadline = Date.now() + 300_000; // 5 min budget for npm ci + LLM turn
+  const completeDeadline = Date.now() + 360_000; // 6 min budget for npm ci + LLM turn (matches oauth)
   while (Date.now() < completeDeadline) {
     const r = run(
       'kubectl',
@@ -749,11 +766,11 @@ async function bootstrapHttpChannel(): Promise<void> {
     await sleep(3000);
   }
   if (!complete) {
-    throw new Error(`bootstrap Job kubeclaw-bootstrap-${HTTP_BOOTSTRAP_INSTANCE} did not Complete within 300s`);
+    throw new Error(`bootstrap Job kubeclaw-bootstrap-${HTTP_BOOTSTRAP_INSTANCE} did not Complete within 360s`);
   }
 
   console.log('⏳ Waiting for bootstrapped http channel pod Ready...');
-  await waitForPod(`app=kubeclaw-channel-${HTTP_BOOTSTRAP_INSTANCE}`, 300_000);
+  await waitForPod(`app=kubeclaw-channel-${HTTP_BOOTSTRAP_INSTANCE}`, 360_000);
   console.log(`✅ http channel bootstrapped and pod Ready (svc/kubeclaw-channel-${HTTP_BOOTSTRAP_INSTANCE})\n`);
 }
 
