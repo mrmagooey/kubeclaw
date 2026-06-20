@@ -4987,7 +4987,10 @@ import { join } from 'node:path';
 it('a runtime adapter self-registers into the resident factory registry', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'cr-'));
   const entry = join(dir, 'entry.mjs');
-  writeFileSync(entry, `export default (sdk) => sdk.registerChannel('runtime-test', () => null);`);
+  writeFileSync(
+    entry,
+    `export default (sdk) => sdk.registerChannel('runtime-test', () => null);`,
+  );
   expect(getChannelFactory('runtime-test')).toBeUndefined();
   await loadRuntimeChannelAdapter(buildChannelSdk(), entry);
   expect(getChannelFactory('runtime-test')).toBeTypeOf('function');

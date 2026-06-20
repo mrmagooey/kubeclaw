@@ -373,7 +373,10 @@ export async function processCommitChannelConfig(
             error,
           })
           .catch((e) =>
-            logger.warn({ e }, 'Failed to publish CHANNEL_SOURCE_PUSH_FAILED reply'),
+            logger.warn(
+              { e },
+              'Failed to publish CHANNEL_SOURCE_PUSH_FAILED reply',
+            ),
           );
         return { ok: false, code: 'CHANNEL_SOURCE_PUSH_FAILED', error };
       }

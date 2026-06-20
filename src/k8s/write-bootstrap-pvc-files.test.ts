@@ -28,7 +28,12 @@ function fakeExec(captures: Array<{ cmd: string[]; stdin: string }>) {
         }
         captures.push({ cmd, stdin: stdinData });
         statusCb({ status: 'Success' });
-        const ws: any = { on: (ev: string, cb: () => void) => { if (ev === 'close') setImmediate(cb); return ws; } };
+        const ws: any = {
+          on: (ev: string, cb: () => void) => {
+            if (ev === 'close') setImmediate(cb);
+            return ws;
+          },
+        };
         return ws;
       },
     ),
@@ -58,7 +63,11 @@ describe('assertSafeRelPath', () => {
 describe('writeBootstrapPvcFiles', () => {
   it('streams each file to /runtime via exec stdin', async () => {
     const captures: Array<{ cmd: string[]; stdin: string }> = [];
-    const deps = { coreApi: fakeCore('bootstrap-pod-xyz') as any, exec: fakeExec(captures) as any, namespace: 'kubeclaw' };
+    const deps = {
+      coreApi: fakeCore('bootstrap-pod-xyz') as any,
+      exec: fakeExec(captures) as any,
+      namespace: 'kubeclaw',
+    };
     await writeBootstrapPvcFiles(deps, 'signal', [
       { path: 'channel-entry.js', content: 'export const x = 1;\n' },
       { path: 'lib/util.js', content: 'export const y = 2;\n' },
@@ -71,7 +80,13 @@ describe('writeBootstrapPvcFiles', () => {
   });
 
   it('throws when no running bootstrap pod exists', async () => {
-    const deps = { coreApi: fakeCore(undefined) as any, exec: fakeExec([]) as any, namespace: 'kubeclaw' };
-    await expect(writeBootstrapPvcFiles(deps, 'signal', [])).rejects.toThrow(/No running bootstrap pod/);
+    const deps = {
+      coreApi: fakeCore(undefined) as any,
+      exec: fakeExec([]) as any,
+      namespace: 'kubeclaw',
+    };
+    await expect(writeBootstrapPvcFiles(deps, 'signal', [])).rejects.toThrow(
+      /No running bootstrap pod/,
+    );
   });
 });

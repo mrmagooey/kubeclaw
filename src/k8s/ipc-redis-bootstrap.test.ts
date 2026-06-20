@@ -796,7 +796,10 @@ describe('processCommitChannelConfig — channel source push', () => {
       'kubeclaw-agent:latest',
     );
     expect(deps.createDeployment).not.toHaveBeenCalled();
-    expect(res).toMatchObject({ ok: false, code: 'CHANNEL_SOURCE_PUSH_FAILED' });
+    expect(res).toMatchObject({
+      ok: false,
+      code: 'CHANNEL_SOURCE_PUSH_FAILED',
+    });
   });
 });
 

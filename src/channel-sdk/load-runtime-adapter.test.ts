@@ -8,7 +8,12 @@ import type { ChannelSdk } from './index.js';
 function fakeSdk(): ChannelSdk {
   return {
     registerChannel: vi.fn(),
-    logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } as any,
+    logger: {
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      debug: vi.fn(),
+    } as any,
     readEnvFile: vi.fn(() => ({})),
     assistantName: 'Andy',
   };
@@ -16,26 +21,39 @@ function fakeSdk(): ChannelSdk {
 
 describe('loadRuntimeChannelAdapter', () => {
   let dir: string;
-  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'rta-')); });
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'rta-'));
+  });
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
   it('returns false when the entry file is absent', async () => {
-    const loaded = await loadRuntimeChannelAdapter(fakeSdk(), join(dir, 'nope.js'));
+    const loaded = await loadRuntimeChannelAdapter(
+      fakeSdk(),
+      join(dir, 'nope.js'),
+    );
     expect(loaded).toBe(false);
   });
 
   it('imports the adapter and invokes its default register(sdk)', async () => {
     const entry = join(dir, 'channel-entry.mjs');
-    writeFileSync(entry, `export default function register(sdk){ sdk.registerChannel('fake', () => null); }`);
+    writeFileSync(
+      entry,
+      `export default function register(sdk){ sdk.registerChannel('fake', () => null); }`,
+    );
     const sdk = fakeSdk();
     const loaded = await loadRuntimeChannelAdapter(sdk, entry);
     expect(loaded).toBe(true);
-    expect(sdk.registerChannel).toHaveBeenCalledWith('fake', expect.any(Function));
+    expect(sdk.registerChannel).toHaveBeenCalledWith(
+      'fake',
+      expect.any(Function),
+    );
   });
 
   it('throws when the default export is not a function', async () => {
     const entry = join(dir, 'bad.mjs');
     writeFileSync(entry, `export default 42;`);
-    await expect(loadRuntimeChannelAdapter(fakeSdk(), entry)).rejects.toThrow(/default export.*function/i);
+    await expect(loadRuntimeChannelAdapter(fakeSdk(), entry)).rejects.toThrow(
+      /default export.*function/i,
+    );
   });
 });

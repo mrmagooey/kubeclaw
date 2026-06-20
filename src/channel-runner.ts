@@ -3570,7 +3570,8 @@ async function main(): Promise<void> {
   // single-image path). It self-registers via the resident registerChannel,
   // so the getChannelFactory lookup below resolves it exactly like a
   // compiled-in channel. Absent file → no-op (compiled-in channels only).
-  const loadedRuntimeAdapter = await loadRuntimeChannelAdapter(buildChannelSdk());
+  const loadedRuntimeAdapter =
+    await loadRuntimeChannelAdapter(buildChannelSdk());
   if (loadedRuntimeAdapter) {
     logger.info(
       { type: KUBECLAW_CHANNEL_TYPE },

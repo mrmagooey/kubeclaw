@@ -7,10 +7,16 @@ import { decodeKey, loadChannelSource } from './loader.js';
 
 describe('decodeKey', () => {
   it('splits type and flat file', () => {
-    expect(decodeKey('signal__channel-entry.js')).toEqual({ channelType: 'signal', relPath: 'channel-entry.js' });
+    expect(decodeKey('signal__channel-entry.js')).toEqual({
+      channelType: 'signal',
+      relPath: 'channel-entry.js',
+    });
   });
   it('decodes nested paths', () => {
-    expect(decodeKey('signal__lib__util.js')).toEqual({ channelType: 'signal', relPath: 'lib/util.js' });
+    expect(decodeKey('signal__lib__util.js')).toEqual({
+      channelType: 'signal',
+      relPath: 'lib/util.js',
+    });
   });
   it('returns null without a separator', () => {
     expect(decodeKey('placeholder')).toBeNull();
