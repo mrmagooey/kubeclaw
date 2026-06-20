@@ -54,6 +54,8 @@ function makeDeps(
     deleteJob: vi.fn().mockResolvedValue(undefined),
     deletePvc: vi.fn().mockResolvedValue(undefined),
     recordMismatch: vi.fn(),
+    // Task 3: default stub — succeeds silently so existing tests are unaffected
+    writeChannelSource: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   };
 }
@@ -751,6 +753,50 @@ describe('resolveSteadyStateReplicas — Story 182', () => {
     process.env.BOOTSTRAP_RUNTIME_PVC_ACCESS_MODES = 'ReadWriteMany';
     process.env.BOOTSTRAP_STEADY_STATE_REPLICAS = 'not-a-number';
     expect(resolveSteadyStateReplicas()).toBe(1);
+  });
+});
+
+// ─── Channel source push (Task 3) ────────────────────────────────────────────
+
+describe('processCommitChannelConfig — channel source push', () => {
+  it('pushes channel source before creating the steady-state Deployment', async () => {
+    const calls: string[] = [];
+    const deps = makeDeps({
+      writeChannelSource: vi.fn(async () => {
+        calls.push('push');
+      }),
+      createDeployment: vi.fn(async () => {
+        calls.push('deploy');
+      }),
+    });
+    await processCommitChannelConfig(
+      validPayload,
+      deps,
+      'kubeclaw-test',
+      'kubeclaw-agent:latest',
+    );
+    expect(deps.writeChannelSource).toHaveBeenCalledWith(
+      validPayload.instance_name,
+      validPayload.channel_type,
+    );
+    expect(calls).toEqual(['push', 'deploy']);
+  });
+
+  it('aborts (no Deployment) when the source push fails', async () => {
+    const deps = makeDeps({
+      writeChannelSource: vi.fn(async () => {
+        throw new Error('exec boom');
+      }),
+      createDeployment: vi.fn(async () => {}),
+    });
+    const res = await processCommitChannelConfig(
+      validPayload,
+      deps,
+      'kubeclaw-test',
+      'kubeclaw-agent:latest',
+    );
+    expect(deps.createDeployment).not.toHaveBeenCalled();
+    expect(res).toMatchObject({ ok: false, code: 'CHANNEL_SOURCE_PUSH_FAILED' });
   });
 });
 

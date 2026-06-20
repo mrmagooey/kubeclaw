@@ -62,6 +62,8 @@ import {
   Exec,
 } from '@kubernetes/client-node';
 import { readBootstrapPvcFiles } from './k8s/read-bootstrap-pvc-files.js';
+import { writeBootstrapPvcFiles } from './k8s/write-bootstrap-pvc-files.js';
+import { loadChannelSource } from './channel-src/loader.js';
 import {
   activeBootstraps,
   startBootstrapHistoryGcInterval,
@@ -475,6 +477,14 @@ async function main(): Promise<void> {
         readBootstrapPvcFiles(
           { coreApi, exec: new Exec(kc), namespace: KUBECLAW_NAMESPACE },
           instanceName,
+        ),
+      // Task 3: push channel source files onto the bootstrap pod's /runtime
+      // (RW mount) before the steady-state Deployment is created.
+      writeChannelSource: async (instanceName: string, channelType: string) =>
+        writeBootstrapPvcFiles(
+          { coreApi, exec: new Exec(kc), namespace: KUBECLAW_NAMESPACE },
+          instanceName,
+          loadChannelSource(channelType),
         ),
       deleteJob: async (name: string) => {
         try {

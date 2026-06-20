@@ -130,6 +130,12 @@ export interface CommitChannelConfigDeps {
    * grace period. Called synchronously — implementation uses setTimeout.
    */
   scheduleOldPvcDeletion?(oldPvcName: string): void;
+  /**
+   * Push the registered channel source files onto the bootstrap pod's /runtime
+   * while it is still alive (RW mount). The steady-state pod mounts the same
+   * PVC read-only and imports /runtime/channel-entry.js.
+   */
+  writeChannelSource(instanceName: string, channelType: string): Promise<void>;
 }
 
 // ─── Handler ──────────────────────────────────────────────────────────────────
@@ -151,7 +157,7 @@ export async function processCommitChannelConfig(
   deps: CommitChannelConfigDeps,
   namespace: string,
   channelBaseImage: string,
-): Promise<void> {
+): Promise<void | { ok: false; code: string; error?: string }> {
   const {
     bootstrapJobId,
     channel_type,
@@ -349,7 +355,24 @@ export async function processCommitChannelConfig(
         'Channel credentials Secret created',
       );
 
-      // 2. Build steady-state Deployment spec
+      // 2. Deterministically deliver the channel's source onto /runtime while the
+      // bootstrap pod is still alive (RW mount). The steady-state pod mounts the
+      // same PVC read-only and imports /runtime/channel-entry.js.
+      try {
+        await deps.writeChannelSource(instance_name, channel_type);
+      } catch (e) {
+        const error = e instanceof Error ? e.message : String(e);
+        logger.error(
+          { instance_name, channel_type, error },
+          'commit_channel_config: channel source push failed',
+        );
+        await deps
+          .publishReply(replyChannel, { ok: false, error })
+          .catch(() => {});
+        return { ok: false, code: 'CHANNEL_SOURCE_PUSH_FAILED', error };
+      }
+
+      // 3. Build steady-state Deployment spec
       const deployment: V1Deployment = {
         apiVersion: 'apps/v1',
         kind: 'Deployment',
@@ -417,27 +440,27 @@ export async function processCommitChannelConfig(
         },
       };
 
-      // 3. Create steady-state Deployment
+      // 4. Create steady-state Deployment
       await deps.createDeployment(deployment);
       logger.info(
         { deploymentName, channelBaseImage, instance_name },
         'Steady-state Deployment created',
       );
 
-      // 4. Release instance name from active bootstraps
+      // 5. Release instance name from active bootstraps
       deps.releaseBootstrap(instance_name);
 
-      // 4.5. Story 180: record terminal outcome in bootstrap_history
+      // 5.5. Story 180: record terminal outcome in bootstrap_history
       deps.recordTerminal?.({
         instanceName: instance_name,
         bootstrapJobId,
         outcome: 'succeeded',
       });
 
-      // 5. Reply success to bootstrap pod
+      // 6. Reply success to bootstrap pod
       await deps.publishReply(replyChannel, { ok: true });
 
-      // 6. Notify admin via SSE
+      // 7. Notify admin via SSE
       await deps.publishSse(
         sseTopic,
         `Channel ${channel_type}/${instance_name} ready. Steady-state Deployment "${deploymentName}" created.`,
