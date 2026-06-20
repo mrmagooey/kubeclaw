@@ -15,8 +15,8 @@
  *   USER  = alice
  *   PASS  = livepass
  *
- * Test driver port-forwards svc/kubeclaw-channel-http →
- * localhost:KUBECLAW_LIVE_HTTP_LOCAL_PORT.
+ * Test driver port-forwards svc/kubeclaw-channel-e2e-http →
+ * localhost:KUBECLAW_LIVE_HTTP_LOCAL_PORT (bootstrapped in global setup).
  */
 import { spawn, spawnSync, type ChildProcess } from 'child_process';
 import { readdirSync, statSync } from 'fs';
@@ -469,21 +469,6 @@ async function helmInstall(): Promise<void> {
     '--overwrite',
   ]);
 
-  // Clean up any prior channel Secret left from a failed run — the chart
-  // recreates it from values below.
-  run(
-    'kubectl',
-    [
-      'delete',
-      'secret',
-      'kubeclaw-channel-http',
-      '-n',
-      NAMESPACE,
-      '--ignore-not-found',
-    ],
-    { allowFail: true },
-  );
-
   console.log(
     `📦 helm install ${RELEASE} → ${NAMESPACE} (LLM=${LIVE_BASE_URL}, model=${LIVE_MODEL})...`,
   );
@@ -508,11 +493,6 @@ async function helmInstall(): Promise<void> {
     `secrets.openaiBaseUrl=${LIVE_BASE_URL}`,
     '--set-string',
     `secrets.directLlmModel=${LIVE_MODEL}`,
-    // Chart auto-creates kubeclaw-channel-http with these users (comma-separated user:pass pairs).
-    // Use --set-string to prevent helm from treating the value as a YAML list.
-    // Commas in --set-string values must be escaped as \, to prevent list-splitting.
-    '--set-string',
-    `secrets.httpChannelUsers=${KUBECLAW_LIVE_USER_A}:${KUBECLAW_LIVE_PASS_A}\\,${KUBECLAW_LIVE_USER_B}:${KUBECLAW_LIVE_PASS_B}`,
     '--set',
     `credentialInjection.mode=off`,
     // 8080 = local LLM endpoint, 6333 = Qdrant (RAG), 6667 = test IRC daemon,
@@ -523,22 +503,6 @@ async function helmInstall(): Promise<void> {
     // file (via Redis IPC), not at helm time — this avoids a startup-time race
     // where the orchestrator publishes capabilities_update before the channel
     // pod has subscribed to its control channel.
-    '--set',
-    `channels.http.enabled=true`,
-    '--set',
-    `channels.http.type=http`,
-    '--set',
-    `channels.http.httpPort=4080`,
-    '--set',
-    `channels.http.envVars[0].name=HTTP_CHANNEL_USERS`,
-    '--set',
-    `channels.http.envVars[0].key=users`,
-    '--set',
-    `channels.http.envVars[1].name=HTTP_CHANNEL_PORT`,
-    '--set',
-    `channels.http.envVars[1].key=port`,
-    '--set',
-    `channels.http.envVars[1].optional=true`,
     // Use the chart's `capabilities:` helm-time templates to deploy our
     // test embedding server as a Deployment+Service at
     // kubeclaw-capability-test-embed:8080 — channel pods reach it by name.
@@ -575,12 +539,13 @@ async function helmInstall(): Promise<void> {
     // Used by e2e/minikube-live-researcher.test.ts.
     '--set-json',
     'specialists=[{"name":"Researcher","prompt":"You are a web-research specialist. When given a topic or question:\\n1. Search for relevant, current information using available search tools.\\n2. Fetch and read promising sources to gather details.\\n3. Synthesise findings into a concise, structured summary with:\\n   - A one-paragraph executive summary.\\n   - Key facts as a bulleted list.\\n   - Source URLs cited inline.\\nStay factual; note when information is uncertain or conflicting.\\n","triggers":["researcher"],"llmProvider":"openrouter","tools":["web_search","web_fetch"]}]',
-    // Bootstrap http-echo + nanoid-echo manifests + skills — installed at chart-time
-    // so the orchestrator's baseline reconciler picks them up at startup.
+    // Bootstrap http-echo + nanoid-echo + irc + oauth-webchat + http manifests + skills —
+    // installed at chart-time so the orchestrator's baseline reconciler picks them up at startup.
     // http-echo used by e2e/minikube-live-bootstrap-channel-http-echo.test.ts.
     // nanoid-echo used by e2e/minikube-live-channel-src-push.test.ts.
+    // http bootstrapped in global setup (bootstrapHttpChannel) for the REST e2e suite.
     '--set-json',
-    'bootstrap.channelManifests={"http-echo":{"packageJson":"{\\"name\\":\\"http-echo-runtime\\",\\"version\\":\\"1.0.0\\",\\"dependencies\\":{}}","packageLockJson":"{\\"name\\":\\"http-echo-runtime\\",\\"version\\":\\"1.0.0\\",\\"lockfileVersion\\":3,\\"requires\\":true,\\"packages\\":{\\"\\":{\\"name\\":\\"http-echo-runtime\\",\\"version\\":\\"1.0.0\\"}}}","manifestHash":"edbb5411113738f81dcb0b203fcf41fbc12197bff9a64d80bb0d7641a18a9961"},"nanoid-echo":{"packageJson":"{\\"name\\":\\"nanoid-echo-runtime\\",\\"version\\":\\"1.0.0\\",\\"dependencies\\":{\\"nanoid\\":\\"5.0.7\\"}}","packageLockJson":"{\\"name\\":\\"nanoid-echo-runtime\\",\\"version\\":\\"1.0.0\\",\\"lockfileVersion\\":3,\\"requires\\":true,\\"packages\\":{\\"\\": {\\"name\\":\\"nanoid-echo-runtime\\",\\"version\\":\\"1.0.0\\",\\"dependencies\\":{\\"nanoid\\":\\"5.0.7\\"}},\\"node_modules/nanoid\\":{\\"version\\":\\"5.0.7\\",\\"resolved\\":\\"https://registry.npmjs.org/nanoid/-/nanoid-5.0.7.tgz\\",\\"integrity\\":\\"sha512-oLxFY2gd2IqnjcYyOXD8XGCftpGtZP2AbHbOkthDkvRywH5ayNtPVy9YlOPcHckXzbLTCHpkb7FB+yuxKV13pQ==\\",\\"funding\\":[{\\"type\\":\\"github\\",\\"url\\":\\"https://github.com/sponsors/ai\\"}],\\"license\\":\\"MIT\\",\\"bin\\":{\\"nanoid\\":\\"bin/nanoid.js\\"},\\"engines\\":{\\"node\\":\\"^18 || >=20\\"}}}}","manifestHash":"eed310417fb4b8d830ab79c719aca128293e065601a0bdbf575a1ab05b2962c5"},"irc":{"packageJson":"{\\"name\\":\\"irc-runtime\\",\\"version\\":\\"1.0.0\\",\\"dependencies\\":{\\"irc-upd\\":\\"0.11.0\\"}}","packageLockJson":"{\\"name\\":\\"irc-runtime\\",\\"version\\":\\"1.0.0\\",\\"lockfileVersion\\":3,\\"requires\\":true,\\"packages\\":{\\"\\":{\\"name\\":\\"irc-runtime\\",\\"version\\":\\"1.0.0\\",\\"dependencies\\":{\\"irc-upd\\":\\"0.11.0\\"}},\\"node_modules/chardet\\":{\\"version\\":\\"1.6.0\\",\\"resolved\\":\\"https://registry.npmjs.org/chardet/-/chardet-1.6.0.tgz\\",\\"integrity\\":\\"sha512-+QOTw3otC4+FxdjK9RopGpNOglADbr4WPFi0SonkO99JbpkTPbMxmdm4NenhF5Zs+4gPXLI1+y2uazws5TMe8w==\\",\\"license\\":\\"MIT\\",\\"optional\\":true},\\"node_modules/iconv-lite\\":{\\"version\\":\\"0.6.3\\",\\"resolved\\":\\"https://registry.npmjs.org/iconv-lite/-/iconv-lite-0.6.3.tgz\\",\\"integrity\\":\\"sha512-4fCk79wshMdzMp2rH06qWrJE4iolqLhCUH+OiuIgU++RB0+94NlDL81atO7GX55uUKueo0txHNtvEyI6D7WdMw==\\",\\"license\\":\\"MIT\\",\\"optional\\":true,\\"dependencies\\":{\\"safer-buffer\\":\\">= 2.1.2 < 3.0.0\\"},\\"engines\\":{\\"node\\":\\">=0.10.0\\"}},\\"node_modules/irc-colors\\":{\\"version\\":\\"1.5.0\\",\\"resolved\\":\\"https://registry.npmjs.org/irc-colors/-/irc-colors-1.5.0.tgz\\",\\"integrity\\":\\"sha512-HtszKchBQTcqw1DC09uD7i7vvMayHGM1OCo6AHt5pkgZEyo99ClhHTMJdf+Ezc9ovuNNxcH89QfyclGthjZJOw==\\",\\"license\\":\\"MIT\\",\\"engines\\":{\\"node\\":\\">=6\\"}},\\"node_modules/irc-upd\\":{\\"version\\":\\"0.11.0\\",\\"resolved\\":\\"https://registry.npmjs.org/irc-upd/-/irc-upd-0.11.0.tgz\\",\\"integrity\\":\\"sha512-A1hV5cUkl5HZsKWRYcszD2Usfz33hB8igSSox8dEmrMyfy8/Ra6T/o4jwzs7jYMZ7ljLquSIWzcvSZHZ/bEAZA==\\",\\"license\\":\\"GPL-3.0\\",\\"dependencies\\":{\\"irc-colors\\":\\"^1.5.0\\"},\\"engines\\":{\\"node\\":\\">=0.10.0\\"},\\"optionalDependencies\\":{\\"chardet\\":\\"^1.2.1\\",\\"iconv-lite\\":\\"^0.6.2\\"}},\\"node_modules/safer-buffer\\":{\\"version\\":\\"2.1.2\\",\\"resolved\\":\\"https://registry.npmjs.org/safer-buffer/-/safer-buffer-2.1.2.tgz\\",\\"integrity\\":\\"sha512-YZo3K82SD7Riyi0E1EQPojLz7kpepnSQI9IyPbHHg1XXXevb5dJI7tpyN2ADxGcQbHG7vcyRHk0cbwqcQriUtg==\\",\\"license\\":\\"MIT\\",\\"optional\\":true}}}","manifestHash":"bb913713e2ca96ca392f3febbb9b5355fa6d0636e3d82f0c0f86d4f44406d652","hostMode":"channel-runner"},"oauth-webchat":{"packageJson":"{\\"name\\":\\"oauth-webchat-runtime\\",\\"version\\":\\"1.0.0\\",\\"dependencies\\":{\\"openid-client\\":\\"5.7.1\\"}}","packageLockJson":"{\\"name\\":\\"oauth-webchat-runtime\\",\\"version\\":\\"1.0.0\\",\\"lockfileVersion\\":3,\\"requires\\":true,\\"packages\\":{\\"\\": {\\"name\\":\\"oauth-webchat-runtime\\",\\"version\\":\\"1.0.0\\",\\"dependencies\\":{\\"openid-client\\":\\"5.7.1\\"}},\\"node_modules/jose\\":{\\"version\\":\\"4.15.9\\",\\"resolved\\":\\"https://registry.npmjs.org/jose/-/jose-4.15.9.tgz\\",\\"integrity\\":\\"sha512-1vUQX+IdDMVPj4k8kOxgUqlcK518yluMuGZwqlr44FS1ppZB/5GWh4rZG89erpOBOJjU/OBsnCVFfapsRz6nEA==\\",\\"license\\":\\"MIT\\",\\"funding\\":{\\"url\\":\\"https://github.com/sponsors/panva\\"}},\\"node_modules/lru-cache\\":{\\"version\\":\\"6.0.0\\",\\"resolved\\":\\"https://registry.npmjs.org/lru-cache/-/lru-cache-6.0.0.tgz\\",\\"integrity\\":\\"sha512-Jo6dJ04CmSjuznwJSS3pUeWmd/H0ffTlkXXgwZi+eq1UCmqQwCh+eLsYOYCwY991i2Fah4h1BEMCx4qThGbsiA==\\",\\"license\\":\\"ISC\\",\\"dependencies\\":{\\"yallist\\":\\"^4.0.0\\"},\\"engines\\":{\\"node\\":\\">=10\\"}},\\"node_modules/object-hash\\":{\\"version\\":\\"2.2.0\\",\\"resolved\\":\\"https://registry.npmjs.org/object-hash/-/object-hash-2.2.0.tgz\\",\\"integrity\\":\\"sha512-gScRMn0bS5fH+IuwyIFgnh9zBdo4DV+6GhygmWM9HyNJSgS0hScp1f5vjtm7oIIOiT9trXrShAkLFSc2IqKNgw==\\",\\"license\\":\\"MIT\\",\\"engines\\":{\\"node\\":\\">= 6\\"}},\\"node_modules/oidc-token-hash\\":{\\"version\\":\\"5.2.0\\",\\"resolved\\":\\"https://registry.npmjs.org/oidc-token-hash/-/oidc-token-hash-5.2.0.tgz\\",\\"integrity\\":\\"sha512-6gj2m8cJZ+iSW8bm0FXdGF0YhIQbKrfP4yWTNzxc31U6MOjfEmB1rHvlYvxI1B7t7BCi1F2vYTT6YhtQRG4hxw==\\",\\"license\\":\\"MIT\\",\\"engines\\":{\\"node\\":\\"^10.13.0 || >=12.0.0\\"}},\\"node_modules/openid-client\\":{\\"version\\":\\"5.7.1\\",\\"resolved\\":\\"https://registry.npmjs.org/openid-client/-/openid-client-5.7.1.tgz\\",\\"integrity\\":\\"sha512-jDBPgSVfTnkIh71Hg9pRvtJc6wTwqjRkN88+gCFtYWrlP4Yx2Dsrow8uPi3qLr/aeymPF3o2+dS+wOpglK04ew==\\",\\"license\\":\\"MIT\\",\\"dependencies\\":{\\"jose\\":\\"^4.15.9\\",\\"lru-cache\\":\\"^6.0.0\\",\\"object-hash\\":\\"^2.2.0\\",\\"oidc-token-hash\\":\\"^5.0.3\\"},\\"funding\\":{\\"url\\":\\"https://github.com/sponsors/panva\\"}},\\"node_modules/yallist\\":{\\"version\\":\\"4.0.0\\",\\"resolved\\":\\"https://registry.npmjs.org/yallist/-/yallist-4.0.0.tgz\\",\\"integrity\\":\\"sha512-3wdGidZyq5PB084XLES5TpOSRA3wjXAlIWMhum2kRcv/41Sn2emQ0dycQW4uZXLejwKvg6EsvbdlVL+FYEct7A==\\",\\"license\\":\\"ISC\\"}}}","manifestHash":"23bbf5942ef45bd32ed83d1a46c18b337dd005d402474c90046130183dd40c8b","hostMode":"channel-runner","httpPort":4080}}',
+    'bootstrap.channelManifests={"http-echo":{"packageJson":"{\\"name\\":\\"http-echo-runtime\\",\\"version\\":\\"1.0.0\\",\\"dependencies\\":{}}","packageLockJson":"{\\"name\\":\\"http-echo-runtime\\",\\"version\\":\\"1.0.0\\",\\"lockfileVersion\\":3,\\"requires\\":true,\\"packages\\":{\\"\\":{\\"name\\":\\"http-echo-runtime\\",\\"version\\":\\"1.0.0\\"}}}","manifestHash":"edbb5411113738f81dcb0b203fcf41fbc12197bff9a64d80bb0d7641a18a9961"},"nanoid-echo":{"packageJson":"{\\"name\\":\\"nanoid-echo-runtime\\",\\"version\\":\\"1.0.0\\",\\"dependencies\\":{\\"nanoid\\":\\"5.0.7\\"}}","packageLockJson":"{\\"name\\":\\"nanoid-echo-runtime\\",\\"version\\":\\"1.0.0\\",\\"lockfileVersion\\":3,\\"requires\\":true,\\"packages\\":{\\"\\": {\\"name\\":\\"nanoid-echo-runtime\\",\\"version\\":\\"1.0.0\\",\\"dependencies\\":{\\"nanoid\\":\\"5.0.7\\"}},\\"node_modules/nanoid\\":{\\"version\\":\\"5.0.7\\",\\"resolved\\":\\"https://registry.npmjs.org/nanoid/-/nanoid-5.0.7.tgz\\",\\"integrity\\":\\"sha512-oLxFY2gd2IqnjcYyOXD8XGCftpGtZP2AbHbOkthDkvRywH5ayNtPVy9YlOPcHckXzbLTCHpkb7FB+yuxKV13pQ==\\",\\"funding\\":[{\\"type\\":\\"github\\",\\"url\\":\\"https://github.com/sponsors/ai\\"}],\\"license\\":\\"MIT\\",\\"bin\\":{\\"nanoid\\":\\"bin/nanoid.js\\"},\\"engines\\":{\\"node\\":\\"^18 || >=20\\"}}}}","manifestHash":"eed310417fb4b8d830ab79c719aca128293e065601a0bdbf575a1ab05b2962c5"},"irc":{"packageJson":"{\\"name\\":\\"irc-runtime\\",\\"version\\":\\"1.0.0\\",\\"dependencies\\":{\\"irc-upd\\":\\"0.11.0\\"}}","packageLockJson":"{\\"name\\":\\"irc-runtime\\",\\"version\\":\\"1.0.0\\",\\"lockfileVersion\\":3,\\"requires\\":true,\\"packages\\":{\\"\\":{\\"name\\":\\"irc-runtime\\",\\"version\\":\\"1.0.0\\",\\"dependencies\\":{\\"irc-upd\\":\\"0.11.0\\"}},\\"node_modules/chardet\\":{\\"version\\":\\"1.6.0\\",\\"resolved\\":\\"https://registry.npmjs.org/chardet/-/chardet-1.6.0.tgz\\",\\"integrity\\":\\"sha512-+QOTw3otC4+FxdjK9RopGpNOglADbr4WPFi0SonkO99JbpkTPbMxmdm4NenhF5Zs+4gPXLI1+y2uazws5TMe8w==\\",\\"license\\":\\"MIT\\",\\"optional\\":true},\\"node_modules/iconv-lite\\":{\\"version\\":\\"0.6.3\\",\\"resolved\\":\\"https://registry.npmjs.org/iconv-lite/-/iconv-lite-0.6.3.tgz\\",\\"integrity\\":\\"sha512-4fCk79wshMdzMp2rH06qWrJE4iolqLhCUH+OiuIgU++RB0+94NlDL81atO7GX55uUKueo0txHNtvEyI6D7WdMw==\\",\\"license\\":\\"MIT\\",\\"optional\\":true,\\"dependencies\\":{\\"safer-buffer\\":\\">= 2.1.2 < 3.0.0\\"},\\"engines\\":{\\"node\\":\\">=0.10.0\\"}},\\"node_modules/irc-colors\\":{\\"version\\":\\"1.5.0\\",\\"resolved\\":\\"https://registry.npmjs.org/irc-colors/-/irc-colors-1.5.0.tgz\\",\\"integrity\\":\\"sha512-HtszKchBQTcqw1DC09uD7i7vvMayHGM1OCo6AHt5pkgZEyo99ClhHTMJdf+Ezc9ovuNNxcH89QfyclGthjZJOw==\\",\\"license\\":\\"MIT\\",\\"engines\\":{\\"node\\":\\">=6\\"}},\\"node_modules/irc-upd\\":{\\"version\\":\\"0.11.0\\",\\"resolved\\":\\"https://registry.npmjs.org/irc-upd/-/irc-upd-0.11.0.tgz\\",\\"integrity\\":\\"sha512-A1hV5cUkl5HZsKWRYcszD2Usfz33hB8igSSox8dEmrMyfy8/Ra6T/o4jwzs7jYMZ7ljLquSIWzcvSZHZ/bEAZA==\\",\\"license\\":\\"GPL-3.0\\",\\"dependencies\\":{\\"irc-colors\\":\\"^1.5.0\\"},\\"engines\\":{\\"node\\":\\">=0.10.0\\"},\\"optionalDependencies\\":{\\"chardet\\":\\"^1.2.1\\",\\"iconv-lite\\":\\"^0.6.2\\"}},\\"node_modules/safer-buffer\\":{\\"version\\":\\"2.1.2\\",\\"resolved\\":\\"https://registry.npmjs.org/safer-buffer/-/safer-buffer-2.1.2.tgz\\",\\"integrity\\":\\"sha512-YZo3K82SD7Riyi0E1EQPojLz7kpepnSQI9IyPbHHg1XXXevb5dJI7tpyN2ADxGcQbHG7vcyRHk0cbwqcQriUtg==\\",\\"license\\":\\"MIT\\",\\"optional\\":true}}}","manifestHash":"bb913713e2ca96ca392f3febbb9b5355fa6d0636e3d82f0c0f86d4f44406d652","hostMode":"channel-runner"},"oauth-webchat":{"packageJson":"{\\"name\\":\\"oauth-webchat-runtime\\",\\"version\\":\\"1.0.0\\",\\"dependencies\\":{\\"openid-client\\":\\"5.7.1\\"}}","packageLockJson":"{\\"name\\":\\"oauth-webchat-runtime\\",\\"version\\":\\"1.0.0\\",\\"lockfileVersion\\":3,\\"requires\\":true,\\"packages\\":{\\"\\": {\\"name\\":\\"oauth-webchat-runtime\\",\\"version\\":\\"1.0.0\\",\\"dependencies\\":{\\"openid-client\\":\\"5.7.1\\"}},\\"node_modules/jose\\":{\\"version\\":\\"4.15.9\\",\\"resolved\\":\\"https://registry.npmjs.org/jose/-/jose-4.15.9.tgz\\",\\"integrity\\":\\"sha512-1vUQX+IdDMVPj4k8kOxgUqlcK518yluMuGZwqlr44FS1ppZB/5GWh4rZG89erpOBOJjU/OBsnCVFfapsRz6nEA==\\",\\"license\\":\\"MIT\\",\\"funding\\":{\\"url\\":\\"https://github.com/sponsors/panva\\"}},\\"node_modules/lru-cache\\":{\\"version\\":\\"6.0.0\\",\\"resolved\\":\\"https://registry.npmjs.org/lru-cache/-/lru-cache-6.0.0.tgz\\",\\"integrity\\":\\"sha512-Jo6dJ04CmSjuznwJSS3pUeWmd/H0ffTlkXXgwZi+eq1UCmqQwCh+eLsYOYCwY991i2Fah4h1BEMCx4qThGbsiA==\\",\\"license\\":\\"ISC\\",\\"dependencies\\":{\\"yallist\\":\\"^4.0.0\\"},\\"engines\\":{\\"node\\":\\">=10\\"}},\\"node_modules/object-hash\\":{\\"version\\":\\"2.2.0\\",\\"resolved\\":\\"https://registry.npmjs.org/object-hash/-/object-hash-2.2.0.tgz\\",\\"integrity\\":\\"sha512-gScRMn0bS5fH+IuwyIFgnh9zBdo4DV+6GhygmWM9HyNJSgS0hScp1f5vjtm7oIIOiT9trXrShAkLFSc2IqKNgw==\\",\\"license\\":\\"MIT\\",\\"engines\\":{\\"node\\":\\">= 6\\"}},\\"node_modules/oidc-token-hash\\":{\\"version\\":\\"5.2.0\\",\\"resolved\\":\\"https://registry.npmjs.org/oidc-token-hash/-/oidc-token-hash-5.2.0.tgz\\",\\"integrity\\":\\"sha512-6gj2m8cJZ+iSW8bm0FXdGF0YhIQbKrfP4yWTNzxc31U6MOjfEmB1rHvlYvxI1B7t7BCi1F2vYTT6YhtQRG4hxw==\\",\\"license\\":\\"MIT\\",\\"engines\\":{\\"node\\":\\"^10.13.0 || >=12.0.0\\"}},\\"node_modules/openid-client\\":{\\"version\\":\\"5.7.1\\",\\"resolved\\":\\"https://registry.npmjs.org/openid-client/-/openid-client-5.7.1.tgz\\",\\"integrity\\":\\"sha512-jDBPgSVfTnkIh71Hg9pRvtJc6wTwqjRkN88+gCFtYWrlP4Yx2Dsrow8uPi3qLr/aeymPF3o2+dS+wOpglK04ew==\\",\\"license\\":\\"MIT\\",\\"dependencies\\":{\\"jose\\":\\"^4.15.9\\",\\"lru-cache\\":\\"^6.0.0\\",\\"object-hash\\":\\"^2.2.0\\",\\"oidc-token-hash\\":\\"^5.0.3\\"},\\"funding\\":{\\"url\\":\\"https://github.com/sponsors/panva\\"}},\\"node_modules/yallist\\":{\\"version\\":\\"4.0.0\\",\\"resolved\\":\\"https://registry.npmjs.org/yallist/-/yallist-4.0.0.tgz\\",\\"integrity\\":\\"sha512-3wdGidZyq5PB084XLES5TpOSRA3wjXAlIWMhum2kRcv/41Sn2emQ0dycQW4uZXLejwKvg6EsvbdlVL+FYEct7A==\\",\\"license\\":\\"ISC\\"}}}","manifestHash":"23bbf5942ef45bd32ed83d1a46c18b337dd005d402474c90046130183dd40c8b","hostMode":"channel-runner","httpPort":4080},"http":{"packageJson":"{\\"name\\":\\"http-runtime\\",\\"version\\":\\"1.0.0\\",\\"dependencies\\":{\\"cron-parser\\":\\"5.5.0\\"}}","packageLockJson":"{\\"name\\":\\"http-runtime\\",\\"version\\":\\"1.0.0\\",\\"lockfileVersion\\":3,\\"requires\\":true,\\"packages\\":{\\"\\":{\\"name\\":\\"http-runtime\\",\\"version\\":\\"1.0.0\\",\\"dependencies\\":{\\"cron-parser\\":\\"5.5.0\\"}},\\"node_modules/cron-parser\\":{\\"version\\":\\"5.5.0\\",\\"resolved\\":\\"https://registry.npmjs.org/cron-parser/-/cron-parser-5.5.0.tgz\\",\\"integrity\\":\\"sha512-oML4lKUXxizYswqmxuOCpgFS8BNUJpIu6k/2HVHyaL8Ynnf3wdf9tkns0yRdJLSIjkJ+b0DXHMZEHGpMwjnPww==\\",\\"license\\":\\"MIT\\",\\"dependencies\\":{\\"luxon\\":\\"^3.7.1\\"},\\"engines\\":{\\"node\\":\\">=18\\"}},\\"node_modules/luxon\\":{\\"version\\":\\"3.7.2\\",\\"resolved\\":\\"https://registry.npmjs.org/luxon/-/luxon-3.7.2.tgz\\",\\"integrity\\":\\"sha512-vtEhXh/gNjI9Yg1u4jX/0YVPMvxzHuGgCm6tC5kZyb08yjGWGnqAjGJvcXbqQR2P3MyMEFnRbpcdFS6PBcLqew==\\",\\"license\\":\\"MIT\\",\\"engines\\":{\\"node\\":\\">=12\\"}}}}","manifestHash":"0562b85165edd209b7e451a3010b7a89f1df36f432a651fafd8ae3aaabbe56fb","hostMode":"channel-runner","httpPort":4080}}',
     '--set-file',
     'bootstrap.skills.bootstrap-http-echo=helm/kubeclaw/files/bootstrap-skills/bootstrap-http-echo.md',
     '--set-file',
@@ -589,6 +554,8 @@ async function helmInstall(): Promise<void> {
     'bootstrap.skills.bootstrap-irc=helm/kubeclaw/files/bootstrap-skills/bootstrap-irc.md',
     '--set-file',
     'bootstrap.skills.bootstrap-oauth-webchat=helm/kubeclaw/files/bootstrap-skills/bootstrap-oauth-webchat.md',
+    '--set-file',
+    'bootstrap.skills.bootstrap-http=helm/kubeclaw/files/bootstrap-skills/bootstrap-http.md',
   ];
   const install = run('helm', setArgs, { timeout: 240_000, allowFail: true });
   if (!install.ok) {
@@ -599,9 +566,204 @@ async function helmInstall(): Promise<void> {
   console.log('✅ helm install complete\n');
 }
 
+// Instance name for the bootstrapped http channel. The Service will be
+// kubeclaw-channel-e2e-http (kubeclaw-channel-<instance>).
+const HTTP_BOOTSTRAP_INSTANCE = 'e2e-http';
+
+// HTTP_CHANNEL_USERS value used for the bootstrapped channel.
+// alice:livepass and bob:bobpass match the KUBECLAW_LIVE_USER_A/B constants
+// exported above — preserving these credentials exactly keeps the REST e2e
+// suite working without any changes to the test files.
+const HTTP_BOOTSTRAP_USERS = `${KUBECLAW_LIVE_USER_A}:${KUBECLAW_LIVE_PASS_A},${KUBECLAW_LIVE_USER_B}:${KUBECLAW_LIVE_PASS_B}`;
+
+/**
+ * POST a chat message to the admin shell and collect the first assistant reply
+ * via the SSE /events stream. Returns the reply text or null if none arrives
+ * within timeoutMs. Retries on 429 (previous request still in progress).
+ *
+ * Mirrors the postChatAndCollectReply helper in the oauth bootstrap test.
+ */
+async function postChatAndCollectReply(
+  adminUrl: string,
+  authHeader: string,
+  text: string,
+  timeoutMs: number,
+): Promise<string | null> {
+  const eventsController = new AbortController();
+  const eventsRes = await fetch(`${adminUrl}/events`, {
+    headers: { Authorization: authHeader, Accept: 'text/event-stream' },
+    signal: eventsController.signal,
+  });
+  if (eventsRes.status !== 200) {
+    throw new Error(`SSE /events returned ${eventsRes.status}`);
+  }
+
+  let chatRes: Response | undefined;
+  for (let attempt = 0; attempt < 10; attempt++) {
+    chatRes = await fetch(`${adminUrl}/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: authHeader },
+      body: JSON.stringify({ text }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (chatRes.status !== 429) break;
+    await sleep(2000);
+  }
+  if (!chatRes || chatRes.status !== 202) {
+    eventsController.abort();
+    throw new Error(`POST /chat returned ${chatRes?.status}`);
+  }
+
+  const reader = eventsRes.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  const deadline = Date.now() + timeoutMs;
+
+  try {
+    while (Date.now() < deadline) {
+      const readTimeout = Math.min(5000, deadline - Date.now());
+      const result = await Promise.race([
+        reader.read(),
+        sleep(readTimeout).then(() => ({ value: undefined, done: false })),
+      ]);
+      if (result.done) break;
+      if (result.value) {
+        buffer += decoder.decode(result.value, { stream: true });
+      }
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? '';
+      for (const line of lines) {
+        if (line.startsWith('data:')) {
+          try {
+            const payload = JSON.parse(line.slice(5).trim()) as {
+              type?: string;
+              text?: string;
+            };
+            if (payload.type === 'assistant' && payload.text) {
+              return payload.text;
+            }
+          } catch {
+            // not JSON
+          }
+        }
+      }
+    }
+  } finally {
+    eventsController.abort();
+  }
+
+  return null;
+}
+
+/**
+ * Bootstrap the http channel via the admin shell. This mirrors the flow used
+ * in minikube-live-channel-oauth-bootstrap.test.ts:
+ *   1. POST /chat to trigger bootstrap_channel_from_skill('bootstrap-http')
+ *   2. Wait for the bootstrap Job to appear + the skill's single combined question
+ *   3. Answer with users + port
+ *   4. Wait for the bootstrap Job to Complete
+ *   5. Wait for the steady-state Deployment + pod Ready
+ *
+ * The channel is bootstrapped as instance "e2e-http", producing the Service
+ * kubeclaw-channel-e2e-http which the http port-forward targets.
+ */
+async function bootstrapHttpChannel(): Promise<void> {
+  const adminUrl = `http://127.0.0.1:${KUBECLAW_LIVE_ADMIN_LOCAL_PORT}`;
+  const authHeader =
+    'Basic ' +
+    Buffer.from(`${KUBECLAW_LIVE_ADMIN_USERNAME}:${KUBECLAW_LIVE_ADMIN_PASS}`).toString('base64');
+
+  console.log(`🤖 Bootstrapping http channel (instance=${HTTP_BOOTSTRAP_INSTANCE})...`);
+
+  const prompt =
+    `Please bootstrap a new channel using the bootstrap-http skill. ` +
+    `The channel type is http and the instance name is ${HTTP_BOOTSTRAP_INSTANCE}.`;
+
+  // Trigger bootstrap + wait for Job to appear (race: reply vs Job appearing).
+  const RACE_TIMEOUT_MS = 90_000;
+  const chatReplyPromise = postChatAndCollectReply(adminUrl, authHeader, prompt, RACE_TIMEOUT_MS);
+
+  // Poll for the bootstrap Job to appear.
+  const jobAppearedPromise = (async () => {
+    const deadline = Date.now() + RACE_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      const r = run(
+        'kubectl',
+        ['get', 'job', `kubeclaw-bootstrap-${HTTP_BOOTSTRAP_INSTANCE}`, '-n', NAMESPACE, '-o', 'yaml'],
+        { allowFail: true },
+      );
+      if (r.ok && r.stdout) return r.stdout;
+      await sleep(2000);
+    }
+    throw new Error(`bootstrap Job kubeclaw-bootstrap-${HTTP_BOOTSTRAP_INSTANCE} did not appear within ${RACE_TIMEOUT_MS}ms`);
+  })();
+
+  // Wait for the Job (chat reply may or may not arrive first).
+  await Promise.race([
+    chatReplyPromise.then(() => undefined),
+    jobAppearedPromise.then(() => undefined),
+  ]);
+  // Ensure the job actually appeared.
+  await jobAppearedPromise;
+
+  // Wait for the bootstrap skill to ask its combined question (polls Job logs).
+  let askAppeared = false;
+  const askDeadline = Date.now() + 120_000;
+  while (Date.now() < askDeadline) {
+    const logs = run(
+      'kubectl',
+      ['logs', '-n', NAMESPACE, `job/kubeclaw-bootstrap-${HTTP_BOOTSTRAP_INSTANCE}`, '--tail=300'],
+      { allowFail: true },
+    );
+    if (logs.ok && /HTTP channel settings/i.test(logs.stdout)) {
+      askAppeared = true;
+      break;
+    }
+    await sleep(3000);
+  }
+  if (!askAppeared) {
+    throw new Error('bootstrap-http skill did not ask for HTTP channel settings within 120s');
+  }
+
+  // Answer the single combined question: users + port.
+  const answer = `users=${HTTP_BOOTSTRAP_USERS} port=4080`;
+  await postChatAndCollectReply(adminUrl, authHeader, answer, 60_000).catch(() => undefined);
+
+  // Wait for the bootstrap Job to Complete.
+  let complete = false;
+  const completeDeadline = Date.now() + 300_000; // 5 min budget for npm ci + LLM turn
+  while (Date.now() < completeDeadline) {
+    const r = run(
+      'kubectl',
+      [
+        'get', 'job', `kubeclaw-bootstrap-${HTTP_BOOTSTRAP_INSTANCE}`,
+        '-n', NAMESPACE,
+        '-o', 'jsonpath={.status.conditions[?(@.type=="Complete")].status}',
+      ],
+      { allowFail: true },
+    );
+    if (r.ok && r.stdout.trim() === 'True') {
+      complete = true;
+      break;
+    }
+    await sleep(3000);
+  }
+  if (!complete) {
+    throw new Error(`bootstrap Job kubeclaw-bootstrap-${HTTP_BOOTSTRAP_INSTANCE} did not Complete within 300s`);
+  }
+
+  console.log('⏳ Waiting for bootstrapped http channel pod Ready...');
+  await waitForPod(`app=kubeclaw-channel-${HTTP_BOOTSTRAP_INSTANCE}`, 300_000);
+  console.log(`✅ http channel bootstrapped and pod Ready (svc/kubeclaw-channel-${HTTP_BOOTSTRAP_INSTANCE})\n`);
+}
+
 async function startPortForward(): Promise<void> {
+  // The bootstrapped channel Service is named after the bootstrap instance
+  // (kubeclaw-channel-<instance>), NOT the old helm channel name. The http
+  // bootstrap in global setup uses instance "e2e-http", so the Service is
+  // kubeclaw-channel-e2e-http.
   console.log(
-    `🔌 Port-forward svc/kubeclaw-channel-http → localhost:${KUBECLAW_LIVE_HTTP_LOCAL_PORT}`,
+    `🔌 Port-forward svc/kubeclaw-channel-${HTTP_BOOTSTRAP_INSTANCE} → localhost:${KUBECLAW_LIVE_HTTP_LOCAL_PORT}`,
   );
   // Auto-restart wrapper: `kubectl port-forward` exits cleanly when the
   // underlying TCP connection is reset (e.g. by a transient channel-pod
@@ -612,7 +774,7 @@ async function startPortForward(): Promise<void> {
     'bash',
     [
       '-c',
-      `while true; do >&2 echo "[port-forward restart $(date +%T)] http"; kubectl port-forward -n ${NAMESPACE} svc/kubeclaw-channel-http ${KUBECLAW_LIVE_HTTP_LOCAL_PORT}:80 || true; sleep 0.1; done`,
+      `while true; do >&2 echo "[port-forward restart $(date +%T)] http"; kubectl port-forward -n ${NAMESPACE} svc/kubeclaw-channel-${HTTP_BOOTSTRAP_INSTANCE} ${KUBECLAW_LIVE_HTTP_LOCAL_PORT}:80 || true; sleep 0.1; done`,
     ],
     { stdio: ['ignore', 'ignore', 'inherit'], detached: true },
   );
@@ -826,7 +988,7 @@ export async function restartChannelPortForward(): Promise<void> {
   // Belt-and-braces: kill any stray kubectl holding the HTTP port.
   spawnSync('bash', [
     '-c',
-    `pkill -f 'kubectl port-forward.*${KUBECLAW_LIVE_HTTP_LOCAL_PORT}:80' || true`,
+    `pkill -f 'kubectl port-forward.*channel-${HTTP_BOOTSTRAP_INSTANCE}.*${KUBECLAW_LIVE_HTTP_LOCAL_PORT}:80' || true; pkill -f 'kubectl port-forward.*${KUBECLAW_LIVE_HTTP_LOCAL_PORT}:80' || true`,
   ]);
   // Give the OS TIME_WAIT to clear the listen socket (typically <1 s).
   await sleep(1000);
@@ -983,39 +1145,31 @@ export default async function setup() {
   await waitForPod('app=kubeclaw-orchestrator', 240_000);
   console.log('⏳ Waiting for redis pod Ready...');
   await waitForPod('app=kubeclaw-redis', 180_000);
-  console.log('⏳ Waiting for channel pod Ready...');
-  await waitForPod('app=kubeclaw-channel-http', 240_000);
   console.log('⏳ Waiting for test embedding pod Ready...');
   await waitForPod('app=kubeclaw-capability-test-embed', 240_000);
   console.log('⏳ Waiting for test ircd pod Ready...');
   await waitForPod('app=kubeclaw-capability-test-ircd', 240_000);
   console.log('⏳ Waiting for test oauth provider pod Ready...');
   await waitForPod('app=kubeclaw-capability-test-oauth', 240_000);
-
-  // The channel pod often loses its first Redis subscribe attempt — the
-  // Redis pod's readiness probe goes True before the server is actually
-  // accepting ACL'd connections, and ioredis bails after the default
-  // maxRetriesPerRequest. Force a rollout restart so the channel pod's
-  // subscribe runs against a fully-warm Redis.
-  console.log('♻️  Restarting channel pod against warm Redis...');
-  run('kubectl', [
-    'rollout',
-    'restart',
-    'deployment/kubeclaw-channel-http',
-    '-n',
-    NAMESPACE,
-  ]);
-  // Wait briefly for the old pod's termination then for the new one to be Ready.
-  await sleep(3000);
-  await waitForPod('app=kubeclaw-channel-http', 240_000);
   // The test MCP capability is installed at runtime by the test itself,
   // so we don't wait for it here.
 
-  await startPortForward();
+  // Port-forwards for redis, oauth-webchat (fire-and-forget), test-oauth, and
+  // admin must come up before we can bootstrap http (bootstrap uses admin /chat).
   await startRedisPortForward();
   await startOauthWebchatPortForward();
   await startTestOauthPortForward();
   await startAdminPortForward();
+
+  // Bootstrap the http channel via the admin shell. This runs the full dialogue
+  // flow (trigger → question → answer → Job Complete → pod Ready) so the
+  // channel is live at svc/kubeclaw-channel-e2e-http before the REST e2e suite
+  // starts. The port-forward is started after the channel is ready.
+  await bootstrapHttpChannel();
+
+  // Start the http port-forward AFTER the channel pod is Ready — the Service
+  // exists now, so the forward will connect on the first attempt.
+  await startPortForward();
 
   console.log('✅ minikube-live global setup complete\n');
 
