@@ -188,6 +188,43 @@ describe('startup reconcile from disk baseline', () => {
   });
 });
 
+describe('hostMode in mergeManifests and render', () => {
+  beforeEach(async () => {
+    await _initTestDatabase();
+    __resetDbForTest();
+  });
+
+  it('baseline entry with hostMode channel-runner survives merge+render into ConfigMap', async () => {
+    const baselineWithHostMode = makeBaseline('telegram');
+    (baselineWithHostMode as ChannelManifestEntry & { hostMode?: string }).hostMode = 'channel-runner';
+    const apply = vi.fn().mockResolvedValue(undefined);
+    const r = new ChannelManifestReconciler({
+      baselineLoader: () => [baselineWithHostMode],
+      configMapApply: apply,
+    });
+    await r.apply();
+    expect(apply).toHaveBeenCalledOnce();
+    const parsed = JSON.parse(apply.mock.calls[0][0]) as {
+      manifests: Array<{ channel_type: string; hostMode?: string }>;
+    };
+    expect(parsed.manifests).toHaveLength(1);
+    expect(parsed.manifests[0].hostMode).toBe('channel-runner');
+  });
+
+  it('baseline entry without hostMode renders with hostMode standalone', async () => {
+    const apply = vi.fn().mockResolvedValue(undefined);
+    const r = new ChannelManifestReconciler({
+      baselineLoader: () => [makeBaseline('telegram')],
+      configMapApply: apply,
+    });
+    await r.apply();
+    const parsed = JSON.parse(apply.mock.calls[0][0]) as {
+      manifests: Array<{ channel_type: string; hostMode: string }>;
+    };
+    expect(parsed.manifests[0].hostMode).toBe('standalone');
+  });
+});
+
 describe('ChannelManifestReconciler.apply', () => {
   beforeEach(async () => {
     await _initTestDatabase();

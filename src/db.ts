@@ -224,6 +224,15 @@ function createSchema(database: SqlJsDatabase): void {
     )
   `);
 
+  // Additive migration: add host_mode to channel_manifest_overrides (Task 4).
+  try {
+    database.run(
+      `ALTER TABLE channel_manifest_overrides ADD COLUMN host_mode TEXT NOT NULL DEFAULT 'standalone'`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
   // Story 179: admin-registered bootstrap skills (runtime write path).
   database.run(`
     CREATE TABLE IF NOT EXISTS bootstrap_skill_overrides (

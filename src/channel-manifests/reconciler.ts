@@ -25,6 +25,8 @@ export interface ChannelManifestEntry {
   package_json?: string;
   /** Raw package-lock.json string — present for baseline and admin entries. */
   package_lock_json?: string;
+  /** Determines the pod command for the resident channel host. Default 'standalone'. */
+  hostMode?: 'standalone' | 'channel-runner';
 }
 
 /** Shape of each per-channel-type JSON file in the baseline ConfigMap mount. */
@@ -32,6 +34,7 @@ interface BaselineFileContent {
   packageJson: string;
   packageLockJson: string;
   manifestHash: string;
+  hostMode?: 'standalone' | 'channel-runner';
 }
 
 // ─── Merge ────────────────────────────────────────────────────────────────────
@@ -93,6 +96,7 @@ export function loadBaselineFromDisk(
         registered_by: 'helm',
         package_json: content.packageJson,
         package_lock_json: content.packageLockJson,
+        hostMode: content.hostMode,
       });
     } catch (err) {
       logger.warn(
@@ -147,10 +151,14 @@ export class ChannelManifestReconciler {
         registered_by: row.registered_by,
         package_json: row.package_json,
         package_lock_json: row.package_lock_json,
+        hostMode: (row.host_mode as 'standalone' | 'channel-runner' | undefined) ?? 'standalone',
       };
     });
 
-    const merged = mergeManifests(baseline, overrides);
+    const merged = mergeManifests(baseline, overrides).map((entry) => ({
+      ...entry,
+      hostMode: entry.hostMode ?? 'standalone',
+    }));
     this.generation += 1;
     const rendered = JSON.stringify(
       { version: 1, generation: this.generation, manifests: merged },

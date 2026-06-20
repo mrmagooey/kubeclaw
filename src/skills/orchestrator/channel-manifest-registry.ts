@@ -35,6 +35,7 @@ export interface RegisterArgs {
   channel_type: string;
   package_json: string;
   package_lock_json: string;
+  host_mode?: 'standalone' | 'channel-runner';
 }
 
 export interface OverrideRow {
@@ -44,6 +45,7 @@ export interface OverrideRow {
   manifest_hash: string;
   registered_at: string;
   registered_by: string;
+  host_mode: 'standalone' | 'channel-runner';
 }
 
 // ─── Register ─────────────────────────────────────────────────────────────────
@@ -109,6 +111,16 @@ export function registerChannelManifest(
     return { ok: false, error: (err as Error).message };
   }
 
+  // 6. Validate host_mode (if provided)
+  const validHostModes = ['standalone', 'channel-runner'];
+  if (args.host_mode !== undefined && !validHostModes.includes(args.host_mode)) {
+    return {
+      ok: false,
+      error: `host_mode must be one of ${validHostModes.map((m) => `'${m}'`).join(', ')} (got '${args.host_mode}')`,
+    };
+  }
+  const host_mode = args.host_mode ?? 'standalone';
+
   // Compute hash
   const manifest_hash = computeManifestHash(
     args.package_json,
@@ -132,8 +144,8 @@ export function registerChannelManifest(
   const now = new Date().toISOString();
   db.run(
     `INSERT OR REPLACE INTO channel_manifest_overrides
-      (channel_type, package_json, package_lock_json, manifest_hash, registered_at, registered_by)
-     VALUES (?, ?, ?, ?, ?, ?)`,
+      (channel_type, package_json, package_lock_json, manifest_hash, registered_at, registered_by, host_mode)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
     [
       args.channel_type,
       args.package_json,
@@ -141,6 +153,7 @@ export function registerChannelManifest(
       manifest_hash,
       now,
       'admin',
+      host_mode,
     ],
   );
 
@@ -158,7 +171,7 @@ export function registerChannelManifest(
  */
 export function listChannelManifestOverrides(): OverrideRow[] {
   const rows = db.exec(
-    `SELECT channel_type, package_json, package_lock_json, manifest_hash, registered_at, registered_by
+    `SELECT channel_type, package_json, package_lock_json, manifest_hash, registered_at, registered_by, host_mode
      FROM channel_manifest_overrides
      ORDER BY channel_type`,
   );
@@ -170,5 +183,6 @@ export function listChannelManifestOverrides(): OverrideRow[] {
     manifest_hash: row[3] as string,
     registered_at: row[4] as string,
     registered_by: row[5] as string,
+    host_mode: ((row[6] as string | null) ?? 'standalone') as 'standalone' | 'channel-runner',
   }));
 }

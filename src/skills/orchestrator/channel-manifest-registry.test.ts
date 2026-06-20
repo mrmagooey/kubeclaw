@@ -231,6 +231,48 @@ describe('registerChannelManifest', () => {
   });
 });
 
+describe('registerChannelManifest host_mode', () => {
+  beforeEach(async () => {
+    await _initTestDatabase();
+    __resetDbForTest();
+  });
+
+  it('persists host_mode channel-runner when provided', () => {
+    const r = registerChannelManifest({
+      channel_type: 'telegram',
+      package_json: VALID_PKG,
+      package_lock_json: VALID_LOCK,
+      host_mode: 'channel-runner',
+    });
+    expect(r.ok).toBe(true);
+    const list = listChannelManifestOverrides();
+    expect(list).toHaveLength(1);
+    expect(list[0].host_mode).toBe('channel-runner');
+  });
+
+  it('defaults host_mode to standalone when omitted', () => {
+    registerChannelManifest({
+      channel_type: 'telegram',
+      package_json: VALID_PKG,
+      package_lock_json: VALID_LOCK,
+    });
+    const list = listChannelManifestOverrides();
+    expect(list[0].host_mode).toBe('standalone');
+  });
+
+  it('rejects host_mode bogus with an error', () => {
+    const r = registerChannelManifest({
+      channel_type: 'telegram',
+      package_json: VALID_PKG,
+      package_lock_json: VALID_LOCK,
+      host_mode: 'bogus' as 'standalone',
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error).toMatch(/host_mode/i);
+  });
+});
+
 describe('listChannelManifestOverrides', () => {
   beforeEach(async () => {
     await _initTestDatabase();
