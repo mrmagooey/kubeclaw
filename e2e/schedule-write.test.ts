@@ -24,7 +24,7 @@
  * Port: 14154
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import { HttpChannel, type HttpChannelOpts } from '../src/channels/http.js';
+import { makeHttpChannel, type HttpChannelOpts } from './lib/http-test-channel.js';
 import {
   _initTestDatabase,
   __resetDbForTest,
@@ -80,12 +80,12 @@ function makeTask(id: string, overrides?: Partial<{
 }
 
 describe('POST/DELETE/PATCH /schedule — HTTP endpoint (Story 71)', () => {
-  let channel: HttpChannel | null = null;
+  let channel: ReturnType<typeof makeHttpChannel> | null = null;
 
   beforeAll(async () => {
     await _initTestDatabase();
 
-    channel = new HttpChannel(
+    channel = makeHttpChannel(
       {
         port: HTTP_PORT,
         users: { [TEST_USER]: TEST_PASS },

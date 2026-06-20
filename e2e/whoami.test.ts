@@ -15,7 +15,7 @@ import {
   beforeAll,
   afterAll,
 } from 'vitest';
-import { HttpChannel, type HttpChannelOpts } from '../src/channels/http.js';
+import { makeHttpChannel, type HttpChannelOpts } from './lib/http-test-channel.js';
 
 const WHOAMI_PORT = 14158;
 const TEST_USER = 'alice';
@@ -37,8 +37,8 @@ function createOpts(): HttpChannelOpts {
   };
 }
 
-function createChannel(): HttpChannel {
-  return new HttpChannel(
+function createChannel(): ReturnType<typeof makeHttpChannel> {
+  return makeHttpChannel(
     { port: WHOAMI_PORT, users: { [TEST_USER]: TEST_PASS } },
     createOpts(),
   );
@@ -49,7 +49,7 @@ function basicAuth(user: string, pass: string): string {
 }
 
 describe('GET /whoami (e2e)', () => {
-  let channel: HttpChannel | null = null;
+  let channel: ReturnType<typeof makeHttpChannel> | null = null;
 
   beforeAll(async () => {
     channel = createChannel();

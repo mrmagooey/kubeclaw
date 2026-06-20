@@ -15,7 +15,7 @@ import {
   beforeAll,
   afterAll,
 } from 'vitest';
-import { HttpChannel, type HttpChannelOpts } from '../src/channels/http.js';
+import { makeHttpChannel, type HttpChannelOpts } from './lib/http-test-channel.js';
 
 const VERSION_PORT = 14144;
 
@@ -27,15 +27,15 @@ function createOpts(): HttpChannelOpts {
   };
 }
 
-function createChannel(): HttpChannel {
-  return new HttpChannel(
+function createChannel(): ReturnType<typeof makeHttpChannel> {
+  return makeHttpChannel(
     { port: VERSION_PORT, users: { testuser: 'testpass' } },
     createOpts(),
   );
 }
 
 describe('GET /version (e2e)', () => {
-  let channel: HttpChannel | null = null;
+  let channel: ReturnType<typeof makeHttpChannel> | null = null;
 
   beforeAll(async () => {
     channel = createChannel();

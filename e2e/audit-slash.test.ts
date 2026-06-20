@@ -16,7 +16,7 @@
  * Port: 14166
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import { HttpChannel, type HttpChannelOpts } from '../src/channels/http.js';
+import { makeHttpChannel, type HttpChannelOpts } from './lib/http-test-channel.js';
 import {
   _initTestDatabase,
   __resetDbForTest,
@@ -94,7 +94,7 @@ function makeSecretDeps(ipcFn: SecretCommandDeps['ipc']): SecretCommandDeps {
 }
 
 describe('Slash command audit (Story 83) — GET /audit shows slash entries', () => {
-  let channel: HttpChannel | null = null;
+  let channel: ReturnType<typeof makeHttpChannel> | null = null;
 
   beforeAll(async () => {
     // Use a process-level env stub so channel-runner module guard passes
@@ -102,7 +102,7 @@ describe('Slash command audit (Story 83) — GET /audit shows slash entries', ()
 
     await _initTestDatabase();
 
-    channel = new HttpChannel(
+    channel = makeHttpChannel(
       {
         port: HTTP_PORT,
         users: { [TEST_USER]: TEST_PASS },

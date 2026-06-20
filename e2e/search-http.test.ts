@@ -16,7 +16,7 @@ import {
   beforeAll,
   afterAll,
 } from 'vitest';
-import { HttpChannel, type HttpChannelOpts } from '../src/channels/http.js';
+import { makeHttpChannel, type HttpChannelOpts } from './lib/http-test-channel.js';
 import { _initTestDatabase, appendConversationMessage } from '../src/db.js';
 
 const HTTP_PORT = 14155;
@@ -30,7 +30,7 @@ function basicAuth(user: string, pass: string): string {
 }
 
 describe('GET /search HTTP endpoint (Story 72)', () => {
-  let channel: HttpChannel;
+  let channel: ReturnType<typeof makeHttpChannel>;
 
   beforeAll(async () => {
     await _initTestDatabase();
@@ -55,7 +55,7 @@ describe('GET /search HTTP endpoint (Story 72)', () => {
       }),
     };
 
-    channel = new HttpChannel(
+    channel = makeHttpChannel(
       { port: HTTP_PORT, users: { [TEST_USER]: TEST_PASS } },
       opts,
     );

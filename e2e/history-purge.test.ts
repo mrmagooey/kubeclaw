@@ -11,7 +11,7 @@
  *   AC4 — future before → accepted (deletes everything up to now)
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import { HttpChannel, type HttpChannelOpts } from '../src/channels/http.js';
+import { makeHttpChannel, type HttpChannelOpts } from './lib/http-test-channel.js';
 import {
   _initTestDatabase,
   db,
@@ -41,9 +41,9 @@ function insertHistoryAt(folder: string, role: 'user' | 'assistant', content: st
 }
 
 describe('Story 78 — DELETE /history?before= (history-purge e2e)', () => {
-  let channel: HttpChannel | null = null;
+  let channel: ReturnType<typeof makeHttpChannel> | null = null;
 
-  function createChannel(): HttpChannel {
+  function createChannel(): ReturnType<typeof makeHttpChannel> {
     const opts: HttpChannelOpts = {
       onMessage: () => {},
       onChatMetadata: () => {},
@@ -57,7 +57,7 @@ describe('Story 78 — DELETE /history?before= (history-purge e2e)', () => {
         },
       }),
     };
-    return new HttpChannel(
+    return makeHttpChannel(
       { port: HTTP_PORT, users: { [TEST_USER]: TEST_PASS } },
       opts,
     );

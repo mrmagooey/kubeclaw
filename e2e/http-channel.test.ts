@@ -14,7 +14,7 @@ import {
   beforeEach,
   afterEach,
 } from 'vitest';
-import { HttpChannel, type HttpChannelOpts } from '../src/channels/http.js';
+import { makeHttpChannel, type HttpChannelOpts } from './lib/http-test-channel.js';
 import { waitFor } from './setup.js';
 
 interface NewMessage {
@@ -38,7 +38,7 @@ function basicAuth(user: string, pass: string): string {
 }
 
 describe('HTTP Channel End-to-End', () => {
-  let channel: HttpChannel | null = null;
+  let channel: ReturnType<typeof makeHttpChannel> | null = null;
   let receivedMessages: { chatJid: string; message: NewMessage }[] = [];
   let receivedMetadata: {
     chatJid: string;
@@ -87,14 +87,14 @@ describe('HTTP Channel End-to-End', () => {
     };
   }
 
-  function createChannel(corsOrigin?: string): HttpChannel {
+  function createChannel(corsOrigin?: string): ReturnType<typeof makeHttpChannel> {
     const config = {
       port: HTTP_PORT,
       users: { [TEST_USER]: TEST_PASS, bob: 'bobpass' },
       perUserMessagesPerMinute: 0,
       corsOrigin: corsOrigin ?? '*',
     };
-    return new HttpChannel(config, createTestOpts());
+    return makeHttpChannel(config, createTestOpts());
   }
 
   beforeEach(() => {

@@ -19,12 +19,12 @@
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import {
-  HttpChannel,
+  makeHttpChannel,
   type HttpChannelOpts,
   type SecretListEntry,
   type CatalogListEntry,
   type AddSecretFn,
-} from '../src/channels/http.js';
+} from './lib/http-test-channel.js';
 
 const HTTP_PORT = 14159;
 const TEST_USER = 'alice';
@@ -43,7 +43,7 @@ let addSecretErrorMessage = '';
 
 // ── Channel wiring ─────────────────────────────────────────────────────────
 
-function createTestChannel(overrides?: Partial<HttpChannelOpts>): HttpChannel {
+function createTestChannel(overrides?: Partial<HttpChannelOpts>): ReturnType<typeof makeHttpChannel> {
   const addSecretFn: AddSecretFn = async (group, type, fields) => {
     if (addSecretShouldTimeout) {
       return { ok: false, error: 'timeout' };
@@ -75,13 +75,13 @@ function createTestChannel(overrides?: Partial<HttpChannelOpts>): HttpChannel {
   };
 
   const config = { port: HTTP_PORT, users: { [TEST_USER]: TEST_PASS } };
-  return new HttpChannel(config, opts);
+  return makeHttpChannel(config, opts);
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────
 
 describe('Story 76: POST /secrets', () => {
-  let channel: HttpChannel | null = null;
+  let channel: ReturnType<typeof makeHttpChannel> | null = null;
 
   beforeAll(async () => {
     channel = createTestChannel();

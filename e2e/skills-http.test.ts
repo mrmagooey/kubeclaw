@@ -12,7 +12,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { HttpChannel, type HttpChannelOpts } from '../src/channels/http.js';
+import { makeHttpChannel, type HttpChannelOpts } from './lib/http-test-channel.js';
 import { writeCandidate } from '../src/runtime/skill-store.js';
 import type { SkillFile } from '../src/runtime/skill-format.js';
 
@@ -43,11 +43,11 @@ function makeSkill(name: string, desc: string, body = 'skill body'): SkillFile {
 }
 
 describe('Skills HTTP REST API (e2e)', () => {
-  let channel: HttpChannel | null = null;
+  let channel: ReturnType<typeof makeHttpChannel> | null = null;
   let tmpGroupsDir: string;
   let groupFolder: string;
 
-  function createChannel(): HttpChannel {
+  function createChannel(): ReturnType<typeof makeHttpChannel> {
     const config = {
       port: HTTP_PORT,
       users: { [TEST_USER]: TEST_PASS },
@@ -64,7 +64,7 @@ describe('Skills HTTP REST API (e2e)', () => {
         },
       }),
     };
-    return new HttpChannel(config, opts);
+    return makeHttpChannel(config, opts);
   }
 
   beforeEach(async () => {
@@ -244,7 +244,7 @@ describe('Skills HTTP REST API (e2e)', () => {
 
       // Cross-group: connect with a user that has no registered group
       await channel!.disconnect();
-      channel = new HttpChannel(
+      channel = makeHttpChannel(
         { port: HTTP_PORT, users: { alice: TEST_PASS } },
         {
           onMessage: () => {},

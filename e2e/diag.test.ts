@@ -20,7 +20,7 @@ import {
   afterAll,
 } from 'vitest';
 
-import { HttpChannel, type HttpChannelOpts } from '../src/channels/http.js';
+import { makeHttpChannel, type HttpChannelOpts } from './lib/http-test-channel.js';
 import { _initTestDatabase } from '../src/db.js';
 
 const E2E_PORT = 14162;
@@ -49,13 +49,13 @@ function makeOpts(): HttpChannelOpts {
 }
 
 describe(`GET /diag (Story 79, namespace kubeclaw-e2e-diag, port ${E2E_PORT})`, () => {
-  let channel: HttpChannel;
+  let channel: ReturnType<typeof makeHttpChannel>;
 
   beforeAll(async () => {
     // Initialise an in-process SQLite DB so the snapshot queries have a real DB.
     await _initTestDatabase();
 
-    channel = new HttpChannel(
+    channel = makeHttpChannel(
       { port: E2E_PORT, users: { [E2E_USER]: E2E_PASS } },
       makeOpts(),
     );

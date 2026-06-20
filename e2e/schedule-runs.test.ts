@@ -18,7 +18,7 @@
  * Port: 14163
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import { HttpChannel, type HttpChannelOpts } from '../src/channels/http.js';
+import { makeHttpChannel, type HttpChannelOpts } from './lib/http-test-channel.js';
 import {
   _initTestDatabase,
   __resetDbForTest,
@@ -53,12 +53,12 @@ function makeOpts(): HttpChannelOpts {
 }
 
 describe('GET /schedule/<id>/runs — HTTP endpoint (Story 80)', () => {
-  let channel: HttpChannel | null = null;
+  let channel: ReturnType<typeof makeHttpChannel> | null = null;
 
   beforeAll(async () => {
     await _initTestDatabase();
 
-    channel = new HttpChannel(
+    channel = makeHttpChannel(
       {
         port: HTTP_PORT,
         users: { [TEST_USER]: TEST_PASS },

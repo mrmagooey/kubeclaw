@@ -9,7 +9,7 @@
  * Namespace: kubeclaw-e2e-history-edited-at  Port: 14167
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { HttpChannel, type HttpChannelOpts } from '../src/channels/http.js';
+import { makeHttpChannel, type HttpChannelOpts } from './lib/http-test-channel.js';
 import {
   _initTestDatabase,
   appendConversationMessage,
@@ -40,7 +40,7 @@ interface HistoryRow {
 }
 
 describe('Story 84 — edited_at on conversation_history (e2e)', () => {
-  let channel: HttpChannel | null = null;
+  let channel: ReturnType<typeof makeHttpChannel> | null = null;
 
   beforeAll(async () => {
     // Initialise in-process DB and seed a message for alice's group
@@ -61,7 +61,7 @@ describe('Story 84 — edited_at on conversation_history (e2e)', () => {
       }),
     };
 
-    channel = new HttpChannel({ port: E2E_PORT, users: { [TEST_USER]: TEST_PASS } }, opts);
+    channel = makeHttpChannel({ port: E2E_PORT, users: { [TEST_USER]: TEST_PASS } }, opts);
     await channel.connect();
   });
 

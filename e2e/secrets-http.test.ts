@@ -23,11 +23,11 @@ import {
   beforeEach,
 } from 'vitest';
 import {
-  HttpChannel,
+  makeHttpChannel,
   type HttpChannelOpts,
   type SecretListEntry,
   type CatalogListEntry,
-} from '../src/channels/http.js';
+} from './lib/http-test-channel.js';
 
 const HTTP_PORT = 14156;
 const TEST_USER = 'alice';
@@ -45,7 +45,7 @@ let removedTypes: string[] = [];
 
 // ── Channel wiring ─────────────────────────────────────────────────────────
 
-function createTestChannel(overrides?: Partial<HttpChannelOpts>): HttpChannel {
+function createTestChannel(overrides?: Partial<HttpChannelOpts>): ReturnType<typeof makeHttpChannel> {
   const opts: HttpChannelOpts = {
     onMessage: () => {},
     onChatMetadata: () => {},
@@ -77,13 +77,13 @@ function createTestChannel(overrides?: Partial<HttpChannelOpts>): HttpChannel {
     ...overrides,
   };
   const config = { port: HTTP_PORT, users: { [TEST_USER]: TEST_PASS } };
-  return new HttpChannel(config, opts);
+  return makeHttpChannel(config, opts);
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────
 
 describe('Story 73: /secrets REST endpoints', () => {
-  let channel: HttpChannel | null = null;
+  let channel: ReturnType<typeof makeHttpChannel> | null = null;
 
   beforeAll(async () => {
     channel = createTestChannel();

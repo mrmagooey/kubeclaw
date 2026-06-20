@@ -13,7 +13,7 @@
  * Port: 14164
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import { HttpChannel, type HttpChannelOpts } from '../src/channels/http.js';
+import { makeHttpChannel, type HttpChannelOpts } from './lib/http-test-channel.js';
 import { _initTestDatabase, __resetDbForTest } from '../src/db.js';
 
 const HTTP_PORT = 14164;
@@ -49,12 +49,12 @@ function makeOpts(overrides: Partial<HttpChannelOpts> = {}): HttpChannelOpts {
 }
 
 describe('GET /audit (Story 81)', () => {
-  let channel: HttpChannel | null = null;
+  let channel: ReturnType<typeof makeHttpChannel> | null = null;
 
   beforeAll(async () => {
     await _initTestDatabase();
 
-    channel = new HttpChannel(
+    channel = makeHttpChannel(
       {
         port: HTTP_PORT,
         users: { [TEST_USER]: TEST_PASS },
@@ -263,7 +263,7 @@ describe('GET /audit (Story 81)', () => {
 
   it('AC8: audit entries are scoped to caller (alice does not see bob entries)', async () => {
     // Create a second channel for bob
-    const bobChannel = new HttpChannel(
+    const bobChannel = makeHttpChannel(
       {
         port: HTTP_PORT + 1,
         users: { bob: 'bobpass' },

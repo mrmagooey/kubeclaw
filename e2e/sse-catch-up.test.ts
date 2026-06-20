@@ -24,7 +24,7 @@ import {
   beforeEach,
   afterEach,
 } from 'vitest';
-import { HttpChannel, type HttpChannelOpts } from '../src/channels/http.js';
+import { makeHttpChannel, type HttpChannelOpts } from './lib/http-test-channel.js';
 import { waitFor } from './setup.js';
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -152,9 +152,9 @@ function rawSseRequest(
 // ── Suite setup ──────────────────────────────────────────────────────────────
 
 describe('SSE catch-up on reconnect (Story 20)', () => {
-  let channel: HttpChannel | null = null;
+  let channel: ReturnType<typeof makeHttpChannel> | null = null;
 
-  function createChannel(): HttpChannel {
+  function createChannel(): ReturnType<typeof makeHttpChannel> {
     const opts: HttpChannelOpts = {
       onMessage: () => {},
       onChatMetadata: () => {},
@@ -168,7 +168,7 @@ describe('SSE catch-up on reconnect (Story 20)', () => {
         },
       }),
     };
-    return new HttpChannel(
+    return makeHttpChannel(
       { port: HTTP_PORT, users: { [ALICE_USER]: ALICE_PASS } },
       opts,
     );

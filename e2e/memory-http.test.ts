@@ -12,7 +12,7 @@ import {
   afterAll,
   beforeEach,
 } from 'vitest';
-import { HttpChannel, type HttpChannelOpts } from '../src/channels/http.js';
+import { makeHttpChannel, type HttpChannelOpts } from './lib/http-test-channel.js';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -30,7 +30,7 @@ function basicAuth(user: string, pass: string): string {
 const AUTH_HEADER = basicAuth(TEST_USER, TEST_PASS);
 
 describe('HTTP Channel /memory REST API (Story 74)', () => {
-  let channel: HttpChannel | null = null;
+  let channel: ReturnType<typeof makeHttpChannel> | null = null;
   let groupsDir: string;
 
   function createTestOpts(): HttpChannelOpts {
@@ -49,12 +49,12 @@ describe('HTTP Channel /memory REST API (Story 74)', () => {
     };
   }
 
-  function createChannel(opts?: HttpChannelOpts): HttpChannel {
+  function createChannel(opts?: HttpChannelOpts): ReturnType<typeof makeHttpChannel> {
     const config = {
       port: MEMORY_PORT,
       users: { [TEST_USER]: TEST_PASS },
     };
-    return new HttpChannel(config, opts ?? createTestOpts());
+    return makeHttpChannel(config, opts ?? createTestOpts());
   }
 
   beforeAll(async () => {

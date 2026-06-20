@@ -16,7 +16,7 @@ import {
   afterAll,
   beforeEach,
 } from 'vitest';
-import { HttpChannel, type HttpChannelOpts, type CapabilityEntry } from '../src/channels/http.js';
+import { makeHttpChannel, type HttpChannelOpts, type CapabilityEntry } from './lib/http-test-channel.js';
 
 const HTTP_PORT = 14153;
 const TEST_USER = 'alice';
@@ -45,7 +45,7 @@ function makeCapabilities(overrides?: CapabilityEntry[]): CapabilityEntry[] {
 }
 
 describe('GET /capabilities — E2E (Story 70)', () => {
-  let channel: HttpChannel | null = null;
+  let channel: ReturnType<typeof makeHttpChannel> | null = null;
   let stubbedCapabilities: CapabilityEntry[] = makeCapabilities();
 
   function createOpts(): HttpChannelOpts {
@@ -72,7 +72,7 @@ describe('GET /capabilities — E2E (Story 70)', () => {
       perUserMessagesPerMinute: 0,
       corsOrigin: '*',
     };
-    channel = new HttpChannel(config, createOpts());
+    channel = makeHttpChannel(config, createOpts());
     await channel.connect();
   });
 
