@@ -76,7 +76,7 @@ export interface CommitChannelConfigDeps {
   /** Publish a reply to the bootstrap pod's reply channel */
   publishReply(
     replyChannel: string,
-    payload: { ok: boolean; error?: string },
+    payload: { ok: boolean; error?: string; code?: string },
   ): Promise<void>;
   /** Publish a message to the admin's SSE stream via Redis */
   publishSse(topic: string, text: string): Promise<void>;
@@ -367,8 +367,14 @@ export async function processCommitChannelConfig(
           'commit_channel_config: channel source push failed',
         );
         await deps
-          .publishReply(replyChannel, { ok: false, error })
-          .catch(() => {});
+          .publishReply(replyChannel, {
+            ok: false,
+            code: 'CHANNEL_SOURCE_PUSH_FAILED',
+            error,
+          })
+          .catch((e) =>
+            logger.warn({ e }, 'Failed to publish CHANNEL_SOURCE_PUSH_FAILED reply'),
+          );
         return { ok: false, code: 'CHANNEL_SOURCE_PUSH_FAILED', error };
       }
 
