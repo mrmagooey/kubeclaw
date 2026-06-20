@@ -27,9 +27,9 @@ You are setting up a Signal channel for KubeClaw. This channel requires:
 
 > **IMPORTANT — operator prerequisites:** The `signal` channel manifest must be
 > present in `kubeclaw-channel-manifests` before this skill runs. Add it to
-> your Helm values (see `docs/DEVELOPING_A_CHANNEL.md` §"Registering the
-> manifest") and run `helm upgrade`. Without the manifest, step 1 below will
-> fail with a missing file error.
+> your Helm values (see "Declare deps in a channel manifest" in
+> `docs/DEVELOPING_A_CHANNEL.md`) and run `helm upgrade`. Without the manifest,
+> step 1 below will fail with a missing file error.
 
 **IMPORTANT — how to read this skill:** Each step below is a TOOL CALL you must
 actually execute, in order. The fenced blocks are the arguments to pass to a

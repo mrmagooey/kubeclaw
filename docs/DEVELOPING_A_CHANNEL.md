@@ -52,7 +52,7 @@ Path A is the default for channels included in the Helm chart. Path B is for cha
 
 ### Overview
 
-A bootstrap channel ships its JavaScript source and npm manifest in the Helm chart. At install time, the orchestrator exec-pushes the source files onto the bootstrap pod's `/runtime` directory and restarts the pod to import `/runtime/channel-entry.js`. npm dependencies are installed by the bootstrap skill (not transcribed by an LLM — the lockfile is committed to the repo and shipped verbatim).
+A bootstrap channel ships its JavaScript source and npm manifest in the Helm chart. At install time, the bootstrap skill (the agent running inside the bootstrap pod) runs `npm ci` to install dependencies, then calls `commit_channel_config`. The orchestrator's commit-time sequence is: verify the manifest hash → exec-push source files to `/runtime` → create the credentials Secret → create the steady-state Deployment. npm dependencies are installed by the bootstrap skill (not transcribed by an LLM — the lockfile is committed to the repo and shipped verbatim).
 
 The worked example below uses the `nanoid-echo` channel. The `signal` skeleton in `helm/kubeclaw/files/channel-src/signal/channel-entry.js` is a commented template following the same pattern.
 
@@ -150,13 +150,13 @@ kubectl -n kubeclaw exec -it deploy/kubeclaw-orchestrator -- node dist/admin-she
 # In the shell: "install the nanoid-echo channel"
 ```
 
-The LLM loads the bootstrap skill and walks through the steps, ending with `commit_channel_config`. The orchestrator:
+The LLM loads the bootstrap skill and walks through the steps. The bootstrap skill runs `npm ci` (step 2 in the skill), then ends with `commit_channel_config`. The orchestrator's commit-time sequence:
 
 1. Verifies the `runtime_pvc_lock_hash` matches the registered manifest
 2. Reads source files for the channel type from the ConfigMap
-3. Exec-pushes each file onto the bootstrap pod's `/runtime` via `kubectl exec cat`
-4. Runs `npm ci` on the bootstrap pod (if the manifest has deps)
-5. Restarts the channel pod to import `/runtime/channel-entry.js`
+3. Exec-pushes each file to `/runtime/<relpath>` on the bootstrap pod via `kubectl exec -- sh -c "mkdir -p \"$(dirname /runtime/<relpath>)\" && cat > /runtime/<relpath>"`
+4. Creates the credentials Secret with any `secret_data` supplied by the skill
+5. Creates the steady-state Deployment, whose pod imports `/runtime/channel-entry.js` on startup (self-executes on import)
 
 No LLM transcription of source code. No per-file content hash. The source arrives exactly as committed.
 
@@ -164,7 +164,7 @@ No LLM transcription of source code. No per-file content hash. The source arrive
 
 ## What the orchestrator exec-push does
 
-At `commit_channel_config`, the orchestrator reads every key in the `kubeclaw-channel-src` ConfigMap whose name starts with `<type>__`, derives the relative path (replacing `__` with `/`), and writes it to `/runtime/<relpath>` on the bootstrap pod using `kubectl exec -- sh -c 'cat > /runtime/<relpath>'`.
+At `commit_channel_config`, the orchestrator reads every key in the `kubeclaw-channel-src` ConfigMap whose name starts with `<type>__`, derives the relative path (replacing `__` with `/`), and writes it to `/runtime/<relpath>` on the bootstrap pod using `kubectl exec -- sh -c "mkdir -p \"$(dirname /runtime/<relpath>)\" && cat > /runtime/<relpath>"`.
 
 The ConfigMap is built by the Helm template from `helm/kubeclaw/files/channel-src/**`:
 
@@ -193,7 +193,7 @@ The channel pod's steady-state entry point is always `/runtime/channel-entry.js`
 Before committing a new bootstrap channel, verify the JS syntax is clean:
 
 ```bash
-export PATH="/home/peter/.nvm/versions/node/v22.22.2/bin:$PATH"
+nvm use 22  # ensure Node 22 is on PATH
 node --check helm/kubeclaw/files/channel-src/<type>/channel-entry.js && echo OK
 ```
 

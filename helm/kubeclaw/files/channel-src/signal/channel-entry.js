@@ -21,6 +21,20 @@
  *   file extension is .js and the nearest package.json has `"type":"module"`.
  *   The bootstrap step writes /runtime/package.json from the channel manifest, so
  *   add `"type":"module"` there to silence the "use --input-type=module" warning.
+ *
+ * HOW THIS FILE IS LOADED:
+ *   The orchestrator exec-pushes this file to /runtime at commit time (after the
+ *   bootstrap skill calls commit_channel_config). The steady-state channel pod runs
+ *   container/agent-runner/channel-loader.js, which does only:
+ *     await import('/runtime/channel-entry.js')
+ *   This file MUST self-execute on import — there is no external caller that
+ *   invokes an exported function. The `export default function register(ctx)`
+ *   pattern belongs to Path-C plugin loading, NOT this path.
+ *
+ * TODO: Forwarding inbound Signal messages into KubeClaw's agent loop is
+ *   operator-specific (depends on the chosen Signal client's event API) and is
+ *   not shown in this skeleton. Wire the client's message event to the harness
+ *   IPC channel once you have chosen a concrete library.
  */
 
 // Replace 'signal-client' with your chosen pure-JS Signal library.
@@ -33,100 +47,72 @@ if (!PHONE_NUMBER) {
   process.exit(1);
 }
 
-// ── Injected at runtime by the channel harness ───────────────────────────────
-// The bootstrap skill runs `commit_channel_config`, which causes the orchestrator
-// to exec-push this file to /runtime and then import it. The harness wraps it via
-// a thin loader that calls registerChannel() below.
-// ─────────────────────────────────────────────────────────────────────────────
+const PORT = parseInt(process.env.PORT ?? '8080', 10);
 
-let _onMessage = null;
-let _onChatMetadata = null;
+// ── Signal client (placeholder — replace with real library API) ───────────────
 let _client = null;
+let _connected = false;
 
-/** @param {import('./registry').ChannelPluginContext} ctx */
-export default function register(ctx) {
-  ctx.registerChannel('signal', (opts) => {
-    if (!PHONE_NUMBER) return null;
-    _onMessage = opts.onMessage;
-    _onChatMetadata = opts.onChatMetadata;
-    return new SignalChannel(opts);
-  });
+/** Connect to the Signal network and subscribe to inbound messages. */
+async function connect() {
+  // TODO: initialise the Signal client with the phone number and any stored
+  // registration state, then link or register the device.
+  _client = new SignalClient({ phoneNumber: PHONE_NUMBER });
+
+  // TODO: subscribe to inbound messages from the Signal network and forward
+  // them into KubeClaw's agent loop via the harness IPC mechanism.
+  // Example (library-specific):
+  //   _client.on('message', (envelope) => { /* ... */ });
+
+  await _client.connect();
+  _connected = true;
+  console.error(`[signal] connected as ${PHONE_NUMBER}`);
 }
 
-class SignalChannel {
-  name = 'signal';
-
-  /** @type {import('./registry').ChannelOpts} */
-  #opts;
-  #connected = false;
-
-  /** @type {ReturnType<typeof http.createServer>} */
-  #healthServer;
-
-  constructor(opts) {
-    this.#opts = opts;
-  }
-
-  async connect() {
-    // TODO: initialise the Signal client, link or register the device, and
-    // subscribe to incoming messages.
-    _client = new SignalClient({ phoneNumber: PHONE_NUMBER });
-
-    // Deliver inbound messages to the KubeClaw harness.
-    _client.on('message', (envelope) => {
-      const sender = envelope.source; // e.g. '+61412345678'
-      const jid = `signal:${sender}`;
-      const text = envelope.dataMessage?.body ?? '';
-      const timestamp = new Date(envelope.timestamp).toISOString();
-      this.#opts.onChatMetadata(jid, timestamp);
-      this.#opts.onMessage(jid, { text, role: 'user', timestamp });
-    });
-
-    await _client.connect();
-    this.#connected = true;
-
-    // Health endpoints expected by the liveness probe.
-    this.#healthServer = http.createServer((req, res) => {
-      if (req.url === '/healthz' || req.url === '/readyz') {
-        res.writeHead(200);
-        res.end(JSON.stringify({ status: 'ok', connected: this.#connected }));
-        return;
-      }
-      res.writeHead(404);
-      res.end('not found');
-    });
-    const PORT = parseInt(process.env.PORT ?? '8080', 10);
-    this.#healthServer.listen(PORT, '0.0.0.0', () =>
-      console.error(`[signal] health endpoint on :${PORT}`),
-    );
-  }
-
-  /** @param {string} jid  @param {string} text */
-  async sendMessage(jid, text) {
-    // jid is 'signal:+61412345678' — strip the prefix.
-    const recipient = jid.replace(/^signal:/, '');
-    await _client.sendMessage({ recipient, message: text });
-  }
-
-  isConnected() {
-    return this.#connected;
-  }
-
-  /** @param {string} jid */
-  ownsJid(jid) {
-    return jid.startsWith('signal:');
-  }
-
-  async disconnect() {
-    this.#connected = false;
-    this.#healthServer?.close();
-    await _client?.disconnect?.();
-  }
+/** Send a text message to a JID of the form 'signal:+61412345678'. */
+async function sendMessage(jid, text) {
+  // TODO: strip the 'signal:' prefix and call the client's send API.
+  const recipient = jid.replace(/^signal:/, '');
+  await _client.sendMessage({ recipient, message: text });
 }
+
+function isConnected() {
+  return _connected;
+}
+
+/** Returns true when this channel owns the given JID. */
+function ownsJid(jid) {
+  return jid.startsWith('signal:');
+}
+
+async function disconnect() {
+  _connected = false;
+  await _client?.disconnect?.();
+  console.error('[signal] disconnected');
+}
+
+// ── Health endpoints ──────────────────────────────────────────────────────────
+const healthServer = http.createServer((req, res) => {
+  if (req.url === '/healthz' || req.url === '/readyz') {
+    res.writeHead(200);
+    res.end(JSON.stringify({ status: 'ok', connected: _connected }));
+    return;
+  }
+  res.writeHead(404);
+  res.end('not found');
+});
+healthServer.listen(PORT, '0.0.0.0', () =>
+  console.error(`[signal] health endpoint on :${PORT}`),
+);
+
+// ── Startup ───────────────────────────────────────────────────────────────────
+connect().catch((err) => {
+  console.error('[signal] connect() failed:', err);
+  process.exit(1);
+});
 
 process.on('SIGTERM', async () => {
   console.error('[signal] SIGTERM — disconnecting');
-  // The channel instance is owned by the harness; SIGTERM handling is shown here
-  // for completeness. The harness calls disconnect() before exit.
-  process.exit(0);
+  await disconnect();
+  healthServer.close(() => process.exit(0));
 });
