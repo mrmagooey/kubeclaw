@@ -39,7 +39,7 @@ const GROUP_PREFIX = `live-test-${RUN_ID}`;
 // top-level await) for the skip flag to be correct at definition time.
 let providerAvailable = false;
 let providerSkipReason = '';
-let channel: import('../src/channels/http.js').HttpChannel | null = null;
+let channel: any = null;
 let runner: import('../src/runtime/direct-llm-runner.js').DirectLLMRunner | null =
   null;
 let HTTP_PORT = 0;
@@ -259,14 +259,16 @@ describe('Live-LLM end-to-end via HTTP channel + DirectLLMRunner', () => {
     fs.mkdirSync(groupsRoot, { recursive: true });
 
     // Construct the channel and the runner exactly the way a channel pod does.
-    const { HttpChannel } = await import('../src/channels/http.js');
+    // http is now a runtime adapter; build it in-process via the test helper
+    // (real sdk wired to the live db) — same as the other rewired e2e tests.
+    const { makeHttpChannel } = await import('./lib/http-test-channel.js');
     const { DirectLLMRunner } = await import(
       '../src/runtime/direct-llm-runner.js'
     );
     runner = new DirectLLMRunner();
     HTTP_PORT = await pickFreePort();
 
-    channel = new HttpChannel(
+    channel = makeHttpChannel(
       { port: HTTP_PORT, users: { ...userPasswords } },
       {
         registeredGroups: () =>
