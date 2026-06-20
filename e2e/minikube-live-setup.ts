@@ -730,14 +730,18 @@ async function startTestOauthPortForward(): Promise<void> {
 }
 
 async function startOauthWebchatPortForward(): Promise<void> {
+  // The bootstrapped channel Service is named after the bootstrap instance
+  // (kubeclaw-channel-<instance_name>), NOT the old helm channel name. The
+  // oauth bootstrap e2e uses instance "e2e-oauth", so the Service is
+  // kubeclaw-channel-e2e-oauth. (Pre-cutover this was kubeclaw-channel-oauth-webchat.)
   console.log(
-    `🔌 Port-forward svc/kubeclaw-channel-oauth-webchat → localhost:${KUBECLAW_LIVE_OAUTH_WEBCHAT_LOCAL_PORT} (fire-and-forget; Service created post-bootstrap)`,
+    `🔌 Port-forward svc/kubeclaw-channel-e2e-oauth → localhost:${KUBECLAW_LIVE_OAUTH_WEBCHAT_LOCAL_PORT} (fire-and-forget; Service created post-bootstrap)`,
   );
   oauthWebchatPortForwardProcess = spawn(
     'bash',
     [
       '-c',
-      `while true; do >&2 echo "[port-forward restart $(date +%T)] oauth-webchat"; kubectl port-forward -n ${NAMESPACE} svc/kubeclaw-channel-oauth-webchat ${KUBECLAW_LIVE_OAUTH_WEBCHAT_LOCAL_PORT}:80 || true; sleep 0.1; done`,
+      `while true; do >&2 echo "[port-forward restart $(date +%T)] oauth-webchat"; kubectl port-forward -n ${NAMESPACE} svc/kubeclaw-channel-e2e-oauth ${KUBECLAW_LIVE_OAUTH_WEBCHAT_LOCAL_PORT}:80 || true; sleep 0.1; done`,
     ],
     { stdio: ['ignore', 'ignore', 'inherit'], detached: true },
   );
