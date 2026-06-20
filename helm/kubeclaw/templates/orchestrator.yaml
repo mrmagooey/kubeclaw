@@ -51,9 +51,11 @@ rules:
   - apiGroups: [""]
     resources: ["persistentvolumeclaims"]
     verbs: ["create", "get", "list", "watch", "update", "patch", "delete"]
-  # Admin shell: manage per-channel Ingress objects (namespace-scoped)
+  # Admin shell: manage per-channel Ingress objects (namespace-scoped).
+  # networkpolicies: bootstrap of an httpPort channel-runner channel creates a
+  # per-channel ingress NetworkPolicy so its port is reachable.
   - apiGroups: ["networking.k8s.io"]
-    resources: ["ingresses"]
+    resources: ["ingresses", "networkpolicies"]
     verbs: ["get", "list", "create", "patch", "replace", "delete"]
   # ConfigMap access for: CatalogInformer (reads cred broker config),
   # SpecialistReconciler (writes kubeclaw-specialists).
