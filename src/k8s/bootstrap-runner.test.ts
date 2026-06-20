@@ -21,6 +21,7 @@ import {
   cleanupBootstrapResources,
   parseRuntimePvcVersion,
   nextRuntimePvcName,
+  buildStageRuntimeInitContainer,
   type BootstrapMeta,
   type BootstrapStatusDeps,
 } from './bootstrap-runner.js';
@@ -1838,5 +1839,203 @@ describe('runUpgrade — Story 181 AC4: credential reuse', () => {
     expect(bootstrapContainer?.envFrom?.[0].secretRef.name).toBe(
       'kubeclaw-channel-prod-bot-credentials',
     );
+  });
+});
+
+// ─── buildStageRuntimeInitContainer unit tests ────────────────────────────────
+
+describe('buildStageRuntimeInitContainer', () => {
+  it('returns a container named stage-runtime', () => {
+    const c = buildStageRuntimeInitContainer('kubeclaw-agent:test', 'irc');
+    expect(c.name).toBe('stage-runtime');
+  });
+
+  it('sets KUBECLAW_BOOTSTRAP_CHANNEL_TYPE env to the provided channelType', () => {
+    const c = buildStageRuntimeInitContainer('kubeclaw-agent:test', 'irc');
+    const envEntry = c.env.find(
+      (e) => e.name === 'KUBECLAW_BOOTSTRAP_CHANNEL_TYPE',
+    );
+    expect(envEntry).toBeDefined();
+    expect(envEntry?.value).toBe('irc');
+  });
+
+  it('uses the provided image', () => {
+    const c = buildStageRuntimeInitContainer('my-image:v2', 'telegram');
+    expect(c.image).toBe('my-image:v2');
+  });
+
+  it('mounts both runtime and manifests volumes', () => {
+    const c = buildStageRuntimeInitContainer('kubeclaw-agent:test', 'irc');
+    const runtimeMount = c.volumeMounts.find((m) => m.name === 'runtime');
+    const manifestsMount = c.volumeMounts.find((m) => m.name === 'manifests');
+    expect(runtimeMount).toBeDefined();
+    expect(runtimeMount?.mountPath).toBe('/runtime');
+    expect(manifestsMount).toBeDefined();
+    expect(manifestsMount?.mountPath).toBe('/workspace/manifests');
+  });
+
+  it('command contains the package.json copy script', () => {
+    const c = buildStageRuntimeInitContainer('kubeclaw-agent:test', 'irc');
+    const cmd = c.command.join(' ');
+    expect(cmd).toContain('/runtime/package.json');
+    expect(cmd).toContain('/runtime/package-lock.json');
+    expect(cmd).toContain('/workspace/manifests/');
+  });
+
+  it('command includes npm ci with --prefix /runtime', () => {
+    const c = buildStageRuntimeInitContainer('kubeclaw-agent:test', 'irc');
+    const cmd = c.command.join(' ');
+    expect(cmd).toContain('npm ci');
+    expect(cmd).toContain('--prefix /runtime');
+  });
+
+  it('does not have a restartPolicy (regular init container, not sidecar)', () => {
+    const c = buildStageRuntimeInitContainer('kubeclaw-agent:test', 'irc') as Record<string, unknown>;
+    expect(c['restartPolicy']).toBeUndefined();
+  });
+});
+
+// ─── Job spec: stage-runtime init container presence ─────────────────────────
+
+describe('bootstrapChannelFromSkill — stage-runtime init container', () => {
+  let fakeK8s: ReturnType<typeof makeFakeK8s>;
+
+  beforeEach(() => {
+    fakeK8s = makeFakeK8s();
+  });
+
+  it('bootstrap Job initContainers has stage-runtime as first entry before inspector', async () => {
+    await bootstrapChannelFromSkill({
+      skillName: 'bootstrap-irc',
+      channelType: 'irc',
+      instanceName: 'my-irc',
+      k8sDeps: { coreV1: fakeK8s.coreV1, batchV1: fakeK8s.batchV1 },
+      namespace: 'test-ns',
+      channelBaseImage: 'kubeclaw-agent:latest',
+      activeBootstraps: new Map(),
+    });
+    const jobBody = fakeK8s.createdJobs[0].body as {
+      spec: {
+        template: {
+          spec: {
+            initContainers: Array<{
+              name: string;
+              command?: string[];
+              env?: Array<{ name: string; value?: string }>;
+              volumeMounts?: Array<{ name: string; mountPath: string }>;
+            }>;
+          };
+        };
+      };
+    };
+    const { initContainers } = jobBody.spec.template.spec;
+    expect(initContainers).toHaveLength(2);
+    expect(initContainers[0].name).toBe('stage-runtime');
+    expect(initContainers[1].name).toBe('inspector');
+  });
+
+  it('stage-runtime init container command references /runtime/package.json and npm ci', async () => {
+    await bootstrapChannelFromSkill({
+      skillName: 'bootstrap-irc',
+      channelType: 'irc',
+      instanceName: 'my-irc',
+      k8sDeps: { coreV1: fakeK8s.coreV1, batchV1: fakeK8s.batchV1 },
+      namespace: 'test-ns',
+      channelBaseImage: 'kubeclaw-agent:latest',
+      activeBootstraps: new Map(),
+    });
+    const jobBody = fakeK8s.createdJobs[0].body as {
+      spec: {
+        template: {
+          spec: {
+            initContainers: Array<{
+              name: string;
+              command?: string[];
+            }>;
+          };
+        };
+      };
+    };
+    const stageRuntime = jobBody.spec.template.spec.initContainers.find(
+      (c) => c.name === 'stage-runtime',
+    );
+    expect(stageRuntime).toBeTruthy();
+    const cmd = (stageRuntime?.command ?? []).join(' ');
+    expect(cmd).toContain('/runtime/package.json');
+    expect(cmd).toContain('npm ci');
+  });
+
+  it('stage-runtime init container mounts runtime and manifests volumes and sets KUBECLAW_BOOTSTRAP_CHANNEL_TYPE', async () => {
+    await bootstrapChannelFromSkill({
+      skillName: 'bootstrap-irc',
+      channelType: 'irc',
+      instanceName: 'my-irc',
+      k8sDeps: { coreV1: fakeK8s.coreV1, batchV1: fakeK8s.batchV1 },
+      namespace: 'test-ns',
+      channelBaseImage: 'kubeclaw-agent:latest',
+      activeBootstraps: new Map(),
+    });
+    const jobBody = fakeK8s.createdJobs[0].body as {
+      spec: {
+        template: {
+          spec: {
+            initContainers: Array<{
+              name: string;
+              env?: Array<{ name: string; value?: string }>;
+              volumeMounts?: Array<{ name: string; mountPath: string }>;
+            }>;
+          };
+        };
+      };
+    };
+    const stageRuntime = jobBody.spec.template.spec.initContainers.find(
+      (c) => c.name === 'stage-runtime',
+    );
+    expect(stageRuntime).toBeTruthy();
+    // env: KUBECLAW_BOOTSTRAP_CHANNEL_TYPE must be set to the channel type
+    const typeEnv = stageRuntime?.env?.find(
+      (e) => e.name === 'KUBECLAW_BOOTSTRAP_CHANNEL_TYPE',
+    );
+    expect(typeEnv?.value).toBe('irc');
+    // volumeMounts: runtime + manifests
+    const runtimeMount = stageRuntime?.volumeMounts?.find(
+      (m) => m.name === 'runtime',
+    );
+    const manifestsMount = stageRuntime?.volumeMounts?.find(
+      (m) => m.name === 'manifests',
+    );
+    expect(runtimeMount?.mountPath).toBe('/runtime');
+    expect(manifestsMount?.mountPath).toBe('/workspace/manifests');
+  });
+
+  it('inspector sidecar is still present with restartPolicy:Always', async () => {
+    await bootstrapChannelFromSkill({
+      skillName: 'bootstrap-irc',
+      channelType: 'irc',
+      instanceName: 'my-irc',
+      k8sDeps: { coreV1: fakeK8s.coreV1, batchV1: fakeK8s.batchV1 },
+      namespace: 'test-ns',
+      channelBaseImage: 'kubeclaw-agent:latest',
+      activeBootstraps: new Map(),
+    });
+    const jobBody = fakeK8s.createdJobs[0].body as {
+      spec: {
+        template: {
+          spec: {
+            initContainers: Array<{
+              name: string;
+              restartPolicy?: string;
+              command?: string[];
+            }>;
+          };
+        };
+      };
+    };
+    const inspector = jobBody.spec.template.spec.initContainers.find(
+      (c) => c.name === 'inspector',
+    );
+    expect(inspector).toBeTruthy();
+    expect(inspector?.restartPolicy).toBe('Always');
+    expect(inspector?.command).toEqual(['sleep', 'infinity']);
   });
 });

@@ -18,6 +18,45 @@ import type { CoreV1Api, BatchV1Api } from '@kubernetes/client-node';
 import { logger } from '../logger.js';
 import { insertBootstrapAuditRow } from '../skills/orchestrator/bootstrap-audit.js';
 
+// ─── Stage-runtime init container helper ─────────────────────────────────────
+
+/**
+ * Init container that deterministically stages the channel manifest's
+ * package.json/package-lock.json onto /runtime and runs `npm ci`, BEFORE the
+ * bootstrap agent runs. This removes the (previously LLM-driven, flaky) file
+ * copy + npm ci from the skill, eliminating MANIFEST_DIVERGENCE caused by the
+ * agent staging non-verbatim bytes.
+ *
+ * The container reads /workspace/manifests/<channelType>.json (the mounted
+ * kubeclaw-channel-manifests ConfigMap), extracts the two embedded JSON strings
+ * verbatim, writes them to /runtime, then runs npm ci --prefix /runtime. The
+ * channel type is passed via the KUBECLAW_BOOTSTRAP_CHANNEL_TYPE env var so
+ * there is no shell interpolation of it in the command string.
+ */
+export function buildStageRuntimeInitContainer(
+  image: string,
+  channelType: string,
+) {
+  return {
+    name: 'stage-runtime',
+    image,
+    imagePullPolicy: 'IfNotPresent',
+    // Read /workspace/manifests/<type>.json, write the two embedded strings
+    // verbatim to /runtime, then npm ci. The channel type comes from env so
+    // there is no shell interpolation of it.
+    command: [
+      'sh',
+      '-c',
+      'node -e "const fs=require(\'fs\');const t=process.env.KUBECLAW_BOOTSTRAP_CHANNEL_TYPE;const m=JSON.parse(fs.readFileSync(\'/workspace/manifests/\'+t+\'.json\',\'utf8\'));fs.writeFileSync(\'/runtime/package.json\',m.packageJson);fs.writeFileSync(\'/runtime/package-lock.json\',m.packageLockJson);" && npm ci --prefix /runtime --omit=dev --ignore-scripts',
+    ],
+    env: [{ name: 'KUBECLAW_BOOTSTRAP_CHANNEL_TYPE', value: channelType }],
+    volumeMounts: [
+      { name: 'runtime', mountPath: '/runtime' },
+      { name: 'manifests', mountPath: '/workspace/manifests' },
+    ],
+  };
+}
+
 // ─── Story 175 constants ──────────────────────────────────────────────────────
 
 /**
@@ -369,7 +408,13 @@ export async function bootstrapChannelFromSkill(
           // container so the orchestrator can `kubectl exec` into it for TOCTOU defense,
           // and automatically terminates it when the main container exits — allowing the
           // Job to reach Complete once the bootstrap agent finishes.
+          //
+          // stage-runtime runs FIRST (regular init container, runs to completion) and
+          // deterministically stages the manifest package files + runs npm ci before the
+          // bootstrap agent starts. This eliminates MANIFEST_DIVERGENCE caused by the
+          // LLM agent staging non-verbatim bytes.
           initContainers: [
+            buildStageRuntimeInitContainer(channelBaseImage, channelType),
             {
               name: 'inspector',
               image: channelBaseImage,
@@ -457,6 +502,12 @@ export interface RunUpgradeOpts {
   };
   namespace: string;
   channelBaseImage: string;
+  /**
+   * Channel type (e.g. 'irc', 'telegram'). When provided, the stage-runtime
+   * init container uses it directly. When absent, it is inferred from the
+   * existing channel Deployment's KUBECLAW_CHANNEL_TYPE env var.
+   */
+  channelType?: string;
   /** Shared map — uses composite key `<instance>:upgrade` */
   activeBootstraps: Map<string, string>;
   timeoutSeconds?: number;
@@ -517,6 +568,8 @@ export async function runUpgrade(
     timeoutSeconds = DEFAULT_TIMEOUT_SECONDS,
     pvcSize = DEFAULT_PVC_SIZE,
   } = opts;
+  // channelType is resolved later from the Deployment if not provided directly.
+  let upgradeChannelType = opts.channelType ?? '';
 
   const upgradeKey = `${instanceName}:upgrade`;
 
@@ -548,7 +601,7 @@ export async function runUpgrade(
     };
   }
 
-  // ── Discover current PVC from Deployment ───────────────────────────────────
+  // ── Discover current PVC and channelType from Deployment ──────────────────
   const deploymentName = `kubeclaw-channel-${instanceName}`;
   const deployment = await k8sDeps.appsV1.readNamespacedDeployment({
     name: deploymentName,
@@ -559,6 +612,17 @@ export async function runUpgrade(
   const currentPvcName =
     (runtimeVolume as any)?.persistentVolumeClaim?.claimName ??
     `kubeclaw-channel-${instanceName}-runtime`;
+
+  // Derive channelType from KUBECLAW_CHANNEL_TYPE env var in the Deployment if
+  // not supplied by the caller (upgrade_channel tool does not pass channelType).
+  if (!upgradeChannelType) {
+    const deployEnvVars: Array<{ name: string; value?: string }> =
+      deployment.spec?.template?.spec?.containers?.[0]?.env ?? [];
+    const typeEnv = deployEnvVars.find(
+      (e) => e.name === 'KUBECLAW_CHANNEL_TYPE',
+    );
+    upgradeChannelType = typeEnv?.value ?? instanceName;
+  }
 
   const newPvcName = nextRuntimePvcName(currentPvcName);
   const upgradeJobId = randomUUID();
@@ -682,7 +746,13 @@ export async function runUpgrade(
           // container so the orchestrator can `kubectl exec` into it for TOCTOU defense,
           // and automatically terminates it when the main container exits — allowing the
           // Job to reach Complete once the bootstrap agent finishes.
+          //
+          // stage-runtime runs FIRST (regular init container, runs to completion) and
+          // deterministically stages the manifest package files + runs npm ci before the
+          // bootstrap agent starts. This eliminates MANIFEST_DIVERGENCE caused by the
+          // LLM agent staging non-verbatim bytes.
           initContainers: [
+            buildStageRuntimeInitContainer(channelBaseImage, upgradeChannelType),
             {
               name: 'inspector',
               image: channelBaseImage,

@@ -19,46 +19,11 @@ tool — they are instructions, NOT examples of code that has already run. Execu
 one tool call, check its result, then proceed to the next step. Do not skip
 steps and do not guess values the admin is supposed to provide.
 
-The orchestrator delivers `/runtime/channel-entry.js` deterministically at commit time — this skill only stages the npm package files, installs dependencies, asks for the IRC settings, and commits.
+The package files are staged and dependencies installed automatically before this skill runs — you only gather credentials and commit.
 
-## Step 1: Stage the manifest files on /runtime
+The orchestrator delivers `/runtime/channel-entry.js` deterministically at commit time — this skill only asks for the IRC settings and commits.
 
-The orchestrator independently rehashes `/runtime/package.json` and
-`/runtime/package-lock.json` at commit time (Story 176 TOCTOU defense). The
-manifest contents must match the registered manifest hash exactly.
-
-The live ConfigMap `kubeclaw-channel-manifests` is mounted at
-`/workspace/manifests/` as one file per channel type
-(`/workspace/manifests/irc.json`), each file holding a single JSON
-object with `packageJson`, `packageLockJson`, and `manifestHash` fields.
-
-**Call the `local_bash` tool now** with this `command` to extract the two
-embedded strings onto `/runtime/`:
-
-```
-node -e "const fs=require('fs');const m=JSON.parse(fs.readFileSync('/workspace/manifests/irc.json','utf8'));fs.writeFileSync('/runtime/package.json',m.packageJson);fs.writeFileSync('/runtime/package-lock.json',m.packageLockJson);"
-```
-
-**Call the `local_bash` tool again** with `command: ls -la /runtime/` to
-confirm both files landed. You should see `package.json` and
-`package-lock.json`. If either is missing, stop and report the error to the
-admin.
-
-## Step 2: Install npm dependencies
-
-This channel requires the `irc-upd` package. **Call the `local_bash` tool now**
-with this `command`:
-
-```
-npm ci --prefix /runtime --omit=dev --ignore-scripts 2>&1
-```
-
-This installs irc-upd from the lockfile and may take 10-30 seconds. After it
-completes, **call the `local_bash` tool again** with `command: ls /runtime/node_modules/irc-upd/package.json`
-to confirm the package installed. If the file is missing, stop and report the
-error to the admin.
-
-## Step 3: Ask the admin for the IRC connection details
+## Step 1: Ask the admin for the IRC connection details
 
 Gather ALL the IRC connection settings with a SINGLE `ask_admin` call (do not
 ask four separate questions — one combined question keeps the dialogue short and
@@ -85,7 +50,7 @@ If any required field is missing or invalid, **call `ask_admin` again** with a
 corrective message naming the missing/invalid field and restating the expected
 format. Do not proceed until you have all four valid values.
 
-## Step 4: Commit the configuration
+## Step 2: Commit the configuration
 
 Compute the runtime PVC lock hash. The hash algorithm is:
 

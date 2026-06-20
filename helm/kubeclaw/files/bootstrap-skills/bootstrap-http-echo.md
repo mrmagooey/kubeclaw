@@ -20,33 +20,11 @@ tool — they are instructions, NOT examples of code that has already run. Execu
 one tool call, check its result, then proceed to the next step. Do not skip
 steps and do not guess values the admin is supposed to provide.
 
-The orchestrator delivers `/runtime/channel-entry.js` deterministically at commit time — this skill only stages the npm package files, asks for the port, and commits.
+The package files are staged and dependencies installed automatically before this skill runs — you only gather credentials and commit.
 
-## Step 1: Stage the manifest files on /runtime
+The orchestrator delivers `/runtime/channel-entry.js` deterministically at commit time — this skill only asks for the port and commits.
 
-The orchestrator independently rehashes `/runtime/package.json` and
-`/runtime/package-lock.json` at commit time (Story 176 TOCTOU defense). The
-manifest contents must match the registered manifest hash exactly.
-
-The live ConfigMap `kubeclaw-channel-manifests` is mounted at
-`/workspace/manifests/` as one file per channel type
-(`/workspace/manifests/http-echo.json`), each file holding a single JSON
-object with `packageJson`, `packageLockJson`, and `manifestHash` fields.
-
-**Call the `local_bash` tool now** with this `command` to extract the two
-embedded strings onto `/runtime/`:
-
-```
-node -e "const fs=require('fs');const m=JSON.parse(fs.readFileSync('/workspace/manifests/http-echo.json','utf8'));fs.writeFileSync('/runtime/package.json',m.packageJson);fs.writeFileSync('/runtime/package-lock.json',m.packageLockJson);"
-```
-
-This http-echo manifest declares **zero** dependencies, so no `npm ci` step is
-required. **Call the `local_bash` tool again** with `command: ls -la /runtime/`
-to confirm both files landed. You should see `package.json` and
-`package-lock.json`. If either is missing, stop and report the error to the
-admin.
-
-## Step 2: Ask the admin for the port
+## Step 1: Ask the admin for the port
 
 **Call the `ask_admin` tool now** with:
 
@@ -63,7 +41,7 @@ If the answer is invalid, **call `ask_admin` again** with a corrective message
 explaining the valid range. Do not proceed, and do not guess a port, until
 `ask_admin` returns a valid value.
 
-## Step 3: Commit the configuration
+## Step 2: Commit the configuration
 
 Compute the runtime PVC lock hash. The hash algorithm is:
 
