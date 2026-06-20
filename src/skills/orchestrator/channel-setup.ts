@@ -290,10 +290,6 @@ export function buildSecretData(
   if (type === 'slack' && input.token) data['SLACK_BOT_TOKEN'] = input.token;
   if (type === 'whatsapp' && input.phoneNumber)
     data['WHATSAPP_PHONE_NUMBER'] = input.phoneNumber;
-  if (type === 'http') {
-    if (input.httpUsers) data['HTTP_CHANNEL_USERS'] = input.httpUsers;
-    if (input.httpPort) data['HTTP_CHANNEL_PORT'] = String(input.httpPort);
-  }
   if (type === 'signal' && input.phoneNumber)
     data['SIGNAL_PHONE_NUMBER'] = input.phoneNumber;
 

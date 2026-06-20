@@ -128,24 +128,6 @@ describe('buildSecretData — non-webchat channel types', () => {
     expect(data).toEqual({ SIGNAL_PHONE_NUMBER: '+15559876543' });
   });
 
-  it('http with httpUsers and httpPort: maps both fields', () => {
-    const data = buildSecretData({
-      type: 'http',
-      httpUsers: 'admin:pass',
-      httpPort: 8080,
-    });
-    expect(data).toEqual({
-      HTTP_CHANNEL_USERS: 'admin:pass',
-      HTTP_CHANNEL_PORT: '8080',
-    });
-  });
-
-  it('http with only httpPort: only HTTP_CHANNEL_PORT present (as string)', () => {
-    const data = buildSecretData({ type: 'http', httpPort: 9000 });
-    expect(data).toEqual({ HTTP_CHANNEL_PORT: '9000' });
-    expect(data['HTTP_CHANNEL_USERS']).toBeUndefined();
-  });
-
   it('unknown type: returns empty object', () => {
     const data = buildSecretData({ type: 'unknown-channel' });
     expect(data).toEqual({});

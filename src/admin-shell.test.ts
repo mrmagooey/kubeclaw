@@ -541,9 +541,9 @@ describe('executeTool', () => {
       mockCreateNamespacedDeployment.mockResolvedValue({});
 
       const result = await executeTool('setup_channel', {
-        type: 'http',
-        instanceName: 'http-staging',
-        httpUsers: 'alice:pass',
+        type: 'whatsapp',
+        instanceName: 'whatsapp-staging',
+        phoneNumber: '+15551234567',
       });
 
       // Verify secret uses instanceName
@@ -551,7 +551,7 @@ describe('executeTool', () => {
         expect.objectContaining({
           body: expect.objectContaining({
             metadata: expect.objectContaining({
-              name: 'kubeclaw-http-staging-secrets',
+              name: 'kubeclaw-whatsapp-staging-secrets',
             }),
           }),
         }),
@@ -562,7 +562,7 @@ describe('executeTool', () => {
         expect.objectContaining({
           body: expect.objectContaining({
             metadata: expect.objectContaining({
-              name: 'kubeclaw-channel-http-staging-groups',
+              name: 'kubeclaw-channel-whatsapp-staging-groups',
             }),
           }),
         }),
@@ -573,7 +573,7 @@ describe('executeTool', () => {
         expect.objectContaining({
           body: expect.objectContaining({
             metadata: expect.objectContaining({
-              name: 'kubeclaw-channel-http-staging',
+              name: 'kubeclaw-channel-whatsapp-staging',
             }),
           }),
         }),
@@ -588,8 +588,8 @@ describe('executeTool', () => {
       const typeEnv = envVars.find(
         (e: { name: string }) => e.name === 'KUBECLAW_CHANNEL_TYPE',
       );
-      expect(channelEnv.value).toBe('http-staging');
-      expect(typeEnv.value).toBe('http');
+      expect(channelEnv.value).toBe('whatsapp-staging');
+      expect(typeEnv.value).toBe('whatsapp');
     });
 
     it('defaults instanceName to type when not provided', async () => {
@@ -618,8 +618,8 @@ describe('executeTool', () => {
       mockCreateNamespacedDeployment.mockResolvedValue({});
 
       await executeTool('setup_channel', {
-        type: 'http',
-        httpUsers: 'bob:pass',
+        type: 'whatsapp',
+        phoneNumber: '+15559876543',
       });
 
       // Without instanceName, should use type as the name
@@ -627,7 +627,7 @@ describe('executeTool', () => {
         expect.objectContaining({
           body: expect.objectContaining({
             metadata: expect.objectContaining({
-              name: 'kubeclaw-http-secrets',
+              name: 'kubeclaw-whatsapp-secrets',
             }),
           }),
         }),
@@ -636,7 +636,7 @@ describe('executeTool', () => {
         expect.objectContaining({
           body: expect.objectContaining({
             metadata: expect.objectContaining({
-              name: 'kubeclaw-channel-http',
+              name: 'kubeclaw-channel-whatsapp',
             }),
           }),
         }),

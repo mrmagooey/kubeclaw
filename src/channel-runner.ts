@@ -37,10 +37,15 @@ import {
   getAllCapabilities,
 } from './capabilities/db.js';
 import type { GroupMcpEntry } from './capabilities/types.js';
-import type { CapabilityEntry } from './channels/http.js';
-import { configureHttpSecretIpc } from './channels/http.js';
+interface CapabilityEntry {
+  type: string;
+  state: 'running' | 'scaled_down';
+  provisioned_at: string;
+  scale: number;
+}
 import { listInstances } from './per-group-capabilities/db.js';
 import {
+  db,
   appendConversationMessage,
   createTask,
   deleteTaskForGroup,
@@ -3391,65 +3396,6 @@ async function main(): Promise<void> {
     READ_USER_PROFILE_TOOL,
   );
 
-  // Wire IPC-backed callbacks into the HTTP channel's /secrets REST endpoints.
-  // Must run before the channel factory is invoked so the module-level fns are set.
-  configureHttpSecretIpc(
-    async (group) => {
-      const ipc = buildCredentialIpcClient();
-      const res = await ipc('secret.list', { group });
-      if (!res.ok) return [];
-      const raw = res.result as Array<{
-        catalogId: string;
-        registeredAt: string;
-        fields_present?: string[];
-      }>;
-      return (raw ?? []).map((e) => ({
-        type: e.catalogId,
-        fields_present: e.fields_present ?? [],
-      }));
-    },
-    async (group, type) => {
-      // First check if the secret exists for this group
-      const listIpc = buildCredentialIpcClient();
-      const listRes = await listIpc('secret.list', { group });
-      if (!listRes.ok) return 'not_found';
-      const entries = listRes.result as Array<{ catalogId: string }>;
-      const exists = (entries ?? []).some((e) => e.catalogId === type);
-      if (!exists) return 'not_found';
-
-      const ipc = buildCredentialIpcClient();
-      const res = await ipc('secret.remove', { group, catalogId: type });
-      if (!res.ok) return 'not_found';
-      return 'ok';
-    },
-    async () => {
-      const ipc = buildCredentialIpcClient();
-      const res = await ipc('catalog.list', {});
-      if (!res.ok) return [];
-      const catalog = res.result as CatalogEntry[];
-      return (catalog ?? []).map((e) => ({
-        type: e.id,
-        required_fields: e.credentialFields.map((f) => f.name),
-        optional_fields: [],
-        description: e.host ?? '',
-      }));
-    },
-    async (group, type, fields) => {
-      const ipc = buildCredentialIpcClient();
-      const res = await ipc('secret.add', {
-        group,
-        catalogId: type,
-        fields: JSON.stringify(fields),
-      });
-      if (!res.ok)
-        return {
-          ok: false as const,
-          error: (res as { ok: false; error: string }).error,
-        };
-      return { ok: true as const };
-    },
-  );
-
   const shutdown = _buildShutdown(channelMetricsServer, queue, channels);
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
@@ -3560,6 +3506,131 @@ async function main(): Promise<void> {
           : new Date(0).toISOString();
         return { type: entry.name, state, provisioned_at, scale };
       });
+    },
+    listSecretsFn: async (group: string) => {
+      const ipc = buildCredentialIpcClient();
+      const res = await ipc('secret.list', { group });
+      if (!res.ok) return [];
+      const raw = res.result as Array<{
+        catalogId: string;
+        registeredAt: string;
+        fields_present?: string[];
+      }>;
+      return (raw ?? []).map((e) => ({
+        type: e.catalogId,
+        fields_present: e.fields_present ?? [],
+      }));
+    },
+    removeSecretFn: async (group: string, type: string) => {
+      const listIpc = buildCredentialIpcClient();
+      const listRes = await listIpc('secret.list', { group });
+      if (!listRes.ok) return 'not_found';
+      const entries = listRes.result as Array<{ catalogId: string }>;
+      const exists = (entries ?? []).some((e) => e.catalogId === type);
+      if (!exists) return 'not_found';
+
+      const ipc = buildCredentialIpcClient();
+      const res = await ipc('secret.remove', { group, catalogId: type });
+      if (!res.ok) return 'not_found';
+      return 'ok';
+    },
+    listCatalogFn: async () => {
+      const ipc = buildCredentialIpcClient();
+      const res = await ipc('catalog.list', {});
+      if (!res.ok) return [];
+      const catalog = res.result as CatalogEntry[];
+      return (catalog ?? []).map((e) => ({
+        type: e.id,
+        required_fields: e.credentialFields.map((f: { name: string }) => f.name),
+        optional_fields: [],
+        description: e.host ?? '',
+      }));
+    },
+    addSecretFn: async (group: string, type: string, fields: Record<string, string>) => {
+      const ipc = buildCredentialIpcClient();
+      const res = await ipc('secret.add', {
+        group,
+        catalogId: type,
+        fields: JSON.stringify(fields),
+      });
+      if (!res.ok)
+        return {
+          ok: false as const,
+          error: (res as { ok: false; error: string }).error,
+        };
+      return { ok: true as const };
+    },
+    checkDb: (): 'ok' | 'failed' => {
+      try {
+        db.exec('SELECT 1');
+        return 'ok';
+      } catch {
+        return 'failed';
+      }
+    },
+    checkRedis: async (): Promise<'ok' | 'unreachable'> => {
+      const client = getRedisClient();
+      try {
+        await Promise.race([
+          client.ping(),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('Redis PING timeout')), 2000),
+          ),
+        ]);
+        return 'ok';
+      } catch {
+        return 'unreachable';
+      }
+    },
+    killJobFn: async (jobId: string, groupFolder: string) => {
+      const redis = getRedisClient();
+      const resultStream = `kubeclaw:job-kill-result:${Date.now()}-${randomBytes(4).toString('hex')}`;
+      await redis.xadd(
+        getTaskRequestStream(),
+        '*',
+        'type',
+        'job.cancel',
+        'jobId',
+        jobId,
+        'groupFolder',
+        groupFolder,
+        'resultStream',
+        resultStream,
+      );
+      const deadline = Date.now() + 5000;
+      let lastId = '0-0';
+      while (Date.now() < deadline) {
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) break;
+        const response = await redis.xread(
+          'COUNT',
+          1,
+          'BLOCK',
+          Math.min(remaining, 1000),
+          'STREAMS',
+          resultStream,
+          lastId,
+        );
+        if (!response) continue;
+        for (const [, messages] of response as [string, [string, string[]][]][]) {
+          for (const [, flds] of messages) {
+            const obj: Record<string, string> = {};
+            for (let i = 0; i < flds.length; i += 2)
+              obj[flds[i]] = flds[i + 1];
+            if (obj.result) {
+              return JSON.parse(obj.result) as {
+                ok: boolean;
+                status?: string;
+                currentStatus?: string;
+                error?: string;
+              };
+            }
+          }
+        }
+      }
+      throw new Error(
+        'DELETE /jobs/<id> kill timed out — orchestrator did not respond',
+      );
     },
   };
 

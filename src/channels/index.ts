@@ -5,9 +5,6 @@
 
 // gmail
 
-// http
-import './http.js';
-
 // signal
 
 // slack
