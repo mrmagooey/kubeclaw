@@ -580,21 +580,21 @@ describe('Minikube-live: bootstrap IRC channel end-to-end (channel-runner host p
     expect(
       deployYaml,
       'Deployment container command must be node dist/channel-runner.js (hostMode: channel-runner)',
-    ).toContain('channel-runner.js');
+    ).toContain('dist/channel-runner.js');
+    expect(deployYaml).toMatch(/-\s+node/);
 
     // AC3 (PVC mounts): the channel-runner path mounts groups/store/sessions PVCs.
     // These are the shared-state volumes (not just /runtime which the standalone
-    // path also mounts). At least one of the three must be present in the spec.
+    // path also mounts). All three must be present in the spec.
     const hasGroupsMount =
       deployYaml.includes('kubeclaw-groups') || deployYaml.includes('/groups');
     const hasStoreMount =
       deployYaml.includes('kubeclaw-store') || deployYaml.includes('/store');
     const hasSessionsMount =
       deployYaml.includes('kubeclaw-sessions') || deployYaml.includes('/sessions');
-    expect(
-      hasGroupsMount || hasStoreMount || hasSessionsMount,
-      'Deployment must mount at least one of: groups, store, or sessions volumes (channel-runner path)',
-    ).toBe(true);
+    expect(hasGroupsMount, 'Deployment must mount groups volume (channel-runner path)').toBe(true);
+    expect(hasStoreMount, 'Deployment must mount store volume (channel-runner path)').toBe(true);
+    expect(hasSessionsMount, 'Deployment must mount sessions volume (channel-runner path)').toBe(true);
 
     // AC3 (negative): the bootstrap-specific env must not be present in the
     // steady-state Deployment — this confirms commit produced a clean manifest.
