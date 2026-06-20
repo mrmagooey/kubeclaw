@@ -484,34 +484,6 @@ async function helmInstall(): Promise<void> {
     { allowFail: true },
   );
 
-  // The chart has no auto-create path for irc channel secrets (unlike http
-  // which keys off secrets.httpChannelUsers). Pre-create the secret manually
-  // so the channel pod can read its env vars.
-  run(
-    'kubectl',
-    [
-      'delete',
-      'secret',
-      'kubeclaw-channel-irc',
-      '-n',
-      NAMESPACE,
-      '--ignore-not-found',
-    ],
-    { allowFail: true },
-  );
-  run('kubectl', [
-    'create',
-    'secret',
-    'generic',
-    'kubeclaw-channel-irc',
-    '-n',
-    NAMESPACE,
-    '--from-literal=server=kubeclaw-capability-test-ircd',
-    '--from-literal=port=6667',
-    '--from-literal=nick=kubeclaw-bot',
-    '--from-literal=channels=#live-test',
-  ]);
-
   // Pre-create the oauth-webchat channel Secret. The chart has no auto-create
   // path for this channel (unlike http which keys off secrets.httpChannelUsers).
   // All OAUTH_WEBCHAT_* env vars are read by the channel pod from this Secret.
@@ -624,28 +596,6 @@ async function helmInstall(): Promise<void> {
     'capabilities.test-ircd.image=kubeclaw-test-ircd:latest',
     '--set',
     'capabilities.test-ircd.port=6667',
-    // Deploy the IRC channel pod. The Secret kubeclaw-channel-irc was
-    // pre-created above with the correct server/port/nick/channels values.
-    '--set',
-    'channels.irc.enabled=true',
-    '--set',
-    'channels.irc.type=irc',
-    '--set',
-    'channels.irc.envVars[0].name=IRC_SERVER',
-    '--set',
-    'channels.irc.envVars[0].key=server',
-    '--set',
-    'channels.irc.envVars[1].name=IRC_PORT',
-    '--set',
-    'channels.irc.envVars[1].key=port',
-    '--set',
-    'channels.irc.envVars[2].name=IRC_NICK',
-    '--set',
-    'channels.irc.envVars[2].key=nick',
-    '--set',
-    'channels.irc.envVars[3].name=IRC_CHANNELS',
-    '--set',
-    'channels.irc.envVars[3].key=channels',
     // Deploy the test OIDC provider as a capability pod. It serves the
     // OpenID Connect Authorization Code flow for the oauth-webchat channel.
     // Port 8080 is already allowed by extraEgressPorts — no additional
@@ -708,11 +658,13 @@ async function helmInstall(): Promise<void> {
     // http-echo used by e2e/minikube-live-bootstrap-channel-http-echo.test.ts.
     // nanoid-echo used by e2e/minikube-live-channel-src-push.test.ts.
     '--set-json',
-    'bootstrap.channelManifests={"http-echo":{"packageJson":"{\\"name\\":\\"http-echo-runtime\\",\\"version\\":\\"1.0.0\\",\\"dependencies\\":{}}","packageLockJson":"{\\"name\\":\\"http-echo-runtime\\",\\"version\\":\\"1.0.0\\",\\"lockfileVersion\\":3,\\"requires\\":true,\\"packages\\":{\\"\\":{\\"name\\":\\"http-echo-runtime\\",\\"version\\":\\"1.0.0\\"}}}","manifestHash":"edbb5411113738f81dcb0b203fcf41fbc12197bff9a64d80bb0d7641a18a9961"},"nanoid-echo":{"packageJson":"{\\"name\\":\\"nanoid-echo-runtime\\",\\"version\\":\\"1.0.0\\",\\"dependencies\\":{\\"nanoid\\":\\"5.0.7\\"}}","packageLockJson":"{\\"name\\":\\"nanoid-echo-runtime\\",\\"version\\":\\"1.0.0\\",\\"lockfileVersion\\":3,\\"requires\\":true,\\"packages\\":{\\"\\": {\\"name\\":\\"nanoid-echo-runtime\\",\\"version\\":\\"1.0.0\\",\\"dependencies\\":{\\"nanoid\\":\\"5.0.7\\"}},\\"node_modules/nanoid\\":{\\"version\\":\\"5.0.7\\",\\"resolved\\":\\"https://registry.npmjs.org/nanoid/-/nanoid-5.0.7.tgz\\",\\"integrity\\":\\"sha512-oLxFY2gd2IqnjcYyOXD8XGCftpGtZP2AbHbOkthDkvRywH5ayNtPVy9YlOPcHckXzbLTCHpkb7FB+yuxKV13pQ==\\",\\"funding\\":[{\\"type\\":\\"github\\",\\"url\\":\\"https://github.com/sponsors/ai\\"}],\\"license\\":\\"MIT\\",\\"bin\\":{\\"nanoid\\":\\"bin/nanoid.js\\"},\\"engines\\":{\\"node\\":\\"^18 || >=20\\"}}}}","manifestHash":"eed310417fb4b8d830ab79c719aca128293e065601a0bdbf575a1ab05b2962c5"}}',
+    'bootstrap.channelManifests={"http-echo":{"packageJson":"{\\"name\\":\\"http-echo-runtime\\",\\"version\\":\\"1.0.0\\",\\"dependencies\\":{}}","packageLockJson":"{\\"name\\":\\"http-echo-runtime\\",\\"version\\":\\"1.0.0\\",\\"lockfileVersion\\":3,\\"requires\\":true,\\"packages\\":{\\"\\":{\\"name\\":\\"http-echo-runtime\\",\\"version\\":\\"1.0.0\\"}}}","manifestHash":"edbb5411113738f81dcb0b203fcf41fbc12197bff9a64d80bb0d7641a18a9961"},"nanoid-echo":{"packageJson":"{\\"name\\":\\"nanoid-echo-runtime\\",\\"version\\":\\"1.0.0\\",\\"dependencies\\":{\\"nanoid\\":\\"5.0.7\\"}}","packageLockJson":"{\\"name\\":\\"nanoid-echo-runtime\\",\\"version\\":\\"1.0.0\\",\\"lockfileVersion\\":3,\\"requires\\":true,\\"packages\\":{\\"\\": {\\"name\\":\\"nanoid-echo-runtime\\",\\"version\\":\\"1.0.0\\",\\"dependencies\\":{\\"nanoid\\":\\"5.0.7\\"}},\\"node_modules/nanoid\\":{\\"version\\":\\"5.0.7\\",\\"resolved\\":\\"https://registry.npmjs.org/nanoid/-/nanoid-5.0.7.tgz\\",\\"integrity\\":\\"sha512-oLxFY2gd2IqnjcYyOXD8XGCftpGtZP2AbHbOkthDkvRywH5ayNtPVy9YlOPcHckXzbLTCHpkb7FB+yuxKV13pQ==\\",\\"funding\\":[{\\"type\\":\\"github\\",\\"url\\":\\"https://github.com/sponsors/ai\\"}],\\"license\\":\\"MIT\\",\\"bin\\":{\\"nanoid\\":\\"bin/nanoid.js\\"},\\"engines\\":{\\"node\\":\\"^18 || >=20\\"}}}}","manifestHash":"eed310417fb4b8d830ab79c719aca128293e065601a0bdbf575a1ab05b2962c5"},"irc":{"packageJson":"{\\"name\\":\\"irc-runtime\\",\\"version\\":\\"1.0.0\\",\\"dependencies\\":{\\"irc-upd\\":\\"0.11.0\\"}}","packageLockJson":"{\\"name\\":\\"irc-runtime\\",\\"version\\":\\"1.0.0\\",\\"lockfileVersion\\":3,\\"requires\\":true,\\"packages\\":{\\"\\":{\\"name\\":\\"irc-runtime\\",\\"version\\":\\"1.0.0\\",\\"dependencies\\":{\\"irc-upd\\":\\"0.11.0\\"}},\\"node_modules/chardet\\":{\\"version\\":\\"1.6.0\\",\\"resolved\\":\\"https://registry.npmjs.org/chardet/-/chardet-1.6.0.tgz\\",\\"integrity\\":\\"sha512-+QOTw3otC4+FxdjK9RopGpNOglADbr4WPFi0SonkO99JbpkTPbMxmdm4NenhF5Zs+4gPXLI1+y2uazws5TMe8w==\\",\\"license\\":\\"MIT\\",\\"optional\\":true},\\"node_modules/iconv-lite\\":{\\"version\\":\\"0.6.3\\",\\"resolved\\":\\"https://registry.npmjs.org/iconv-lite/-/iconv-lite-0.6.3.tgz\\",\\"integrity\\":\\"sha512-4fCk79wshMdzMp2rH06qWrJE4iolqLhCUH+OiuIgU++RB0+94NlDL81atO7GX55uUKueo0txHNtvEyI6D7WdMw==\\",\\"license\\":\\"MIT\\",\\"optional\\":true,\\"dependencies\\":{\\"safer-buffer\\":\\">= 2.1.2 < 3.0.0\\"},\\"engines\\":{\\"node\\":\\">=0.10.0\\"}},\\"node_modules/irc-colors\\":{\\"version\\":\\"1.5.0\\",\\"resolved\\":\\"https://registry.npmjs.org/irc-colors/-/irc-colors-1.5.0.tgz\\",\\"integrity\\":\\"sha512-HtszKchBQTcqw1DC09uD7i7vvMayHGM1OCo6AHt5pkgZEyo99ClhHTMJdf+Ezc9ovuNNxcH89QfyclGthjZJOw==\\",\\"license\\":\\"MIT\\",\\"engines\\":{\\"node\\":\\">=6\\"}},\\"node_modules/irc-upd\\":{\\"version\\":\\"0.11.0\\",\\"resolved\\":\\"https://registry.npmjs.org/irc-upd/-/irc-upd-0.11.0.tgz\\",\\"integrity\\":\\"sha512-A1hV5cUkl5HZsKWRYcszD2Usfz33hB8igSSox8dEmrMyfy8/Ra6T/o4jwzs7jYMZ7ljLquSIWzcvSZHZ/bEAZA==\\",\\"license\\":\\"GPL-3.0\\",\\"dependencies\\":{\\"irc-colors\\":\\"^1.5.0\\"},\\"engines\\":{\\"node\\":\\">=0.10.0\\"},\\"optionalDependencies\\":{\\"chardet\\":\\"^1.2.1\\",\\"iconv-lite\\":\\"^0.6.2\\"}},\\"node_modules/safer-buffer\\":{\\"version\\":\\"2.1.2\\",\\"resolved\\":\\"https://registry.npmjs.org/safer-buffer/-/safer-buffer-2.1.2.tgz\\",\\"integrity\\":\\"sha512-YZo3K82SD7Riyi0E1EQPojLz7kpepnSQI9IyPbHHg1XXXevb5dJI7tpyN2ADxGcQbHG7vcyRHk0cbwqcQriUtg==\\",\\"license\\":\\"MIT\\",\\"optional\\":true}}}","manifestHash":"bb913713e2ca96ca392f3febbb9b5355fa6d0636e3d82f0c0f86d4f44406d652","hostMode":"channel-runner"}}',
     '--set-file',
     'bootstrap.skills.bootstrap-http-echo=helm/kubeclaw/files/bootstrap-skills/bootstrap-http-echo.md',
     '--set-file',
     'bootstrap.skills.bootstrap-nanoid-echo=helm/kubeclaw/files/bootstrap-skills/bootstrap-nanoid-echo.md',
+    '--set-file',
+    'bootstrap.skills.bootstrap-irc=helm/kubeclaw/files/bootstrap-skills/bootstrap-irc.md',
   ];
   const install = run('helm', setArgs, { timeout: 240_000, allowFail: true });
   if (!install.ok) {
@@ -1103,8 +1055,6 @@ export default async function setup() {
   await waitForPod('app=kubeclaw-capability-test-embed', 240_000);
   console.log('⏳ Waiting for test ircd pod Ready...');
   await waitForPod('app=kubeclaw-capability-test-ircd', 240_000);
-  console.log('⏳ Waiting for IRC channel pod Ready...');
-  await waitForPod('app=kubeclaw-channel-irc', 240_000);
   console.log('⏳ Waiting for test oauth provider pod Ready...');
   await waitForPod('app=kubeclaw-capability-test-oauth', 240_000);
   console.log('⏳ Waiting for oauth-webchat channel pod Ready...');
