@@ -136,6 +136,10 @@ export interface CommitChannelConfigDeps {
    * PVC read-only and imports /runtime/channel-entry.js.
    */
   writeChannelSource(instanceName: string, channelType: string): Promise<void>;
+  /** Read the channel manifest's hostMode (default 'standalone'). */
+  getChannelHostMode(channelType: string): Promise<'standalone' | 'channel-runner'>;
+  /** Create a PVC (idempotent; NotFound-create, AlreadyExists-ignore). */
+  createPvc(name: string, sizeGi: number): Promise<void>;
 }
 
 // ─── Handler ──────────────────────────────────────────────────────────────────
@@ -381,6 +385,19 @@ export async function processCommitChannelConfig(
         return { ok: false, code: 'CHANNEL_SOURCE_PUSH_FAILED', error };
       }
 
+      // 3a. Determine hostMode and prepare extra PVCs for channel-runner mode
+      const hostMode = await deps.getChannelHostMode(channel_type);
+      const channelRunnerMode = hostMode === 'channel-runner';
+
+      const extraVolumes: Array<{ name: string; claimName: string; mountPath: string; sizeGi: number }> = channelRunnerMode
+        ? [
+            { name: 'groups', claimName: `kubeclaw-channel-${instance_name}-groups`, mountPath: '/app/groups', sizeGi: 2 },
+            { name: 'store', claimName: `kubeclaw-channel-${instance_name}-store`, mountPath: '/app/store', sizeGi: 1 },
+            { name: 'sessions', claimName: `kubeclaw-channel-${instance_name}-sessions`, mountPath: '/data/sessions', sizeGi: 1 },
+          ]
+        : [];
+      for (const v of extraVolumes) await deps.createPvc(v.claimName, v.sizeGi);
+
       // 3. Build steady-state Deployment spec
       const deployment: V1Deployment = {
         apiVersion: 'apps/v1',
@@ -417,7 +434,9 @@ export async function processCommitChannelConfig(
                   name: 'channel',
                   image: channelBaseImage,
                   imagePullPolicy: 'IfNotPresent',
-                  command: ['node', '/app/channel-loader.js'],
+                  command: channelRunnerMode
+                    ? ['node', 'dist/channel-runner.js']
+                    : ['node', '/app/channel-loader.js'],
                   env: [
                     { name: 'KUBECLAW_CHANNEL', value: instance_name },
                     { name: 'KUBECLAW_CHANNEL_TYPE', value: channel_type },
@@ -431,6 +450,7 @@ export async function processCommitChannelConfig(
                   volumeMounts: [
                     // Runtime PVC mounted READ-ONLY (AC5)
                     { name: 'runtime', mountPath: '/runtime', readOnly: true },
+                    ...extraVolumes.map((v) => ({ name: v.name, mountPath: v.mountPath })),
                   ],
                 },
               ],
@@ -443,6 +463,7 @@ export async function processCommitChannelConfig(
                     // in volumeMounts is the binding enforcement. Both are set for clarity.
                   } as any,
                 },
+                ...extraVolumes.map((v) => ({ name: v.name, persistentVolumeClaim: { claimName: v.claimName } })),
               ],
             },
           },

@@ -56,6 +56,9 @@ function makeDeps(
     recordMismatch: vi.fn(),
     // Task 3: default stub — succeeds silently so existing tests are unaffected
     writeChannelSource: vi.fn().mockResolvedValue(undefined),
+    // Task 5: default stubs — standalone mode keeps existing tests unaffected
+    getChannelHostMode: vi.fn(async () => 'standalone' as const),
+    createPvc: vi.fn(async () => {}),
     ...overrides,
   };
 }
@@ -235,6 +238,32 @@ describe('processCommitChannelConfig', () => {
     expect(runtimeVol?.persistentVolumeClaim?.claimName).toBe(
       'kubeclaw-channel-my-telegram-runtime',
     );
+  });
+
+  it('standalone hostMode → channel-loader command, only runtime volume', async () => {
+    const deps = makeDeps({ getChannelHostMode: vi.fn(async () => 'standalone') });
+    let built: any;
+    deps.createDeployment = vi.fn(async (b) => { built = b; });
+    await processCommitChannelConfig(validPayload, deps, 'kubeclaw', 'kubeclaw-agent:latest');
+    const c = built.spec.template.spec.containers[0];
+    expect(c.command).toEqual(['node', '/app/channel-loader.js']);
+    expect(built.spec.template.spec.volumes.map((v: any) => v.name)).toEqual(['runtime']);
+    expect(deps.createPvc).not.toHaveBeenCalled();
+  });
+
+  it('channel-runner hostMode → channel-runner command + groups/store/sessions PVCs mounted', async () => {
+    const deps = makeDeps({ getChannelHostMode: vi.fn(async () => 'channel-runner') });
+    let built: any;
+    deps.createDeployment = vi.fn(async (b) => { built = b; });
+    await processCommitChannelConfig(validPayload, deps, 'kubeclaw', 'kubeclaw-agent:latest');
+    const c = built.spec.template.spec.containers[0];
+    expect(c.command).toEqual(['node', 'dist/channel-runner.js']);
+    const mountPaths = c.volumeMounts.map((m: any) => m.mountPath).sort();
+    expect(mountPaths).toEqual(['/app/groups', '/app/store', '/data/sessions', '/runtime'].sort());
+    const inst = validPayload.instance_name;
+    expect(deps.createPvc).toHaveBeenCalledWith(`kubeclaw-channel-${inst}-groups`, 2);
+    expect(deps.createPvc).toHaveBeenCalledWith(`kubeclaw-channel-${inst}-store`, 1);
+    expect(deps.createPvc).toHaveBeenCalledWith(`kubeclaw-channel-${inst}-sessions`, 1);
   });
 });
 

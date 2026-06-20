@@ -486,6 +486,38 @@ async function main(): Promise<void> {
           instanceName,
           loadChannelSource(channelType),
         ),
+      // Task 5: read the channel manifest's hostMode from the ConfigMap.
+      getChannelHostMode: async (channelType: string) => {
+        try {
+          const cm = await coreApi.readNamespacedConfigMap({
+            name: 'kubeclaw-channel-manifests',
+            namespace: KUBECLAW_NAMESPACE,
+          });
+          const raw = cm.data?.[`${channelType}.json`];
+          if (!raw) return 'standalone';
+          const hm = (JSON.parse(raw) as { hostMode?: string }).hostMode;
+          return hm === 'channel-runner' ? 'channel-runner' : 'standalone';
+        } catch {
+          return 'standalone';
+        }
+      },
+      // Task 5: create a PVC (idempotent; AlreadyExists → ignore).
+      createPvc: async (name: string, sizeGi: number) => {
+        try {
+          await coreApi.createNamespacedPersistentVolumeClaim({
+            namespace: KUBECLAW_NAMESPACE,
+            body: {
+              apiVersion: 'v1',
+              kind: 'PersistentVolumeClaim',
+              metadata: { name, labels: { 'kubeclaw/channel-pvc': 'true' } },
+              spec: { accessModes: ['ReadWriteOnce'], resources: { requests: { storage: `${sizeGi}Gi` } } },
+            },
+          });
+        } catch (err: any) {
+          if (err?.statusCode === 409 || err?.body?.code === 409) return;
+          throw err;
+        }
+      },
       deleteJob: async (name: string) => {
         try {
           await batchApi.deleteNamespacedJob({

@@ -112,6 +112,19 @@ function makeCommitDeps(): CommitChannelConfigDeps & {
     releaseBootstrap: (instanceName: string) => {
       releasedInstances.push(instanceName);
     },
+    // Story 176: read PVC files — default to empty content (no hash check in these tests)
+    readPvcFiles: async (_instanceName: string) => ({
+      packageJson: JSON.stringify({ name: 'test', dependencies: {} }),
+      packageLockJson: JSON.stringify({ lockfileVersion: 3, packages: {} }),
+    }),
+    deleteJob: async (_name: string) => {},
+    deletePvc: async (_name: string) => {},
+    recordMismatch: (_labels: { channel_type: string }) => {},
+    // Task 3: write channel source files — no-op
+    writeChannelSource: async (_instanceName: string, _channelType: string) => {},
+    // Task 5: host mode deps — default standalone
+    getChannelHostMode: async (_channelType: string) => 'standalone' as const,
+    createPvc: async (_name: string, _sizeGi: number) => {},
   };
 }
 
