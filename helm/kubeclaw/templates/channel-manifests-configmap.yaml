@@ -14,7 +14,11 @@ metadata:
 data:
   {{- range $channelType, $manifest := .Values.bootstrap.channelManifests }}
   {{ $channelType }}.json: |
-    {{ toJson (dict "packageJson" $manifest.packageJson "packageLockJson" $manifest.packageLockJson "manifestHash" $manifest.manifestHash "hostMode" ($manifest.hostMode | default "standalone")) }}
+    {{- $entry := dict "packageJson" $manifest.packageJson "packageLockJson" $manifest.packageLockJson "manifestHash" $manifest.manifestHash "hostMode" ($manifest.hostMode | default "standalone") }}
+    {{- if $manifest.httpPort }}
+    {{- $_ := set $entry "httpPort" $manifest.httpPort }}
+    {{- end }}
+    {{ toJson $entry }}
   {{- end }}
 ---
 # kubeclaw-channel-manifests: the live merged catalog written by the orchestrator

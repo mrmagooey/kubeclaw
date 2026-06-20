@@ -233,6 +233,15 @@ function createSchema(database: SqlJsDatabase): void {
     /* column already exists */
   }
 
+  // Additive migration: add http_port to channel_manifest_overrides (Task 1, sub-project 2).
+  try {
+    database.run(
+      `ALTER TABLE channel_manifest_overrides ADD COLUMN http_port INTEGER`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
   // Story 179: admin-registered bootstrap skills (runtime write path).
   database.run(`
     CREATE TABLE IF NOT EXISTS bootstrap_skill_overrides (

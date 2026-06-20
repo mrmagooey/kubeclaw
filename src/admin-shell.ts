@@ -613,6 +613,11 @@ export const TOOLS: OpenAI.ChatCompletionTool[] = [
             description:
               "Steady-state pod host for this channel type. 'channel-runner' (full resident host: agent loop, slash commands, IPC — for first-party channels like irc/http/oauth) or 'standalone' (thin self-contained server — for simple channels). Defaults to 'standalone' if omitted.",
           },
+          http_port: {
+            type: 'integer',
+            description:
+              "The channel's HTTP port if it serves HTTP, e.g. 4080. Must be in range 1024..65535. Omit if the channel does not expose HTTP.",
+          },
         },
       },
     },
@@ -2083,6 +2088,7 @@ async function handleRegisterChannelManifest(
     | 'standalone'
     | 'channel-runner'
     | undefined;
+  const http_port = input.http_port as number | undefined;
   if (!channel_type || !package_json || !package_lock_json) {
     return 'Error: channel_type, package_json, and package_lock_json are all required.';
   }
@@ -2096,7 +2102,7 @@ async function handleRegisterChannelManifest(
         .filter(Boolean)
     : [];
   const result = registerChannelManifest(
-    { channel_type, package_json, package_lock_json, host_mode },
+    { channel_type, package_json, package_lock_json, host_mode, http_port },
     allowedLifecycleScripts,
     channelManifestReconciler.apply.bind(channelManifestReconciler),
   );

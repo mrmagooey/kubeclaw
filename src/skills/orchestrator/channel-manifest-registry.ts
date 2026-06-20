@@ -36,6 +36,7 @@ export interface RegisterArgs {
   package_json: string;
   package_lock_json: string;
   host_mode?: 'standalone' | 'channel-runner';
+  http_port?: number;
 }
 
 export interface OverrideRow {
@@ -46,6 +47,7 @@ export interface OverrideRow {
   registered_at: string;
   registered_by: string;
   host_mode: 'standalone' | 'channel-runner';
+  http_port?: number;
 }
 
 // ─── Register ─────────────────────────────────────────────────────────────────
@@ -121,22 +123,33 @@ export function registerChannelManifest(
   }
   const host_mode = args.host_mode ?? 'standalone';
 
+  // 7. Validate http_port (if provided)
+  if (args.http_port !== undefined) {
+    if (!Number.isInteger(args.http_port) || args.http_port < 1024 || args.http_port > 65535) {
+      return {
+        ok: false,
+        error: `http_port must be an integer in range 1024..65535 (got ${String(args.http_port)})`,
+      };
+    }
+  }
+
   // Compute hash
   const manifest_hash = computeManifestHash(
     args.package_json,
     args.package_lock_json,
   );
 
-  // Idempotency check — same channel_type AND same hash AND same host_mode → short-circuit
+  // Idempotency check — same channel_type AND same hash AND same host_mode AND same http_port → short-circuit
   const existing = db.exec(
-    `SELECT manifest_hash, host_mode FROM channel_manifest_overrides WHERE channel_type = ?`,
+    `SELECT manifest_hash, host_mode, http_port FROM channel_manifest_overrides WHERE channel_type = ?`,
     [args.channel_type],
   );
   if (existing.length > 0 && existing[0].values.length > 0) {
     const storedHash = existing[0].values[0][0] as string;
     const storedHostMode = ((existing[0].values[0][1] as string | null) ?? 'standalone') as 'standalone' | 'channel-runner';
-    if (storedHash === manifest_hash && storedHostMode === host_mode) {
-      // Identical content and host_mode — no-op, no reconcile
+    const storedHttpPort = (existing[0].values[0][2] as number | null) ?? undefined;
+    if (storedHash === manifest_hash && storedHostMode === host_mode && storedHttpPort === args.http_port) {
+      // Identical content, host_mode, and http_port — no-op, no reconcile
       return { ok: true, manifest_hash, source: 'admin-registered' };
     }
   }
@@ -145,8 +158,8 @@ export function registerChannelManifest(
   const now = new Date().toISOString();
   db.run(
     `INSERT OR REPLACE INTO channel_manifest_overrides
-      (channel_type, package_json, package_lock_json, manifest_hash, registered_at, registered_by, host_mode)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      (channel_type, package_json, package_lock_json, manifest_hash, registered_at, registered_by, host_mode, http_port)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       args.channel_type,
       args.package_json,
@@ -155,6 +168,7 @@ export function registerChannelManifest(
       now,
       'admin',
       host_mode,
+      args.http_port ?? null,
     ],
   );
 
@@ -172,7 +186,7 @@ export function registerChannelManifest(
  */
 export function listChannelManifestOverrides(): OverrideRow[] {
   const rows = db.exec(
-    `SELECT channel_type, package_json, package_lock_json, manifest_hash, registered_at, registered_by, host_mode
+    `SELECT channel_type, package_json, package_lock_json, manifest_hash, registered_at, registered_by, host_mode, http_port
      FROM channel_manifest_overrides
      ORDER BY channel_type`,
   );
@@ -185,5 +199,6 @@ export function listChannelManifestOverrides(): OverrideRow[] {
     registered_at: row[4] as string,
     registered_by: row[5] as string,
     host_mode: ((row[6] as string | null) ?? 'standalone') as 'standalone' | 'channel-runner',
+    http_port: (row[7] as number | null) ?? undefined,
   }));
 }

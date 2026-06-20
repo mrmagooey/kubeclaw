@@ -27,6 +27,8 @@ export interface ChannelManifestEntry {
   package_lock_json?: string;
   /** Determines the pod command for the resident channel host. Default 'standalone'. */
   hostMode?: 'standalone' | 'channel-runner';
+  /** The channel's HTTP port if it serves HTTP traffic (e.g. 4080). Optional — omitted when not set. */
+  httpPort?: number;
 }
 
 /** Shape of each per-channel-type JSON file in the baseline ConfigMap mount. */
@@ -35,6 +37,7 @@ interface BaselineFileContent {
   packageLockJson: string;
   manifestHash: string;
   hostMode?: 'standalone' | 'channel-runner';
+  httpPort?: number;
 }
 
 // ─── Merge ────────────────────────────────────────────────────────────────────
@@ -97,6 +100,7 @@ export function loadBaselineFromDisk(
         package_json: content.packageJson,
         package_lock_json: content.packageLockJson,
         hostMode: content.hostMode,
+        httpPort: content.httpPort,
       });
     } catch (err) {
       logger.warn(
@@ -113,7 +117,7 @@ export function loadBaselineFromDisk(
 /** Minimal shape needed to render a manifest into the per-type ConfigMap value. */
 export type RenderableManifest = Pick<
   ChannelManifestEntry,
-  'channel_type' | 'package_json' | 'package_lock_json' | 'manifest_hash' | 'hostMode'
+  'channel_type' | 'package_json' | 'package_lock_json' | 'manifest_hash' | 'hostMode' | 'httpPort'
 >;
 
 /**
@@ -136,6 +140,7 @@ export function renderChannelManifestConfigMapData(
         packageLockJson: m.package_lock_json,
         manifestHash: m.manifest_hash,
         hostMode: m.hostMode ?? 'standalone',
+        ...(m.httpPort !== undefined ? { httpPort: m.httpPort } : {}),
       });
     }
   }
@@ -186,6 +191,7 @@ export class ChannelManifestReconciler {
         package_json: row.package_json,
         package_lock_json: row.package_lock_json,
         hostMode: (row.host_mode as 'standalone' | 'channel-runner' | undefined) ?? 'standalone',
+        ...(row.http_port !== undefined ? { httpPort: row.http_port as number } : {}),
       };
     });
 

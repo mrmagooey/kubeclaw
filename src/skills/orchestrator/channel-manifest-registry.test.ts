@@ -311,6 +311,62 @@ describe('registerChannelManifest host_mode', () => {
   });
 });
 
+describe('registerChannelManifest http_port', () => {
+  beforeEach(async () => {
+    await _initTestDatabase();
+    __resetDbForTest();
+  });
+
+  it('persists http_port 4080 when provided and returns entry with httpPort: 4080', () => {
+    const r = registerChannelManifest({
+      channel_type: 'telegram',
+      package_json: VALID_PKG,
+      package_lock_json: VALID_LOCK,
+      http_port: 4080,
+    });
+    expect(r.ok).toBe(true);
+    const list = listChannelManifestOverrides();
+    expect(list).toHaveLength(1);
+    expect(list[0].http_port).toBe(4080);
+  });
+
+  it('entry has no http_port (undefined) when not provided', () => {
+    registerChannelManifest({
+      channel_type: 'telegram',
+      package_json: VALID_PKG,
+      package_lock_json: VALID_LOCK,
+    });
+    const list = listChannelManifestOverrides();
+    expect(list[0].http_port).toBeUndefined();
+  });
+
+  it('rejects http_port 80 (below 1024) with descriptive error', () => {
+    const r = registerChannelManifest({
+      channel_type: 'telegram',
+      package_json: VALID_PKG,
+      package_lock_json: VALID_LOCK,
+      http_port: 80,
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error).toMatch(/http_port/i);
+    expect(r.error).toMatch(/1024/);
+  });
+
+  it('rejects http_port 70000 (above 65535) with descriptive error', () => {
+    const r = registerChannelManifest({
+      channel_type: 'telegram',
+      package_json: VALID_PKG,
+      package_lock_json: VALID_LOCK,
+      http_port: 70000,
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error).toMatch(/http_port/i);
+    expect(r.error).toMatch(/65535/);
+  });
+});
+
 describe('listChannelManifestOverrides', () => {
   beforeEach(async () => {
     await _initTestDatabase();

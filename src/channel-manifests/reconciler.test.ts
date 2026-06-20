@@ -357,6 +357,43 @@ describe('ChannelManifestReconciler.apply', () => {
   });
 });
 
+describe('httpPort in mergeManifests and render', () => {
+  beforeEach(async () => {
+    await _initTestDatabase();
+    __resetDbForTest();
+  });
+
+  it('baseline entry with httpPort 4080 survives merge+render into ConfigMap', async () => {
+    const baselineWithHttpPort = makeBaseline('telegram');
+    (baselineWithHttpPort as ChannelManifestEntry & { httpPort?: number }).httpPort = 4080;
+    const apply = vi.fn().mockResolvedValue(undefined);
+    const r = new ChannelManifestReconciler({
+      baselineLoader: () => [baselineWithHttpPort],
+      configMapApply: apply,
+    });
+    await r.apply();
+    expect(apply).toHaveBeenCalledOnce();
+    const parsed = JSON.parse(apply.mock.calls[0][0]) as {
+      manifests: Array<{ channel_type: string; httpPort?: number }>;
+    };
+    expect(parsed.manifests).toHaveLength(1);
+    expect(parsed.manifests[0].httpPort).toBe(4080);
+  });
+
+  it('baseline entry without httpPort renders with NO httpPort key', async () => {
+    const apply = vi.fn().mockResolvedValue(undefined);
+    const r = new ChannelManifestReconciler({
+      baselineLoader: () => [makeBaseline('telegram')],
+      configMapApply: apply,
+    });
+    await r.apply();
+    const parsed = JSON.parse(apply.mock.calls[0][0]) as {
+      manifests: Array<{ channel_type: string; httpPort?: number }>;
+    };
+    expect(Object.prototype.hasOwnProperty.call(parsed.manifests[0], 'httpPort')).toBe(false);
+  });
+});
+
 describe('renderChannelManifestConfigMapData', () => {
   it('includes hostMode in each per-type ConfigMap value (regression: silent drop defaulted all channels to standalone)', () => {
     const data = renderChannelManifestConfigMapData([
@@ -397,5 +434,32 @@ describe('renderChannelManifestConfigMapData', () => {
       { channel_type: 'broken', manifest_hash: 'h', hostMode: 'standalone' },
     ]);
     expect(data['broken.json']).toBeUndefined();
+  });
+
+  it('includes httpPort in per-type ConfigMap value when present', () => {
+    const data = renderChannelManifestConfigMapData([
+      {
+        channel_type: 'irc',
+        package_json: '{"name":"irc-runtime","version":"1.0.0"}',
+        package_lock_json: '{"lockfileVersion":3}',
+        manifest_hash: 'abc',
+        hostMode: 'channel-runner',
+        httpPort: 4080,
+      },
+    ]);
+    const parsed = JSON.parse(data['irc.json']) as { httpPort?: number };
+    expect(parsed.httpPort).toBe(4080);
+  });
+
+  it('omits httpPort key entirely when not set (no default)', () => {
+    const data = renderChannelManifestConfigMapData([
+      {
+        channel_type: 'http-echo',
+        package_json: '{"name":"x"}',
+        package_lock_json: '{}',
+        manifest_hash: 'h',
+      },
+    ]);
+    expect(Object.prototype.hasOwnProperty.call(JSON.parse(data['http-echo.json']), 'httpPort')).toBe(false);
   });
 });
