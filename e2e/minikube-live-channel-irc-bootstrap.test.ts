@@ -566,6 +566,25 @@ describe('Minikube-live: bootstrap IRC channel end-to-end (channel-runner host p
       }
       await sleep(3000);
     }
+    if (!ready) {
+      // Diagnostic dump: the channel-runner pod isn't Ready (likely crashing).
+      // Capture its logs (current + previous, all containers) and describe so the
+      // crash reason is in the test output, since afterAll deletes the Deployment.
+      const podName = kubectl([
+        'get', 'pod', '-n', NAMESPACE,
+        '-l', `kubeclaw.io/role=channel,kubeclaw/channel=${INSTANCE_NAME}`,
+        '-o', 'jsonpath={.items[0].metadata.name}',
+      ]).stdout.trim();
+      const logs = kubectl(['logs', '-n', NAMESPACE, podName, '--all-containers=true', '--tail=120']);
+      const prev = kubectl(['logs', '-n', NAMESPACE, podName, '--all-containers=true', '--previous', '--tail=120']);
+      const desc = kubectl(['describe', 'pod', '-n', NAMESPACE, podName]);
+      console.error(
+        `[AC3 channel pod not Ready] pod=${podName}\n` +
+        `--- LOGS ---\n${logs.stdout}\n${logs.stderr}\n` +
+        `--- PREVIOUS (crash) LOGS ---\n${prev.stdout}\n${prev.stderr}\n` +
+        `--- DESCRIBE (tail) ---\n${desc.stdout.slice(-2500)}`,
+      );
+    }
     expect(ready, 'channel pod did not reach Ready within 90s').toBe(true);
   }, 180_000);
 
