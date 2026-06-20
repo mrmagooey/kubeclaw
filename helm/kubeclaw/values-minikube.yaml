@@ -74,3 +74,9 @@ bootstrap:
       packageLockJson: |
         {"name":"runtime","lockfileVersion":3,"requires":true,"packages":{"":{"name":"runtime","version":"1.0.0","dependencies":{"telegraf":"4.16.3"}}}}
       manifestHash: "d1b52f26cee92aa02e0f46ec25d3d8ca70ee8abf1835e651f65cadf69edf1ada"
+    nanoid-echo:
+      packageJson: |
+        {"name":"nanoid-echo-runtime","version":"1.0.0","dependencies":{"nanoid":"5.0.7"}}
+      packageLockJson: |
+        {"name":"nanoid-echo-runtime","version":"1.0.0","lockfileVersion":3,"requires":true,"packages":{"":{"name":"nanoid-echo-runtime","version":"1.0.0","dependencies":{"nanoid":"5.0.7"}},"node_modules/nanoid":{"version":"5.0.7","resolved":"https://registry.npmjs.org/nanoid/-/nanoid-5.0.7.tgz","integrity":"sha512-oLxFY2gd2IqnjcYyOXD8XGCftpGtZP2AbHbOkthDkvRywH5ayNtPVy9YlOPcHckXzbLTCHpkb7FB+yuxKV13pQ==","funding":[{"type":"github","url":"https://github.com/sponsors/ai"}],"license":"MIT","bin":{"nanoid":"bin/nanoid.js"},"engines":{"node":"^18 || >=20"}}}}
+      manifestHash: "eed310417fb4b8d830ab79c719aca128293e065601a0bdbf575a1ab05b2962c5"

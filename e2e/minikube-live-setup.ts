@@ -703,14 +703,16 @@ async function helmInstall(): Promise<void> {
     // Used by e2e/minikube-live-researcher.test.ts.
     '--set-json',
     'specialists=[{"name":"Researcher","prompt":"You are a web-research specialist. When given a topic or question:\\n1. Search for relevant, current information using available search tools.\\n2. Fetch and read promising sources to gather details.\\n3. Synthesise findings into a concise, structured summary with:\\n   - A one-paragraph executive summary.\\n   - Key facts as a bulleted list.\\n   - Source URLs cited inline.\\nStay factual; note when information is uncertain or conflicting.\\n","triggers":["researcher"],"llmProvider":"openrouter","tools":["web_search","web_fetch"]}]',
-    // Bootstrap http-echo manifest + skill — installed at chart-time so the
-    // orchestrator's baseline reconciler picks them up at startup without
-    // requiring a runtime restart. Used by
-    // e2e/minikube-live-bootstrap-channel-http-echo.test.ts.
+    // Bootstrap http-echo + nanoid-echo manifests + skills — installed at chart-time
+    // so the orchestrator's baseline reconciler picks them up at startup.
+    // http-echo used by e2e/minikube-live-bootstrap-channel-http-echo.test.ts.
+    // nanoid-echo used by e2e/minikube-live-channel-src-push.test.ts.
     '--set-json',
-    'bootstrap.channelManifests={"http-echo":{"packageJson":"{\\"name\\":\\"http-echo-runtime\\",\\"version\\":\\"1.0.0\\",\\"dependencies\\":{}}","packageLockJson":"{\\"name\\":\\"http-echo-runtime\\",\\"version\\":\\"1.0.0\\",\\"lockfileVersion\\":3,\\"requires\\":true,\\"packages\\":{\\"\\":{\\"name\\":\\"http-echo-runtime\\",\\"version\\":\\"1.0.0\\"}}}","manifestHash":"edbb5411113738f81dcb0b203fcf41fbc12197bff9a64d80bb0d7641a18a9961"}}',
+    'bootstrap.channelManifests={"http-echo":{"packageJson":"{\\"name\\":\\"http-echo-runtime\\",\\"version\\":\\"1.0.0\\",\\"dependencies\\":{}}","packageLockJson":"{\\"name\\":\\"http-echo-runtime\\",\\"version\\":\\"1.0.0\\",\\"lockfileVersion\\":3,\\"requires\\":true,\\"packages\\":{\\"\\":{\\"name\\":\\"http-echo-runtime\\",\\"version\\":\\"1.0.0\\"}}}","manifestHash":"edbb5411113738f81dcb0b203fcf41fbc12197bff9a64d80bb0d7641a18a9961"},"nanoid-echo":{"packageJson":"{\\"name\\":\\"nanoid-echo-runtime\\",\\"version\\":\\"1.0.0\\",\\"dependencies\\":{\\"nanoid\\":\\"5.0.7\\"}}","packageLockJson":"{\\"name\\":\\"nanoid-echo-runtime\\",\\"version\\":\\"1.0.0\\",\\"lockfileVersion\\":3,\\"requires\\":true,\\"packages\\":{\\"\\": {\\"name\\":\\"nanoid-echo-runtime\\",\\"version\\":\\"1.0.0\\",\\"dependencies\\":{\\"nanoid\\":\\"5.0.7\\"}},\\"node_modules/nanoid\\":{\\"version\\":\\"5.0.7\\",\\"resolved\\":\\"https://registry.npmjs.org/nanoid/-/nanoid-5.0.7.tgz\\",\\"integrity\\":\\"sha512-oLxFY2gd2IqnjcYyOXD8XGCftpGtZP2AbHbOkthDkvRywH5ayNtPVy9YlOPcHckXzbLTCHpkb7FB+yuxKV13pQ==\\",\\"funding\\":[{\\"type\\":\\"github\\",\\"url\\":\\"https://github.com/sponsors/ai\\"}],\\"license\\":\\"MIT\\",\\"bin\\":{\\"nanoid\\":\\"bin/nanoid.js\\"},\\"engines\\":{\\"node\\":\\"^18 || >=20\\"}}}}","manifestHash":"eed310417fb4b8d830ab79c719aca128293e065601a0bdbf575a1ab05b2962c5"}}',
     '--set-file',
     'bootstrap.skills.bootstrap-http-echo=helm/kubeclaw/files/bootstrap-skills/bootstrap-http-echo.md',
+    '--set-file',
+    'bootstrap.skills.bootstrap-nanoid-echo=helm/kubeclaw/files/bootstrap-skills/bootstrap-nanoid-echo.md',
   ];
   const install = run('helm', setArgs, { timeout: 240_000, allowFail: true });
   if (!install.ok) {
