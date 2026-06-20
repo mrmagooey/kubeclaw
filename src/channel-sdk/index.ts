@@ -9,13 +9,14 @@
 import { registerChannel } from '../channels/registry.js';
 import { logger } from '../logger.js';
 import { readEnvFile } from '../env.js';
-import { ASSISTANT_NAME } from '../config.js';
+import { ASSISTANT_NAME, GROUPS_DIR } from '../config.js';
 
 export interface ChannelSdk {
   registerChannel: typeof registerChannel;
   logger: typeof logger;
   readEnvFile: typeof readEnvFile;
   assistantName: string;
+  groupsDir: string;
 }
 
 /** Signature an adapter module must default-export. */
@@ -27,5 +28,6 @@ export function buildChannelSdk(): ChannelSdk {
     logger,
     readEnvFile,
     assistantName: ASSISTANT_NAME,
+    groupsDir: GROUPS_DIR,
   };
 }
