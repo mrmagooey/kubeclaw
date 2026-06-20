@@ -6,6 +6,7 @@ import {
   mergeManifests,
   ChannelManifestReconciler,
   loadBaselineFromDisk,
+  renderChannelManifestConfigMapData,
 } from './reconciler.js';
 import type { ChannelManifestEntry } from './reconciler.js';
 import { _initTestDatabase, __resetDbForTest } from '../db.js';
@@ -353,5 +354,48 @@ describe('ChannelManifestReconciler.apply', () => {
     };
     const types = secondPayload.manifests.map((e) => e.channel_type).sort();
     expect(types).toEqual(['slack', 'telegram']);
+  });
+});
+
+describe('renderChannelManifestConfigMapData', () => {
+  it('includes hostMode in each per-type ConfigMap value (regression: silent drop defaulted all channels to standalone)', () => {
+    const data = renderChannelManifestConfigMapData([
+      {
+        channel_type: 'irc',
+        package_json: '{"name":"irc-runtime","version":"1.0.0"}',
+        package_lock_json: '{"lockfileVersion":3}',
+        manifest_hash: 'abc',
+        hostMode: 'channel-runner',
+      },
+    ]);
+    expect(data['irc.json']).toBeDefined();
+    const parsed = JSON.parse(data['irc.json']) as {
+      packageJson: string;
+      packageLockJson: string;
+      manifestHash: string;
+      hostMode: string;
+    };
+    expect(parsed.hostMode).toBe('channel-runner');
+    expect(parsed.manifestHash).toBe('abc');
+    expect(parsed.packageJson).toContain('irc-runtime');
+  });
+
+  it("defaults hostMode to 'standalone' when absent", () => {
+    const data = renderChannelManifestConfigMapData([
+      {
+        channel_type: 'http-echo',
+        package_json: '{"name":"x"}',
+        package_lock_json: '{}',
+        manifest_hash: 'h',
+      },
+    ]);
+    expect(JSON.parse(data['http-echo.json']).hostMode).toBe('standalone');
+  });
+
+  it('skips entries missing package files', () => {
+    const data = renderChannelManifestConfigMapData([
+      { channel_type: 'broken', manifest_hash: 'h', hostMode: 'standalone' },
+    ]);
+    expect(data['broken.json']).toBeUndefined();
   });
 });

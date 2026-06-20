@@ -66,6 +66,8 @@ import {
   ChannelManifestReconciler,
   loadBaselineFromDisk as loadChannelManifestBaselineFromDisk,
   mergeManifests,
+  renderChannelManifestConfigMapData,
+  type RenderableManifest,
 } from './channel-manifests/reconciler.js';
 import {
   registerBootstrapSkill,
@@ -208,28 +210,12 @@ const channelManifestReconciler = new ChannelManifestReconciler({
     // Build ConfigMap data: one key per channel_type, value is JSON with
     // packageJson, packageLockJson, manifestHash (same shape Helm baseline uses).
     const parsed = JSON.parse(rendered) as {
-      manifests: Array<{
-        channel_type: string;
-        package_json?: string;
-        package_lock_json?: string;
-        manifest_hash: string;
-        source: string;
-        registered_at: string;
-        registered_by: string;
-        package_name: string;
-        package_version: string;
-      }>;
+      manifests: RenderableManifest[];
     };
-    const data: Record<string, string> = {};
-    for (const m of parsed.manifests) {
-      if (m.package_json && m.package_lock_json) {
-        data[`${m.channel_type}.json`] = JSON.stringify({
-          packageJson: m.package_json,
-          packageLockJson: m.package_lock_json,
-          manifestHash: m.manifest_hash,
-        });
-      }
-    }
+    // Build one ConfigMap key per channel type. hostMode is propagated here so
+    // the orchestrator's getChannelHostMode (which reads data[`${type}.json`])
+    // can pick the steady-state pod command (channel-runner vs standalone).
+    const data = renderChannelManifestConfigMapData(parsed.manifests);
 
     let resourceVersion: string | undefined;
     try {

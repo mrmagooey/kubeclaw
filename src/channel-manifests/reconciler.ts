@@ -108,6 +108,40 @@ export function loadBaselineFromDisk(
   return entries;
 }
 
+// ─── Per-type ConfigMap rendering ──────────────────────────────────────────────
+
+/** Minimal shape needed to render a manifest into the per-type ConfigMap value. */
+export type RenderableManifest = Pick<
+  ChannelManifestEntry,
+  'channel_type' | 'package_json' | 'package_lock_json' | 'manifest_hash' | 'hostMode'
+>;
+
+/**
+ * Build the live `kubeclaw-channel-manifests` ConfigMap `data` map: one key per
+ * channel type (`<channel_type>.json`) whose value is the JSON the orchestrator
+ * reads at commit time (packageJson, packageLockJson, manifestHash, hostMode).
+ *
+ * `hostMode` MUST be included: getChannelHostMode reads it to choose the
+ * steady-state pod command (channel-runner vs standalone). Entries missing
+ * package files are skipped (nothing to install/deliver).
+ */
+export function renderChannelManifestConfigMapData(
+  manifests: RenderableManifest[],
+): Record<string, string> {
+  const data: Record<string, string> = {};
+  for (const m of manifests) {
+    if (m.package_json && m.package_lock_json) {
+      data[`${m.channel_type}.json`] = JSON.stringify({
+        packageJson: m.package_json,
+        packageLockJson: m.package_lock_json,
+        manifestHash: m.manifest_hash,
+        hostMode: m.hostMode ?? 'standalone',
+      });
+    }
+  }
+  return data;
+}
+
 // ─── Reconciler ───────────────────────────────────────────────────────────────
 
 export interface ReconcilerDeps {
