@@ -484,42 +484,6 @@ async function helmInstall(): Promise<void> {
     { allowFail: true },
   );
 
-  // Pre-create the oauth-webchat channel Secret. The chart has no auto-create
-  // path for this channel (unlike http which keys off secrets.httpChannelUsers).
-  // All OAUTH_WEBCHAT_* env vars are read by the channel pod from this Secret.
-  // The OIDC issuer URL points to the test-oauth capability pod (in-cluster).
-  // OAUTH_WEBCHAT_PUBLIC_URL is the port-forward address reachable by test
-  // clients on the host — used to build the redirect_uri in the OAuth flow.
-  run(
-    'kubectl',
-    [
-      'delete',
-      'secret',
-      'kubeclaw-channel-oauth-webchat',
-      '-n',
-      NAMESPACE,
-      '--ignore-not-found',
-    ],
-    { allowFail: true },
-  );
-  run('kubectl', [
-    'create',
-    'secret',
-    'generic',
-    'kubeclaw-channel-oauth-webchat',
-    '-n',
-    NAMESPACE,
-    '--from-literal=oidc-issuer=http://kubeclaw-capability-test-oauth:8080',
-    '--from-literal=public-url=http://127.0.0.1:' +
-      KUBECLAW_LIVE_OAUTH_WEBCHAT_LOCAL_PORT,
-    '--from-literal=client-id=test-client',
-    '--from-literal=client-secret=test-secret',
-    '--from-literal=allowed-emails=alice@test.local',
-    '--from-literal=cookie-secret=' + KUBECLAW_LIVE_OAUTH_WEBCHAT_COOKIE_SECRET,
-    '--from-literal=provider-name=TestOIDC',
-    '--from-literal=session-ttl-days=1',
-  ]);
-
   console.log(
     `📦 helm install ${RELEASE} → ${NAMESPACE} (LLM=${LIVE_BASE_URL}, model=${LIVE_MODEL})...`,
   );
@@ -604,48 +568,6 @@ async function helmInstall(): Promise<void> {
     'capabilities.test-oauth.image=kubeclaw-test-oauth:latest',
     '--set',
     'capabilities.test-oauth.port=8080',
-    // Deploy the oauth-webchat channel pod. The Secret kubeclaw-channel-oauth-webchat
-    // was pre-created above with all required OAUTH_WEBCHAT_* env vars.
-    '--set',
-    'channels.oauth-webchat.enabled=true',
-    '--set',
-    'channels.oauth-webchat.type=oauth-webchat',
-    '--set',
-    'channels.oauth-webchat.httpPort=4080',
-    '--set',
-    'channels.oauth-webchat.envVars[0].name=OAUTH_WEBCHAT_OIDC_ISSUER',
-    '--set',
-    'channels.oauth-webchat.envVars[0].key=oidc-issuer',
-    '--set',
-    'channels.oauth-webchat.envVars[1].name=OAUTH_WEBCHAT_PUBLIC_URL',
-    '--set',
-    'channels.oauth-webchat.envVars[1].key=public-url',
-    '--set',
-    'channels.oauth-webchat.envVars[2].name=OAUTH_WEBCHAT_CLIENT_ID',
-    '--set',
-    'channels.oauth-webchat.envVars[2].key=client-id',
-    '--set',
-    'channels.oauth-webchat.envVars[3].name=OAUTH_WEBCHAT_CLIENT_SECRET',
-    '--set',
-    'channels.oauth-webchat.envVars[3].key=client-secret',
-    '--set',
-    'channels.oauth-webchat.envVars[4].name=OAUTH_WEBCHAT_ALLOWED_EMAILS',
-    '--set',
-    'channels.oauth-webchat.envVars[4].key=allowed-emails',
-    '--set',
-    'channels.oauth-webchat.envVars[5].name=OAUTH_WEBCHAT_COOKIE_SECRET',
-    '--set',
-    'channels.oauth-webchat.envVars[5].key=cookie-secret',
-    '--set',
-    'channels.oauth-webchat.envVars[6].name=OAUTH_WEBCHAT_PROVIDER_NAME',
-    '--set',
-    'channels.oauth-webchat.envVars[6].key=provider-name',
-    '--set',
-    'channels.oauth-webchat.envVars[7].name=OAUTH_WEBCHAT_SESSION_TTL_DAYS',
-    '--set',
-    'channels.oauth-webchat.envVars[7].key=session-ttl-days',
-    '--set',
-    'channels.oauth-webchat.envVars[7].optional=true',
     // Register the Researcher specialist so @Researcher mentions are dispatched
     // to the specialist runner. The default chart values.yaml has specialists:[]
     // (empty); we inject it here so the minikube-live suite gets the specialist
@@ -658,13 +580,15 @@ async function helmInstall(): Promise<void> {
     // http-echo used by e2e/minikube-live-bootstrap-channel-http-echo.test.ts.
     // nanoid-echo used by e2e/minikube-live-channel-src-push.test.ts.
     '--set-json',
-    'bootstrap.channelManifests={"http-echo":{"packageJson":"{\\"name\\":\\"http-echo-runtime\\",\\"version\\":\\"1.0.0\\",\\"dependencies\\":{}}","packageLockJson":"{\\"name\\":\\"http-echo-runtime\\",\\"version\\":\\"1.0.0\\",\\"lockfileVersion\\":3,\\"requires\\":true,\\"packages\\":{\\"\\":{\\"name\\":\\"http-echo-runtime\\",\\"version\\":\\"1.0.0\\"}}}","manifestHash":"edbb5411113738f81dcb0b203fcf41fbc12197bff9a64d80bb0d7641a18a9961"},"nanoid-echo":{"packageJson":"{\\"name\\":\\"nanoid-echo-runtime\\",\\"version\\":\\"1.0.0\\",\\"dependencies\\":{\\"nanoid\\":\\"5.0.7\\"}}","packageLockJson":"{\\"name\\":\\"nanoid-echo-runtime\\",\\"version\\":\\"1.0.0\\",\\"lockfileVersion\\":3,\\"requires\\":true,\\"packages\\":{\\"\\": {\\"name\\":\\"nanoid-echo-runtime\\",\\"version\\":\\"1.0.0\\",\\"dependencies\\":{\\"nanoid\\":\\"5.0.7\\"}},\\"node_modules/nanoid\\":{\\"version\\":\\"5.0.7\\",\\"resolved\\":\\"https://registry.npmjs.org/nanoid/-/nanoid-5.0.7.tgz\\",\\"integrity\\":\\"sha512-oLxFY2gd2IqnjcYyOXD8XGCftpGtZP2AbHbOkthDkvRywH5ayNtPVy9YlOPcHckXzbLTCHpkb7FB+yuxKV13pQ==\\",\\"funding\\":[{\\"type\\":\\"github\\",\\"url\\":\\"https://github.com/sponsors/ai\\"}],\\"license\\":\\"MIT\\",\\"bin\\":{\\"nanoid\\":\\"bin/nanoid.js\\"},\\"engines\\":{\\"node\\":\\"^18 || >=20\\"}}}}","manifestHash":"eed310417fb4b8d830ab79c719aca128293e065601a0bdbf575a1ab05b2962c5"},"irc":{"packageJson":"{\\"name\\":\\"irc-runtime\\",\\"version\\":\\"1.0.0\\",\\"dependencies\\":{\\"irc-upd\\":\\"0.11.0\\"}}","packageLockJson":"{\\"name\\":\\"irc-runtime\\",\\"version\\":\\"1.0.0\\",\\"lockfileVersion\\":3,\\"requires\\":true,\\"packages\\":{\\"\\":{\\"name\\":\\"irc-runtime\\",\\"version\\":\\"1.0.0\\",\\"dependencies\\":{\\"irc-upd\\":\\"0.11.0\\"}},\\"node_modules/chardet\\":{\\"version\\":\\"1.6.0\\",\\"resolved\\":\\"https://registry.npmjs.org/chardet/-/chardet-1.6.0.tgz\\",\\"integrity\\":\\"sha512-+QOTw3otC4+FxdjK9RopGpNOglADbr4WPFi0SonkO99JbpkTPbMxmdm4NenhF5Zs+4gPXLI1+y2uazws5TMe8w==\\",\\"license\\":\\"MIT\\",\\"optional\\":true},\\"node_modules/iconv-lite\\":{\\"version\\":\\"0.6.3\\",\\"resolved\\":\\"https://registry.npmjs.org/iconv-lite/-/iconv-lite-0.6.3.tgz\\",\\"integrity\\":\\"sha512-4fCk79wshMdzMp2rH06qWrJE4iolqLhCUH+OiuIgU++RB0+94NlDL81atO7GX55uUKueo0txHNtvEyI6D7WdMw==\\",\\"license\\":\\"MIT\\",\\"optional\\":true,\\"dependencies\\":{\\"safer-buffer\\":\\">= 2.1.2 < 3.0.0\\"},\\"engines\\":{\\"node\\":\\">=0.10.0\\"}},\\"node_modules/irc-colors\\":{\\"version\\":\\"1.5.0\\",\\"resolved\\":\\"https://registry.npmjs.org/irc-colors/-/irc-colors-1.5.0.tgz\\",\\"integrity\\":\\"sha512-HtszKchBQTcqw1DC09uD7i7vvMayHGM1OCo6AHt5pkgZEyo99ClhHTMJdf+Ezc9ovuNNxcH89QfyclGthjZJOw==\\",\\"license\\":\\"MIT\\",\\"engines\\":{\\"node\\":\\">=6\\"}},\\"node_modules/irc-upd\\":{\\"version\\":\\"0.11.0\\",\\"resolved\\":\\"https://registry.npmjs.org/irc-upd/-/irc-upd-0.11.0.tgz\\",\\"integrity\\":\\"sha512-A1hV5cUkl5HZsKWRYcszD2Usfz33hB8igSSox8dEmrMyfy8/Ra6T/o4jwzs7jYMZ7ljLquSIWzcvSZHZ/bEAZA==\\",\\"license\\":\\"GPL-3.0\\",\\"dependencies\\":{\\"irc-colors\\":\\"^1.5.0\\"},\\"engines\\":{\\"node\\":\\">=0.10.0\\"},\\"optionalDependencies\\":{\\"chardet\\":\\"^1.2.1\\",\\"iconv-lite\\":\\"^0.6.2\\"}},\\"node_modules/safer-buffer\\":{\\"version\\":\\"2.1.2\\",\\"resolved\\":\\"https://registry.npmjs.org/safer-buffer/-/safer-buffer-2.1.2.tgz\\",\\"integrity\\":\\"sha512-YZo3K82SD7Riyi0E1EQPojLz7kpepnSQI9IyPbHHg1XXXevb5dJI7tpyN2ADxGcQbHG7vcyRHk0cbwqcQriUtg==\\",\\"license\\":\\"MIT\\",\\"optional\\":true}}}","manifestHash":"bb913713e2ca96ca392f3febbb9b5355fa6d0636e3d82f0c0f86d4f44406d652","hostMode":"channel-runner"}}',
+    'bootstrap.channelManifests={"http-echo":{"packageJson":"{\\"name\\":\\"http-echo-runtime\\",\\"version\\":\\"1.0.0\\",\\"dependencies\\":{}}","packageLockJson":"{\\"name\\":\\"http-echo-runtime\\",\\"version\\":\\"1.0.0\\",\\"lockfileVersion\\":3,\\"requires\\":true,\\"packages\\":{\\"\\":{\\"name\\":\\"http-echo-runtime\\",\\"version\\":\\"1.0.0\\"}}}","manifestHash":"edbb5411113738f81dcb0b203fcf41fbc12197bff9a64d80bb0d7641a18a9961"},"nanoid-echo":{"packageJson":"{\\"name\\":\\"nanoid-echo-runtime\\",\\"version\\":\\"1.0.0\\",\\"dependencies\\":{\\"nanoid\\":\\"5.0.7\\"}}","packageLockJson":"{\\"name\\":\\"nanoid-echo-runtime\\",\\"version\\":\\"1.0.0\\",\\"lockfileVersion\\":3,\\"requires\\":true,\\"packages\\":{\\"\\": {\\"name\\":\\"nanoid-echo-runtime\\",\\"version\\":\\"1.0.0\\",\\"dependencies\\":{\\"nanoid\\":\\"5.0.7\\"}},\\"node_modules/nanoid\\":{\\"version\\":\\"5.0.7\\",\\"resolved\\":\\"https://registry.npmjs.org/nanoid/-/nanoid-5.0.7.tgz\\",\\"integrity\\":\\"sha512-oLxFY2gd2IqnjcYyOXD8XGCftpGtZP2AbHbOkthDkvRywH5ayNtPVy9YlOPcHckXzbLTCHpkb7FB+yuxKV13pQ==\\",\\"funding\\":[{\\"type\\":\\"github\\",\\"url\\":\\"https://github.com/sponsors/ai\\"}],\\"license\\":\\"MIT\\",\\"bin\\":{\\"nanoid\\":\\"bin/nanoid.js\\"},\\"engines\\":{\\"node\\":\\"^18 || >=20\\"}}}}","manifestHash":"eed310417fb4b8d830ab79c719aca128293e065601a0bdbf575a1ab05b2962c5"},"irc":{"packageJson":"{\\"name\\":\\"irc-runtime\\",\\"version\\":\\"1.0.0\\",\\"dependencies\\":{\\"irc-upd\\":\\"0.11.0\\"}}","packageLockJson":"{\\"name\\":\\"irc-runtime\\",\\"version\\":\\"1.0.0\\",\\"lockfileVersion\\":3,\\"requires\\":true,\\"packages\\":{\\"\\":{\\"name\\":\\"irc-runtime\\",\\"version\\":\\"1.0.0\\",\\"dependencies\\":{\\"irc-upd\\":\\"0.11.0\\"}},\\"node_modules/chardet\\":{\\"version\\":\\"1.6.0\\",\\"resolved\\":\\"https://registry.npmjs.org/chardet/-/chardet-1.6.0.tgz\\",\\"integrity\\":\\"sha512-+QOTw3otC4+FxdjK9RopGpNOglADbr4WPFi0SonkO99JbpkTPbMxmdm4NenhF5Zs+4gPXLI1+y2uazws5TMe8w==\\",\\"license\\":\\"MIT\\",\\"optional\\":true},\\"node_modules/iconv-lite\\":{\\"version\\":\\"0.6.3\\",\\"resolved\\":\\"https://registry.npmjs.org/iconv-lite/-/iconv-lite-0.6.3.tgz\\",\\"integrity\\":\\"sha512-4fCk79wshMdzMp2rH06qWrJE4iolqLhCUH+OiuIgU++RB0+94NlDL81atO7GX55uUKueo0txHNtvEyI6D7WdMw==\\",\\"license\\":\\"MIT\\",\\"optional\\":true,\\"dependencies\\":{\\"safer-buffer\\":\\">= 2.1.2 < 3.0.0\\"},\\"engines\\":{\\"node\\":\\">=0.10.0\\"}},\\"node_modules/irc-colors\\":{\\"version\\":\\"1.5.0\\",\\"resolved\\":\\"https://registry.npmjs.org/irc-colors/-/irc-colors-1.5.0.tgz\\",\\"integrity\\":\\"sha512-HtszKchBQTcqw1DC09uD7i7vvMayHGM1OCo6AHt5pkgZEyo99ClhHTMJdf+Ezc9ovuNNxcH89QfyclGthjZJOw==\\",\\"license\\":\\"MIT\\",\\"engines\\":{\\"node\\":\\">=6\\"}},\\"node_modules/irc-upd\\":{\\"version\\":\\"0.11.0\\",\\"resolved\\":\\"https://registry.npmjs.org/irc-upd/-/irc-upd-0.11.0.tgz\\",\\"integrity\\":\\"sha512-A1hV5cUkl5HZsKWRYcszD2Usfz33hB8igSSox8dEmrMyfy8/Ra6T/o4jwzs7jYMZ7ljLquSIWzcvSZHZ/bEAZA==\\",\\"license\\":\\"GPL-3.0\\",\\"dependencies\\":{\\"irc-colors\\":\\"^1.5.0\\"},\\"engines\\":{\\"node\\":\\">=0.10.0\\"},\\"optionalDependencies\\":{\\"chardet\\":\\"^1.2.1\\",\\"iconv-lite\\":\\"^0.6.2\\"}},\\"node_modules/safer-buffer\\":{\\"version\\":\\"2.1.2\\",\\"resolved\\":\\"https://registry.npmjs.org/safer-buffer/-/safer-buffer-2.1.2.tgz\\",\\"integrity\\":\\"sha512-YZo3K82SD7Riyi0E1EQPojLz7kpepnSQI9IyPbHHg1XXXevb5dJI7tpyN2ADxGcQbHG7vcyRHk0cbwqcQriUtg==\\",\\"license\\":\\"MIT\\",\\"optional\\":true}}}","manifestHash":"bb913713e2ca96ca392f3febbb9b5355fa6d0636e3d82f0c0f86d4f44406d652","hostMode":"channel-runner"},"oauth-webchat":{"packageJson":"{\\"name\\":\\"oauth-webchat-runtime\\",\\"version\\":\\"1.0.0\\",\\"dependencies\\":{\\"openid-client\\":\\"5.7.1\\"}}","packageLockJson":"{\\"name\\":\\"oauth-webchat-runtime\\",\\"version\\":\\"1.0.0\\",\\"lockfileVersion\\":3,\\"requires\\":true,\\"packages\\":{\\"\\": {\\"name\\":\\"oauth-webchat-runtime\\",\\"version\\":\\"1.0.0\\",\\"dependencies\\":{\\"openid-client\\":\\"5.7.1\\"}},\\"node_modules/jose\\":{\\"version\\":\\"4.15.9\\",\\"resolved\\":\\"https://registry.npmjs.org/jose/-/jose-4.15.9.tgz\\",\\"integrity\\":\\"sha512-1vUQX+IdDMVPj4k8kOxgUqlcK518yluMuGZwqlr44FS1ppZB/5GWh4rZG89erpOBOJjU/OBsnCVFfapsRz6nEA==\\",\\"license\\":\\"MIT\\",\\"funding\\":{\\"url\\":\\"https://github.com/sponsors/panva\\"}},\\"node_modules/lru-cache\\":{\\"version\\":\\"6.0.0\\",\\"resolved\\":\\"https://registry.npmjs.org/lru-cache/-/lru-cache-6.0.0.tgz\\",\\"integrity\\":\\"sha512-Jo6dJ04CmSjuznwJSS3pUeWmd/H0ffTlkXXgwZi+eq1UCmqQwCh+eLsYOYCwY991i2Fah4h1BEMCx4qThGbsiA==\\",\\"license\\":\\"ISC\\",\\"dependencies\\":{\\"yallist\\":\\"^4.0.0\\"},\\"engines\\":{\\"node\\":\\">=10\\"}},\\"node_modules/object-hash\\":{\\"version\\":\\"2.2.0\\",\\"resolved\\":\\"https://registry.npmjs.org/object-hash/-/object-hash-2.2.0.tgz\\",\\"integrity\\":\\"sha512-gScRMn0bS5fH+IuwyIFgnh9zBdo4DV+6GhygmWM9HyNJSgS0hScp1f5vjtm7oIIOiT9trXrShAkLFSc2IqKNgw==\\",\\"license\\":\\"MIT\\",\\"engines\\":{\\"node\\":\\">= 6\\"}},\\"node_modules/oidc-token-hash\\":{\\"version\\":\\"5.2.0\\",\\"resolved\\":\\"https://registry.npmjs.org/oidc-token-hash/-/oidc-token-hash-5.2.0.tgz\\",\\"integrity\\":\\"sha512-6gj2m8cJZ+iSW8bm0FXdGF0YhIQbKrfP4yWTNzxc31U6MOjfEmB1rHvlYvxI1B7t7BCi1F2vYTT6YhtQRG4hxw==\\",\\"license\\":\\"MIT\\",\\"engines\\":{\\"node\\":\\"^10.13.0 || >=12.0.0\\"}},\\"node_modules/openid-client\\":{\\"version\\":\\"5.7.1\\",\\"resolved\\":\\"https://registry.npmjs.org/openid-client/-/openid-client-5.7.1.tgz\\",\\"integrity\\":\\"sha512-jDBPgSVfTnkIh71Hg9pRvtJc6wTwqjRkN88+gCFtYWrlP4Yx2Dsrow8uPi3qLr/aeymPF3o2+dS+wOpglK04ew==\\",\\"license\\":\\"MIT\\",\\"dependencies\\":{\\"jose\\":\\"^4.15.9\\",\\"lru-cache\\":\\"^6.0.0\\",\\"object-hash\\":\\"^2.2.0\\",\\"oidc-token-hash\\":\\"^5.0.3\\"},\\"funding\\":{\\"url\\":\\"https://github.com/sponsors/panva\\"}},\\"node_modules/yallist\\":{\\"version\\":\\"4.0.0\\",\\"resolved\\":\\"https://registry.npmjs.org/yallist/-/yallist-4.0.0.tgz\\",\\"integrity\\":\\"sha512-3wdGidZyq5PB084XLES5TpOSRA3wjXAlIWMhum2kRcv/41Sn2emQ0dycQW4uZXLejwKvg6EsvbdlVL+FYEct7A==\\",\\"license\\":\\"ISC\\"}}}","manifestHash":"23bbf5942ef45bd32ed83d1a46c18b337dd005d402474c90046130183dd40c8b","hostMode":"channel-runner","httpPort":4080}}',
     '--set-file',
     'bootstrap.skills.bootstrap-http-echo=helm/kubeclaw/files/bootstrap-skills/bootstrap-http-echo.md',
     '--set-file',
     'bootstrap.skills.bootstrap-nanoid-echo=helm/kubeclaw/files/bootstrap-skills/bootstrap-nanoid-echo.md',
     '--set-file',
     'bootstrap.skills.bootstrap-irc=helm/kubeclaw/files/bootstrap-skills/bootstrap-irc.md',
+    '--set-file',
+    'bootstrap.skills.bootstrap-oauth-webchat=helm/kubeclaw/files/bootstrap-skills/bootstrap-oauth-webchat.md',
   ];
   const install = run('helm', setArgs, { timeout: 240_000, allowFail: true });
   if (!install.ok) {
@@ -807,7 +731,7 @@ async function startTestOauthPortForward(): Promise<void> {
 
 async function startOauthWebchatPortForward(): Promise<void> {
   console.log(
-    `🔌 Port-forward svc/kubeclaw-channel-oauth-webchat → localhost:${KUBECLAW_LIVE_OAUTH_WEBCHAT_LOCAL_PORT}`,
+    `🔌 Port-forward svc/kubeclaw-channel-oauth-webchat → localhost:${KUBECLAW_LIVE_OAUTH_WEBCHAT_LOCAL_PORT} (fire-and-forget; Service created post-bootstrap)`,
   );
   oauthWebchatPortForwardProcess = spawn(
     'bash',
@@ -817,22 +741,9 @@ async function startOauthWebchatPortForward(): Promise<void> {
     ],
     { stdio: ['ignore', 'ignore', 'inherit'], detached: true },
   );
-
-  for (let i = 0; i < 15; i++) {
-    await sleep(1000);
-    const nc = spawnSync(
-      'nc',
-      ['-z', 'localhost', String(KUBECLAW_LIVE_OAUTH_WEBCHAT_LOCAL_PORT)],
-      { stdio: 'pipe' },
-    );
-    if (nc.status === 0) {
-      console.log(
-        `✅ Port-forward live on :${KUBECLAW_LIVE_OAUTH_WEBCHAT_LOCAL_PORT}\n`,
-      );
-      return;
-    }
-  }
-  throw new Error('oauth-webchat port-forward did not come up within 15s');
+  // Do not wait for the port to become connectable — the oauth-webchat Service
+  // only exists after the bootstrap e2e registers the channel. The bash wrapper
+  // auto-retries every 0.1 s, so it will connect naturally once the Service appears.
 }
 
 async function startAdminPortForward(): Promise<void> {
@@ -1057,8 +968,6 @@ export default async function setup() {
   await waitForPod('app=kubeclaw-capability-test-ircd', 240_000);
   console.log('⏳ Waiting for test oauth provider pod Ready...');
   await waitForPod('app=kubeclaw-capability-test-oauth', 240_000);
-  console.log('⏳ Waiting for oauth-webchat channel pod Ready...');
-  await waitForPod('app=kubeclaw-channel-oauth-webchat', 240_000);
 
   // The channel pod often loses its first Redis subscribe attempt — the
   // Redis pod's readiness probe goes True before the server is actually
@@ -1073,18 +982,9 @@ export default async function setup() {
     '-n',
     NAMESPACE,
   ]);
-  // Also restart the oauth-webchat channel pod for the same reason.
-  run('kubectl', [
-    'rollout',
-    'restart',
-    'deployment/kubeclaw-channel-oauth-webchat',
-    '-n',
-    NAMESPACE,
-  ]);
   // Wait briefly for the old pod's termination then for the new one to be Ready.
   await sleep(3000);
   await waitForPod('app=kubeclaw-channel-http', 240_000);
-  await waitForPod('app=kubeclaw-channel-oauth-webchat', 240_000);
   // The test MCP capability is installed at runtime by the test itself,
   // so we don't wait for it here.
 
