@@ -311,11 +311,6 @@ export function buildSecretData(
   if (type === 'slack' && input.token) data['SLACK_BOT_TOKEN'] = input.token;
   if (type === 'whatsapp' && input.phoneNumber)
     data['WHATSAPP_PHONE_NUMBER'] = input.phoneNumber;
-  if (type === 'irc') {
-    if (input.server) data['IRC_SERVER'] = input.server;
-    if (input.nick) data['IRC_NICK'] = input.nick;
-    if (input.channels) data['IRC_CHANNELS'] = input.channels;
-  }
   if (type === 'http') {
     if (input.httpUsers) data['HTTP_CHANNEL_USERS'] = input.httpUsers;
     if (input.httpPort) data['HTTP_CHANNEL_PORT'] = String(input.httpPort);

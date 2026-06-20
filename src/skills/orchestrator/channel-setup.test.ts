@@ -224,27 +224,6 @@ describe('buildSecretData — non-webchat channel types', () => {
     expect(data).toEqual({ SIGNAL_PHONE_NUMBER: '+15559876543' });
   });
 
-  it('irc with all fields: maps server, nick, and channels', () => {
-    const data = buildSecretData({
-      type: 'irc',
-      server: 'irc.libera.chat',
-      nick: 'mybot',
-      channels: '#general,#kubeclaw',
-    });
-    expect(data).toEqual({
-      IRC_SERVER: 'irc.libera.chat',
-      IRC_NICK: 'mybot',
-      IRC_CHANNELS: '#general,#kubeclaw',
-    });
-  });
-
-  it('irc with only server (nick and channels absent): only IRC_SERVER present', () => {
-    const data = buildSecretData({ type: 'irc', server: 'irc.libera.chat' });
-    expect(data).toEqual({ IRC_SERVER: 'irc.libera.chat' });
-    expect(data['IRC_NICK']).toBeUndefined();
-    expect(data['IRC_CHANNELS']).toBeUndefined();
-  });
-
   it('http with httpUsers and httpPort: maps both fields', () => {
     const data = buildSecretData({
       type: 'http',
@@ -376,17 +355,6 @@ describe('validateChannelCredentials — non-webchat types', () => {
       SLACK_BOT_TOKEN: 'xoxb-bad',
     });
     expect(result).toBe('invalid_auth');
-  });
-
-  it('irc: returns null without calling fetch', async () => {
-    globalThis.fetch = vi.fn(() => {
-      throw new Error('should not be called');
-    }) as unknown as typeof fetch;
-    const result = await validateChannelCredentials('irc', {
-      IRC_SERVER: 'irc.libera.chat',
-    });
-    expect(result).toBeNull();
-    expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
   it('http: returns null without calling fetch', async () => {

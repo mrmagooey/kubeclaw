@@ -8,9 +8,6 @@
 // http
 import './http.js';
 
-// irc
-import './irc.js';
-
 // oauth-webchat
 import './oauth-webchat.js';
 
