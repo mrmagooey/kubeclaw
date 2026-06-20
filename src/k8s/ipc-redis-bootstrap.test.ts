@@ -58,6 +58,7 @@ function makeDeps(
     writeChannelSource: vi.fn().mockResolvedValue(undefined),
     // Task 5: default stubs — standalone mode keeps existing tests unaffected
     getChannelHostMode: vi.fn(async () => 'standalone' as const),
+    getChannelRunnerImage: vi.fn(async () => 'kubeclaw-orchestrator:latest'),
     createPvc: vi.fn(async () => {}),
     ...overrides,
   };
@@ -247,6 +248,8 @@ describe('processCommitChannelConfig', () => {
     await processCommitChannelConfig(validPayload, deps, 'kubeclaw', 'kubeclaw-agent:latest');
     const c = built.spec.template.spec.containers[0];
     expect(c.command).toEqual(['node', '/app/channel-loader.js']);
+    // standalone uses the agent/base image (channel-loader.js), not the orchestrator image.
+    expect(c.image).toBe('kubeclaw-agent:latest');
     expect(built.spec.template.spec.volumes.map((v: any) => v.name)).toEqual(['runtime']);
     expect(deps.createPvc).not.toHaveBeenCalled();
   });
@@ -267,6 +270,9 @@ describe('processCommitChannelConfig', () => {
       await processCommitChannelConfig(validPayload, deps, 'kubeclaw', 'kubeclaw-agent:latest');
       const c = built.spec.template.spec.containers[0];
       expect(c.command).toEqual(['node', 'dist/channel-runner.js']);
+      // channel-runner mode MUST use the orchestrator image (has channel-runner.js
+      // at /app/dist, WORKDIR /app), NOT the agent image passed as channelBaseImage.
+      expect(c.image).toBe('kubeclaw-orchestrator:latest');
 
       // Mounts: runtime + groups/store/sessions PVCs + the two catalog ConfigMaps.
       const mountPaths = c.volumeMounts.map((m: any) => m.mountPath).sort();

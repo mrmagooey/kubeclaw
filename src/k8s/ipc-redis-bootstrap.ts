@@ -138,6 +138,13 @@ export interface CommitChannelConfigDeps {
   writeChannelSource(instanceName: string, channelType: string): Promise<void>;
   /** Read the channel manifest's hostMode (default 'standalone'). */
   getChannelHostMode(channelType: string): Promise<'standalone' | 'channel-runner'>;
+  /**
+   * Image for channel-runner-mode pods. channel-runner.js (the resident host)
+   * lives in the ORCHESTRATOR image (WORKDIR /app), not the agent image
+   * (channelBaseImage, WORKDIR /workspace/group, which has only channel-loader.js).
+   * Standalone echo channels keep channelBaseImage.
+   */
+  getChannelRunnerImage(): Promise<string>;
   /** Create a PVC (idempotent; NotFound-create, AlreadyExists-ignore). */
   createPvc(name: string, sizeGi: number): Promise<void>;
 }
@@ -388,6 +395,11 @@ export async function processCommitChannelConfig(
       // 3a. Determine hostMode and prepare extra PVCs for channel-runner mode
       const hostMode = await deps.getChannelHostMode(channel_type);
       const channelRunnerMode = hostMode === 'channel-runner';
+      // channel-runner.js lives only in the orchestrator image (WORKDIR /app);
+      // the agent image (channelBaseImage) has channel-loader.js for standalone.
+      const channelImage = channelRunnerMode
+        ? await deps.getChannelRunnerImage()
+        : channelBaseImage;
 
       const extraVolumes: Array<{ name: string; claimName: string; mountPath: string; sizeGi: number }> = channelRunnerMode
         ? [
@@ -478,7 +490,7 @@ export async function processCommitChannelConfig(
               containers: [
                 {
                   name: 'channel',
-                  image: channelBaseImage,
+                  image: channelImage,
                   imagePullPolicy: 'IfNotPresent',
                   command: channelRunnerMode
                     ? ['node', 'dist/channel-runner.js']
@@ -529,7 +541,7 @@ export async function processCommitChannelConfig(
       // 4. Create steady-state Deployment
       await deps.createDeployment(deployment);
       logger.info(
-        { deploymentName, channelBaseImage, instance_name },
+        { deploymentName, channelImage, instance_name },
         'Steady-state Deployment created',
       );
 

@@ -501,6 +501,24 @@ async function main(): Promise<void> {
           return 'standalone';
         }
       },
+      // channel-runner.js lives in the orchestrator image (WORKDIR /app), not the
+      // agent/bootstrap image. Read the orchestrator's own Deployment image so
+      // channel-runner-mode pods run the right binary.
+      getChannelRunnerImage: async () => {
+        try {
+          const dep = await appsApi.readNamespacedDeployment({
+            name: 'kubeclaw-orchestrator',
+            namespace: KUBECLAW_NAMESPACE,
+          });
+          const c =
+            dep.spec?.template?.spec?.containers?.find(
+              (x) => x.name === 'orchestrator',
+            ) ?? dep.spec?.template?.spec?.containers?.[0];
+          return c?.image ?? 'kubeclaw-orchestrator:latest';
+        } catch {
+          return 'kubeclaw-orchestrator:latest';
+        }
+      },
       // Task 5: create a PVC (idempotent; AlreadyExists → ignore).
       createPvc: async (name: string, sizeGi: number) => {
         try {
