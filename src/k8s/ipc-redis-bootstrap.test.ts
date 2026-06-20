@@ -251,19 +251,61 @@ describe('processCommitChannelConfig', () => {
     expect(deps.createPvc).not.toHaveBeenCalled();
   });
 
-  it('channel-runner hostMode → channel-runner command + groups/store/sessions PVCs mounted', async () => {
-    const deps = makeDeps({ getChannelHostMode: vi.fn(async () => 'channel-runner') });
+  it('channel-runner hostMode → channel-runner command + groups/store/sessions PVCs + catalog mounts + host env', async () => {
+    // The channel-runner host needs Redis ACL auth + LLM env + catalog mounts.
+    // Seed the orchestrator process.env so the passthrough is exercised.
+    const prev = {
+      REDIS_ADMIN_PASSWORD: process.env.REDIS_ADMIN_PASSWORD,
+      OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+    };
+    process.env.REDIS_ADMIN_PASSWORD = 'secret-pw';
+    process.env.OPENAI_API_KEY = 'sk-test';
+    try {
+      const deps = makeDeps({ getChannelHostMode: vi.fn(async () => 'channel-runner') });
+      let built: any;
+      deps.createDeployment = vi.fn(async (b) => { built = b; });
+      await processCommitChannelConfig(validPayload, deps, 'kubeclaw', 'kubeclaw-agent:latest');
+      const c = built.spec.template.spec.containers[0];
+      expect(c.command).toEqual(['node', 'dist/channel-runner.js']);
+
+      // Mounts: runtime + groups/store/sessions PVCs + the two catalog ConfigMaps.
+      const mountPaths = c.volumeMounts.map((m: any) => m.mountPath).sort();
+      expect(mountPaths).toEqual(
+        ['/app/groups', '/app/store', '/data/sessions', '/runtime', '/etc/kubeclaw/specialists', '/etc/kubeclaw/tools'].sort(),
+      );
+      const volNames = built.spec.template.spec.volumes.map((v: any) => v.name).sort();
+      expect(volNames).toContain('specialists-catalog');
+      expect(volNames).toContain('tools-catalog');
+      const specVol = built.spec.template.spec.volumes.find((v: any) => v.name === 'specialists-catalog');
+      expect(specVol.configMap.name).toBe('kubeclaw-specialists');
+
+      // Env: KUBECLAW_MODE=channel + the Redis-auth / LLM passthrough from process.env.
+      const env = Object.fromEntries(c.env.map((e: any) => [e.name, e.value]));
+      expect(env.KUBECLAW_MODE).toBe('channel');
+      expect(env.REDIS_ADMIN_PASSWORD).toBe('secret-pw');
+      expect(env.OPENAI_API_KEY).toBe('sk-test');
+
+      const inst = validPayload.instance_name;
+      expect(deps.createPvc).toHaveBeenCalledWith(`kubeclaw-channel-${inst}-groups`, 2);
+      expect(deps.createPvc).toHaveBeenCalledWith(`kubeclaw-channel-${inst}-store`, 1);
+      expect(deps.createPvc).toHaveBeenCalledWith(`kubeclaw-channel-${inst}-sessions`, 1);
+    } finally {
+      if (prev.REDIS_ADMIN_PASSWORD === undefined) delete process.env.REDIS_ADMIN_PASSWORD;
+      else process.env.REDIS_ADMIN_PASSWORD = prev.REDIS_ADMIN_PASSWORD;
+      if (prev.OPENAI_API_KEY === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = prev.OPENAI_API_KEY;
+    }
+  });
+
+  it('standalone hostMode → no host env / no catalog mounts', async () => {
+    const deps = makeDeps({ getChannelHostMode: vi.fn(async () => 'standalone') });
     let built: any;
     deps.createDeployment = vi.fn(async (b) => { built = b; });
     await processCommitChannelConfig(validPayload, deps, 'kubeclaw', 'kubeclaw-agent:latest');
     const c = built.spec.template.spec.containers[0];
-    expect(c.command).toEqual(['node', 'dist/channel-runner.js']);
-    const mountPaths = c.volumeMounts.map((m: any) => m.mountPath).sort();
-    expect(mountPaths).toEqual(['/app/groups', '/app/store', '/data/sessions', '/runtime'].sort());
-    const inst = validPayload.instance_name;
-    expect(deps.createPvc).toHaveBeenCalledWith(`kubeclaw-channel-${inst}-groups`, 2);
-    expect(deps.createPvc).toHaveBeenCalledWith(`kubeclaw-channel-${inst}-store`, 1);
-    expect(deps.createPvc).toHaveBeenCalledWith(`kubeclaw-channel-${inst}-sessions`, 1);
+    const env = Object.fromEntries(c.env.map((e: any) => [e.name, e.value]));
+    expect(env.KUBECLAW_MODE).toBeUndefined();
+    expect(c.volumeMounts.some((m: any) => m.mountPath.startsWith('/etc/kubeclaw'))).toBe(false);
   });
 });
 

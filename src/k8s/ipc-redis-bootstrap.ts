@@ -398,6 +398,52 @@ export async function processCommitChannelConfig(
         : [];
       for (const v of extraVolumes) await deps.createPvc(v.claimName, v.sizeGi);
 
+      // channel-runner mode runs the full resident host (dist/channel-runner.js),
+      // which needs the same env + catalog mounts that helm-installed channel
+      // pods get — Redis ACL auth, the LLM provider config, mode/version, and the
+      // specialists/tools catalog ConfigMaps it fs.watches. Without these the host
+      // crash-loops (e.g. Redis auth failure) on startup. Standalone channels
+      // (echo demos via channel-loader.js) keep the minimal env.
+      const CHANNEL_RUNNER_PASSTHROUGH_ENV = [
+        'KUBECLAW_VERSION',
+        'REDIS_USERNAME',
+        'REDIS_ADMIN_PASSWORD',
+        'OPENAI_API_KEY',
+        'OPENAI_BASE_URL',
+        'DIRECT_LLM_MODEL',
+        'TOOL_JOBS_PRUNE_INTERVAL_MS',
+        'TOOL_JOBS_RETENTION_DAYS',
+      ];
+      const channelRunnerEnv: Array<{ name: string; value: string }> =
+        channelRunnerMode
+          ? [
+              { name: 'KUBECLAW_MODE', value: 'channel' },
+              ...CHANNEL_RUNNER_PASSTHROUGH_ENV.filter(
+                (k) => process.env[k] !== undefined,
+              ).map((k) => ({ name: k, value: process.env[k] as string })),
+            ]
+          : [];
+      // Catalog ConfigMaps the resident host mounts + fs.watches. Created by the
+      // orchestrator's startup reconcilers, so they always exist in-cluster.
+      const channelRunnerConfigVolumes: Array<{
+        name: string;
+        configMapName: string;
+        mountPath: string;
+      }> = channelRunnerMode
+        ? [
+            {
+              name: 'specialists-catalog',
+              configMapName: 'kubeclaw-specialists',
+              mountPath: '/etc/kubeclaw/specialists',
+            },
+            {
+              name: 'tools-catalog',
+              configMapName: 'kubeclaw-tools',
+              mountPath: '/etc/kubeclaw/tools',
+            },
+          ]
+        : [];
+
       // 3. Build steady-state Deployment spec
       const deployment: V1Deployment = {
         apiVersion: 'apps/v1',
@@ -445,12 +491,18 @@ export async function processCommitChannelConfig(
                       value:
                         process.env.REDIS_URL || 'redis://kubeclaw-redis:6379',
                     },
+                    ...channelRunnerEnv,
                   ],
                   envFrom: [{ secretRef: { name: secretName } }],
                   volumeMounts: [
                     // Runtime PVC mounted READ-ONLY (AC5)
                     { name: 'runtime', mountPath: '/runtime', readOnly: true },
                     ...extraVolumes.map((v) => ({ name: v.name, mountPath: v.mountPath })),
+                    ...channelRunnerConfigVolumes.map((v) => ({
+                      name: v.name,
+                      mountPath: v.mountPath,
+                      readOnly: true,
+                    })),
                   ],
                 },
               ],
@@ -464,6 +516,10 @@ export async function processCommitChannelConfig(
                   } as any,
                 },
                 ...extraVolumes.map((v) => ({ name: v.name, persistentVolumeClaim: { claimName: v.claimName } })),
+                ...channelRunnerConfigVolumes.map((v) => ({
+                  name: v.name,
+                  configMap: { name: v.configMapName },
+                })),
               ],
             },
           },
