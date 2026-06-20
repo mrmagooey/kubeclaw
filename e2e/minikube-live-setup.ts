@@ -956,6 +956,25 @@ export default async function setup() {
 
   await helmInstall();
 
+  // `helm upgrade` with the :latest tag does NOT roll the orchestrator
+  // Deployment when only its baseline ConfigMaps changed (e.g. a newly-added
+  // channel manifest in bootstrap.channelManifests). The channel-manifests
+  // reconcile runs only at orchestrator startup, so on a REUSED namespace the
+  // surviving orchestrator pod keeps its stale reconcile — the live
+  // kubeclaw-channel-manifests ConfigMap is missing the new <type>.json, and
+  // a bootstrap of that channel then crash-loops (its stage-runtime init
+  // container can't read /workspace/manifests/<type>.json → ENOENT →
+  // BackoffLimitExceeded). Force a rollout restart so the orchestrator always
+  // re-reconciles the current baseline (and runs the freshly-built image).
+  console.log('♻️  Restarting orchestrator to re-reconcile baseline manifests...');
+  run('kubectl', [
+    'rollout',
+    'restart',
+    'deployment/kubeclaw-orchestrator',
+    '-n',
+    NAMESPACE,
+  ]);
+  await sleep(3000);
   console.log('⏳ Waiting for orchestrator pod Ready...');
   await waitForPod('app=kubeclaw-orchestrator', 240_000);
   console.log('⏳ Waiting for redis pod Ready...');
