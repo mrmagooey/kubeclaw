@@ -117,15 +117,24 @@ async function postChatAndCollectReply(
     throw new Error(`SSE /events returned ${eventsRes.status}`);
   }
 
-  const chatRes = await fetch(`${ADMIN_URL}/chat`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: authHeader },
-    body: JSON.stringify({ text }),
-    signal: AbortSignal.timeout(10_000),
-  });
-  if (chatRes.status !== 202) {
+  // The admin /chat endpoint serializes per user: while a previous turn is
+  // still running it returns 429 ("Previous request still in progress"). That
+  // is transient — back off and retry rather than failing the test (the
+  // bootstrap-trigger turn can still be settling when the next post arrives).
+  let chatRes: Response | undefined;
+  for (let attempt = 0; attempt < 10; attempt++) {
+    chatRes = await fetch(`${ADMIN_URL}/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: authHeader },
+      body: JSON.stringify({ text }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (chatRes.status !== 429) break;
+    await sleep(2000);
+  }
+  if (!chatRes || chatRes.status !== 202) {
     eventsController.abort();
-    throw new Error(`POST /chat returned ${chatRes.status}`);
+    throw new Error(`POST /chat returned ${chatRes?.status}`);
   }
 
   const reader = eventsRes.body!.getReader();
@@ -426,7 +435,6 @@ describe('Minikube-live: bootstrap oauth-webchat channel end-to-end (full lifecy
     ]);
 
     if (raceResult.kind === 'job') {
-      chatReplyPromise.catch(() => undefined);
       jobYaml = raceResult.yaml;
     } else {
       jobYaml = await jobAppearedPromise;
@@ -438,6 +446,11 @@ describe('Minikube-live: bootstrap oauth-webchat channel end-to-end (full lifecy
     expect(jobYaml).toContain('bootstrap-oauth-webchat');
     expect(jobYaml).toContain('KUBECLAW_BOOTSTRAP_INSTANCE');
     expect(jobYaml).toContain(INSTANCE_NAME);
+
+    // Let the trigger /chat turn fully settle so the admin's per-user
+    // inProgress guard clears before AC1b posts the dialogue answer (the
+    // poster also retries on 429, but settling here avoids the wasted round).
+    await chatReplyPromise.catch(() => undefined);
   }, 90_000);
 
   // ── AC1b: bootstrap dialogue completes (admin answers the single combined question) ─
