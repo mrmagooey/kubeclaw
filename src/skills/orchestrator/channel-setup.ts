@@ -71,28 +71,7 @@ export async function validateChannelCredentials(
       return null;
     }
 
-    if (type === 'oauth-webchat') {
-      const issuer = secretData['OAUTH_WEBCHAT_OIDC_ISSUER'];
-      if (!issuer) return 'OAUTH_WEBCHAT_OIDC_ISSUER is required';
-      try {
-        const discoveryUrl = `${issuer.replace(/\/$/, '')}/.well-known/openid-configuration`;
-        const res = await fetch(discoveryUrl, {
-          signal: AbortSignal.timeout(10_000),
-        });
-        if (!res.ok) {
-          return `OIDC discovery failed (HTTP ${res.status})`;
-        }
-        const json = (await res.json()) as Record<string, unknown>;
-        if (!json.authorization_endpoint || !json.token_endpoint) {
-          return 'OIDC discovery response missing authorization_endpoint or token_endpoint';
-        }
-        return null;
-      } catch (err) {
-        return `Could not reach OIDC discovery URL: ${err instanceof Error ? err.message : String(err)}`;
-      }
-    }
-
-    // IRC, WhatsApp, Signal, HTTP: no pre-flight validation possible
+    // IRC, WhatsApp, Signal, HTTP, oauth-webchat (runtime adapter): no pre-flight validation possible
     return null;
   } catch (err) {
     return `Could not reach the channel API to validate credentials: ${err instanceof Error ? err.message : String(err)}`;
@@ -318,22 +297,8 @@ export function buildSecretData(
   if (type === 'signal' && input.phoneNumber)
     data['SIGNAL_PHONE_NUMBER'] = input.phoneNumber;
 
-  if (type === 'oauth-webchat') {
-    if (input.publicUrl) data['OAUTH_WEBCHAT_PUBLIC_URL'] = input.publicUrl;
-    if (input.oidcIssuer) data['OAUTH_WEBCHAT_OIDC_ISSUER'] = input.oidcIssuer;
-    if (input.clientId) data['OAUTH_WEBCHAT_CLIENT_ID'] = input.clientId;
-    if (input.clientSecret)
-      data['OAUTH_WEBCHAT_CLIENT_SECRET'] = input.clientSecret;
-    if (input.allowedEmails)
-      data['OAUTH_WEBCHAT_ALLOWED_EMAILS'] = input.allowedEmails;
-    if (input.cookieSecret)
-      data['OAUTH_WEBCHAT_COOKIE_SECRET'] = input.cookieSecret;
-    if (input.sessionTtlDays !== undefined)
-      data['OAUTH_WEBCHAT_SESSION_TTL_DAYS'] = String(input.sessionTtlDays);
-    if (input.scopes) data['OAUTH_WEBCHAT_SCOPES'] = input.scopes;
-    if (input.providerName)
-      data['OAUTH_WEBCHAT_PROVIDER_NAME'] = input.providerName;
-  }
+  // oauth-webchat is now a runtime SDK adapter; credentials are provisioned by
+  // the bootstrap skill path, not by buildSecretData / setup_channel.
 
   return data;
 }

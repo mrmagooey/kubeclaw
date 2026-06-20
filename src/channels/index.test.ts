@@ -5,7 +5,7 @@ vi.mock('./http.js', () => ({}));
 
 describe('channels/index barrel', () => {
   it('imports without error', async () => {
-    // This import covers the barrel file's static imports (http, oauth-webchat)
+    // This import covers the barrel file's static imports (http)
     await import('./index.js');
   });
 });

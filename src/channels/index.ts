@@ -8,9 +8,6 @@
 // http
 import './http.js';
 
-// oauth-webchat
-import './oauth-webchat.js';
-
 // signal
 
 // slack
