@@ -271,6 +271,44 @@ describe('registerChannelManifest host_mode', () => {
     if (r.ok) return;
     expect(r.error).toMatch(/host_mode/i);
   });
+
+  it('updates host_mode even when manifest hash is unchanged', async () => {
+    const reconcile = vi.fn().mockResolvedValue(undefined);
+    // Register with standalone host_mode
+    registerChannelManifest(
+      {
+        channel_type: 'telegram',
+        package_json: VALID_PKG,
+        package_lock_json: VALID_LOCK,
+        host_mode: 'standalone',
+      },
+      [],
+      reconcile,
+    );
+    await Promise.resolve();
+    expect(reconcile).toHaveBeenCalledTimes(1);
+
+    // Re-register with same package files (same hash) but different host_mode
+    const r2 = registerChannelManifest(
+      {
+        channel_type: 'telegram',
+        package_json: VALID_PKG,
+        package_lock_json: VALID_LOCK,
+        host_mode: 'channel-runner',
+      },
+      [],
+      reconcile,
+    );
+    expect(r2.ok).toBe(true);
+    await Promise.resolve();
+    // Should have called reconcile again because host_mode changed
+    expect(reconcile).toHaveBeenCalledTimes(2);
+
+    // Verify the stored host_mode is now 'channel-runner'
+    const list = listChannelManifestOverrides();
+    expect(list).toHaveLength(1);
+    expect(list[0].host_mode).toBe('channel-runner');
+  });
 });
 
 describe('listChannelManifestOverrides', () => {

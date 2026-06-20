@@ -127,15 +127,16 @@ export function registerChannelManifest(
     args.package_lock_json,
   );
 
-  // Idempotency check — same channel_type AND same hash → short-circuit
+  // Idempotency check — same channel_type AND same hash AND same host_mode → short-circuit
   const existing = db.exec(
-    `SELECT manifest_hash FROM channel_manifest_overrides WHERE channel_type = ?`,
+    `SELECT manifest_hash, host_mode FROM channel_manifest_overrides WHERE channel_type = ?`,
     [args.channel_type],
   );
   if (existing.length > 0 && existing[0].values.length > 0) {
     const storedHash = existing[0].values[0][0] as string;
-    if (storedHash === manifest_hash) {
-      // Identical content — no-op, no reconcile
+    const storedHostMode = ((existing[0].values[0][1] as string | null) ?? 'standalone') as 'standalone' | 'channel-runner';
+    if (storedHash === manifest_hash && storedHostMode === host_mode) {
+      // Identical content and host_mode — no-op, no reconcile
       return { ok: true, manifest_hash, source: 'admin-registered' };
     }
   }
