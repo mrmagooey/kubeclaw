@@ -282,6 +282,9 @@ spec:
             - name: bootstrap-skills-baseline
               mountPath: /etc/kubeclaw/bootstrap-skills-baseline
               readOnly: true
+            - name: channel-src
+              mountPath: /etc/kubeclaw/channel-src
+              readOnly: true
           resources:
             {{- toYaml .Values.orchestrator.resources | nindent 12 }}
       volumes:
@@ -310,6 +313,9 @@ spec:
           configMap:
             name: kubeclaw-bootstrap-skills-baseline
             optional: true
+        - name: channel-src
+          configMap:
+            name: kubeclaw-channel-src
 {{- if .Values.orchestrator.admin.enabled }}
 ---
 apiVersion: v1

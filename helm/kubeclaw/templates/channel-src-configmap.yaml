@@ -1,0 +1,25 @@
+---
+# kubeclaw-channel-src: real channel source files shipped to the orchestrator.
+# Built from helm/kubeclaw/files/channel-src/<type>/<relpath>. Each file becomes
+# one key "<type>__<relpath with '/' replaced by '__'>". The orchestrator mounts
+# this read-only at /etc/kubeclaw/channel-src and pushes a type's files onto a
+# bootstrap pod's /runtime at commit time. Keep total size < ~1 MB (ConfigMap limit).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kubeclaw-channel-src
+  namespace: {{ include "kubeclaw.namespace" . }}
+  labels:
+    app: kubeclaw
+    component: channel-src
+data:
+  {{- $found := false }}
+  {{- range $path, $_ := .Files.Glob "files/channel-src/**" }}
+  {{- $found = true }}
+  {{- $key := $path | trimPrefix "files/channel-src/" | replace "/" "__" }}
+  {{ $key }}: |
+    {{ $.Files.Get $path | indent 4 | trimAll " " }}
+  {{- end }}
+  {{- if not $found }}
+  _placeholder: ""
+  {{- end }}
