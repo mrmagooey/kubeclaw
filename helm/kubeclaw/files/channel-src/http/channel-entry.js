@@ -301,43 +301,14 @@ export class HttpChannel {
     this.messageSeq = 0;
     this.rateBuckets = new Map();
 
+    // checkDb returns 'ok' by default; the real probe is host-injected via opts.checkDb (the channel-runner wires it).
     this.checkDb = opts.checkDb ?? (() => { return 'ok'; });
     this.checkRedis = opts.checkRedis ?? (async () => {
-      const { getRedisClient } = await import('../k8s/redis-client.js');
-      const client = getRedisClient();
-      try {
-        await Promise.race([
-          client.ping(),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('Redis PING timeout')), 2000)),
-        ]);
-        return 'ok';
-      } catch {
-        return 'unreachable';
-      }
+      throw new Error('http adapter: checkRedis must be injected via channel opts by the host');
     });
 
-    this.killJobFn = opts.killJobFn ?? (async (jobId, groupFolder) => {
-      const { getRedisClient, getTaskRequestStream } = await import('../k8s/redis-client.js');
-      const { randomBytes } = await import('node:crypto');
-      const redis = getRedisClient();
-      const resultStream = `kubeclaw:job-kill-result:${Date.now()}-${randomBytes(4).toString('hex')}`;
-      await redis.xadd(getTaskRequestStream(), '*', 'type', 'job.cancel', 'jobId', jobId, 'groupFolder', groupFolder, 'resultStream', resultStream);
-      const deadline = Date.now() + 5000;
-      let lastId = '0-0';
-      while (Date.now() < deadline) {
-        const remaining = deadline - Date.now();
-        if (remaining <= 0) break;
-        const response = await redis.xread('COUNT', 1, 'BLOCK', Math.min(remaining, 1000), 'STREAMS', resultStream, lastId);
-        if (!response) continue;
-        for (const [, messages] of response) {
-          for (const [, flds] of messages) {
-            const obj = {};
-            for (let i = 0; i < flds.length; i += 2) obj[flds[i]] = flds[i + 1];
-            if (obj.result) return JSON.parse(obj.result);
-          }
-        }
-      }
-      throw new Error('DELETE /jobs/<id> kill timed out — orchestrator did not respond');
+    this.killJobFn = opts.killJobFn ?? (async () => {
+      throw new Error('http adapter: killJobFn must be injected via channel opts by the host');
     });
   }
 
@@ -2773,20 +2744,9 @@ function parseConfig(sdk) {
 }
 
 export default function register(sdk) {
-  let _listSecretsFn;
-  let _removeSecretFn;
-  let _listCatalogFn;
-  let _addSecretFn;
-
   sdk.registerChannel('http', (opts) => {
     const config = parseConfig(sdk);
     if (!config) return null;
-    return new HttpChannel(config, {
-      ...opts,
-      listSecretsFn: _listSecretsFn,
-      removeSecretFn: _removeSecretFn,
-      listCatalogFn: _listCatalogFn,
-      addSecretFn: _addSecretFn,
-    }, sdk);
+    return new HttpChannel(config, opts, sdk);
   });
 }

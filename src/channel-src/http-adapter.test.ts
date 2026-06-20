@@ -437,3 +437,31 @@ describe('http-adapter: SDK facade integration', () => {
     expect(sdk.audit.entries).toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Suite 6: opts pass-through — secret fns reach handlers (Fix 1 regression)
+// ---------------------------------------------------------------------------
+
+describe('http-adapter: opts secret fns pass-through', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockServerInstance._handler = null;
+  });
+
+  it('GET /secrets calls opts.listSecretsFn injected via opts (not clobbered)', async () => {
+    const listSecretsFn = vi.fn(async () => []);
+    const addSecretFn = vi.fn(async () => ({ ok: true }));
+    const sdk = makeFakeSdk({ HTTP_CHANNEL_USERS: 'alice:secret' });
+    register(sdk);
+    const factory = sdk.registerChannel.mock.calls[0][1];
+    const ch = factory(makeOpts({ listSecretsFn, addSecretFn }));
+    await ch.connect();
+
+    const req = makeReq({ method: 'GET', url: '/secrets', auth: 'alice:secret' });
+    const res = makeRes();
+    await dispatch(ch, req, res);
+
+    expect(listSecretsFn).toHaveBeenCalled();
+    expect((res as any).statusCode).toBe(200);
+  });
+});
