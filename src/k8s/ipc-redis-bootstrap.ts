@@ -416,25 +416,56 @@ export async function processCommitChannelConfig(
       // specialists/tools catalog ConfigMaps it fs.watches. Without these the host
       // crash-loops (e.g. Redis auth failure) on startup. Standalone channels
       // (echo demos via channel-loader.js) keep the minimal env.
-      const CHANNEL_RUNNER_PASSTHROUGH_ENV = [
-        'KUBECLAW_VERSION',
-        'REDIS_USERNAME',
-        'REDIS_ADMIN_PASSWORD',
-        'OPENAI_API_KEY',
-        'OPENAI_BASE_URL',
-        'DIRECT_LLM_MODEL',
-        'TOOL_JOBS_PRUNE_INTERVAL_MS',
-        'TOOL_JOBS_RETENTION_DAYS',
-      ];
-      const channelRunnerEnv: Array<{ name: string; value: string }> =
-        channelRunnerMode
-          ? [
-              { name: 'KUBECLAW_MODE', value: 'channel' },
-              ...CHANNEL_RUNNER_PASSTHROUGH_ENV.filter(
-                (k) => process.env[k] !== undefined,
-              ).map((k) => ({ name: k, value: process.env[k] as string })),
-            ]
-          : [];
+      // channel-runner mode runs the resident host (channel-runner.js), which
+      // needs the same env helm-installed channel pods get. CRITICALLY it
+      // connects to Redis as the RESTRICTED `channel` ACL identity (~kubeclaw:*,
+      // small command allow-list) — NOT the orchestrator's full-admin identity.
+      // Secrets are referenced via secretKeyRef (never copied as literals into
+      // the Deployment spec). Mirrors helm/kubeclaw/templates/channel-pods.yaml.
+      type EnvEntry = {
+        name: string;
+        value?: string;
+        valueFrom?: {
+          secretKeyRef: { name: string; key: string; optional?: boolean };
+        };
+      };
+      const passEnv = (k: string): EnvEntry[] =>
+        process.env[k] !== undefined ? [{ name: k, value: process.env[k] }] : [];
+      const channelRunnerEnv: EnvEntry[] = channelRunnerMode
+        ? [
+            { name: 'KUBECLAW_MODE', value: 'channel' },
+            ...passEnv('KUBECLAW_VERSION'),
+            // Restricted Redis ACL identity + channel password (NOT admin).
+            { name: 'REDIS_USERNAME', value: 'channel' },
+            {
+              name: 'REDIS_ADMIN_PASSWORD',
+              valueFrom: {
+                secretKeyRef: { name: 'kubeclaw-redis', key: 'channel-password' },
+              },
+            },
+            // LLM provider config via secretKeyRef (optional in some modes).
+            {
+              name: 'OPENAI_API_KEY',
+              valueFrom: {
+                secretKeyRef: { name: 'kubeclaw-secrets', key: 'openai-api-key', optional: true },
+              },
+            },
+            {
+              name: 'OPENAI_BASE_URL',
+              valueFrom: {
+                secretKeyRef: { name: 'kubeclaw-secrets', key: 'openai-base-url', optional: true },
+              },
+            },
+            {
+              name: 'DIRECT_LLM_MODEL',
+              valueFrom: {
+                secretKeyRef: { name: 'kubeclaw-secrets', key: 'direct-llm-model', optional: true },
+              },
+            },
+            ...passEnv('TOOL_JOBS_PRUNE_INTERVAL_MS'),
+            ...passEnv('TOOL_JOBS_RETENTION_DAYS'),
+          ]
+        : [];
       // Catalog ConfigMaps the resident host mounts + fs.watches. Created by the
       // orchestrator's startup reconcilers, so they always exist in-cluster.
       const channelRunnerConfigVolumes: Array<{

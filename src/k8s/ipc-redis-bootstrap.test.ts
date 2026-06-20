@@ -255,15 +255,7 @@ describe('processCommitChannelConfig', () => {
   });
 
   it('channel-runner hostMode → channel-runner command + groups/store/sessions PVCs + catalog mounts + host env', async () => {
-    // The channel-runner host needs Redis ACL auth + LLM env + catalog mounts.
-    // Seed the orchestrator process.env so the passthrough is exercised.
-    const prev = {
-      REDIS_ADMIN_PASSWORD: process.env.REDIS_ADMIN_PASSWORD,
-      OPENAI_API_KEY: process.env.OPENAI_API_KEY,
-    };
-    process.env.REDIS_ADMIN_PASSWORD = 'secret-pw';
-    process.env.OPENAI_API_KEY = 'sk-test';
-    try {
+    {
       const deps = makeDeps({ getChannelHostMode: vi.fn(async () => 'channel-runner') });
       let built: any;
       deps.createDeployment = vi.fn(async (b) => { built = b; });
@@ -285,21 +277,24 @@ describe('processCommitChannelConfig', () => {
       const specVol = built.spec.template.spec.volumes.find((v: any) => v.name === 'specialists-catalog');
       expect(specVol.configMap.name).toBe('kubeclaw-specialists');
 
-      // Env: KUBECLAW_MODE=channel + the Redis-auth / LLM passthrough from process.env.
-      const env = Object.fromEntries(c.env.map((e: any) => [e.name, e.value]));
-      expect(env.KUBECLAW_MODE).toBe('channel');
-      expect(env.REDIS_ADMIN_PASSWORD).toBe('secret-pw');
-      expect(env.OPENAI_API_KEY).toBe('sk-test');
+      // Env: KUBECLAW_MODE=channel; Redis uses the RESTRICTED `channel` ACL
+      // identity (not orchestrator/admin), password + LLM secrets via secretKeyRef.
+      const byName = Object.fromEntries(c.env.map((e: any) => [e.name, e]));
+      expect(byName.KUBECLAW_MODE.value).toBe('channel');
+      expect(byName.REDIS_USERNAME.value).toBe('channel');
+      expect(byName.REDIS_ADMIN_PASSWORD.value).toBeUndefined();
+      expect(byName.REDIS_ADMIN_PASSWORD.valueFrom.secretKeyRef).toEqual({
+        name: 'kubeclaw-redis',
+        key: 'channel-password',
+      });
+      // LLM secrets referenced, never copied as literals into the Deployment.
+      expect(byName.OPENAI_API_KEY.value).toBeUndefined();
+      expect(byName.OPENAI_API_KEY.valueFrom.secretKeyRef.name).toBe('kubeclaw-secrets');
 
       const inst = validPayload.instance_name;
       expect(deps.createPvc).toHaveBeenCalledWith(`kubeclaw-channel-${inst}-groups`, 2);
       expect(deps.createPvc).toHaveBeenCalledWith(`kubeclaw-channel-${inst}-store`, 1);
       expect(deps.createPvc).toHaveBeenCalledWith(`kubeclaw-channel-${inst}-sessions`, 1);
-    } finally {
-      if (prev.REDIS_ADMIN_PASSWORD === undefined) delete process.env.REDIS_ADMIN_PASSWORD;
-      else process.env.REDIS_ADMIN_PASSWORD = prev.REDIS_ADMIN_PASSWORD;
-      if (prev.OPENAI_API_KEY === undefined) delete process.env.OPENAI_API_KEY;
-      else process.env.OPENAI_API_KEY = prev.OPENAI_API_KEY;
     }
   });
 

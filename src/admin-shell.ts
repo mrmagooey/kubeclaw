@@ -607,6 +607,12 @@ export const TOOLS: OpenAI.ChatCompletionTool[] = [
             description:
               'Full content of package-lock.json as a JSON string. Must be npm lockfile v3 (lockfileVersion: 3). Per-package lifecycle scripts checked against the same allowlist.',
           },
+          host_mode: {
+            type: 'string',
+            enum: ['standalone', 'channel-runner'],
+            description:
+              "Steady-state pod host for this channel type. 'channel-runner' (full resident host: agent loop, slash commands, IPC — for first-party channels like irc/http/oauth) or 'standalone' (thin self-contained server — for simple channels). Defaults to 'standalone' if omitted.",
+          },
         },
       },
     },
@@ -2073,6 +2079,10 @@ async function handleRegisterChannelManifest(
   const channel_type = input.channel_type as string;
   const package_json = input.package_json as string;
   const package_lock_json = input.package_lock_json as string;
+  const host_mode = input.host_mode as
+    | 'standalone'
+    | 'channel-runner'
+    | undefined;
   if (!channel_type || !package_json || !package_lock_json) {
     return 'Error: channel_type, package_json, and package_lock_json are all required.';
   }
@@ -2086,7 +2096,7 @@ async function handleRegisterChannelManifest(
         .filter(Boolean)
     : [];
   const result = registerChannelManifest(
-    { channel_type, package_json, package_lock_json },
+    { channel_type, package_json, package_lock_json, host_mode },
     allowedLifecycleScripts,
     channelManifestReconciler.apply.bind(channelManifestReconciler),
   );
