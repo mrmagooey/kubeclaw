@@ -4971,3 +4971,25 @@ describe('update_profile local tool registration', () => {
     expect(registeredTools).toContain('update_profile');
   });
 });
+
+// ── Runtime adapter self-registration ────────────────────────────────────────
+// Verifies that loadRuntimeChannelAdapter(buildChannelSdk(), <path>) causes
+// getChannelFactory('<type>') to resolve — the foundation for the single-image
+// runtime-channel-delivery path. Tested at the helper level because main() is
+// not unit-testable (Redis/DB I/O).
+import { getChannelFactory } from './channels/registry.js';
+import { buildChannelSdk } from './channel-sdk/index.js';
+import { loadRuntimeChannelAdapter } from './channel-sdk/load-runtime-adapter.js';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+it('a runtime adapter self-registers into the resident factory registry', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cr-'));
+  const entry = join(dir, 'entry.mjs');
+  writeFileSync(entry, `export default (sdk) => sdk.registerChannel('runtime-test', () => null);`);
+  expect(getChannelFactory('runtime-test')).toBeUndefined();
+  await loadRuntimeChannelAdapter(buildChannelSdk(), entry);
+  expect(getChannelFactory('runtime-test')).toBeTypeOf('function');
+  rmSync(dir, { recursive: true, force: true });
+});

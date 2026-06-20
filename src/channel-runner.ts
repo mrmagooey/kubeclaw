@@ -27,6 +27,8 @@ import {
 import './channels/index.js'; // self-register all channel factories
 import { getChannelFactory } from './channels/registry.js';
 import { loadChannelPlugins } from './channels/plugin-loader.js';
+import { buildChannelSdk } from './channel-sdk/index.js';
+import { loadRuntimeChannelAdapter } from './channel-sdk/load-runtime-adapter.js';
 import { getDirectLLMRunner, shutdownAllRunners } from './runtime/index.js';
 import { installProxyDispatcher } from './runtime/proxy-dispatcher.js';
 import {
@@ -3563,6 +3565,18 @@ async function main(): Promise<void> {
 
   // Notify orchestrator that this channel pod is ready to receive commands.
   await publishChannelStatus('ready');
+
+  // Load a runtime-delivered channel adapter (bootstrap channels on the
+  // single-image path). It self-registers via the resident registerChannel,
+  // so the getChannelFactory lookup below resolves it exactly like a
+  // compiled-in channel. Absent file → no-op (compiled-in channels only).
+  const loadedRuntimeAdapter = await loadRuntimeChannelAdapter(buildChannelSdk());
+  if (loadedRuntimeAdapter) {
+    logger.info(
+      { type: KUBECLAW_CHANNEL_TYPE },
+      'Loaded runtime channel adapter from /runtime/channel-entry.js',
+    );
+  }
 
   // Load the channel factory by type (KUBECLAW_CHANNEL_TYPE), not instance name (KUBECLAW_CHANNEL).
   // This allows multiple instances of the same type (e.g. "http-dev" and "http-prod" both using "http" factory).
