@@ -20,6 +20,8 @@ tool — they are instructions, NOT examples of code that has already run. Execu
 one tool call, check its result, then proceed to the next step. Do not skip
 steps and do not guess values the admin is supposed to provide.
 
+The orchestrator delivers `/runtime/channel-entry.js` deterministically at commit time — this skill only stages the npm package files, asks for the port, and commits.
+
 ## Step 1: Stage the manifest files on /runtime
 
 The orchestrator independently rehashes `/runtime/package.json` and
@@ -61,48 +63,7 @@ If the answer is invalid, **call `ask_admin` again** with a corrective message
 explaining the valid range. Do not proceed, and do not guess a port, until
 `ask_admin` returns a valid value.
 
-## Step 3: Write the channel entrypoint
-
-**Call the `local_write` tool now** to write the channel-entry.js file (do NOT
-use a shell heredoc). The file must read its port from the `PORT` environment
-variable — that variable will be populated from the K8s Secret you assemble in
-step 4.
-
-Pass `file_path: /runtime/channel-entry.js` and `content` set to exactly this:
-
-```
-import http from 'node:http';
-
-const PORT = parseInt(process.env.PORT ?? '8080', 10);
-const INSTANCE = process.env.KUBECLAW_CHANNEL || 'http-echo';
-
-const server = http.createServer((req, res) => {
-  if (req.url === '/healthz' || req.url === '/readyz') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ status: 'ok', channel: INSTANCE }));
-    return;
-  }
-  res.writeHead(200, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({
-    channel: INSTANCE,
-    method: req.method,
-    url: req.url,
-    headers: req.headers,
-  }));
-});
-
-server.listen(PORT, '0.0.0.0', () => {
-  console.error('[http-echo] listening on port ' + PORT);
-});
-
-process.on('SIGTERM', () => server.close(() => process.exit(0)));
-```
-
-Then **call the `local_read` tool** with `file_path: /runtime/channel-entry.js`
-and `limit: 5` to confirm the file was written. You should see the first five
-lines of the entry file.
-
-## Step 4: Commit the configuration
+## Step 3: Commit the configuration
 
 Compute the runtime PVC lock hash. The hash algorithm is:
 
