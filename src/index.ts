@@ -59,6 +59,7 @@ import {
   CoreV1Api,
   AppsV1Api,
   BatchV1Api,
+  NetworkingV1Api,
   Exec,
 } from '@kubernetes/client-node';
 import { readBootstrapPvcFiles } from './k8s/read-bootstrap-pvc-files.js';
@@ -393,6 +394,7 @@ async function main(): Promise<void> {
 
   // ── Bootstrap channel IPC deps (Story 174) ───────────────────────────────
   const appsApi = kc.makeApiClient(AppsV1Api);
+  const networkingApi = kc.makeApiClient(NetworkingV1Api);
   const channelBaseImage =
     process.env.KUBECLAW_BOOTSTRAP_AGENT_IMAGE || 'kubeclaw-agent:latest';
   const redisForBootstrap = getRedisClient();
@@ -627,6 +629,104 @@ async function main(): Promise<void> {
           }
         }, graceSec * 1000);
         logger.info({ oldPvcName, graceSec }, 'Old PVC deletion scheduled');
+      },
+      // Task 2: read the channel manifest's httpPort from the ConfigMap.
+      // Returns the numeric port, or null if absent/unknown/error.
+      getChannelHttpPort: async (channelType: string) => {
+        try {
+          const cm = await coreApi.readNamespacedConfigMap({
+            name: 'kubeclaw-channel-manifests',
+            namespace: KUBECLAW_NAMESPACE,
+          });
+          const raw = cm.data?.[`${channelType}.json`];
+          if (!raw) return null;
+          const parsed = JSON.parse(raw) as { httpPort?: number };
+          return typeof parsed.httpPort === 'number' ? parsed.httpPort : null;
+        } catch {
+          return null;
+        }
+      },
+      // Task 2: idempotent create-or-replace a K8s Service.
+      createService: async (body: import('@kubernetes/client-node').V1Service) => {
+        const name = body.metadata!.name!;
+        try {
+          await coreApi.createNamespacedService({
+            namespace: KUBECLAW_NAMESPACE,
+            body,
+          });
+        } catch (err: any) {
+          if (err?.statusCode === 409 || err?.body?.code === 409) {
+            // Already exists — read resourceVersion, then replace
+            const existing = await coreApi.readNamespacedService({
+              name,
+              namespace: KUBECLAW_NAMESPACE,
+            });
+            const resourceVersion = existing.metadata?.resourceVersion;
+            try {
+              await coreApi.replaceNamespacedService({
+                name,
+                namespace: KUBECLAW_NAMESPACE,
+                body: {
+                  ...body,
+                  metadata: { ...body.metadata, resourceVersion },
+                },
+              });
+            } catch (replaceErr: any) {
+              if (replaceErr?.statusCode === 404 || replaceErr?.body?.code === 404) {
+                // Rare race: disappeared between read and replace — create again
+                await coreApi.createNamespacedService({
+                  namespace: KUBECLAW_NAMESPACE,
+                  body,
+                });
+              } else {
+                throw replaceErr;
+              }
+            }
+          } else {
+            throw err;
+          }
+        }
+      },
+      // Task 2: idempotent create-or-replace a K8s NetworkPolicy.
+      createNetworkPolicy: async (body: import('@kubernetes/client-node').V1NetworkPolicy) => {
+        const name = body.metadata!.name!;
+        try {
+          await networkingApi.createNamespacedNetworkPolicy({
+            namespace: KUBECLAW_NAMESPACE,
+            body,
+          });
+        } catch (err: any) {
+          if (err?.statusCode === 409 || err?.body?.code === 409) {
+            // Already exists — read resourceVersion, then replace
+            const existing = await networkingApi.readNamespacedNetworkPolicy({
+              name,
+              namespace: KUBECLAW_NAMESPACE,
+            });
+            const resourceVersion = existing.metadata?.resourceVersion;
+            try {
+              await networkingApi.replaceNamespacedNetworkPolicy({
+                name,
+                namespace: KUBECLAW_NAMESPACE,
+                body: {
+                  ...body,
+                  metadata: { ...body.metadata, resourceVersion },
+                },
+              });
+            } catch (replaceErr: any) {
+              if (replaceErr?.statusCode === 404 || replaceErr?.body?.code === 404) {
+                // Rare race: disappeared between read and replace — create again
+                await networkingApi.createNamespacedNetworkPolicy({
+                  namespace: KUBECLAW_NAMESPACE,
+                  body,
+                });
+              } else {
+                throw replaceErr;
+              }
+            }
+          } else {
+            throw err;
+          }
+        }
       },
     },
     channelBaseImage,

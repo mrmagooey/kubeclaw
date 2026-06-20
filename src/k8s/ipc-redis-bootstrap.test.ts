@@ -60,6 +60,10 @@ function makeDeps(
     getChannelHostMode: vi.fn(async () => 'standalone' as const),
     getChannelRunnerImage: vi.fn(async () => 'kubeclaw-orchestrator:latest'),
     createPvc: vi.fn(async () => {}),
+    // Task 2: new deps — default null/no-op so existing tests are unaffected
+    getChannelHttpPort: vi.fn(async () => null),
+    createService: vi.fn(async () => {}),
+    createNetworkPolicy: vi.fn(async () => {}),
     ...overrides,
   };
 }
@@ -1000,5 +1004,87 @@ describe('processCommitChannelConfig — Story 182: replica cap + RO mount invar
       (vm) => vm.name === 'runtime',
     );
     expect(runtimeMount!.readOnly).toBe(true);
+  });
+});
+
+// ─── Task 2: httpPort → ports, probes, Service, NetworkPolicy ────────────────
+
+describe('processCommitChannelConfig — httpPort / Service / NetworkPolicy (Task 2)', () => {
+  const inst = validPayload.instance_name; // 'my-telegram'
+
+  it('channel-runner + httpPort=4080: Deployment gets ports, probes; Service and NetworkPolicy created', async () => {
+    let builtDeployment: any;
+    const deps = makeDeps({
+      getChannelHostMode: vi.fn(async () => 'channel-runner' as const),
+      getChannelHttpPort: vi.fn(async () => 4080),
+      createDeployment: vi.fn(async (b) => {
+        builtDeployment = b;
+      }),
+    });
+    await processCommitChannelConfig(validPayload, deps, 'kubeclaw', 'kubeclaw-agent:latest');
+
+    // Deployment container ports
+    const container = builtDeployment.spec.template.spec.containers[0];
+    expect(container.ports).toEqual([
+      { name: 'http', containerPort: 4080 },
+      { name: 'health', containerPort: 9090 },
+    ]);
+
+    // livenessProbe
+    expect(container.livenessProbe).toBeDefined();
+    expect(container.livenessProbe.httpGet.path).toBe('/liveness');
+    expect(container.livenessProbe.httpGet.port).toBe('health');
+
+    // readinessProbe
+    expect(container.readinessProbe).toBeDefined();
+    expect(container.readinessProbe.httpGet.path).toBe('/readyz');
+    expect(container.readinessProbe.httpGet.port).toBe('http');
+
+    // Service created once with correct name + port
+    expect(deps.createService).toHaveBeenCalledOnce();
+    const svcBody = (deps.createService as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(svcBody.metadata.name).toBe(`kubeclaw-channel-${inst}`);
+    expect(svcBody.spec.ports[0].port).toBe(80);
+
+    // NetworkPolicy created once with correct name + port
+    expect(deps.createNetworkPolicy).toHaveBeenCalledOnce();
+    const netpolBody = (deps.createNetworkPolicy as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(netpolBody.metadata.name).toBe(`kubeclaw-channel-${inst}-ingress`);
+    expect(netpolBody.spec.ingress[0].ports[0].port).toBe(4080);
+  });
+
+  it('channel-runner + httpPort=null (irc): no ports/probes, no Service/NetworkPolicy', async () => {
+    let builtDeployment: any;
+    const deps = makeDeps({
+      getChannelHostMode: vi.fn(async () => 'channel-runner' as const),
+      getChannelHttpPort: vi.fn(async () => null),
+      createDeployment: vi.fn(async (b) => {
+        builtDeployment = b;
+      }),
+    });
+    await processCommitChannelConfig(validPayload, deps, 'kubeclaw', 'kubeclaw-agent:latest');
+
+    const container = builtDeployment.spec.template.spec.containers[0];
+    // No ports field (or empty/undefined)
+    expect(container.ports == null || container.ports.length === 0).toBe(true);
+    // No probes
+    expect(container.livenessProbe).toBeUndefined();
+    expect(container.readinessProbe).toBeUndefined();
+
+    // Service and NetworkPolicy must NOT be called
+    expect(deps.createService).not.toHaveBeenCalled();
+    expect(deps.createNetworkPolicy).not.toHaveBeenCalled();
+  });
+
+  it('standalone mode: no Service or NetworkPolicy regardless of httpPort dep', async () => {
+    const deps = makeDeps({
+      getChannelHostMode: vi.fn(async () => 'standalone' as const),
+      // Even if getChannelHttpPort were wired, standalone must not call it or create resources
+      getChannelHttpPort: vi.fn(async () => 8080),
+    });
+    await processCommitChannelConfig(validPayload, deps, 'kubeclaw', 'kubeclaw-agent:latest');
+
+    expect(deps.createService).not.toHaveBeenCalled();
+    expect(deps.createNetworkPolicy).not.toHaveBeenCalled();
   });
 });

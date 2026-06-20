@@ -13,7 +13,11 @@
  *   7. Releases the instance name from activeBootstraps
  */
 
-import type { V1Deployment } from '@kubernetes/client-node';
+import type {
+  V1Deployment,
+  V1Service,
+  V1NetworkPolicy,
+} from '@kubernetes/client-node';
 import { logger } from '../logger.js';
 import { computeManifestHash, nextRuntimePvcName } from './bootstrap-runner.js';
 
@@ -147,6 +151,16 @@ export interface CommitChannelConfigDeps {
   getChannelRunnerImage(): Promise<string>;
   /** Create a PVC (idempotent; NotFound-create, AlreadyExists-ignore). */
   createPvc(name: string, sizeGi: number): Promise<void>;
+  /**
+   * Return the HTTP port for a channel-runner-mode channel type (from the
+   * kubeclaw-channel-manifests ConfigMap `.httpPort` field), or null when the
+   * channel has no HTTP port (e.g. IRC) or the manifest is absent.
+   */
+  getChannelHttpPort(channelType: string): Promise<number | null>;
+  /** Create or replace a K8s Service (idempotent; AlreadyExists → replace). */
+  createService(body: V1Service): Promise<void>;
+  /** Create or replace a K8s NetworkPolicy (idempotent; AlreadyExists → replace). */
+  createNetworkPolicy(body: V1NetworkPolicy): Promise<void>;
 }
 
 // ─── Handler ──────────────────────────────────────────────────────────────────
@@ -395,6 +409,11 @@ export async function processCommitChannelConfig(
       // 3a. Determine hostMode and prepare extra PVCs for channel-runner mode
       const hostMode = await deps.getChannelHostMode(channel_type);
       const channelRunnerMode = hostMode === 'channel-runner';
+      // HTTP port for channel-runner pods that expose an HTTP endpoint.
+      // null means no HTTP exposure (e.g. IRC, standalone echo channels).
+      const httpPort = channelRunnerMode
+        ? await deps.getChannelHttpPort(channel_type)
+        : null;
       // channel-runner.js lives only in the orchestrator image (WORKDIR /app);
       // the agent image (channelBaseImage) has channel-loader.js for standalone.
       const channelImage = channelRunnerMode
@@ -537,6 +556,28 @@ export async function processCommitChannelConfig(
                     ...channelRunnerEnv,
                   ],
                   envFrom: [{ secretRef: { name: secretName } }],
+                  ...(channelRunnerMode && httpPort != null
+                    ? {
+                        ports: [
+                          { name: 'http', containerPort: httpPort },
+                          { name: 'health', containerPort: 9090 },
+                        ],
+                        livenessProbe: {
+                          httpGet: { path: '/liveness', port: 'health' },
+                          initialDelaySeconds: 15,
+                          periodSeconds: 30,
+                          failureThreshold: 3,
+                          timeoutSeconds: 5,
+                        },
+                        readinessProbe: {
+                          httpGet: { path: '/readyz', port: 'http' },
+                          initialDelaySeconds: 5,
+                          periodSeconds: 10,
+                          failureThreshold: 3,
+                          timeoutSeconds: 5,
+                        },
+                      }
+                    : {}),
                   volumeMounts: [
                     // Runtime PVC mounted READ-ONLY (AC5)
                     { name: 'runtime', mountPath: '/runtime', readOnly: true },
@@ -575,6 +616,49 @@ export async function processCommitChannelConfig(
         { deploymentName, channelImage, instance_name },
         'Steady-state Deployment created',
       );
+
+      // 4a. When channel-runner mode exposes an HTTP port, create the Service
+      // and ingress NetworkPolicy so the port is reachable within the cluster.
+      if (channelRunnerMode && httpPort != null) {
+        await deps.createService({
+          apiVersion: 'v1',
+          kind: 'Service',
+          metadata: {
+            name: `kubeclaw-channel-${instance_name}`,
+            namespace: 'kubeclaw',
+            labels: { app: `kubeclaw-channel-${instance_name}` },
+          },
+          spec: {
+            type: 'ClusterIP',
+            selector: { app: `kubeclaw-channel-${instance_name}` },
+            ports: [
+              { name: 'http', port: 80, targetPort: 'http' as any, protocol: 'TCP' },
+            ],
+          },
+        });
+        logger.info(
+          { instance_name, httpPort },
+          'Channel Service created',
+        );
+
+        await deps.createNetworkPolicy({
+          apiVersion: 'networking.k8s.io/v1',
+          kind: 'NetworkPolicy',
+          metadata: {
+            name: `kubeclaw-channel-${instance_name}-ingress`,
+            namespace: 'kubeclaw',
+          },
+          spec: {
+            podSelector: { matchLabels: { app: `kubeclaw-channel-${instance_name}` } },
+            policyTypes: ['Ingress'],
+            ingress: [{ _from: [], ports: [{ protocol: 'TCP', port: httpPort as any }] }],
+          },
+        });
+        logger.info(
+          { instance_name, httpPort },
+          'Channel ingress NetworkPolicy created',
+        );
+      }
 
       // 5. Release instance name from active bootstraps
       deps.releaseBootstrap(instance_name);
