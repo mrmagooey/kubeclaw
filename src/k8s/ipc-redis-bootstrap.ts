@@ -620,12 +620,16 @@ export async function processCommitChannelConfig(
       // 4a. When channel-runner mode exposes an HTTP port, create the Service
       // and ingress NetworkPolicy so the port is reachable within the cluster.
       if (channelRunnerMode && httpPort != null) {
+        // No metadata.namespace on the Service/NetworkPolicy bodies — the
+        // createNamespacedService/NetworkPolicy calls supply the namespace
+        // (KUBECLAW_NAMESPACE). Hardcoding it mismatches the request namespace
+        // (e.g. kubeclaw-live in e2e) and K8s rejects with HTTP 400. This
+        // mirrors the Deployment body, which also omits metadata.namespace.
         await deps.createService({
           apiVersion: 'v1',
           kind: 'Service',
           metadata: {
             name: `kubeclaw-channel-${instance_name}`,
-            namespace: 'kubeclaw',
             labels: { app: `kubeclaw-channel-${instance_name}` },
           },
           spec: {
@@ -646,7 +650,6 @@ export async function processCommitChannelConfig(
           kind: 'NetworkPolicy',
           metadata: {
             name: `kubeclaw-channel-${instance_name}-ingress`,
-            namespace: 'kubeclaw',
           },
           spec: {
             podSelector: { matchLabels: { app: `kubeclaw-channel-${instance_name}` } },

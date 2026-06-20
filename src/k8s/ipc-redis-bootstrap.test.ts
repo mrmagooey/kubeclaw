@@ -1045,12 +1045,17 @@ describe('processCommitChannelConfig — httpPort / Service / NetworkPolicy (Tas
     const svcBody = (deps.createService as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(svcBody.metadata.name).toBe(`kubeclaw-channel-${inst}`);
     expect(svcBody.spec.ports[0].port).toBe(80);
+    // Regression: the body must NOT hardcode metadata.namespace — the
+    // createNamespacedService call supplies it. A hardcoded value mismatches
+    // the request namespace (e.g. kubeclaw-live) and K8s rejects with HTTP 400.
+    expect(svcBody.metadata.namespace).toBeUndefined();
 
     // NetworkPolicy created once with correct name + port
     expect(deps.createNetworkPolicy).toHaveBeenCalledOnce();
     const netpolBody = (deps.createNetworkPolicy as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(netpolBody.metadata.name).toBe(`kubeclaw-channel-${inst}-ingress`);
     expect(netpolBody.spec.ingress[0].ports[0].port).toBe(4080);
+    expect(netpolBody.metadata.namespace).toBeUndefined();
   });
 
   it('channel-runner + httpPort=null (irc): no ports/probes, no Service/NetworkPolicy', async () => {
