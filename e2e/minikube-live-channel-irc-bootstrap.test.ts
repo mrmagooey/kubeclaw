@@ -431,8 +431,11 @@ describe('Minikube-live: bootstrap IRC channel end-to-end (channel-runner host p
       return;
     }
 
-    // Wait for the bootstrap pod to be running and ask its first question.
-    // The skill asks about the IRC server hostname first (Step 3).
+    // The skill asks ONE combined question for all IRC connection details
+    // (Step 3) — a single round-trip, like the reliable echo bootstraps. The
+    // 4-separate-question form was flaky: a cheap admin model only sometimes
+    // completed all four reply_to_bootstrap hops. Detect the distinctive
+    // "connection details" phrasing (not bare "IRC", which is log noise).
     let askAppeared = false;
     for (let i = 0; i < 40; i++) {
       const logs = kubectl([
@@ -442,13 +445,7 @@ describe('Minikube-live: bootstrap IRC channel end-to-end (channel-runner host p
         `job/kubeclaw-bootstrap-${INSTANCE_NAME}`,
         '--tail=300',
       ]);
-      // Match the DISTINCTIVE question phrasing ("hostname"), not bare "IRC"
-      // or "server" — the bootstrap pod logs the word "IRC" constantly
-      // (installing irc-upd, the skill title), which would fire this detector
-      // on noise and post the answer BEFORE the agent actually asks via
-      // ask_admin, desyncing the whole dialogue. "hostname" only appears when
-      // the agent issues the first question.
-      if (logs.ok && /hostname/i.test(logs.stdout)) {
+      if (logs.ok && /connection details/i.test(logs.stdout)) {
         askAppeared = true;
         break;
       }
@@ -456,70 +453,14 @@ describe('Minikube-live: bootstrap IRC channel end-to-end (channel-runner host p
     }
     expect(
       askAppeared,
-      'bootstrap pod did not ask about the IRC server within 120s',
+      'bootstrap pod did not ask for the IRC connection details within 120s',
     ).toBe(true);
 
-    // Answer Q1: IRC server hostname.
+    // Answer all four settings in one structured reply (matches the skill's
+    // key=value example), so the agent parses them in a single turn and commits.
     await postChatAndCollectReply(
       authHeader,
-      `The IRC server hostname is ${IRC_SERVER}.`,
-      60_000,
-    );
-
-    // Wait for Q2: IRC port.
-    for (let i = 0; i < 20; i++) {
-      const logs = kubectl([
-        'logs',
-        '-n',
-        NAMESPACE,
-        `job/kubeclaw-bootstrap-${INSTANCE_NAME}`,
-        '--tail=300',
-      ]);
-      if (logs.ok && /port/i.test(logs.stdout)) break;
-      await sleep(3000);
-    }
-    // Answer Q2: IRC port.
-    await postChatAndCollectReply(
-      authHeader,
-      `Use port ${IRC_PORT}.`,
-      60_000,
-    );
-
-    // Wait for Q3: bot nickname.
-    for (let i = 0; i < 20; i++) {
-      const logs = kubectl([
-        'logs',
-        '-n',
-        NAMESPACE,
-        `job/kubeclaw-bootstrap-${INSTANCE_NAME}`,
-        '--tail=300',
-      ]);
-      if (logs.ok && /nickname/i.test(logs.stdout)) break;
-      await sleep(3000);
-    }
-    // Answer Q3: bot nickname.
-    await postChatAndCollectReply(
-      authHeader,
-      `The bot nickname is ${IRC_NICK}.`,
-      60_000,
-    );
-
-    // Wait for Q4: channels to join.
-    for (let i = 0; i < 20; i++) {
-      const logs = kubectl([
-        'logs',
-        '-n',
-        NAMESPACE,
-        `job/kubeclaw-bootstrap-${INSTANCE_NAME}`,
-        '--tail=300',
-      ]);
-      if (logs.ok && /channels to join/i.test(logs.stdout)) break;
-      await sleep(3000);
-    }
-    // Answer Q4: channels to join.
-    await postChatAndCollectReply(
-      authHeader,
-      `Join the channel ${IRC_CHANNEL}.`,
+      `server=${IRC_SERVER} port=${IRC_PORT} nick=${IRC_NICK} channels=${IRC_CHANNEL}`,
       60_000,
     );
 

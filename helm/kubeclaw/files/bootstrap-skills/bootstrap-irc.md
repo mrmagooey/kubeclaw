@@ -5,10 +5,7 @@ bootstrap:
   channelType: irc
   manifestVersion: "1"
   expectedQuestions:
-    - "IRC server hostname?"
-    - "IRC port? (default 6697)"
-    - "Bot nickname?"
-    - "Comma-separated channels to join (e.g. #ops,#general)?"
+    - "Provide the IRC connection details on one line — server hostname, port (default 6697), bot nickname, and comma-separated channels to join."
 ---
 
 # Bootstrap: irc channel
@@ -61,64 +58,32 @@ completes, **call the `local_bash` tool again** with `command: ls /runtime/node_
 to confirm the package installed. If the file is missing, stop and report the
 error to the admin.
 
-## Step 3: Ask the admin for the IRC settings
+## Step 3: Ask the admin for the IRC connection details
+
+Gather ALL the IRC connection settings with a SINGLE `ask_admin` call (do not
+ask four separate questions — one combined question keeps the dialogue short and
+reliable).
 
 **Call the `ask_admin` tool now** with:
 
 ```
-question: "IRC server hostname?"
+question: "Provide the IRC connection details on one line — server hostname, port (default 6697), bot nickname, and comma-separated channels to join. Example: server=irc.example.net port=6697 nick=mybot channels=#ops,#general"
 ```
 
-The value the `ask_admin` tool returns IS the admin's answer. Validate it:
+The value the `ask_admin` tool returns IS the admin's answer. Parse these four
+fields from it (the admin may use `key=value` form as in the example, or plain
+prose — extract sensibly):
 
-- Must be a non-empty string
-- Must not contain spaces
+- `IRC_SERVER` — the server hostname. Required, non-empty, no spaces.
+- `IRC_PORT` — the port as a string. If not provided, default to `6697`. Must be
+  an integer between 1 and 65535 inclusive.
+- `IRC_NICK` — the bot nickname. Required, non-empty, no spaces or commas.
+- `IRC_CHANNELS` — the comma-separated channels. Required; each comma-separated
+  token should start with `#`.
 
-If the answer is invalid, **call `ask_admin` again** with a corrective message
-explaining that a valid hostname is required. Do not proceed until `ask_admin`
-returns a valid value. Store this as `IRC_SERVER`.
-
-**Call the `ask_admin` tool now** with:
-
-```
-question: "IRC port? (default 6697)"
-```
-
-Validate it:
-
-- If blank or empty, default to `6697`
-- Otherwise must parse as an integer between 1 and 65535 inclusive
-
-If the answer is invalid, **call `ask_admin` again** explaining the valid range.
-Store the final value (as a string) as `IRC_PORT`.
-
-**Call the `ask_admin` tool now** with:
-
-```
-question: "Bot nickname?"
-```
-
-Validate it:
-
-- Must be a non-empty string
-- Must not contain spaces or commas
-
-If the answer is invalid, **call `ask_admin` again** explaining that a valid
-IRC nickname is required. Store this as `IRC_NICK`.
-
-**Call the `ask_admin` tool now** with:
-
-```
-question: "Comma-separated channels to join (e.g. #ops,#general)?"
-```
-
-Validate it:
-
-- Must be a non-empty string
-- Each comma-separated token should start with `#`
-
-If the answer is invalid, **call `ask_admin` again** explaining that at least
-one channel prefixed with `#` is required. Store this as `IRC_CHANNELS`.
+If any required field is missing or invalid, **call `ask_admin` again** with a
+corrective message naming the missing/invalid field and restating the expected
+format. Do not proceed until you have all four valid values.
 
 ## Step 4: Commit the configuration
 
