@@ -504,7 +504,7 @@ export const TOOLS: OpenAI.ChatCompletionTool[] = [
         properties: {
           type: {
             type: 'string',
-            enum: ['telegram', 'discord', 'slack', 'whatsapp', 'irc', 'http'],
+            enum: ['telegram', 'discord', 'slack', 'whatsapp', 'http'],
             description: 'Channel type',
           },
           instanceName: {
