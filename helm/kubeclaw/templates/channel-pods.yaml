@@ -29,6 +29,25 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       initContainers:
+        - name: stage-runtime
+          image: {{ include "kubeclaw.image" (dict "root" $ "name" "kubeclaw-orchestrator") }}
+          imagePullPolicy: {{ include "kubeclaw.pullPolicy" $ }}
+          command:
+            - sh
+            - -c
+            - >-
+              node -e "const fs=require('fs');const t=process.env.KUBECLAW_CHANNEL_TYPE;const m=JSON.parse(fs.readFileSync('/workspace/manifests/'+t+'.json','utf8'));fs.writeFileSync('/runtime/package.json',m.packageJson);fs.writeFileSync('/runtime/package-lock.json',m.packageLockJson);fs.copyFileSync('/workspace/channel-src/'+t+'__channel-entry.js','/runtime/channel-entry.js');"
+              && npm ci --prefix /runtime --omit=dev --ignore-scripts
+          env:
+            - name: KUBECLAW_CHANNEL_TYPE
+              value: {{ $cfg.type | default $name }}
+          volumeMounts:
+            - name: runtime
+              mountPath: /runtime
+            - name: channel-src
+              mountPath: /workspace/channel-src
+            - name: channel-manifests
+              mountPath: /workspace/manifests
         - name: fix-permissions
           image: busybox:latest
           command:
@@ -176,6 +195,8 @@ spec:
             timeoutSeconds: 5
           {{- end }}
           volumeMounts:
+            - name: runtime
+              mountPath: /runtime
             - name: groups
               mountPath: /app/groups
             - name: store
@@ -194,6 +215,14 @@ spec:
         {{- include "kubeclaw.credentialSidecarContainer" $ | nindent 8 }}
         {{- end }}
       volumes:
+        - name: runtime
+          emptyDir: {}
+        - name: channel-src
+          configMap:
+            name: kubeclaw-channel-src
+        - name: channel-manifests
+          configMap:
+            name: kubeclaw-channel-manifests-baseline
         - name: groups
           persistentVolumeClaim:
             claimName: kubeclaw-channel-{{ $name }}-groups
