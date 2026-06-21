@@ -47,6 +47,10 @@ rules:
   - apiGroups: [""]
     resources: ["services"]
     verbs: ["create", "get", "list", "watch", "update", "patch", "delete"]
+  # remove_channel: delete the per-channel ServiceAccount (Helm-created).
+  - apiGroups: [""]
+    resources: ["serviceaccounts"]
+    verbs: ["get", "list", "delete"]
   # Admin shell: create per-channel PVCs; RAG capability removal deletes them
   - apiGroups: [""]
     resources: ["persistentvolumeclaims"]

@@ -46,8 +46,15 @@ const NAMESPACE = process.env.KUBECLAW_NAMESPACE || 'kubeclaw';
 export interface ChannelRemoveResult {
   deleted: string[];
   alreadyAbsent: string[];
+  /** `<kind>/<name>: <reason>` for resources that could not be deleted. */
+  failed: string[];
   summary: string;
 }
+
+type DeleteOutcome =
+  | { status: 'deleted' }
+  | { status: 'absent' }
+  | { status: 'failed'; error: string };
 
 /**
  * Returns true if the error from the K8s client is a 404 (resource not found).
@@ -70,16 +77,23 @@ function isNotFound(err: unknown): boolean {
   return false;
 }
 
-/** Wrap a delete call: success → 'deleted', 404 → 'absent', else propagate. */
-async function tryDelete(
-  del: () => Promise<unknown>,
-): Promise<'deleted' | 'absent'> {
+/**
+ * Wrap a delete call. Best-effort: success → 'deleted', 404 → 'absent', any
+ * other error → 'failed' (captured, NOT thrown) so one resource's failure
+ * (e.g. a 403 RBAC gap) does not abort the cleanup of the rest.
+ */
+async function tryDelete(del: () => Promise<unknown>): Promise<DeleteOutcome> {
   try {
     await del();
-    return 'deleted';
+    return { status: 'deleted' };
   } catch (err) {
-    if (isNotFound(err)) return 'absent';
-    throw err;
+    if (isNotFound(err)) return { status: 'absent' };
+    const raw = err instanceof Error ? err.message : String(err);
+    // ApiException messages are multi-line; keep the first line + status code.
+    const e = err as { code?: number; statusCode?: number };
+    const code = e?.code ?? e?.statusCode;
+    const first = raw.split('\n')[0];
+    return { status: 'failed', error: code ? `${code} ${first}` : first };
   }
 }
 
@@ -171,9 +185,11 @@ export async function removeChannel(
 
   const deleted: string[] = [];
   const alreadyAbsent: string[] = [];
-  function record(name: string, outcome: 'deleted' | 'absent'): void {
-    if (outcome === 'deleted') deleted.push(name);
-    else alreadyAbsent.push(name);
+  const failed: string[] = [];
+  function record(name: string, outcome: DeleteOutcome): void {
+    if (outcome.status === 'deleted') deleted.push(name);
+    else if (outcome.status === 'absent') alreadyAbsent.push(name);
+    else failed.push(`${name}: ${outcome.error}`);
   }
 
   // Resources are recorded as `<kind>/<name>` because several share the same
@@ -210,9 +226,14 @@ export async function removeChannel(
   }
 
   // 6. PVCs — groups/store/sessions/runtime (+ versioned runtime), by precise name.
-  const pvcNames = await listInstancePvcNames(instanceName);
-  for (const pvcName of pvcNames) {
-    record(`persistentvolumeclaim/${pvcName}`, await tryDeletePvc(pvcName));
+  try {
+    const pvcNames = await listInstancePvcNames(instanceName);
+    for (const pvcName of pvcNames) {
+      record(`persistentvolumeclaim/${pvcName}`, await tryDeletePvc(pvcName));
+    }
+  } catch (err) {
+    const raw = err instanceof Error ? err.message : String(err);
+    failed.push(`persistentvolumeclaims (list): ${raw.split('\n')[0]}`);
   }
 
   // 7. Bootstrap Jobs — the initial bootstrap Job and the upgrade Job (both
@@ -232,8 +253,14 @@ export async function removeChannel(
     alreadyAbsent.length > 0
       ? `Already absent:\n${alreadyAbsent.map((n) => `  - ${n}`).join('\n')}`
       : '';
+  const failedLines =
+    failed.length > 0
+      ? `FAILED (could not delete):\n${failed.map((n) => `  - ${n}`).join('\n')}`
+      : '';
 
-  const summary = [deletedLines, absentLines].filter(Boolean).join('\n');
+  const summary = [deletedLines, absentLines, failedLines]
+    .filter(Boolean)
+    .join('\n');
 
-  return { deleted, alreadyAbsent, summary };
+  return { deleted, alreadyAbsent, failed, summary };
 }

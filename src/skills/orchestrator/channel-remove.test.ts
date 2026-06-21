@@ -244,16 +244,49 @@ describe('removeChannel — comprehensive name-based cleanup', () => {
     });
   });
 
-  describe('error handling + summary', () => {
-    it('propagates non-404 errors (e.g. 500) from a delete', async () => {
-      const serverError = Object.assign(new Error('internal server error'), {
-        statusCode: 500,
-      });
-      mockDeleteDeployment.mockRejectedValue(serverError);
-      await expect(removeChannel('bad')).rejects.toThrow(
-        'internal server error',
+  describe('best-effort — one resource failing does NOT abort the rest', () => {
+    it('records a non-404 error (e.g. a 403 RBAC gap) as failed and still deletes everything else', async () => {
+      allDeletesSucceed();
+      // ServiceAccount delete fails with 403 (the exact RBAC cascade the e2e
+      // exposed: with fail-fast this orphaned every later resource).
+      mockDeleteServiceAccount.mockRejectedValue(
+        Object.assign(new Error('HTTP-Code: 403\nMessage: forbidden'), {
+          code: 403,
+        }),
+      );
+      const result = await removeChannel('http');
+      // Did NOT throw; the failure is recorded.
+      expect(
+        result.failed.some((f) =>
+          f.startsWith('serviceaccount/kubeclaw-channel-http'),
+        ),
+      ).toBe(true);
+      expect(result.summary).toContain('FAILED (could not delete):');
+      // Everything AFTER the failed SA was still deleted.
+      expect(result.deleted).toEqual(
+        expect.arrayContaining([
+          'service/kubeclaw-channel-http',
+          'networkpolicy/kubeclaw-channel-http-ingress',
+          'secret/kubeclaw-channel-http-credentials',
+          'job/kubeclaw-bootstrap-http',
+        ]),
       );
     });
+
+    it('a list failure (e.g. PVC list) is recorded but does not abort the Job deletes after it', async () => {
+      allDeletesSucceed();
+      mockListPvc.mockRejectedValue(new Error('list boom'));
+      const result = await removeChannel('http');
+      expect(
+        result.failed.some((f) =>
+          f.startsWith('persistentvolumeclaims (list)'),
+        ),
+      ).toBe(true);
+      expect(result.deleted).toContain('job/kubeclaw-bootstrap-http');
+    });
+  });
+
+  describe('summary', () => {
 
     it('summary lists deleted resources', async () => {
       allDeletesSucceed();
