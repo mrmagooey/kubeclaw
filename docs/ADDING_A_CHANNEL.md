@@ -1,6 +1,6 @@
 # Adding a Channel
 
-This guide explains how to implement a new channel and package it as a skill.
+This guide explains how to implement a new channel as a runtime adapter. For packaging, install, and the bootstrap/Helm workflow, see [docs/DEVELOPING_A_CHANNEL.md](DEVELOPING_A_CHANNEL.md).
 
 ## Required interface
 
@@ -78,24 +78,16 @@ The identifier part of the JID is then sanitised:
 
 The final folder name is `{prefix}-{sanitized-identifier}`, e.g. `tg-1001234567890` or `dc-987654321098765432`.
 
-If you need to discover your channel's folder prefix at runtime you can import `folderPrefixForChannel` directly:
-
-```typescript
-import { folderPrefixForChannel } from '../channel-runner.js';
-
-const prefix = folderPrefixForChannel('mychannel'); // → 'myc' (3-char fallback)
-```
+The folder prefix logic is baked into the host — adapters do not need to compute it. The table above is provided as a reference so you can predict the folder name your channel will use (e.g. when constructing attachment paths).
 
 ## Capabilities declaration
 
-Add a `readonly capabilities` property to your class to declare what optional features your channel supports:
+Add a `capabilities` property to your class to declare what optional features your channel supports:
 
-```typescript
-import { Channel, ChannelCapabilities } from '../types.js';
-
-export class MyChannel implements Channel {
+```js
+class MyChannel {
   name = 'mychannel';
-  readonly capabilities: ChannelCapabilities = {
+  capabilities = {
     typing: true,
     groupSync: true,
     inboundImages: true,
@@ -147,40 +139,38 @@ The orchestrator calls this periodically via IPC to keep group names up to date.
 
 ### `inboundImages: true` — image attachments
 
-When a user sends an image, download the binary and write it to the group's attachment directory, then embed a marker in the message content using the `imageAttachmentMarker` builder:
+When a user sends an image, download the binary and write it to the group's attachment directory, then embed a marker in the message content:
 
-```typescript
+```js
 import path from 'path';
 import fs from 'fs';
-import { GROUPS_DIR } from '../config.js';
-import { imageAttachmentMarker } from '../attachment-markers.js';
 
-// Download image bytes from platform...
-const folder = getGroupFolder(chatJid); // your channel's folder lookup
-const rawDir = path.join(GROUPS_DIR, folder, 'attachments', 'raw');
+// sdk.groupsDir is the resolved groups directory path
+const rawDir = path.join(sdk.groupsDir, folder, 'attachments', 'raw');
 fs.mkdirSync(rawDir, { recursive: true });
 
 const filename = `img-${Date.now()}.jpg`;
 const rawPath = path.join('attachments', 'raw', filename);
-fs.writeFileSync(path.join(GROUPS_DIR, folder, rawPath), imageBuffer);
+fs.writeFileSync(path.join(sdk.groupsDir, folder, rawPath), imageBuffer);
 
 // Embed marker in message content (caption is optional):
-content = imageAttachmentMarker(rawPath, caption) + '\n' + content;
+const marker = caption
+  ? `[ImageAttachment: ${rawPath} caption="${caption}"]`
+  : `[ImageAttachment: ${rawPath}]`;
+content = marker + '\n' + content;
 ```
 
 A preprocessing pipeline (image-vision) is expected to read these markers, resize the image, and rewrite them to `[Image: attachments/processed/...]` before the agent sees them. See `docs/INSTALLING_A_CHANNEL.md` (capability section) for how to add the pipeline via `/customize`.
 
 ### `inboundPdfs: true` — PDF attachments
 
-Same pattern as images, using `pdfAttachmentMarker`:
+Same pattern as images, using the `[PdfAttachment: ...]` marker format:
 
-```typescript
-import { pdfAttachmentMarker } from '../attachment-markers.js';
-
+```js
 const filename = `doc-${Date.now()}.pdf`;
 const rawPath = path.join('attachments', 'raw', filename);
-fs.writeFileSync(path.join(GROUPS_DIR, folder, rawPath), pdfBuffer);
-content = pdfAttachmentMarker(rawPath) + '\n' + content;
+fs.writeFileSync(path.join(sdk.groupsDir, folder, rawPath), pdfBuffer);
+content = `[PdfAttachment: ${rawPath}]\n` + content;
 ```
 
 A pdf-reader preprocessing module must also be present for the agent to receive extracted PDF text. See `docs/INSTALLING_A_CHANNEL.md` for how to add it via `/customize`.
@@ -191,27 +181,24 @@ Two implementation patterns:
 
 **Option A — Inline transcription (recommended for simplicity):**
 
-```typescript
-import { transcribeBuffer } from '../transcription.js'; // module added via /customize (voice-transcription)
+```js
+// Requires a transcription helper available in your adapter's npm deps (e.g. openai)
+// See docs/INSTALLING_A_CHANNEL.md for how to add voice transcription via /customize.
 
 // Download audio bytes from platform...
-const transcript = await transcribeBuffer(audioBuffer);
+const transcript = await transcribeAudio(audioBuffer); // your platform helper
 if (transcript) {
   content = `[Voice: ${transcript}]\n${content}`;
 }
 ```
 
-Requires `src/transcription.ts` (which depends on the `openai` npm package) to be present in the build. See `docs/INSTALLING_A_CHANNEL.md` for how to add voice transcription via `/customize`.
-
 **Option B — Attachment marker (uses preprocessing pipeline):**
 
-```typescript
-import { voiceAttachmentMarker } from '../attachment-markers.js';
-
+```js
 const filename = `voice-${Date.now()}.ogg`;
 const rawPath = path.join('attachments', 'raw', filename);
-fs.writeFileSync(path.join(GROUPS_DIR, folder, rawPath), audioBuffer);
-content = voiceAttachmentMarker(rawPath) + '\n' + content;
+fs.writeFileSync(path.join(sdk.groupsDir, folder, rawPath), audioBuffer);
+content = `[VoiceAttachment: ${rawPath}]\n` + content;
 ```
 
 ### `markdownOutput: true` — markdown rendering
@@ -220,132 +207,70 @@ No code needed in the channel. This flag signals that the platform renders markd
 
 When your platform requires specific escaping (e.g. Telegram's `MarkdownV2`), handle that in `sendMessage` before dispatching to the API.
 
-## Self-registration
+## Adapter registration
 
-Channels register themselves at module load time. The factory returns `null` if credentials are missing (auto-disable):
+Channels are **runtime adapters** — plain JS files shipped in the `kubeclaw-channel-src` ConfigMap and loaded at runtime. There are no compiled-in channel modules; `src/channels/index.ts` imports no channel code.
 
-```typescript
-import { registerChannel, ChannelOpts } from './registry.js';
-
-registerChannel('mychannel', (opts: ChannelOpts) => {
-  const token = process.env.MYCHANNEL_TOKEN || '';
-  if (!token) {
-    console.warn('MyChannel: MYCHANNEL_TOKEN not set');
-    return null;
-  }
-  return new MyChannel(token, opts);
-});
-```
-
-`ChannelOpts` provides:
-- `opts.onMessage(chatJid, message)` — deliver an inbound message to storage
-- `opts.onChatMetadata(chatJid, timestamp, name?, channelName?, isGroup?)` — register a chat
-- `opts.registeredGroups()` — read the current group configuration
-
-## Skill manifest
-
-A minimal `manifest.yaml` for a new channel skill:
-
-```yaml
-skill: mychannel
-version: 1.0.0
-core_version: ">=1.0.0"
-
-adds:
-  - src/channels/mychannel.ts
-  - src/channels/mychannel.test.ts
-
-modifies:
-  - src/channels/index.ts
-
-structured:
-  npm_dependencies:
-    some-platform-sdk: "^4.0.0"
-  env_additions:
-    - MYCHANNEL_TOKEN
-
-conflicts: []
-depends: []
-
-test: "npx vitest run src/channels/mychannel.test.ts"
-```
-
-The `modifies` entry for `src/channels/index.ts` appends `import './mychannel.js'` so the channel self-registers at startup.
-
-## Plugin channels (runtime-loaded)
-
-### When to use a plugin vs. TypeScript source
-
-The normal approach is to add a TypeScript source file (`src/channels/mychannel.ts`) that is compiled when the skill is applied and self-registers at startup via `src/channels/index.ts`. This is suitable for all first-party and skill-distributed channels.
-
-A plugin (a pre-compiled `.js` file placed in `/workspace/plugins/`) is loaded dynamically at runtime via `src/channels/plugin-loader.ts`. Use this approach when the channel code cannot or should not go through the TypeScript compile step — for example, when shipping pre-compiled code for distribution outside the normal skill apply pipeline.
-
-### The plugin contract
-
-A plugin file must export a single default function that receives a `ChannelPluginContext` and calls `ctx.registerChannel` to register its channel:
+An adapter must **default-export a `register(sdk)` function** that calls `sdk.registerChannel`:
 
 ```js
-// mychannel.plugin.js — must have a default export
-export default function(ctx) {
-  ctx.registerChannel('mychannel', (opts) => {
-    const token = process.env.MYCHANNEL_TOKEN;
+// helm/kubeclaw/files/channel-src/mychannel/channel-entry.js
+
+class MyChannel {
+  name = 'mychannel';
+  // ...
+}
+
+export default function register(sdk) {
+  sdk.registerChannel('mychannel', (opts) => {
+    // readEnvFile(keys: string[]) → Record<string, string> (reads the mounted
+    // credential file); fall back to the process env.
+    const env = sdk.readEnvFile(['MYCHANNEL_TOKEN']);
+    const token = process.env.MYCHANNEL_TOKEN || env.MYCHANNEL_TOKEN;
     if (!token) {
-      console.warn('MyChannel: MYCHANNEL_TOKEN not set');
-      return null;  // returning null disables the channel silently
+      sdk.logger.warn('MyChannel: MYCHANNEL_TOKEN not set');
+      return null; // returning null disables the channel silently
     }
-    return new MyChannel(token, opts);
+    return new MyChannel(token, opts, sdk);
   });
 }
 ```
 
-The factory function follows the same contract as a TypeScript source channel:
-- It receives `ChannelOpts` (`onMessage`, `onChatMetadata`, `registeredGroups`)
-- It must return a `Channel` instance, or `null` if credentials are missing
+The factory returns `null` when credentials are missing — the channel is skipped without crashing the host.
 
-### Where to place the file
+### `ChannelOpts`
 
-Place the compiled `.js` file at `/workspace/plugins/<filename>.js` inside the container. The loader scans every `*.js` file in that directory at startup. If the directory does not exist, startup proceeds normally with no error.
+The `opts` argument passed by the host to your factory provides:
+- `opts.onMessage(chatJid, message)` — deliver an inbound message to storage
+- `opts.onChatMetadata(chatJid, timestamp, name?, channelName?, isGroup?)` — register a chat
+- `opts.registeredGroups()` — read the current group configuration
 
-In a skill, add the file under `container/plugins/` and list it in the `adds` section of `manifest.yaml`:
+### The `sdk` object
 
-```yaml
-adds:
-  - container/plugins/mychannel.plugin.js
-```
+The injected `sdk` (`ChannelSdk`) gives the adapter access to host services without importing internal modules:
 
-The skill apply tooling copies files under `container/` into the image at `/workspace/`.
+- **Core:** `registerChannel`, `logger`, `readEnvFile`, `assistantName`, `groupsDir`
+- **Data-facade** (typed pass-throughs to host db/skill-store/config): `config`, `history`, `tasks`, `jobs`, `audit`, `diag`, `skills`
 
-### Manifest entry
+Pure transports (IRC, Signal) typically use only `sdk.logger` and `sdk.readEnvFile`. Channels that expose REST endpoints (HTTP) use the full data-facade.
 
-A minimal `manifest.yaml` for a plugin-based channel skill:
+## Packaging, install, and the full authoring workflow
 
-```yaml
-skill: mychannel-plugin
-version: 1.0.0
-core_version: ">=1.0.0"
+The adapter contract described above (the `register(sdk)` export and the `Channel` interface) is all you need to understand when writing a channel implementation. For everything else — the Helm manifest, bootstrap skill, host-selector (`hostMode`), declarative vs. interactive install, and the `remove_channel` tool — see:
 
-adds:
-  - container/plugins/mychannel.plugin.js
+**[docs/DEVELOPING_A_CHANNEL.md](DEVELOPING_A_CHANNEL.md)**
 
-structured:
-  npm_dependencies: {}
-  env_additions:
-    - MYCHANNEL_TOKEN
+That guide owns the full runtime-adapter packaging and install lifecycle. This guide intentionally does not duplicate it.
 
-conflicts: []
-depends: []
-```
-
-No `modifies` entry for `src/channels/index.ts` is needed — plugin channels are discovered automatically from the plugins directory without any import added to source.
-
-## Checklist for a new channel skill
+## Checklist for a new channel adapter
 
 - [ ] Implements all 6 required `Channel` methods
 - [ ] JIDs are prefixed with `channelname:`
 - [ ] `readonly capabilities` declared (even if `{}`)
-- [ ] `registerChannel()` call at module bottom with credential check
-- [ ] Adds `import './mychannel.js'` to `src/channels/index.ts`
-- [ ] `manifest.yaml` lists all env vars in `env_additions`
+- [ ] Default-exports `register(sdk)` which calls `sdk.registerChannel('<type>', factory)`
+- [ ] Factory returns `null` when credentials are missing
+- [ ] File placed at `helm/kubeclaw/files/channel-src/<type>/channel-entry.js`
+- [ ] Manifest and install steps covered in `docs/DEVELOPING_A_CHANNEL.md`
 - [ ] Tests cover: message receipt, `ownsJid`, `sendMessage`, credential-missing returns null
 
 ## See also

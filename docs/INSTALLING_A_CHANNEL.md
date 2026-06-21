@@ -8,9 +8,18 @@ For developers who want to *write a brand-new channel TYPE* (the TypeScript code
 
 ## Installing a channel
 
-Channels are installed via the orchestrator's **admin shell**. The admin shell is an LLM-powered tool runner that walks you through credential collection and provisions the K8s resources (Secret, PVCs, Deployment, NetworkPolicy) for the new channel pod.
+Every channel is a **runtime adapter** — a plain JS file shipped in the `kubeclaw-channel-src` ConfigMap and loaded at runtime by the channel-runner host. There is one install mechanism (deliver the adapter + create the channel Deployment), with two front-ends:
 
-### Two access modes
+- **(a) Interactive bootstrap** — LLM-driven credential gathering via the admin shell.
+- **(b) Declarative Helm** — deterministic, LLM-free; suitable for automation and GitOps.
+
+Both produce the same steady-state Deployment. Credentials reach the channel pod via environment variables sourced from its Secret.
+
+Currently available adapters: `http`, `irc`, `oauth-webchat`. Additional channel types (telegram, slack, discord, etc.) follow the same pattern but their adapters are not yet built — the install steps below describe the intended model for when they are.
+
+For developers writing a new adapter, see [DEVELOPING_A_CHANNEL.md](DEVELOPING_A_CHANNEL.md).
+
+### Two access modes for the admin shell
 
 **TTY mode** (interactive shell inside the orchestrator pod):
 
@@ -25,49 +34,99 @@ kubectl -n kubeclaw port-forward deploy/kubeclaw-orchestrator 8080:8080
 # Open http://localhost:8080 in browser; auth with ADMIN_HTTP_USERNAME/PASSWORD
 ```
 
-### What the admin shell does
+### (a) Interactive bootstrap
 
-The admin shell exposes a `setup_channel` tool to its underlying LLM. You describe what you want ("install Telegram"), the LLM asks for credentials, calls `setup_channel`, and the orchestrator:
+The bootstrap flow is LLM-driven and suited for gathering credentials interactively. You need a channel manifest and a bootstrap skill in place first — these ship in `bootstrap.channelManifests` Helm values and `helm/kubeclaw/files/bootstrap-skills/`, or you can register them at runtime:
 
-1. Validates credentials online (e.g. fetches `api.telegram.org` for Telegram)
-2. Creates a K8s Secret with the credentials
-3. Creates 3 PVCs for the channel pod (groups, store, sessions)
-4. Creates a Deployment running the orchestrator image in `KUBECLAW_MODE=channel`
-5. Optionally registers a default group with `direct: true`
+```
+register_channel_manifest(type="irc", ...)
+register_bootstrap_skill(type="irc", ...)
+```
+
+Then trigger the install:
+
+```
+bootstrap_channel_from_skill(type="irc")
+```
+
+The orchestrator launches a short-lived bootstrap Job. An init container stages the adapter and runs `npm ci` deterministically. The agent then gathers credentials via one combined question and calls `commit_channel_config`. The orchestrator independently re-hashes the staged `/runtime` files and rejects the install with `MANIFEST_DIVERGENCE` if the files do not match the registered manifest hash (TOCTOU check). On success it creates the credentials Secret and the steady-state Deployment (plus Service and NetworkPolicy for channels with an `httpPort`).
+
+**Multi-instance** — pass a distinct `instance_name` to `bootstrap_channel_from_skill`:
+
+```
+bootstrap_channel_from_skill(type="irc", instance_name="irc-work")
+bootstrap_channel_from_skill(type="irc", instance_name="irc-personal")
+```
+
+Each instance gets its own Deployment (`kubeclaw-channel-irc-work`, `kubeclaw-channel-irc-personal`) and Secret.
+
+Other useful admin shell tools: `list_channel_manifests`, `list_bootstrap_skills`, `remove_bootstrap_skill`.
+
+### (b) Declarative Helm
+
+For automation, GitOps, or CI, set `channels.<name>.enabled=true` with at minimum `type`, and optionally `httpPort` and `envVars`:
+
+```yaml
+channels:
+  my-http:
+    enabled: true
+    type: http
+    httpPort: 3000
+    envVars:
+      HTTP_BASIC_USERS: "alice:secret,bob:s3cr3t"
+```
+
+The channel pod includes a `stage-runtime` init container that copies `<type>__channel-entry.js` from the `kubeclaw-channel-src` ConfigMap and the package files from `kubeclaw-channel-manifests-baseline` into a `/runtime` emptyDir, then runs `npm ci`. The resident `channel-runner.js` then loads `/runtime/channel-entry.js`.
+
+**Note:** the `npm ci` step needs outbound HTTPS (port 443) to the npm registry. This works out of the box with `credentialInjection.mode=off`. With `sidecar` or `istio` mode, add:
+
+```yaml
+networkPolicy:
+  extraEgressPorts: [443]
+```
+
+**Multi-instance** — use distinct keys under `channels:`:
+
+```yaml
+channels:
+  irc-work:
+    enabled: true
+    type: irc
+    envVars:
+      IRC_SERVER: irc.work.example.com
+      IRC_NICK: kubeclaw-work
+  irc-personal:
+    enabled: true
+    type: irc
+    envVars:
+      IRC_SERVER: irc.libera.chat
+      IRC_NICK: kubeclaw-personal
+```
+
+Apply with `helm upgrade --install kubeclaw ./helm/kubeclaw -n kubeclaw -f your-values.yaml`.
 
 ### Per-channel credentials
 
+Credentials are gathered by the bootstrap dialogue (interactive) or supplied via `envVars` / a channel Secret (declarative). The table below lists what each adapter needs — note that most of these channel types are aspirational; only `http`, `irc`, and `oauth-webchat` have adapters today.
+
 | Channel | Credentials needed | Where to obtain |
 |---|---|---|
-| `telegram` | Bot token | Talk to [@BotFather](https://t.me/BotFather) |
-| `discord` | Bot token | https://discord.com/developers/applications → Bot → Token |
-| `slack` | Bot token + App token | https://api.slack.com/apps → OAuth & Permissions / Socket Mode |
-| `whatsapp` | Phone number | WhatsApp Business API setup |
-| `signal` | Phone number | signal-cli registration |
-| `irc` | Server, nick, optional channels list | None (just the IRC server you want to join) |
-| `gmail` | OAuth flow handled by setup_channel | Google Cloud project with Gmail API enabled |
 | `http` | Username:password pairs | None (you choose them) |
+| `irc` | Server, nick, optional channels list | None (just the IRC server you want to join) |
 | `oauth-webchat` | OIDC issuer, client ID, client secret, allowed emails | Your OIDC provider (Google Workspace, Okta, etc.) |
-
-### Multi-instance setups (e.g., Telegram swarm)
-
-`setup_channel` accepts an `instanceName` field. To run multiple Telegram bots side by side, call it once per bot with distinct names:
-
-```
-setup_channel(type="telegram", instanceName="telegram-personal", token="...")
-setup_channel(type="telegram", instanceName="telegram-work", token="...")
-```
-
-Each gets its own Deployment (`kubeclaw-channel-telegram-personal`, `kubeclaw-channel-telegram-work`) and Secret. The default `instanceName` equals the channel `type` for the single-bot common case.
+| `telegram` _(aspirational)_ | Bot token | Talk to [@BotFather](https://t.me/BotFather) |
+| `discord` _(aspirational)_ | Bot token | https://discord.com/developers/applications → Bot → Token |
+| `slack` _(aspirational)_ | Bot token + App token | https://api.slack.com/apps → OAuth & Permissions / Socket Mode |
+| `whatsapp` _(aspirational)_ | Phone number | WhatsApp Business API setup |
+| `signal` _(aspirational)_ | Phone number | signal-cli registration |
+| `gmail` _(aspirational)_ | OAuth credentials | Google Cloud project with Gmail API enabled |
 
 ### Removing a channel
 
-The admin shell does not currently expose a removal tool. To remove a channel, manually:
+Use the `remove_channel` admin shell tool. It deletes the full per-channel resource set — Deployment, ServiceAccount, Services (including `-metrics`), Ingress, NetworkPolicy, all Secret name variants, PVCs (`groups`, `store`, `sessions`, `runtime`, versioned runtime), and the bootstrap/upgrade Jobs. Failures are reported under a `FAILED` section; the operation never aborts early.
 
-```bash
-kubectl -n kubeclaw delete deploy kubeclaw-channel-<instanceName>
-kubectl -n kubeclaw delete secret kubeclaw-channel-<instanceName>-secret
-kubectl -n kubeclaw delete pvc -l kubeclaw/channel=<instanceName>  # ⚠ deletes message history
+```
+remove_channel(name="irc-work")
 ```
 
 ---

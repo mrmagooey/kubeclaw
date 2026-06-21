@@ -195,70 +195,62 @@ interface Channel {
 }
 ```
 
-### Self-Registration Pattern
+### Runtime Adapter Model
 
-Channels self-register using a barrel-import pattern:
+Channels are **runtime adapters** — there are no compiled-in channel files. A single generic image supports all channel types; the channel is selected and customised at install time, not at build time.
 
-1. Each channel skill adds a file to `src/channels/` (e.g. `whatsapp.ts`, `telegram.ts`) that calls `registerChannel()` at module load time:
+Each adapter lives at `helm/kubeclaw/files/channel-src/<type>/channel-entry.js` and is shipped in the `kubeclaw-channel-src` ConfigMap. At startup the resident host (`channel-runner.js`) loads the adapter from `/runtime/channel-entry.js` (see `src/channel-sdk/load-runtime-adapter.ts`). Current adapters: `http`, `irc`, `oauth-webchat` (real channels); `http-echo`, `nanoid-echo` (echo demos); `signal` (skeleton/template).
 
-   ```typescript
-   // src/channels/whatsapp.ts
-   import { registerChannel, ChannelOpts } from './registry.js';
+A channel-runner adapter (see [Host Selector](#host-selector) for the standalone variant) default-exports a `register(sdk)` function that calls `sdk.registerChannel()` to add its factory to the in-process registry:
 
-   export class WhatsAppChannel implements Channel {
-     /* ... */
-   }
+```javascript
+// helm/kubeclaw/files/channel-src/<type>/channel-entry.js
+export default function register(sdk) {
+  sdk.registerChannel('<type>', (opts) => new MyChannel(cfg, opts, sdk));
+}
+```
 
-   registerChannel('whatsapp', (opts: ChannelOpts) => {
-     // Return null if credentials are missing
-     if (!existsSync(authPath)) return null;
-     return new WhatsAppChannel(opts);
-   });
-   ```
+`src/channels/index.ts` no longer imports any channel modules; it plays no role in adapter registration.
 
-2. The barrel file `src/channels/index.ts` imports all channel modules, triggering registration:
+### Channel SDK
 
-   ```typescript
-   import './whatsapp.js';
-   import './telegram.js';
-   // ... each skill adds its import here
-   ```
+The host injects a `ChannelSdk` object (built by `buildChannelSdk()` in `src/channel-sdk/index.ts`) into every adapter's `register(sdk)` call. The surface is:
 
-3. At startup, the orchestrator (`src/index.ts`) loops through registered channels and connects whichever ones return a valid instance:
+- **Core:** `registerChannel`, `logger`, `readEnvFile`, `assistantName: string`, `groupsDir: string`.
+- **Data-facade** — typed pass-throughs to the host db, skill-store, and config so adapters never import `db.ts` directly: `config`, `history`, `tasks`, `jobs`, `audit`, `diag`, `skills`. Pure-transport adapters (e.g. irc) use only the core members; REST-serving adapters (e.g. http) use the full facade.
 
-   ```typescript
-   for (const name of getRegisteredChannelNames()) {
-     const factory = getChannelFactory(name);
-     const channel = factory?.(channelOpts);
-     if (channel) {
-       await channel.connect();
-       channels.push(channel);
-     }
-   }
-   ```
+### Host Selector
+
+The channel manifest (`bootstrap.channelManifests.<type>` in Helm values; `kubeclaw-channel-manifests` ConfigMap) includes a `hostMode` field:
+
+- `hostMode: standalone` — pod runs `node /app/channel-loader.js` (thin self-contained loader) using the **agent image**. A standalone adapter is **self-executing**: `channel-loader.js` does a bare `await import('/runtime/channel-entry.js')`, so the adapter runs on import (no `register(sdk)` export, no SDK injection). Used for simple self-contained channels (the `http-echo`/`nanoid-echo` demos).
+- `hostMode: channel-runner` — pod runs `node dist/channel-runner.js` (full resident host with agent loop, slash commands, IPC, and the Channel SDK) using the **orchestrator image**. A channel-runner adapter **default-exports `register(sdk)`** (the form shown above) and consumes the injected SDK. This is the form for real first-party channels; current channel-runner channels: `irc`, `oauth-webchat`, `http`.
+
+An optional `httpPort` field additionally provisions container ports, liveness (`/liveness`) + readiness (`/readyz`) probes, a ClusterIP Service `kubeclaw-channel-<inst>` (+ `-metrics`), and an ingress NetworkPolicy.
+
+### Install Model
+
+There is **one mechanism, two front-ends** — both produce the same steady-state pod:
+
+1. **Interactive bootstrap** (LLM-driven; for credential gathering). Admin shell tools: `register_channel_manifest`, `register_bootstrap_skill`, then `bootstrap_channel_from_skill`. A short-lived bootstrap Job runs an agent that stages the manifest, gathers credentials, and calls `commit_channel_config`; the orchestrator independently re-hashes the staged runtime files (rejects `MANIFEST_DIVERGENCE`) and creates the steady-state Deployment.
+
+2. **Declarative Helm** (deterministic; for automation/tests/operators). `channels.<name>.enabled=true` with `type`, `httpPort`, `envVars`. A `stage-runtime` init container copies the adapter from `kubeclaw-channel-src` + package files from `kubeclaw-channel-manifests-baseline` into a `/runtime` emptyDir and runs `npm ci`, then `channel-runner.js` loads `/runtime/channel-entry.js`.
+
+See `docs/DEVELOPING_A_CHANNEL.md` for the adapter authoring contract and `docs/INSTALLING_A_CHANNEL.md` for the operator install path.
 
 ### Key Files
 
-| File                       | Purpose                                                 |
-| -------------------------- | ------------------------------------------------------- |
-| `src/channels/registry.ts` | Channel factory registry                                |
-| `src/channels/index.ts`    | Barrel imports that trigger channel self-registration   |
-| `src/types.ts`             | `Channel` interface, `ChannelOpts`, message types       |
-| `src/index.ts`             | Orchestrator — instantiates channels, runs message loop |
-| `src/router.ts`            | Finds the owning channel for a JID, formats messages    |
-
-### Adding a New Channel
-
-To add a new channel TYPE, contribute a PR that:
-
-1. Adds a `src/channels/<name>.ts` file implementing the `Channel` interface
-2. Calls `registerChannel(name, factory)` at module load
-3. Returns `null` from the factory if credentials are missing
-4. Adds an import line to `src/channels/index.ts`
-5. Plumbs the new type into `src/skills/orchestrator/channel-setup.ts` and the validated enum in `src/skills/orchestrator/types.ts` so the admin shell `setup_channel` tool can install it
-6. Adds a runtime spec at `skills/channel/<name>.md` describing dependencies and required env vars
-
-See existing channel implementations in `src/channels/` (e.g. `telegram.ts`, `slack.ts`, `discord.ts`, `whatsapp.ts`, `gmail.ts`) for the pattern. See `docs/ADDING_A_CHANNEL.md` for the full `Channel` contract and `docs/INSTALLING_A_CHANNEL.md` for the operator install path.
+| File                                          | Purpose                                                       |
+| --------------------------------------------- | ------------------------------------------------------------- |
+| `src/channels/registry.ts`                    | Channel factory registry (`registerChannel`, `getChannelFactory`, `getRegisteredChannelNames`) |
+| `src/channels/index.ts`                       | Module entry point — no longer imports channel modules        |
+| `src/types.ts`                                | `Channel` interface, `ChannelOpts`, message types             |
+| `src/channel-sdk/index.ts`                    | `buildChannelSdk()` — assembles the SDK injected into adapters |
+| `src/channel-sdk/load-runtime-adapter.ts`     | Loads `/runtime/channel-entry.js` at startup                  |
+| `src/channel-runner.ts`                       | Resident host: agent loop, slash commands, IPC, SDK wiring    |
+| `helm/kubeclaw/files/channel-src/`            | Per-type adapter files (`<type>/channel-entry.js`)            |
+| `src/index.ts`                                | Orchestrator — instantiates channels, runs message loop       |
+| `src/router.ts`                               | Finds the owning channel for a JID, formats messages          |
 
 ---
 
