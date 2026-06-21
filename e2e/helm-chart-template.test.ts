@@ -1147,4 +1147,35 @@ describe('channel Service independent of networkPolicy', () => {
     expect(result.stdout).toContain('name: kubeclaw-channel-http-ingress');
     expect(result.stdout).toContain('kind: NetworkPolicy');
   });
+
+  it('channel pod renders stage-runtime init container, channel-src volume, and /runtime mount', () => {
+    const result = spawnSync(
+      'helm',
+      ['template', 'smoke', CHART_DIR, ...baseArgs],
+      { encoding: 'utf8' },
+    );
+    expect(result.status, result.stderr).toBe(0);
+
+    // Find the channel Deployment document.
+    const docs = result.stdout.split(/\n---\n/);
+    const deployDoc = docs.find(
+      (d) =>
+        /^kind: Deployment$/m.test(d) &&
+        /^\s+name: kubeclaw-channel-http$/m.test(d),
+    );
+    expect(
+      deployDoc,
+      'channel Deployment (kind: Deployment, name: kubeclaw-channel-http) not found',
+    ).toBeDefined();
+
+    // (a) stage-runtime init container must be present.
+    expect(deployDoc).toContain('name: stage-runtime');
+
+    // (b) channel-src volume must reference the kubeclaw-channel-src ConfigMap.
+    expect(deployDoc).toContain('name: channel-src');
+    expect(deployDoc).toContain('name: kubeclaw-channel-src');
+
+    // (c) main container must mount /runtime.
+    expect(deployDoc).toContain('mountPath: /runtime');
+  });
 });
