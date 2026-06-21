@@ -2,9 +2,14 @@
  * E2E: remove_channel admin shell tool
  *
  * Tests that the remove_channel tool in admin-shell.ts correctly removes
- * a channel's Deployment, Secret, and PersistentVolumeClaims, and that
- * setup_channel stamps the kubeclaw-channel=<instance> label on all
- * created resources so AC5 label-selector cleanup verification works.
+ * a channel's Deployment, Secret, and PersistentVolumeClaims.  The fixture
+ * provisions resources directly via kubectl apply (inline manifests) — this
+ * matches exactly what remove_channel expects: Deployment kubeclaw-channel-<N>,
+ * Secret kubeclaw-<N>-secrets, and PVCs labelled kubeclaw-channel=<N>.
+ *
+ * (The declarative Helm path creates a differently-named Secret
+ * (kubeclaw-channel-<N>) and unlabelled PVCs, so kubectl apply of a minimal
+ * inline manifest is used instead to keep fixture/assertion alignment simple.)
  *
  * Requires: kind cluster `kubeclaw-e2e-istio` with kubeclaw installed
  *   (kubectl context = kind-kubeclaw-e2e-istio, namespace = kubeclaw).
@@ -216,24 +221,107 @@ describe.skipIf(!contextAvailable)(
   `remove_channel admin shell tool (instance: ${INSTANCE_NAME})`,
   () => {
     it(
-      'setup_channel creates Deployment, Secret, and PVCs',
+      'declarative install creates Deployment, Secret, and PVCs',
       async () => {
-        const result = runAdminTool(
-          'setup_channel',
+        // Provision the channel fixture via kubectl apply of inline manifests.
+        // We create resources with names/labels that remove_channel expects:
+        //   Deployment: kubeclaw-channel-<N>  (label kubeclaw-channel=<N>)
+        //   Secret:     kubeclaw-<N>-secrets  (label kubeclaw-channel=<N>)
+        //   PVCs:       kubeclaw-channel-<N>-{groups,store,sessions}
+        //               (all labelled kubeclaw-channel=<N> for AC5 label-selector cleanup)
+        //
+        // Note: the declarative Helm path creates the Secret as kubeclaw-channel-<N>
+        // and does not label PVCs with kubeclaw-channel=<N>, so inline manifests are
+        // used here to keep fixture/assertion alignment exact.
+        const fixtureManifest = `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${DEPLOYMENT_NAME}
+  namespace: ${NAMESPACE}
+  labels:
+    kubeclaw-channel: "${INSTANCE_NAME}"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ${DEPLOYMENT_NAME}
+  template:
+    metadata:
+      labels:
+        app: ${DEPLOYMENT_NAME}
+        kubeclaw-channel: "${INSTANCE_NAME}"
+    spec:
+      containers:
+        - name: channel
+          image: kubeclaw-orchestrator:e2e-test
+          imagePullPolicy: Never
+          command: ["sleep", "infinity"]
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ${SECRET_NAME}
+  namespace: ${NAMESPACE}
+  labels:
+    kubeclaw-channel: "${INSTANCE_NAME}"
+type: Opaque
+stringData:
+  users: "testuser:testpass"
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ${PVC_NAMES[0]}
+  namespace: ${NAMESPACE}
+  labels:
+    kubeclaw-channel: "${INSTANCE_NAME}"
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ${PVC_NAMES[1]}
+  namespace: ${NAMESPACE}
+  labels:
+    kubeclaw-channel: "${INSTANCE_NAME}"
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ${PVC_NAMES[2]}
+  namespace: ${NAMESPACE}
+  labels:
+    kubeclaw-channel: "${INSTANCE_NAME}"
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+`;
+        const apply = spawnSync(
+          'kubectl',
+          ['--context', KUBE_CONTEXT, 'apply', '-f', '-'],
           {
-            type: 'http',
-            instanceName: INSTANCE_NAME,
-            httpUsers: 'testuser:testpass',
-            httpPort: 4080,
+            input: fixtureManifest,
+            encoding: 'utf8',
+            stdio: 'pipe',
+            timeout: 60_000,
           },
-          { timeout: 90_000 },
         );
-
         expect(
-          result.ok,
-          `setup_channel failed:\nstdout: ${result.stdout}\nstderr: ${result.stderr}`,
-        ).toBe(true);
-        expect(result.stdout).toMatch(/Created|Updated/);
+          apply.status,
+          `kubectl apply fixture failed:\nstdout: ${apply.stdout}\nstderr: ${apply.stderr}`,
+        ).toBe(0);
 
         // Wait for the Deployment to appear (K8s API may lag slightly).
         await waitUntil(

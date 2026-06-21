@@ -129,6 +129,16 @@ networkPolicy:
   # Extra TCP ports allowed for egress from channel, agent, and tool pods.
   # Use this for self-hosted LLM endpoints on non-standard ports
   # (e.g. 8080 for llama.cpp, 11434 for Ollama).
+  #
+  # Note: declarative channel install (channels.<N>.enabled=true) stages the
+  # runtime adapter via a `stage-runtime` init container that runs `npm ci`,
+  # which needs egress to the npm registry on port 443.  This egress is
+  # permitted when credentialInjection.mode=off.  For sidecar/istio mode, add
+  # 443 here (or pre-bake adapter deps into the image) so `npm ci` can reach
+  # the registry:
+  #   networkPolicy:
+  #     extraEgressPorts:
+  #       - 443
   extraEgressPorts: []
   # Example:
   #   extraEgressPorts:

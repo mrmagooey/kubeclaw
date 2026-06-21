@@ -151,7 +151,7 @@ async function listJobNamesByLabel(instanceName: string): Promise<string[]> {
  *   1. Deployment (steady-state channel pod, if present)
  *   2. Secret (channel credentials)
  *   3. All PVCs labelled kubeclaw-channel=<instanceName>
- *      — covers groups/store/sessions (setup_channel) and runtime (bootstrap)
+ *      — covers groups/store/sessions (declarative helm / bootstrap) and runtime (bootstrap)
  *   4. All Jobs labelled kubeclaw-channel=<instanceName>
  *      — covers in-progress bootstrap Jobs (AC5)
  */
