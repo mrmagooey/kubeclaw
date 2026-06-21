@@ -1,15 +1,24 @@
 /**
  * Orchestrator skill: Channel removal.
  *
- * Idempotently removes all K8s resources associated with a channel instance:
- *   - Deployment kubeclaw-channel-<instance>
- *   - Secret     kubeclaw-<instance>-secrets
- *   - All PVCs   labelled kubeclaw-channel=<instance>  (AC1 — label-driven)
- *   - All Jobs   labelled kubeclaw-channel=<instance>  (AC5 — in-progress bootstrap)
- *
- * PVC and Job deletion switches from hardcoded name suffixes to a label selector
- * so that both steady-state PVCs (groups/store/sessions) and bootstrap-era runtime
- * PVCs are cleaned up without needing to enumerate names.
+ * Idempotently removes ALL K8s resources a channel instance can own, across
+ * BOTH install front-ends (declarative Helm `channels:` and the interactive
+ * bootstrap flow). Resources share the predictable base name
+ * `kubeclaw-channel-<instance>`, so removal is name-driven (the install paths
+ * label resources inconsistently — bootstrap PVCs carry only
+ * `kubeclaw/channel-pvc`, Helm PVCs none — so a label selector cannot be
+ * relied on). Deleted (each idempotent, 404 → already-absent):
+ *   - Deployment      kubeclaw-channel-<instance>
+ *   - ServiceAccount  kubeclaw-channel-<instance>            (Helm)
+ *   - Service         kubeclaw-channel-<instance>            (httpPort channels)
+ *   - Service         kubeclaw-channel-<instance>-metrics    (Helm)
+ *   - NetworkPolicy   kubeclaw-channel-<instance>-ingress    (httpPort channels)
+ *   - Secret          kubeclaw-channel-<instance>            (Helm user secret)
+ *   - Secret          kubeclaw-channel-<instance>-credentials (bootstrap)
+ *   - Secret          kubeclaw-<instance>-secrets            (legacy setup_channel)
+ *   - PVCs            kubeclaw-channel-<instance>-{groups,store,sessions,runtime}
+ *                     plus versioned runtime PVCs (…-runtime-v<N>) from upgrades
+ *   - Job             kubeclaw-bootstrap-<instance>          (in-progress bootstrap)
  */
 import * as k8s from '@kubernetes/client-node';
 
@@ -18,6 +27,7 @@ import * as k8s from '@kubernetes/client-node';
 let coreV1: k8s.CoreV1Api;
 let appsV1: k8s.AppsV1Api;
 let batchV1: k8s.BatchV1Api;
+let networkingV1: k8s.NetworkingV1Api;
 function getK8sClients() {
   if (!coreV1) {
     const kc = new k8s.KubeConfig();
@@ -25,8 +35,9 @@ function getK8sClients() {
     coreV1 = kc.makeApiClient(k8s.CoreV1Api);
     appsV1 = kc.makeApiClient(k8s.AppsV1Api);
     batchV1 = kc.makeApiClient(k8s.BatchV1Api);
+    networkingV1 = kc.makeApiClient(k8s.NetworkingV1Api);
   }
-  return { coreV1, appsV1, batchV1 };
+  return { coreV1, appsV1, batchV1, networkingV1 };
 }
 
 const NAMESPACE = process.env.KUBECLAW_NAMESPACE || 'kubeclaw';
@@ -58,12 +69,12 @@ function isNotFound(err: unknown): boolean {
   return false;
 }
 
-async function tryDeleteDeployment(
-  name: string,
+/** Wrap a delete call: success → 'deleted', 404 → 'absent', else propagate. */
+async function tryDelete(
+  del: () => Promise<unknown>,
 ): Promise<'deleted' | 'absent'> {
-  const { appsV1 } = getK8sClients();
   try {
-    await appsV1.deleteNamespacedDeployment({ name, namespace: NAMESPACE });
+    await del();
     return 'deleted';
   } catch (err) {
     if (isNotFound(err)) return 'absent';
@@ -71,126 +82,125 @@ async function tryDeleteDeployment(
   }
 }
 
-async function tryDeleteSecret(name: string): Promise<'deleted' | 'absent'> {
-  const { coreV1 } = getK8sClients();
-  try {
-    await coreV1.deleteNamespacedSecret({ name, namespace: NAMESPACE });
-    return 'deleted';
-  } catch (err) {
-    if (isNotFound(err)) return 'absent';
-    throw err;
-  }
-}
-
-/**
- * Delete a single PVC by name. NotFound → 'absent'; others propagate.
- */
-async function tryDeletePvc(name: string): Promise<'deleted' | 'absent'> {
-  const { coreV1 } = getK8sClients();
-  try {
-    await coreV1.deleteNamespacedPersistentVolumeClaim({
+const tryDeleteDeployment = (name: string) =>
+  tryDelete(() =>
+    getK8sClients().appsV1.deleteNamespacedDeployment({
       name,
       namespace: NAMESPACE,
-    });
-    return 'deleted';
-  } catch (err) {
-    if (isNotFound(err)) return 'absent';
-    throw err;
-  }
+    }),
+  );
+const tryDeleteServiceAccount = (name: string) =>
+  tryDelete(() =>
+    getK8sClients().coreV1.deleteNamespacedServiceAccount({
+      name,
+      namespace: NAMESPACE,
+    }),
+  );
+const tryDeleteService = (name: string) =>
+  tryDelete(() =>
+    getK8sClients().coreV1.deleteNamespacedService({
+      name,
+      namespace: NAMESPACE,
+    }),
+  );
+const tryDeleteNetworkPolicy = (name: string) =>
+  tryDelete(() =>
+    getK8sClients().networkingV1.deleteNamespacedNetworkPolicy({
+      name,
+      namespace: NAMESPACE,
+    }),
+  );
+const tryDeleteSecret = (name: string) =>
+  tryDelete(() =>
+    getK8sClients().coreV1.deleteNamespacedSecret({ name, namespace: NAMESPACE }),
+  );
+const tryDeletePvc = (name: string) =>
+  tryDelete(() =>
+    getK8sClients().coreV1.deleteNamespacedPersistentVolumeClaim({
+      name,
+      namespace: NAMESPACE,
+    }),
+  );
+const tryDeleteJob = (name: string) =>
+  tryDelete(() =>
+    getK8sClients().batchV1.deleteNamespacedJob({ name, namespace: NAMESPACE }),
+  );
+
+/** Escape regex metacharacters (instance names are validated [a-z0-9-], but be safe). */
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 /**
- * Delete a single Job by name. NotFound → 'absent'; others propagate.
+ * List the instance's PVC names by precise name match (the install paths do not
+ * label PVCs consistently). Matches `kubeclaw-channel-<instance>-<suffix>` where
+ * suffix is groups/store/sessions/runtime, optionally with an upgrade version
+ * (`-runtime-v<N>`). Anchored so `http` does NOT match `http-staging` resources.
  */
-async function tryDeleteJob(name: string): Promise<'deleted' | 'absent'> {
-  const { batchV1 } = getK8sClients();
-  try {
-    await batchV1.deleteNamespacedJob({ name, namespace: NAMESPACE });
-    return 'deleted';
-  } catch (err) {
-    if (isNotFound(err)) return 'absent';
-    throw err;
-  }
-}
-
-/**
- * List PVC names carrying the label kubeclaw-channel=<instanceName>.
- * Returns an empty array when none are found (AC4 — backwards-compatible).
- */
-async function listPvcNamesByLabel(instanceName: string): Promise<string[]> {
+async function listInstancePvcNames(instanceName: string): Promise<string[]> {
   const { coreV1 } = getK8sClients();
   const result = await coreV1.listNamespacedPersistentVolumeClaim({
     namespace: NAMESPACE,
-    labelSelector: `kubeclaw-channel=${instanceName}`,
   });
+  const re = new RegExp(
+    `^kubeclaw-channel-${escapeRegex(instanceName)}-(groups|store|sessions|runtime)(-v\\d+)?$`,
+  );
   return (result.items ?? [])
     .map((pvc) => pvc.metadata?.name)
-    .filter((n): n is string => typeof n === 'string');
-}
-
-/**
- * List Job names carrying the label kubeclaw-channel=<instanceName>.
- * Returns an empty array when none are found (AC5 — in-progress bootstrap).
- */
-async function listJobNamesByLabel(instanceName: string): Promise<string[]> {
-  const { batchV1 } = getK8sClients();
-  const result = await batchV1.listNamespacedJob({
-    namespace: NAMESPACE,
-    labelSelector: `kubeclaw-channel=${instanceName}`,
-  });
-  return (result.items ?? [])
-    .map((job) => job.metadata?.name)
-    .filter((n): n is string => typeof n === 'string');
+    .filter((n): n is string => typeof n === 'string')
+    .filter((n) => re.test(n));
 }
 
 /**
  * Remove all K8s resources associated with a channel instance.
- * Idempotent: treats 404 as success.
- *
- * Deletion order:
- *   1. Deployment (steady-state channel pod, if present)
- *   2. Secret (channel credentials)
- *   3. All PVCs labelled kubeclaw-channel=<instanceName>
- *      — covers groups/store/sessions (declarative helm / bootstrap) and runtime (bootstrap)
- *   4. All Jobs labelled kubeclaw-channel=<instanceName>
- *      — covers in-progress bootstrap Jobs (AC5)
+ * Idempotent: treats 404 as success. Deletes the Deployment first (releases the
+ * pod's hold on the PVCs/Secret) then the remaining resources.
  */
 export async function removeChannel(
   instanceName: string,
 ): Promise<ChannelRemoveResult> {
-  const deploymentName = `kubeclaw-channel-${instanceName}`;
-  const secretName = `kubeclaw-${instanceName}-secrets`;
+  const base = `kubeclaw-channel-${instanceName}`;
 
   const deleted: string[] = [];
   const alreadyAbsent: string[] = [];
-
   function record(name: string, outcome: 'deleted' | 'absent'): void {
     if (outcome === 'deleted') deleted.push(name);
     else alreadyAbsent.push(name);
   }
 
-  // 1. Delete the steady-state Deployment (may not exist if bootstrap-era only)
-  record(deploymentName, await tryDeleteDeployment(deploymentName));
+  // 1. Deployment first — stops the pod so it releases its PVCs/Secret mounts.
+  record(base, await tryDeleteDeployment(base));
 
-  // 2. Delete the credentials Secret
-  record(secretName, await tryDeleteSecret(secretName));
+  // 2. ServiceAccount (Helm-created).
+  record(base, await tryDeleteServiceAccount(base));
 
-  // 3. Delete all PVCs by label (groups, store, sessions, runtime — whatever is present)
-  const pvcNames = await listPvcNamesByLabel(instanceName);
-  if (pvcNames.length === 0) {
-    // No labelled PVCs found — legacy channel or already fully absent
-    alreadyAbsent.push(`<no PVCs labelled kubeclaw-channel=${instanceName}>`);
-  } else {
-    for (const pvcName of pvcNames) {
-      record(pvcName, await tryDeletePvc(pvcName));
-    }
+  // 3. Services: the channel Service (httpPort) + the Helm metrics Service.
+  for (const svc of [base, `${base}-metrics`]) {
+    record(svc, await tryDeleteService(svc));
   }
 
-  // 4. Delete all Jobs by label (covers in-progress bootstrap, AC5)
-  const jobNames = await listJobNamesByLabel(instanceName);
-  for (const jobName of jobNames) {
-    record(jobName, await tryDeleteJob(jobName));
+  // 4. Ingress NetworkPolicy (httpPort channels).
+  record(`${base}-ingress`, await tryDeleteNetworkPolicy(`${base}-ingress`));
+
+  // 5. Secrets — cover all three naming conventions:
+  //    Helm user secret, bootstrap credentials, legacy setup_channel.
+  for (const sec of [
+    base,
+    `${base}-credentials`,
+    `kubeclaw-${instanceName}-secrets`,
+  ]) {
+    record(sec, await tryDeleteSecret(sec));
   }
+
+  // 6. PVCs — groups/store/sessions/runtime (+ versioned runtime), by precise name.
+  const pvcNames = await listInstancePvcNames(instanceName);
+  for (const pvcName of pvcNames) {
+    record(pvcName, await tryDeletePvc(pvcName));
+  }
+
+  // 7. In-progress bootstrap Job.
+  const bootstrapJob = `kubeclaw-bootstrap-${instanceName}`;
+  record(bootstrapJob, await tryDeleteJob(bootstrapJob));
 
   const deletedLines =
     deleted.length > 0

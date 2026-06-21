@@ -1,15 +1,13 @@
 /**
  * E2E: remove_channel admin shell tool
  *
- * Tests that the remove_channel tool in admin-shell.ts correctly removes
- * a channel's Deployment, Secret, and PersistentVolumeClaims.  The fixture
- * provisions resources directly via kubectl apply (inline manifests) — this
- * matches exactly what remove_channel expects: Deployment kubeclaw-channel-<N>,
- * Secret kubeclaw-<N>-secrets, and PVCs labelled kubeclaw-channel=<N>.
- *
- * (The declarative Helm path creates a differently-named Secret
- * (kubeclaw-channel-<N>) and unlabelled PVCs, so kubectl apply of a minimal
- * inline manifest is used instead to keep fixture/assertion alignment simple.)
+ * Tests that remove_channel deletes ALL resources a real channel instance owns,
+ * across both install front-ends. The fixture provisions resources with the
+ * REAL names the install paths produce (Deployment, both Secret naming
+ * conventions, Service, NetworkPolicy, and the four standard PVCs) — crucially
+ * WITHOUT the `kubeclaw-channel` label, because the actual install paths do not
+ * label these resources. This proves remove_channel finds + deletes them by
+ * name (the previous label-based deletion matched nothing and orphaned them).
  *
  * Requires: kind cluster `kubeclaw-e2e-istio` with kubeclaw installed
  *   (kubectl context = kind-kubeclaw-e2e-istio, namespace = kubeclaw).
@@ -38,12 +36,27 @@ const RELEASE = 'kubeclaw';
 // immutability conflicts if the namespace is not wiped between runs.
 const INSTANCE_SUFFIX = Math.random().toString(36).slice(2, 7);
 const INSTANCE_NAME = `http-removetest-${INSTANCE_SUFFIX}`;
-const DEPLOYMENT_NAME = `kubeclaw-channel-${INSTANCE_NAME}`;
-const SECRET_NAME = `kubeclaw-${INSTANCE_NAME}-secrets`;
+const BASE = `kubeclaw-channel-${INSTANCE_NAME}`;
+const DEPLOYMENT_NAME = BASE;
+// Both real Secret naming conventions the install paths use.
+const SECRET_HELM = BASE; // declarative Helm user secret
+const SECRET_BOOTSTRAP = `${BASE}-credentials`; // bootstrap credentials
+const SERVICE_NAME = BASE; // httpPort channel Service
+const NETPOL_NAME = `${BASE}-ingress`; // httpPort ingress NetworkPolicy
 const PVC_NAMES = [
-  `kubeclaw-channel-${INSTANCE_NAME}-groups`,
-  `kubeclaw-channel-${INSTANCE_NAME}-store`,
-  `kubeclaw-channel-${INSTANCE_NAME}-sessions`,
+  `${BASE}-groups`,
+  `${BASE}-store`,
+  `${BASE}-sessions`,
+  `${BASE}-runtime`,
+];
+// Every resource the fixture creates — used for assertions + teardown.
+const ALL_RESOURCES: Array<[kind: string, name: string]> = [
+  ['deployment', DEPLOYMENT_NAME],
+  ['secret', SECRET_HELM],
+  ['secret', SECRET_BOOTSTRAP],
+  ['service', SERVICE_NAME],
+  ['networkpolicy', NETPOL_NAME],
+  ...PVC_NAMES.map((p) => ['pvc', p] as [string, string]),
 ];
 
 const RESOURCE_READY_TIMEOUT_MS = 120_000;
@@ -83,17 +96,12 @@ function kc(
 /**
  * Call executeTool inside the orchestrator pod via kubectl exec.
  * Uses dynamic import of the compiled admin-shell.js — no LLM needed.
- * The script runs as an ES module (`--input-type=module`) so dynamic
- * import() works without transpilation.
  */
 function runAdminTool(
   toolName: string,
   input: Record<string, unknown>,
   opts: { timeout?: number } = {},
 ): { ok: boolean; stdout: string; stderr: string } {
-  // Build the inline ESM script.  JSON.stringify is safe for embedding in
-  // the double-quoted node -e argument because it produces only ASCII
-  // printable characters and does not include unescaped quotes.
   const script = `import('/app/dist/admin-shell.js').then(async m => {
   const result = await m.executeTool(${JSON.stringify(toolName)}, ${JSON.stringify(input)});
   process.stdout.write(result + '\\n');
@@ -146,38 +154,65 @@ async function waitUntil(
   throw new Error(`Timed out after ${timeoutMs}ms waiting for: ${label}`);
 }
 
+/** True when the named resource no longer exists in the namespace. */
+function resourceAbsent(kind: string, name: string): boolean {
+  const r = kc([
+    'get',
+    kind,
+    name,
+    '-n',
+    NAMESPACE,
+    '--ignore-not-found',
+    '-o',
+    'name',
+  ]);
+  return r.ok && r.stdout.trim() === '';
+}
+
 // ── Suite setup / teardown ─────────────────────────────────────────────────────
 
 beforeAll(async () => {
   if (!contextAvailable) return; // suite is skipped — nothing to set up
 
-  // Check if kubeclaw is already installed in the kind cluster.
   const helmStatus = spawnSync(
     'helm',
-    ['--kube-context', KUBE_CONTEXT, 'status', RELEASE, '--namespace', NAMESPACE],
+    [
+      '--kube-context',
+      KUBE_CONTEXT,
+      'status',
+      RELEASE,
+      '--namespace',
+      NAMESPACE,
+    ],
     { encoding: 'utf8', stdio: 'pipe' },
   );
 
   if (helmStatus.status !== 0) {
-    // Install kubeclaw.  The caller must have pre-loaded
-    // kubeclaw-orchestrator:e2e-test into the kind cluster with:
-    //   docker build -t kubeclaw-orchestrator:e2e-test .
-    //   docker save ... | kind load image-archive ...
     console.log(`Installing kubeclaw into ${KUBE_CONTEXT}...`);
     kc(['create', 'namespace', NAMESPACE]);
     const install = spawnSync(
       'helm',
       [
-        '--kube-context', KUBE_CONTEXT,
-        'upgrade', '--install',
-        RELEASE, CHART_DIR,
-        '--namespace', NAMESPACE,
-        '--timeout', '120s',
-        '--set', `namespace=${NAMESPACE}`,
-        '--set', 'secrets.anthropicApiKey=test-key',
-        '--set', 'redis.password=e2e-test-pass',
-        '--set', 'image.tag=e2e-test',
-        '--set', 'image.pullPolicy=Never',
+        '--kube-context',
+        KUBE_CONTEXT,
+        'upgrade',
+        '--install',
+        RELEASE,
+        CHART_DIR,
+        '--namespace',
+        NAMESPACE,
+        '--timeout',
+        '120s',
+        '--set',
+        `namespace=${NAMESPACE}`,
+        '--set',
+        'secrets.anthropicApiKey=test-key',
+        '--set',
+        'redis.password=e2e-test-pass',
+        '--set',
+        'image.tag=e2e-test',
+        '--set',
+        'image.pullPolicy=Never',
       ],
       { encoding: 'utf8', stdio: 'pipe', timeout: 180_000 },
     );
@@ -188,14 +223,17 @@ beforeAll(async () => {
     }
   }
 
-  // Wait for orchestrator pod to be Ready (up to 120s).
   console.log('Waiting for kubeclaw-orchestrator to be Ready...');
   await waitUntil(
     () => {
       const r = kc([
-        'get', 'deployment', 'kubeclaw-orchestrator',
-        '-n', NAMESPACE,
-        '-o', 'jsonpath={.status.readyReplicas}',
+        'get',
+        'deployment',
+        'kubeclaw-orchestrator',
+        '-n',
+        NAMESPACE,
+        '-o',
+        'jsonpath={.status.readyReplicas}',
       ]);
       return r.ok && r.stdout.trim() === '1';
     },
@@ -208,10 +246,8 @@ beforeAll(async () => {
 afterAll(() => {
   if (!contextAvailable) return;
   // Best-effort cleanup of any test channel resources left by a failed run.
-  kc(['delete', 'deployment', DEPLOYMENT_NAME, '-n', NAMESPACE, '--ignore-not-found']);
-  kc(['delete', 'secret', SECRET_NAME, '-n', NAMESPACE, '--ignore-not-found']);
-  for (const pvc of PVC_NAMES) {
-    kc(['delete', 'pvc', pvc, '-n', NAMESPACE, '--ignore-not-found']);
+  for (const [kind, name] of ALL_RESOURCES) {
+    kc(['delete', kind, name, '-n', NAMESPACE, '--ignore-not-found']);
   }
 });
 
@@ -221,26 +257,31 @@ describe.skipIf(!contextAvailable)(
   `remove_channel admin shell tool (instance: ${INSTANCE_NAME})`,
   () => {
     it(
-      'declarative install creates Deployment, Secret, and PVCs',
+      'provisions a real channel (Deployment, both Secrets, Service, NetworkPolicy, PVCs) — UNLABELLED',
       async () => {
-        // Provision the channel fixture via kubectl apply of inline manifests.
-        // We create resources with names/labels that remove_channel expects:
-        //   Deployment: kubeclaw-channel-<N>  (label kubeclaw-channel=<N>)
-        //   Secret:     kubeclaw-<N>-secrets  (label kubeclaw-channel=<N>)
-        //   PVCs:       kubeclaw-channel-<N>-{groups,store,sessions}
-        //               (all labelled kubeclaw-channel=<N> for AC5 label-selector cleanup)
-        //
-        // Note: the declarative Helm path creates the Secret as kubeclaw-channel-<N>
-        // and does not label PVCs with kubeclaw-channel=<N>, so inline manifests are
-        // used here to keep fixture/assertion alignment exact.
+        // Real channel resource names, with NO kubeclaw-channel label — exactly
+        // as the declarative-Helm + bootstrap install paths produce them. This
+        // is what the previous label-based remove_channel failed to clean up.
+        const pvcDocs = PVC_NAMES.map(
+          (name) => `
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ${name}
+  namespace: ${NAMESPACE}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi`,
+        ).join('\n---');
+
         const fixtureManifest = `
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: ${DEPLOYMENT_NAME}
   namespace: ${NAMESPACE}
-  labels:
-    kubeclaw-channel: "${INSTANCE_NAME}"
 spec:
   replicas: 1
   selector:
@@ -250,7 +291,6 @@ spec:
     metadata:
       labels:
         app: ${DEPLOYMENT_NAME}
-        kubeclaw-channel: "${INSTANCE_NAME}"
     spec:
       containers:
         - name: channel
@@ -261,52 +301,50 @@ spec:
 apiVersion: v1
 kind: Secret
 metadata:
-  name: ${SECRET_NAME}
+  name: ${SECRET_HELM}
   namespace: ${NAMESPACE}
-  labels:
-    kubeclaw-channel: "${INSTANCE_NAME}"
 type: Opaque
 stringData:
   users: "testuser:testpass"
 ---
 apiVersion: v1
-kind: PersistentVolumeClaim
+kind: Secret
 metadata:
-  name: ${PVC_NAMES[0]}
+  name: ${SECRET_BOOTSTRAP}
   namespace: ${NAMESPACE}
-  labels:
-    kubeclaw-channel: "${INSTANCE_NAME}"
-spec:
-  accessModes: [ReadWriteOnce]
-  resources:
-    requests:
-      storage: 1Gi
+type: Opaque
+stringData:
+  users: "testuser:testpass"
 ---
 apiVersion: v1
-kind: PersistentVolumeClaim
+kind: Service
 metadata:
-  name: ${PVC_NAMES[1]}
+  name: ${SERVICE_NAME}
   namespace: ${NAMESPACE}
-  labels:
-    kubeclaw-channel: "${INSTANCE_NAME}"
 spec:
-  accessModes: [ReadWriteOnce]
-  resources:
-    requests:
-      storage: 1Gi
+  selector:
+    app: ${DEPLOYMENT_NAME}
+  ports:
+    - name: http
+      port: 80
+      targetPort: 4080
 ---
-apiVersion: v1
-kind: PersistentVolumeClaim
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
 metadata:
-  name: ${PVC_NAMES[2]}
+  name: ${NETPOL_NAME}
   namespace: ${NAMESPACE}
-  labels:
-    kubeclaw-channel: "${INSTANCE_NAME}"
 spec:
-  accessModes: [ReadWriteOnce]
-  resources:
-    requests:
-      storage: 1Gi
+  podSelector:
+    matchLabels:
+      app: ${DEPLOYMENT_NAME}
+  policyTypes: [Ingress]
+  ingress:
+    - from: []
+      ports:
+        - protocol: TCP
+          port: 4080
+---${pvcDocs}
 `;
         const apply = spawnSync(
           'kubectl',
@@ -323,53 +361,24 @@ spec:
           `kubectl apply fixture failed:\nstdout: ${apply.stdout}\nstderr: ${apply.stderr}`,
         ).toBe(0);
 
-        // Wait for the Deployment to appear (K8s API may lag slightly).
+        // All fixture resources must exist before removal.
         await waitUntil(
           () => kc(['get', 'deployment', DEPLOYMENT_NAME, '-n', NAMESPACE]).ok,
           RESOURCE_READY_TIMEOUT_MS,
           `Deployment ${DEPLOYMENT_NAME} to exist`,
         );
-
-        // Secret must exist.
-        const secretCheck = kc(['get', 'secret', SECRET_NAME, '-n', NAMESPACE]);
-        expect(
-          secretCheck.ok,
-          `Secret ${SECRET_NAME} not found:\n${secretCheck.stderr}`,
-        ).toBe(true);
-
-        // All 3 PVCs must exist.
-        for (const pvc of PVC_NAMES) {
-          const pvcCheck = kc(['get', 'pvc', pvc, '-n', NAMESPACE]);
-          expect(
-            pvcCheck.ok,
-            `PVC ${pvc} not found:\n${pvcCheck.stderr}`,
-          ).toBe(true);
+        for (const [kind, name] of ALL_RESOURCES) {
+          const check = kc(['get', kind, name, '-n', NAMESPACE]);
+          expect(check.ok, `${kind}/${name} not created:\n${check.stderr}`).toBe(
+            true,
+          );
         }
       },
       RESOURCE_READY_TIMEOUT_MS + 30_000,
     );
 
     it(
-      'channel Deployment becomes Ready',
-      async () => {
-        await waitUntil(
-          () => {
-            const r = kc([
-              'get', 'deployment', DEPLOYMENT_NAME,
-              '-n', NAMESPACE,
-              '-o', 'jsonpath={.status.readyReplicas}',
-            ]);
-            return r.ok && r.stdout.trim() === '1';
-          },
-          RESOURCE_READY_TIMEOUT_MS,
-          `Deployment ${DEPLOYMENT_NAME} readyReplicas=1`,
-        );
-      },
-      RESOURCE_READY_TIMEOUT_MS + 10_000,
-    );
-
-    it(
-      'AC1/AC2: remove_channel tool exists and deletes Deployment, Secret, and PVCs',
+      'remove_channel deletes EVERY resource (Deployment, both Secrets, Service, NetworkPolicy, all PVCs)',
       async () => {
         const result = runAdminTool(
           'remove_channel',
@@ -384,37 +393,26 @@ spec:
 
         const output = result.stdout;
         expect(output, 'Expected "Deleted:" in output').toContain('Deleted:');
-        expect(output).toContain(DEPLOYMENT_NAME);
-        expect(output).toContain(SECRET_NAME);
-        for (const pvc of PVC_NAMES) {
-          expect(output, `Expected PVC ${pvc} in output`).toContain(pvc);
+        // Every fixture resource must appear as deleted in the tool's summary.
+        for (const [kind, name] of ALL_RESOURCES) {
+          expect(output, `Expected ${kind}/${name} in remove output`).toContain(
+            name,
+          );
         }
 
-        // Wait for ALL resources (Deployment + PVCs) to be fully gone from the
-        // API server.  PVCs with the pvc-protection finalizer may linger in
-        // Terminating state while a pod still holds a reference; we must wait
-        // for them to fully disappear so AC3 (idempotent check) sees 404s,
-        // not a successful delete on a still-terminating PVC.
+        // Poll until every resource is fully gone from the API server (PVCs may
+        // linger Terminating while the pod releases them).
         await waitUntil(
-          () => {
-            const labelCheck = kc([
-              'get', 'deployment,secret,pvc',
-              '-n', NAMESPACE,
-              '-l', `kubeclaw-channel=${INSTANCE_NAME}`,
-              '--ignore-not-found',
-              '-o', 'name',
-            ]);
-            return labelCheck.ok && labelCheck.stdout.trim() === '';
-          },
+          () => ALL_RESOURCES.every(([kind, name]) => resourceAbsent(kind, name)),
           60_000,
-          'all kubeclaw-channel resources to be fully absent after first remove_channel',
+          'all channel resources fully absent after remove_channel',
         );
       },
       90_000,
     );
 
     it(
-      'AC3: idempotent — second remove_channel call succeeds with already-absent summary',
+      'idempotent — second remove_channel call reports everything already absent',
       () => {
         const result = runAdminTool(
           'remove_channel',
@@ -428,38 +426,15 @@ spec:
         ).toBe(true);
 
         const output = result.stdout;
-        expect(output, 'Expected "Already absent:" in output').toContain('Already absent:');
-        // Must NOT report any deletions (the "Deleted:\n" line is absent;
-        // "Nothing deleted." is the marker when deleted=[] in summary).
-        expect(output, 'Should not contain "Deleted:" on second call').not.toMatch(
-          /^Deleted:/m,
+        expect(output, 'Expected "Already absent:" in output').toContain(
+          'Already absent:',
         );
+        expect(
+          output,
+          'Should not contain "Deleted:" on second call',
+        ).not.toMatch(/^Deleted:/m);
       },
       30_000,
-    );
-
-    it(
-      'AC5: kubectl label selector finds no resources after remove',
-      async () => {
-        // PVCs with the pvc-protection finalizer enter Terminating state when
-        // a pod still held a reference.  Poll until the label selector returns
-        // nothing (all resources fully gone, not just marked for deletion).
-        await waitUntil(
-          () => {
-            const result = kc([
-              'get', 'deployment,secret,pvc',
-              '-n', NAMESPACE,
-              '-l', `kubeclaw-channel=${INSTANCE_NAME}`,
-              '--ignore-not-found',
-              '-o', 'name',
-            ]);
-            return result.ok && result.stdout.trim() === '';
-          },
-          30_000,
-          `all kubeclaw-channel=${INSTANCE_NAME} resources to be absent`,
-        );
-      },
-      35_000,
     );
   },
 );
