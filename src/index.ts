@@ -420,7 +420,7 @@ async function main(): Promise<void> {
             },
           });
         } catch (err: any) {
-          if (err?.statusCode === 409 || err?.body?.code === 409) {
+          if (err?.code === 409 || err?.statusCode === 409 || err?.body?.code === 409) {
             // Already exists — patch it
             await coreApi.patchNamespacedSecret({
               name,
@@ -439,7 +439,7 @@ async function main(): Promise<void> {
             body,
           });
         } catch (err: any) {
-          if (err?.statusCode === 409 || err?.body?.code === 409) {
+          if (err?.code === 409 || err?.statusCode === 409 || err?.body?.code === 409) {
             await appsApi.replaceNamespacedDeployment({
               name: body.metadata!.name!,
               namespace: KUBECLAW_NAMESPACE,
@@ -534,7 +534,7 @@ async function main(): Promise<void> {
             },
           });
         } catch (err: any) {
-          if (err?.statusCode === 409 || err?.body?.code === 409) return;
+          if (err?.code === 409 || err?.statusCode === 409 || err?.body?.code === 409) return;
           throw err;
         }
       },
@@ -546,7 +546,7 @@ async function main(): Promise<void> {
             gracePeriodSeconds: 0,
           });
         } catch (err: any) {
-          if (err?.statusCode === 404 || err?.body?.code === 404) return;
+          if (err?.code === 404 || err?.statusCode === 404 || err?.body?.code === 404) return;
           throw err;
         }
       },
@@ -558,7 +558,7 @@ async function main(): Promise<void> {
             gracePeriodSeconds: 0,
           });
         } catch (err: any) {
-          if (err?.statusCode === 404 || err?.body?.code === 404) return;
+          if (err?.code === 404 || err?.statusCode === 404 || err?.body?.code === 404) return;
           throw err;
         }
       },
@@ -655,7 +655,7 @@ async function main(): Promise<void> {
             body,
           });
         } catch (err: any) {
-          if (err?.statusCode === 409 || err?.body?.code === 409) {
+          if (err?.code === 409 || err?.statusCode === 409 || err?.body?.code === 409) {
             // Already exists — read resourceVersion, then replace
             const existing = await coreApi.readNamespacedService({
               name,
@@ -672,7 +672,7 @@ async function main(): Promise<void> {
                 },
               });
             } catch (replaceErr: any) {
-              if (replaceErr?.statusCode === 404 || replaceErr?.body?.code === 404) {
+              if (replaceErr?.code === 404 || replaceErr?.statusCode === 404 || replaceErr?.body?.code === 404) {
                 // Rare race: disappeared between read and replace — create again
                 await coreApi.createNamespacedService({
                   namespace: KUBECLAW_NAMESPACE,
@@ -696,7 +696,7 @@ async function main(): Promise<void> {
             body,
           });
         } catch (err: any) {
-          if (err?.statusCode === 409 || err?.body?.code === 409) {
+          if (err?.code === 409 || err?.statusCode === 409 || err?.body?.code === 409) {
             // Already exists — read resourceVersion, then replace
             const existing = await networkingApi.readNamespacedNetworkPolicy({
               name,
@@ -713,7 +713,7 @@ async function main(): Promise<void> {
                 },
               });
             } catch (replaceErr: any) {
-              if (replaceErr?.statusCode === 404 || replaceErr?.body?.code === 404) {
+              if (replaceErr?.code === 404 || replaceErr?.statusCode === 404 || replaceErr?.body?.code === 404) {
                 // Rare race: disappeared between read and replace — create again
                 await networkingApi.createNamespacedNetworkPolicy({
                   namespace: KUBECLAW_NAMESPACE,
