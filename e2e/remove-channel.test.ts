@@ -42,6 +42,7 @@ const DEPLOYMENT_NAME = BASE;
 const SECRET_HELM = BASE; // declarative Helm user secret
 const SECRET_BOOTSTRAP = `${BASE}-credentials`; // bootstrap credentials
 const SERVICE_NAME = BASE; // httpPort channel Service
+const INGRESS_NAME = BASE; // Helm Ingress (ingress.enabled)
 const NETPOL_NAME = `${BASE}-ingress`; // httpPort ingress NetworkPolicy
 const PVC_NAMES = [
   `${BASE}-groups`,
@@ -55,6 +56,7 @@ const ALL_RESOURCES: Array<[kind: string, name: string]> = [
   ['secret', SECRET_HELM],
   ['secret', SECRET_BOOTSTRAP],
   ['service', SERVICE_NAME],
+  ['ingress', INGRESS_NAME],
   ['networkpolicy', NETPOL_NAME],
   ...PVC_NAMES.map((p) => ['pvc', p] as [string, string]),
 ];
@@ -344,6 +346,23 @@ spec:
       ports:
         - protocol: TCP
           port: 4080
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ${INGRESS_NAME}
+  namespace: ${NAMESPACE}
+spec:
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ${SERVICE_NAME}
+                port:
+                  number: 80
 ---${pvcDocs}
 `;
         const apply = spawnSync(

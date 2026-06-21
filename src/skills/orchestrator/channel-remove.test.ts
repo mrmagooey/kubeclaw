@@ -6,6 +6,7 @@ const mockDeleteDeployment = vi.fn();
 const mockDeleteServiceAccount = vi.fn();
 const mockDeleteService = vi.fn();
 const mockDeleteNetworkPolicy = vi.fn();
+const mockDeleteIngress = vi.fn();
 const mockDeleteSecret = vi.fn();
 const mockDeletePvc = vi.fn();
 const mockListPvc = vi.fn();
@@ -28,7 +29,10 @@ vi.mock('@kubernetes/client-node', () => {
           return { deleteNamespacedJob: mockDeleteJob };
         }
         if (cls === MockNetworkingV1Api) {
-          return { deleteNamespacedNetworkPolicy: mockDeleteNetworkPolicy };
+          return {
+            deleteNamespacedNetworkPolicy: mockDeleteNetworkPolicy,
+            deleteNamespacedIngress: mockDeleteIngress,
+          };
         }
         return {
           deleteNamespacedServiceAccount: mockDeleteServiceAccount,
@@ -63,6 +67,7 @@ function allDeletesSucceed() {
   mockDeleteServiceAccount.mockResolvedValue({});
   mockDeleteService.mockResolvedValue({});
   mockDeleteNetworkPolicy.mockResolvedValue({});
+  mockDeleteIngress.mockResolvedValue({});
   mockDeleteSecret.mockResolvedValue({});
   mockDeletePvc.mockResolvedValue({});
   mockDeleteJob.mockResolvedValue({});
@@ -74,6 +79,7 @@ function allDeletesAbsent() {
   mockDeleteServiceAccount.mockRejectedValue(notFound());
   mockDeleteService.mockRejectedValue(notFound());
   mockDeleteNetworkPolicy.mockRejectedValue(notFound());
+  mockDeleteIngress.mockRejectedValue(notFound());
   mockDeleteSecret.mockRejectedValue(notFound());
   mockDeletePvc.mockRejectedValue(notFound());
   mockDeleteJob.mockRejectedValue(notFound());
@@ -84,7 +90,7 @@ describe('removeChannel — comprehensive name-based cleanup', () => {
   beforeEach(() => vi.clearAllMocks());
 
   describe('deletes every resource a channel can own (both install paths)', () => {
-    it('deletes Deployment, SA, Services, NetworkPolicy, all Secret variants, and the bootstrap Job by name', async () => {
+    it('deletes Deployment, SA, Services, Ingress, NetworkPolicy, all Secret variants, and both bootstrap Jobs by name', async () => {
       allDeletesSucceed();
       await removeChannel('http');
 
@@ -96,7 +102,6 @@ describe('removeChannel — comprehensive name-based cleanup', () => {
         name: 'kubeclaw-channel-http',
         namespace: 'kubeclaw',
       });
-      // Both the channel Service and the metrics Service.
       const svcNames = mockDeleteService.mock.calls.map((c) => c[0].name);
       expect(svcNames).toEqual(
         expect.arrayContaining([
@@ -104,6 +109,11 @@ describe('removeChannel — comprehensive name-based cleanup', () => {
           'kubeclaw-channel-http-metrics',
         ]),
       );
+      // Helm Ingress (named like <base>) + the ingress NetworkPolicy.
+      expect(mockDeleteIngress).toHaveBeenCalledWith({
+        name: 'kubeclaw-channel-http',
+        namespace: 'kubeclaw',
+      });
       expect(mockDeleteNetworkPolicy).toHaveBeenCalledWith({
         name: 'kubeclaw-channel-http-ingress',
         namespace: 'kubeclaw',
@@ -112,23 +122,46 @@ describe('removeChannel — comprehensive name-based cleanup', () => {
       const secNames = mockDeleteSecret.mock.calls.map((c) => c[0].name);
       expect(secNames).toEqual(
         expect.arrayContaining([
-          'kubeclaw-channel-http', // helm user secret
-          'kubeclaw-channel-http-credentials', // bootstrap credentials
-          'kubeclaw-http-secrets', // legacy setup_channel
+          'kubeclaw-channel-http',
+          'kubeclaw-channel-http-credentials',
+          'kubeclaw-http-secrets',
         ]),
       );
-      expect(mockDeleteJob).toHaveBeenCalledWith({
-        name: 'kubeclaw-bootstrap-http',
-        namespace: 'kubeclaw',
-      });
+      // Initial bootstrap Job + the upgrade Job.
+      const jobNames = mockDeleteJob.mock.calls.map((c) => c[0].name);
+      expect(jobNames).toEqual(
+        expect.arrayContaining([
+          'kubeclaw-bootstrap-http',
+          'kubeclaw-bootstrap-http-upgrade',
+        ]),
+      );
     });
 
     it('lists PVCs WITHOUT a label selector (the install paths do not label them consistently)', async () => {
       allDeletesSucceed();
       await removeChannel('http');
       expect(mockListPvc).toHaveBeenCalledWith({ namespace: 'kubeclaw' });
-      // No labelSelector key.
       expect(mockListPvc.mock.calls[0][0]).not.toHaveProperty('labelSelector');
+    });
+
+    it('records resources as <kind>/<name> so same-named resources are distinct', async () => {
+      allDeletesSucceed();
+      const result = await removeChannel('http');
+      expect(result.deleted).toEqual(
+        expect.arrayContaining([
+          'deployment/kubeclaw-channel-http',
+          'serviceaccount/kubeclaw-channel-http',
+          'service/kubeclaw-channel-http',
+          'service/kubeclaw-channel-http-metrics',
+          'ingress/kubeclaw-channel-http',
+          'networkpolicy/kubeclaw-channel-http-ingress',
+          'secret/kubeclaw-channel-http',
+          'secret/kubeclaw-channel-http-credentials',
+          'secret/kubeclaw-http-secrets',
+          'job/kubeclaw-bootstrap-http',
+          'job/kubeclaw-bootstrap-http-upgrade',
+        ]),
+      );
     });
   });
 
@@ -141,10 +174,11 @@ describe('removeChannel — comprehensive name-based cleanup', () => {
           pvcItem('kubeclaw-channel-http-store'),
           pvcItem('kubeclaw-channel-http-sessions'),
           pvcItem('kubeclaw-channel-http-runtime'),
-          pvcItem('kubeclaw-channel-http-runtime-v2'), // upgrade-era
+          pvcItem('kubeclaw-channel-http-runtime-v2'),
         ],
       });
       const result = await removeChannel('http');
+      const deletedPvc = mockDeletePvc.mock.calls.map((c) => c[0].name);
       for (const n of [
         'kubeclaw-channel-http-groups',
         'kubeclaw-channel-http-store',
@@ -152,7 +186,8 @@ describe('removeChannel — comprehensive name-based cleanup', () => {
         'kubeclaw-channel-http-runtime',
         'kubeclaw-channel-http-runtime-v2',
       ]) {
-        expect(result.deleted).toContain(n);
+        expect(deletedPvc).toContain(n);
+        expect(result.deleted).toContain(`persistentvolumeclaim/${n}`);
       }
     });
 
@@ -161,20 +196,15 @@ describe('removeChannel — comprehensive name-based cleanup', () => {
       mockListPvc.mockResolvedValue({
         items: [
           pvcItem('kubeclaw-channel-http-groups'),
-          pvcItem('kubeclaw-channel-http-staging-groups'), // different instance!
+          pvcItem('kubeclaw-channel-http-staging-groups'),
           pvcItem('kubeclaw-channel-http-staging-runtime'),
         ],
       });
-      const result = await removeChannel('http');
-      expect(result.deleted).toContain('kubeclaw-channel-http-groups');
-      expect(result.deleted).not.toContain(
-        'kubeclaw-channel-http-staging-groups',
-      );
-      expect(result.deleted).not.toContain(
-        'kubeclaw-channel-http-staging-runtime',
-      );
+      await removeChannel('http');
       const deletedPvc = mockDeletePvc.mock.calls.map((c) => c[0].name);
+      expect(deletedPvc).toEqual(['kubeclaw-channel-http-groups']);
       expect(deletedPvc).not.toContain('kubeclaw-channel-http-staging-groups');
+      expect(deletedPvc).not.toContain('kubeclaw-channel-http-staging-runtime');
     });
 
     it('ignores unrelated PVCs that merely contain the instance name', async () => {
@@ -186,10 +216,7 @@ describe('removeChannel — comprehensive name-based cleanup', () => {
           pvcItem('kubeclaw-channel-http'), // no recognised suffix — skip
         ],
       });
-      const result = await removeChannel('http');
-      expect(result.deleted).toEqual(
-        expect.arrayContaining(['kubeclaw-channel-http-groups']),
-      );
+      await removeChannel('http');
       const deletedPvc = mockDeletePvc.mock.calls.map((c) => c[0].name);
       expect(deletedPvc).toEqual(['kubeclaw-channel-http-groups']);
     });
@@ -204,11 +231,13 @@ describe('removeChannel — comprehensive name-based cleanup', () => {
       expect(r2.deleted).toEqual([]);
       expect(r2.alreadyAbsent).toEqual(
         expect.arrayContaining([
-          'kubeclaw-channel-gone',
-          'kubeclaw-channel-gone-credentials',
-          'kubeclaw-gone-secrets',
-          'kubeclaw-channel-gone-ingress',
-          'kubeclaw-bootstrap-gone',
+          'deployment/kubeclaw-channel-gone',
+          'secret/kubeclaw-channel-gone-credentials',
+          'secret/kubeclaw-gone-secrets',
+          'ingress/kubeclaw-channel-gone',
+          'networkpolicy/kubeclaw-channel-gone-ingress',
+          'job/kubeclaw-bootstrap-gone',
+          'job/kubeclaw-bootstrap-gone-upgrade',
         ]),
       );
       expect(r2.summary).toContain('Already absent:');
@@ -233,8 +262,10 @@ describe('removeChannel — comprehensive name-based cleanup', () => {
       });
       const result = await removeChannel('prod');
       expect(result.summary).toContain('Deleted:');
-      expect(result.summary).toContain('kubeclaw-channel-prod');
-      expect(result.summary).toContain('kubeclaw-channel-prod-runtime');
+      expect(result.summary).toContain('deployment/kubeclaw-channel-prod');
+      expect(result.summary).toContain(
+        'persistentvolumeclaim/kubeclaw-channel-prod-runtime',
+      );
     });
   });
 });

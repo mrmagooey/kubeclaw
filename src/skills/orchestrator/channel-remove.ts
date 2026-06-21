@@ -12,13 +12,14 @@
  *   - ServiceAccount  kubeclaw-channel-<instance>            (Helm)
  *   - Service         kubeclaw-channel-<instance>            (httpPort channels)
  *   - Service         kubeclaw-channel-<instance>-metrics    (Helm)
+ *   - Ingress         kubeclaw-channel-<instance>            (Helm, ingress.enabled)
  *   - NetworkPolicy   kubeclaw-channel-<instance>-ingress    (httpPort channels)
  *   - Secret          kubeclaw-channel-<instance>            (Helm user secret)
  *   - Secret          kubeclaw-channel-<instance>-credentials (bootstrap)
  *   - Secret          kubeclaw-<instance>-secrets            (legacy setup_channel)
  *   - PVCs            kubeclaw-channel-<instance>-{groups,store,sessions,runtime}
  *                     plus versioned runtime PVCs (…-runtime-v<N>) from upgrades
- *   - Job             kubeclaw-bootstrap-<instance>          (in-progress bootstrap)
+ *   - Jobs            kubeclaw-bootstrap-<instance>[-upgrade] (bootstrap/upgrade)
  */
 import * as k8s from '@kubernetes/client-node';
 
@@ -110,6 +111,13 @@ const tryDeleteNetworkPolicy = (name: string) =>
       namespace: NAMESPACE,
     }),
   );
+const tryDeleteIngress = (name: string) =>
+  tryDelete(() =>
+    getK8sClients().networkingV1.deleteNamespacedIngress({
+      name,
+      namespace: NAMESPACE,
+    }),
+  );
 const tryDeleteSecret = (name: string) =>
   tryDelete(() =>
     getK8sClients().coreV1.deleteNamespacedSecret({ name, namespace: NAMESPACE }),
@@ -168,19 +176,28 @@ export async function removeChannel(
     else alreadyAbsent.push(name);
   }
 
+  // Resources are recorded as `<kind>/<name>` because several share the same
+  // name (Deployment/ServiceAccount/Service/Secret/Ingress are all `<base>`).
+
   // 1. Deployment first — stops the pod so it releases its PVCs/Secret mounts.
-  record(base, await tryDeleteDeployment(base));
+  record(`deployment/${base}`, await tryDeleteDeployment(base));
 
   // 2. ServiceAccount (Helm-created).
-  record(base, await tryDeleteServiceAccount(base));
+  record(`serviceaccount/${base}`, await tryDeleteServiceAccount(base));
 
   // 3. Services: the channel Service (httpPort) + the Helm metrics Service.
   for (const svc of [base, `${base}-metrics`]) {
-    record(svc, await tryDeleteService(svc));
+    record(`service/${svc}`, await tryDeleteService(svc));
   }
 
-  // 4. Ingress NetworkPolicy (httpPort channels).
-  record(`${base}-ingress`, await tryDeleteNetworkPolicy(`${base}-ingress`));
+  // 4. Ingress + ingress NetworkPolicy (httpPort channels). The Helm Ingress is
+  //    named `<base>` (channel-pods.yaml, gated on $cfg.ingress.enabled) — a
+  //    stale one would keep routing external traffic, so it must go.
+  record(`ingress/${base}`, await tryDeleteIngress(base));
+  record(
+    `networkpolicy/${base}-ingress`,
+    await tryDeleteNetworkPolicy(`${base}-ingress`),
+  );
 
   // 5. Secrets — cover all three naming conventions:
   //    Helm user secret, bootstrap credentials, legacy setup_channel.
@@ -189,18 +206,23 @@ export async function removeChannel(
     `${base}-credentials`,
     `kubeclaw-${instanceName}-secrets`,
   ]) {
-    record(sec, await tryDeleteSecret(sec));
+    record(`secret/${sec}`, await tryDeleteSecret(sec));
   }
 
   // 6. PVCs — groups/store/sessions/runtime (+ versioned runtime), by precise name.
   const pvcNames = await listInstancePvcNames(instanceName);
   for (const pvcName of pvcNames) {
-    record(pvcName, await tryDeletePvc(pvcName));
+    record(`persistentvolumeclaim/${pvcName}`, await tryDeletePvc(pvcName));
   }
 
-  // 7. In-progress bootstrap Job.
-  const bootstrapJob = `kubeclaw-bootstrap-${instanceName}`;
-  record(bootstrapJob, await tryDeleteJob(bootstrapJob));
+  // 7. Bootstrap Jobs — the initial bootstrap Job and the upgrade Job (both
+  //    have a finished-TTL, but remove them deterministically rather than wait).
+  for (const job of [
+    `kubeclaw-bootstrap-${instanceName}`,
+    `kubeclaw-bootstrap-${instanceName}-upgrade`,
+  ]) {
+    record(`job/${job}`, await tryDeleteJob(job));
+  }
 
   const deletedLines =
     deleted.length > 0
