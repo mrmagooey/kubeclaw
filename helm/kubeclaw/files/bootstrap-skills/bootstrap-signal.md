@@ -1,35 +1,44 @@
 ---
 name: bootstrap-signal
-description: Bootstrap a Signal channel — requires a pure-JS Signal client npm package and a registered Signal phone number. Template only; Signal cannot run in CI. Operator must register a 'signal' channel manifest in Helm values before using this skill.
+description: Bootstrap a Signal channel — relays Signal messages into KubeClaw via a signal-cli-rest-api daemon (the kubeclaw-signal-cli StatefulSet). The adapter has no npm dependencies. Requires the signal-cli daemon to be enabled AND the bot account linked/registered out-of-band first (cannot be done in CI).
 bootstrap:
   channelType: signal
   manifestVersion: "1"
   expectedQuestions:
-    - "What is the Signal phone number for this channel? (e.g. +61412345678)"
+    - "Provide the Signal settings on one line — the bot's phone number in E.164 form (e.g. +61412345678), and optionally the signal-cli API URL (default http://kubeclaw-signal-cli:8080)."
 ---
 
 # Bootstrap: Signal channel
 
-You are setting up a Signal channel for KubeClaw. This channel requires:
+You are setting up a Signal channel for KubeClaw. This channel relays messages
+to/from Signal via the **signal-cli-rest-api** daemon
+(`bbernhard/signal-cli-rest-api`), deployed as the `kubeclaw-signal-cli`
+StatefulSet. The channel adapter talks to it over plain HTTP using Node's
+built-in `fetch`, so it has **no npm dependencies** (no native libsignal compile
+to fight `npm ci`).
 
-1. A **channel manifest** registered in Helm values for channel type `signal`
-   (operator must do this before running this skill — see below).
-2. A **registered Signal phone number** that the chosen pure-JS Signal client
-   can use to send and receive messages.
-
-> **IMPORTANT — native bindings:** Most Signal SDKs require native compilation
-> (libsignal, Java-based signal-cli). These do NOT work with
-> `npm ci --ignore-scripts` inside the bootstrap pod. Choose a pure-JS client
-> or a REST bridge (run signal-cli as a sidecar and call its JSON-RPC HTTP API
-> from channel-entry.js using Node's built-in `fetch`). Update the `import`
-> line in `helm/kubeclaw/files/channel-src/signal/channel-entry.js` accordingly
-> before registering the manifest.
-
-> **IMPORTANT — operator prerequisites:** The `signal` channel manifest must be
-> present in `kubeclaw-channel-manifests` before this skill runs. Add it to
-> your Helm values (see "Declare deps in a channel manifest" in
-> `docs/DEVELOPING_A_CHANNEL.md`) and run `helm upgrade`. Without the manifest,
-> step 1 below will fail with a missing file error.
+> **OPERATOR PREREQUISITES — do these BEFORE running this skill:**
+>
+> 1. **Deploy the daemon.** Set `signalCli.enabled=true` in your Helm values and
+>    `helm upgrade`. This creates the `kubeclaw-signal-cli` StatefulSet (holding
+>    the account session on a PVC) and a Service on `:8080`. It also opens the
+>    channel egress NetworkPolicy to reach it.
+>
+> 2. **Link or register the bot account.** signal-cli must hold a real Signal
+>    session. This CANNOT be automated in CI — it needs a real phone/account.
+>    Two paths:
+>    - **Link as a secondary device (recommended).** From a shell with access to
+>      the service: open `GET /v1/qrcodelink?device_name=kubeclaw` in a browser
+>      (or `kubectl port-forward svc/kubeclaw-signal-cli 8080:8080` first), then
+>      on your phone go to *Signal → Settings → Linked devices → +* and scan the
+>      QR code. The bot now sends/receives as YOUR existing number.
+>    - **Register a dedicated number.** `POST /v1/register/<number>` (solve the
+>      captcha, then `POST /v1/register/<number>/verify/<code>` with the SMS or
+>      voice code). The bot uses this fresh number.
+>
+> 3. **Register the `signal` channel manifest** in `kubeclaw-channel-manifests`
+>    (it ships in `bootstrap.channelManifests.signal` in the Helm values). Run
+>    `helm upgrade` if you added it. Without it, step 1 below fails.
 
 **IMPORTANT — how to read this skill:** Each step below is a TOOL CALL you must
 actually execute, in order. The fenced blocks are the arguments to pass to a
@@ -37,64 +46,34 @@ tool — they are instructions, NOT examples of code that has already run. Execu
 one tool call, check its result, then proceed to the next step. Do not skip
 steps and do not guess values the admin is supposed to provide.
 
-The orchestrator delivers `/runtime/channel-entry.js` deterministically at commit time — this skill only stages the npm package files, installs dependencies, asks for the phone number, and commits.
+The package files are staged and dependencies installed automatically before
+this skill runs (the signal manifest has no dependencies, so `npm ci` is a
+no-op) — you only gather the phone number and commit. The orchestrator delivers
+`/runtime/channel-entry.js` deterministically at commit time.
 
-## Step 1: Stage the manifest files on /runtime
+## Step 1: Ask the admin for the Signal settings
 
-The orchestrator independently rehashes `/runtime/package.json` and
-`/runtime/package-lock.json` at commit time (TOCTOU defense). The manifest
-contents must match the registered manifest hash exactly.
-
-The live ConfigMap `kubeclaw-channel-manifests` is mounted at
-`/workspace/manifests/` as one file per channel type
-(`/workspace/manifests/signal.json`), each file holding a single JSON object
-with `packageJson`, `packageLockJson`, and `manifestHash` fields.
-
-**Call the `local_bash` tool now** with this `command` to extract the two
-embedded strings onto `/runtime/`:
-
-```
-node -e "const fs=require('fs');const m=JSON.parse(fs.readFileSync('/workspace/manifests/signal.json','utf8'));fs.writeFileSync('/runtime/package.json',m.packageJson);fs.writeFileSync('/runtime/package-lock.json',m.packageLockJson);"
-```
-
-**Call the `local_bash` tool again** with `command: ls -la /runtime/` to
-confirm both files landed. You should see `package.json` and
-`package-lock.json`. If either is missing, stop and report the error to the
-admin.
-
-## Step 2: Install npm dependencies
-
-This channel requires a pure-JS Signal client package (defined in the manifest).
-**Call the `local_bash` tool now** with this `command`:
-
-```
-npm ci --prefix /runtime --omit=dev --ignore-scripts 2>&1
-```
-
-This installs the Signal client from the lockfile and may take 10-60 seconds
-(pure-JS clients can be large). After it completes, **call the `local_bash`
-tool again** to confirm `ls /runtime/node_modules/` lists at least one entry.
-If `npm ci` fails with a native binding error, the wrong Signal library is in
-the manifest — stop and report to the admin.
-
-## Step 3: Ask the admin for the phone number
+Gather the settings with a SINGLE `ask_admin` call.
 
 **Call the `ask_admin` tool now** with:
 
 ```
-question: "What is the Signal phone number for this channel? (e.g. +61412345678)"
+question: "Provide the Signal settings on one line — the bot's phone number in E.164 form (e.g. +61412345678), and optionally the signal-cli API URL (default http://kubeclaw-signal-cli:8080). Example: number=+61412345678 api=http://kubeclaw-signal-cli:8080"
 ```
 
-The value the `ask_admin` tool returns IS the admin's answer. Validate it:
+The value the `ask_admin` tool returns IS the admin's answer. Parse these fields
+(the admin may use `key=value` form or plain prose — extract sensibly):
 
-- Must be a non-empty string
-- Must start with `+` followed by digits only
-- Must be between 8 and 16 characters total
+- `SIGNAL_PHONE_NUMBER` — the bot's own number. Required. Must start with `+`
+  followed by 7–15 digits (E.164). This must be the SAME number you linked or
+  registered in operator prerequisite step 2.
+- `SIGNAL_API_URL` — the signal-cli-rest-api base URL. Optional; default
+  `http://kubeclaw-signal-cli:8080`. If provided, must be an `http(s)://` URL.
 
-If the answer is invalid, **call `ask_admin` again** with a corrective message.
-Do not proceed until `ask_admin` returns a valid value.
+If the phone number is missing or not valid E.164, **call `ask_admin` again**
+with a corrective message. Do not proceed until you have a valid number.
 
-## Step 4: Commit the configuration
+## Step 2: Commit the configuration
 
 Compute the runtime PVC lock hash. The hash algorithm is:
 
@@ -131,12 +110,13 @@ with these arguments:
 
 - `channel_type`: `signal`
 - `instance_name`: the instance name from the bootstrap context above
-- `secret_data`: `{ "SIGNAL_PHONE_NUMBER": "<the validated phone number>" }`
+- `secret_data`: `{ "SIGNAL_PHONE_NUMBER": "<the validated phone number>", "SIGNAL_API_URL": "<api url, or http://kubeclaw-signal-cli:8080>" }`
 - `runtime_pvc_lock_hash`: the hash printed by the previous step
 
 If the orchestrator replies success, tell the admin: **"Channel
-signal/<instance> is ready. It will start receiving messages sent to
-<phone number>."**
+signal/<instance> is ready. It will start relaying messages for
+<phone number>. Make sure the signal-cli account is linked/registered, or no
+messages will flow."**
 
 If the orchestrator rejects (e.g. MANIFEST_DIVERGENCE), surface the structured
 error to the admin verbatim. Do not retry without admin direction.
