@@ -26,12 +26,10 @@ import * as db from './db.js';
 import { logger } from './logger.js';
 import { createLLMClient, DEFAULT_DIRECT_MODEL } from './runtime/llm-client.js';
 import {
-  setupChannel,
   patchRuntimePvc,
   waitForDeploymentRollout,
 } from './skills/orchestrator/channel-setup.js';
 import { removeChannel } from './skills/orchestrator/channel-remove.js';
-import type { ChannelSetupInput } from './skills/orchestrator/types.js';
 import {
   installCapability,
   removeCapability,
@@ -482,81 +480,6 @@ export const TOOLS: OpenAI.ChatCompletionTool[] = [
   {
     type: 'function',
     function: {
-      name: 'setup_channel',
-      description:
-        'Set up a new communication channel. Stores the credential in a K8s Secret and creates a dedicated channel pod Deployment. No orchestrator restart needed. Call this after gathering all required credentials from the user.',
-      parameters: {
-        type: 'object',
-        properties: {
-          type: {
-            type: 'string',
-            enum: ['telegram', 'discord', 'slack', 'whatsapp'],
-            description: 'Channel type',
-          },
-          instanceName: {
-            type: 'string',
-            description:
-              'Unique instance name (defaults to the type). Use to create multiple channels of the same type, e.g. "http-staging".',
-          },
-          token: {
-            type: 'string',
-            description: 'Bot token or API key (Telegram, Discord, Slack)',
-          },
-          phoneNumber: {
-            type: 'string',
-            description: 'Phone number in E.164 format (WhatsApp only)',
-          },
-          server: {
-            type: 'string',
-            description: 'IRC server hostname (IRC only)',
-          },
-          nick: { type: 'string', description: 'IRC nickname (IRC only)' },
-          channels: {
-            type: 'string',
-            description: 'Comma-separated IRC channels to join (IRC only)',
-          },
-          httpUsers: {
-            type: 'string',
-            description:
-              'Comma-separated user:pass pairs for HTTP channel, e.g. "alice:secret,bob:pass" (HTTP only)',
-          },
-          httpPort: {
-            type: 'number',
-            description: 'HTTP listen port, default 4080 (HTTP only)',
-          },
-          registerGroup: {
-            type: 'boolean',
-            description:
-              'If true, auto-register a default group for this channel with direct LLM mode.',
-          },
-          groupJid: {
-            type: 'string',
-            description:
-              'Chat JID to register (required if registerGroup is true)',
-          },
-          groupName: {
-            type: 'string',
-            description:
-              'Group display name (required if registerGroup is true)',
-          },
-          groupFolder: {
-            type: 'string',
-            description:
-              'Group folder name (required if registerGroup is true)',
-          },
-          trigger: {
-            type: 'string',
-            description:
-              'Trigger pattern, e.g. @Andy (required if registerGroup is true)',
-          },
-        },
-        required: ['type'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
       name: 'remove_channel',
       description:
         'Remove a channel instance and all its associated K8s resources (Deployment, Secret, and PersistentVolumeClaims). Idempotent — safe to call even if resources are already absent.',
@@ -566,7 +489,7 @@ export const TOOLS: OpenAI.ChatCompletionTool[] = [
           instanceName: {
             type: 'string',
             description:
-              'The channel instance name passed to setup_channel (e.g. "http", "telegram", "http-staging").',
+              'The channel instance name (e.g. "http", "telegram", "http-staging").',
           },
         },
         required: ['instanceName'],
@@ -1360,12 +1283,7 @@ function handleClearConversation(input: ToolInput): string {
   return `Cleared conversation history for group folder: ${folder}`;
 }
 
-// ---- K8s channel setup handlers ----
-
-async function handleSetupChannel(input: ToolInput): Promise<string> {
-  const result = await setupChannel(input as unknown as ChannelSetupInput);
-  return result.log.join('\n');
-}
+// ---- K8s channel handlers ----
 
 async function handleRemoveChannel(input: ToolInput): Promise<string> {
   const instanceName = input.instanceName as string | undefined;
@@ -2416,8 +2334,6 @@ export async function executeTool(
       return handleGetSessions();
     case 'clear_conversation':
       return handleClearConversation(input);
-    case 'setup_channel':
-      return handleSetupChannel(input);
     case 'remove_channel':
       return handleRemoveChannel(input);
     case 'get_orchestrator_status':
@@ -2495,13 +2411,7 @@ Key concepts:
 - Main group: the primary control group with elevated privileges. Only one group should have isMain=true.
 
 When setting up a channel:
-1. Ask the user for the required credentials (bot token, phone number, etc.)
-2. For Telegram: ask for the bot token from @BotFather. Remind them to disable Group Privacy in @BotFather for group chats.
-3. For Discord/Slack: ask for the bot token.
-4. For HTTP: ask for one or more users in the format "user1:pass1,user2:pass2" and an optional port (default 4080). Each user gets their own JID (http:{username}) and isolated group. After setup, tell the user to configure their Kubernetes Ingress to route to the kubeclaw-channel-http Service on that port. Register each user as a separate group with their JID.
-5. Call setup_channel with the credentials. This stores the credentials in a K8s Secret and creates a dedicated channel pod Deployment. No orchestrator restart needed.
-6. After the channel pod starts (~30s), ask the user for the chat JID (they can get it by sending /chatid to the bot). For HTTP, JIDs are http:{username} — register each user's group immediately.
-7. Call register_group to register the group with direct=true.
+Channels are installed via the bootstrap skill path (bootstrap_channel_from_skill) or declarative Helm values — there is no setup_channel tool. Use bootstrap_channel_from_skill to start a new channel install; the bootstrap agent will collect credentials and provision K8s resources. After the channel pod starts, call register_group to register each group with direct=true.
 
 When registering a group, confirm the details before calling register_group. After registering, inform the user that changes take effect on the next orchestrator poll (~2 seconds).
 
