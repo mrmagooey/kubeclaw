@@ -78,7 +78,9 @@ class SignalChannel {
     // not ready yet — the poll loop retries and the daemon may still be linking.
     try {
       const res = await fetch(`${this.config.apiUrl}/v1/health`);
-      if (!res.ok) {
+      if (res.ok) {
+        this.connected = true;
+      } else {
         this.sdk.logger.warn(
           { status: res.status },
           'signal: signal-cli health check returned non-200; will keep polling',
@@ -91,10 +93,9 @@ class SignalChannel {
       );
     }
 
-    this.connected = true;
     this.sdk.logger.info(
-      { number: this.config.phoneNumber, apiUrl: this.config.apiUrl },
-      'signal: channel connected; starting receive loop',
+      { number: this.config.phoneNumber, apiUrl: this.config.apiUrl, connected: this.connected },
+      'signal: channel starting; beginning receive loop',
     );
     this.scheduleReceive();
   }
@@ -117,6 +118,9 @@ class SignalChannel {
 
   /** Drain one batch of envelopes from the signal-cli receive queue. */
   async receiveOnce() {
+    // encodeURIComponent turns '+' → '%2B' so the E.164 number survives the path.
+    // signal-cli-rest-api decodes path params correctly; a naive proxy that
+    // double-decodes will serve a 404 — encode the number in the proxy config too.
     const url = `${this.config.apiUrl}/v1/receive/${encodeURIComponent(this.config.phoneNumber)}`;
     const res = await fetch(url);
     if (!res.ok) {
@@ -168,10 +172,12 @@ class SignalChannel {
     // For groups Signal requires an explicit trigger; rewrite a bare mention of
     // the assistant name into the canonical trigger prefix so the agent runs.
     let content = data.message;
-    const triggerRegex = new RegExp(`^@${this.sdk.assistantName}\\b`, 'i');
-    const mentionRegex = new RegExp(`@${this.sdk.assistantName}\\b`, 'i');
-    if (isGroup && mentionRegex.test(content) && !triggerRegex.test(content)) {
-      content = `@${this.sdk.assistantName} ${content}`;
+    if (isGroup && this.sdk.assistantName) {
+      const triggerRegex = new RegExp(`^@${this.sdk.assistantName}\\b`, 'i');
+      const mentionRegex = new RegExp(`@${this.sdk.assistantName}\\b`, 'i');
+      if (mentionRegex.test(content) && !triggerRegex.test(content)) {
+        content = `@${this.sdk.assistantName} ${content}`;
+      }
     }
 
     this.opts.onChatMetadata(jid, timestamp, senderName, 'signal', isGroup);
@@ -200,6 +206,7 @@ class SignalChannel {
     }
 
     const chunks = this.chunk(text, MAX_MESSAGE_LENGTH);
+    let successCount = 0;
     for (const chunk of chunks) {
       const payload = {
         message: chunk,
@@ -212,7 +219,9 @@ class SignalChannel {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
         });
-        if (!res.ok) {
+        if (res.ok) {
+          successCount++;
+        } else {
           const errText = await res.text().catch(() => '');
           this.sdk.logger.error(
             { jid, status: res.status, errText },
@@ -223,7 +232,12 @@ class SignalChannel {
         this.sdk.logger.error({ jid, err: String(err) }, 'signal: send threw');
       }
     }
-    this.sdk.logger.info({ jid, length: text.length }, 'signal: message sent');
+    if (successCount > 0) {
+      this.sdk.logger.info(
+        { jid, length: text.length, chunks: chunks.length, successCount },
+        'signal: message sent',
+      );
+    }
   }
 
   /** Split text into <= max-length chunks (Signal has a message size limit). */

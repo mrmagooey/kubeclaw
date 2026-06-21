@@ -82,6 +82,11 @@ describe('signal-adapter: factory + config parsing', () => {
     const { ch } = buildChannel({ SIGNAL_PHONE_NUMBER: BOT });
     expect(ch.capabilities.markdownOutput).toBe(false);
   });
+
+  it('honours SIGNAL_POLL_MS as the poll interval (m3)', () => {
+    const { ch } = buildChannel({ SIGNAL_PHONE_NUMBER: BOT, SIGNAL_POLL_MS: '5000' });
+    expect(ch.config.pollMs).toBe(5000);
+  });
 });
 
 describe('signal-adapter: ownsJid', () => {
@@ -232,6 +237,52 @@ describe('signal-adapter: receiveOnce drains the queue', () => {
     const { ch } = buildChannel({ SIGNAL_PHONE_NUMBER: BOT }, opts);
     fetchMock.mockResolvedValueOnce({ ok: false, status: 500, json: async () => ({}) });
     await ch.receiveOnce();
+    expect(opts.onMessage).not.toHaveBeenCalled();
+  });
+
+  it('routes a group envelope to onMessage with signal:group.<id> JID and isGroup=true (I2)', async () => {
+    const opts = fakeOpts();
+    const { ch } = buildChannel({ SIGNAL_PHONE_NUMBER: BOT }, opts);
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [
+        {
+          envelope: {
+            sourceNumber: '+61400000000',
+            sourceName: 'Bob',
+            timestamp: 1700000001000,
+            dataMessage: {
+              message: 'group hello',
+              groupInfo: { groupId: 'ABCD' },
+            },
+          },
+        },
+      ],
+    });
+    await ch.receiveOnce();
+    expect(opts.onMessage).toHaveBeenCalledWith(
+      'signal:group.ABCD',
+      expect.objectContaining({
+        content: 'group hello',
+        sender: '+61400000000',
+        is_from_me: false,
+      }),
+    );
+    expect(opts.onChatMetadata).toHaveBeenCalledWith(
+      'signal:group.ABCD',
+      expect.any(String),
+      'Bob',
+      'signal',
+      true,
+    );
+  });
+
+  it('rejects when fetch throws (ECONNREFUSED) and does not crash (m4)', async () => {
+    const opts = fakeOpts();
+    const { ch } = buildChannel({ SIGNAL_PHONE_NUMBER: BOT }, opts);
+    fetchMock.mockRejectedValueOnce(new Error('ECONNREFUSED'));
+    // receiveOnce propagates the rejection; scheduleReceive's catch handles re-scheduling.
+    await expect(ch.receiveOnce()).rejects.toThrow('ECONNREFUSED');
     expect(opts.onMessage).not.toHaveBeenCalled();
   });
 });
