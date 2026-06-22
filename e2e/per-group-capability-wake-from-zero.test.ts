@@ -2,12 +2,12 @@
  * End-to-end test for Story 39 — per-group capability wakes from zero on first
  * use after scale-down.
  *
- * Target:   kind cluster `kubeclaw-e2e-istio`
+ * Target:   minikube cluster
  * Namespace: `kubeclaw-e2e-cap-wakeup`
  * Port:      14123
  *
  * Pre-requisites:
- *   - `kind load docker-image kubeclaw-echo:e2e-test --name kubeclaw-e2e-istio`
+ *   - `minikube image load kubeclaw-echo:e2e-test`
  *   - Echo image must serve GET /health → 200 (for waitForReady polling).
  *   - A running Redis accessible via KUBECLAW_REDIS_URL or default localhost:6379.
  *
@@ -96,7 +96,7 @@ describe.skipIf(!K8S_AVAILABLE)('Story 39 — per-group capability wake from zer
 
     // Build the echo image into minikube's docker daemon so the in-cluster
     // capability pod can pull it locally. Idempotent — docker build is a no-op
-    // on cache hits. Falls back to `kind load` for legacy kind environments.
+    // on cache hits. Falls back to `minikube image load` if docker-env build fails.
     try {
       sh(
         'eval $(minikube docker-env) && ' +
@@ -104,7 +104,7 @@ describe.skipIf(!K8S_AVAILABLE)('Story 39 — per-group capability wake from zer
       );
     } catch {
       try {
-        sh(`kind load docker-image ${ECHO_IMAGE} --name kubeclaw-e2e-istio 2>&1 || true`);
+        sh(`minikube image load ${ECHO_IMAGE} 2>&1 || true`);
       } catch {
         // Not using kind either — assume image already present.
       }

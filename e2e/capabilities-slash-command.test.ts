@@ -2,7 +2,7 @@
  * Story 36 e2e: `/capabilities add/list/remove` slash command
  *
  * Prerequisites (cluster must be running before this test):
- *   kind cluster: kubeclaw-e2e-istio
+ *   cluster:     minikube
  *   namespace:    kubeclaw-e2e-caps
  *   helm release: kubeclaw-caps — installed with:
  *     helm upgrade --install kubeclaw-caps ./helm/kubeclaw \
@@ -16,7 +16,7 @@
  *
  *   Pre-load test image:
  *     docker build -t kubeclaw-echo:e2e-test ./container/echo/ (or similar)
- *     kind load docker-image kubeclaw-echo:e2e-test --name kubeclaw-e2e-istio
+ *     minikube image load kubeclaw-echo:e2e-test
  *
  * Port forwarding expected on localhost:14120 → channel HTTP pod port 3000.
  *
@@ -152,7 +152,7 @@ describe.skipIf(!K8S_AVAILABLE || !E2E_CAPS)(
       // Pre-load the echo image into the kind cluster if kind is the context.
       try {
         sh(
-          `kind load docker-image kubeclaw-echo:e2e-test --name kubeclaw-e2e-istio 2>&1 || true`,
+          `minikube image load kubeclaw-echo:e2e-test 2>&1 || true`,
         );
       } catch {
         // Not a kind cluster or image already loaded — continue.

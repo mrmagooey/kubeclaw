@@ -1,9 +1,9 @@
 /**
- * e2e tests for credentialInjection.mode=istio on a kind cluster with Istio.
+ * e2e tests for credentialInjection.mode=istio on minikube with Istio.
  *
  * Prerequisites (handled by the GitHub Actions workflow / local setup script):
- *   - kind cluster running with Istio 1.24.x installed (profile=minimal)
- *   - kubectl context pointing at the kind cluster
+ *   - minikube running with Istio 1.24.x installed (profile=minimal)
+ *   - kubectl context pointing at the minikube cluster
  *   - helm 3.x on PATH
  *
  * Run time: ~10-15 minutes (after cluster + Istio are up).

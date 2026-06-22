@@ -2,7 +2,7 @@
  * e2e tests for Story 40: credential broker live config reload without restart.
  *
  * Prerequisites:
- *   - kind cluster `kubeclaw-e2e-istio` running (or any available cluster)
+ *   - minikube cluster running (or any available cluster)
  *   - kubectl context pointing at the cluster
  *   - helm 3.x on PATH
  *
@@ -55,7 +55,7 @@ function k(args: string, opts?: { allowFail?: boolean }): string {
 }
 
 /**
- * Build or re-tag the broker image so the kind cluster has a local copy.
+ * Build or re-tag the broker image so the minikube cluster has a local copy.
  *
  * Mirrors the pattern in credential-broker.test.ts: re-tags the
  * kubeclaw-orchestrator:latest image that global-setup built, rather than
@@ -63,32 +63,14 @@ function k(args: string, opts?: { allowFail?: boolean }): string {
  */
 function buildBrokerImage(): string {
   const tag = 'kubeclaw-orchestrator:e2e-cbreload';
-  const ctx = execSync('kubectl config current-context', {
-    encoding: 'utf8',
-  }).trim();
-
-  if (ctx.startsWith('kind-')) {
-    const clusterName = ctx.replace(/^kind-/, '');
-    // Load the current worktree's image into the kind cluster.
-    execSync(
-      `docker tag kubeclaw-orchestrator:latest ${tag} 2>/dev/null || true`,
-      { encoding: 'utf8', shell: '/bin/bash' },
-    );
-    execSync(`kind load docker-image ${tag} --name ${clusterName}`, {
-      encoding: 'utf8',
-      stdio: 'inherit',
-    });
-  } else {
-    // minikube (or other): use docker-env eval trick.
-    const profileFlag = process.env.KUBECLAW_MINIKUBE_PROFILE
-      ? `-p ${process.env.KUBECLAW_MINIKUBE_PROFILE}`
-      : '';
-    execSync(
-      `eval $(minikube ${profileFlag} docker-env) && ` +
-        `docker tag kubeclaw-orchestrator:latest ${tag}`,
-      { encoding: 'utf8', shell: '/bin/bash', stdio: 'inherit' },
-    );
-  }
+  const profileFlag = process.env.KUBECLAW_MINIKUBE_PROFILE
+    ? `-p ${process.env.KUBECLAW_MINIKUBE_PROFILE}`
+    : '';
+  execSync(
+    `eval $(minikube ${profileFlag} docker-env) && ` +
+      `docker tag kubeclaw-orchestrator:latest ${tag}`,
+    { encoding: 'utf8', shell: '/bin/bash', stdio: 'inherit' },
+  );
   return tag;
 }
 
