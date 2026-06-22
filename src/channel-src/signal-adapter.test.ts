@@ -1,6 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import register from '../../helm/kubeclaw/files/channel-src/signal/channel-entry.js';
 
+vi.mock('node:fs', async () => {
+  const mkdirSync = vi.fn();
+  const writeFileSync = vi.fn();
+  const mod = { mkdirSync, writeFileSync };
+  return { ...mod, default: mod };
+});
+
 function fakeSdk(env: Record<string, string>) {
   const factories: Record<string, any> = {};
   return {
@@ -343,5 +350,234 @@ describe('signal-adapter: lifecycle', () => {
     await ch.disconnect();
     expect(ch.isConnected()).toBe(false);
     vi.unstubAllGlobals();
+  });
+});
+
+// ── NEW: media capabilities ───────────────────────────────────────────────────
+
+describe('signal-adapter: media capabilities', () => {
+  it('declares all four media capability flags', () => {
+    const { ch } = buildChannel({ SIGNAL_PHONE_NUMBER: BOT });
+    expect(ch.capabilities.inboundImages).toBe(true);
+    expect(ch.capabilities.inboundPdfs).toBe(true);
+    expect(ch.capabilities.inboundVoice).toBe(true);
+    expect(ch.capabilities.outboundMedia).toBe(true);
+    expect(ch.capabilities.markdownOutput).toBe(false);
+  });
+});
+
+// ── NEW: inbound attachments ──────────────────────────────────────────────────
+
+describe('signal-adapter: inbound attachments', () => {
+  let fetchMock: any;
+  let nodeFs: typeof import('node:fs');
+
+  beforeEach(async () => {
+    fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    nodeFs = await import('node:fs');
+    vi.mocked(nodeFs.mkdirSync).mockReset();
+    vi.mocked(nodeFs.writeFileSync).mockReset();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('downloads an image attachment and passes an ImageAttachment marker to onMessage', async () => {
+    const opts = fakeOpts();
+    const { sdk, ch } = buildChannel({ SIGNAL_PHONE_NUMBER: BOT }, opts);
+    // Stub sdk.groupsDir (set by the runtime; simulate it)
+    (ch as any).sdk = { ...sdk, groupsDir: '/groups' };
+
+    const imgBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47]); // PNG magic
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [
+          {
+            envelope: {
+              sourceNumber: '+61400000000',
+              sourceName: 'Alice',
+              timestamp: 1700000000000,
+              dataMessage: {
+                message: '',
+                attachments: [{ id: 'att1', contentType: 'image/jpeg', filename: 'pic.jpg' }],
+              },
+            },
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        arrayBuffer: async () => imgBytes.buffer,
+      });
+
+    await ch.receiveOnce();
+
+    expect(vi.mocked(nodeFs.mkdirSync)).toHaveBeenCalledWith(
+      expect.stringContaining('attachments/raw'),
+      expect.objectContaining({ recursive: true }),
+    );
+    expect(vi.mocked(nodeFs.writeFileSync)).toHaveBeenCalledWith(
+      expect.stringContaining('pic.jpg'),
+      expect.any(Buffer),
+    );
+    expect(opts.onMessage).toHaveBeenCalledTimes(1);
+    const [_jid, msg] = opts.onMessage.mock.calls[0];
+    expect(msg.content).toMatch(/\[ImageAttachment: attachments\/raw\/pic\.jpg\]/);
+  });
+
+  it('downloads a PDF attachment and passes a PdfAttachment marker', async () => {
+    const opts = fakeOpts();
+    const { sdk, ch } = buildChannel({ SIGNAL_PHONE_NUMBER: BOT }, opts);
+    (ch as any).sdk = { ...sdk, groupsDir: '/groups' };
+
+    const pdfBytes = Buffer.from('%PDF-1.4');
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [
+          {
+            envelope: {
+              sourceNumber: '+61400000000',
+              sourceName: 'Alice',
+              timestamp: 1700000002000,
+              dataMessage: {
+                message: '',
+                attachments: [{ id: 'att2', contentType: 'application/pdf', filename: 'doc.pdf' }],
+              },
+            },
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        arrayBuffer: async () => pdfBytes.buffer,
+      });
+
+    await ch.receiveOnce();
+
+    const [_jid, msg] = opts.onMessage.mock.calls[0];
+    expect(msg.content).toMatch(/\[PdfAttachment: attachments\/raw\/doc\.pdf\]/);
+  });
+
+  it('downloads a voice attachment and passes a VoiceAttachment marker', async () => {
+    const opts = fakeOpts();
+    const { sdk, ch } = buildChannel({ SIGNAL_PHONE_NUMBER: BOT }, opts);
+    (ch as any).sdk = { ...sdk, groupsDir: '/groups' };
+
+    const audioBytes = Buffer.from([0x4f, 0x67, 0x67, 0x53]); // OGG magic
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [
+          {
+            envelope: {
+              sourceNumber: '+61400000000',
+              sourceName: 'Alice',
+              timestamp: 1700000003000,
+              dataMessage: {
+                message: '',
+                attachments: [{ id: 'att3', contentType: 'audio/ogg', filename: 'voice.ogg' }],
+              },
+            },
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        arrayBuffer: async () => audioBytes.buffer,
+      });
+
+    await ch.receiveOnce();
+
+    const [_jid, msg] = opts.onMessage.mock.calls[0];
+    expect(msg.content).toMatch(/\[VoiceAttachment: attachments\/raw\/voice\.ogg\]/);
+  });
+
+  it('combines text caption with image marker (text after marker)', async () => {
+    const opts = fakeOpts();
+    const { sdk, ch } = buildChannel({ SIGNAL_PHONE_NUMBER: BOT }, opts);
+    (ch as any).sdk = { ...sdk, groupsDir: '/groups' };
+
+    const imgBytes = Buffer.from([0xff, 0xd8, 0xff]); // JPEG magic
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [
+          {
+            envelope: {
+              sourceNumber: '+61400000000',
+              sourceName: 'Alice',
+              timestamp: 1700000004000,
+              dataMessage: {
+                message: 'see this image',
+                attachments: [{ id: 'att4', contentType: 'image/jpeg', filename: 'photo.jpg', caption: '' }],
+              },
+            },
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        arrayBuffer: async () => imgBytes.buffer,
+      });
+
+    await ch.receiveOnce();
+
+    const [_jid, msg] = opts.onMessage.mock.calls[0];
+    expect(msg.content).toMatch(/\[ImageAttachment: attachments\/raw\/photo\.jpg\]/);
+    expect(msg.content).toContain('see this image');
+  });
+});
+
+// ── NEW: sendMedia ────────────────────────────────────────────────────────────
+
+describe('signal-adapter: sendMedia', () => {
+  let fetchMock: any;
+  beforeEach(() => {
+    fetchMock = vi.fn().mockResolvedValue({ ok: true, text: async () => '' });
+    vi.stubGlobal('fetch', fetchMock);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('posts base64_attachments + message to /v2/send for a 1:1 JID', async () => {
+    const { ch } = buildChannel({ SIGNAL_PHONE_NUMBER: BOT });
+    const imgBuf = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+    await (ch as any).sendMedia('signal:+61400000000', imgBuf, 'image/png', 'hello caption');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('http://kubeclaw-signal-cli:8080/v2/send');
+    const body = JSON.parse(init.body);
+    expect(body.recipients).toEqual(['+61400000000']);
+    expect(body.number).toBe(BOT);
+    expect(body.message).toBe('hello caption');
+    expect(body.base64_attachments).toEqual([imgBuf.toString('base64')]);
+  });
+
+  it('uses empty string as message when caption is omitted', async () => {
+    const { ch } = buildChannel({ SIGNAL_PHONE_NUMBER: BOT });
+    const buf = Buffer.from('data');
+    await (ch as any).sendMedia('signal:+61400000000', buf, 'image/png');
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.message).toBe('');
+    expect(body.base64_attachments).toEqual([buf.toString('base64')]);
+  });
+
+  it('does not call fetch for a non-signal JID', async () => {
+    const { ch } = buildChannel({ SIGNAL_PHONE_NUMBER: BOT });
+    await (ch as any).sendMedia('oauth-webchat:user@example.com', Buffer.from('x'), 'image/png');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('sends to a group JID with the group recipient', async () => {
+    const { ch } = buildChannel({ SIGNAL_PHONE_NUMBER: BOT });
+    const buf = Buffer.from([1, 2, 3]);
+    await (ch as any).sendMedia('signal:group.ABCD', buf, 'image/jpeg', 'caption');
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.recipients).toEqual(['group.ABCD']);
   });
 });

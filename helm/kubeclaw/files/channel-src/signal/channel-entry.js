@@ -32,6 +32,9 @@
  *   SIGNAL_POLL_MS       receive poll interval in ms (default 2000)
  */
 
+import fs from 'node:fs';
+import nodePath from 'node:path';
+
 const DEFAULT_API_URL = 'http://kubeclaw-signal-cli:8080';
 const DEFAULT_POLL_MS = 2000;
 // signal-cli-rest-api default; Signal's hard limit is higher but chunk to be safe.
@@ -39,10 +42,13 @@ const MAX_MESSAGE_LENGTH = 4000;
 
 class SignalChannel {
   name = 'signal';
-  // Signal does NOT render markdown — replies are plain text. It DOES support
-  // inbound image/voice attachments, but this adapter does not download them
-  // yet (text-only path), so we declare no inbound-attachment capabilities.
-  capabilities = { markdownOutput: false };
+  capabilities = {
+    markdownOutput: false,
+    inboundImages: true,
+    inboundPdfs: true,
+    inboundVoice: true,
+    outboundMedia: true,
+  };
 
   constructor(config, opts, sdk) {
     this.config = config;
@@ -135,19 +141,22 @@ class SignalChannel {
     const items = Array.isArray(body) ? body : [];
     for (const item of items) {
       const env = item?.envelope ?? item;
-      this.handleEnvelope(env);
+      await this.handleEnvelope(env);
     }
   }
 
   /** Turn one received envelope into an inbound KubeClaw message. */
-  handleEnvelope(env) {
+  async handleEnvelope(env) {
     if (!env) return;
     const data = env.dataMessage;
-    // Only data messages with text are conversational. Skip receipts, typing,
-    // sync, reactions, and empty (attachment-only) messages.
-    if (!data || typeof data.message !== 'string' || data.message.length === 0) {
-      return;
-    }
+    if (!data) return;
+
+    const hasText = typeof data.message === 'string' && data.message.length > 0;
+    const hasAttachments = Array.isArray(data.attachments) && data.attachments.length > 0;
+
+    // Skip receipts, typing, sync, reactions — nothing to deliver
+    if (!hasText && !hasAttachments) return;
+
     // Ignore anything we sent ourselves (echoed sync messages).
     if (env.source === this.config.phoneNumber || env.sourceNumber === this.config.phoneNumber) {
       return;
@@ -156,7 +165,7 @@ class SignalChannel {
     const jid = this.jidForEnvelope(env);
     const isGroup = Boolean(data.groupInfo?.groupId);
 
-    // Only handle messages for registered groups/chats (mirrors the irc adapter).
+    // Only handle messages for registered groups/chats.
     const registered = this.opts.registeredGroups()[jid];
     if (!registered) {
       this.sdk.logger.debug({ jid }, 'signal: message from unregistered chat');
@@ -169,15 +178,18 @@ class SignalChannel {
     const timestamp = new Date(ts).toISOString();
     const msgId = `${ts}-${++this.messageId}`;
 
-    // For groups Signal requires an explicit trigger; rewrite a bare mention of
-    // the assistant name into the canonical trigger prefix so the agent runs.
-    let content = data.message;
-    if (isGroup && this.sdk.assistantName) {
+    let content = hasText ? data.message : '';
+    if (isGroup && this.sdk.assistantName && content) {
       const triggerRegex = new RegExp(`^@${this.sdk.assistantName}\\b`, 'i');
       const mentionRegex = new RegExp(`@${this.sdk.assistantName}\\b`, 'i');
       if (mentionRegex.test(content) && !triggerRegex.test(content)) {
         content = `@${this.sdk.assistantName} ${content}`;
       }
+    }
+
+    // Process attachments — await so the caller (receiveOnce) knows when delivery is done
+    if (hasAttachments) {
+      return this._handleAttachments(env, data.attachments, jid, registered, sender, senderName, content, timestamp, msgId, isGroup);
     }
 
     this.opts.onChatMetadata(jid, timestamp, senderName, 'signal', isGroup);
@@ -191,6 +203,88 @@ class SignalChannel {
       is_from_me: false,
     });
     this.sdk.logger.info({ jid, sender, isGroup }, 'signal: inbound message stored');
+  }
+
+  async _handleAttachments(env, attachments, jid, registered, sender, senderName, textContent, timestamp, msgId, isGroup) {
+    const markers = [];
+    for (const att of attachments) {
+      try {
+        const attId = att.id ?? att.attachmentId;
+        if (!attId) {
+          this.sdk.logger.warn({ att }, 'signal: attachment missing id, skipping');
+          continue;
+        }
+        const contentType = (att.contentType || att.content_type || '').toLowerCase();
+        const attRes = await fetch(`${this.config.apiUrl}/v1/attachments/${attId}`);
+        if (!attRes.ok) {
+          this.sdk.logger.warn({ attId, status: attRes.status }, 'signal: attachment download failed');
+          continue;
+        }
+        const arrayBuf = await attRes.arrayBuffer();
+        const buf = Buffer.from(arrayBuf);
+
+        // Sanitize filename — no path traversal
+        const rawFilename = att.filename || att.fileName || '';
+        const safeName = rawFilename.replace(/[^a-zA-Z0-9._-]/g, '_').replace(/^\.+/, '') || null;
+
+        // Derive extension from contentType if needed
+        let ext = '';
+        if (contentType.startsWith('image/jpeg') || contentType === 'image/jpg') ext = 'jpg';
+        else if (contentType.startsWith('image/png')) ext = 'png';
+        else if (contentType.startsWith('image/gif')) ext = 'gif';
+        else if (contentType.startsWith('image/webp')) ext = 'webp';
+        else if (contentType.startsWith('audio/')) ext = contentType.split('/')[1].split(';')[0] || 'ogg';
+        else if (contentType === 'application/pdf') ext = 'pdf';
+        else if (contentType.startsWith('image/')) ext = contentType.split('/')[1].split(';')[0] || 'bin';
+        else ext = 'bin';
+
+        const filename = safeName && safeName.includes('.') ? safeName : `att-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.${ext}`;
+        const attachDir = nodePath.join(this.sdk.groupsDir, registered.folder, 'attachments', 'raw');
+        fs.mkdirSync(attachDir, { recursive: true });
+        fs.writeFileSync(nodePath.join(attachDir, filename), buf);
+
+        const caption = (att.caption || '').trim();
+
+        let marker;
+        if (contentType.startsWith('image/')) {
+          marker = caption
+            ? `[ImageAttachment: attachments/raw/${filename} caption="${caption}"]`
+            : `[ImageAttachment: attachments/raw/${filename}]`;
+        } else if (contentType === 'application/pdf') {
+          marker = `[PdfAttachment: attachments/raw/${filename}]`;
+        } else if (contentType.startsWith('audio/')) {
+          marker = `[VoiceAttachment: attachments/raw/${filename}]`;
+        } else {
+          this.sdk.logger.warn({ contentType, filename }, 'signal: unrecognised attachment type, skipping marker');
+          continue;
+        }
+        markers.push(marker);
+      } catch (err) {
+        this.sdk.logger.warn({ err: String(err) }, 'signal: error processing attachment');
+      }
+    }
+
+    if (markers.length === 0 && !textContent) {
+      this.sdk.logger.debug({ jid }, 'signal: no deliverable content from attachments, skipping');
+      return;
+    }
+
+    // Combine: markers first, then text (if any)
+    const parts = [...markers];
+    if (textContent) parts.push(textContent);
+    const content = parts.join('\n');
+
+    this.opts.onChatMetadata(jid, timestamp, senderName, 'signal', isGroup);
+    this.opts.onMessage(jid, {
+      id: msgId,
+      chat_jid: jid,
+      sender,
+      sender_name: senderName,
+      content,
+      timestamp,
+      is_from_me: false,
+    });
+    this.sdk.logger.info({ jid, sender, isGroup, attachments: markers.length }, 'signal: inbound message with attachments stored');
   }
 
   // ── Send ─────────────────────────────────────────────────────────────────
@@ -237,6 +331,40 @@ class SignalChannel {
         { jid, length: text.length, chunks: chunks.length, successCount },
         'signal: message sent',
       );
+    }
+  }
+
+  async sendMedia(jid, buffer, mediaType, caption) {
+    if (!this.ownsJid(jid)) {
+      this.sdk.logger.warn({ jid }, 'signal: sendMedia called with non-signal JID');
+      return;
+    }
+    const recipient = this.recipientForJid(jid);
+    if (!recipient) {
+      this.sdk.logger.warn({ jid }, 'signal: empty recipient after JID parse (sendMedia)');
+      return;
+    }
+    const b64 = buffer.toString('base64');
+    const payload = {
+      message: caption || '',
+      number: this.config.phoneNumber,
+      recipients: [recipient],
+      base64_attachments: [b64],
+    };
+    try {
+      const res = await fetch(`${this.config.apiUrl}/v2/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) {
+        this.sdk.logger.info({ jid, mediaType }, 'signal: media sent');
+      } else {
+        const errText = await res.text().catch(() => '');
+        this.sdk.logger.error({ jid, status: res.status, errText }, 'signal: sendMedia failed');
+      }
+    } catch (err) {
+      this.sdk.logger.error({ jid, err: String(err) }, 'signal: sendMedia threw');
     }
   }
 
