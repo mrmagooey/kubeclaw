@@ -367,6 +367,205 @@ describe('registerChannelManifest http_port', () => {
   });
 });
 
+describe('registerChannelManifest sidecar', () => {
+  beforeEach(async () => {
+    await _initTestDatabase();
+    __resetDbForTest();
+  });
+
+  const VALID_SIDECAR = {
+    image: 'bbernhard/signal-cli-rest-api:0.93',
+    port: 8080,
+    sessionMountPath: '/home/signal-api/.local/share/signal-cli',
+    sessionStorageGi: 2,
+  };
+
+  it('registers a valid sidecar + host_mode channel-runner and persists it', () => {
+    const r = registerChannelManifest({
+      channel_type: 'signal',
+      package_json: VALID_PKG,
+      package_lock_json: VALID_LOCK,
+      host_mode: 'channel-runner',
+      sidecar: VALID_SIDECAR,
+    });
+    expect(r.ok).toBe(true);
+    const list = listChannelManifestOverrides();
+    expect(list).toHaveLength(1);
+    expect(list[0].sidecar).toEqual(VALID_SIDECAR);
+  });
+
+  it('stores optional sidecar fields when provided', () => {
+    const r = registerChannelManifest({
+      channel_type: 'signal',
+      package_json: VALID_PKG,
+      package_lock_json: VALID_LOCK,
+      host_mode: 'channel-runner',
+      sidecar: {
+        ...VALID_SIDECAR,
+        env: [{ name: 'MODE', value: 'normal' }],
+        healthPath: '/v1/about',
+        egressPorts: [443],
+      },
+    });
+    expect(r.ok).toBe(true);
+    const list = listChannelManifestOverrides();
+    expect(list[0].sidecar?.env).toEqual([{ name: 'MODE', value: 'normal' }]);
+    expect(list[0].sidecar?.healthPath).toBe('/v1/about');
+    expect(list[0].sidecar?.egressPorts).toEqual([443]);
+  });
+
+  it('rejects sidecar when host_mode is standalone', () => {
+    const r = registerChannelManifest({
+      channel_type: 'signal',
+      package_json: VALID_PKG,
+      package_lock_json: VALID_LOCK,
+      host_mode: 'standalone',
+      sidecar: VALID_SIDECAR,
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error).toMatch(/channel-runner/i);
+  });
+
+  it('rejects sidecar when host_mode is omitted (defaults to standalone)', () => {
+    const r = registerChannelManifest({
+      channel_type: 'signal',
+      package_json: VALID_PKG,
+      package_lock_json: VALID_LOCK,
+      sidecar: VALID_SIDECAR,
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error).toMatch(/channel-runner/i);
+  });
+
+  it('rejects sidecar with missing image', () => {
+    const r = registerChannelManifest({
+      channel_type: 'signal',
+      package_json: VALID_PKG,
+      package_lock_json: VALID_LOCK,
+      host_mode: 'channel-runner',
+      sidecar: { ...VALID_SIDECAR, image: '' },
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error).toMatch(/image/i);
+  });
+
+  it('rejects sidecar with missing port (zero)', () => {
+    const r = registerChannelManifest({
+      channel_type: 'signal',
+      package_json: VALID_PKG,
+      package_lock_json: VALID_LOCK,
+      host_mode: 'channel-runner',
+      sidecar: { ...VALID_SIDECAR, port: 0 },
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error).toMatch(/port/i);
+  });
+
+  it('rejects sidecar with port above 65535', () => {
+    const r = registerChannelManifest({
+      channel_type: 'signal',
+      package_json: VALID_PKG,
+      package_lock_json: VALID_LOCK,
+      host_mode: 'channel-runner',
+      sidecar: { ...VALID_SIDECAR, port: 70000 },
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error).toMatch(/port/i);
+  });
+
+  it('accepts a valid mid-range port (1234)', () => {
+    const r = registerChannelManifest({
+      channel_type: 'signal',
+      package_json: VALID_PKG,
+      package_lock_json: VALID_LOCK,
+      host_mode: 'channel-runner',
+      sidecar: { ...VALID_SIDECAR, port: 1234 },
+    });
+    expect(r.ok).toBe(true);
+  });
+
+  it('rejects sidecar with missing sessionMountPath', () => {
+    const r = registerChannelManifest({
+      channel_type: 'signal',
+      package_json: VALID_PKG,
+      package_lock_json: VALID_LOCK,
+      host_mode: 'channel-runner',
+      sidecar: { ...VALID_SIDECAR, sessionMountPath: '' },
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error).toMatch(/sessionMountPath/i);
+  });
+
+  it('rejects sidecar with non-absolute sessionMountPath', () => {
+    const r = registerChannelManifest({
+      channel_type: 'signal',
+      package_json: VALID_PKG,
+      package_lock_json: VALID_LOCK,
+      host_mode: 'channel-runner',
+      sidecar: { ...VALID_SIDECAR, sessionMountPath: 'relative/path' },
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error).toMatch(/sessionMountPath/i);
+  });
+
+  it('rejects sidecar with sessionStorageGi = 0', () => {
+    const r = registerChannelManifest({
+      channel_type: 'signal',
+      package_json: VALID_PKG,
+      package_lock_json: VALID_LOCK,
+      host_mode: 'channel-runner',
+      sidecar: { ...VALID_SIDECAR, sessionStorageGi: 0 },
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error).toMatch(/sessionStorageGi/i);
+  });
+
+  it('rejects egressPorts containing an out-of-range port (70000)', () => {
+    const r = registerChannelManifest({
+      channel_type: 'signal',
+      package_json: VALID_PKG,
+      package_lock_json: VALID_LOCK,
+      host_mode: 'channel-runner',
+      sidecar: { ...VALID_SIDECAR, egressPorts: [443, 70000] },
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error).toMatch(/egressPorts/i);
+  });
+
+  it('accepts egressPorts: [443]', () => {
+    const r = registerChannelManifest({
+      channel_type: 'signal',
+      package_json: VALID_PKG,
+      package_lock_json: VALID_LOCK,
+      host_mode: 'channel-runner',
+      sidecar: { ...VALID_SIDECAR, egressPorts: [443] },
+    });
+    expect(r.ok).toBe(true);
+  });
+
+  it('rejects env entry with empty name', () => {
+    const r = registerChannelManifest({
+      channel_type: 'signal',
+      package_json: VALID_PKG,
+      package_lock_json: VALID_LOCK,
+      host_mode: 'channel-runner',
+      sidecar: { ...VALID_SIDECAR, env: [{ name: '', value: 'x' }] },
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error).toMatch(/env/i);
+  });
+});
+
 describe('listChannelManifestOverrides', () => {
   beforeEach(async () => {
     await _initTestDatabase();

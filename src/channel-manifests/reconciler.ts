@@ -8,7 +8,7 @@
  */
 
 import { readFileSync, existsSync, readdirSync } from 'fs';
-import { listChannelManifestOverrides } from '../skills/orchestrator/channel-manifest-registry.js';
+import { listChannelManifestOverrides, type SidecarSpec } from '../skills/orchestrator/channel-manifest-registry.js';
 import { logger } from '../logger.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -29,6 +29,8 @@ export interface ChannelManifestEntry {
   hostMode?: 'standalone' | 'channel-runner';
   /** The channel's HTTP port if it serves HTTP traffic (e.g. 4080). Optional — omitted when not set. */
   httpPort?: number;
+  /** Optional sidecar container spec; only valid when hostMode === 'channel-runner'. */
+  sidecar?: SidecarSpec;
 }
 
 /** Shape of each per-channel-type JSON file in the baseline ConfigMap mount. */
@@ -38,6 +40,7 @@ interface BaselineFileContent {
   manifestHash: string;
   hostMode?: 'standalone' | 'channel-runner';
   httpPort?: number;
+  sidecar?: SidecarSpec;
 }
 
 // ─── Merge ────────────────────────────────────────────────────────────────────
@@ -101,6 +104,7 @@ export function loadBaselineFromDisk(
         package_lock_json: content.packageLockJson,
         hostMode: content.hostMode,
         httpPort: content.httpPort,
+        ...(content.sidecar !== undefined ? { sidecar: content.sidecar } : {}),
       });
     } catch (err) {
       logger.warn(
@@ -117,7 +121,7 @@ export function loadBaselineFromDisk(
 /** Minimal shape needed to render a manifest into the per-type ConfigMap value. */
 export type RenderableManifest = Pick<
   ChannelManifestEntry,
-  'channel_type' | 'package_json' | 'package_lock_json' | 'manifest_hash' | 'hostMode' | 'httpPort'
+  'channel_type' | 'package_json' | 'package_lock_json' | 'manifest_hash' | 'hostMode' | 'httpPort' | 'sidecar'
 >;
 
 /**
@@ -141,6 +145,7 @@ export function renderChannelManifestConfigMapData(
         manifestHash: m.manifest_hash,
         hostMode: m.hostMode ?? 'standalone',
         ...(m.httpPort !== undefined ? { httpPort: m.httpPort } : {}),
+        ...(m.sidecar !== undefined ? { sidecar: m.sidecar } : {}),
       });
     }
   }
@@ -192,6 +197,7 @@ export class ChannelManifestReconciler {
         package_lock_json: row.package_lock_json,
         hostMode: (row.host_mode as 'standalone' | 'channel-runner' | undefined) ?? 'standalone',
         ...(row.http_port !== undefined ? { httpPort: row.http_port as number } : {}),
+        ...(row.sidecar !== undefined ? { sidecar: row.sidecar } : {}),
       };
     });
 

@@ -31,12 +31,23 @@ export type Result<T = Record<string, never>> =
 
 export type ReconcileFn = () => Promise<void>;
 
+export interface SidecarSpec {
+  image: string;
+  port: number;
+  sessionMountPath: string;
+  sessionStorageGi: number;
+  env?: { name: string; value: string }[];
+  healthPath?: string;
+  egressPorts?: number[];
+}
+
 export interface RegisterArgs {
   channel_type: string;
   package_json: string;
   package_lock_json: string;
   host_mode?: 'standalone' | 'channel-runner';
   http_port?: number;
+  sidecar?: SidecarSpec;
 }
 
 export interface OverrideRow {
@@ -48,6 +59,7 @@ export interface OverrideRow {
   registered_by: string;
   host_mode: 'standalone' | 'channel-runner';
   http_port?: number;
+  sidecar?: SidecarSpec;
 }
 
 // ─── Register ─────────────────────────────────────────────────────────────────
@@ -133,23 +145,82 @@ export function registerChannelManifest(
     }
   }
 
+  // 8. Validate sidecar (if provided)
+  if (args.sidecar !== undefined) {
+    if (host_mode !== 'channel-runner') {
+      return {
+        ok: false,
+        error: `sidecar requires host_mode 'channel-runner' (got '${host_mode}')`,
+      };
+    }
+    const s = args.sidecar;
+    if (!s.image || typeof s.image !== 'string') {
+      return { ok: false, error: 'sidecar.image must be a non-empty string' };
+    }
+    if (!Number.isInteger(s.port) || s.port < 1 || s.port > 65535) {
+      return {
+        ok: false,
+        error: `sidecar.port must be an integer in range 1..65535 (got ${String(s.port)})`,
+      };
+    }
+    if (!s.sessionMountPath || typeof s.sessionMountPath !== 'string' || !s.sessionMountPath.startsWith('/')) {
+      return {
+        ok: false,
+        error: 'sidecar.sessionMountPath must be a non-empty absolute path (starts with /)',
+      };
+    }
+    if (typeof s.sessionStorageGi !== 'number' || s.sessionStorageGi <= 0) {
+      return {
+        ok: false,
+        error: `sidecar.sessionStorageGi must be a positive number (got ${String(s.sessionStorageGi)})`,
+      };
+    }
+    if (s.egressPorts !== undefined) {
+      for (const p of s.egressPorts) {
+        if (!Number.isInteger(p) || p < 1 || p > 65535) {
+          return {
+            ok: false,
+            error: `sidecar.egressPorts contains invalid port ${String(p)} (must be integer in 1..65535)`,
+          };
+        }
+      }
+    }
+    if (s.env !== undefined) {
+      for (const entry of s.env) {
+        if (!entry.name || typeof entry.name !== 'string') {
+          return {
+            ok: false,
+            error: `sidecar.env entry has empty or missing name`,
+          };
+        }
+      }
+    }
+  }
+
   // Compute hash
   const manifest_hash = computeManifestHash(
     args.package_json,
     args.package_lock_json,
   );
 
-  // Idempotency check — same channel_type AND same hash AND same host_mode AND same http_port → short-circuit
+  // Idempotency check — same channel_type AND same hash AND same host_mode AND same http_port AND same sidecar → short-circuit
   const existing = db.exec(
-    `SELECT manifest_hash, host_mode, http_port FROM channel_manifest_overrides WHERE channel_type = ?`,
+    `SELECT manifest_hash, host_mode, http_port, sidecar FROM channel_manifest_overrides WHERE channel_type = ?`,
     [args.channel_type],
   );
   if (existing.length > 0 && existing[0].values.length > 0) {
     const storedHash = existing[0].values[0][0] as string;
     const storedHostMode = ((existing[0].values[0][1] as string | null) ?? 'standalone') as 'standalone' | 'channel-runner';
     const storedHttpPort = (existing[0].values[0][2] as number | null) ?? undefined;
-    if (storedHash === manifest_hash && storedHostMode === host_mode && storedHttpPort === args.http_port) {
-      // Identical content, host_mode, and http_port — no-op, no reconcile
+    const storedSidecarJson = (existing[0].values[0][3] as string | null) ?? undefined;
+    const newSidecarJson = args.sidecar !== undefined ? JSON.stringify(args.sidecar) : undefined;
+    if (
+      storedHash === manifest_hash &&
+      storedHostMode === host_mode &&
+      storedHttpPort === args.http_port &&
+      storedSidecarJson === newSidecarJson
+    ) {
+      // Identical content, host_mode, http_port, and sidecar — no-op, no reconcile
       return { ok: true, manifest_hash, source: 'admin-registered' };
     }
   }
@@ -158,8 +229,8 @@ export function registerChannelManifest(
   const now = new Date().toISOString();
   db.run(
     `INSERT OR REPLACE INTO channel_manifest_overrides
-      (channel_type, package_json, package_lock_json, manifest_hash, registered_at, registered_by, host_mode, http_port)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      (channel_type, package_json, package_lock_json, manifest_hash, registered_at, registered_by, host_mode, http_port, sidecar)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       args.channel_type,
       args.package_json,
@@ -169,6 +240,7 @@ export function registerChannelManifest(
       'admin',
       host_mode,
       args.http_port ?? null,
+      args.sidecar !== undefined ? JSON.stringify(args.sidecar) : null,
     ],
   );
 
@@ -186,19 +258,23 @@ export function registerChannelManifest(
  */
 export function listChannelManifestOverrides(): OverrideRow[] {
   const rows = db.exec(
-    `SELECT channel_type, package_json, package_lock_json, manifest_hash, registered_at, registered_by, host_mode, http_port
+    `SELECT channel_type, package_json, package_lock_json, manifest_hash, registered_at, registered_by, host_mode, http_port, sidecar
      FROM channel_manifest_overrides
      ORDER BY channel_type`,
   );
   if (rows.length === 0) return [];
-  return rows[0].values.map((row) => ({
-    channel_type: row[0] as string,
-    package_json: row[1] as string,
-    package_lock_json: row[2] as string,
-    manifest_hash: row[3] as string,
-    registered_at: row[4] as string,
-    registered_by: row[5] as string,
-    host_mode: ((row[6] as string | null) ?? 'standalone') as 'standalone' | 'channel-runner',
-    http_port: (row[7] as number | null) ?? undefined,
-  }));
+  return rows[0].values.map((row) => {
+    const sidecarJson = row[8] as string | null;
+    return {
+      channel_type: row[0] as string,
+      package_json: row[1] as string,
+      package_lock_json: row[2] as string,
+      manifest_hash: row[3] as string,
+      registered_at: row[4] as string,
+      registered_by: row[5] as string,
+      host_mode: ((row[6] as string | null) ?? 'standalone') as 'standalone' | 'channel-runner',
+      http_port: (row[7] as number | null) ?? undefined,
+      ...(sidecarJson !== null ? { sidecar: JSON.parse(sidecarJson) as SidecarSpec } : {}),
+    };
+  });
 }

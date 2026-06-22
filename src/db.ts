@@ -242,6 +242,15 @@ function createSchema(database: SqlJsDatabase): void {
     /* column already exists */
   }
 
+  // Additive migration: add sidecar (JSON blob) to channel_manifest_overrides.
+  try {
+    database.run(
+      `ALTER TABLE channel_manifest_overrides ADD COLUMN sidecar TEXT`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
   // Story 179: admin-registered bootstrap skills (runtime write path).
   database.run(`
     CREATE TABLE IF NOT EXISTS bootstrap_skill_overrides (
