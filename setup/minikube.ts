@@ -3,6 +3,7 @@
  *
  * Phases:
  *   1. Start minikube (bridge CNI by default, Cilium opt-in)
+ *   1.5 Install Istio (idempotent; skipped if virtualservices CRD already present)
  *   2. Build container images into minikube's Docker daemon
  *   3. Install Falco (runtime security)
  *   3.5 Install cert-manager (Issuer/Certificate CRDs for credentialInjection)
@@ -15,6 +16,7 @@
  *   npm run setup:minikube -- --skip-build     # skip image build
  *   npm run setup:minikube -- --skip-falco     # skip Falco install
  *   npm run setup:minikube -- --skip-cert-manager  # skip cert-manager install
+ *   npm run setup:minikube -- --skip-istio     # skip Istio install
  *   npm run setup:minikube -- --cpus 6 --memory 8192
  *   npm run setup:minikube -- --profile kubeclaw  # use a named minikube profile
  *   npm run setup:minikube -- --cni=cilium     # opt-in to Cilium CNI
@@ -39,18 +41,20 @@ export interface MinikubeOpts {
   skipBuild: boolean;
   skipFalco: boolean;
   skipCertManager: boolean;
+  skipIstio: boolean;
   profile: string; // named minikube profile; empty = default profile
   cni: CniMode;
 }
 
 export function parseArgs(args: string[]): MinikubeOpts {
   let cpus = 4;
-  let memory = 6144;
+  let memory = 8192;
   let disk = '20g';
   let reset = false;
   let skipBuild = false;
   let skipFalco = false;
   let skipCertManager = false;
+  let skipIstio = false;
   let profile = '';
   let cni: CniMode = 'auto';
 
@@ -59,6 +63,7 @@ export function parseArgs(args: string[]): MinikubeOpts {
     else if (args[i] === '--skip-build') skipBuild = true;
     else if (args[i] === '--skip-falco') skipFalco = true;
     else if (args[i] === '--skip-cert-manager') skipCertManager = true;
+    else if (args[i] === '--skip-istio') skipIstio = true;
     else if (args[i] === '--with-cilium') cni = 'cilium';
     else if (args[i] === '--cpus' && args[i + 1]) { cpus = parseInt(args[++i], 10); }
     else if (args[i] === '--memory' && args[i + 1]) { memory = parseInt(args[++i], 10); }
@@ -81,7 +86,7 @@ export function parseArgs(args: string[]): MinikubeOpts {
     }
   }
 
-  return { cpus, memory, disk, reset, skipBuild, skipFalco, skipCertManager, profile, cni };
+  return { cpus, memory, disk, reset, skipBuild, skipFalco, skipCertManager, skipIstio, profile, cni };
 }
 
 /** Returns `['-p', profile]` when a named profile is set, otherwise `[]`. */
@@ -267,6 +272,104 @@ async function waitForCilium(): Promise<void> {
   const ready = await waitForDaemonSet('kube-system', 'cilium', 120_000);
   if (!ready) throw new Error('cilium_not_ready');
   logger.info('Cilium is ready');
+}
+
+// ── phase 1.5: istio ─────────────────────────────────────────────────────────
+
+/**
+ * Check whether istioctl is on PATH or download version 1.24.3 if absent.
+ * Returns the path to the istioctl binary.
+ */
+function ensureIstioctl(): string {
+  // Try PATH first
+  const which = spawnSync('which', ['istioctl'], {
+    encoding: 'utf8',
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  if (which.status === 0 && which.stdout.trim()) {
+    return 'istioctl';
+  }
+
+  // Not on PATH — download 1.24.3 to a temp dir
+  const istioVersion = '1.24.3';
+  const homeDir = process.env.HOME ?? '/root';
+  const istioDir = `${homeDir}/istio-${istioVersion}`;
+  const istioctlPath = `${istioDir}/bin/istioctl`;
+
+  // Already downloaded?
+  const check = spawnSync('test', ['-f', istioctlPath], { stdio: 'pipe' });
+  if (check.status === 0) {
+    logger.info({ path: istioctlPath }, 'Using previously downloaded istioctl');
+    return istioctlPath;
+  }
+
+  logger.info(`istioctl not found on PATH — downloading v${istioVersion}`);
+  const download = spawnSync(
+    'bash',
+    [
+      '-c',
+      `curl -L https://istio.io/downloadIstio | ISTIO_VERSION=${istioVersion} TARGET_ARCH=$(uname -m) sh -`,
+    ],
+    { stdio: 'inherit', cwd: homeDir },
+  );
+  if (download.status !== 0) throw new Error('istioctl_download_failed');
+  logger.info({ path: istioctlPath }, 'istioctl downloaded');
+  return istioctlPath;
+}
+
+/**
+ * Check if the virtualservices CRD exists — used as the idempotency sentinel.
+ * If it does, Istio is already installed and we skip.
+ */
+function istioAlreadyInstalled(): boolean {
+  const r = spawnSync(
+    'kubectl',
+    ['get', 'crd', 'virtualservices.networking.istio.io'],
+    { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] },
+  );
+  return r.status === 0;
+}
+
+/**
+ * Install Istio using the minimal profile with low-resource proxy settings.
+ * Idempotent: skips if the virtualservices CRD is already present.
+ */
+async function installIstio(): Promise<void> {
+  if (istioAlreadyInstalled()) {
+    logger.info('Istio already installed (virtualservices CRD present) — skipping');
+    return;
+  }
+
+  logger.info('Installing Istio (minimal profile, low-resource proxies)');
+  const istioctlPath = ensureIstioctl();
+
+  const install = spawnSync(
+    istioctlPath,
+    [
+      'install',
+      '--set', 'profile=minimal',
+      '--set', 'values.global.proxy.resources.requests.cpu=10m',
+      '--set', 'values.global.proxy.resources.requests.memory=40Mi',
+      '-y',
+    ],
+    { stdio: 'inherit' },
+  );
+  if (install.status !== 0) throw new Error('istio_install_failed');
+
+  logger.info('Waiting for Istio pods to be Ready (up to 5 min)');
+  const wait = spawnSync(
+    'kubectl',
+    [
+      'wait',
+      '--for=condition=Ready',
+      'pods', '--all',
+      '-n', 'istio-system',
+      '--timeout=300s',
+    ],
+    { stdio: 'inherit' },
+  );
+  if (wait.status !== 0) throw new Error('istio_pods_not_ready');
+  logger.info('Istio is ready');
 }
 
 // ── phase 2: image build ──────────────────────────────────────────────────────
@@ -470,6 +573,26 @@ export async function run(args: string[]): Promise<void> {
       ...(diag ? { CILIUM_PODS: truncateText(diag) } : {}),
     });
     process.exit(1);
+  }
+
+  // Phase 1.5: Istio
+  if (!opts.skipIstio) {
+    try {
+      await installIstio();
+      emitStatus('SETUP_MINIKUBE_ISTIO', { STATUS: 'ok' });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const diag = runKubectl(['get', 'pods', '-n', 'istio-system'], 10);
+      emitStatus('SETUP_MINIKUBE_ISTIO', {
+        STATUS: 'failed',
+        ERROR: msg,
+        ...(diag ? { ISTIO_PODS: truncateText(diag) } : {}),
+      });
+      process.exit(1);
+    }
+  } else {
+    logger.info('Skipping Istio install (--skip-istio)');
+    emitStatus('SETUP_MINIKUBE_ISTIO', { STATUS: 'skipped' });
   }
 
   // Phase 2: images

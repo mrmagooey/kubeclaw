@@ -191,6 +191,75 @@ async function ensureMinikube(): Promise<void> {
   throw new Error(`${REQUIRED_CNI} DaemonSet did not become Ready within 180s`);
 }
 
+/**
+ * Idempotently install Istio (minimal profile, low-resource proxies).
+ * Skips if the virtualservices CRD is already present.
+ *
+ * NOTE: Cilium + Istio coexistence at 8GB is validated separately by the
+ * coordinator; this install is idempotent.
+ */
+async function ensureIstio(): Promise<void> {
+  // Check for idempotency sentinel — skip if already installed.
+  const crdCheck = run(
+    'kubectl',
+    ['get', 'crd', 'virtualservices.networking.istio.io'],
+    { allowFail: true },
+  );
+  if (crdCheck.ok) {
+    console.log('✅ Istio already installed (virtualservices CRD present) — skipping');
+    return;
+  }
+
+  // Locate istioctl — prefer PATH, fall back to ~/istio-1.24.3/bin/istioctl.
+  const ISTIO_VERSION = '1.24.3';
+  const homeDir = process.env.HOME ?? '/root';
+  const downloadedPath = `${homeDir}/istio-${ISTIO_VERSION}/bin/istioctl`;
+
+  const whichIstio = run('which', ['istioctl'], { allowFail: true });
+  let istioctlBin = whichIstio.ok ? 'istioctl' : downloadedPath;
+
+  // Check downloaded path exists.
+  const binExists = run('test', ['-f', downloadedPath], { allowFail: true });
+  if (!whichIstio.ok && !binExists.ok) {
+    console.log(`🔽 Downloading istioctl ${ISTIO_VERSION}...`);
+    run(
+      'bash',
+      [
+        '-c',
+        `curl -L https://istio.io/downloadIstio | ISTIO_VERSION=${ISTIO_VERSION} sh -`,
+      ],
+      { timeout: 300_000 },
+    );
+    istioctlBin = downloadedPath;
+  }
+
+  console.log(`🔧 Installing Istio ${ISTIO_VERSION} (minimal profile)...`);
+  run(
+    istioctlBin,
+    [
+      'install',
+      '--set', 'profile=minimal',
+      '--set', 'values.global.proxy.resources.requests.cpu=10m',
+      '--set', 'values.global.proxy.resources.requests.memory=40Mi',
+      '-y',
+    ],
+    { timeout: 300_000 },
+  );
+
+  console.log('⏳ Waiting for Istio pods to be Ready (up to 5 min)...');
+  run(
+    'kubectl',
+    [
+      'wait',
+      '--for=condition=Ready', 'pods', '--all',
+      '-n', 'istio-system',
+      '--timeout=300s',
+    ],
+    { timeout: 360_000 },
+  );
+  console.log('✅ Istio ready\n');
+}
+
 function latestMtimeUnder(
   dir: string,
   exclude: Set<string> = new Set(['node_modules', '.git', '.claude', 'dist']),
@@ -1085,6 +1154,7 @@ async function teardownImpl() {
 export default async function setup() {
   console.log('🚀 minikube-live global setup starting...\n');
   await ensureMinikube();
+  await ensureIstio();
   await ensureImage(
     'kubeclaw-agent:latest',
     'container/Dockerfile',

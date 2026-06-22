@@ -10,7 +10,7 @@ TEST_PHASE ?= all
 DEBUG ?= false
 CI_MODE ?= false
 MINIKUBE_DRIVER ?= docker
-MINIKUBE_MEMORY ?= 4096
+MINIKUBE_MEMORY ?= 8192
 MINIKUBE_CPUS ?= 2
 KUBERNETES_VERSION ?= v1.29.0
 
@@ -69,6 +69,22 @@ setup-minikube: ## Setup minikube cluster
 		echo "$(GREEN)Minikube is already running$(NC)"; \
 	fi
 	@kubectl config use-context minikube || true
+	@echo "$(GREEN)Installing Istio (idempotent)...$(NC)"
+	@if kubectl get crd virtualservices.networking.istio.io &>/dev/null; then \
+		echo "$(GREEN)Istio already installed — skipping$(NC)"; \
+	else \
+		if ! command -v istioctl &>/dev/null; then \
+			echo "$(YELLOW)Downloading istioctl 1.24.3...$(NC)"; \
+			curl -L https://istio.io/downloadIstio | ISTIO_VERSION=1.24.3 sh -; \
+			export PATH="$$PWD/istio-1.24.3/bin:$$PATH"; \
+		fi; \
+		istioctl install \
+			--set profile=minimal \
+			--set values.global.proxy.resources.requests.cpu=10m \
+			--set values.global.proxy.resources.requests.memory=40Mi \
+			-y; \
+		kubectl wait --for=condition=Ready pods --all -n istio-system --timeout=300s; \
+	fi
 	@echo "$(GREEN)Minikube setup complete$(NC)"
 
 build-images: ## Build Docker images for testing
