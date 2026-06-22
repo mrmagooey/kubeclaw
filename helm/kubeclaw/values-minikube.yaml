@@ -107,12 +107,23 @@ bootstrap:
       # channel-runner mode: routes inbound Signal messages into the agent loop
       # and sends replies via the injected SDK/opts. No httpPort — Signal is an
       # outbound/inbound transport, not an HTTP-served channel.
-      # The adapter has NO npm deps: it talks to the kubeclaw-signal-cli
-      # (bbernhard/signal-cli-rest-api) service over HTTP using Node's global
-      # fetch. Enable the daemon via `signalCli.enabled=true`.
+      # The adapter has NO npm deps: it talks to the per-channel signal-cli sidecar
+      # (bbernhard/signal-cli-rest-api) over localhost:8080 using Node's global fetch.
+      # The sidecar is created automatically alongside the channel pod.
       hostMode: channel-runner
       packageJson: |
         {"name":"signal-runtime","version":"1.0.0"}
       packageLockJson: |
         {"name":"signal-runtime","version":"1.0.0","lockfileVersion":3,"requires":true,"packages":{"":{"name":"signal-runtime","version":"1.0.0"}}}
       manifestHash: "027224ce7530c22abcb57c6e88e0ed9258003d255b9c161b9141f0db71e7accb"
+      sidecar:
+        image: bbernhard/signal-cli-rest-api:0.93
+        port: 8080
+        sessionMountPath: /home/.local/share/signal-cli
+        sessionStorageGi: 5
+        env:
+          - name: MODE
+            value: native
+        healthPath: /v1/health
+        egressPorts: [443]
+        apiUrlEnv: SIGNAL_API_URL

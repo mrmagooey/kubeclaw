@@ -1369,3 +1369,111 @@ describe('channel manifest sidecar rendering', () => {
     expect(deployDoc).not.toContain('-backend');
   });
 });
+
+// ─── Signal channel: per-channel sidecar migration ───────────────────────────
+//
+// After migrating Signal off the shared kubeclaw-signal-cli StatefulSet:
+//   1. The signal manifest's sidecar field causes the channel pod to include
+//      a signal-backend container + auxsession PVC + 443 egress netpol.
+//   2. NO kubeclaw-signal-cli StatefulSet or Service is rendered anywhere.
+//   3. SIGNAL_API_URL is injected as http://localhost:8080 (apiUrlEnv).
+//
+// We render with values-minikube.yaml (which includes the full signal sidecar
+// manifest) plus channels.signal.enabled=true to activate the channel.
+
+describe('signal channel: per-channel sidecar migration (no shared StatefulSet)', () => {
+  // Use values-minikube.yaml which has the full signal sidecar manifest defined.
+  const MINIKUBE_VALUES = './helm/kubeclaw/values-minikube.yaml';
+
+  let rendered: string;
+  let docs: string[];
+
+  beforeAll(() => {
+    const result = spawnSync(
+      'helm',
+      [
+        'template', 'smoke', CHART_DIR,
+        '-f', MINIKUBE_VALUES,
+        '--set', 'channels.signal.enabled=true',
+        '--set', 'channels.signal.type=signal',
+        '--set', 'networkPolicy.enabled=true',
+        '--set', 'secrets.anthropicApiKey=test',
+        '--set', 'redis.password=test',
+      ],
+      { encoding: 'utf8' },
+    );
+    expect(result.status, `helm template failed: ${result.stderr}`).toBe(0);
+    rendered = result.stdout;
+    docs = rendered.split(/\n---\n/);
+  });
+
+  it('renders NO kubeclaw-signal-cli StatefulSet', () => {
+    const signalCliSS = docs.find(
+      (d) =>
+        /^kind: StatefulSet$/m.test(d) &&
+        d.includes('kubeclaw-signal-cli'),
+    );
+    expect(signalCliSS, 'kubeclaw-signal-cli StatefulSet must not exist').toBeUndefined();
+  });
+
+  it('renders NO kubeclaw-signal-cli Service', () => {
+    const signalCliSvc = docs.find(
+      (d) =>
+        /^kind: Service$/m.test(d) &&
+        /^\s+name: kubeclaw-signal-cli$/m.test(d),
+    );
+    expect(signalCliSvc, 'kubeclaw-signal-cli Service must not exist').toBeUndefined();
+  });
+
+  it('renders the signal-backend sidecar container in the channel Deployment', () => {
+    const deployDoc = docs.find(
+      (d) =>
+        /^kind: Deployment$/m.test(d) &&
+        /^\s+name: kubeclaw-channel-signal$/m.test(d),
+    );
+    expect(deployDoc, 'signal channel Deployment not found').toBeDefined();
+    expect(deployDoc).toContain('name: signal-backend');
+    expect(deployDoc).toContain('image: bbernhard/signal-cli-rest-api:0.93');
+  });
+
+  it('injects SIGNAL_API_URL=http://localhost:8080 into the channel container env', () => {
+    const deployDoc = docs.find(
+      (d) =>
+        /^kind: Deployment$/m.test(d) &&
+        /^\s+name: kubeclaw-channel-signal$/m.test(d),
+    );
+    expect(deployDoc, 'signal channel Deployment not found').toBeDefined();
+    expect(deployDoc).toContain('SIGNAL_API_URL');
+    expect(deployDoc).toContain('http://localhost:8080');
+  });
+
+  it('renders the auxsession PVC for the signal channel', () => {
+    const pvcDoc = docs.find(
+      (d) =>
+        /^kind: PersistentVolumeClaim$/m.test(d) &&
+        /^\s+name: kubeclaw-channel-signal-auxsession$/m.test(d),
+    );
+    expect(pvcDoc, 'signal auxsession PVC not found').toBeDefined();
+    expect(pvcDoc).toContain('5Gi');
+  });
+
+  it('renders a per-channel sidecar-egress NetworkPolicy allowing port 443', () => {
+    const npDoc = docs.find(
+      (d) =>
+        /^kind: NetworkPolicy$/m.test(d) &&
+        /^\s+name: kubeclaw-channel-signal-sidecar-egress$/m.test(d),
+    );
+    expect(npDoc, 'signal sidecar-egress NetworkPolicy not found').toBeDefined();
+    expect(npDoc).toContain('port: 443');
+  });
+
+  it('renders fsGroup: 1000 in pod securityContext', () => {
+    const deployDoc = docs.find(
+      (d) =>
+        /^kind: Deployment$/m.test(d) &&
+        /^\s+name: kubeclaw-channel-signal$/m.test(d),
+    );
+    expect(deployDoc).toBeDefined();
+    expect(deployDoc).toContain('fsGroup: 1000');
+  });
+});

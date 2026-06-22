@@ -73,7 +73,7 @@ describe('signal-adapter: factory + config parsing', () => {
 
   it('defaults api url and poll interval', () => {
     const { ch } = buildChannel({ SIGNAL_PHONE_NUMBER: BOT });
-    expect(ch.config.apiUrl).toBe('http://kubeclaw-signal-cli:8080');
+    expect(ch.config.apiUrl).toBe('http://localhost:8080');
     expect(ch.config.pollMs).toBe(2000);
   });
 
@@ -230,7 +230,7 @@ describe('signal-adapter: receiveOnce drains the queue', () => {
     });
     await ch.receiveOnce();
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://kubeclaw-signal-cli:8080/v1/receive/' + encodeURIComponent(BOT),
+      'http://localhost:8080/v1/receive/' + encodeURIComponent(BOT),
     );
     expect(opts.onMessage).toHaveBeenCalledTimes(1);
     expect(opts.onMessage).toHaveBeenCalledWith(
@@ -309,7 +309,7 @@ describe('signal-adapter: sendMessage → POST /v2/send', () => {
     await ch.sendMessage('signal:+61400000000', 'hi there');
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe('http://kubeclaw-signal-cli:8080/v2/send');
+    expect(url).toBe('http://localhost:8080/v2/send');
     expect(init.method).toBe('POST');
     expect(JSON.parse(init.body)).toEqual({
       message: 'hi there',
@@ -550,7 +550,7 @@ describe('signal-adapter: sendMedia', () => {
     await (ch as any).sendMedia('signal:+61400000000', imgBuf, 'image/png', 'hello caption');
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe('http://kubeclaw-signal-cli:8080/v2/send');
+    expect(url).toBe('http://localhost:8080/v2/send');
     const body = JSON.parse(init.body);
     expect(body.recipients).toEqual(['+61400000000']);
     expect(body.number).toBe(BOT);

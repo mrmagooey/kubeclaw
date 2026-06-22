@@ -4,32 +4,40 @@ description: Signal channel via signal-cli REST API (no npm dependency)
 dependencies: []
 env:
   - SIGNAL_PHONE_NUMBER
-  - SIGNAL_CLI_URL
 ---
 
 # Signal Channel
 
-Connects to Signal via HTTP to a signal-cli-rest-api sidecar. No npm dependency — uses native fetch.
+Connects to Signal via HTTP to a per-channel `signal-cli-rest-api` sidecar
+container. No npm dependency — uses native fetch.
 
 ## Setup
 
-1. Deploy `bbernhard/signal-cli-rest-api` as a sidecar or separate pod
-2. Register your phone number:
-   - `POST /v1/register/{number}` to request SMS verification
-   - `POST /v1/register/{number}/verify/{code}` with the received code
-3. Send a message to a Signal group to discover the group ID
+The `bbernhard/signal-cli-rest-api` backend is automatically deployed as a
+sidecar container alongside the channel pod (declared in the signal channel
+manifest). The sidecar listens at `http://localhost:8080` inside the pod.
+
+After the channel pod is Running, link or register the bot account:
+
+1. Port-forward into the channel pod:
+   ```
+   kubectl port-forward pod/<channel-pod-name> 8080:8080 -n kubeclaw
+   ```
+2. Link as a secondary device (recommended): open
+   `GET http://localhost:8080/v1/qrcodelink?device_name=kubeclaw` in a
+   browser, then scan the QR code from Signal → Settings → Linked devices → +
+3. Or register a dedicated number: `POST /v1/register/{number}` then
+   `POST /v1/register/{number}/verify/{code}` with the received code.
+
+The session persists on the `kubeclaw-channel-<instance>-auxsession` PVC.
 
 ## Configuration
 
 - `SIGNAL_PHONE_NUMBER`: your number in E.164 format (e.g. `+14155552671`)
-- `SIGNAL_CLI_URL`: URL of the signal-cli REST API (e.g. `http://kubeclaw-signal-cli:8080`)
-- `SIGNAL_POLL_INTERVAL_MS`: polling interval (default: 2000)
+- `SIGNAL_API_URL`: injected automatically as `http://localhost:8080` by the manifest's `apiUrlEnv` — do not set manually
+- `SIGNAL_POLL_MS`: polling interval (default: 2000)
 
 ## JID Format
 
 - `signal:+{phone}` for direct messages
-- `signal:g.{groupId}` for groups
-
-## Kubernetes
-
-Requires `signalCli.enabled: true` in Helm values to deploy the signal-cli StatefulSet.
+- `signal:group.{groupId}` for groups

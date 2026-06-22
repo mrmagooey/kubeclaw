@@ -3,11 +3,12 @@
  * Signal channel adapter for KubeClaw — channel-runner mode.
  *
  * Backend: bbernhard/signal-cli-rest-api (a Dockerized REST wrapper around
- * AsamK/signal-cli). A long-lived `kubeclaw-signal-cli` StatefulSet holds the
- * linked Signal account session on a PVC and exposes an HTTP API on :8080. This
- * adapter talks to it over plain HTTP using Node's built-in global `fetch` —
- * so it needs NO npm dependencies (no native libsignal compile, nothing that
- * fights `npm ci --ignore-scripts`).
+ * AsamK/signal-cli). The backend runs as a per-channel sidecar container
+ * (injected automatically by the channel manifest's `sidecar` field) and
+ * exposes an HTTP API on :8080 at localhost. This adapter talks to it over
+ * plain HTTP using Node's built-in global `fetch` — so it needs NO npm
+ * dependencies (no native libsignal compile, nothing that fights
+ * `npm ci --ignore-scripts`).
  *
  * Receive model: poll `GET /v1/receive/{number}` on an interval. That endpoint
  * works in every signal-cli-rest-api MODE (normal/native/json-rpc) and drains
@@ -27,15 +28,15 @@
  *
  * Config (from the channel Secret / env):
  *   SIGNAL_PHONE_NUMBER  the bot's own E.164 number (the linked/registered number)
- *   SIGNAL_API_URL       base URL of the signal-cli-rest-api service
- *                        (default http://kubeclaw-signal-cli:8080)
+ *   SIGNAL_API_URL       base URL of the signal-cli-rest-api sidecar
+ *                        (default http://localhost:8080 — injected by manifest apiUrlEnv)
  *   SIGNAL_POLL_MS       receive poll interval in ms (default 2000)
  */
 
 import fs from 'node:fs';
 import nodePath from 'node:path';
 
-const DEFAULT_API_URL = 'http://kubeclaw-signal-cli:8080';
+const DEFAULT_API_URL = 'http://localhost:8080';
 const DEFAULT_POLL_MS = 2000;
 // signal-cli-rest-api default; Signal's hard limit is higher but chunk to be safe.
 const MAX_MESSAGE_LENGTH = 4000;

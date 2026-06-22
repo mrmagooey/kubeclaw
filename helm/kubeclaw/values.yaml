@@ -336,20 +336,6 @@ ciliumNetworkPolicy:
     # If empty, all HTTP/HTTPS egress is allowed (standard NetworkPolicy behaviour).
     allowedFQDNs: []
 
-# Signal messaging channel — deploys signal-cli-rest-api as a StatefulSet.
-# Enable alongside channels.signal.enabled to use Signal as a channel.
-# After deploying, register your number via the signal-cli REST API.
-signalCli:
-  enabled: false
-  imageTag: latest
-  # "native" uses the native signal-cli binary (recommended); "json-rpc" for older versions
-  mode: native
-  storage: 5Gi
-  resources:
-    limits:
-      memory: 512Mi
-      cpu: "1"
-
 # --- Credential injection (network-layer auth header injection) ---
 # When enabled, third-party API credentials are NOT injected as env vars
 # into channel/capability/tool-job pods. Instead, a credential-broker
