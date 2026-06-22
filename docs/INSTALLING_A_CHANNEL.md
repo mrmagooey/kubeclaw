@@ -118,8 +118,62 @@ Credentials are gathered by the bootstrap dialogue (interactive) or supplied via
 | `discord` _(aspirational)_ | Bot token | https://discord.com/developers/applications → Bot → Token |
 | `slack` _(aspirational)_ | Bot token + App token | https://api.slack.com/apps → OAuth & Permissions / Socket Mode |
 | `whatsapp` _(aspirational)_ | Phone number | WhatsApp Business API setup |
-| `signal` _(aspirational)_ | Phone number | signal-cli registration |
+| `signal` | Phone number (E.164) | See [Signal](#signal) below — the signal-cli sidecar is created with the channel pod; link the device afterward via port-forward |
 | `gmail` _(aspirational)_ | OAuth credentials | Google Cloud project with Gmail API enabled |
+
+### Signal
+
+Signal is a **channel-runner** adapter backed by a per-channel `bbernhard/signal-cli-rest-api` sidecar. There is no separately-deployed shared Signal daemon — the sidecar is created automatically alongside the channel pod when you install a Signal instance.
+
+**What the sidecar field does:**
+- Adds a second container (`signal-backend`) to the channel pod running `bbernhard/signal-cli-rest-api:0.93`.
+- Creates a `kubeclaw-channel-<instance>-auxsession` PVC (5 GiB by default) mounted exclusively on the sidecar at `/home/.local/share/signal-cli`.
+- Injects `SIGNAL_API_URL=http://localhost:8080` into the channel container automatically (via `apiUrlEnv`).
+- Adds a per-channel `sidecar-egress` NetworkPolicy allowing outbound TCP 443 for Signal's infrastructure.
+
+The adapter has **no npm dependencies** — it uses Node's built-in `fetch` to poll and send.
+
+**Bootstrap (interactive, Path A):**
+
+Ensure the Signal manifest ships in `bootstrap.channelManifests.signal` (it is included in `values-minikube.yaml` and any overlay that inherits from it). Then:
+
+```
+# In the admin shell:
+bootstrap_channel_from_skill(type="signal")
+# Or for a named instance:
+bootstrap_channel_from_skill(type="signal", instance_name="signal-personal")
+```
+
+You will be asked for the bot's E.164 phone number (e.g. `+61412345678`). That is the only credential gathered; the `SIGNAL_API_URL` is injected by the manifest and does not need to be provided.
+
+**Linking the device (post-install — required):**
+
+After the channel pod reaches Running state, link the Signal account. The session persists on the `auxsession` PVC and survives pod restarts.
+
+1. Find the channel pod name:
+   ```bash
+   kubectl get pods -n kubeclaw -l app=kubeclaw-channel-<instance>
+   ```
+
+2. Port-forward into the pod (the sidecar listens on 8080):
+   ```bash
+   kubectl port-forward pod/<pod-name> 8080:8080 -n kubeclaw
+   ```
+
+3. Two paths:
+   - **Link as secondary device (recommended):** Open `http://localhost:8080/v1/qrcodelink?device_name=kubeclaw` in a browser. On your phone: *Signal → Settings → Linked devices → +* and scan the QR code. The bot sends/receives as your existing number.
+   - **Register a dedicated number:** `POST http://localhost:8080/v1/register/<number>` (with captcha token), then `POST http://localhost:8080/v1/register/<number>/verify/<sms-code>`.
+
+Once linked, the session is durable — the `auxsession` PVC keeps the linked-device credentials across pod restarts and upgrades.
+
+**Multi-instance:** each instance gets its own sidecar, its own `auxsession` PVC, and therefore its own Signal device. You must link each instance separately.
+
+```
+bootstrap_channel_from_skill(type="signal", instance_name="signal-personal")
+bootstrap_channel_from_skill(type="signal", instance_name="signal-work")
+```
+
+For developer notes on extending or modifying the Signal adapter, see [DEVELOPING_A_CHANNEL.md](DEVELOPING_A_CHANNEL.md#channels-with-an-external-backend-sidecar).
 
 ### Removing a channel
 

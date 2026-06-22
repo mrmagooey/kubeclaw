@@ -186,6 +186,119 @@ See `helm/kubeclaw/files/channel-src/nanoid-echo/channel-entry.js` (simple HTTP 
 
 ---
 
+## Channels with an external backend (sidecar)
+
+Some channels cannot embed a client library — the library requires a native runtime, a separately-managed daemon, or a registration/linking step that must happen outside the agent loop. Signal is the canonical example: the reference implementation (`libsignal`) is native C and cannot run inside `npm ci --ignore-scripts`. The solution is to run the third-party backend as a **sidecar container** in the same pod and let the adapter talk to it over `localhost`.
+
+### When to use this
+
+Use a sidecar when:
+- The official client is a native binary or a Docker image, not a JS library (Signal, Matrix via element-web, etc.).
+- The backend must maintain long-lived session state (a linked device, an XMPP connection) that outlives individual messages.
+- The adapter communicates with the backend over a plain HTTP REST API.
+
+Do NOT use a sidecar for pure-JS clients (Slack SDK, Telegram's `telegraf`, IRC) — those embed directly in the adapter. Sidecars are `channel-runner` mode only.
+
+### The `sidecar` manifest field
+
+Declare the sidecar in the channel's manifest (`bootstrap.channelManifests.<type>.sidecar` in Helm values, or via `register_channel_manifest` in the admin shell). **`sidecar` is only valid when `hostMode: channel-runner`.**
+
+| Field | Type | Required | Purpose |
+|---|---|---|---|
+| `image` | `string` | yes | Container image for the backend (e.g. `bbernhard/signal-cli-rest-api:0.93`) |
+| `port` | `number` | yes | Port the backend listens on inside the pod (the adapter reaches it at `http://localhost:<port>`) |
+| `sessionMountPath` | `string` (absolute path) | yes | Filesystem path where the backend stores its session/account data (e.g. `/home/.local/share/signal-cli`) |
+| `sessionStorageGi` | `number` | yes | Size in GiB for the per-instance session PVC |
+| `env` | `{name, value}[]` | no | Extra environment variables for the sidecar container |
+| `healthPath` | `string` | no | HTTP path for liveness/readiness probes on `<port>` (e.g. `/v1/health`) |
+| `egressPorts` | `number[]` | no | Outbound TCP ports the sidecar needs beyond what the channel policy already allows (renders a per-channel `sidecar-egress` NetworkPolicy) |
+| `apiUrlEnv` | `string` | no | Env-var name the channel adapter reads for the backend URL. When set, the orchestrator injects `{ name: apiUrlEnv, value: "http://localhost:<port>" }` into the CHANNEL container's env automatically |
+
+### Pod topology
+
+When a channel manifest has a `sidecar`, the steady-state Deployment contains **two containers**:
+
+```
+pod: kubeclaw-channel-<instance>
+  ├── container: channel              (orchestrator image, runs channel-runner.js)
+  │     env: SIGNAL_API_URL=http://localhost:8080   ← injected by apiUrlEnv
+  │     volumeMounts:
+  │       /runtime         (runtime PVC, read-only)
+  │       /app/groups      (groups PVC)
+  │       /app/store       (store PVC)
+  │       /data/sessions   (sessions PVC)
+  │
+  └── container: <type>-backend       (sidecar image, e.g. signal-backend)
+        volumeMounts:
+          <sessionMountPath>  (kubeclaw-channel-<instance>-auxsession PVC)
+```
+
+Key points:
+- The sidecar container is named `<channel-type>-backend` (e.g. `signal-backend`).
+- The adapter reaches the backend via `http://localhost:<port>` — no service discovery needed.
+- The `kubeclaw-channel-<instance>-auxsession` PVC is mounted **exclusively on the sidecar**, not on the channel container.
+- Pod `securityContext.fsGroup: 1000` is set when a sidecar is present, making the session PVC writable by a non-root backend user.
+
+### Wiring the adapter via `apiUrlEnv`
+
+Set `apiUrlEnv` to the env-var name your adapter reads for the backend base URL (e.g. `SIGNAL_API_URL`). The orchestrator then automatically injects `SIGNAL_API_URL=http://localhost:8080` into the channel container. In the adapter:
+
+```js
+const apiUrl = process.env.SIGNAL_API_URL || 'http://localhost:8080';
+```
+
+If `apiUrlEnv` is absent, nothing is injected — the adapter must hard-code or default the URL itself.
+
+### Per-instance lifecycle
+
+Each channel INSTANCE gets its own backend container and its own `auxsession` PVC. This means:
+- Two Signal instances (`signal-personal` and `signal-work`) each have a separate linked device and separate PVC.
+- The backend starts and stops with the channel pod — there is no shared daemon.
+- `remove_channel` reaps the `auxsession` PVC along with the other per-channel PVCs.
+
+### Egress networking
+
+The `egressPorts` list generates a per-channel `kubeclaw-channel-<instance>-sidecar-egress` NetworkPolicy, allowing the pod egress on those ports. This is port-scoped, not domain-scoped — standard Kubernetes NetworkPolicy cannot restrict by FQDN. For FQDN-level allow-listing, enable Cilium (`ciliumNetworkPolicy.enabled=true`).
+
+### Caveats
+
+- **Stateful pod.** The session PVC makes the channel pod stateful. The session survives pod restarts, but cannot be trivially migrated. Plan accordingly.
+- **Per-instance linking.** Each instance requires a separate account linking/registration step after the channel pod is running (see below).
+- **Third-party image.** The sidecar image is not built or audited by KubeClaw. Pin the image tag and review release notes before upgrading.
+- **Declarative path (Helm) only for channel-runner.** The declarative path (`channels.<name>.enabled=true`) already requires `channel-runner` mode; sidecars render correctly there. Bootstrap path (Path A) also honours the sidecar field.
+
+### Signal: worked example
+
+Signal ships with the sidecar preconfigured in `values-minikube.yaml`:
+
+```yaml
+bootstrap:
+  channelManifests:
+    signal:
+      hostMode: channel-runner
+      packageJson: |
+        {"name":"signal-runtime","version":"1.0.0"}
+      packageLockJson: |
+        { ... lockfile ... }
+      sidecar:
+        image: bbernhard/signal-cli-rest-api:0.93
+        port: 8080
+        sessionMountPath: /home/.local/share/signal-cli
+        sessionStorageGi: 5
+        env:
+          - name: MODE
+            value: native
+        healthPath: /v1/health
+        egressPorts: [443]
+        apiUrlEnv: SIGNAL_API_URL
+```
+
+The adapter (`helm/kubeclaw/files/channel-src/signal/channel-entry.js`) reads `SIGNAL_API_URL` (injected automatically) and polls `GET /v1/receive/<number>` to drain inbound envelopes. It has **no npm dependencies** — it uses Node's built-in `fetch`. The `npm ci` step is a no-op.
+
+After install, link the bot account (see [INSTALLING_A_CHANNEL.md](INSTALLING_A_CHANNEL.md#signal) for the port-forward + QR-code linking steps).
+
+---
+
 ## Two delivery paths
 
 Both paths produce the same steady-state pod. The choice is operational, not architectural.
@@ -381,6 +494,7 @@ helm template kubeclaw ./helm/kubeclaw -f ./helm/kubeclaw/values-minikube.yaml \
 - [INSTALLING_A_CHANNEL.md](INSTALLING_A_CHANNEL.md) — operator guide for installing a finished channel type
 - `helm/kubeclaw/files/channel-src/irc/channel-entry.js` — complete `channel-runner` adapter (SDK-based)
 - `helm/kubeclaw/files/channel-src/nanoid-echo/channel-entry.js` — minimal `standalone` adapter
-- `helm/kubeclaw/files/channel-src/signal/channel-entry.js` — Signal skeleton / template (standalone)
+- `helm/kubeclaw/files/channel-src/signal/channel-entry.js` — Signal channel adapter (channel-runner, sidecar-backed)
 - `helm/kubeclaw/files/bootstrap-skills/bootstrap-nanoid-echo.md` — canonical bootstrap skill pattern
-- `helm/kubeclaw/files/bootstrap-skills/bootstrap-signal.md` — Signal bootstrap skill template
+- `helm/kubeclaw/files/bootstrap-skills/bootstrap-signal.md` — Signal bootstrap skill (sidecar-backed channel-runner)
+- `helm/kubeclaw/values-minikube.yaml` — concrete `sidecar` manifest example for Signal
