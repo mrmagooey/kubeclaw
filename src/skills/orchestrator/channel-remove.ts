@@ -165,7 +165,7 @@ async function listInstancePvcNames(instanceName: string): Promise<string[]> {
     namespace: NAMESPACE,
   });
   const re = new RegExp(
-    `^kubeclaw-channel-${escapeRegex(instanceName)}-(groups|store|sessions|runtime)(-v\\d+)?$`,
+    `^kubeclaw-channel-${escapeRegex(instanceName)}-(groups|store|sessions|runtime|auxsession)(-v\\d+)?$`,
   );
   return (result.items ?? [])
     .map((pvc) => pvc.metadata?.name)

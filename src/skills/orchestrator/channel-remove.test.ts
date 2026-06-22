@@ -165,7 +165,34 @@ describe('removeChannel — comprehensive name-based cleanup', () => {
     });
   });
 
-  describe('PVC name matching — groups/store/sessions/runtime + versioned runtime', () => {
+  describe('PVC name matching — groups/store/sessions/runtime/auxsession + versioned runtime', () => {
+    it('deletes the auxsession PVC', async () => {
+      allDeletesSucceed();
+      mockListPvc.mockResolvedValue({
+        items: [
+          pvcItem('kubeclaw-channel-http-auxsession'),
+        ],
+      });
+      const result = await removeChannel('http');
+      const deletedPvc = mockDeletePvc.mock.calls.map((c) => c[0].name);
+      expect(deletedPvc).toContain('kubeclaw-channel-http-auxsession');
+      expect(result.deleted).toContain('persistentvolumeclaim/kubeclaw-channel-http-auxsession');
+    });
+
+    it('does NOT delete a different instance auxsession PVC (http vs http-staging)', async () => {
+      allDeletesSucceed();
+      mockListPvc.mockResolvedValue({
+        items: [
+          pvcItem('kubeclaw-channel-http-auxsession'),
+          pvcItem('kubeclaw-channel-http-staging-auxsession'),
+        ],
+      });
+      await removeChannel('http');
+      const deletedPvc = mockDeletePvc.mock.calls.map((c) => c[0].name);
+      expect(deletedPvc).toContain('kubeclaw-channel-http-auxsession');
+      expect(deletedPvc).not.toContain('kubeclaw-channel-http-staging-auxsession');
+    });
+
     it('deletes the four standard PVCs and a versioned runtime PVC', async () => {
       allDeletesSucceed();
       mockListPvc.mockResolvedValue({
