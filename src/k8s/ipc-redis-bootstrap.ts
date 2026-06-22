@@ -749,6 +749,32 @@ export async function processCommitChannelConfig(
         );
       }
 
+      // 4b. When the sidecar declares egressPorts, create the per-channel sidecar-egress
+      // NetworkPolicy (mirrors the Helm sidecar-egress block in networkpolicies.yaml ~L119-151).
+      // This is needed in credentialInjection.mode=sidecar/istio locked-down environments
+      // where the default deny-all policy blocks the aux-backend's outbound traffic.
+      if (sidecar && sidecar.egressPorts && sidecar.egressPorts.length > 0) {
+        await deps.createNetworkPolicy({
+          apiVersion: 'networking.k8s.io/v1',
+          kind: 'NetworkPolicy',
+          metadata: {
+            name: `kubeclaw-channel-${instance_name}-sidecar-egress`,
+          },
+          spec: {
+            podSelector: { matchLabels: { app: `kubeclaw-channel-${instance_name}` } },
+            policyTypes: ['Egress'],
+            egress: sidecar.egressPorts.map((port) => ({
+              to: [],
+              ports: [{ protocol: 'TCP', port: port as any }],
+            })),
+          },
+        });
+        logger.info(
+          { instance_name, egressPorts: sidecar.egressPorts },
+          'Channel sidecar-egress NetworkPolicy created',
+        );
+      }
+
       // 5. Release instance name from active bootstraps
       deps.releaseBootstrap(instance_name);
 

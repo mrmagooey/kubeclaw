@@ -1359,3 +1359,105 @@ describe('processCommitChannelConfig — sidecar aux-backend rendering', () => {
     expect(builtDeployment.spec.template.spec.securityContext?.fsGroup).toBeUndefined();
   });
 });
+
+// ─── Sidecar egress NetworkPolicy (bootstrap parity with Helm) ───────────────
+
+describe('processCommitChannelConfig — sidecar-egress NetworkPolicy', () => {
+  const inst = validPayload.instance_name; // 'my-telegram'
+
+  const sidecarWithEgress: SidecarSpec = {
+    image: 'signal-cli:latest',
+    port: 8080,
+    sessionMountPath: '/home/.local/share/signal-cli',
+    sessionStorageGi: 5,
+    egressPorts: [443],
+  };
+
+  // Test A: channel-runner + sidecar.egressPorts → sidecar-egress NetworkPolicy created
+  it('channel-runner + sidecar.egressPorts:[443] → creates sidecar-egress NetworkPolicy', async () => {
+    const deps = makeDeps({
+      getChannelHostMode: vi.fn(async () => 'channel-runner' as const),
+      getChannelSidecar: vi.fn(async () => sidecarWithEgress),
+    });
+    await processCommitChannelConfig(validPayload, deps, 'kubeclaw', 'kubeclaw-agent:latest');
+
+    const netpolCalls = (deps.createNetworkPolicy as ReturnType<typeof vi.fn>).mock.calls;
+    const egressCall = netpolCalls.find(
+      ([body]: [any]) => body.metadata.name === `kubeclaw-channel-${inst}-sidecar-egress`,
+    );
+    expect(egressCall).toBeDefined();
+
+    const body = egressCall![0];
+    // policyTypes must be ['Egress']
+    expect(body.spec.policyTypes).toEqual(['Egress']);
+    // podSelector matches the channel pod label (same as the ingress netpol + Helm template)
+    expect(body.spec.podSelector.matchLabels).toEqual({ app: `kubeclaw-channel-${inst}` });
+    // egress rule for port 443
+    const egressRules: any[] = body.spec.egress;
+    expect(egressRules).toBeDefined();
+    const has443 = egressRules.some((rule: any) =>
+      rule.ports?.some((p: any) => p.port === 443 && p.protocol === 'TCP'),
+    );
+    expect(has443).toBe(true);
+  });
+
+  // Test A2: multiple egressPorts → each port in egress rules
+  it('sidecar.egressPorts:[443,5222] → egress rules cover both ports', async () => {
+    const sidecarMulti: SidecarSpec = { ...sidecarWithEgress, egressPorts: [443, 5222] };
+    const deps = makeDeps({
+      getChannelHostMode: vi.fn(async () => 'channel-runner' as const),
+      getChannelSidecar: vi.fn(async () => sidecarMulti),
+    });
+    await processCommitChannelConfig(validPayload, deps, 'kubeclaw', 'kubeclaw-agent:latest');
+
+    const netpolCalls = (deps.createNetworkPolicy as ReturnType<typeof vi.fn>).mock.calls;
+    const egressCall = netpolCalls.find(
+      ([body]: [any]) => body.metadata.name === `kubeclaw-channel-${inst}-sidecar-egress`,
+    );
+    expect(egressCall).toBeDefined();
+    const body = egressCall![0];
+    const egressRules: any[] = body.spec.egress;
+    const allPorts = egressRules.flatMap((rule: any) =>
+      (rule.ports ?? []).map((p: any) => p.port),
+    );
+    expect(allPorts).toContain(443);
+    expect(allPorts).toContain(5222);
+  });
+
+  // Test B: sidecar WITHOUT egressPorts → NO sidecar-egress netpol
+  it('sidecar WITHOUT egressPorts → does NOT create sidecar-egress NetworkPolicy', async () => {
+    const sidecarNoEgress: SidecarSpec = {
+      image: 'some-backend:latest',
+      port: 8080,
+      sessionMountPath: '/data',
+      sessionStorageGi: 1,
+      // egressPorts intentionally absent
+    };
+    const deps = makeDeps({
+      getChannelHostMode: vi.fn(async () => 'channel-runner' as const),
+      getChannelSidecar: vi.fn(async () => sidecarNoEgress),
+    });
+    await processCommitChannelConfig(validPayload, deps, 'kubeclaw', 'kubeclaw-agent:latest');
+
+    const netpolCalls = (deps.createNetworkPolicy as ReturnType<typeof vi.fn>).mock.calls;
+    const egressCall = netpolCalls.find(
+      ([body]: [any]) => body.metadata.name === `kubeclaw-channel-${inst}-sidecar-egress`,
+    );
+    expect(egressCall).toBeUndefined();
+  });
+
+  // Test B2: no sidecar at all → NO sidecar-egress netpol
+  it('no sidecar → does NOT create sidecar-egress NetworkPolicy', async () => {
+    const deps = makeDeps({
+      getChannelHostMode: vi.fn(async () => 'channel-runner' as const),
+      getChannelSidecar: vi.fn(async () => undefined),
+    });
+    await processCommitChannelConfig(validPayload, deps, 'kubeclaw', 'kubeclaw-agent:latest');
+
+    const netpolCalls = (deps.createNetworkPolicy as ReturnType<typeof vi.fn>).mock.calls;
+    const egressCall = netpolCalls.find(
+      ([body]: [any]) => body.metadata.name === `kubeclaw-channel-${inst}-sidecar-egress`,
+    );
+    expect(egressCall).toBeUndefined();
+  });
+});
