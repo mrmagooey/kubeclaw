@@ -15,13 +15,13 @@
  * LLM-independent — no real LLM key needed.
  *
  * Prerequisites:
- *   - kind cluster (kind-kubeclaw-e2e-istio) with the kubeclaw-orchestrator:e2e-test
+ *   - kind cluster (minikube) with the kubeclaw-orchestrator:e2e-test
  *     image already loaded (done by the build script before running this suite).
  *   - kubectl context pointing at the kind cluster.
  *   - helm 3.x on PATH.
  *
  * Run via:
- *   kubectl --context kind-kubeclaw-e2e-istio delete namespace kubeclaw-e2e-empty-msg \
+ *   kubectl --context minikube delete namespace kubeclaw-e2e-empty-msg \
  *     --ignore-not-found --timeout=60s && \
  *   KUBECLAW_SKIP_HELM_INSTALL=true npx vitest run --config vitest.e2e.config.ts empty-message
  */

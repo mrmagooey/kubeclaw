@@ -2,7 +2,7 @@
  * End-to-end tests for Story 26: DELETE /history.
  *
  * Installs kubeclaw into an isolated namespace (kubeclaw-e2e-del-history) on
- * the kind-kubeclaw-e2e-istio cluster, registers two users (alice + bob),
+ * the minikube cluster, registers two users (alice + bob),
  * seeds messages for both, then exercises the DELETE /history endpoint.
  *
  * ACs verified:
@@ -15,8 +15,8 @@
  * Run:
  *   docker build -t kubeclaw-orchestrator:e2e-test . && \
  *   docker save kubeclaw-orchestrator:e2e-test -o /tmp/orch.tar && \
- *   kind load image-archive /tmp/orch.tar --name kubeclaw-e2e-istio && \
- *   kubectl --context kind-kubeclaw-e2e-istio delete namespace kubeclaw-e2e-del-history \
+ *   minikube image load /tmp/orch.tar && \
+ *   kubectl --context minikube delete namespace kubeclaw-e2e-del-history \
  *     --ignore-not-found --timeout=60s && \
  *   KUBECLAW_SKIP_HELM_INSTALL=true \
  *   npx vitest run --config vitest.e2e.config.ts history-delete 2>&1 | tee /tmp/del-hist.log | tail -25

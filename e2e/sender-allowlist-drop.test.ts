@@ -13,7 +13,7 @@
  *     the drop-mode path. AC5 is marked skipped with this note.
  *
  * Prerequisites:
- *  - kind cluster kubeclaw-e2e-istio (context: kind-kubeclaw-e2e-istio)
+ *  - minikube cluster (context: minikube)
  *  - kubeclaw-orchestrator:e2e-test image loaded into kind
  *  - KUBECLAW_SKIP_HELM_INSTALL=true (prevent global-setup racing)
  */

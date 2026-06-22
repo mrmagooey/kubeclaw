@@ -22,8 +22,8 @@
  * Run (manual):
  *   docker build -t kubeclaw-orchestrator:e2e-test . \
  *     && docker save kubeclaw-orchestrator:e2e-test -o /tmp/orch-s57.tar \
- *     && kind load image-archive /tmp/orch-s57.tar --name kubeclaw-e2e-istio
- *   kubectl --context kind-kubeclaw-e2e-istio delete namespace kubeclaw-e2e-ratelimit-status \
+ *     && minikube image load /tmp/orch-s57.tar
+ *   kubectl --context minikube delete namespace kubeclaw-e2e-ratelimit-status \
  *     --ignore-not-found --timeout=60s
  *   npx vitest run --config vitest.e2e.config.ts rate-limit-status
  */

@@ -19,12 +19,12 @@
  * All five ACs are LLM-dependent. The suite detects the provider with the
  * same probe used by specialist-catalog.test.ts (GET /models, POST
  * /chat/completions with max_tokens=256). If the provider is unreachable or
- * the kind cluster `kubeclaw-e2e-istio` is absent the whole suite skips
+ * the minikube cluster is absent the whole suite skips
  * cleanly via it.skipIf(shouldSkip).
  *
  * Cluster / namespace
  * ───────────────────
- *   Context   : kind-kubeclaw-e2e-istio
+ *   Context   : minikube
  *   Namespace : kubeclaw-e2e-specialist
  *   Release   : kubeclaw-e2e-specialist
  *   HTTP port : 14098 (unique, no clash with other e2e suites)

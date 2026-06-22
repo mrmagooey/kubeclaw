@@ -14,7 +14,7 @@
  *   AC4 — Group not wedged: subsequent POST /message returns 200, dispatched
  *          normally.
  *
- * Cluster  : kubeclaw-e2e-istio (kind)
+ * Cluster  : minikube (kind)
  * Namespace: kubeclaw-e2e-oomkill
  * Port     : 14130
  *

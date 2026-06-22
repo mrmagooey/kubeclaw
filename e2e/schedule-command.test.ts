@@ -1,7 +1,7 @@
 /**
  * End-to-end tests for the /schedule slash command via the HTTP channel.
  *
- * Target: kind cluster kubeclaw-e2e-istio, namespace kubeclaw-e2e-schedule,
+ * Target: minikube cluster, namespace kubeclaw-e2e-schedule,
  * HTTP channel port 14128.
  *
  * These tests exercise the full path:

@@ -9,7 +9,7 @@
  *  5. secret.add with unknown catalogId → { ok: false, error: "unknown_catalog_entry" }
  *
  * Prerequisites:
- *  - kind cluster kubeclaw-e2e-istio (context: kind-kubeclaw-e2e-istio)
+ *  - minikube cluster (context: minikube)
  *  - kubeclaw-orchestrator:e2e-test image loaded into kind
  *  - KUBECLAW_SKIP_HELM_INSTALL=true (prevent global-setup from racing this install)
  *
@@ -148,7 +148,7 @@ async function waitForRedisPortForward(timeoutMs = 30_000): Promise<void> {
   throw new Error(`Redis port-forward not ready after ${timeoutMs}ms`);
 }
 
-// ── Skip guard: only run on the kind-kubeclaw-e2e-istio cluster ──────────────
+// ── Skip guard: only run on the minikube cluster ──────────────
 
 const clusterReachable = (() => {
   try {

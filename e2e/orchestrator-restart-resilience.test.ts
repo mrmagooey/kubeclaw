@@ -14,7 +14,7 @@
  *          delivering to SSE).
  *   AC5 — (LLM-dependent) A fresh POST /message after AC2 works normally.
  *
- * Cluster  : kubeclaw-e2e-istio (kind)
+ * Cluster  : minikube (kind)
  * Namespace: kubeclaw-e2e-orch-restart
  * Port     : 14121
  *

@@ -3,18 +3,18 @@
  * and per-group memory.
  *
  * Runs a full install → data-seed → helm upgrade cycle in an isolated namespace
- * on the kind-kubeclaw-e2e-istio cluster and verifies that all user data
+ * on the minikube cluster and verifies that all user data
  * (conversation history, attachment sha256, skills, PVC UIDs) survives the upgrade
  * byte-for-byte.
  *
  * Prerequisites:
- *   - kind cluster "kubeclaw-e2e-istio" running with kubectl context
- *     "kind-kubeclaw-e2e-istio".
+ *   - kind cluster "minikube" running with kubectl context
+ *     "minikube".
  *   - kubeclaw-orchestrator:e2e-test image loaded into the cluster.
  *   - helm 3.x on PATH.
  *
  * Manual run (after image load):
- *   kubectl --context kind-kubeclaw-e2e-istio \
+ *   kubectl --context minikube \
  *     delete namespace kubeclaw-e2e-upgrade --ignore-not-found --timeout=90s
  *   KUBECLAW_SKIP_HELM_INSTALL=true \
  *   npx vitest run --config vitest.e2e.config.ts helm-upgrade-preserves-data

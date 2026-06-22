@@ -12,7 +12,7 @@
  *   AC4: Endpoint reachable on port 9091 without auth
  *   AC5: Metric families present after pod restart
  *
- * Requires: kind cluster `kubeclaw-e2e-istio` with image pre-loaded.
+ * Requires: minikube cluster with image pre-loaded.
  *   Image tag must be `e2e-test` (loaded via kind load image-archive).
  *   The test installs kubeclaw if not already present.
  *

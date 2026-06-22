@@ -1,7 +1,7 @@
 /**
  * E2E tests for /memory slash command (Story 45).
  *
- * Target: kind cluster `kubeclaw-e2e-istio`, namespace `kubeclaw-e2e-memory`,
+ * Target: minikube cluster, namespace `kubeclaw-e2e-memory`,
  * HTTP channel port-forwarded to localhost:14129.
  *
  * Pre-conditions (set up by CI or manually):

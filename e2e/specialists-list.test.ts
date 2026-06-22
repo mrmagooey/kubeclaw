@@ -6,7 +6,7 @@
  * /stream, and verifies the /specialists list command behaviour.
  *
  * Port: 14122 (does not clash with other e2e suites)
- * Cluster: kubeclaw-e2e-istio
+ * Cluster: minikube
  * Namespace: kubeclaw-e2e-spec-list
  *
  * Acceptance criteria covered:

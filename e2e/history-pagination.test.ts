@@ -2,14 +2,14 @@
  * End-to-end tests for Story 18: GET /history pagination.
  *
  * Installs kubeclaw into an isolated namespace (kubeclaw-e2e-hist) on the
- * kind-kubeclaw-e2e-istio cluster, seeds 7 messages directly into the channel
+ * minikube cluster, seeds 7 messages directly into the channel
  * pod's SQLite DB, then exercises the GET /history endpoint.
  *
  * Run:
  *   docker build -t kubeclaw-orchestrator:e2e-test . && \
  *   docker save kubeclaw-orchestrator:e2e-test -o /tmp/orch.tar && \
- *   kind load image-archive /tmp/orch.tar --name kubeclaw-e2e-istio && \
- *   kubectl --context kind-kubeclaw-e2e-istio delete namespace kubeclaw-e2e-hist \
+ *   minikube image load /tmp/orch.tar && \
+ *   kubectl --context minikube delete namespace kubeclaw-e2e-hist \
  *     --ignore-not-found --timeout=60s && \
  *   KUBECLAW_SKIP_HELM_INSTALL=true \
  *   npx vitest run --config vitest.e2e.config.ts history-pagination

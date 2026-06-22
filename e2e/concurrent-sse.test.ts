@@ -13,16 +13,16 @@
  * src/channels/http.ts sendMessage).
  *
  * Infrastructure:
- *   - kind cluster: kubeclaw-e2e-istio
+ *   - cluster:     minikube
  *   - namespace:    kubeclaw-e2e-csse
  *   - HTTP channel port-forwarded to localhost:14106
  *   - Helm installs with alice:alicepw,bob:bobpw and a placeholder LLM key.
  *
  * Run after building and loading the image:
  *   docker build -t kubeclaw-orchestrator:e2e-test . && \
- *   docker save kubeclaw-orchestrator:e2e-test | kind load image-archive /dev/stdin --name kubeclaw-e2e-istio
+ *   docker save kubeclaw-orchestrator:e2e-test | minikube image load /dev/stdin
  *
- *   kubectl --context kind-kubeclaw-e2e-istio \
+ *   kubectl --context minikube \
  *     delete namespace kubeclaw-e2e-csse --ignore-not-found --timeout=60s
  *
  *   KUBECLAW_SKIP_HELM_INSTALL=true \

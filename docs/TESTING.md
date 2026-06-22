@@ -101,7 +101,8 @@ namespace, so that namespace must be empty first, and `global-setup` must not
 install the baseline release. It expects images tagged `:e2e-test`.
 
 ```bash
-# Istio must be installed in the cluster (istiod running in istio-system).
+# Istio is installed by default on minikube (via npm run setup:minikube).
+# If running manually, ensure istiod is running in istio-system.
 
 eval "$(minikube docker-env)"
 ./container/build.sh --all
@@ -119,10 +120,10 @@ KUBECLAW_SKIP_HELM_INSTALL=true KC_E2E_SKIP_BUILD=1 \
 
 The suite labels the namespace `istio-injection=enabled`, deploys the egress
 gateway + broker + a `mock-upstream` fixture, and verifies broker-stamped egress
-and per-group catalog credentials. In CI it runs on a dedicated kind cluster via
-`.github/workflows/e2e-istio.yml`.
+and per-group catalog credentials. In CI it runs on minikube (Istio installed by
+default) via `.github/workflows/e2e-istio.yml`.
 
-> One istio case (identity-mismatch) self-skips on minikube/kind when the
+> One istio case (identity-mismatch) self-skips on minikube when the
 > pod-informer IP-lookup it depends on doesn't resolve in time — a known timing
 > edge covered by `src/k8s/pod-informer.test.ts` and `identity.test.ts`.
 

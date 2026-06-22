@@ -1,7 +1,7 @@
 /**
  * E2E: Per-user Attachment Quota (Story 48)
  *
- * Target cluster : kubeclaw-e2e-istio (kind)
+ * Target cluster : minikube (kind)
  * Namespace      : kubeclaw-e2e-attach-quota
  * Channel port   : 14132 (port-forwarded from svc/kubeclaw-channel-http)
  *
@@ -21,7 +21,7 @@
  *       maxSizeBytesPerUser: 50000 # → HTTP_CHANNEL_MAX_ATTACHMENT_BYTES_PER_USER=50000
  *
  * Prerequisites (verified in beforeAll):
- *   - kubectl context points at kubeclaw-e2e-istio
+ *   - kubectl context points at minikube
  *   - namespace kubeclaw-e2e-attach-quota exists and helm release is deployed
  *   - port-forward from svc/kubeclaw-channel-http :14132 is active
  *

@@ -18,8 +18,8 @@
  * Run (manual):
  *   docker build -t kubeclaw-orchestrator:e2e-test . \
  *     && docker save kubeclaw-orchestrator:e2e-test -o /tmp/orch-s52.tar \
- *     && kind load image-archive /tmp/orch-s52.tar --name kubeclaw-e2e-istio
- *   kubectl --context kind-kubeclaw-e2e-istio delete namespace kubeclaw-e2e-export \
+ *     && minikube image load /tmp/orch-s52.tar
+ *   kubectl --context minikube delete namespace kubeclaw-e2e-export \
  *     --ignore-not-found --timeout=60s
  *   npx vitest run --config vitest.e2e.config.ts export
  */

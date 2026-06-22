@@ -11,7 +11,7 @@
  *
  * Infrastructure assumptions
  * --------------------------
- * • Kind cluster: kubeclaw-e2e-istio.  Context is whatever kubectl currently points to.
+ * • Kind cluster: minikube.  Context is whatever kubectl currently points to.
  * • `KUBECLAW_SKIP_HELM_INSTALL=true` — this suite manages its own Helm release in an
  *   isolated namespace so it never collides with global-setup's release.
  * • Redis 7-alpine is pre-loaded in the kind node (verified before writing this test).

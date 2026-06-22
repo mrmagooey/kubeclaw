@@ -6,7 +6,7 @@
  * responded to (the slash command via SSE AND the normal message via the LLM
  * path / processing queue).
  *
- * Target:  kind cluster kubeclaw-e2e-istio
+ * Target:  minikube cluster
  * Namespace: kubeclaw-e2e-msg-batch
  * Port:    14136
  *

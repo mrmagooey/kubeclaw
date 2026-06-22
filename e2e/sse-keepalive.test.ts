@@ -12,16 +12,16 @@
  * setInterval(() => res.write(': ping\n\n'), 30_000).
  *
  * Infrastructure:
- *   - kind cluster: kubeclaw-e2e-istio
+ *   - cluster:     minikube
  *   - namespace:    kubeclaw-e2e-keepalive
  *   - HTTP channel port-forwarded to localhost:14109
  *   - Helm installs with alice:alicepw and a placeholder LLM key.
  *
  * Run after building and loading the image:
  *   docker build -t kubeclaw-orchestrator:e2e-test . && \
- *   docker save kubeclaw-orchestrator:e2e-test | kind load image-archive /dev/stdin --name kubeclaw-e2e-istio
+ *   docker save kubeclaw-orchestrator:e2e-test | minikube image load /dev/stdin
  *
- *   kubectl --context kind-kubeclaw-e2e-istio \
+ *   kubectl --context minikube \
  *     delete namespace kubeclaw-e2e-keepalive --ignore-not-found --timeout=60s
  *
  *   KUBECLAW_SKIP_HELM_INSTALL=true \

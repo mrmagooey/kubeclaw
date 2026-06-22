@@ -1,7 +1,7 @@
 /**
  * Story 47 — CORS preflight end-to-end tests
  *
- * Target: kind cluster `kubeclaw-e2e-istio`, namespace `kubeclaw-e2e-cors`,
+ * Target: minikube cluster, namespace `kubeclaw-e2e-cors`,
  * HTTP channel on port 14131.
  *
  * These tests fire real OPTIONS requests against a live channel pod and assert

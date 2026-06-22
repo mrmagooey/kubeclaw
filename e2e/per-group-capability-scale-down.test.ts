@@ -1,7 +1,7 @@
 /**
  * Live e2e test — Story 7: idle per-group capability scale-down.
  *
- * Runs against the kind cluster `kubeclaw-e2e-istio` in an isolated namespace
+ * Runs against the minikube cluster in an isolated namespace
  * `kubeclaw-e2e-scaledown`. The orchestrator is deployed via Helm. The test
  * seeds the orchestrator's on-disk SQLite with pre-group instances, restarts
  * the orchestrator so it reloads from disk, then waits for the live sweeper
@@ -34,13 +34,13 @@
  *
  * Prerequisites
  * -------------
- *   kubectl context kind-kubeclaw-e2e-istio accessible
+ *   kubectl context minikube accessible
  *   kubeclaw-orchestrator:e2e-test image loaded into the kind cluster
  *   KUBECLAW_SKIP_HELM_INSTALL=true  (global-setup skips its own install)
  *
  * Invocation
  * ----------
- *   kubectl --context kind-kubeclaw-e2e-istio \
+ *   kubectl --context minikube \
  *     delete namespace kubeclaw-e2e-scaledown --ignore-not-found --timeout=60s
  *   KUBECLAW_SKIP_HELM_INSTALL=true \
  *     npx vitest run --config vitest.e2e.config.ts per-group-capability-scale-down

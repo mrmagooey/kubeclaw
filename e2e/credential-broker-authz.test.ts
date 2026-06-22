@@ -13,7 +13,7 @@
  *          has runAsNonRoot: true
  *
  * Prerequisites:
- *   - kubectl context pointing at kind-kubeclaw-e2e-istio
+ *   - kubectl context pointing at minikube
  *   - kubeclaw-orchestrator:e2e-test image pre-loaded into the kind cluster
  *   - curlimages/curl:8.10.1 pre-loaded into the kind cluster
  *

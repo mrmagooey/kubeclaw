@@ -14,7 +14,7 @@
  * LLM-independent.
  *
  * Prerequisites:
- *   - kind cluster (kind-kubeclaw-e2e-istio) with the kubeclaw-orchestrator:e2e-test
+ *   - kind cluster (minikube) with the kubeclaw-orchestrator:e2e-test
  *     image already loaded (done by the build script before running this suite).
  *   - kubectl context pointing at the kind cluster.
  *   - helm 3.x on PATH.

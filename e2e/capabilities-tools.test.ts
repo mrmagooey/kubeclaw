@@ -1,7 +1,7 @@
 /**
  * End-to-end test for Story 54: /capabilities tools <type>
  *
- * Target cluster: kubeclaw-e2e-istio
+ * Target cluster: minikube
  * Namespace: kubeclaw-e2e-cap-tools
  * HTTP channel port: 14137
  *

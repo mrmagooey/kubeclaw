@@ -9,7 +9,7 @@
  *   AC5 — subsequent non-slash messages do not produce help text.
  *
  * Infrastructure:
- *   - kind cluster: kubeclaw-e2e-istio
+ *   - cluster:     minikube
  *   - namespace:    kubeclaw-e2e-help
  *   - HTTP channel port-forwarded to localhost:14102
  *   - Helm installs with a placeholder LLM key (no real LLM needed for AC1-4;
@@ -18,9 +18,9 @@
  *
  * Run after building and loading the image:
  *   docker build -t kubeclaw-orchestrator:e2e-test . && \
- *   docker save kubeclaw-orchestrator:e2e-test | kind load image-archive /dev/stdin --name kubeclaw-e2e-istio
+ *   docker save kubeclaw-orchestrator:e2e-test | minikube image load /dev/stdin
  *
- *   kubectl --context kind-kubeclaw-e2e-istio \
+ *   kubectl --context minikube \
  *     delete namespace kubeclaw-e2e-help --ignore-not-found --timeout=60s
  *
  *   KUBECLAW_SKIP_HELM_INSTALL=true \
