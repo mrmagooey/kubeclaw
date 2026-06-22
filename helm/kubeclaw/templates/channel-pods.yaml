@@ -240,7 +240,10 @@ spec:
           {{- end }}
           securityContext:
             allowPrivilegeEscalation: false
+            {{- if $sidecar.runAsUser }}
+            runAsUser: {{ $sidecar.runAsUser }}
             runAsNonRoot: true
+            {{- end }}
             readOnlyRootFilesystem: false
             capabilities:
               drop: ["ALL"]

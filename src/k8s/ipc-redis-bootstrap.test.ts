@@ -1291,23 +1291,45 @@ describe('processCommitChannelConfig — sidecar aux-backend rendering', () => {
     expect(deps.getChannelSidecar).not.toHaveBeenCalled();
   });
 
-  // F4(a): sidecar container securityContext hardening
-  it('sidecar container securityContext has hardened fields (no runAsUser)', async () => {
+  // F4(a): sidecar container securityContext hardening — no runAsUser in spec
+  it('sidecar container securityContext has hardened fields; without runAsUser, omits runAsNonRoot', async () => {
     let builtDeployment: any;
     const deps = makeDeps({
       getChannelHostMode: vi.fn(async () => 'channel-runner' as const),
-      getChannelSidecar: vi.fn(async () => baseSidecar),
+      getChannelSidecar: vi.fn(async () => baseSidecar), // no runAsUser field
       createDeployment: vi.fn(async (b) => { builtDeployment = b; }),
     });
     await processCommitChannelConfig(validPayload, deps, 'kubeclaw', 'kubeclaw-agent:latest');
 
     const sc = builtDeployment.spec.template.spec.containers[1].securityContext;
+    // Always-present hardening fields
     expect(sc.allowPrivilegeEscalation).toBe(false);
-    expect(sc.runAsNonRoot).toBe(true);
+    expect(sc.readOnlyRootFilesystem).toBe(false);
     expect(sc.capabilities?.drop).toContain('ALL');
     expect(sc.seccompProfile?.type).toBe('RuntimeDefault');
-    // Must NOT force a specific uid — the third-party image owns its own non-root uid
+    // When runAsUser is NOT set → neither runAsNonRoot nor runAsUser should be present
+    expect(sc.runAsNonRoot).toBeUndefined();
     expect(sc.runAsUser).toBeUndefined();
+  });
+
+  // F4(a-2): sidecar with runAsUser set → both runAsUser and runAsNonRoot present
+  it('sidecar container securityContext with runAsUser=101 renders runAsUser + runAsNonRoot', async () => {
+    const sidecarWithUid: SidecarSpec = { ...baseSidecar, runAsUser: 101 };
+    let builtDeployment: any;
+    const deps = makeDeps({
+      getChannelHostMode: vi.fn(async () => 'channel-runner' as const),
+      getChannelSidecar: vi.fn(async () => sidecarWithUid),
+      createDeployment: vi.fn(async (b) => { builtDeployment = b; }),
+    });
+    await processCommitChannelConfig(validPayload, deps, 'kubeclaw', 'kubeclaw-agent:latest');
+
+    const sc = builtDeployment.spec.template.spec.containers[1].securityContext;
+    expect(sc.runAsUser).toBe(101);
+    expect(sc.runAsNonRoot).toBe(true);
+    // Other fields still present
+    expect(sc.allowPrivilegeEscalation).toBe(false);
+    expect(sc.capabilities?.drop).toContain('ALL');
+    expect(sc.seccompProfile?.type).toBe('RuntimeDefault');
   });
 
   // F4(b): pod-level fsGroup when sidecar is present

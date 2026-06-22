@@ -564,6 +564,58 @@ describe('registerChannelManifest sidecar', () => {
     if (r.ok) return;
     expect(r.error).toMatch(/env/i);
   });
+
+  it('accepts sidecar with runAsUser=101 (nginx-unprivileged uid)', () => {
+    const r = registerChannelManifest({
+      channel_type: 'signal',
+      package_json: VALID_PKG,
+      package_lock_json: VALID_LOCK,
+      host_mode: 'channel-runner',
+      sidecar: { ...VALID_SIDECAR, runAsUser: 101 },
+    });
+    expect(r.ok).toBe(true);
+    const list = listChannelManifestOverrides();
+    expect(list[0].sidecar?.runAsUser).toBe(101);
+  });
+
+  it('rejects sidecar.runAsUser=0 (must be > 0)', () => {
+    const r = registerChannelManifest({
+      channel_type: 'signal',
+      package_json: VALID_PKG,
+      package_lock_json: VALID_LOCK,
+      host_mode: 'channel-runner',
+      sidecar: { ...VALID_SIDECAR, runAsUser: 0 },
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error).toMatch(/runAsUser/i);
+  });
+
+  it('rejects sidecar.runAsUser=-1 (negative)', () => {
+    const r = registerChannelManifest({
+      channel_type: 'signal',
+      package_json: VALID_PKG,
+      package_lock_json: VALID_LOCK,
+      host_mode: 'channel-runner',
+      sidecar: { ...VALID_SIDECAR, runAsUser: -1 },
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error).toMatch(/runAsUser/i);
+  });
+
+  it('accepts sidecar without runAsUser (omitted is valid — lets image USER apply)', () => {
+    const r = registerChannelManifest({
+      channel_type: 'signal',
+      package_json: VALID_PKG,
+      package_lock_json: VALID_LOCK,
+      host_mode: 'channel-runner',
+      sidecar: VALID_SIDECAR, // no runAsUser
+    });
+    expect(r.ok).toBe(true);
+    const list = listChannelManifestOverrides();
+    expect(list[0].sidecar?.runAsUser).toBeUndefined();
+  });
 });
 
 describe('listChannelManifestOverrides', () => {

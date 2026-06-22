@@ -1237,21 +1237,22 @@ describe('channel manifest sidecar rendering', () => {
     expect(deployDoc).toContain('containerPort: 8080');
   });
 
-  it('aux-backend container has hardened securityContext (no runAsUser)', () => {
+  it('aux-backend container has hardened securityContext; without runAsUser, omits runAsNonRoot', () => {
     const deployDoc = docs.find(
       (d) =>
         /^kind: Deployment$/m.test(d) &&
         /^\s+name: kubeclaw-channel-signal$/m.test(d),
     );
     expect(deployDoc).toBeDefined();
+    // Always-present hardening fields
     expect(deployDoc).toContain('allowPrivilegeEscalation: false');
-    expect(deployDoc).toContain('runAsNonRoot: true');
     expect(deployDoc).toContain('readOnlyRootFilesystem: false');
-    // Must NOT set runAsUser (third-party image — let it use its own UID)
-    // We check by ensuring runAsUser does NOT appear AFTER the backend container name
+    // When runAsUser is NOT set in the sidecar spec → neither runAsUser nor runAsNonRoot
+    // should appear in the backend container's securityContext section.
     const backendStart = deployDoc!.indexOf('name: signal-backend');
     const backendSection = deployDoc!.slice(backendStart, backendStart + 800);
     expect(backendSection).not.toContain('runAsUser');
+    expect(backendSection).not.toContain('runAsNonRoot');
   });
 
   it('aux-backend container has readiness and liveness probes when healthPath set', () => {

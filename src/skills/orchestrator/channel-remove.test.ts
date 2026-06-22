@@ -118,6 +118,10 @@ describe('removeChannel — comprehensive name-based cleanup', () => {
         name: 'kubeclaw-channel-http-ingress',
         namespace: 'kubeclaw',
       });
+      expect(mockDeleteNetworkPolicy).toHaveBeenCalledWith({
+        name: 'kubeclaw-channel-http-sidecar-egress',
+        namespace: 'kubeclaw',
+      });
       // All three Secret naming conventions: helm / bootstrap / legacy.
       const secNames = mockDeleteSecret.mock.calls.map((c) => c[0].name);
       expect(secNames).toEqual(
@@ -135,6 +139,24 @@ describe('removeChannel — comprehensive name-based cleanup', () => {
           'kubeclaw-bootstrap-http-upgrade',
         ]),
       );
+    });
+
+    it('deletes the sidecar-egress NetworkPolicy (treat 404 as absent, not error)', async () => {
+      allDeletesSucceed();
+      const result = await removeChannel('http');
+      // The sidecar-egress netpol delete must have been attempted
+      const netpolNames = mockDeleteNetworkPolicy.mock.calls.map((c: any) => c[0].name);
+      expect(netpolNames).toContain('kubeclaw-channel-http-sidecar-egress');
+      // And it should appear in the deleted list
+      expect(result.deleted).toContain('networkpolicy/kubeclaw-channel-http-sidecar-egress');
+    });
+
+    it('does NOT delete a different instance sidecar-egress netpol (http vs http-staging cross-instance safety)', async () => {
+      allDeletesSucceed();
+      await removeChannel('http');
+      // Specifically targeting http-sidecar-egress — must NOT touch http-staging-sidecar-egress
+      const netpolNames = mockDeleteNetworkPolicy.mock.calls.map((c: any) => c[0].name);
+      expect(netpolNames).not.toContain('kubeclaw-channel-http-staging-sidecar-egress');
     });
 
     it('lists PVCs WITHOUT a label selector (the install paths do not label them consistently)', async () => {
@@ -155,6 +177,7 @@ describe('removeChannel — comprehensive name-based cleanup', () => {
           'service/kubeclaw-channel-http-metrics',
           'ingress/kubeclaw-channel-http',
           'networkpolicy/kubeclaw-channel-http-ingress',
+          'networkpolicy/kubeclaw-channel-http-sidecar-egress',
           'secret/kubeclaw-channel-http',
           'secret/kubeclaw-channel-http-credentials',
           'secret/kubeclaw-http-secrets',
@@ -263,6 +286,7 @@ describe('removeChannel — comprehensive name-based cleanup', () => {
           'secret/kubeclaw-gone-secrets',
           'ingress/kubeclaw-channel-gone',
           'networkpolicy/kubeclaw-channel-gone-ingress',
+          'networkpolicy/kubeclaw-channel-gone-sidecar-egress',
           'job/kubeclaw-bootstrap-gone',
           'job/kubeclaw-bootstrap-gone-upgrade',
         ]),

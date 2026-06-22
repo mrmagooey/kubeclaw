@@ -158,6 +158,8 @@ beforeAll(() => {
       '--set',
       `bootstrap.channelManifests.http.sidecar.image=nginxinc/nginx-unprivileged:stable-alpine`,
       '--set',
+      `bootstrap.channelManifests.http.sidecar.runAsUser=101`,
+      '--set',
       `bootstrap.channelManifests.http.sidecar.port=8080`,
       '--set',
       `bootstrap.channelManifests.http.sidecar.sessionMountPath=/tmp/session`,

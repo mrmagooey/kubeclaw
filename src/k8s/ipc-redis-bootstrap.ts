@@ -546,7 +546,12 @@ export async function processCommitChannelConfig(
               // The third-party backend needs a writable root FS for its runtime;
               // durable data lives on the session PVC (auxsession mount).
               readOnlyRootFilesystem: false,
-              runAsNonRoot: true,
+              // runAsNonRoot/runAsUser: opt-in via sidecar.runAsUser.
+              // When set, enforce non-root with the given UID.
+              // When absent, let the image's own USER directive apply (no forced UID).
+              ...(sidecar.runAsUser !== undefined
+                ? { runAsUser: sidecar.runAsUser, runAsNonRoot: true }
+                : {}),
               capabilities: { drop: ['ALL'] },
               seccompProfile: { type: 'RuntimeDefault' },
             },

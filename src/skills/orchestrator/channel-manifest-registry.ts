@@ -45,6 +45,12 @@ export interface SidecarSpec {
    * into the CHANNEL container's env, wiring the adapter to the in-pod backend.
    */
   apiUrlEnv?: string;
+  /**
+   * UID to run the sidecar container as. When set, the securityContext will include
+   * `runAsUser: <uid>` and `runAsNonRoot: true`. When absent, neither field is set
+   * (the image's own USER directive applies). Must be a positive integer (> 0).
+   */
+  runAsUser?: number;
 }
 
 export interface RegisterArgs {
@@ -206,6 +212,14 @@ export function registerChannelManifest(
         return {
           ok: false,
           error: 'sidecar.apiUrlEnv must be a non-empty string',
+        };
+      }
+    }
+    if (s.runAsUser !== undefined) {
+      if (!Number.isInteger(s.runAsUser) || s.runAsUser <= 0) {
+        return {
+          ok: false,
+          error: `sidecar.runAsUser must be a positive integer > 0 (got ${String(s.runAsUser)})`,
         };
       }
     }

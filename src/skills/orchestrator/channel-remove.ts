@@ -214,6 +214,13 @@ export async function removeChannel(
     `networkpolicy/${base}-ingress`,
     await tryDeleteNetworkPolicy(`${base}-ingress`),
   );
+  // Sidecar-egress NetworkPolicy (rendered by networkpolicies.yaml when the
+  // channel manifest declares a sidecar with egressPorts). Not all channels have
+  // this — tryDelete treats 404 as already-absent.
+  record(
+    `networkpolicy/${base}-sidecar-egress`,
+    await tryDeleteNetworkPolicy(`${base}-sidecar-egress`),
+  );
 
   // 5. Secrets — cover all three naming conventions:
   //    Helm user secret, bootstrap credentials, legacy setup_channel.
