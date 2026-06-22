@@ -114,11 +114,15 @@ spec:
 ---
 # Aux-backend session PVC — mounted exclusively on the sidecar container (not channel).
 # Provides durable session storage for third-party backend images.
+# resource-policy: keep protects the registered account session (e.g. signal-cli's
+# linked device) from being destroyed on `helm uninstall`, like groups/store.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: kubeclaw-channel-{{ $name }}-auxsession
   namespace: {{ include "kubeclaw.namespace" $ }}
+  annotations:
+    helm.sh/resource-policy: keep
 spec:
   accessModes:
     - ReadWriteOnce
