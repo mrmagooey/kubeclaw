@@ -1104,7 +1104,7 @@ describe('processCommitChannelConfig — sidecar aux-backend rendering', () => {
   const baseSidecar: SidecarSpec = {
     image: 'my-backend:latest',
     port: 8765,
-    sessionMountPath: '/data/sessions',
+    sessionMountPath: '/home/.local/share/signal-cli',
     sessionStorageGi: 5,
     env: [{ name: 'FOO', value: 'bar' }],
     healthPath: '/health',
@@ -1216,7 +1216,7 @@ describe('processCommitChannelConfig — sidecar aux-backend rendering', () => {
       (m: any) => m.name === 'auxsession',
     );
     expect(sidecarMount).toBeDefined();
-    expect(sidecarMount.mountPath).toBe('/data/sessions');
+    expect(sidecarMount.mountPath).toBe('/home/.local/share/signal-cli');
 
     // channel container must NOT have the auxsession mount
     const channelMount = channelContainer.volumeMounts?.find(
@@ -1289,5 +1289,51 @@ describe('processCommitChannelConfig — sidecar aux-backend rendering', () => {
     // standalone always produces 1 container
     expect(builtDeployment.spec.template.spec.containers).toHaveLength(1);
     expect(deps.getChannelSidecar).not.toHaveBeenCalled();
+  });
+
+  // F4(a): sidecar container securityContext hardening
+  it('sidecar container securityContext has hardened fields (no runAsUser)', async () => {
+    let builtDeployment: any;
+    const deps = makeDeps({
+      getChannelHostMode: vi.fn(async () => 'channel-runner' as const),
+      getChannelSidecar: vi.fn(async () => baseSidecar),
+      createDeployment: vi.fn(async (b) => { builtDeployment = b; }),
+    });
+    await processCommitChannelConfig(validPayload, deps, 'kubeclaw', 'kubeclaw-agent:latest');
+
+    const sc = builtDeployment.spec.template.spec.containers[1].securityContext;
+    expect(sc.allowPrivilegeEscalation).toBe(false);
+    expect(sc.runAsNonRoot).toBe(true);
+    expect(sc.capabilities?.drop).toContain('ALL');
+    expect(sc.seccompProfile?.type).toBe('RuntimeDefault');
+    // Must NOT force a specific uid — the third-party image owns its own non-root uid
+    expect(sc.runAsUser).toBeUndefined();
+  });
+
+  // F4(b): pod-level fsGroup when sidecar is present
+  it('sidecar present → pod-level securityContext.fsGroup === 1000', async () => {
+    let builtDeployment: any;
+    const deps = makeDeps({
+      getChannelHostMode: vi.fn(async () => 'channel-runner' as const),
+      getChannelSidecar: vi.fn(async () => baseSidecar),
+      createDeployment: vi.fn(async (b) => { builtDeployment = b; }),
+    });
+    await processCommitChannelConfig(validPayload, deps, 'kubeclaw', 'kubeclaw-agent:latest');
+
+    expect(builtDeployment.spec.template.spec.securityContext?.fsGroup).toBe(1000);
+  });
+
+  // F4(c): no sidecar → pod-level securityContext is NOT changed (no fsGroup added)
+  it('no sidecar → pod-level securityContext does NOT gain fsGroup', async () => {
+    let builtDeployment: any;
+    const deps = makeDeps({
+      getChannelHostMode: vi.fn(async () => 'channel-runner' as const),
+      getChannelSidecar: vi.fn(async () => undefined),
+      createDeployment: vi.fn(async (b) => { builtDeployment = b; }),
+    });
+    await processCommitChannelConfig(validPayload, deps, 'kubeclaw', 'kubeclaw-agent:latest');
+
+    // Should not have fsGroup set when no sidecar
+    expect(builtDeployment.spec.template.spec.securityContext?.fsGroup).toBeUndefined();
   });
 });

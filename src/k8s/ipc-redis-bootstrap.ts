@@ -543,8 +543,12 @@ export async function processCommitChannelConfig(
             env: sidecar.env ?? [],
             securityContext: {
               allowPrivilegeEscalation: false,
+              // The third-party backend needs a writable root FS for its runtime;
+              // durable data lives on the session PVC (auxsession mount).
               readOnlyRootFilesystem: false,
               runAsNonRoot: true,
+              capabilities: { drop: ['ALL'] },
+              seccompProfile: { type: 'RuntimeDefault' },
             },
             ...(sidecar.healthPath
               ? {
@@ -598,6 +602,10 @@ export async function processCommitChannelConfig(
             },
             spec: {
               automountServiceAccountToken: false,
+              // fsGroup: 1000 makes the session PVC writable by the backend's non-root user.
+              // Required only when a sidecar is present; without it signal-cli cannot write
+              // its session data to a freshly-provisioned PVC.
+              ...(sidecar ? { securityContext: { fsGroup: 1000 } } : {}),
               // No KUBECLAW_SUPERUSER — must be absent from steady-state pod (AC5)
               // No KUBECLAW_BOOTSTRAP_SKILL — must be absent from steady-state pod (AC5)
               containers: [
