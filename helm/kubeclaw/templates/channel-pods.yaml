@@ -1,5 +1,11 @@
 {{- range $name, $cfg := .Values.channels }}
 {{- if $cfg.enabled }}
+{{- $type := ($cfg.type | default $name) }}
+{{- $manifest := index $.Values.bootstrap.channelManifests $type }}
+{{- $sidecar := "" }}
+{{- if and $manifest $manifest.sidecar }}
+{{- $sidecar = $manifest.sidecar }}
+{{- end }}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -28,6 +34,9 @@ spec:
         runAsNonRoot: false
         seccompProfile:
           type: RuntimeDefault
+        {{- if $sidecar }}
+        fsGroup: 1000
+        {{- end }}
       initContainers:
         - name: stage-runtime
           image: {{ include "kubeclaw.image" (dict "root" $ "name" "kubeclaw-orchestrator") }}
@@ -154,6 +163,12 @@ spec:
             {{- if eq $.Values.credentialInjection.mode "sidecar" }}
             {{- include "kubeclaw.credentialSidecarEnv" $ | nindent 12 }}
             {{- end }}
+            {{- if $sidecar }}
+            {{- if $sidecar.apiUrlEnv }}
+            - name: {{ $sidecar.apiUrlEnv }}
+              value: "http://localhost:{{ $sidecar.port }}"
+            {{- end }}
+            {{- end }}
 {{- /* Base URLs for istio mode are covered by kubeclaw.llmBrokerEnv (injected above). */}}
           ports:
             {{- if $cfg.httpPort }}
@@ -214,6 +229,42 @@ spec:
         {{- if eq $.Values.credentialInjection.mode "sidecar" }}
         {{- include "kubeclaw.credentialSidecarContainer" $ | nindent 8 }}
         {{- end }}
+        {{- if $sidecar }}
+        - name: {{ $type }}-backend
+          image: {{ $sidecar.image }}
+          ports:
+            - containerPort: {{ $sidecar.port }}
+          {{- if $sidecar.env }}
+          env:
+            {{- toYaml $sidecar.env | nindent 12 }}
+          {{- end }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          {{- if $sidecar.healthPath }}
+          readinessProbe:
+            httpGet:
+              path: {{ $sidecar.healthPath }}
+              port: {{ $sidecar.port }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: {{ $sidecar.healthPath }}
+              port: {{ $sidecar.port }}
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          {{- end }}
+          volumeMounts:
+            - name: auxsession
+              mountPath: {{ $sidecar.sessionMountPath }}
+              readOnly: false
+        {{- end }}
       volumes:
         - name: runtime
           emptyDir: {}
@@ -240,6 +291,11 @@ spec:
             name: kubeclaw-tools
         {{- if eq $.Values.credentialInjection.mode "sidecar" }}
         {{- include "kubeclaw.credentialSidecarVolumes" $ | nindent 8 }}
+        {{- end }}
+        {{- if $sidecar }}
+        - name: auxsession
+          persistentVolumeClaim:
+            claimName: kubeclaw-channel-{{ $name }}-auxsession
         {{- end }}
 {{- if and $cfg.httpPort $.Values.networkPolicy.enabled }}
 ---

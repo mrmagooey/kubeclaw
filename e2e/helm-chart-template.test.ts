@@ -1179,3 +1179,193 @@ describe('channel Service independent of networkPolicy', () => {
     expect(deployDoc).toContain('mountPath: /runtime');
   });
 });
+
+// ─── Channel manifest sidecar rendering ─────────────────────────────────────
+//
+// When a channel type's manifest declares a `sidecar`, the Helm chart must:
+//   1. Add the aux-backend container to the channel Deployment
+//   2. Add the auxsession PVC to storage.yaml
+//   3. Add a per-channel sidecar-egress NetworkPolicy
+//   4. Inject fsGroup: 1000 into the pod securityContext
+//   5. Leave channels WITHOUT a sidecar unchanged (1 container, no auxsession)
+
+describe('channel manifest sidecar rendering', () => {
+  // Build helm args that inject a sidecar manifest for the "signal" channel type.
+  // Using --set for nested objects requires escaping; easier as individual --set flags.
+  const sidecarArgs = [
+    '--set', 'channels.signal.enabled=true',
+    '--set', 'channels.signal.type=signal',
+    '--set', 'bootstrap.channelManifests.signal.packageJson={"name":"runtime"}',
+    '--set', 'bootstrap.channelManifests.signal.packageLockJson={}',
+    '--set', 'bootstrap.channelManifests.signal.manifestHash=testhash',
+    '--set', 'bootstrap.channelManifests.signal.hostMode=channel-runner',
+    '--set', 'bootstrap.channelManifests.signal.sidecar.image=registry.example.com/signal-backend:latest',
+    '--set', 'bootstrap.channelManifests.signal.sidecar.port=8080',
+    '--set', 'bootstrap.channelManifests.signal.sidecar.sessionMountPath=/root/.local/share/signal-cli',
+    '--set', 'bootstrap.channelManifests.signal.sidecar.sessionStorageGi=2',
+    '--set', 'bootstrap.channelManifests.signal.sidecar.healthPath=/.well-known/health',
+    '--set', 'bootstrap.channelManifests.signal.sidecar.apiUrlEnv=SIGNAL_CLI_REST_API_URL',
+    '--set', 'bootstrap.channelManifests.signal.sidecar.egressPorts[0]=8080',
+    '--set', 'networkPolicy.enabled=true',
+    '--set', 'secrets.anthropicApiKey=test',
+    '--set', 'redis.password=test',
+  ];
+
+  let rendered: string;
+  let docs: string[];
+
+  beforeAll(() => {
+    const result = spawnSync(
+      'helm',
+      ['template', 'smoke', CHART_DIR, ...sidecarArgs],
+      { encoding: 'utf8' },
+    );
+    expect(result.status, `helm template failed: ${result.stderr}`).toBe(0);
+    rendered = result.stdout;
+    docs = rendered.split(/\n---\n/);
+  });
+
+  it('renders the aux-backend container in the channel Deployment', () => {
+    const deployDoc = docs.find(
+      (d) =>
+        /^kind: Deployment$/m.test(d) &&
+        /^\s+name: kubeclaw-channel-signal$/m.test(d),
+    );
+    expect(deployDoc, 'channel signal Deployment not found').toBeDefined();
+    expect(deployDoc).toContain('name: signal-backend');
+    expect(deployDoc).toContain('image: registry.example.com/signal-backend:latest');
+    expect(deployDoc).toContain('containerPort: 8080');
+  });
+
+  it('aux-backend container has hardened securityContext (no runAsUser)', () => {
+    const deployDoc = docs.find(
+      (d) =>
+        /^kind: Deployment$/m.test(d) &&
+        /^\s+name: kubeclaw-channel-signal$/m.test(d),
+    );
+    expect(deployDoc).toBeDefined();
+    expect(deployDoc).toContain('allowPrivilegeEscalation: false');
+    expect(deployDoc).toContain('runAsNonRoot: true');
+    expect(deployDoc).toContain('readOnlyRootFilesystem: false');
+    // Must NOT set runAsUser (third-party image — let it use its own UID)
+    // We check by ensuring runAsUser does NOT appear AFTER the backend container name
+    const backendStart = deployDoc!.indexOf('name: signal-backend');
+    const backendSection = deployDoc!.slice(backendStart, backendStart + 800);
+    expect(backendSection).not.toContain('runAsUser');
+  });
+
+  it('aux-backend container has readiness and liveness probes when healthPath set', () => {
+    const deployDoc = docs.find(
+      (d) =>
+        /^kind: Deployment$/m.test(d) &&
+        /^\s+name: kubeclaw-channel-signal$/m.test(d),
+    );
+    expect(deployDoc).toBeDefined();
+    expect(deployDoc).toContain('readinessProbe');
+    expect(deployDoc).toContain('livenessProbe');
+    expect(deployDoc).toContain('path: /.well-known/health');
+  });
+
+  it('auxsession volume is added to the Deployment pod volumes', () => {
+    const deployDoc = docs.find(
+      (d) =>
+        /^kind: Deployment$/m.test(d) &&
+        /^\s+name: kubeclaw-channel-signal$/m.test(d),
+    );
+    expect(deployDoc).toBeDefined();
+    expect(deployDoc).toContain('name: auxsession');
+    expect(deployDoc).toContain('claimName: kubeclaw-channel-signal-auxsession');
+  });
+
+  it('pod securityContext has fsGroup: 1000 when sidecar is present', () => {
+    const deployDoc = docs.find(
+      (d) =>
+        /^kind: Deployment$/m.test(d) &&
+        /^\s+name: kubeclaw-channel-signal$/m.test(d),
+    );
+    expect(deployDoc).toBeDefined();
+    expect(deployDoc).toContain('fsGroup: 1000');
+  });
+
+  it('apiUrlEnv is injected into the channel container env', () => {
+    const deployDoc = docs.find(
+      (d) =>
+        /^kind: Deployment$/m.test(d) &&
+        /^\s+name: kubeclaw-channel-signal$/m.test(d),
+    );
+    expect(deployDoc).toBeDefined();
+    expect(deployDoc).toContain('SIGNAL_CLI_REST_API_URL');
+    expect(deployDoc).toContain('http://localhost:8080');
+  });
+
+  it('auxsession PVC is rendered in storage.yaml', () => {
+    const pvcDoc = docs.find(
+      (d) =>
+        /^kind: PersistentVolumeClaim$/m.test(d) &&
+        /^\s+name: kubeclaw-channel-signal-auxsession$/m.test(d),
+    );
+    expect(pvcDoc, 'auxsession PVC not found').toBeDefined();
+    expect(pvcDoc).toContain('2Gi');
+    expect(pvcDoc).toContain('ReadWriteOnce');
+  });
+
+  it('per-channel sidecar-egress NetworkPolicy is rendered with declared egressPorts', () => {
+    const npDoc = docs.find(
+      (d) =>
+        /^kind: NetworkPolicy$/m.test(d) &&
+        /^\s+name: kubeclaw-channel-signal-sidecar-egress$/m.test(d),
+    );
+    expect(npDoc, 'sidecar-egress NetworkPolicy not found').toBeDefined();
+    expect(npDoc).toContain('port: 8080');
+    expect(npDoc).toContain('policyTypes');
+    expect(npDoc).toContain('Egress');
+  });
+
+  it('channel WITHOUT a sidecar renders 1 container and no auxsession PVC', () => {
+    // Use the existing http channel base args — no sidecar manifest set for "http"
+    const noSidecarArgs = [
+      '--set', 'channels.http.enabled=true',
+      '--set', 'channels.http.type=http',
+      '--set', 'channels.http.httpPort=8080',
+      '--set', 'secrets.anthropicApiKey=test',
+      '--set', 'redis.password=test',
+    ];
+    const result = spawnSync(
+      'helm',
+      ['template', 'smoke', CHART_DIR, ...noSidecarArgs],
+      { encoding: 'utf8' },
+    );
+    expect(result.status, result.stderr).toBe(0);
+
+    const allDocs = result.stdout.split(/\n---\n/);
+
+    // No auxsession PVC
+    const auxPvc = allDocs.find(
+      (d) =>
+        /^kind: PersistentVolumeClaim$/m.test(d) &&
+        d.includes('auxsession'),
+    );
+    expect(auxPvc, 'auxsession PVC should not be rendered for channel without sidecar').toBeUndefined();
+
+    // No sidecar-egress NetworkPolicy
+    const sidecarNetpol = allDocs.find(
+      (d) =>
+        /^kind: NetworkPolicy$/m.test(d) &&
+        d.includes('sidecar-egress'),
+    );
+    expect(sidecarNetpol, 'sidecar-egress NetworkPolicy should not render without sidecar').toBeUndefined();
+
+    // No fsGroup in pod securityContext
+    const deployDoc = allDocs.find(
+      (d) =>
+        /^kind: Deployment$/m.test(d) &&
+        /^\s+name: kubeclaw-channel-http$/m.test(d),
+    );
+    expect(deployDoc, 'http channel Deployment not found').toBeDefined();
+    expect(deployDoc).not.toContain('fsGroup');
+
+    // Only one named container (not counting credential-sidecar in off mode)
+    // channel container present, no backend container
+    expect(deployDoc).not.toContain('-backend');
+  });
+});

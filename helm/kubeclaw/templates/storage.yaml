@@ -57,6 +57,12 @@ spec:
       storage: {{ .Values.storage.sizes.store }}
 {{- range $name, $cfg := .Values.channels }}
 {{- if $cfg.enabled }}
+{{- $type := ($cfg.type | default $name) }}
+{{- $manifest := index $.Values.bootstrap.channelManifests $type }}
+{{- $sidecar := "" }}
+{{- if and $manifest $manifest.sidecar }}
+{{- $sidecar = $manifest.sidecar }}
+{{- end }}
 ---
 # Per-channel storage: groups, store, sessions (ReadWriteOnce — each channel pod owns its own PVCs)
 # helm.sh/resource-policy: keep on groups and store prevents Helm from deleting these PVCs
@@ -104,5 +110,22 @@ spec:
   resources:
     requests:
       storage: {{ $.Values.storage.sizes.sessions }}
+{{- if $sidecar }}
+---
+# Aux-backend session PVC — mounted exclusively on the sidecar container (not channel).
+# Provides durable session storage for third-party backend images.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: kubeclaw-channel-{{ $name }}-auxsession
+  namespace: {{ include "kubeclaw.namespace" $ }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- include "kubeclaw.storageClassName" $ | nindent 2 }}
+  resources:
+    requests:
+      storage: {{ $sidecar.sessionStorageGi }}Gi
+{{- end }}
 {{- end }}
 {{- end }}
