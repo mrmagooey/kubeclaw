@@ -12,6 +12,7 @@ import type {
   CommitChannelConfigPayload,
 } from './ipc-redis-bootstrap.js';
 import { computeManifestHash } from './bootstrap-runner.js';
+import type { SidecarSpec } from '../skills/orchestrator/channel-manifest-registry.js';
 
 // ── Canonical content used as "approved manifest" in mismatch tests ───────────
 const APPROVED_PKG_JSON = JSON.stringify({ name: 'test', dependencies: {} });
@@ -62,6 +63,7 @@ function makeDeps(
     createPvc: vi.fn(async () => {}),
     // Task 2: new deps — default null/no-op so existing tests are unaffected
     getChannelHttpPort: vi.fn(async () => null),
+    getChannelSidecar: vi.fn(async () => undefined),
     createService: vi.fn(async () => {}),
     createNetworkPolicy: vi.fn(async () => {}),
     ...overrides,
@@ -1091,5 +1093,201 @@ describe('processCommitChannelConfig — httpPort / Service / NetworkPolicy (Tas
 
     expect(deps.createService).not.toHaveBeenCalled();
     expect(deps.createNetworkPolicy).not.toHaveBeenCalled();
+  });
+});
+
+// ─── Sidecar rendering (Task: sidecar aux-backend) ────────────────────────────
+
+describe('processCommitChannelConfig — sidecar aux-backend rendering', () => {
+  const inst = validPayload.instance_name; // 'my-telegram'
+
+  const baseSidecar: SidecarSpec = {
+    image: 'my-backend:latest',
+    port: 8765,
+    sessionMountPath: '/data/sessions',
+    sessionStorageGi: 5,
+    env: [{ name: 'FOO', value: 'bar' }],
+    healthPath: '/health',
+  };
+
+  it('sidecar present → Deployment has 2 containers', async () => {
+    let builtDeployment: any;
+    const deps = makeDeps({
+      getChannelHostMode: vi.fn(async () => 'channel-runner' as const),
+      getChannelSidecar: vi.fn(async () => baseSidecar),
+      createDeployment: vi.fn(async (b) => { builtDeployment = b; }),
+    });
+    await processCommitChannelConfig(validPayload, deps, 'kubeclaw', 'kubeclaw-agent:latest');
+
+    expect(builtDeployment.spec.template.spec.containers).toHaveLength(2);
+  });
+
+  it('sidecar container[1] has correct name, image, ports and env', async () => {
+    let builtDeployment: any;
+    const deps = makeDeps({
+      getChannelHostMode: vi.fn(async () => 'channel-runner' as const),
+      getChannelSidecar: vi.fn(async () => baseSidecar),
+      createDeployment: vi.fn(async (b) => { builtDeployment = b; }),
+    });
+    await processCommitChannelConfig(validPayload, deps, 'kubeclaw', 'kubeclaw-agent:latest');
+
+    const sidecarContainer = builtDeployment.spec.template.spec.containers[1];
+    expect(sidecarContainer.name).toBe(`${validPayload.channel_type}-backend`);
+    expect(sidecarContainer.image).toBe('my-backend:latest');
+    expect(sidecarContainer.ports).toEqual([{ containerPort: 8765 }]);
+    expect(sidecarContainer.env).toEqual([{ name: 'FOO', value: 'bar' }]);
+  });
+
+  it('sidecar with healthPath → readiness + liveness probes on sidecar container', async () => {
+    let builtDeployment: any;
+    const deps = makeDeps({
+      getChannelHostMode: vi.fn(async () => 'channel-runner' as const),
+      getChannelSidecar: vi.fn(async () => baseSidecar),
+      createDeployment: vi.fn(async (b) => { builtDeployment = b; }),
+    });
+    await processCommitChannelConfig(validPayload, deps, 'kubeclaw', 'kubeclaw-agent:latest');
+
+    const sidecarContainer = builtDeployment.spec.template.spec.containers[1];
+    expect(sidecarContainer.readinessProbe).toBeDefined();
+    expect(sidecarContainer.readinessProbe.httpGet).toEqual({ path: '/health', port: 8765 });
+    expect(sidecarContainer.livenessProbe).toBeDefined();
+    expect(sidecarContainer.livenessProbe.httpGet).toEqual({ path: '/health', port: 8765 });
+  });
+
+  it('sidecar without healthPath → no probes on sidecar container', async () => {
+    const sidecarNoHealth: SidecarSpec = { ...baseSidecar, healthPath: undefined };
+    let builtDeployment: any;
+    const deps = makeDeps({
+      getChannelHostMode: vi.fn(async () => 'channel-runner' as const),
+      getChannelSidecar: vi.fn(async () => sidecarNoHealth),
+      createDeployment: vi.fn(async (b) => { builtDeployment = b; }),
+    });
+    await processCommitChannelConfig(validPayload, deps, 'kubeclaw', 'kubeclaw-agent:latest');
+
+    const sidecarContainer = builtDeployment.spec.template.spec.containers[1];
+    expect(sidecarContainer.readinessProbe).toBeUndefined();
+    expect(sidecarContainer.livenessProbe).toBeUndefined();
+  });
+
+  it('session PVC created with correct name and sizeGi', async () => {
+    const deps = makeDeps({
+      getChannelHostMode: vi.fn(async () => 'channel-runner' as const),
+      getChannelSidecar: vi.fn(async () => baseSidecar),
+    });
+    await processCommitChannelConfig(validPayload, deps, 'kubeclaw', 'kubeclaw-agent:latest');
+
+    expect(deps.createPvc).toHaveBeenCalledWith(
+      `kubeclaw-channel-${inst}-auxsession`,
+      5,
+    );
+  });
+
+  it('session PVC volume exists in pod spec', async () => {
+    let builtDeployment: any;
+    const deps = makeDeps({
+      getChannelHostMode: vi.fn(async () => 'channel-runner' as const),
+      getChannelSidecar: vi.fn(async () => baseSidecar),
+      createDeployment: vi.fn(async (b) => { builtDeployment = b; }),
+    });
+    await processCommitChannelConfig(validPayload, deps, 'kubeclaw', 'kubeclaw-agent:latest');
+
+    const volumes: any[] = builtDeployment.spec.template.spec.volumes;
+    const auxVol = volumes.find((v: any) => v.name === 'auxsession');
+    expect(auxVol).toBeDefined();
+    expect(auxVol.persistentVolumeClaim.claimName).toBe(
+      `kubeclaw-channel-${inst}-auxsession`,
+    );
+  });
+
+  it('session PVC is mounted on the SIDECAR container at sessionMountPath (NOT channel container)', async () => {
+    let builtDeployment: any;
+    const deps = makeDeps({
+      getChannelHostMode: vi.fn(async () => 'channel-runner' as const),
+      getChannelSidecar: vi.fn(async () => baseSidecar),
+      createDeployment: vi.fn(async (b) => { builtDeployment = b; }),
+    });
+    await processCommitChannelConfig(validPayload, deps, 'kubeclaw', 'kubeclaw-agent:latest');
+
+    const channelContainer = builtDeployment.spec.template.spec.containers[0];
+    const sidecarContainer = builtDeployment.spec.template.spec.containers[1];
+
+    // sidecar must have the auxsession mount at sessionMountPath
+    const sidecarMount = sidecarContainer.volumeMounts?.find(
+      (m: any) => m.name === 'auxsession',
+    );
+    expect(sidecarMount).toBeDefined();
+    expect(sidecarMount.mountPath).toBe('/data/sessions');
+
+    // channel container must NOT have the auxsession mount
+    const channelMount = channelContainer.volumeMounts?.find(
+      (m: any) => m.name === 'auxsession',
+    );
+    expect(channelMount).toBeUndefined();
+  });
+
+  it('apiUrlEnv set → channel container env has the backend URL injected', async () => {
+    const sidecarWithApiUrl: SidecarSpec = { ...baseSidecar, apiUrlEnv: 'BACKEND_URL' };
+    let builtDeployment: any;
+    const deps = makeDeps({
+      getChannelHostMode: vi.fn(async () => 'channel-runner' as const),
+      getChannelSidecar: vi.fn(async () => sidecarWithApiUrl),
+      createDeployment: vi.fn(async (b) => { builtDeployment = b; }),
+    });
+    await processCommitChannelConfig(validPayload, deps, 'kubeclaw', 'kubeclaw-agent:latest');
+
+    const channelEnv: any[] = builtDeployment.spec.template.spec.containers[0].env;
+    const apiUrlEntry = channelEnv.find((e: any) => e.name === 'BACKEND_URL');
+    expect(apiUrlEntry).toBeDefined();
+    expect(apiUrlEntry.value).toBe('http://localhost:8765');
+  });
+
+  it('apiUrlEnv absent → channel container env does NOT gain extra backend URL entry', async () => {
+    let builtDeployment: any;
+    const deps = makeDeps({
+      getChannelHostMode: vi.fn(async () => 'channel-runner' as const),
+      getChannelSidecar: vi.fn(async () => baseSidecar), // no apiUrlEnv
+      createDeployment: vi.fn(async (b) => { builtDeployment = b; }),
+    });
+    await processCommitChannelConfig(validPayload, deps, 'kubeclaw', 'kubeclaw-agent:latest');
+
+    const channelEnv: any[] = builtDeployment.spec.template.spec.containers[0].env;
+    // Should not have any auxsession-related env
+    expect(channelEnv.every((e: any) => e.name !== 'BACKEND_URL')).toBe(true);
+  });
+
+  it('no sidecar → 1 container, no auxsession volume, no auxsession createPvc call', async () => {
+    let builtDeployment: any;
+    const deps = makeDeps({
+      getChannelHostMode: vi.fn(async () => 'channel-runner' as const),
+      getChannelSidecar: vi.fn(async () => undefined), // no sidecar
+      createDeployment: vi.fn(async (b) => { builtDeployment = b; }),
+    });
+    await processCommitChannelConfig(validPayload, deps, 'kubeclaw', 'kubeclaw-agent:latest');
+
+    expect(builtDeployment.spec.template.spec.containers).toHaveLength(1);
+
+    const volumes: any[] = builtDeployment.spec.template.spec.volumes;
+    expect(volumes.find((v: any) => v.name === 'auxsession')).toBeUndefined();
+
+    // createPvc for auxsession must NOT have been called
+    const pvcCalls = (deps.createPvc as ReturnType<typeof vi.fn>).mock.calls;
+    const auxCall = pvcCalls.find((args: any[]) =>
+      typeof args[0] === 'string' && args[0].includes('auxsession'),
+    );
+    expect(auxCall).toBeUndefined();
+  });
+
+  it('standalone mode + sidecar → sidecar is ignored (standalone does not call getChannelSidecar)', async () => {
+    let builtDeployment: any;
+    const deps = makeDeps({
+      getChannelHostMode: vi.fn(async () => 'standalone' as const),
+      getChannelSidecar: vi.fn(async () => baseSidecar),
+      createDeployment: vi.fn(async (b) => { builtDeployment = b; }),
+    });
+    await processCommitChannelConfig(validPayload, deps, 'kubeclaw', 'kubeclaw-agent:latest');
+
+    // standalone always produces 1 container
+    expect(builtDeployment.spec.template.spec.containers).toHaveLength(1);
+    expect(deps.getChannelSidecar).not.toHaveBeenCalled();
   });
 });

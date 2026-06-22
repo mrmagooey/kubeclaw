@@ -646,6 +646,22 @@ async function main(): Promise<void> {
           return null;
         }
       },
+      // Sidecar aux-backend: read the sidecar spec for a channel type from the
+      // ConfigMap. Returns undefined when absent, unknown, or on error.
+      getChannelSidecar: async (channelType: string) => {
+        try {
+          const cm = await coreApi.readNamespacedConfigMap({
+            name: 'kubeclaw-channel-manifests',
+            namespace: KUBECLAW_NAMESPACE,
+          });
+          const raw = cm.data?.[`${channelType}.json`];
+          if (!raw) return undefined;
+          const parsed = JSON.parse(raw) as { sidecar?: import('./skills/orchestrator/channel-manifest-registry.js').SidecarSpec };
+          return parsed.sidecar ?? undefined;
+        } catch {
+          return undefined;
+        }
+      },
       // Task 2: idempotent create-or-replace a K8s Service.
       createService: async (body: import('@kubernetes/client-node').V1Service) => {
         const name = body.metadata!.name!;

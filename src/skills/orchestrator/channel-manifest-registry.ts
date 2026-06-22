@@ -39,6 +39,12 @@ export interface SidecarSpec {
   env?: { name: string; value: string }[];
   healthPath?: string;
   egressPorts?: number[];
+  /**
+   * The env-var name the channel adapter reads for the backend URL.
+   * When set, the orchestrator injects `{ name: apiUrlEnv, value: 'http://localhost:<port>' }`
+   * into the CHANNEL container's env, wiring the adapter to the in-pod backend.
+   */
+  apiUrlEnv?: string;
 }
 
 export interface RegisterArgs {
@@ -193,6 +199,14 @@ export function registerChannelManifest(
             error: `sidecar.env entry has empty or missing name`,
           };
         }
+      }
+    }
+    if (s.apiUrlEnv !== undefined) {
+      if (!s.apiUrlEnv || typeof s.apiUrlEnv !== 'string') {
+        return {
+          ok: false,
+          error: 'sidecar.apiUrlEnv must be a non-empty string',
+        };
       }
     }
   }

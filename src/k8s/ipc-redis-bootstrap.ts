@@ -18,6 +18,7 @@ import type {
   V1Service,
   V1NetworkPolicy,
 } from '@kubernetes/client-node';
+import type { SidecarSpec } from '../skills/orchestrator/channel-manifest-registry.js';
 import { logger } from '../logger.js';
 import { computeManifestHash, nextRuntimePvcName } from './bootstrap-runner.js';
 
@@ -157,6 +158,12 @@ export interface CommitChannelConfigDeps {
    * channel has no HTTP port (e.g. IRC) or the manifest is absent.
    */
   getChannelHttpPort(channelType: string): Promise<number | null>;
+  /**
+   * Return the sidecar spec for a channel-runner-mode channel type (from the
+   * kubeclaw-channel-manifests ConfigMap `.sidecar` field), or undefined when
+   * the channel has no sidecar or the manifest is absent.
+   */
+  getChannelSidecar(channelType: string): Promise<SidecarSpec | undefined>;
   /** Create or replace a K8s Service (idempotent; AlreadyExists → replace). */
   createService(body: V1Service): Promise<void>;
   /** Create or replace a K8s NetworkPolicy (idempotent; AlreadyExists → replace). */
@@ -414,6 +421,11 @@ export async function processCommitChannelConfig(
       const httpPort = channelRunnerMode
         ? await deps.getChannelHttpPort(channel_type)
         : null;
+      // Sidecar aux-backend spec (channel-runner mode only).
+      // undefined means no sidecar for this channel type.
+      const sidecar = channelRunnerMode
+        ? await deps.getChannelSidecar(channel_type)
+        : undefined;
       // channel-runner.js lives only in the orchestrator image (WORKDIR /app);
       // the agent image (channelBaseImage) has channel-loader.js for standalone.
       const channelImage = channelRunnerMode
@@ -428,6 +440,13 @@ export async function processCommitChannelConfig(
           ]
         : [];
       for (const v of extraVolumes) await deps.createPvc(v.claimName, v.sizeGi);
+
+      // Session PVC for the sidecar aux-backend (channel-runner mode only).
+      // Mounted exclusively on the sidecar container — NOT on the channel container.
+      const auxSessionPvcName = `kubeclaw-channel-${instance_name}-auxsession`;
+      if (sidecar) {
+        await deps.createPvc(auxSessionPvcName, sidecar.sessionStorageGi);
+      }
 
       // channel-runner mode runs the full resident host (dist/channel-runner.js),
       // which needs the same env + catalog mounts that helm-installed channel
@@ -507,6 +526,50 @@ export async function processCommitChannelConfig(
         : [];
 
       // 3. Build steady-state Deployment spec
+
+      // API-URL env to inject into the channel container when a sidecar is present
+      // and apiUrlEnv is set — wires the channel adapter to the in-pod backend.
+      const sidecarApiUrlEnv: Array<{ name: string; value: string }> =
+        sidecar?.apiUrlEnv
+          ? [{ name: sidecar.apiUrlEnv, value: `http://localhost:${sidecar.port}` }]
+          : [];
+
+      // Sidecar container definition (rendered only when sidecar is present).
+      const sidecarContainer = sidecar
+        ? {
+            name: `${channel_type}-backend`,
+            image: sidecar.image,
+            ports: [{ containerPort: sidecar.port }],
+            env: sidecar.env ?? [],
+            securityContext: {
+              allowPrivilegeEscalation: false,
+              readOnlyRootFilesystem: false,
+              runAsNonRoot: true,
+            },
+            ...(sidecar.healthPath
+              ? {
+                  readinessProbe: {
+                    httpGet: { path: sidecar.healthPath, port: sidecar.port },
+                    initialDelaySeconds: 5,
+                    periodSeconds: 10,
+                  },
+                  livenessProbe: {
+                    httpGet: { path: sidecar.healthPath, port: sidecar.port },
+                    initialDelaySeconds: 15,
+                    periodSeconds: 30,
+                  },
+                }
+              : {}),
+            volumeMounts: [
+              {
+                name: 'auxsession',
+                mountPath: sidecar.sessionMountPath,
+                readOnly: false,
+              },
+            ],
+          }
+        : null;
+
       const deployment: V1Deployment = {
         apiVersion: 'apps/v1',
         kind: 'Deployment',
@@ -554,6 +617,8 @@ export async function processCommitChannelConfig(
                         process.env.REDIS_URL || 'redis://kubeclaw-redis:6379',
                     },
                     ...channelRunnerEnv,
+                    // Inject backend URL into channel container when sidecar has apiUrlEnv set
+                    ...sidecarApiUrlEnv,
                   ],
                   envFrom: [{ secretRef: { name: secretName } }],
                   ...(channelRunnerMode && httpPort != null
@@ -581,14 +646,18 @@ export async function processCommitChannelConfig(
                   volumeMounts: [
                     // Runtime PVC mounted READ-ONLY (AC5)
                     { name: 'runtime', mountPath: '/runtime', readOnly: true },
+                    // extraVolumes mount on the CHANNEL container only (groups/store/sessions PVCs)
                     ...extraVolumes.map((v) => ({ name: v.name, mountPath: v.mountPath })),
                     ...channelRunnerConfigVolumes.map((v) => ({
                       name: v.name,
                       mountPath: v.mountPath,
                       readOnly: true,
                     })),
+                    // NOTE: auxsession is intentionally NOT mounted here — it goes on the sidecar only.
                   ],
                 },
+                // Sidecar aux-backend container (only when sidecar spec is present)
+                ...(sidecarContainer ? [sidecarContainer] : []),
               ],
               volumes: [
                 {
@@ -604,6 +673,10 @@ export async function processCommitChannelConfig(
                   name: v.name,
                   configMap: { name: v.configMapName },
                 })),
+                // Sidecar session PVC volume (only when sidecar spec is present)
+                ...(sidecar
+                  ? [{ name: 'auxsession', persistentVolumeClaim: { claimName: auxSessionPvcName } }]
+                  : []),
               ],
             },
           },
