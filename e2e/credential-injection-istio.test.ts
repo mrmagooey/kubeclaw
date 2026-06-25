@@ -1406,44 +1406,77 @@ spec:
     // actually replaced the placeholder in the *final outbound request* that
     // reaches the upstream.  This test closes that gap.
     //
+    // Owner-group resolution on the egress path (critical correctness note)
+    // ---------------------------------------------------------------------
+    // On the real Istio egress path the broker's ext_authz call originates from
+    // the EGRESS-GATEWAY pod, so the TCP source IP the broker observes is the
+    // gateway pod's IP — NOT the workload's.  The gateway has no
+    // kubeclaw.io/owner-group annotation, so source-IP resolution
+    // (resolveOwnerGroupByIP) would yield null → no_owner_group → 403 and the
+    // request would never reach the upstream.
+    //
+    // Therefore this test resolves owner-group via the BEARER path, exactly like
+    // the "tool-job egress is broker-stamped end-to-end" test above:
+    //   - The workload sends Authorization: Bearer <projected-SA-token>
+    //     (audience kubeclaw-credential-broker).  The EnvoyFilter forwards the
+    //     authorization header to the broker's ext_authz call.
+    //   - The broker performs a TokenReview, extracts the pod-uid from the token
+    //     extras, and calls resolveOwnerGroupByUID(pod-uid).  That looks up the
+    //     WORKLOAD pod (this probe) by UID and reads its kubeclaw.io/owner-group
+    //     annotation — which we set below.  This works regardless of which pod's
+    //     IP the broker sees.
+    //
+    // Why a dedicated owner-group (not the shared EXEC_POD_GROUP):
+    //   This test owns its own group + Secret so its cleanup
+    //   (deleteGroupSecret) never stomps the shared EXEC_POD_GROUP secret that
+    //   sibling tests create/delete — preventing cross-test interference if
+    //   tests interleave.
+    //
     // Strategy:
-    //   1. Create a per-group Secret for EXEC_POD_GROUP under catalog id
-    //      e2e-catalog-lua-subst (host api.e2e-lua-subst.kubeclaw-test).
+    //   1. Create a per-group Secret for LUA_SUBST_GROUP under catalog id
+    //      e2e-catalog-lua-subst (host api.e2e-lua-subst.kubeclaw-test, a
+    //      catalog-only host with NO test-mock MAPPING, so the substitution path
+    //      runs rather than the legacy bearer-mapping path).
     //   2. Spawn a probe pod with:
-    //      - kubeclaw.io/owner-group=EXEC_POD_GROUP (so the broker resolves the group)
-    //      - Istio DNS capture enabled (so DNS queries for the catalog host resolve
-    //        to a synthetic IP that Envoy routes through the egress gateway)
-    //      - A projected SA token (broker-audience) for TokenReview-based identity
-    //        (since the egress gateway is the XFCC source but the probe's projected
-    //        token also provides identity via the bearer path in the ext_authz request
-    //        forwarded by the egress gateway)
-    //   3. The probe pod sends an HTTP GET to http://api.e2e-lua-subst.kubeclaw-test/echo
-    //      with header X-Api-Key: <placeholder> in the request.
-    //   4. The traffic flows: probe sidecar → egress gateway → ext_authz (broker) →
-    //      Lua substitution filter (replaces placeholder with real value) → mock
-    //      upstream echo pod.
+    //      - kubeclaw.io/owner-group=LUA_SUBST_GROUP (read via the bearer path's
+    //        pod-uid lookup)
+    //      - Istio DNS capture (so DNS for the catalog host resolves to a
+    //        synthetic IP Envoy routes through the egress gateway)
+    //      - A projected SA token (broker-audience) sent as Authorization: Bearer
+    //   3. The probe sends GET http://api.e2e-lua-subst.kubeclaw-test/echo with
+    //      Authorization: Bearer <token> (identity + owner-group) AND
+    //      X-Api-Key: <placeholder> (the substitution target).
+    //   4. Traffic: probe sidecar → egress gateway → ext_authz (broker returns
+    //      x-kubeclaw-substitutions for the apikey placeholder) → Lua filter
+    //      (replaces the placeholder in X-Api-Key) → mock upstream echo pod.
     //   5. The echo pod (mendhak/http-https-echo) reflects ALL request headers in
-    //      its JSON body. The probe reads the response and prints it to stdout.
-    //   6. We check that the echo body contains the REAL value, NOT the placeholder.
+    //      its JSON body; the probe prints the response.
+    //   6. We assert X-Api-Key arrived as the REAL value, not the placeholder.
     //
     // This proves the Lua filter rewrote the request, closing the gap of
     // "tested by parsing response headers, not the final egress request".
     //
+    // There is NO soft-skip: a Failed pod phase, missing echo output, or a
+    // non-substituted value all HARD-FAIL the test.  A false green here would
+    // hide a completely broken Lua filter, so the test must be strict.
+    //
     // Note: this test requires the supplementary Istio resources applied in
     // beforeAll (ServiceEntry + VirtualService + Gateway patch for
-    // api.e2e-lua-subst.kubeclaw-test).  It also requires the e2e-catalog-lua-subst
-    // catalog entry added to the Helm values in beforeAll.
+    // api.e2e-lua-subst.kubeclaw-test) and the e2e-catalog-lua-subst catalog
+    // entry added to the Helm values in beforeAll.
     it(
       'istio (test 11): Lua substitution — placeholder replaced in final egress request reaching echo upstream',
       () => {
         const luaSubstHost = 'api.e2e-lua-subst.kubeclaw-test';
         const catalogId = 'e2e-catalog-lua-subst';
+        // Dedicated owner-group so cleanup never touches the shared EXEC_POD_GROUP.
+        const LUA_SUBST_GROUP = 'e2e-lua-subst-group';
         const placeholder = 'KC_PH_apikey_luasubst2200';
         const realKey = 'lua-subst-real-api-key-abc456';
         const probeName = 'kubeclaw-lua-subst-probe';
 
-        // Register a real credential for EXEC_POD_GROUP under the lua-subst catalog.
-        createGroupSecret(EXEC_POD_GROUP, catalogId, {
+        // Register a real credential for the dedicated group under the lua-subst catalog.
+        createGroupSecret(LUA_SUBST_GROUP, catalogId, {
           apikey: { value: realKey, placeholder },
         });
 
@@ -1453,27 +1486,26 @@ spec:
           { encoding: 'utf8', stdio: 'pipe' },
         );
 
-        // The probe pod sends a request with the placeholder in X-Api-Key.
-        // After the Lua filter on the egress gateway, X-Api-Key must contain the
-        // real value instead of the placeholder.
+        // The probe sends Authorization: Bearer <projected-token> (so the broker
+        // resolves owner-group via the pod-uid in the token extras) AND
+        // X-Api-Key: <placeholder> (the header the Lua filter must rewrite).
+        // After the egress Lua filter, X-Api-Key must contain the real value.
         //
         // trap: always POST to quitquitquit so the istio-proxy sidecar exits and
         // the pod reaches Succeeded rather than hanging in Running indefinitely.
-        //
-        // Note: the broker resolves identity via the XFCC that the egress gateway's
-        // mTLS sets on the inbound leg (SPIFFE URI = sa/kubeclaw-tool-job).  The
-        // ownerGroup comes from the pod-informer IP-lookup, which finds the
-        // EXEC_POD_GROUP annotation on BROKER_PROBE_POD.  HOWEVER, this probe pod
-        // has its OWN IP — the pod-informer must index IT too.  We annotate the
-        // probe with EXEC_POD_GROUP so the IP-lookup succeeds for the probe's IP.
+        // set -e: a failed curl (e.g. routing not converged) fails the container
+        // → pod phase Failed → the test hard-fails on the phase assertion below.
         const scriptLines = [
           'trap "curl -sS -X POST http://localhost:15020/quitquitquit || true" EXIT',
           'set -e',
-          // Wait for Secret informer to pick up the new Secret.
+          // Wait for the broker's Secret informer to pick up the new Secret.
           'sleep 15',
-          // Send the request with the placeholder as the X-Api-Key header value.
+          'SA_TOKEN=$(cat /var/run/secrets/tokens/broker-token)',
+          // Authorization carries identity + (via pod-uid) owner-group.
+          // X-Api-Key carries the placeholder the Lua filter must substitute.
           // The echo pod reflects all request headers in the JSON body under "headers".
           `resp=$(curl -sS \\`,
+          `  -H "Authorization: Bearer $SA_TOKEN" \\`,
           `  -H "X-Api-Key: ${placeholder}" \\`,
           `  http://${luaSubstHost}/echo)`,
           'echo ECHO_BEGIN',
@@ -1484,7 +1516,8 @@ spec:
         const probeOverrides = JSON.stringify({
           metadata: {
             annotations: {
-              'kubeclaw.io/owner-group': EXEC_POD_GROUP,
+              // Read by the broker via resolveOwnerGroupByUID(pod-uid) on the bearer path.
+              'kubeclaw.io/owner-group': LUA_SUBST_GROUP,
               // Enable Istio DNS capture so the sidecar intercepts DNS lookups for
               // ServiceEntry hostnames and returns synthetic IPs that Envoy routes
               // through the egress gateway.
@@ -1494,11 +1527,36 @@ spec:
           },
           spec: {
             serviceAccountName: 'kubeclaw-tool-job',
+            // Projected token (audience kubeclaw-credential-broker) so the broker
+            // can TokenReview it and extract the pod-uid for owner-group resolution.
+            volumes: [
+              {
+                name: 'broker-token',
+                projected: {
+                  sources: [
+                    {
+                      serviceAccountToken: {
+                        audience: 'kubeclaw-credential-broker',
+                        expirationSeconds: 600,
+                        path: 'broker-token',
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
             containers: [
               {
                 name: probeName,
                 image: 'curlimages/curl:8.10.1',
                 command: ['sh', '-c', scriptLines.join('\n')],
+                volumeMounts: [
+                  {
+                    name: 'broker-token',
+                    mountPath: '/var/run/secrets/tokens',
+                    readOnly: true,
+                  },
+                ],
               },
             ],
           },
@@ -1523,41 +1581,38 @@ spec:
             if (phase === 'Succeeded' || phase === 'Failed') break;
             execSync('sleep 1');
           }
-          expect(phase, 'Lua substitution probe pod reached terminal phase').toMatch(
-            /^(Succeeded|Failed)$/,
-          );
 
           const logs = execSync(`kubectl -n ${NS} logs ${probeName}`, {
-            encoding: 'utf8' });
+            encoding: 'utf8',
+          });
+
+          // HARD-FAIL: the probe pod must have Succeeded.  A Failed phase means the
+          // egress curl failed (set -e) — e.g. routing not converged or the broker
+          // returned a non-2xx — which is a real failure of the egress→Lua path,
+          // NOT something to skip past.  Include the pod logs for diagnosis.
+          expect(
+            phase,
+            `Lua substitution probe pod must reach Succeeded (got "${phase}"); logs:\n${logs}`,
+          ).toBe('Succeeded');
 
           const begin = logs.indexOf('ECHO_BEGIN');
           const end = logs.indexOf('ECHO_END');
 
-          if (begin < 0 || end <= begin) {
-            // The pod may have failed before reaching the curl step (e.g. the Secret
-            // informer was not yet ready, or the VirtualService routing hadn't
-            // converged).  Treat as a soft skip-style warning rather than a hard fail
-            // because timing is the sole cause and the unit tests cover the Lua path.
-            console.warn(
-              '[Test 11] Lua substitution probe did not produce ECHO output. ' +
-                'This may be a timing issue (Secret informer or VS convergence). ' +
-                `Pod phase: ${phase}. Logs:\n${logs}`,
-            );
-            return;
-          }
+          // HARD-FAIL: the echo markers must be present.  Their absence means the
+          // upstream was never reached (the whole point of this test).
+          expect(
+            begin,
+            `echo response begin marker must be present; logs:\n${logs}`,
+          ).toBeGreaterThanOrEqual(0);
+          expect(
+            end,
+            `echo response end marker must be present; logs:\n${logs}`,
+          ).toBeGreaterThan(begin);
 
           const echoBody = logs.slice(begin + 'ECHO_BEGIN'.length, end).trim();
-          let parsed: Record<string, unknown>;
-          try {
-            parsed = JSON.parse(echoBody);
-          } catch {
-            console.warn(
-              '[Test 11] Echo response was not valid JSON — egress gateway may not have ' +
-                'routed the request through the substitution filter yet (VS convergence). ' +
-                `Body: ${echoBody}`,
-            );
-            return;
-          }
+          // HARD-FAIL: the echo body must be valid JSON (the echo pod always emits
+          // JSON; a non-JSON body means we did not reach the echo pod).
+          const parsed = JSON.parse(echoBody) as Record<string, unknown>;
 
           const headers = (parsed.headers ?? {}) as Record<string, string>;
           // mendhak/http-https-echo lowercases header names in the JSON body.
@@ -1603,7 +1658,8 @@ spec:
           execSync(`kubectl -n ${NS} delete pod ${probeName} --wait=false`, {
             stdio: 'pipe',
           });
-          deleteGroupSecret(EXEC_POD_GROUP);
+          // Scoped to this test's dedicated group — never touches EXEC_POD_GROUP.
+          deleteGroupSecret(LUA_SUBST_GROUP);
         }
       },
       300_000,
