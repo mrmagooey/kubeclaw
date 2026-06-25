@@ -108,13 +108,8 @@ export function isSenderAllowed(
 export function shouldDropMessage(
   chatJid: string,
   cfg: SenderAllowlistConfig,
-  sender?: string,
 ): boolean {
-  const drop = getEntry(chatJid, cfg).mode === 'drop';
-  if (drop && cfg.logDenied) {
-    logger.info({ chatJid, sender }, 'sender-allowlist: dropping message');
-  }
-  return drop;
+  return getEntry(chatJid, cfg).mode === 'drop';
 }
 
 export function isTriggerAllowed(

@@ -133,11 +133,16 @@ describe('loadSkills', () => {
       expect(res.promptSuffix).not.toContain(`body of ${name}`);
     }
 
-    // A load event must be recorded for each of the SKILL_CAP selected skills
+    // loadSkills must record a NEW load event for each selected skill on top
+    // of the single pre-seed, so load_count must be >= 2. (A bare has() check
+    // would pass tautologically from the pre-seed alone.)
     const stats = getSkillLoadStats(GROUP);
     const statMap = new Map(stats.map((s) => [s.skill_name, s]));
     for (const name of topSkills) {
-      expect(statMap.has(name), `load stat missing for ${name}`).toBe(true);
+      expect(
+        statMap.get(name)?.load_count ?? 0,
+        `expected a fresh load event recorded for ${name}`,
+      ).toBeGreaterThanOrEqual(2);
     }
   });
 
