@@ -299,6 +299,19 @@ describe.skipIf(!hasIstio || hasExistingRelease)(
             '      baseUrlEnvs: {}',
             '      allowOperatorFallback: false',
             '      allowedPositions: [body]',
+            // e2e-catalog-lua-subst: a catalog-only host with NO test-mock MAPPING
+            // entry. Requests to this host from sa/kubeclaw-tool-job bypass the
+            // legacy bearer-mapping path and fall through to the substitution path.
+            // The Istio routing for this host (ServiceEntry + VirtualService + Gateway
+            // patch) is applied separately after the Helm install — see below.
+            '    - id: e2e-catalog-lua-subst',
+            '      host: api.e2e-lua-subst.kubeclaw-test',
+            '      upstreamPort: 80',
+            '      credentialFields:',
+            '        - { name: apikey, envVar: E2E_LUA_SUBST_KEY }',
+            '      baseUrlEnvs: {}',
+            '      allowOperatorFallback: false',
+            '      allowedPositions: [header]',
           ].join('\n'),
         );
 
@@ -325,6 +338,103 @@ describe.skipIf(!hasIstio || hasExistingRelease)(
         );
         rmSync(valuesDir, { recursive: true, force: true });
         installed = true;
+      }
+
+      // Apply additional Istio routing resources for the lua-substitution test host
+      // (api.e2e-lua-subst.kubeclaw-test).  This host is in the broker catalog but
+      // NOT covered by the Helm-rendered ServiceEntries / VirtualService / Gateway
+      // (the Helm chart only renders destinations from egressDestinations, which
+      // requires endpointAddress support not available via additionalDestinations).
+      //
+      // We apply three supplementary resources that mirror what the Helm chart does
+      // for mock-upstream.kubeclaw-test:
+      //   1. ServiceEntry — registers the host; endpoints resolve to the same mock
+      //      upstream Service that handles /echo requests.
+      //   2. Gateway patch — adds a server entry for the new host on port 80 so the
+      //      egress gateway pod accepts inbound requests for this host.
+      //   3. VirtualService — mesh leg routes workload traffic to the egress gateway;
+      //      gateway leg routes the gateway to the mock upstream endpoint on port 80.
+      {
+        const luaSubstHost = 'api.e2e-lua-subst.kubeclaw-test';
+        const mockUpstreamSvc = `kubeclaw-mock-upstream.${NS}.svc.cluster.local`;
+
+        const extraManifests = [
+          // ServiceEntry: register the test host; resolve to the mock upstream pod.
+          `apiVersion: networking.istio.io/v1
+kind: ServiceEntry
+metadata:
+  name: kubeclaw-e2e-lua-subst-entry
+  namespace: ${NS}
+spec:
+  hosts:
+    - ${luaSubstHost}
+  ports:
+    - number: 80
+      name: http
+      protocol: HTTP
+  location: MESH_EXTERNAL
+  resolution: DNS
+  endpoints:
+    - address: ${mockUpstreamSvc}`,
+          // VirtualService: mesh leg → egress gateway; gateway leg → mock upstream.
+          `apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: kubeclaw-e2e-lua-subst-routing
+  namespace: ${NS}
+spec:
+  hosts:
+    - ${luaSubstHost}
+  gateways:
+    - mesh
+    - kubeclaw-egressgateway
+  http:
+    - match:
+        - gateways: [mesh]
+          port: 80
+          authority:
+            exact: ${luaSubstHost}
+      route:
+        - destination:
+            host: kubeclaw-istio-egressgateway.${NS}.svc.cluster.local
+            port: { number: 80 }
+    - match:
+        - gateways: [kubeclaw-egressgateway]
+          port: 80
+          authority:
+            exact: ${luaSubstHost}
+      route:
+        - destination:
+            host: ${luaSubstHost}
+            port: { number: 80 }`,
+        ].join('\n---\n');
+
+        const extraDir = mkdtempSync(path.join(tmpdir(), 'ke2e-lua-extra-'));
+        const extraFile = path.join(extraDir, 'lua-subst-resources.yaml');
+        try {
+          writeFileSync(extraFile, extraManifests);
+          execSync(`kubectl apply -f ${extraFile}`, { stdio: 'pipe' });
+
+          // Patch the existing Gateway to add a server for the new host so the
+          // egress gateway pod accepts inbound requests for api.e2e-lua-subst.kubeclaw-test.
+          // json-patch "add" appends to the /spec/servers array.
+          const gatewayPatch = JSON.stringify([
+            {
+              op: 'add',
+              path: '/spec/servers/-',
+              value: {
+                port: { number: 80, name: `http-${luaSubstHost.replace(/\./g, '-')}`, protocol: 'HTTP' },
+                hosts: [luaSubstHost],
+              },
+            },
+          ]);
+          execSync(
+            `kubectl -n ${NS} patch gateway kubeclaw-egressgateway --type=json -p='${gatewayPatch}'`,
+            { stdio: 'pipe' },
+          );
+        } finally {
+          rmSync(extraDir, { recursive: true, force: true });
+        }
       }
 
       execSync(
@@ -1101,25 +1211,458 @@ describe.skipIf(!hasIstio || hasExistingRelease)(
     );
 
     // ── Test 9 (istio-specific): identity-mismatch simulation ─────────────────
-    it.skip(
-      'istio (test 9): identity-mismatch — broker returns 403 when pod IP mismatches informer cache',
-      // SKIPPED: Simulating a genuine identity-mismatch in a running kind cluster
-      // requires either:
-      //   a) A test-only hook in the broker binary to pause/corrupt the
-      //      PodInformer cache at the right moment, or
-      //   b) Cluster-level networking surgery (iptables inside the broker pod)
-      //      to spoof source IPs.
-      // Both approaches are fragile in a kind + Istio CI environment.
-      //
-      // The identity-mismatch guard (PodInformer.resolveOwnerGroupByIP A1
-      // cross-check: pod.podIP !== requestedIP → return null) is covered at
-      // the unit-test level in:
-      //   src/credential-broker/pod-informer.test.ts  (resolveOwnerGroupByIP)
-      //   src/credential-broker/identity.test.ts      (XFCC + sourceIP path)
-      //   src/credential-broker/ext-authz.test.ts     (no_owner_group branch)
-      //
-      // An integration-level test with an in-process mock PodInformer is a
-      // lower-risk approach for this scenario.
+    //
+    // "Identity-mismatch" in the broker's istio path means: the XFCC header
+    // presents a SPIFFE identity, but the broker cannot resolve an ownerGroup
+    // for the source IP of the connection.  This happens when:
+    //
+    //   (a) The source-IP pod is NOT annotated with kubeclaw.io/owner-group, OR
+    //   (b) The source IP is not indexed in the pod-informer at all.
+    //
+    // In both cases the resolver receives ownerGroup=null and returns
+    // no_owner_group → 403.  We test case (a) here because it is reproducible
+    // in-cluster without iptables surgery:
+    //
+    //   1. Spawn an unannotated probe pod (no kubeclaw.io/owner-group annotation).
+    //   2. The pod calls /authz for a catalog-only host with a valid XFCC.
+    //   3. The broker sees source IP = unannotated pod's IP, finds the pod in the
+    //      informer, but resolves no annotation → ownerGroup null → no_owner_group
+    //      → 403. The broker stamps NOTHING.
+    //
+    // Note: the original skip comment anticipated needing to corrupt the informer
+    // cache to cause a mismatch. That is not necessary — an unannotated pod is
+    // sufficient to trigger the no_owner_group guard, which is the in-cluster
+    // manifestation of the identity-mismatch path.
+    it(
+      'istio (test 9): identity-mismatch — unannotated pod → broker returns 403 and stamps nothing',
+      () => {
+        // Use a catalog-only host (no test-mock MAPPING) so the request definitely
+        // reaches the catalog resolver; with no ownerGroup the resolver must return
+        // no_owner_group → 403.
+        const catalogHost = 'api.e2e-bodyonly.kubeclaw-test';
+        const catalogId = 'e2e-catalog-body-only';
+        const placeholder = 'KC_PH_apikey_mismatch9901';
+        const probeName = 'probe-identity-mismatch';
+
+        // Register a valid credential for a different group so we can be certain
+        // that 403 is not caused by "no catalog entry" but by "no owner group".
+        const otherGroup = 'e2e-mismatch-has-creds-group';
+        createGroupSecret(otherGroup, catalogId, {
+          apikey: { value: 'mismatch-real-key', placeholder },
+        });
+
+        // Clean up any stale probe from a previous run.
+        execSync(
+          `kubectl -n ${NS} delete pod ${probeName} --ignore-not-found --wait=true`,
+          { stdio: 'pipe' },
+        );
+
+        // Spawn a probe pod WITHOUT the kubeclaw.io/owner-group annotation.
+        // This is the critical difference from BROKER_PROBE_POD.
+        // The pod calls /authz directly (bypassing the Istio egress gateway) so
+        // we can precisely control the XFCC header and the source IP behaviour.
+        // The broker sees this pod's IP as sourceIP; the pod-informer finds the
+        // pod but it has no owner-group annotation → ownerGroup null → 403.
+        const podYaml = [
+          'apiVersion: v1',
+          'kind: Pod',
+          'metadata:',
+          `  name: ${probeName}`,
+          `  namespace: ${NS}`,
+          '  # Deliberately NO kubeclaw.io/owner-group annotation.',
+          '  # The broker pod-informer will find this pod by source IP but',
+          '  # cannot resolve an ownerGroup → no_owner_group → 403.',
+          'spec:',
+          '  serviceAccountName: kubeclaw-tool-job',
+          '  restartPolicy: Never',
+          '  containers:',
+          '    - name: probe',
+          '      image: curlimages/curl:8.10.1',
+          '      command: ["sh", "-c"]',
+          '      args:',
+          '        - |',
+          // Wait for the pod-informer to index this pod (the informer watch is
+          // eventually consistent; 10 s is generous for a kind cluster).
+          '          sleep 10',
+          // Call /authz directly — the broker sees the TCP source IP of this pod.
+          // XFCC presents the tool-job SPIFFE identity (matching a real workload SA),
+          // so identity resolution succeeds; ownerGroup resolution fails → 403.
+          `          STATUS=$(curl -sS -o /dev/null -w "%{http_code}" -X POST \\`,
+          `            http://kubeclaw-credential-broker.${NS}.svc:8080/authz \\`,
+          `            -H "x-forwarded-authority: ${catalogHost}" \\`,
+          `            -H "x-forwarded-client-cert: By=spiffe://cluster.local/ns/${NS}/sa/kubeclaw-istio-egressgateway;Hash=0;URI=${TOOL_JOB_SPIFFE}")`,
+          '          echo "MISMATCH_STATUS=$STATUS"',
+          // Confirm no x-kubeclaw-substitutions or authorization header was returned.
+          `          RESP_HDRS=$(curl -sS -D - -o /dev/null -X POST \\`,
+          `            http://kubeclaw-credential-broker.${NS}.svc:8080/authz \\`,
+          `            -H "x-forwarded-authority: ${catalogHost}" \\`,
+          `            -H "x-forwarded-client-cert: By=spiffe://cluster.local/ns/${NS}/sa/kubeclaw-istio-egressgateway;Hash=0;URI=${TOOL_JOB_SPIFFE}")`,
+          '          echo "RESP_HDRS_BEGIN"',
+          '          echo "$RESP_HDRS"',
+          '          echo "RESP_HDRS_END"',
+          '          curl -sS -X POST http://localhost:15020/quitquitquit || true',
+        ].join('\n');
+
+        const tmp = mkdtempSync(path.join(tmpdir(), 'ke2e-mismatch-'));
+        const podFile = path.join(tmp, 'pod.yaml');
+
+        try {
+          writeFileSync(podFile, podYaml);
+          execSync(`kubectl apply -f ${podFile}`, { stdio: 'pipe' });
+
+          // Wait for terminal phase (max 120 s).
+          let phase = '';
+          for (let i = 0; i < 120; i++) {
+            phase = execSync(
+              `kubectl -n ${NS} get pod ${probeName} -o jsonpath='{.status.phase}'`,
+              { encoding: 'utf8' },
+            ).trim();
+            if (phase === 'Succeeded' || phase === 'Failed') break;
+            execSync('sleep 1');
+          }
+          expect(phase, 'identity-mismatch probe pod reached terminal phase').toMatch(
+            /^(Succeeded|Failed)$/,
+          );
+
+          const logs = execSync(`kubectl -n ${NS} logs ${probeName}`, {
+            encoding: 'utf8',
+          });
+
+          // Primary assertion: broker returned 403 (no_owner_group path).
+          // The unannotated pod's IP resolves to a pod without owner-group → 403.
+          // If the pod-informer has not yet indexed this pod, the IP lookup returns
+          // null (ownerGroup=null) → same no_owner_group path → also 403.
+          const statusMatch = logs.match(/MISMATCH_STATUS=(\d+)/);
+          const status = statusMatch ? statusMatch[1] : '';
+          expect(
+            status,
+            'broker must return 403 for an unannotated pod (no ownerGroup resolvable)',
+          ).toBe('403');
+
+          // Secondary assertion: no credential header was stamped.
+          const hdrsBegin = logs.indexOf('RESP_HDRS_BEGIN');
+          const hdrsEnd = logs.indexOf('RESP_HDRS_END');
+          if (hdrsBegin >= 0 && hdrsEnd > hdrsBegin) {
+            const hdrsSection = logs.slice(hdrsBegin + 'RESP_HDRS_BEGIN'.length, hdrsEnd).toLowerCase();
+            expect(
+              hdrsSection,
+              'broker must NOT stamp x-kubeclaw-substitutions on a 403 response',
+            ).not.toContain('x-kubeclaw-substitutions');
+            expect(
+              hdrsSection,
+              'broker must NOT stamp authorization on a 403 response',
+            ).not.toContain('authorization:');
+          }
+
+          // Tertiary assertion: broker audit log records 403 for this destination.
+          const brokerLogs = execSync(
+            `kubectl -n ${NS} logs deployment/kubeclaw-credential-broker --since=180s`,
+            { encoding: 'utf8' },
+          );
+          const has403ForHost = brokerLogs.split('\n').some((l) => {
+            try {
+              const j = JSON.parse(l);
+              return j?.destination === catalogHost && j?.status === 403;
+            } catch {
+              return false;
+            }
+          });
+          expect(
+            has403ForHost,
+            'broker audit log must record a 403 for the catalog host from the unannotated pod',
+          ).toBe(true);
+
+          // Belt-and-suspenders: broker never emitted a 200 for this destination from
+          // this probe (which has no owner group).
+          const has200ForHost = brokerLogs.split('\n').some((l) => {
+            try {
+              const j = JSON.parse(l);
+              // Filter to lines likely from this probe (no ownerGroup field).
+              return j?.destination === catalogHost && j?.status === 200 && !j?.ownerGroup;
+            } catch {
+              return false;
+            }
+          });
+          expect(
+            has200ForHost,
+            'broker must never emit a 200 for a request with no resolvable ownerGroup',
+          ).toBe(false);
+        } finally {
+          rmSync(tmp, { recursive: true, force: true });
+          execSync(
+            `kubectl -n ${NS} delete pod ${probeName} --ignore-not-found --wait=false`,
+            { stdio: 'pipe' },
+          );
+          deleteGroupSecret(otherGroup);
+        }
+      },
+      180_000,
+    );
+
+    // ── Test 11 (istio-specific): Lua substitution observed on final egress ─────
+    //
+    // GAP: prior tests verify the broker returns x-kubeclaw-substitutions in the
+    // authz response header, but no test observed whether the Envoy Lua filter
+    // actually replaced the placeholder in the *final outbound request* that
+    // reaches the upstream.  This test closes that gap.
+    //
+    // Owner-group resolution on the egress path (critical correctness note)
+    // ---------------------------------------------------------------------
+    // On the real Istio egress path the broker's ext_authz call originates from
+    // the EGRESS-GATEWAY pod, so the TCP source IP the broker observes is the
+    // gateway pod's IP — NOT the workload's.  The gateway has no
+    // kubeclaw.io/owner-group annotation, so source-IP resolution
+    // (resolveOwnerGroupByIP) would yield null → no_owner_group → 403 and the
+    // request would never reach the upstream.
+    //
+    // Therefore this test resolves owner-group via the BEARER path, exactly like
+    // the "tool-job egress is broker-stamped end-to-end" test above:
+    //   - The workload sends Authorization: Bearer <projected-SA-token>
+    //     (audience kubeclaw-credential-broker).  The EnvoyFilter forwards the
+    //     authorization header to the broker's ext_authz call.
+    //   - The broker performs a TokenReview, extracts the pod-uid from the token
+    //     extras, and calls resolveOwnerGroupByUID(pod-uid).  That looks up the
+    //     WORKLOAD pod (this probe) by UID and reads its kubeclaw.io/owner-group
+    //     annotation — which we set below.  This works regardless of which pod's
+    //     IP the broker sees.
+    //
+    // Why a dedicated owner-group (not the shared EXEC_POD_GROUP):
+    //   This test owns its own group + Secret so its cleanup
+    //   (deleteGroupSecret) never stomps the shared EXEC_POD_GROUP secret that
+    //   sibling tests create/delete — preventing cross-test interference if
+    //   tests interleave.
+    //
+    // Strategy:
+    //   1. Create a per-group Secret for LUA_SUBST_GROUP under catalog id
+    //      e2e-catalog-lua-subst (host api.e2e-lua-subst.kubeclaw-test, a
+    //      catalog-only host with NO test-mock MAPPING, so the substitution path
+    //      runs rather than the legacy bearer-mapping path).
+    //   2. Spawn a probe pod with:
+    //      - kubeclaw.io/owner-group=LUA_SUBST_GROUP (read via the bearer path's
+    //        pod-uid lookup)
+    //      - Istio DNS capture (so DNS for the catalog host resolves to a
+    //        synthetic IP Envoy routes through the egress gateway)
+    //      - A projected SA token (broker-audience) sent as Authorization: Bearer
+    //   3. The probe sends GET http://api.e2e-lua-subst.kubeclaw-test/echo with
+    //      Authorization: Bearer <token> (identity + owner-group) AND
+    //      X-Api-Key: <placeholder> (the substitution target).
+    //   4. Traffic: probe sidecar → egress gateway → ext_authz (broker returns
+    //      x-kubeclaw-substitutions for the apikey placeholder) → Lua filter
+    //      (replaces the placeholder in X-Api-Key) → mock upstream echo pod.
+    //   5. The echo pod (mendhak/http-https-echo) reflects ALL request headers in
+    //      its JSON body; the probe prints the response.
+    //   6. We assert X-Api-Key arrived as the REAL value, not the placeholder.
+    //
+    // This proves the Lua filter rewrote the request, closing the gap of
+    // "tested by parsing response headers, not the final egress request".
+    //
+    // There is NO soft-skip: a Failed pod phase, missing echo output, or a
+    // non-substituted value all HARD-FAIL the test.  A false green here would
+    // hide a completely broken Lua filter, so the test must be strict.
+    //
+    // Note: this test requires the supplementary Istio resources applied in
+    // beforeAll (ServiceEntry + VirtualService + Gateway patch for
+    // api.e2e-lua-subst.kubeclaw-test) and the e2e-catalog-lua-subst catalog
+    // entry added to the Helm values in beforeAll.
+    it(
+      'istio (test 11): Lua substitution — placeholder replaced in final egress request reaching echo upstream',
+      () => {
+        const luaSubstHost = 'api.e2e-lua-subst.kubeclaw-test';
+        const catalogId = 'e2e-catalog-lua-subst';
+        // Dedicated owner-group so cleanup never touches the shared EXEC_POD_GROUP.
+        const LUA_SUBST_GROUP = 'e2e-lua-subst-group';
+        const placeholder = 'KC_PH_apikey_luasubst2200';
+        const realKey = 'lua-subst-real-api-key-abc456';
+        const probeName = 'kubeclaw-lua-subst-probe';
+
+        // Register a real credential for the dedicated group under the lua-subst catalog.
+        createGroupSecret(LUA_SUBST_GROUP, catalogId, {
+          apikey: { value: realKey, placeholder },
+        });
+
+        // Clean stale probe from a prior run.
+        execSync(
+          `kubectl -n ${NS} delete pod ${probeName} --ignore-not-found --wait=true`,
+          { encoding: 'utf8', stdio: 'pipe' },
+        );
+
+        // The probe sends Authorization: Bearer <projected-token> (so the broker
+        // resolves owner-group via the pod-uid in the token extras) AND
+        // X-Api-Key: <placeholder> (the header the Lua filter must rewrite).
+        // After the egress Lua filter, X-Api-Key must contain the real value.
+        //
+        // trap: always POST to quitquitquit so the istio-proxy sidecar exits and
+        // the pod reaches Succeeded rather than hanging in Running indefinitely.
+        // set -e: a failed curl (e.g. routing not converged) fails the container
+        // → pod phase Failed → the test hard-fails on the phase assertion below.
+        const scriptLines = [
+          'trap "curl -sS -X POST http://localhost:15020/quitquitquit || true" EXIT',
+          'set -e',
+          // Wait for the broker's Secret informer to pick up the new Secret.
+          'sleep 15',
+          'SA_TOKEN=$(cat /var/run/secrets/tokens/broker-token)',
+          // Authorization carries identity + (via pod-uid) owner-group.
+          // X-Api-Key carries the placeholder the Lua filter must substitute.
+          // The echo pod reflects all request headers in the JSON body under "headers".
+          `resp=$(curl -sS \\`,
+          `  -H "Authorization: Bearer $SA_TOKEN" \\`,
+          `  -H "X-Api-Key: ${placeholder}" \\`,
+          `  http://${luaSubstHost}/echo)`,
+          'echo ECHO_BEGIN',
+          'echo "$resp"',
+          'echo ECHO_END',
+        ];
+
+        const probeOverrides = JSON.stringify({
+          metadata: {
+            annotations: {
+              // Read by the broker via resolveOwnerGroupByUID(pod-uid) on the bearer path.
+              'kubeclaw.io/owner-group': LUA_SUBST_GROUP,
+              // Enable Istio DNS capture so the sidecar intercepts DNS lookups for
+              // ServiceEntry hostnames and returns synthetic IPs that Envoy routes
+              // through the egress gateway.
+              'proxy.istio.io/config':
+                '{"proxyMetadata":{"ISTIO_META_DNS_CAPTURE":"true","ISTIO_META_DNS_AUTO_ALLOCATE":"true"}}',
+            },
+          },
+          spec: {
+            serviceAccountName: 'kubeclaw-tool-job',
+            // Projected token (audience kubeclaw-credential-broker) so the broker
+            // can TokenReview it and extract the pod-uid for owner-group resolution.
+            volumes: [
+              {
+                name: 'broker-token',
+                projected: {
+                  sources: [
+                    {
+                      serviceAccountToken: {
+                        audience: 'kubeclaw-credential-broker',
+                        expirationSeconds: 600,
+                        path: 'broker-token',
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+            containers: [
+              {
+                name: probeName,
+                image: 'curlimages/curl:8.10.1',
+                command: ['sh', '-c', scriptLines.join('\n')],
+                volumeMounts: [
+                  {
+                    name: 'broker-token',
+                    mountPath: '/var/run/secrets/tokens',
+                    readOnly: true,
+                  },
+                ],
+              },
+            ],
+          },
+        });
+
+        try {
+          execSync(
+            `kubectl run ${probeName} -n ${NS} ` +
+              `--image=curlimages/curl:8.10.1 ` +
+              `--restart=Never ` +
+              `--overrides='${probeOverrides}'`,
+            { stdio: 'inherit' },
+          );
+
+          // Poll for terminal phase (max 120 s after Secret informer wait + curl).
+          let phase = '';
+          for (let i = 0; i < 120; i++) {
+            phase = execSync(
+              `kubectl -n ${NS} get pod ${probeName} -o jsonpath='{.status.phase}'`,
+              { encoding: 'utf8' },
+            ).trim();
+            if (phase === 'Succeeded' || phase === 'Failed') break;
+            execSync('sleep 1');
+          }
+
+          const logs = execSync(`kubectl -n ${NS} logs ${probeName}`, {
+            encoding: 'utf8',
+          });
+
+          // HARD-FAIL: the probe pod must have Succeeded.  A Failed phase means the
+          // egress curl failed (set -e) — e.g. routing not converged or the broker
+          // returned a non-2xx — which is a real failure of the egress→Lua path,
+          // NOT something to skip past.  Include the pod logs for diagnosis.
+          expect(
+            phase,
+            `Lua substitution probe pod must reach Succeeded (got "${phase}"); logs:\n${logs}`,
+          ).toBe('Succeeded');
+
+          const begin = logs.indexOf('ECHO_BEGIN');
+          const end = logs.indexOf('ECHO_END');
+
+          // HARD-FAIL: the echo markers must be present.  Their absence means the
+          // upstream was never reached (the whole point of this test).
+          expect(
+            begin,
+            `echo response begin marker must be present; logs:\n${logs}`,
+          ).toBeGreaterThanOrEqual(0);
+          expect(
+            end,
+            `echo response end marker must be present; logs:\n${logs}`,
+          ).toBeGreaterThan(begin);
+
+          const echoBody = logs.slice(begin + 'ECHO_BEGIN'.length, end).trim();
+          // HARD-FAIL: the echo body must be valid JSON (the echo pod always emits
+          // JSON; a non-JSON body means we did not reach the echo pod).
+          const parsed = JSON.parse(echoBody) as Record<string, unknown>;
+
+          const headers = (parsed.headers ?? {}) as Record<string, string>;
+          // mendhak/http-https-echo lowercases header names in the JSON body.
+          const receivedKey =
+            headers['x-api-key'] ?? headers['X-Api-Key'] ?? '';
+
+          // Primary assertion: Lua filter replaced the placeholder with the real key.
+          expect(
+            receivedKey,
+            'echo upstream must receive the real API key (not the placeholder) after Lua substitution',
+          ).toBe(realKey);
+
+          // Secondary assertion: the placeholder must NOT appear in the upstream request.
+          expect(
+            receivedKey,
+            'placeholder must NOT appear in the upstream request after substitution',
+          ).not.toContain(placeholder);
+
+          // Tertiary assertion: broker audit log shows a substitution was performed.
+          const brokerLogs = execSync(
+            `kubectl -n ${NS} logs deployment/kubeclaw-credential-broker --since=180s`,
+            { encoding: 'utf8' },
+          );
+          const subAuditLine = brokerLogs
+            .split('\n')
+            .map((l) => {
+              try { return JSON.parse(l); } catch { return null; }
+            })
+            .find(
+              (j) =>
+                j &&
+                j.destination === luaSubstHost &&
+                j.catalogId === catalogId &&
+                j.status === 200 &&
+                typeof j.substitutionCount === 'number' &&
+                j.substitutionCount > 0,
+            );
+          expect(
+            subAuditLine,
+            'broker audit log must record a substitution (substitutionCount>0) for the lua-subst host',
+          ).toBeDefined();
+        } finally {
+          execSync(`kubectl -n ${NS} delete pod ${probeName} --wait=false`, {
+            stdio: 'pipe',
+          });
+          // Scoped to this test's dedicated group — never touches EXEC_POD_GROUP.
+          deleteGroupSecret(LUA_SUBST_GROUP);
+        }
+      },
+      300_000,
     );
 
     // ── Test 10 (istio-specific): unknown catalog ID — broker returns 403 ─────

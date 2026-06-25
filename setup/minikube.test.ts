@@ -79,7 +79,7 @@ describe('parseArgs', () => {
   it('returns defaults when no args given', () => {
     const opts = parseArgs([]);
     expect(opts.cpus).toBe(4);
-    expect(opts.memory).toBe(6144);
+    expect(opts.memory).toBe(8192);
     expect(opts.disk).toBe('20g');
     expect(opts.reset).toBe(false);
     expect(opts.skipBuild).toBe(false);
