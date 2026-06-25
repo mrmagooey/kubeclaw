@@ -144,11 +144,8 @@ describe('Minikube-live: data-facade endpoints against live channel pod', () => 
 
   it(
     'GET /history without credentials returns 401',
-    async () => {
-      if (!provisioned) {
-        console.warn(SKIP_MSG);
-        return;
-      }
+    async (ctx) => {
+      if (!provisioned) return ctx.skip();
 
       const res = await fetch(`${HTTP_URL}/history`, {
         signal: AbortSignal.timeout(10_000),
@@ -163,11 +160,8 @@ describe('Minikube-live: data-facade endpoints against live channel pod', () => 
 
   it(
     'GET /history with wrong password returns 401',
-    async () => {
-      if (!provisioned) {
-        console.warn(SKIP_MSG);
-        return;
-      }
+    async (ctx) => {
+      if (!provisioned) return ctx.skip();
 
       const res = await fetch(`${HTTP_URL}/history`, {
         headers: { Authorization: basicAuth(KUBECLAW_LIVE_USER, 'wrongpass') },
@@ -185,11 +179,8 @@ describe('Minikube-live: data-facade endpoints against live channel pod', () => 
 
   it(
     'GET /history returns 200 with { messages: [...] } shape',
-    async () => {
-      if (!provisioned) {
-        console.warn(SKIP_MSG);
-        return;
-      }
+    async (ctx) => {
+      if (!provisioned) return ctx.skip();
 
       const res = await fetch(`${HTTP_URL}/history`, {
         headers: { Authorization: AUTH },
@@ -222,11 +213,8 @@ describe('Minikube-live: data-facade endpoints against live channel pod', () => 
 
   it(
     'GET /history?limit=1 returns at most 1 message',
-    async () => {
-      if (!provisioned) {
-        console.warn(SKIP_MSG);
-        return;
-      }
+    async (ctx) => {
+      if (!provisioned) return ctx.skip();
 
       const res = await fetch(`${HTTP_URL}/history?limit=1`, {
         headers: { Authorization: AUTH },
@@ -254,11 +242,8 @@ describe('Minikube-live: data-facade endpoints against live channel pod', () => 
 
   it(
     'GET /jobs returns 200 + JSON array (sdk data-facade wired)',
-    async () => {
-      if (!provisioned) {
-        console.warn(SKIP_MSG);
-        return;
-      }
+    async (ctx) => {
+      if (!provisioned) return ctx.skip();
 
       const res = await fetch(`${HTTP_URL}/jobs`, {
         headers: { Authorization: AUTH },
@@ -290,11 +275,8 @@ describe('Minikube-live: data-facade endpoints against live channel pod', () => 
 
   it(
     'GET /schedule returns 200 + JSON array',
-    async () => {
-      if (!provisioned) {
-        console.warn(SKIP_MSG);
-        return;
-      }
+    async (ctx) => {
+      if (!provisioned) return ctx.skip();
 
       const res = await fetch(`${HTTP_URL}/schedule`, {
         headers: { Authorization: AUTH },
@@ -326,11 +308,8 @@ describe('Minikube-live: data-facade endpoints against live channel pod', () => 
 
   it(
     'GET /search?q=hello returns 200 + JSON array (FTS over conversation_history)',
-    async () => {
-      if (!provisioned) {
-        console.warn(SKIP_MSG);
-        return;
-      }
+    async (ctx) => {
+      if (!provisioned) return ctx.skip();
 
       const res = await fetch(
         `${HTTP_URL}/search?q=${encodeURIComponent('hello')}`,
@@ -367,11 +346,8 @@ describe('Minikube-live: data-facade endpoints against live channel pod', () => 
 
   it(
     'GET /search without q returns 400 with error body',
-    async () => {
-      if (!provisioned) {
-        console.warn(SKIP_MSG);
-        return;
-      }
+    async (ctx) => {
+      if (!provisioned) return ctx.skip();
 
       const res = await fetch(`${HTTP_URL}/search`, {
         headers: { Authorization: AUTH },
@@ -392,11 +368,8 @@ describe('Minikube-live: data-facade endpoints against live channel pod', () => 
 
   it(
     'GET /memory returns 200 + { content: string }',
-    async () => {
-      if (!provisioned) {
-        console.warn(SKIP_MSG);
-        return;
-      }
+    async (ctx) => {
+      if (!provisioned) return ctx.skip();
 
       const res = await fetch(`${HTTP_URL}/memory`, {
         headers: { Authorization: AUTH },
@@ -424,11 +397,8 @@ describe('Minikube-live: data-facade endpoints against live channel pod', () => 
 
   it(
     'GET /audit returns 200 + { entries: [...] }',
-    async () => {
-      if (!provisioned) {
-        console.warn(SKIP_MSG);
-        return;
-      }
+    async (ctx) => {
+      if (!provisioned) return ctx.skip();
 
       const res = await fetch(`${HTTP_URL}/audit`, {
         headers: { Authorization: AUTH },
@@ -472,11 +442,8 @@ describe('Minikube-live: data-facade endpoints against live channel pod', () => 
 
   it(
     'GET /diag returns 200 + JSON object with the 7 required numeric fields',
-    async () => {
-      if (!provisioned) {
-        console.warn(SKIP_MSG);
-        return;
-      }
+    async (ctx) => {
+      if (!provisioned) return ctx.skip();
 
       const res = await fetch(`${HTTP_URL}/diag`, {
         headers: { Authorization: AUTH },
@@ -523,11 +490,8 @@ describe('Minikube-live: data-facade endpoints against live channel pod', () => 
 
   it(
     'GET /version (no auth required) returns 200 + { version, model }',
-    async () => {
-      if (!provisioned) {
-        console.warn(SKIP_MSG);
-        return;
-      }
+    async (ctx) => {
+      if (!provisioned) return ctx.skip();
 
       const res = await fetch(`${HTTP_URL}/version`, {
         signal: AbortSignal.timeout(10_000),
@@ -554,11 +518,8 @@ describe('Minikube-live: data-facade endpoints against live channel pod', () => 
 
   it(
     'GET /whoami returns 200 + { username, group, group_folder } for authenticated user',
-    async () => {
-      if (!provisioned) {
-        console.warn(SKIP_MSG);
-        return;
-      }
+    async (ctx) => {
+      if (!provisioned) return ctx.skip();
 
       const res = await fetch(`${HTTP_URL}/whoami`, {
         headers: { Authorization: AUTH },
