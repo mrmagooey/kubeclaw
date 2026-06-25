@@ -3405,13 +3405,9 @@ async function main(): Promise<void> {
       if (!msg.is_from_me && !msg.is_bot_message && registeredGroups[chatJid]) {
         const cfg = loadSenderAllowlist();
         if (
-          shouldDropMessage(chatJid, cfg) &&
+          shouldDropMessage(chatJid, cfg, msg.sender) &&
           !isSenderAllowed(chatJid, msg.sender, cfg)
         ) {
-          logger.info(
-            { chatJid, sender: msg.sender },
-            'sender-allowlist: dropping message',
-          );
           return;
         }
       }
