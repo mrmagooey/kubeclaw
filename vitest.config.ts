@@ -17,6 +17,7 @@ export default defineConfig({
       'setup/**/*.test.ts',
       'skills-engine/**/*.test.ts',
       'container/agent-runner/**/*.test.ts',
+      'container/postgres-mcp/**/*.test.ts',
     ],
   },
 });
