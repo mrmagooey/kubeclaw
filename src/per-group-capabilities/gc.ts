@@ -18,6 +18,12 @@ export async function gcGroup(args: GcArgs): Promise<void> {
   const selector = `kubeclaw.io/group-hash=${hash}`;
   const instanceCount = listInstances(args.groupFolder).length;
   try {
+    // deleteByLabel removes Deployments, Services, NetworkPolicies, and Secrets
+    // carrying the group-hash label. It intentionally does NOT delete
+    // PersistentVolumeClaims — dedicated PVCs carry the annotation
+    // kubeclaw.io/retain: "true" and are not in the collections targeted here.
+    // This means a group's database PVC (and its data) survives group deletion
+    // and must be cleaned up manually when the data is no longer needed.
     await args.client.deleteByLabel(args.namespace, selector);
   } catch (err) {
     logger.warn(

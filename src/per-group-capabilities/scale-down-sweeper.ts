@@ -25,6 +25,7 @@ export async function sweepIdleInstances(args: SweepArgs): Promise<void> {
   for (const inst of live) {
     const spec = specByName.get(inst.capabilityName);
     if (!spec) continue;
+    if (resolveGroupCapability(spec).pinned) continue;
     const threshold = resolveGroupCapability(spec).scaleDownAfterIdleSeconds;
     const idleFor = inst.lastUsedAt === null ? Infinity : now - inst.lastUsedAt;
     if (idleFor < threshold) continue;

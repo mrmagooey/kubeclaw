@@ -114,4 +114,46 @@ describe('sweepIdleInstances', () => {
     });
     expect(getInstance('Family', 'echo')?.currentReplicas).toBe(0);
   });
+
+  it('never scales down a pinned instance even when long idle', async () => {
+    const c = new FakePerGroupK8sClient();
+    upsertInstance({
+      groupFolder: 'alice',
+      capabilityName: 'database',
+      groupHash: 'abc123',
+      deploymentName: 'mcp-database-abc123',
+      serviceName: 'mcp-database-abc123',
+    });
+    setReplicas('alice', 'database', 1);
+    touchLastUsed('alice', 'database', 0); // epoch 0 = ancient
+    await c.applyDeployment({
+      apiVersion: 'apps/v1',
+      kind: 'Deployment',
+      metadata: { name: 'mcp-database-abc123', namespace: 'kubeclaw' },
+      spec: {
+        replicas: 1,
+        selector: { matchLabels: {} },
+        template: { metadata: {}, spec: { containers: [] } },
+      },
+    });
+    const pinned: CapabilitySpec = {
+      name: 'database',
+      kind: 'mcp',
+      image: 'pg-mcp:1',
+      scope: 'group',
+      pinned: true,
+      scaleDownAfterIdleSeconds: 60,
+    };
+    await sweepIdleInstances({
+      client: c,
+      namespace: 'kubeclaw',
+      specs: [pinned],
+      nowSeconds: () => 1_000_000,
+    });
+    // Pinned instance must not be scaled down — DB and K8s replicas stay at 1.
+    expect(getInstance('alice', 'database')?.currentReplicas).toBe(1);
+    expect(
+      (await c.readDeployment('kubeclaw', 'mcp-database-abc123'))?.spec?.replicas,
+    ).toBe(1);
+  });
 });
