@@ -14,12 +14,16 @@ const {
   MockClient,
   MockStreamableHTTPTransport,
   MockSSETransport,
+  capturedTransportArgs,
 } = vi.hoisted(() => {
   const mockListTools = vi.fn();
   const mockCallTool = vi.fn();
   const mockConnect = vi.fn();
   const mockClose = vi.fn();
   const mockRequestGroupCapability = vi.fn();
+
+  // Stores the args passed to the most-recent MockStreamableHTTPTransport construction.
+  const capturedTransportArgs: { url?: unknown; options?: unknown } = {};
 
   class MockClient {
     connect = mockConnect;
@@ -31,7 +35,10 @@ const {
 
   class MockStreamableHTTPTransport {
     close = vi.fn();
-    constructor(_url: unknown) {}
+    constructor(_url: unknown, _options?: unknown) {
+      capturedTransportArgs.url = _url;
+      capturedTransportArgs.options = _options;
+    }
   }
 
   class MockSSETransport {
@@ -47,6 +54,7 @@ const {
     MockClient,
     MockStreamableHTTPTransport,
     MockSSETransport,
+    capturedTransportArgs,
   };
 });
 
@@ -976,5 +984,41 @@ describe('callTool — group-scoped MCP dispatch', () => {
       name: 'read_file',
       arguments: {},
     });
+  });
+
+  it('sends Authorization: Bearer header when requestGroupCapability returns a token', async () => {
+    mockRequestGroupCapability.mockResolvedValue({
+      endpoint: 'http://svc.kubeclaw.svc.cluster.local:3000',
+      token: 'tok123',
+    });
+    mockCallTool.mockResolvedValue({
+      content: [{ type: 'text', text: 'result' }],
+    });
+    const mgr = await makeGroupManager();
+    await mgr.callTool(
+      'mcp__filesystem__read_file',
+      { path: '/etc/hosts' },
+      { groupFolder: 'my-group' },
+    );
+    const opts = capturedTransportArgs.options as
+      | { requestInit?: { headers?: Record<string, string> } }
+      | undefined;
+    expect(opts?.requestInit?.headers?.Authorization).toBe('Bearer tok123');
+  });
+
+  it('does not send Authorization header when no token is returned', async () => {
+    mockRequestGroupCapability.mockResolvedValue({
+      endpoint: 'http://svc.kubeclaw.svc.cluster.local:3000',
+    });
+    mockCallTool.mockResolvedValue({
+      content: [{ type: 'text', text: 'result' }],
+    });
+    const mgr = await makeGroupManager();
+    await mgr.callTool(
+      'mcp__filesystem__read_file',
+      {},
+      { groupFolder: 'my-group' },
+    );
+    expect(capturedTransportArgs.options).toBeUndefined();
   });
 });
