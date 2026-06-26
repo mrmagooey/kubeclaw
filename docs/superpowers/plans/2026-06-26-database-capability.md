@@ -767,20 +767,84 @@ git commit -m "feat(db): postgres-mcp server image (read-only query, row cap, to
 
 ---
 
-## Task 9: Wire the `database` capability in Helm values
+## Task 9: Assemble the `database` capability — read-only role bootstrap, reconcile-time credentials, Helm wiring
+
+> **DESIGN (human-decided):** read-only `query` + gated `execute`, enforced by TWO Postgres roles. The DB capability is **pinned** (pod starts at reconcile, before any discovery call) and the postgres-mcp server **requires its credentials at startup** — therefore per-group credentials (the MCP token + the `rw` and `ro` Postgres passwords) MUST be provisioned at **reconcile time**, before the pinned pod starts. (Task 6's lazy discovery-time `ensureGroupMcpToken` is fine for the tokenless filesystem MCP but insufficient here.) The read-only `kubeclaw_ro` Postgres role is created by the postgres-mcp server on boot using its rw/superuser connection.
 
 **Files:**
+- Modify: `container/postgres-mcp/server.ts` + `container/postgres-mcp/server.test.ts` (ro-role bootstrap)
+- Create: `src/per-group-capabilities/provision-credentials.ts` + `.test.ts` (reconcile-time credential provisioning)
+- Modify: `src/per-group-capabilities/reconciler.ts` + `reconciler.test.ts` (call the provisioner before instance creation for `credentialsFrom: 'secret'` capabilities)
 - Modify: `helm/kubeclaw/values.yaml` (add `capabilities.database`)
-- Test: `e2e/helm-chart-template.test.ts` (extend — assert the rendered/parsed capability spec)
+- Test: `e2e/helm-chart-template.test.ts` (extend)
 
 **Interfaces:**
-- Produces a `capabilities.database` entry consumed by the per-group reconciler: `kind: mcp`, `scope: group`, `pinned: true`, `credentialsFrom: secret`, primary image = the postgres-mcp image, `sidecars: [postgres]`, `storage` on the postgres container, `podSecurity.fsGroup` matching the postgres image's group, `allowedTools: [query]`, and env wiring `PGHOST=localhost`, `PGUSER`, `PGDATABASE`, plus shared `POSTGRES_PASSWORD`/`PGPASSWORD` via the per-group creds secret.
+- Produces:
+  - `buildRoleBootstrapSql(roUser: string): string` (in `server.ts`) — idempotent SQL creating the read-only login role and granting it `CONNECT`, `USAGE` on `public`, `SELECT` on all current + future tables. The role's password is set separately by `main()` (which has `PG_RO_PASSWORD`); the SQL uses a placeholder the caller parameterizes, OR `main()` runs `CREATE ROLE ... LOGIN; ALTER ROLE ... PASSWORD $1` via a parameterized query — choose the parameterized form to avoid SQL-injecting the password.
+  - `ensureGroupDbCredentials(args: { client: PerGroupK8sClient; namespace: string; groupFolder: string; capabilityName: string }): Promise<void>` (in `provision-credentials.ts`) — idempotently ensure the per-group creds secret has: `KUBECLAW_MCP_TOKEN` (reuse `ensureGroupMcpToken` from Task 6), `POSTGRES_PASSWORD` and `PGPASSWORD` (same generated value — the rw password), and `PG_RO_PASSWORD` (a distinct generated value). Each generated with `randomBytes(24).toString('hex')`; only generate when absent (idempotent, like `ensureGroupMcpToken`).
+- Consumes: `setGroupCredential`/`readGroupCredential`/`ensureGroupMcpToken` (Task 6), `PerGroupK8sClient`.
 
-- [ ] **Step 1: Write the failing test** — assert the chart renders the capability with the expected shape (model on existing `helm-chart-template.test.ts` assertions that parse rendered YAML or values).
+### Part A — server ro-role bootstrap
+
+- [ ] **Step 1: Failing test** (append to `container/postgres-mcp/server.test.ts`)
 
 ```ts
-it('renders a database capability: group-scoped, pinned, with a postgres sidecar + dedicated storage', () => {
-  // Load values (or `helm template` output) the way sibling tests do, then:
+import { buildRoleBootstrapSql } from './server.js';
+describe('buildRoleBootstrapSql', () => {
+  it('grants SELECT and future-table SELECT to the ro role, no write grants', () => {
+    const sql = buildRoleBootstrapSql('kubeclaw_ro');
+    expect(sql).toMatch(/GRANT SELECT ON ALL TABLES IN SCHEMA public TO kubeclaw_ro/i);
+    expect(sql).toMatch(/ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO kubeclaw_ro/i);
+    expect(sql).toMatch(/GRANT USAGE ON SCHEMA public TO kubeclaw_ro/i);
+    expect(sql).not.toMatch(/INSERT|UPDATE|DELETE|ALL PRIVILEGES/i);
+  });
+  it('rejects an unsafe role identifier', () => {
+    expect(() => buildRoleBootstrapSql('ro; DROP DATABASE x')).toThrow();
+  });
+});
+```
+
+- [ ] **Step 2: Run → fails.** `export PATH=...; npx vitest run container/postgres-mcp/server.test.ts`
+
+- [ ] **Step 3: Implement** `buildRoleBootstrapSql(roUser)`: validate `roUser` against `^[a-z_][a-z0-9_]*$` (throw otherwise — it is interpolated as an identifier, which cannot be parameterized), then return the idempotent grant SQL (`CREATE ROLE` is done separately in `main()` to set the password via a parameterized `ALTER ROLE ... PASSWORD`). In `main()`: after the rw pool connects (retry until Postgres is ready), run, as rw/superuser, `CREATE ROLE <roUser> LOGIN` guarded by a `DO $$ ... IF NOT EXISTS ... $$` block (roles have no `IF NOT EXISTS`), then `ALTER ROLE <roUser> PASSWORD $1` (parameterized with `PG_RO_PASSWORD`), then `buildRoleBootstrapSql(roUser)`. Do this before the HTTP server starts serving. Log success; on failure exit non-zero.
+
+- [ ] **Step 4: Run → passes.** Then `npx tsc --noEmit`.
+
+### Part B — reconcile-time credential provisioning
+
+- [ ] **Step 5: Failing test** (`src/per-group-capabilities/provision-credentials.test.ts`, FakePerGroupK8sClient)
+
+```ts
+it('provisions rw + ro passwords + mcp token idempotently', async () => {
+  const client = new FakePerGroupK8sClient();
+  const a = { client, namespace: 'kubeclaw', groupFolder: 'alice', capabilityName: 'database' };
+  await ensureGroupDbCredentials(a);
+  const read = (k: string) => /* read from the fake secret store, base64-decoded */;
+  expect(read('POSTGRES_PASSWORD')).toBe(read('PGPASSWORD'));      // same rw password
+  expect(read('POSTGRES_PASSWORD')).toMatch(/^[0-9a-f]{48}$/);
+  expect(read('PG_RO_PASSWORD')).toMatch(/^[0-9a-f]{48}$/);
+  expect(read('PG_RO_PASSWORD')).not.toBe(read('POSTGRES_PASSWORD'));
+  expect(read('KUBECLAW_MCP_TOKEN')).toMatch(/^[0-9a-f]{64}$/);
+  const before = read('POSTGRES_PASSWORD');
+  await ensureGroupDbCredentials(a);                              // idempotent
+  expect(read('POSTGRES_PASSWORD')).toBe(before);
+});
+```
+
+(Use the same secret-read approach the Task 6 `credentials.test.ts` uses — match it.)
+
+- [ ] **Step 6: Run → fails. Implement** `ensureGroupDbCredentials`: for each key, `readGroupCredential` first; if absent, generate and `setGroupCredential`. `POSTGRES_PASSWORD` and `PGPASSWORD` must store the SAME value (generate once, write to both keys). Reuse `ensureGroupMcpToken` for the token.
+
+- [ ] **Step 7: Wire into the reconciler** — in `reconcileGroupCapabilities`, for each (spec, group) where `resolveGroupCapability(spec).credentialsFrom === 'secret'`, call `ensureGroupDbCredentials(...)` AFTER the empty secret is ensured and BEFORE `applyDeployment` (so a pinned pod starts with credentials present). Add a reconciler test asserting the provisioner is invoked for a `credentialsFrom:'secret'` spec and skipped for a `none` spec (extend `reconciler.test.ts`; you can spy via the FakePerGroupK8sClient's recorded secret writes).
+
+- [ ] **Step 8: Run** `npx vitest run src/per-group-capabilities/provision-credentials.test.ts src/per-group-capabilities/reconciler.test.ts && npx tsc --noEmit` → all pass.
+
+### Part C — Helm values
+
+- [ ] **Step 9: Failing test** (`e2e/helm-chart-template.test.ts`, model on sibling assertions)
+
+```ts
+it('renders a database capability: group-scoped, pinned, postgres sidecar, read-only by default', () => {
   const db = values.capabilities.database;
   expect(db.kind).toBe('mcp');
   expect(db.scope).toBe('group');
@@ -788,16 +852,12 @@ it('renders a database capability: group-scoped, pinned, with a postgres sidecar
   expect(db.credentialsFrom).toBe('secret');
   expect(db.sidecars?.[0]?.name).toBe('postgres');
   expect(db.storage?.container).toBe('postgres');
-  expect(db.allowedTools).toEqual(['query']);
+  expect(db.allowedTools).toEqual(['query']);        // execute hidden by default
+  expect(db.env?.PG_RO_USER).toBe('kubeclaw_ro');
 });
 ```
 
-- [ ] **Step 2: Run to verify it fails**
-
-Run: `npx vitest run e2e/helm-chart-template.test.ts`
-Expected: FAIL — no `database` capability.
-
-- [ ] **Step 3: Implement** — add to `helm/kubeclaw/values.yaml` under `capabilities:`:
+- [ ] **Step 10: Implement** — add to `helm/kubeclaw/values.yaml` under `capabilities:`:
 
 ```yaml
   database:
@@ -808,16 +868,17 @@ Expected: FAIL — no `database` capability.
     port: 3000
     path: /mcp
     credentialsFrom: secret
-    allowedTools: [query]
+    allowedTools: [query]          # execute is offered by the server but hidden until opted in per group
     podSecurity:
-      fsGroup: 999          # postgres image's data group
+      fsGroup: 999                 # postgres image's data group (postgres:16 runs as uid/gid 999)
     storage:
       sizeGi: 5
       mountPath: /var/lib/postgresql/data
       container: postgres
     env:
       PGHOST: "127.0.0.1"
-      PGUSER: kubeclaw
+      PGUSER: kubeclaw             # rw role (= POSTGRES_USER); password from the per-group secret
+      PG_RO_USER: kubeclaw_ro      # ro role created by the server on boot; password from the secret
       PGDATABASE: kubeclaw
       KUBECLAW_DB_STATEMENT_TIMEOUT_MS: "5000"
       KUBECLAW_DB_MAX_ROWS: "1000"
@@ -829,23 +890,24 @@ Expected: FAIL — no `database` capability.
           POSTGRES_USER: kubeclaw
           POSTGRES_DB: kubeclaw
           PGDATA: /var/lib/postgresql/data/pgdata
+          # POSTGRES_PASSWORD comes from the per-group creds secret (envFrom)
     resources:
       requests: { memory: 256Mi, cpu: 100m }
       limits: { memory: 1Gi, cpu: "1" }
 ```
 
-Ensure the per-group creds secret supplies `POSTGRES_PASSWORD` (engine) and `PGPASSWORD` (mcp client) — both keys hold the same per-group password, provisioned alongside `KUBECLAW_MCP_TOKEN` (extend the orchestrator's capability-install path that calls `setGroupCredential`, mirroring Task 6's token provisioning; provision the password once per group on first reconcile).
+The per-group creds secret keys (`POSTGRES_PASSWORD`, `PGPASSWORD`, `PG_RO_PASSWORD`, `KUBECLAW_MCP_TOKEN`) are populated at reconcile time by `ensureGroupDbCredentials` (Part B) and reach BOTH containers via `envFrom` (Task 3 shares the creds secret to all containers).
 
-- [ ] **Step 4: Run to verify it passes**
+- [ ] **Step 11: Run** `npx vitest run e2e/helm-chart-template.test.ts && npx tsc --noEmit` → pass.
 
-Run: `npx vitest run e2e/helm-chart-template.test.ts && npx tsc --noEmit`
-Expected: PASS, tsc clean.
-
-- [ ] **Step 5: Commit**
+- [ ] **Step 12: Commit**
 
 ```bash
-git add helm/kubeclaw/values.yaml e2e/helm-chart-template.test.ts
-git commit -m "feat(db): wire per-group database capability (postgres + postgres-mcp) in values"
+git add container/postgres-mcp/server.ts container/postgres-mcp/server.test.ts \
+  src/per-group-capabilities/provision-credentials.ts src/per-group-capabilities/provision-credentials.test.ts \
+  src/per-group-capabilities/reconciler.ts src/per-group-capabilities/reconciler.test.ts \
+  helm/kubeclaw/values.yaml e2e/helm-chart-template.test.ts
+git commit -m "feat(db): ro-role bootstrap, reconcile-time per-group DB credentials, helm wiring"
 ```
 
 ---
@@ -857,7 +919,7 @@ git commit -m "feat(db): wire per-group database capability (postgres + postgres
 
 **Interfaces:** none new — exercises Tasks 1–9 end-to-end.
 
-- [ ] **Step 1: Write the test** — model precisely on `e2e/minikube-live-capabilities.test.ts` and `e2e/minikube-live-data-facade.test.ts`. Use `ctx.skip()` (NOT bare `return`) so it skips cleanly without a cluster. Flow: build+load `kubeclaw-postgres-mcp` into minikube; install the `database` capability for a test group via the orchestrator IPC path; send a message that drives a `query` tool call (e.g. `@assistant create a table t(x int), insert 1, select x from t`); assert the tool result reflects the row (`x = 1`), proving: pod scheduled (pinned, no cold start), PVC mounted, postgres + mcp sidecars co-resident, token-gated MCP call succeeded, read-after-write within the group's DB. Add an assertion that a second group cannot see the first group's table (per-group isolation at the data layer).
+- [ ] **Step 1: Write the test** — model precisely on `e2e/minikube-live-capabilities.test.ts` and `e2e/minikube-live-data-facade.test.ts`. Use `ctx.skip()` (NOT bare `return`) so it skips cleanly without a cluster. Flow: build+load `kubeclaw-postgres-mcp` into minikube; install the `database` capability for a test group via the orchestrator IPC path **with `allowedTools: [query, execute]`** (the e2e opts the test group into the write tool so it can prove read-after-write; the shipped default stays `[query]`); send a message that drives an `execute` tool call to `create table t(x int); insert into t values (1)` and then a `query` call `select x from t`; assert the query result reflects the row (`x = 1`), proving: pinned pod scheduled (no cold start), dedicated PVC mounted, postgres + mcp sidecars co-resident, ro-role bootstrap succeeded, token-gated MCP call worked, and write-then-read within the group's DB. Then assert per-group isolation: a SECOND group's `database` capability (default `allowedTools: [query]`) cannot see group one's table `t` (a `select from t` errors / returns nothing — separate per-group Postgres). Also assert the default capability rejects a write via `query` (the ro role denies it) to prove read-only enforcement is real.
 
 - [ ] **Step 2: Run (will skip without a cluster; runs on CI/large host)**
 
