@@ -15,7 +15,7 @@ Every channel is a **runtime adapter** — a plain JS file shipped in the `kubec
 
 Both produce the same steady-state Deployment. Credentials reach the channel pod via environment variables sourced from its Secret.
 
-Currently available adapters: `http`, `irc`, `oauth-webchat`. Additional channel types (telegram, slack, discord, etc.) follow the same pattern but their adapters are not yet built — the install steps below describe the intended model for when they are.
+Currently available adapters: `http`, `irc`, `oauth-webchat`, `signal`, `telegram`. Additional channel types (discord, slack, matrix, whatsapp, imessage, etc.) follow the same pattern but their adapters are not yet built.
 
 For developers writing a new adapter, see [DEVELOPING_A_CHANNEL.md](DEVELOPING_A_CHANNEL.md).
 
@@ -114,7 +114,7 @@ Credentials are gathered by the bootstrap dialogue (interactive) or supplied via
 | `http` | Username:password pairs | None (you choose them) |
 | `irc` | Server, nick, optional channels list | None (just the IRC server you want to join) |
 | `oauth-webchat` | OIDC issuer, client ID, client secret, allowed emails | Your OIDC provider (Google Workspace, Okta, etc.) |
-| `telegram` _(aspirational)_ | Bot token | Talk to [@BotFather](https://t.me/BotFather) |
+| `telegram` | Bot token | Talk to [@BotFather](https://t.me/BotFather) |
 | `discord` _(aspirational)_ | Bot token | https://discord.com/developers/applications → Bot → Token |
 | `slack` _(aspirational)_ | Bot token + App token | https://api.slack.com/apps → OAuth & Permissions / Socket Mode |
 | `whatsapp` _(aspirational)_ | Phone number | WhatsApp Business API setup |
@@ -174,6 +174,80 @@ bootstrap_channel_from_skill(type="signal", instance_name="signal-work")
 ```
 
 For developer notes on extending or modifying the Signal adapter, see [DEVELOPING_A_CHANNEL.md](DEVELOPING_A_CHANNEL.md#channels-with-an-external-backend-sidecar).
+
+### Telegram
+
+Telegram is a **channel-runner** adapter that uses [Telegraf](https://telegraf.js.org/) for long-poll updates. No sidecar or external backend is needed — the bot token is the only credential required.
+
+**Prerequisites:** Create a bot via [@BotFather](https://t.me/BotFather) on Telegram:
+
+```
+/newbot
+# Answer the name prompts; BotFather gives you a token like:
+# 7412345678:AAExampleTokenXXX
+```
+
+Keep this token secret — it is equivalent to a password for your bot.
+
+**Bootstrap (interactive, Path A):**
+
+```
+# In the admin shell:
+bootstrap_channel_from_skill(type="telegram")
+# Or for a named instance:
+bootstrap_channel_from_skill(type="telegram", instance_name="telegram-personal")
+```
+
+You will be prompted for `TELEGRAM_BOT_TOKEN` (and optionally `TELEGRAM_BOT_USERNAME` — the `@botname` without the `@`). The bootstrap skill re-hashes the staged runtime files before creating the Deployment and rejects the install with `MANIFEST_DIVERGENCE` if there is a discrepancy.
+
+**Declarative Helm (Path B):**
+
+Create a Secret first, then reference it in `values.yaml`:
+
+```bash
+kubectl create secret generic kubeclaw-channel-telegram \
+  --from-literal=TELEGRAM_BOT_TOKEN="7412345678:AAExampleTokenXXX" \
+  -n kubeclaw
+```
+
+```yaml
+# In your values overrides:
+channels:
+  telegram:
+    enabled: true
+    type: telegram
+    envVars:
+      TELEGRAM_BOT_USERNAME: "mybotname"   # optional but recommended
+```
+
+Apply with `helm upgrade --install kubeclaw ./helm/kubeclaw -n kubeclaw -f your-values.yaml`.
+
+**Multi-instance** — one bot per instance; use distinct keys:
+
+```yaml
+channels:
+  telegram-personal:
+    enabled: true
+    type: telegram
+  telegram-work:
+    enabled: true
+    type: telegram
+```
+
+Each instance needs its own bot token (i.e. two separate bots created via @BotFather) stored in distinct Secrets:
+
+```bash
+kubectl create secret generic kubeclaw-channel-telegram-personal \
+  --from-literal=TELEGRAM_BOT_TOKEN="<personal-bot-token>" -n kubeclaw
+kubectl create secret generic kubeclaw-channel-telegram-work \
+  --from-literal=TELEGRAM_BOT_TOKEN="<work-bot-token>" -n kubeclaw
+```
+
+**Registering chats:** After the pod starts, add the bot to the chats you want it to monitor using the normal `register_group` admin shell flow. The adapter listens for messages only in registered chats.
+
+**Group trigger:** In group chats, a message must mention the assistant by name (e.g. `@Andy`) to trigger a response. Private chats respond to every message that passes the trigger pattern.
+
+For developer notes on the Telegram adapter, see [DEVELOPING_A_CHANNEL.md](DEVELOPING_A_CHANNEL.md).
 
 ### Removing a channel
 
