@@ -496,7 +496,7 @@ describe('telegram manifest: values.yaml integrity', () => {
   // Here we validate the hash formula using the embedded packageJson and the
   // known-good lock string (which must remain consistent with the hash field).
   const TELEGRAM_MANIFEST_HASH =
-    '1bbd00add05cb0488fffcc0179ffc3a3e3d325cd8e311961430bd1b7d07b4747';
+    'fc3f1d6b9fea0cbd1dc936d128926920b316bc88e2e6db0360eacee514e46382';
 
   it('packageJson is valid JSON and pins telegraf@4.16.3 exactly', () => {
     const pkg = JSON.parse(TELEGRAM_PKG_JSON);
@@ -535,15 +535,17 @@ describe('helm-render: telegram channelManifest', () => {
   it('renders telegram.json in the channel-manifests-baseline ConfigMap', () => {
     // Run helm template with the values.yaml defaults (telegram manifest is now included).
     // This confirms the YAML is well-formed and the template iterates over it correctly.
-    const rendered = execSync(
-      'helm template helm/kubeclaw',
-      { cwd: process.cwd(), encoding: 'utf8' },
-    );
+    const rendered = execSync('helm template helm/kubeclaw', {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+    });
     // The ConfigMap key should be `telegram.json`
     expect(rendered).toContain('telegram.json');
     // The manifest must carry hostMode: channel-runner
     expect(rendered).toContain('"hostMode":"channel-runner"');
     // The manifest must carry the expected hash
-    expect(rendered).toContain('1bbd00add05cb0488fffcc0179ffc3a3e3d325cd8e311961430bd1b7d07b4747');
+    expect(rendered).toContain(
+      'fc3f1d6b9fea0cbd1dc936d128926920b316bc88e2e6db0360eacee514e46382',
+    );
   });
 });
