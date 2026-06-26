@@ -82,6 +82,17 @@ const BOB_HASH = computeGroupHash(BOB_FOLDER);
 const BOB_DEPLOYMENT = instanceName('database', BOB_HASH);
 const BOB_CREDS_SECRET = credsSecretName('database', BOB_HASH);
 
+/**
+ * Per-group pod label selectors — matching what k8s-objects.ts commonLabels() emits.
+ * The renderer does NOT set `app=`; it only sets kubeclaw.io/* labels.
+ */
+function perGroupSelector(capName: string, hash: string): string {
+  return `kubeclaw.io/capability=${capName},kubeclaw.io/group-hash=${hash}`;
+}
+
+const ALICE_POD_SELECTOR = perGroupSelector('database', ALICE_HASH);
+const BOB_POD_SELECTOR = perGroupSelector('database', BOB_HASH);
+
 const HTTP_URL = `http://127.0.0.1:${KUBECLAW_LIVE_HTTP_LOCAL_PORT}`;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -143,16 +154,20 @@ function ensurePostgresMcpImage(): void {
   console.log(`[db-e2e] ${IMAGE} built successfully`);
 }
 
-/** Wait up to timeoutMs for the named deployment's pods to be Ready. */
+/**
+ * Wait up to timeoutMs for the pods matching labelSelector to be Ready.
+ * labelSelector must be a per-group kubeclaw.io label selector, e.g.
+ * `kubeclaw.io/capability=database,kubeclaw.io/group-hash=<hash>`.
+ */
 async function waitForDeploymentReady(
-  name: string,
+  labelSelector: string,
   timeoutMs: number,
 ): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const r = kubectl([
       'get', 'pods', '-n', NAMESPACE,
-      '-l', `app=${name}`,
+      '-l', labelSelector,
       '-o', 'jsonpath={.items[*].status.conditions[?(@.type=="Ready")].status}',
     ]);
     if (
@@ -506,7 +521,10 @@ describe('Minikube-live: database capability (per-group postgres-mcp, execute+qu
 
     // 4. If a database deployment exists but its pod is in ImagePullBackOff
     //    (image wasn't present before step 2), restart it to pick up the new image.
-    for (const dep of [ALICE_DEPLOYMENT, BOB_DEPLOYMENT]) {
+    for (const [dep, podSelector] of [
+      [ALICE_DEPLOYMENT, ALICE_POD_SELECTOR],
+      [BOB_DEPLOYMENT, BOB_POD_SELECTOR],
+    ] as [string, string][]) {
       const depExists = kubectl([
         'get', 'deployment', dep, '-n', NAMESPACE,
         '-o', 'jsonpath={.metadata.name}',
@@ -514,7 +532,7 @@ describe('Minikube-live: database capability (per-group postgres-mcp, execute+qu
       if (!depExists.ok) continue;
 
       const podState = kubectl([
-        'get', 'pods', '-n', NAMESPACE, '-l', `app=${dep}`,
+        'get', 'pods', '-n', NAMESPACE, '-l', podSelector,
         '-o', 'jsonpath={.items[*].status.containerStatuses[*].state.waiting.reason}',
       ]);
       if (
@@ -529,22 +547,22 @@ describe('Minikube-live: database capability (per-group postgres-mcp, execute+qu
     // 5. Wait for alice's database pod to be Ready (up to 5 minutes — postgres
     //    init can take a while the first time it initialises the data directory).
     console.log(`[db-e2e] Waiting for ${ALICE_DEPLOYMENT} to be Ready...`);
-    const aliceReady = await waitForDeploymentReady(ALICE_DEPLOYMENT, 300_000);
+    const aliceReady = await waitForDeploymentReady(ALICE_POD_SELECTOR, 300_000);
     if (!aliceReady) {
-      const dump = kubectl(['get', 'pods', '-n', NAMESPACE, '-l', `app=${ALICE_DEPLOYMENT}`, '-o', 'wide']);
+      const dump = kubectl(['get', 'pods', '-n', NAMESPACE, '-l', ALICE_POD_SELECTOR, '-o', 'wide']);
       console.warn(`[db-e2e] ${ALICE_DEPLOYMENT} did not become Ready:\n${dump.stdout}\n${dump.stderr}`);
       return;
     }
     console.log(`[db-e2e] ${ALICE_DEPLOYMENT} is Ready`);
 
     // 6. Wait for bob's database pod (best-effort; isolation test will skip if absent).
-    const bobReady = await waitForDeploymentReady(BOB_DEPLOYMENT, 300_000);
+    const bobReady = await waitForDeploymentReady(BOB_POD_SELECTOR, 300_000);
     if (!bobReady) {
       console.warn(
         `[db-e2e] ${BOB_DEPLOYMENT} did not become Ready — ` +
           'isolation tests (test 6) and K8s-isolation test (test 8) will be skipped. ' +
           'Check: did the bob POST to /message succeed? ' +
-          `kubectl get pods -n ${NAMESPACE} -l app=${BOB_DEPLOYMENT} -o wide`,
+          `kubectl get pods -n ${NAMESPACE} -l ${BOB_POD_SELECTOR} -o wide`,
       );
     }
 
@@ -561,14 +579,14 @@ describe('Minikube-live: database capability (per-group postgres-mcp, execute+qu
 
     // 8. Locate the alice and bob pod names.
     const alicePods = kubectl([
-      'get', 'pods', '-n', NAMESPACE, '-l', `app=${ALICE_DEPLOYMENT}`,
+      'get', 'pods', '-n', NAMESPACE, '-l', ALICE_POD_SELECTOR,
       '-o', 'jsonpath={.items[0].metadata.name}',
     ]);
     alicePodName = alicePods.stdout.trim();
 
     if (bobReady) {
       const bobPods = kubectl([
-        'get', 'pods', '-n', NAMESPACE, '-l', `app=${BOB_DEPLOYMENT}`,
+        'get', 'pods', '-n', NAMESPACE, '-l', BOB_POD_SELECTOR,
         '-o', 'jsonpath={.items[0].metadata.name}',
       ]);
       bobPodName = bobPods.stdout.trim();
@@ -602,12 +620,12 @@ describe('Minikube-live: database capability (per-group postgres-mcp, execute+qu
 
     // Pod readiness
     const pods = kubectl([
-      'get', 'pods', '-n', NAMESPACE, '-l', `app=${ALICE_DEPLOYMENT}`,
+      'get', 'pods', '-n', NAMESPACE, '-l', ALICE_POD_SELECTOR,
       '-o', 'jsonpath={.items[*].status.conditions[?(@.type=="Ready")].status}',
     ]);
     expect(pods.ok, `kubectl get pods failed: ${pods.stderr}`).toBe(true);
     const statuses = pods.stdout.trim().split(/\s+/).filter(Boolean);
-    expect(statuses.length, `no pods matched selector app=${ALICE_DEPLOYMENT}`).toBeGreaterThan(0);
+    expect(statuses.length, `no pods matched selector ${ALICE_POD_SELECTOR}`).toBeGreaterThan(0);
     expect(
       statuses.every((s) => s === 'True'),
       `not all pods Ready for ${ALICE_DEPLOYMENT}: ${statuses.join(',')}`,
