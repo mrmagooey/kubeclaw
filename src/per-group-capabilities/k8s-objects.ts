@@ -36,7 +36,7 @@ export function credsSecretName(
   return `${instanceName(capabilityName, groupHash)}-creds`;
 }
 
-function commonLabels(
+export function commonLabels(
   spec: CapabilitySpec,
   ctx: RenderContext,
 ): Record<string, string> {
