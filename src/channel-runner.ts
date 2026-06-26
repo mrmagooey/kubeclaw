@@ -462,6 +462,8 @@ export function folderPrefixForChannel(channelName: string): string {
     irc: 'irc',
     http: 'http',
     'oauth-webchat': 'oauth',
+    matrix: 'mat',
+    imessage: 'imsg',
   };
   return prefix[channelName] ?? channelName.slice(0, 3);
 }

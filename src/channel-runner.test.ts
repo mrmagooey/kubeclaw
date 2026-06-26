@@ -188,6 +188,14 @@ describe('folderPrefixForChannel', () => {
   it('falls back to first 3 chars for unknown channels', () => {
     expect(folderPrefixForChannel('matrix')).toBe('mat');
   });
+
+  it('maps all five new channel types to stable prefixes', () => {
+    expect(folderPrefixForChannel('telegram')).toBe('tg');
+    expect(folderPrefixForChannel('discord')).toBe('dc');
+    expect(folderPrefixForChannel('whatsapp')).toBe('wa');
+    expect(folderPrefixForChannel('matrix')).toBe('mat');
+    expect(folderPrefixForChannel('imessage')).toBe('imsg');
+  });
 });
 
 describe('_buildShutdown: metrics server closed on shutdown', () => {
