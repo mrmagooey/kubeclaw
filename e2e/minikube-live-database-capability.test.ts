@@ -36,9 +36,10 @@
  *   These are computed inline below rather than hard-coded.
  */
 
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
+import Redis from 'ioredis';
 import {
   KUBECLAW_LIVE_REDIS_LOCAL_PORT,
   KUBECLAW_LIVE_HTTP_LOCAL_PORT,
@@ -350,6 +351,8 @@ describe('Minikube-live: database capability (per-group postgres-mcp, execute+qu
   let alicePodName = '';
   let bobPodName = '';
   let aliceToken = '';
+  /** Redis client used to install the database capability with execute enabled. */
+  let redis: Redis | null = null;
 
   beforeAll(async () => {
     // 1. Check that the Redis port-forward is reachable (signals globalSetup ran).
@@ -368,6 +371,97 @@ describe('Minikube-live: database capability (per-group postgres-mcp, execute+qu
       console.warn('[db-e2e] postgres-mcp image build failed:', err);
       return;
     }
+
+    // 2b. Connect to Redis as the orchestrator ACL user so we can install the
+    //     database capability with allowedTools: ['query', 'execute'].
+    //     The default values.yaml ships allowedTools: ['query'] only (execute is
+    //     opt-in per group). We upsert the capability spec via install_capability
+    //     IPC BEFORE registering alice's group so that when onGroupAdded fires
+    //     the reconciler reads the updated spec and creates the per-group pod with
+    //     execute enabled.
+    //     Request shape: see src/k8s/ipc-redis.ts install_capability handler — the
+    //     spec field is a JSON.stringify'd CapabilitySpec (McpCapabilitySpec here).
+    //     isMain MUST be the literal string 'true' (equality-checked by the handler).
+    const redisPwd = kubectl([
+      'get', 'secret', '-n', NAMESPACE, 'kubeclaw-redis',
+      '-o', 'jsonpath={.data.admin-password}',
+    ]);
+    if (!redisPwd.ok || !redisPwd.stdout.trim()) {
+      console.warn('[db-e2e] failed to read Redis admin-password — cannot install capability with execute');
+      return;
+    }
+    const redisPassword = Buffer.from(redisPwd.stdout.trim(), 'base64').toString('utf8');
+    redis = new Redis(
+      `redis://orchestrator:${redisPassword}@127.0.0.1:${KUBECLAW_LIVE_REDIS_LOCAL_PORT}`,
+      {
+        maxRetriesPerRequest: 20,
+        connectTimeout: 15_000,
+        retryStrategy: (times: number) => Math.min(times * 200, 2_000),
+        reconnectOnError: () => true,
+      },
+    );
+    try {
+      await redis.ping();
+    } catch (err) {
+      console.warn('[db-e2e] Redis ping failed — cannot install capability with execute:', err);
+      return;
+    }
+
+    // Install (or upsert) the database capability spec with allowedTools: ['query', 'execute'].
+    // This overwrites the values.yaml default (allowedTools: ['query']) in the orchestrator DB.
+    // The per-group reconciler calls listCapabilities() on every onGroupAdded/reconcile tick,
+    // so it will pick up the updated spec immediately for alice's and bob's group pods.
+    // NOTE: install_capability also calls applySpec() which creates a cluster-scoped
+    // kubeclaw-cap-database Deployment; this is a harmless side effect — per-group pods use
+    // the mcp-database-<hash> name scheme and are created by the per-group reconciler.
+    const databaseSpec = {
+      kind: 'mcp',
+      name: 'database',
+      scope: 'group',
+      pinned: true,
+      image: 'kubeclaw-postgres-mcp:latest',
+      port: 3000,
+      path: '/mcp',
+      credentialsFrom: 'secret',
+      allowedTools: ['query', 'execute'],
+      podSecurity: { fsGroup: 999 },
+      storage: {
+        sizeGi: 5,
+        mountPath: '/var/lib/postgresql/data',
+        container: 'postgres',
+      },
+      env: {
+        PGHOST: '127.0.0.1',
+        PGUSER: 'kubeclaw',
+        PG_RO_USER: 'kubeclaw_ro',
+        PGDATABASE: 'kubeclaw',
+        KUBECLAW_DB_STATEMENT_TIMEOUT_MS: '5000',
+        KUBECLAW_DB_MAX_ROWS: '1000',
+      },
+      sidecars: [
+        {
+          name: 'postgres',
+          image: 'postgres:16',
+          port: 5432,
+          env: {
+            POSTGRES_USER: 'kubeclaw',
+            POSTGRES_DB: 'kubeclaw',
+            PGDATA: '/var/lib/postgresql/data/pgdata',
+          },
+        },
+      ],
+    };
+    await redis.xadd(
+      'kubeclaw:task-requests',
+      '*',
+      'type', 'install_capability',
+      'groupFolder', 'http',
+      'isMain', 'true',
+      'spec', JSON.stringify(databaseSpec),
+    );
+    console.log('[db-e2e] Sent install_capability IPC with allowedTools: [query, execute]');
+    // Give the orchestrator a moment to process the install before we trigger group registration.
+    await new Promise((res) => setTimeout(res, 3_000));
 
     // 3. POST to the HTTP channel to register alice's group with the orchestrator.
     //    This triggers onGroupAdded → per-group reconcile → DB credentials + deployment
@@ -446,7 +540,12 @@ describe('Minikube-live: database capability (per-group postgres-mcp, execute+qu
     // 6. Wait for bob's database pod (best-effort; isolation test will skip if absent).
     const bobReady = await waitForDeploymentReady(BOB_DEPLOYMENT, 300_000);
     if (!bobReady) {
-      console.warn(`[db-e2e] ${BOB_DEPLOYMENT} did not become Ready — isolation tests will be skipped`);
+      console.warn(
+        `[db-e2e] ${BOB_DEPLOYMENT} did not become Ready — ` +
+          'isolation tests (test 6) and K8s-isolation test (test 8) will be skipped. ' +
+          'Check: did the bob POST to /message succeed? ' +
+          `kubectl get pods -n ${NAMESPACE} -l app=${BOB_DEPLOYMENT} -o wide`,
+      );
     }
 
     // 7. Read alice's MCP token from the creds secret.
@@ -477,6 +576,24 @@ describe('Minikube-live: database capability (per-group postgres-mcp, execute+qu
 
     provisioned = true;
   }, 660_000);
+
+  afterAll(async () => {
+    // The per-group database Deployments and PVCs are pinned (scope: group, pinned: true)
+    // and intentionally left running — they are tied to alice's and bob's group data
+    // volumes and will be cleaned up by `helm uninstall`. Removing them here would
+    // destroy the per-group PVCs, which is undesirable in shared minikube environments.
+    // The cluster-scoped kubeclaw-cap-database Deployment (side effect of the
+    // install_capability IPC call above) is also left in place; it is harmless and
+    // matches the state that helm install normally produces.
+    if (redis) {
+      try {
+        await redis.quit();
+      } catch {
+        /* ignore */
+      }
+      redis = null;
+    }
+  });
 
   // ── 1. Deployment + Service + PVC exist and are Ready ────────────────────
 
@@ -673,11 +790,18 @@ http.get('http://127.0.0.1:3000/health', (res) => {
     const responseText = stripSseFraming(rawBody);
 
     // Accept any indication that the write was blocked by the ro role.
-    // Postgres errors: "permission denied for table", "cannot execute INSERT in a read-only transaction",
-    // "read_only_sql_transaction", "relation ... does not exist" (ro role can't CREATE either).
+    // Postgres errors observed in practice:
+    //   - "permission denied for table ..."         — ro role lacks INSERT privilege
+    //   - "permission denied for relation ..."      — older Postgres phrasing
+    //   - "read-only transaction" / "read_only_sql_transaction" — session-level guard
+    //   - "cannot execute INSERT in a read-only transaction"
+    //   - "does not exist"  — ro role may hit a relation-not-found error before
+    //                         reaching a permission check (e.g. _ro_guard_check
+    //                         was never created, so the ro role sees "does not exist")
+    //   - "insufficient privilege"
     // The MCP server wraps Postgres errors as isError content or JSON-RPC error.
     const indicatesReadOnlyError =
-      /permission denied|read.only|read_only_sql_transaction|cannot execute INSERT|insufficient privi/i.test(
+      /permission denied|read[_\- ]?only|read_only_sql_transaction|cannot execute INSERT|insufficient privi|does not exist/i.test(
         responseText,
       );
     expect(
@@ -690,6 +814,9 @@ http.get('http://127.0.0.1:3000/health', (res) => {
 
   it('alice and bob have separate Deployments and PVCs (per-group K8s isolation)', (ctx) => {
     if (!provisioned) return ctx.skip();
+    // Symmetric with test 6: if bob's pod did not come up, skip rather than hard-fail.
+    // bob's Deployment existence is only confirmed once bobPodName is set in beforeAll.
+    if (!bobPodName) return ctx.skip();
 
     const aliceDep = kubectl([
       'get', 'deployment', ALICE_DEPLOYMENT, '-n', NAMESPACE,
