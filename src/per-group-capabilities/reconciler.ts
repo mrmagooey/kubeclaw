@@ -8,6 +8,7 @@ import {
   renderNetworkPolicy,
   instanceName,
 } from './k8s-objects.js';
+import { renderPersistentVolumeClaim } from './pvc.js';
 import { upsertInstance } from './db.js';
 import { logger } from '../logger.js';
 
@@ -54,6 +55,8 @@ export async function reconcileGroupCapabilities(
       };
       await args.client.applyNetworkPolicy(renderNetworkPolicy(spec, ctx));
       await args.client.applyService(renderService(spec, ctx));
+      const pvc = renderPersistentVolumeClaim(spec, ctx);
+      if (pvc) await args.client.applyPersistentVolumeClaim(args.namespace, pvc);
       await args.client.applyDeployment(renderDeployment(spec, ctx));
       const name = instanceName(spec.name, hash);
       upsertInstance({

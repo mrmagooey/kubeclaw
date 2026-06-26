@@ -3,6 +3,7 @@ import {
   V1Service,
   V1NetworkPolicy,
   V1Secret,
+  V1PersistentVolumeClaim,
   KubeConfig,
   AppsV1Api,
   CoreV1Api,
@@ -14,6 +15,7 @@ export interface PerGroupK8sClient {
   applyService(s: V1Service): Promise<void>;
   applyNetworkPolicy(p: V1NetworkPolicy): Promise<void>;
   applySecret(s: V1Secret): Promise<void>;
+  applyPersistentVolumeClaim(namespace: string, pvc: V1PersistentVolumeClaim): Promise<void>;
   readDeployment(namespace: string, name: string): Promise<V1Deployment | null>;
   readService(namespace: string, name: string): Promise<V1Service | null>;
   readSecret(namespace: string, name: string): Promise<V1Secret | null>;
@@ -150,6 +152,21 @@ export class RealPerGroupK8sClient implements PerGroupK8sClient {
       await this.core.replaceNamespacedSecret({ name, namespace: ns, body: s });
     } else {
       await this.core.createNamespacedSecret({ namespace: ns, body: s });
+    }
+  }
+
+  async applyPersistentVolumeClaim(
+    namespace: string,
+    pvc: V1PersistentVolumeClaim,
+  ): Promise<void> {
+    try {
+      await this.core.createNamespacedPersistentVolumeClaim({ namespace, body: pvc });
+    } catch (err) {
+      // AlreadyExists (409) -> leave the existing PVC (keep data). Re-throw anything else.
+      const code =
+        (err as { code?: number; statusCode?: number }).code ??
+        (err as { statusCode?: number }).statusCode;
+      if (code !== 409) throw err;
     }
   }
 
@@ -299,11 +316,29 @@ export class FakePerGroupK8sClient implements PerGroupK8sClient {
     ready: new Set(),
   };
 
+  /** All PVCs passed to applyPersistentVolumeClaim, in order. */
+  appliedPvcs: V1PersistentVolumeClaim[] = [];
+
+  /**
+   * Ordered log of apply calls, for ordering assertions.
+   * Each entry is either `'pvc:<name>'` or `'deployment:<name>'`.
+   */
+  applyOrder: string[] = [];
+
   async applyDeployment(d: V1Deployment): Promise<void> {
     this.store.deployments.set(
       fakeKey(d.metadata!.namespace!, d.metadata!.name!),
       structuredClone(d),
     );
+    this.applyOrder.push(`deployment:${d.metadata!.name!}`);
+  }
+
+  async applyPersistentVolumeClaim(
+    _ns: string,
+    pvc: V1PersistentVolumeClaim,
+  ): Promise<void> {
+    this.appliedPvcs.push(structuredClone(pvc));
+    this.applyOrder.push(`pvc:${pvc.metadata!.name!}`);
   }
 
   async applyService(s: V1Service): Promise<void> {
