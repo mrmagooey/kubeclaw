@@ -6,6 +6,7 @@ import type {
 } from '@kubernetes/client-node';
 import type { CapabilitySpec } from '../capabilities/types.js';
 import { resolveGroupCapability } from './types.js';
+import { pvcName } from './pvc.js';
 
 export const COMMON_LABELS_KEYS = [
   'kubeclaw.io/scope',
@@ -73,70 +74,88 @@ export function renderDeployment(
         ]
       : undefined;
 
-  const volumeMounts = resolved.volumeFromGroupPvc
-    ? [
-        {
-          name: 'groups',
-          mountPath: '/data',
-          subPath: `groups/${ctx.groupFolder}`,
-        },
-      ]
-    : [];
+  const hasPvc = !!spec.storage;
+  const pvcClaim = hasPvc ? pvcName(spec.name, ctx.groupHash) : null;
+  const pvcMountContainer = spec.storage?.container ?? 'mcp';
 
-  const volumes = resolved.volumeFromGroupPvc
-    ? [
-        {
-          name: 'groups',
-          persistentVolumeClaim: { claimName: ctx.groupsPvcName },
-        },
-      ]
-    : [];
+  // Group-PVC subPath mount (existing behavior) is independent of the dedicated PVC.
+  const groupMount: Array<{ name: string; mountPath: string; subPath?: string }> =
+    resolved.volumeFromGroupPvc
+      ? [{ name: 'groups', mountPath: '/data', subPath: `groups/${ctx.groupFolder}` }]
+      : [];
+
+  function mountsFor(containerName: string) {
+    const m = [...groupMount];
+    if (pvcClaim && containerName === pvcMountContainer) {
+      m.push({ name: 'data', mountPath: spec.storage!.mountPath });
+    }
+    return m;
+  }
+
+  const containerSecurity = {
+    runAsNonRoot: spec.podSecurity?.runAsNonRoot ?? true,
+    runAsUser: spec.podSecurity?.runAsUser ?? 1000,
+    runAsGroup: spec.podSecurity?.runAsGroup ?? 1000,
+    allowPrivilegeEscalation: false,
+  };
+
+  const primary = {
+    name: 'mcp',
+    image: spec.image,
+    ports: [{ containerPort: port }],
+    ...(spec.command ? { command: spec.command } : {}),
+    ...(spec.args ? { args: spec.args } : {}),
+    env,
+    envFrom,
+    volumeMounts: mountsFor('mcp'),
+    readinessProbe: {
+      httpGet: { path: '/health', port },
+      initialDelaySeconds: 1,
+      periodSeconds: 2,
+      failureThreshold: 15,
+    },
+    resources: {
+      requests: { memory: spec.resources?.memoryRequest ?? '64Mi', cpu: spec.resources?.cpuRequest ?? '50m' },
+      limits: { memory: spec.resources?.memoryLimit ?? '256Mi', cpu: spec.resources?.cpuLimit ?? '500m' },
+    },
+    securityContext: containerSecurity,
+  };
+
+  const sidecars = (spec.sidecars ?? []).map((s) => ({
+    name: s.name,
+    image: s.image,
+    ...(s.port ? { ports: [{ containerPort: s.port }] } : {}),
+    ...(s.command ? { command: s.command } : {}),
+    ...(s.args ? { args: s.args } : {}),
+    env: Object.entries(s.env ?? {}).map(([k, v]) => ({ name: k, value: v })),
+    envFrom, // share the per-group creds secret to the engine too
+    volumeMounts: mountsFor(s.name),
+    securityContext: containerSecurity,
+  }));
+
+  const volumes = [
+    ...(resolved.volumeFromGroupPvc
+      ? [{ name: 'groups', persistentVolumeClaim: { claimName: ctx.groupsPvcName } }]
+      : []),
+    ...(pvcClaim ? [{ name: 'data', persistentVolumeClaim: { claimName: pvcClaim } }] : []),
+  ];
 
   return {
     apiVersion: 'apps/v1',
     kind: 'Deployment',
     metadata: { name, namespace: ctx.namespace, labels },
     spec: {
-      replicas: 0,
+      replicas: resolved.pinned ? 1 : 0,
+      ...(hasPvc ? { strategy: { type: 'Recreate' } } : {}),
       selector: { matchLabels: labels },
       template: {
         metadata: { labels },
         spec: {
           automountServiceAccountToken: false,
-          containers: [
-            {
-              name: 'mcp',
-              image: spec.image,
-              ports: [{ containerPort: port }],
-              ...(spec.command ? { command: spec.command } : {}),
-              ...(spec.args ? { args: spec.args } : {}),
-              env,
-              envFrom,
-              volumeMounts,
-              readinessProbe: {
-                httpGet: { path: '/health', port },
-                initialDelaySeconds: 1,
-                periodSeconds: 2,
-                failureThreshold: 15,
-              },
-              resources: {
-                requests: {
-                  memory: spec.resources?.memoryRequest ?? '64Mi',
-                  cpu: spec.resources?.cpuRequest ?? '50m',
-                },
-                limits: {
-                  memory: spec.resources?.memoryLimit ?? '256Mi',
-                  cpu: spec.resources?.cpuLimit ?? '500m',
-                },
-              },
-              securityContext: {
-                runAsNonRoot: true,
-                runAsUser: 1000,
-                runAsGroup: 1000,
-                allowPrivilegeEscalation: false,
-              },
-            },
-          ],
+          ...(spec.podSecurity?.fsGroup !== undefined
+            ? { securityContext: { fsGroup: spec.podSecurity.fsGroup } }
+            : {}),
+          containers: [primary, ...sidecars],
           volumes,
         },
       },
