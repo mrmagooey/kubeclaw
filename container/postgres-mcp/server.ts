@@ -16,7 +16,7 @@
 // ─── Role bootstrap SQL (pure helper, no external deps) ──────────────────────
 
 /** Regex that matches safe Postgres identifier characters. */
-const SAFE_IDENTIFIER_RE = /^[a-z_][a-z0-9_]*$/;
+export const SAFE_IDENTIFIER_RE = /^[a-z_][a-z0-9_]*$/;
 
 /**
  * Returns the idempotent SQL to grant a read-only Postgres role the minimum
@@ -168,6 +168,18 @@ export async function main(): Promise<void> {
     process.exit(1);
   }
 
+  // Validate PG_RO_USER BEFORE any interpolation into SQL.
+  // Identifiers cannot be parameterized in Postgres, so we enforce a strict
+  // safe-identifier regex here. The same check runs inside buildRoleBootstrapSql
+  // but we must guard here too, BEFORE the DO block interpolation below.
+  if (!SAFE_IDENTIFIER_RE.test(PG_RO_USER)) {
+    console.error(
+      `FATAL: PG_RO_USER "${PG_RO_USER}" contains unsafe characters. ` +
+        'Must match ^[a-z_][a-z0-9_]*$. Refusing to start.',
+    );
+    process.exit(1);
+  }
+
   // Dynamic imports so module loads in tests without pg / MCP SDK installed.
   const { default: pg } = await import('pg');
   const { Server } = await import('@modelcontextprotocol/sdk/server/index.js');
@@ -239,11 +251,17 @@ export async function main(): Promise<void> {
     try {
       // Step 1: Create the ro role if it does not exist.
       // Roles have no IF NOT EXISTS, so we guard with a DO block.
+      // PG_RO_USER was validated against ^[a-z_][a-z0-9_]*$ above (exits non-zero
+      // if invalid), so interpolation here is safe. We additionally use
+      // format('%I', ...) inside PL/pgSQL so the DO block itself uses
+      // quote_ident semantics, providing defence-in-depth.
       await rwPool.query(`
         DO $$
+        DECLARE
+          _role text := ${`'${PG_RO_USER}'`};
         BEGIN
-          IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${PG_RO_USER}') THEN
-            CREATE ROLE "${PG_RO_USER}" LOGIN;
+          IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = _role) THEN
+            EXECUTE format('CREATE ROLE %I LOGIN', _role);
           END IF;
         END
         $$;
@@ -251,6 +269,7 @@ export async function main(): Promise<void> {
 
       // Step 2: Set the password via a PARAMETERIZED query — the password
       // is never interpolated into SQL to prevent injection.
+      // PG_RO_USER is regex-validated above; the ALTER ROLE identifier is safe.
       await rwPool.query(`ALTER ROLE "${PG_RO_USER}" PASSWORD $1`, [
         PG_RO_PASSWORD,
       ]);

@@ -15,7 +15,10 @@ export interface PerGroupK8sClient {
   applyService(s: V1Service): Promise<void>;
   applyNetworkPolicy(p: V1NetworkPolicy): Promise<void>;
   applySecret(s: V1Secret): Promise<void>;
-  applyPersistentVolumeClaim(namespace: string, pvc: V1PersistentVolumeClaim): Promise<void>;
+  applyPersistentVolumeClaim(
+    namespace: string,
+    pvc: V1PersistentVolumeClaim,
+  ): Promise<void>;
   readDeployment(namespace: string, name: string): Promise<V1Deployment | null>;
   readService(namespace: string, name: string): Promise<V1Service | null>;
   readSecret(namespace: string, name: string): Promise<V1Secret | null>;
@@ -160,7 +163,10 @@ export class RealPerGroupK8sClient implements PerGroupK8sClient {
     pvc: V1PersistentVolumeClaim,
   ): Promise<void> {
     try {
-      await this.core.createNamespacedPersistentVolumeClaim({ namespace, body: pvc });
+      await this.core.createNamespacedPersistentVolumeClaim({
+        namespace,
+        body: pvc,
+      });
     } catch (err) {
       // AlreadyExists (409) -> leave the existing PVC (keep data). Re-throw anything else.
       const code =
@@ -360,6 +366,7 @@ export class FakePerGroupK8sClient implements PerGroupK8sClient {
       fakeKey(s.metadata!.namespace!, s.metadata!.name!),
       structuredClone(s),
     );
+    this.applyOrder.push(`secret:${s.metadata!.name!}`);
   }
 
   async readDeployment(ns: string, name: string): Promise<V1Deployment | null> {

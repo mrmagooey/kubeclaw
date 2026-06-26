@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { capRows, isAuthorized, buildToolHandlers, buildRoleBootstrapSql } from './server.js';
+import { capRows, isAuthorized, buildToolHandlers, buildRoleBootstrapSql, SAFE_IDENTIFIER_RE } from './server.js';
 import type { QueryPool } from './server.js';
 
 describe('capRows', () => {
@@ -152,7 +152,30 @@ describe('buildRoleBootstrapSql', () => {
     expect(sql).toMatch(/GRANT USAGE ON SCHEMA public TO kubeclaw_ro/i);
     expect(sql).not.toMatch(/INSERT|UPDATE|DELETE|ALL PRIVILEGES/i);
   });
+  it('grants CONNECT ON DATABASE kubeclaw to the ro role', () => {
+    const sql = buildRoleBootstrapSql('kubeclaw_ro');
+    expect(sql).toMatch(/GRANT CONNECT ON DATABASE kubeclaw TO kubeclaw_ro/i);
+  });
   it('rejects an unsafe role identifier', () => {
     expect(() => buildRoleBootstrapSql('ro; DROP DATABASE x')).toThrow();
+  });
+});
+
+describe('SAFE_IDENTIFIER_RE (PG_RO_USER guard)', () => {
+  it('accepts valid lowercase identifiers', () => {
+    expect(SAFE_IDENTIFIER_RE.test('kubeclaw_ro')).toBe(true);
+    expect(SAFE_IDENTIFIER_RE.test('ro')).toBe(true);
+    expect(SAFE_IDENTIFIER_RE.test('_ro_user_2')).toBe(true);
+  });
+  it('rejects identifiers with unsafe characters (SQL injection vectors)', () => {
+    // semicolons, quotes, hyphens, spaces, uppercase — all rejected
+    expect(SAFE_IDENTIFIER_RE.test('ro; DROP DATABASE x')).toBe(false);
+    expect(SAFE_IDENTIFIER_RE.test('"admin"')).toBe(false);
+    expect(SAFE_IDENTIFIER_RE.test('ro-user')).toBe(false);
+    expect(SAFE_IDENTIFIER_RE.test('ro user')).toBe(false);
+    expect(SAFE_IDENTIFIER_RE.test('Kubeclaw_RO')).toBe(false);
+  });
+  it('rejects identifiers that start with a digit', () => {
+    expect(SAFE_IDENTIFIER_RE.test('1ro')).toBe(false);
   });
 });

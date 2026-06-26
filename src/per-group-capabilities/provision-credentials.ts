@@ -40,15 +40,27 @@ export async function ensureGroupDbCredentials(
   await ensureGroupMcpToken(base);
 
   // 2. rw password: POSTGRES_PASSWORD and PGPASSWORD hold the SAME value.
-  //    Read POSTGRES_PASSWORD to determine whether a rw password has been set.
-  let rwPassword = await readGroupCredential({
-    ...base,
-    envName: 'POSTGRES_PASSWORD',
-  });
-  if (!rwPassword) {
-    rwPassword = randomBytes(24).toString('hex');
-    await setGroupCredential({ ...base, envName: 'POSTGRES_PASSWORD', value: rwPassword });
-    await setGroupCredential({ ...base, envName: 'PGPASSWORD', value: rwPassword });
+  //    Read both keys; only skip writing when BOTH are present (to handle a
+  //    partial prior write where POSTGRES_PASSWORD exists but PGPASSWORD is
+  //    absent). If either is missing, (re)write both to the same value.
+  const [existingPgPassword, existingPgPasswordAlias] = await Promise.all([
+    readGroupCredential({ ...base, envName: 'POSTGRES_PASSWORD' }),
+    readGroupCredential({ ...base, envName: 'PGPASSWORD' }),
+  ]);
+  if (!existingPgPassword || !existingPgPasswordAlias) {
+    // Use the existing POSTGRES_PASSWORD if it is already set (avoids rotating
+    // a live password on a partial write), otherwise generate a new one.
+    const rwPassword = existingPgPassword ?? randomBytes(24).toString('hex');
+    await setGroupCredential({
+      ...base,
+      envName: 'POSTGRES_PASSWORD',
+      value: rwPassword,
+    });
+    await setGroupCredential({
+      ...base,
+      envName: 'PGPASSWORD',
+      value: rwPassword,
+    });
   }
 
   // 3. ro password: distinct from rw, 24 random bytes.

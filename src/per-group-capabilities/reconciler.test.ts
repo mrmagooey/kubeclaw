@@ -194,16 +194,35 @@ describe('reconcileGroupCapabilities', () => {
 
     const hash = groupHash('alice');
     const dbSecretName = credsSecretName('database', hash);
-
-    // The secret must exist and have credentials BEFORE the deployment was applied
-    // We verify this by checking the applyOrder: the secret should be in the store
-    // and the deployment should also be in applyOrder
     const deployName = `mcp-database-${hash}`;
-    const deployIndex = client.applyOrder.indexOf('deployment:' + deployName);
-    expect(deployIndex, 'deployment should be in applyOrder').toBeGreaterThanOrEqual(0);
 
     // After reconcile completes, credentials must be present
     const dbSecret = await client.readSecret('kubeclaw', dbSecretName);
-    expect(dbSecret, 'creds secret must be present after reconcile').not.toBeNull();
+    expect(
+      dbSecret,
+      'creds secret must be present after reconcile',
+    ).not.toBeNull();
+
+    // Assert ordering: the last secret write for the creds secret must come
+    // BEFORE the deployment apply — mirrors the PVC-ordering test above.
+    const deployIndex = client.applyOrder.indexOf('deployment:' + deployName);
+    expect(
+      deployIndex,
+      'deployment should be in applyOrder',
+    ).toBeGreaterThanOrEqual(0);
+
+    // Find the LAST write to the creds secret (credential provisioning writes
+    // multiple times — once per key — so we want the final write index).
+    const secretEntry = 'secret:' + dbSecretName;
+    const lastSecretIndex = client.applyOrder.lastIndexOf(secretEntry);
+    expect(
+      lastSecretIndex,
+      'creds secret write should be in applyOrder',
+    ).toBeGreaterThanOrEqual(0);
+
+    expect(
+      lastSecretIndex,
+      'creds secret write must appear before deployment apply',
+    ).toBeLessThan(deployIndex);
   });
 });
