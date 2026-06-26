@@ -102,13 +102,21 @@ async function handleRequest(req: DiscoveryRequest): Promise<void> {
         });
         const baseEntry = asClusterEntry(specToDiscoveryEntry(spec));
         if (up.state === 'ready') {
-          const token = await ensureGroupMcpToken({
-            client: deps.perGroupK8sClient,
-            namespace: deps.namespace,
-            groupFolder: req.group,
-            capabilityName: spec.name,
-          });
-          result = [{ ...baseEntry, endpoint: up.endpoint, state: 'ready', token }];
+          if (baseEntry.kind !== 'mcp') {
+            // ensureGroupMcpToken is only meaningful for MCP capabilities; other
+            // group-scoped kinds don't carry a token.
+            result = [{ ...baseEntry, endpoint: up.endpoint, state: 'ready' as const }];
+          } else {
+            const token = await ensureGroupMcpToken({
+              client: deps.perGroupK8sClient,
+              namespace: deps.namespace,
+              groupFolder: req.group,
+              capabilityName: spec.name,
+            });
+            result = [
+              { ...baseEntry, endpoint: up.endpoint, state: 'ready', token },
+            ];
+          }
         } else {
           result = [withState(baseEntry, { state: 'failed', error: up.error })];
         }

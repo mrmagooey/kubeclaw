@@ -247,7 +247,11 @@ export type CapabilityDiscoveryEntry =
       kindMetadata: { path: string; allowedTools?: string[] };
       state?: 'ready' | 'warming' | 'failed';
       error?: string;
-      /** Per-group MCP bearer token; present only on group-scoped discovery responses. */
+      /**
+       * Per-group MCP bearer token. Set ONLY on the per-request group-scoped
+       * resolve response produced in discovery.ts `scaleUpInstance` success
+       * branch. Never set by `specToDiscoveryEntry`.
+       */
       token?: string;
     }
   | {
@@ -257,7 +261,6 @@ export type CapabilityDiscoveryEntry =
       kindMetadata: { backend: string; provider: RagProviderConfig };
       state?: 'ready' | 'warming' | 'failed';
       error?: string;
-      token?: string;
     }
   | {
       name: string;
@@ -266,7 +269,6 @@ export type CapabilityDiscoveryEntry =
       kindMetadata: Record<string, never>;
       state?: 'ready' | 'warming' | 'failed';
       error?: string;
-      token?: string;
     }
   | {
       name: string;
@@ -275,7 +277,6 @@ export type CapabilityDiscoveryEntry =
       kindMetadata: { provider: TranscriptionProviderConfig };
       state?: 'ready' | 'warming' | 'failed';
       error?: string;
-      token?: string;
     }
   | GroupMcpEntry;
 

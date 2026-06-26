@@ -57,7 +57,9 @@ export async function requestGroupCapability(
         return { error: entry.error ?? 'failed' };
       }
       if (entry.kind !== 'mcp-group' && 'endpoint' in entry && entry.endpoint) {
-        return { endpoint: entry.endpoint, token: entry.token };
+        // token is only present on the mcp member (set by the group-scoped resolve path)
+        const token = entry.kind === 'mcp' ? entry.token : undefined;
+        return { endpoint: entry.endpoint, token };
       }
       return { error: 'response missing endpoint' };
     }
