@@ -13,6 +13,7 @@ const GROUP_ONLY_FIELDS = [
   'scaleDownAfterIdleSeconds',
   'volumeFromGroupPvc',
   'credentialsFrom',
+  'pinned',
 ] as const;
 
 export function getScope(spec: CapabilitySpec): CapabilityScope {
@@ -44,6 +45,7 @@ export interface ResolvedGroupCapability {
   scaleDownAfterIdleSeconds: number;
   volumeFromGroupPvc: boolean;
   credentialsFrom: 'none' | 'secret';
+  pinned: boolean;
 }
 
 export function resolveGroupCapability(
@@ -59,5 +61,6 @@ export function resolveGroupCapability(
     scaleDownAfterIdleSeconds: spec.scaleDownAfterIdleSeconds ?? 600,
     volumeFromGroupPvc: spec.volumeFromGroupPvc ?? false,
     credentialsFrom: spec.credentialsFrom ?? 'none',
+    pinned: spec.pinned ?? false,
   };
 }

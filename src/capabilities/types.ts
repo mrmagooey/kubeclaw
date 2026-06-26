@@ -32,11 +32,26 @@ export interface CapabilityPodSecurity {
   runAsNonRoot?: boolean;
 }
 
+export interface CapabilitySidecar {
+  /** Container name; must be unique within the pod. */
+  name: string;
+  image: string;
+  /** Container port (not exposed by the Service; the primary container's port is). */
+  port?: number;
+  env?: Record<string, string>;
+  command?: string[];
+  args?: string[];
+  /** When set, the dedicated PVC is mounted here at this path. */
+  mountPath?: string;
+}
+
 export interface CapabilityStorage {
   /** PVC size in GiB. */
   sizeGi: number;
   /** Container path the PVC mounts to. */
   mountPath: string;
+  /** Container that mounts the PVC. Default: the primary container. */
+  container?: string;
 }
 
 export interface ProbeConfig {
@@ -99,6 +114,10 @@ export interface CapabilityBase {
   volumeFromGroupPvc?: boolean;
   /** Group-scope only: where per-group credentials come from. Default 'none'. */
   credentialsFrom?: 'none' | 'secret';
+  /** Extra containers co-located in the pod (e.g. a database engine behind an MCP server). */
+  sidecars?: CapabilitySidecar[];
+  /** Group-scope only: keep ≥1 replica and exempt from idle scale-to-zero. Default false. */
+  pinned?: boolean;
   /** URL scheme for the discovery endpoint. Default 'http'. */
   endpointScheme?: string;
 }
