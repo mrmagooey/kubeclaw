@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { TelegramChannel, parseConfig } from '../../helm/kubeclaw/files/channel-src/telegram/channel-entry.js';
+import {
+  TelegramChannel,
+  parseConfig,
+} from '../../helm/kubeclaw/files/channel-src/telegram/channel-entry.js';
 
 // ── Fake SDK / opts helpers (mirror signal-adapter.test.ts) ──────────────────
 
@@ -19,7 +22,9 @@ function fakeSdk(env: Record<string, string> = {}) {
   };
 }
 
-function fakeOpts(overrides?: { registeredGroups?: () => Record<string, any> }) {
+function fakeOpts(overrides?: {
+  registeredGroups?: () => Record<string, any>;
+}) {
   return {
     onMessage: vi.fn(),
     onChatMetadata: vi.fn(),
@@ -43,13 +48,6 @@ function fakeOpts(overrides?: { registeredGroups?: () => Record<string, any> }) 
 
 function buildChannel(env: Record<string, string>, opts?: any) {
   const { sdk, factories } = fakeSdk(env);
-  const { default: register } = (globalThis as any).__telegramRegister__
-    ? { default: (globalThis as any).__telegramRegister__ }
-    : { default: null };
-
-  // Dynamically import the default export already loaded by the named imports above
-  // We need the factory; use parseConfig + TelegramChannel directly for most tests.
-  // For factory tests we use the register function via a second import trick.
   sdk.registerChannel('telegram', (o: any) => {
     const cfg = parseConfig(sdk);
     if (!cfg) return null;
@@ -119,7 +117,13 @@ describe('telegram-adapter: buildInbound', () => {
     const { ch } = buildChannel({ TELEGRAM_BOT_TOKEN: 'tok:ABC' });
     const ctx = {
       chat: { id: 123, type: 'private', title: undefined },
-      from: { id: 456, username: 'alice', first_name: 'Alice', last_name: undefined, is_bot: false },
+      from: {
+        id: 456,
+        username: 'alice',
+        first_name: 'Alice',
+        last_name: undefined,
+        is_bot: false,
+      },
       message: { text: 'hello' },
     };
     const result = ch.buildInbound(ctx);
@@ -134,7 +138,13 @@ describe('telegram-adapter: buildInbound', () => {
     const { ch } = buildChannel({ TELEGRAM_BOT_TOKEN: 'tok:ABC' });
     const ctx = {
       chat: { id: -1001234567890, type: 'group', title: 'My Group' },
-      from: { id: 789, username: undefined, first_name: 'Bob', last_name: 'Smith', is_bot: false },
+      from: {
+        id: 789,
+        username: undefined,
+        first_name: 'Bob',
+        last_name: 'Smith',
+        is_bot: false,
+      },
       message: { text: 'group msg' },
     };
     const result = ch.buildInbound(ctx);
@@ -156,7 +166,12 @@ describe('telegram-adapter: buildInbound', () => {
 
   it('returns null when chat is missing', () => {
     const { ch } = buildChannel({ TELEGRAM_BOT_TOKEN: 'tok:ABC' });
-    expect(ch.buildInbound({ from: { id: 1, is_bot: false }, message: { text: 'x' } })).toBeNull();
+    expect(
+      ch.buildInbound({
+        from: { id: 1, is_bot: false },
+        message: { text: 'x' },
+      }),
+    ).toBeNull();
   });
 });
 
@@ -273,7 +288,9 @@ describe('telegram-adapter: sendMessage', () => {
     const { ch } = buildChannel({ TELEGRAM_BOT_TOKEN: 'tok:ABC' }, opts);
 
     const sendMessageSpy = vi.fn().mockResolvedValue({});
-    ch.bot = { telegram: { sendMessage: sendMessageSpy, sendChatAction: vi.fn() } };
+    ch.bot = {
+      telegram: { sendMessage: sendMessageSpy, sendChatAction: vi.fn() },
+    };
 
     await ch.sendMessage('telegram:123', 'hello there');
     expect(sendMessageSpy).toHaveBeenCalledTimes(1);
@@ -285,7 +302,9 @@ describe('telegram-adapter: sendMessage', () => {
     const { ch } = buildChannel({ TELEGRAM_BOT_TOKEN: 'tok:ABC' }, opts);
 
     const sendMessageSpy = vi.fn().mockResolvedValue({});
-    ch.bot = { telegram: { sendMessage: sendMessageSpy, sendChatAction: vi.fn() } };
+    ch.bot = {
+      telegram: { sendMessage: sendMessageSpy, sendChatAction: vi.fn() },
+    };
 
     await ch.sendMessage('telegram:123', 'x'.repeat(9000));
     // 9000 / 4096 = ceil(9000/4096) = 3 chunks
@@ -305,11 +324,17 @@ describe('telegram-adapter: sendMessage', () => {
     expect(sendMessageSpy).not.toHaveBeenCalled();
   });
 
-  it('does nothing when bot is null (not connected)', async () => {
+  it('logs a warn and returns when bot is null (not connected)', async () => {
     const opts = fakeOpts();
-    const { ch } = buildChannel({ TELEGRAM_BOT_TOKEN: 'tok:ABC' }, opts);
-    // ch.bot is null by default
-    await expect(ch.sendMessage('telegram:123', 'hello')).resolves.toBeUndefined();
+    const { sdk, ch } = buildChannel({ TELEGRAM_BOT_TOKEN: 'tok:ABC' }, opts);
+    // ch.bot is null by default — should warn but not throw
+    await expect(
+      ch.sendMessage('telegram:123', 'hello'),
+    ).resolves.toBeUndefined();
+    expect(sdk.logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ jid: 'telegram:123' }),
+      'telegram: sendMessage called but bot not connected',
+    );
   });
 });
 

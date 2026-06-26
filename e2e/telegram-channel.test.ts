@@ -110,11 +110,12 @@ function startFakeBotApiServer(token: string): Promise<{
       }
 
       if (url.endsWith('/getUpdates')) {
-        // Return empty array immediately — the polling loop will keep calling
-        // this, but since launch() is detached and we stop the bot in afterAll,
-        // this just keeps the loop running cheaply until bot.stop() is called.
+        // Delay response ~100ms to rate-limit the long-poll loop and avoid
+        // tight-spin CPU burn during the test suite. This mimics real Telegram
+        // long-poll behaviour (which holds the connection for up to 60s).
+        const body = JSON.stringify({ ok: true, result: [] });
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: true, result: [] }));
+        setTimeout(() => res.end(body), 100);
         return;
       }
 
@@ -443,6 +444,25 @@ describe('Telegram Channel End-to-End', () => {
 
       expect(receivedMessages).toHaveLength(1);
       expect(receivedMessages[0].message.content).toBe('@Andy help me please');
+    });
+
+    it('should deliver a group message with no @Andy mention unchanged', async () => {
+      // A group message with no @assistant mention should be delivered to
+      // onMessage as-is (no prefix rewrite applied).
+      await realBot!.handleUpdate({
+        update_id: 6,
+        message: {
+          message_id: 6,
+          date: Math.floor(Date.now() / 1000),
+          chat: { id: GROUP_CHAT_ID, type: 'group', title: 'E2E Group' },
+          from: { id: 777, is_bot: false, first_name: 'Bob', username: 'bob' },
+          text: 'hello there',
+        },
+      } as any);
+
+      expect(receivedMessages).toHaveLength(1);
+      expect(receivedMessages[0].chatJid).toBe(GROUP_JID);
+      expect(receivedMessages[0].message.content).toBe('hello there');
     });
   });
 

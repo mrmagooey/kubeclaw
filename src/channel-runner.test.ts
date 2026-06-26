@@ -190,7 +190,9 @@ describe('folderPrefixForChannel', () => {
   });
 
   it('maps all five new channel types to stable prefixes', () => {
-    expect(folderPrefixForChannel('telegram')).toBe('tg');
+    // telegram is already asserted in the test above; assert the four
+    // channel types that are unique to this matrix (discord, whatsapp,
+    // matrix, imessage).
     expect(folderPrefixForChannel('discord')).toBe('dc');
     expect(folderPrefixForChannel('whatsapp')).toBe('wa');
     expect(folderPrefixForChannel('matrix')).toBe('mat');

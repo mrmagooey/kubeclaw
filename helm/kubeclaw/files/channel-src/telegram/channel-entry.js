@@ -110,7 +110,13 @@ class TelegramChannel {
     const ts = Date.now();
     const timestamp = new Date(ts).toISOString();
 
-    this.opts.onChatMetadata(inb.jid, timestamp, inb.chatName, 'telegram', inb.isGroup);
+    this.opts.onChatMetadata(
+      inb.jid,
+      timestamp,
+      inb.chatName,
+      'telegram',
+      inb.isGroup,
+    );
     this.opts.onMessage(inb.jid, {
       id: `${ts}-${++this.messageId}`,
       chat_jid: inb.jid,
@@ -138,7 +144,10 @@ class TelegramChannel {
       try {
         this.handleCtx(ctx);
       } catch (err) {
-        this.sdk.logger.warn({ err: String(err) }, 'telegram: handleCtx failed');
+        this.sdk.logger.warn(
+          { err: String(err) },
+          'telegram: handleCtx failed',
+        );
       }
     });
 
@@ -159,13 +168,23 @@ class TelegramChannel {
 
   // ── Send ──────────────────────────────────────────────────────────────────
   async sendMessage(jid, text) {
-    if (!this.ownsJid(jid) || !this.bot) return;
+    if (!this.ownsJid(jid)) return;
+    if (!this.bot) {
+      this.sdk.logger.warn(
+        { jid },
+        'telegram: sendMessage called but bot not connected',
+      );
+      return;
+    }
     const chatId = jid.slice('telegram:'.length);
     for (const c of this.chunk(text, MAX_MESSAGE_LENGTH)) {
       try {
         await this.bot.telegram.sendMessage(chatId, c);
       } catch (err) {
-        this.sdk.logger.error({ jid, err: String(err) }, 'telegram: send failed');
+        this.sdk.logger.error(
+          { jid, err: String(err) },
+          'telegram: send failed',
+        );
       }
     }
   }
@@ -173,7 +192,10 @@ class TelegramChannel {
   async setTyping(jid, isTyping) {
     if (!this.ownsJid(jid) || !this.bot || !isTyping) return;
     try {
-      await this.bot.telegram.sendChatAction(jid.slice('telegram:'.length), 'typing');
+      await this.bot.telegram.sendChatAction(
+        jid.slice('telegram:'.length),
+        'typing',
+      );
     } catch (err) {
       this.sdk.logger.debug({ err: String(err) }, 'telegram: typing failed');
     }
@@ -199,7 +221,11 @@ class TelegramChannel {
 // ── Config parser ─────────────────────────────────────────────────────────────
 function parseConfig(sdk) {
   const env = sdk.readEnvFile(['TELEGRAM_BOT_TOKEN', 'TELEGRAM_BOT_USERNAME']);
-  const token = process.env.TELEGRAM_BOT_TOKEN || env.TELEGRAM_BOT_TOKEN || '';
+  const token = (
+    process.env.TELEGRAM_BOT_TOKEN ||
+    env.TELEGRAM_BOT_TOKEN ||
+    ''
+  ).trim();
   if (!token) {
     sdk.logger.warn('telegram: TELEGRAM_BOT_TOKEN is required');
     return null;
