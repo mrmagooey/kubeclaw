@@ -15,6 +15,7 @@ import type { CapabilityDiscoveryEntry } from './types.js';
 import type { PerGroupK8sClient } from '../per-group-capabilities/k8s-client.js';
 import { getScope } from '../per-group-capabilities/types.js';
 import { scaleUpInstance } from '../per-group-capabilities/scale-up.js';
+import { ensureGroupMcpToken } from '../per-group-capabilities/credentials.js';
 
 const RESPONSE_TTL_SECONDS = 30;
 
@@ -101,7 +102,13 @@ async function handleRequest(req: DiscoveryRequest): Promise<void> {
         });
         const baseEntry = asClusterEntry(specToDiscoveryEntry(spec));
         if (up.state === 'ready') {
-          result = [{ ...baseEntry, endpoint: up.endpoint, state: 'ready' }];
+          const token = await ensureGroupMcpToken({
+            client: deps.perGroupK8sClient,
+            namespace: deps.namespace,
+            groupFolder: req.group,
+            capabilityName: spec.name,
+          });
+          result = [{ ...baseEntry, endpoint: up.endpoint, state: 'ready', token }];
         } else {
           result = [withState(baseEntry, { state: 'failed', error: up.error })];
         }

@@ -11,7 +11,7 @@ const POLL_INTERVAL_MS = 200;
 const DEFAULT_TIMEOUT_MS = 35_000;
 
 export type GroupCapabilityResolveResult =
-  | { endpoint: string }
+  | { endpoint: string; token?: string }
   | { error: string };
 
 export async function requestGroupCapability(
@@ -57,7 +57,7 @@ export async function requestGroupCapability(
         return { error: entry.error ?? 'failed' };
       }
       if (entry.kind !== 'mcp-group' && 'endpoint' in entry && entry.endpoint) {
-        return { endpoint: entry.endpoint };
+        return { endpoint: entry.endpoint, token: entry.token };
       }
       return { error: 'response missing endpoint' };
     }

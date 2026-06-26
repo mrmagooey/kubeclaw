@@ -37,7 +37,7 @@ describe('requestGroupCapability', () => {
       ]),
     );
     const res = await requestGroupCapability('echo', 'Family', 1000);
-    expect(res).toEqual({ endpoint: 'http://mcp-echo-h1.kubeclaw.svc:3000' });
+    expect(res).toEqual({ endpoint: 'http://mcp-echo-h1.kubeclaw.svc:3000', token: undefined });
     expect(mockXadd).toHaveBeenCalledTimes(1);
     const [stream, ...fields] = mockXadd.mock.calls[0];
     expect(stream).toBe('kubeclaw:discovery:request');
@@ -45,6 +45,27 @@ describe('requestGroupCapability', () => {
     expect(fields).toContain('echo');
     expect(fields).toContain('group');
     expect(fields).toContain('Family');
+  });
+
+  it('passes through the token when present in the discovery response', async () => {
+    mockXadd.mockResolvedValue('1-0');
+    mockGet.mockResolvedValueOnce(
+      JSON.stringify([
+        {
+          kind: 'mcp',
+          name: 'database',
+          endpoint: 'http://mcp-database-h2.kubeclaw.svc:3000',
+          kindMetadata: { path: '/mcp' },
+          state: 'ready',
+          token: 'abc123def456',
+        },
+      ]),
+    );
+    const res = await requestGroupCapability('database', 'alice', 1000);
+    expect(res).toEqual({
+      endpoint: 'http://mcp-database-h2.kubeclaw.svc:3000',
+      token: 'abc123def456',
+    });
   });
 
   it('returns error when response carries state: failed', async () => {

@@ -1,6 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { FakePerGroupK8sClient } from './k8s-client.js';
-import { setGroupCredential, unsetGroupCredential } from './credentials.js';
+import {
+  setGroupCredential,
+  unsetGroupCredential,
+  ensureGroupMcpToken,
+} from './credentials.js';
 import { credsSecretName } from './k8s-objects.js';
 import { groupHash } from './hash.js';
 
@@ -97,5 +101,25 @@ describe('unsetGroupCredential', () => {
     });
     const name = credsSecretName('github', groupHash('Family'));
     expect(await c.readSecret('kubeclaw', name)).toBeNull();
+  });
+});
+
+describe('ensureGroupMcpToken', () => {
+  it('generates once and is idempotent', async () => {
+    const client = new FakePerGroupK8sClient();
+    const a = await ensureGroupMcpToken({
+      client,
+      namespace: 'kubeclaw',
+      groupFolder: 'alice',
+      capabilityName: 'database',
+    });
+    expect(a).toMatch(/^[0-9a-f]{64}$/);
+    const b = await ensureGroupMcpToken({
+      client,
+      namespace: 'kubeclaw',
+      groupFolder: 'alice',
+      capabilityName: 'database',
+    });
+    expect(b).toBe(a); // idempotent — same token returned
   });
 });

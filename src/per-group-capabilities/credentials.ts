@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import type { V1Secret } from '@kubernetes/client-node';
 import type { PerGroupK8sClient } from './k8s-client.js';
 import { groupHash } from './hash.js';
@@ -49,6 +50,55 @@ export async function setGroupCredential(
     data,
   };
   await args.client.applySecret(sec);
+}
+
+export interface ReadCredentialArgs {
+  client: PerGroupK8sClient;
+  namespace: string;
+  groupFolder: string;
+  capabilityName: string;
+  envName: string;
+}
+
+/**
+ * Read a single credential from the group's creds Secret.
+ * Returns `null` when the secret or the key is absent.
+ */
+export async function readGroupCredential(
+  args: ReadCredentialArgs,
+): Promise<string | null> {
+  const hash = groupHash(args.groupFolder);
+  const name = credsSecretName(args.capabilityName, hash);
+  const sec = await args.client.readSecret(args.namespace, name);
+  if (!sec?.data) return null;
+  const raw = sec.data[args.envName];
+  if (!raw) return null;
+  return Buffer.from(raw, 'base64').toString('utf-8');
+}
+
+export interface EnsureGroupMcpTokenArgs {
+  client: PerGroupK8sClient;
+  namespace: string;
+  groupFolder: string;
+  capabilityName: string;
+}
+
+/**
+ * Idempotently provision a per-group MCP bearer token.
+ * Returns the existing token if one is already stored, otherwise generates a
+ * 32-byte hex token, persists it via setGroupCredential, and returns it.
+ */
+export async function ensureGroupMcpToken(
+  args: EnsureGroupMcpTokenArgs,
+): Promise<string> {
+  const existing = await readGroupCredential({
+    ...args,
+    envName: 'KUBECLAW_MCP_TOKEN',
+  });
+  if (existing) return existing;
+  const token = randomBytes(32).toString('hex');
+  await setGroupCredential({ ...args, envName: 'KUBECLAW_MCP_TOKEN', value: token });
+  return token;
 }
 
 export async function unsetGroupCredential(
