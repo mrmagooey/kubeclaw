@@ -1,15 +1,17 @@
 import type { CapabilitySpec } from '../capabilities/types.js';
 import type { PerGroupK8sClient } from './k8s-client.js';
-import { getScope, validateScopeFields } from './types.js';
+import { getScope, validateScopeFields, resolveGroupCapability } from './types.js';
 import { groupHash } from './hash.js';
 import {
   renderDeployment,
   renderService,
   renderNetworkPolicy,
   instanceName,
+  credsSecretName,
 } from './k8s-objects.js';
 import { renderPersistentVolumeClaim } from './pvc.js';
 import { upsertInstance } from './db.js';
+import { ensureGroupDbCredentials } from './provision-credentials.js';
 import { logger } from '../logger.js';
 
 export interface ReconcileArgs {
@@ -56,7 +58,45 @@ export async function reconcileGroupCapabilities(
       await args.client.applyNetworkPolicy(renderNetworkPolicy(spec, ctx));
       await args.client.applyService(renderService(spec, ctx));
       const pvc = renderPersistentVolumeClaim(spec, ctx);
-      if (pvc) await args.client.applyPersistentVolumeClaim(args.namespace, pvc);
+      if (pvc)
+        await args.client.applyPersistentVolumeClaim(args.namespace, pvc);
+
+      // For capabilities that read credentials from a Secret, ensure the Secret
+      // exists (empty placeholder) and then populate all required credential keys
+      // BEFORE the Deployment is applied — a pinned pod must start with creds present.
+      const resolved = resolveGroupCapability(spec);
+      if (resolved.credentialsFrom === 'secret') {
+        // Ensure the empty placeholder Secret exists first so the envFrom reference
+        // is satisfied even if credential generation fails mid-flight.
+        const secretName = credsSecretName(spec.name, hash);
+        const existingSecret = await args.client.readSecret(args.namespace, secretName);
+        if (!existingSecret) {
+          await args.client.applySecret({
+            apiVersion: 'v1',
+            kind: 'Secret',
+            metadata: {
+              name: secretName,
+              namespace: args.namespace,
+              labels: {
+                'kubeclaw.io/scope': 'group',
+                'kubeclaw.io/capability': spec.name,
+                'kubeclaw.io/group-hash': hash,
+                'kubeclaw.io/managed-by': 'kubeclaw-orchestrator',
+              },
+            },
+            type: 'Opaque',
+            data: {},
+          });
+        }
+        // Provision all required credentials (idempotent).
+        await ensureGroupDbCredentials({
+          client: args.client,
+          namespace: args.namespace,
+          groupFolder,
+          capabilityName: spec.name,
+        });
+      }
+
       await args.client.applyDeployment(renderDeployment(spec, ctx));
       const name = instanceName(spec.name, hash);
       upsertInstance({

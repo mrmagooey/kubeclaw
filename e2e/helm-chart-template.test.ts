@@ -1478,3 +1478,32 @@ describe('signal channel: per-channel sidecar migration (no shared StatefulSet)'
     expect(deployDoc).toContain('fsGroup: 1000');
   });
 });
+
+// ─── Task 9: database capability wiring ───────────────────────────────────────
+//
+// Verifies that the `capabilities.database` entry in values.yaml carries all
+// required fields for the postgres-mcp capability.
+
+describe('helm values — database capability declared correctly', () => {
+  it('renders a database capability: group-scoped, pinned, postgres sidecar, read-only by default', () => {
+    // Load values.yaml directly and assert on the structured values object.
+    // This avoids a full helm template render and keeps the test fast.
+    const { execSync } = require('child_process');
+    const yaml = require('js-yaml');
+    const fs = require('fs');
+    const valuesRaw = fs.readFileSync('./helm/kubeclaw/values.yaml', 'utf-8');
+    const values = yaml.load(valuesRaw) as Record<string, unknown>;
+    const db = (values.capabilities as Record<string, unknown>).database as Record<string, unknown>;
+    expect(db.kind).toBe('mcp');
+    expect(db.scope).toBe('group');
+    expect(db.pinned).toBe(true);
+    expect(db.credentialsFrom).toBe('secret');
+    const sidecars = db.sidecars as Array<Record<string, unknown>>;
+    expect(sidecars?.[0]?.name).toBe('postgres');
+    const storage = db.storage as Record<string, unknown>;
+    expect(storage?.container).toBe('postgres');
+    expect(db.allowedTools).toEqual(['query']);
+    const env = db.env as Record<string, unknown>;
+    expect(env?.PG_RO_USER).toBe('kubeclaw_ro');
+  });
+});

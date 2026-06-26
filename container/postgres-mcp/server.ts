@@ -13,6 +13,38 @@
  * dynamic imports so the module can be loaded in tests without pg installed.
  */
 
+// ─── Role bootstrap SQL (pure helper, no external deps) ──────────────────────
+
+/** Regex that matches safe Postgres identifier characters. */
+const SAFE_IDENTIFIER_RE = /^[a-z_][a-z0-9_]*$/;
+
+/**
+ * Returns the idempotent SQL to grant a read-only Postgres role the minimum
+ * permissions needed to SELECT from all current and future tables in the
+ * `public` schema.
+ *
+ * The role name is validated against a strict safe-identifier regex because
+ * it is interpolated directly into the SQL string (identifiers cannot be
+ * parameterized). The role password is handled separately by `main()` via a
+ * parameterized `ALTER ROLE ... PASSWORD $1` query — never string-interpolated.
+ *
+ * @throws if roUser contains characters outside `^[a-z_][a-z0-9_]*$`
+ */
+export function buildRoleBootstrapSql(roUser: string): string {
+  if (!SAFE_IDENTIFIER_RE.test(roUser)) {
+    throw new Error(
+      `Unsafe Postgres role identifier: "${roUser}". ` +
+        'Must match ^[a-z_][a-z0-9_]*$.',
+    );
+  }
+  return [
+    `GRANT CONNECT ON DATABASE kubeclaw TO ${roUser};`,
+    `GRANT USAGE ON SCHEMA public TO ${roUser};`,
+    `GRANT SELECT ON ALL TABLES IN SCHEMA public TO ${roUser};`,
+    `ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO ${roUser};`,
+  ].join('\n');
+}
+
 // ─── Pure helpers (unit-testable, no external deps) ──────────────────────────
 
 export interface CapRowsResult {
@@ -174,6 +206,69 @@ export async function main(): Promise<void> {
     password: process.env.PGPASSWORD,
     database: pgDatabase,
   });
+
+  // ── Read-only role bootstrap ───────────────────────────────────────────────
+  // Wait until Postgres is reachable (retry with back-off), then:
+  //   1. CREATE the ro role guarded by a DO block (roles lack IF NOT EXISTS).
+  //   2. ALTER ROLE ... PASSWORD $1 (PARAMETERIZED — never string-interpolated).
+  //   3. Grant read-only permissions via buildRoleBootstrapSql.
+  // This runs BEFORE the HTTP server starts serving.
+  {
+    const BOOTSTRAP_RETRIES = 30;
+    const BOOTSTRAP_RETRY_DELAY_MS = 2000;
+    let connected = false;
+    for (let i = 0; i < BOOTSTRAP_RETRIES; i++) {
+      try {
+        await rwPool.query('SELECT 1');
+        connected = true;
+        break;
+      } catch {
+        if (i < BOOTSTRAP_RETRIES - 1) {
+          console.log(
+            `postgres-mcp: waiting for Postgres (attempt ${i + 1}/${BOOTSTRAP_RETRIES})…`,
+          );
+          await new Promise((r) => setTimeout(r, BOOTSTRAP_RETRY_DELAY_MS));
+        }
+      }
+    }
+    if (!connected) {
+      console.error('FATAL: Postgres not reachable after retries. Exiting.');
+      process.exit(1);
+    }
+
+    try {
+      // Step 1: Create the ro role if it does not exist.
+      // Roles have no IF NOT EXISTS, so we guard with a DO block.
+      await rwPool.query(`
+        DO $$
+        BEGIN
+          IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${PG_RO_USER}') THEN
+            CREATE ROLE "${PG_RO_USER}" LOGIN;
+          END IF;
+        END
+        $$;
+      `);
+
+      // Step 2: Set the password via a PARAMETERIZED query — the password
+      // is never interpolated into SQL to prevent injection.
+      await rwPool.query(`ALTER ROLE "${PG_RO_USER}" PASSWORD $1`, [
+        PG_RO_PASSWORD,
+      ]);
+
+      // Step 3: Grant read-only permissions.
+      const grantSql = buildRoleBootstrapSql(PG_RO_USER);
+      for (const stmt of grantSql.split('\n').filter((s) => s.trim())) {
+        await rwPool.query(stmt);
+      }
+
+      console.log(
+        `postgres-mcp: ro role "${PG_RO_USER}" bootstrapped successfully.`,
+      );
+    } catch (err) {
+      console.error('FATAL: ro role bootstrap failed:', err);
+      process.exit(1);
+    }
+  }
 
   const handleTool = buildToolHandlers({
     roPool,

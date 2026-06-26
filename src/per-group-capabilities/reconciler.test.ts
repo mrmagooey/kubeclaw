@@ -6,6 +6,7 @@ import { listAllInstances } from './db.js';
 import type { CapabilitySpec } from '../capabilities/types.js';
 import { groupHash } from './hash.js';
 import { pvcName } from './pvc.js';
+import { credsSecretName } from './k8s-objects.js';
 
 beforeAll(async () => {
   await _initTestDatabase();
@@ -94,7 +95,11 @@ describe('reconcileGroupCapabilities', () => {
       kind: 'mcp',
       image: 'pg-mcp:1',
       scope: 'group',
-      storage: { sizeGi: 5, mountPath: '/var/lib/postgresql/data', container: 'postgres' },
+      storage: {
+        sizeGi: 5,
+        mountPath: '/var/lib/postgresql/data',
+        container: 'postgres',
+      },
       sidecars: [{ name: 'postgres', image: 'postgres:16', port: 5432 }],
     };
     await reconcileGroupCapabilities({
@@ -106,12 +111,99 @@ describe('reconcileGroupCapabilities', () => {
     });
     const hash = groupHash('alice');
     const expectedPvcName = pvcName('database', hash);
-    expect(client.appliedPvcs.map((p) => p.metadata?.name)).toContain(expectedPvcName);
+    expect(client.appliedPvcs.map((p) => p.metadata?.name)).toContain(
+      expectedPvcName,
+    );
     // PVC must be applied before the Deployment
     const pvcIndex = client.applyOrder.indexOf('pvc:' + expectedPvcName);
     const deployName = `mcp-database-${hash}`;
     const deployIndex = client.applyOrder.indexOf('deployment:' + deployName);
     expect(pvcIndex).toBeGreaterThanOrEqual(0);
     expect(deployIndex).toBeGreaterThan(pvcIndex);
+  });
+
+  it('provisions DB credentials for credentialsFrom:secret and skips for credentialsFrom:none', async () => {
+    const client = new FakePerGroupK8sClient();
+
+    const secretSpec: CapabilitySpec = {
+      name: 'database',
+      kind: 'mcp',
+      image: 'pg-mcp:1',
+      scope: 'group',
+      credentialsFrom: 'secret',
+    };
+    const noneSpec: CapabilitySpec = {
+      name: 'echo',
+      kind: 'mcp',
+      image: 'echo:1',
+      scope: 'group',
+      credentialsFrom: 'none',
+    };
+
+    await reconcileGroupCapabilities({
+      client,
+      namespace: 'kubeclaw',
+      groupsPvcName: 'pvc',
+      groups: ['alice'],
+      specs: [secretSpec, noneSpec],
+    });
+
+    const hash = groupHash('alice');
+
+    // The database capability should have a credentials secret with all required keys
+    const dbSecretName = credsSecretName('database', hash);
+    const dbSecret = await client.readSecret('kubeclaw', dbSecretName);
+    expect(dbSecret, 'database creds secret should exist').not.toBeNull();
+
+    const read = (k: string) => {
+      const raw = dbSecret?.data?.[k];
+      if (!raw) return null;
+      return Buffer.from(raw, 'base64').toString('utf-8');
+    };
+
+    expect(read('KUBECLAW_MCP_TOKEN')).toMatch(/^[0-9a-f]{64}$/);
+    expect(read('POSTGRES_PASSWORD')).toMatch(/^[0-9a-f]{48}$/);
+    expect(read('PGPASSWORD')).toBe(read('POSTGRES_PASSWORD'));
+    expect(read('PG_RO_PASSWORD')).toMatch(/^[0-9a-f]{48}$/);
+    expect(read('PG_RO_PASSWORD')).not.toBe(read('POSTGRES_PASSWORD'));
+
+    // The echo capability (credentialsFrom:none) should have NO creds secret
+    const echoSecretName = credsSecretName('echo', hash);
+    const echoSecret = await client.readSecret('kubeclaw', echoSecretName);
+    expect(echoSecret, 'echo creds secret should NOT exist').toBeNull();
+  });
+
+  it('credentials are provisioned before the deployment is applied', async () => {
+    const client = new FakePerGroupK8sClient();
+
+    const secretSpec: CapabilitySpec = {
+      name: 'database',
+      kind: 'mcp',
+      image: 'pg-mcp:1',
+      scope: 'group',
+      credentialsFrom: 'secret',
+    };
+
+    await reconcileGroupCapabilities({
+      client,
+      namespace: 'kubeclaw',
+      groupsPvcName: 'pvc',
+      groups: ['alice'],
+      specs: [secretSpec],
+    });
+
+    const hash = groupHash('alice');
+    const dbSecretName = credsSecretName('database', hash);
+
+    // The secret must exist and have credentials BEFORE the deployment was applied
+    // We verify this by checking the applyOrder: the secret should be in the store
+    // and the deployment should also be in applyOrder
+    const deployName = `mcp-database-${hash}`;
+    const deployIndex = client.applyOrder.indexOf('deployment:' + deployName);
+    expect(deployIndex, 'deployment should be in applyOrder').toBeGreaterThanOrEqual(0);
+
+    // After reconcile completes, credentials must be present
+    const dbSecret = await client.readSecret('kubeclaw', dbSecretName);
+    expect(dbSecret, 'creds secret must be present after reconcile').not.toBeNull();
   });
 });

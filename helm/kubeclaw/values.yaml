@@ -285,6 +285,41 @@ capabilities:
         memory: 512Mi
         cpu: 500m
 
+  database:
+    kind: mcp
+    scope: group
+    pinned: true
+    image: kubeclaw-postgres-mcp:latest
+    port: 3000
+    path: /mcp
+    credentialsFrom: secret
+    allowedTools: [query]          # execute is offered by the server but hidden until opted in per group
+    podSecurity:
+      fsGroup: 999                 # postgres image's data group (postgres:16 runs as uid/gid 999)
+    storage:
+      sizeGi: 5
+      mountPath: /var/lib/postgresql/data
+      container: postgres
+    env:
+      PGHOST: "127.0.0.1"
+      PGUSER: kubeclaw             # rw role (= POSTGRES_USER); password from the per-group secret
+      PG_RO_USER: kubeclaw_ro      # ro role created by the server on boot; password from the secret
+      PGDATABASE: kubeclaw
+      KUBECLAW_DB_STATEMENT_TIMEOUT_MS: "5000"
+      KUBECLAW_DB_MAX_ROWS: "1000"
+    sidecars:
+      - name: postgres
+        image: postgres:16
+        port: 5432
+        env:
+          POSTGRES_USER: kubeclaw
+          POSTGRES_DB: kubeclaw
+          PGDATA: /var/lib/postgresql/data/pgdata
+          # POSTGRES_PASSWORD comes from the per-group creds secret (envFrom)
+    resources:
+      requests: { memory: 256Mi, cpu: 100m }
+      limits: { memory: 1Gi, cpu: "1" }
+
 # Default resource limits for capability pods.
 capabilityPod:
   resources:

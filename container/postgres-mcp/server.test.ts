@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { capRows, isAuthorized, buildToolHandlers } from './server.js';
+import { capRows, isAuthorized, buildToolHandlers, buildRoleBootstrapSql } from './server.js';
 import type { QueryPool } from './server.js';
 
 describe('capRows', () => {
@@ -141,5 +141,18 @@ describe('buildToolHandlers', () => {
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.rows).toHaveLength(3);
     expect(parsed.truncated).toBe(true);
+  });
+});
+
+describe('buildRoleBootstrapSql', () => {
+  it('grants SELECT and future-table SELECT to the ro role, no write grants', () => {
+    const sql = buildRoleBootstrapSql('kubeclaw_ro');
+    expect(sql).toMatch(/GRANT SELECT ON ALL TABLES IN SCHEMA public TO kubeclaw_ro/i);
+    expect(sql).toMatch(/ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO kubeclaw_ro/i);
+    expect(sql).toMatch(/GRANT USAGE ON SCHEMA public TO kubeclaw_ro/i);
+    expect(sql).not.toMatch(/INSERT|UPDATE|DELETE|ALL PRIVILEGES/i);
+  });
+  it('rejects an unsafe role identifier', () => {
+    expect(() => buildRoleBootstrapSql('ro; DROP DATABASE x')).toThrow();
   });
 });
