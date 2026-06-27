@@ -325,6 +325,153 @@ describe('Minikube-live: RBAC denial — low-tier SAs cannot access K8s API', ()
     },
     20_000,
   );
+
+  // ── Task 10 RBAC: egress-policy CRD write access ─────────────────────────
+  //
+  // Task 10 extended the orchestrator's RBAC to allow creating, updating, and
+  // deleting the network-policy CRDs that the egress applier writes per tool
+  // pod.  The orchestrator must be allowed to create/delete:
+  //
+  //   • ciliumnetworkpolicies.cilium.io   (Cilium substrate)
+  //   • serviceentries.networking.istio.io (Istio substrate)
+  //   • sidecars.networking.istio.io       (Istio substrate — per-pod sidecar scope)
+  //
+  // The three assertions below are positive-control checks (analogous to the
+  // jobs/secrets checks above).  They verify that the orchestrator's
+  // ClusterRole or Role in orchestrator.yaml includes the correct API-group
+  // rules added by Task 10.
+  //
+  // NOTE: These run only when Cilium / Istio CRDs are registered in the live
+  // cluster.  If the CRD is absent, `kubectl auth can-i` still returns 'yes'
+  // when the Role grants the verb — RBAC evaluation does not require the CRD
+  // to exist.  So the assertion is always meaningful: 'no' means the Role
+  // rule is missing regardless of CRD presence.
+
+  it(
+    'kubeclaw-orchestrator SA CAN create ciliumnetworkpolicies (Task 10 RBAC)',
+    (ctx) => {
+      if (!clusterAvailable) return ctx.skip();
+
+      const result = canI(
+        'kubeclaw-orchestrator',
+        'create',
+        'ciliumnetworkpolicies.cilium.io',
+      );
+      if (result === null) return ctx.skip();
+      expect(
+        result,
+        'kubeclaw-orchestrator SA must be able to create CiliumNetworkPolicy objects. ' +
+        'Task 10 added cilium.io/ciliumnetworkpolicies:create/update/delete to the orchestrator Role. ' +
+        'If this fails, check the cilium.io rule in orchestrator.yaml (or the equivalent ClusterRole).',
+      ).toBe('yes');
+    },
+    20_000,
+  );
+
+  it(
+    'kubeclaw-orchestrator SA CAN delete ciliumnetworkpolicies (Task 10 RBAC)',
+    (ctx) => {
+      if (!clusterAvailable) return ctx.skip();
+
+      const result = canI(
+        'kubeclaw-orchestrator',
+        'delete',
+        'ciliumnetworkpolicies.cilium.io',
+      );
+      if (result === null) return ctx.skip();
+      expect(
+        result,
+        'kubeclaw-orchestrator SA must be able to delete CiliumNetworkPolicy objects (cleanup on tool-pod teardown). ' +
+        'Task 10 added cilium.io/ciliumnetworkpolicies:delete to the orchestrator Role. ' +
+        'If this fails, check the cilium.io rule in orchestrator.yaml.',
+      ).toBe('yes');
+    },
+    20_000,
+  );
+
+  it(
+    'kubeclaw-orchestrator SA CAN create serviceentries (Task 10 RBAC)',
+    (ctx) => {
+      if (!clusterAvailable) return ctx.skip();
+
+      const result = canI(
+        'kubeclaw-orchestrator',
+        'create',
+        'serviceentries.networking.istio.io',
+      );
+      if (result === null) return ctx.skip();
+      expect(
+        result,
+        'kubeclaw-orchestrator SA must be able to create Istio ServiceEntry objects. ' +
+        'Task 10 added networking.istio.io/serviceentries:create/update/delete to the orchestrator Role. ' +
+        'If this fails, check the networking.istio.io rule in orchestrator.yaml.',
+      ).toBe('yes');
+    },
+    20_000,
+  );
+
+  it(
+    'kubeclaw-orchestrator SA CAN delete serviceentries (Task 10 RBAC)',
+    (ctx) => {
+      if (!clusterAvailable) return ctx.skip();
+
+      const result = canI(
+        'kubeclaw-orchestrator',
+        'delete',
+        'serviceentries.networking.istio.io',
+      );
+      if (result === null) return ctx.skip();
+      expect(
+        result,
+        'kubeclaw-orchestrator SA must be able to delete Istio ServiceEntry objects (cleanup on tool-pod teardown). ' +
+        'Task 10 added networking.istio.io/serviceentries:delete to the orchestrator Role. ' +
+        'If this fails, check the networking.istio.io rule in orchestrator.yaml.',
+      ).toBe('yes');
+    },
+    20_000,
+  );
+
+  it(
+    'kubeclaw-orchestrator SA CAN create sidecars.networking.istio.io (Task 10 RBAC)',
+    (ctx) => {
+      if (!clusterAvailable) return ctx.skip();
+
+      const result = canI(
+        'kubeclaw-orchestrator',
+        'create',
+        'sidecars.networking.istio.io',
+      );
+      if (result === null) return ctx.skip();
+      expect(
+        result,
+        'kubeclaw-orchestrator SA must be able to create Istio Sidecar objects (per-pod egress scope). ' +
+        'Task 10 added networking.istio.io/sidecars:create/update/delete to the orchestrator Role. ' +
+        'If this fails, check the networking.istio.io rule in orchestrator.yaml.',
+      ).toBe('yes');
+    },
+    20_000,
+  );
+
+  it(
+    'kubeclaw-orchestrator SA CAN delete sidecars.networking.istio.io (Task 10 RBAC)',
+    (ctx) => {
+      if (!clusterAvailable) return ctx.skip();
+
+      const result = canI(
+        'kubeclaw-orchestrator',
+        'delete',
+        'sidecars.networking.istio.io',
+      );
+      if (result === null) return ctx.skip();
+      expect(
+        result,
+        'kubeclaw-orchestrator SA must be able to delete Istio Sidecar objects (cleanup on tool-pod teardown). ' +
+        'Task 10 added networking.istio.io/sidecars:delete to the orchestrator Role. ' +
+        'If this fails, check the networking.istio.io rule in orchestrator.yaml.',
+      ).toBe('yes');
+    },
+    20_000,
+  );
 });
 
 // ── Suite B: Mount-allowlist enforcement (live) ───────────────────────────────
