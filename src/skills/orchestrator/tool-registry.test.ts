@@ -113,4 +113,45 @@ describe('registerTool coherence', () => {
     };
     expect(registerTool(spec, undefined, lookup).ok).toBe(true);
   });
+
+  it('rejects an edit that makes a credentialed tool incoherent', () => {
+    const spec = {
+      name: 'edit_me',
+      description: 'd',
+      parameters: { type: 'object' },
+      image: 'i',
+      pattern: 'http' as const,
+      credentials: ['brave-search'],
+      allowedEgress: [{ host: 'api.search.brave.com', ports: [443] }],
+    };
+    expect(registerTool(spec, undefined, lookup).ok).toBe(true);
+    const r = editTool(
+      { name: 'edit_me', patch: { allowedEgress: [{ host: 'evil.example.com' }] } },
+      undefined,
+      lookup,
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('accepts a coherent edit', () => {
+    const spec = {
+      name: 'edit_ok',
+      description: 'd',
+      parameters: { type: 'object' },
+      image: 'i',
+      pattern: 'http' as const,
+      credentials: ['brave-search'],
+      allowedEgress: [{ host: 'api.search.brave.com', ports: [443] }],
+    };
+    expect(registerTool(spec, undefined, lookup).ok).toBe(true);
+    const r = editTool(
+      {
+        name: 'edit_ok',
+        patch: { allowedEgress: [{ host: 'api.search.brave.com', ports: [80, 443] }] },
+      },
+      undefined,
+      lookup,
+    );
+    expect(r.ok).toBe(true);
+  });
 });
