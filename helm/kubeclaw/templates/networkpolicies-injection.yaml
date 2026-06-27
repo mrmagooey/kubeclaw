@@ -24,7 +24,7 @@ metadata:
 spec:
   podSelector:
     matchLabels:
-      app: kubeclaw-tool-pod
+      app: kubeclaw-sidecar-tool
   policyTypes: [Egress]
   egress:
     - to: []
