@@ -2,6 +2,7 @@
  * Kubernetes Job Runner for KubeClaw
  * Creates and manages Kubernetes Jobs for tool job execution
  */
+import crypto from 'crypto';
 import {
   V1Job,
   CoreV1Api,
@@ -64,13 +65,17 @@ import {
   AgentOutputMessage,
   SidecarToolPodJobSpec,
   RawAttachment,
+  ToolSpec,
 } from './types.js';
 import type { CatalogEntry } from '../credential-broker/resolver.js';
 import { ContainerOutput } from '../runtime/types.js';
 import {
   getRedisSubscriber,
+  getRedisClient,
   getOutputChannel,
   closeRedisConnections,
+  getToolCallsStream,
+  getToolResultsStream,
 } from './redis-client.js';
 import { getACLManager } from './acl-manager.js';
 import type { OrchestratorMetrics } from '../metrics/orchestrator.js';
@@ -195,6 +200,23 @@ export function buildJobName(folder: string): string {
   const maxFolderLen = 63 - prefix.length - 2 - suffix.length;
   const truncated = sanitized.slice(0, maxFolderLen);
   return `${prefix}-${truncated}-${suffix}`;
+}
+
+/**
+ * Heuristic: does a log/error string look like a kernel-level egress denial?
+ * NetworkPolicy drops manifest as ECONNREFUSED / EHOSTUNREACH / ENETUNREACH
+ * at the connecting process; these keywords are a best-effort signal.
+ */
+function isEgressViolation(msg: string): boolean {
+  const lower = msg.toLowerCase();
+  return (
+    lower.includes('econnrefused') ||
+    lower.includes('ehostunreach') ||
+    lower.includes('enetunreach') ||
+    lower.includes('network policy') ||
+    lower.includes('connection refused') ||
+    lower.includes('connection denied')
+  );
 }
 
 /** Markers written by the agent-runner to stdout to delimit the final JSON result block. */
@@ -2092,6 +2114,110 @@ export class JobRunner {
 
     return job;
   }
+
+  /**
+   * Run a one-shot sandboxed probe job for the given ToolSpec.
+   *
+   * Reuses createSidecarToolPodJob (→ buildSidecarToolPodManifest) to get:
+   *   - Phase-2 hardened securityContexts (always applied by the manifest builder)
+   *   - No credential sidecar (gated on toolSpec.credentials; caller must strip them)
+   *   - Per-pod egress policy derived from toolSpec.allowedEgress (default-deny otherwise)
+   *
+   * Input is published to the bridge's Redis toolcalls stream BEFORE the job
+   * starts so the bridge picks it up with lastId='0-0' on first XREAD.
+   * Result is read back from the toolresults stream.
+   *
+   * egressViolation is detected best-effort: if the bridge returns an error
+   * message containing kernel-level denial keywords (ECONNREFUSED, EHOSTUNREACH,
+   * etc.) we surface it as egressViolation=true.  A live hard-substrate signal
+   * (NetworkPolicy deny) manifests exactly this way at the pod's syscall layer.
+   * Definitive verification is covered by the Task 10 e2e test.
+   */
+  async runProbeToolJob(args: {
+    toolSpec: ToolSpec;
+    input: Record<string, string>;
+    timeoutMs: number;
+  }): Promise<{ ok: boolean; output?: string; egressViolation?: boolean; error?: string }> {
+    const { toolSpec, input, timeoutMs } = args;
+    // Unique IDs for this probe run
+    const probeJobId = `probe-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const requestId = crypto.randomUUID();
+
+    const callsStream = getToolCallsStream(probeJobId, toolSpec.name);
+    const resultsStream = getToolResultsStream(probeJobId, toolSpec.name);
+    const redis = getRedisClient();
+
+    // Write tool call BEFORE creating the job so the bridge picks it up with
+    // lastId='0-0' on startup — matches the pattern in direct-llm-runner.ts.
+    await redis.xadd(
+      callsStream,
+      '*',
+      'requestId', requestId,
+      'tool', toolSpec.name,
+      'input', JSON.stringify(input),
+    );
+
+    // Create job via existing plumbing.  The spec must have no credentials so the
+    // credential-injection gate (wantsCreds) stays false and no sidecar is attached.
+    let jobName: string;
+    try {
+      jobName = await this.createSidecarToolPodJob({
+        agentJobId: probeJobId,
+        groupFolder: 'probe',
+        toolName: toolSpec.name,
+        toolSpec,
+        timeout: timeoutMs,
+      });
+    } catch (err) {
+      return { ok: false, error: `probe job creation failed: ${String(err)}` };
+    }
+
+    logger.info({ jobName, toolName: toolSpec.name }, 'probe job created');
+
+    // Wait for the tool result on the Redis results stream.
+    const deadline = Date.now() + timeoutMs;
+    let lastId = '0-0';
+
+    while (Date.now() < deadline) {
+      const blockMs = Math.min(deadline - Date.now(), 5_000);
+      if (blockMs <= 0) break;
+      try {
+        const response = await redis.xread(
+          'COUNT', 10,
+          'BLOCK', blockMs,
+          'STREAMS', resultsStream, lastId,
+        );
+        if (!response) continue;
+
+        for (const [, messages] of response as [string, [string, string[]][]][]) {
+          for (const [msgId, fields] of messages) {
+            lastId = msgId;
+            const obj: Record<string, string> = {};
+            for (let i = 0; i < fields.length; i += 2) obj[fields[i]] = fields[i + 1];
+            if (obj['requestId'] !== requestId) continue;
+
+            if (obj['error']) {
+              const egressViolation = isEgressViolation(obj['error']) || undefined;
+              return { ok: false, egressViolation, error: obj['error'] };
+            }
+            return { ok: true, output: obj['result'] ?? '' };
+          }
+        }
+      } catch (err) {
+        logger.warn({ err, jobName }, 'probe: error reading tool results stream');
+      }
+    }
+
+    // Timed out waiting for result — try pod logs for a best-effort egress signal.
+    try {
+      const logs = await this.getJobLogs(jobName);
+      const egressViolation = isEgressViolation(logs) || undefined;
+      return { ok: false, egressViolation, error: 'probe timed out' };
+    } catch {
+      return { ok: false, error: 'probe timed out' };
+    }
+  }
+
   /**
    * Delete a Deployment by name.
    */

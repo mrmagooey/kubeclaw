@@ -58,8 +58,11 @@ vi.mock('./acl-manager.js', () => ({
 
 vi.mock('./redis-client.js', () => ({
   getRedisSubscriber: vi.fn(() => ({})),
+  getRedisClient: vi.fn(() => ({})),
   getOutputChannel: vi.fn((gf: string) => `kubeclaw:messages:${gf}`),
   closeRedisConnections: vi.fn().mockResolvedValue(undefined),
+  getToolCallsStream: vi.fn((jobId: string, toolName: string) => `kubeclaw:toolcalls:${jobId}:${toolName}`),
+  getToolResultsStream: vi.fn((jobId: string, toolName: string) => `kubeclaw:toolresults:${jobId}:${toolName}`),
 }));
 
 vi.mock('../db.js', () => ({
@@ -204,5 +207,92 @@ describe('createSidecarToolPodJob: securityContext + egress hardening', () => {
 
     expect(applied).toHaveLength(1);
     expect(applied[0].allowedEgress).toEqual([]);
+  });
+});
+
+// ── Probe seam: credential-free manifest + egress ────────────────────────────
+//
+// runProbeToolJob reuses createSidecarToolPodJob → buildSidecarToolPodManifest.
+// We test the manifest shape via buildSidecarToolPodJobForTest (same code path,
+// no K8s submission) to assert that a credential-free probe spec produces:
+//   (a) no credential sidecar container
+//   (b) allowedEgress forwarded to the egressApplier
+//
+// The Redis interaction (write toolcalls stream, read toolresults stream) and
+// K8s wait are exercised by the Task 10 e2e test against a live cluster.
+
+describe('runProbeToolJob: credential-free manifest + egress (via buildSidecarToolPodJobForTest)', () => {
+  let runner: JobRunner;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    runner = new JobRunner();
+  });
+
+  it('produces a manifest with no credential sidecar for a credential-free probe spec', async () => {
+    const applied: Parameters<EgressApplier['applyForJob']>[0][] = [];
+    runner.egressApplier = {
+      applyForJob: async (a) => { applied.push(a); },
+      deleteForJob: async () => {},
+    };
+
+    // Probe spec: no credentials field — mirrors what probeTool() passes after stripping
+    const probeSpec: SidecarToolPodJobSpec = {
+      agentJobId: 'probe-test-1',
+      groupFolder: 'probe',
+      toolName: 'extract_metadata',
+      toolSpec: {
+        name: 'extract_metadata',
+        description: 'Extract file metadata',
+        parameters: { type: 'object', properties: { filename: { type: 'string' } }, required: ['filename'] },
+        image: 'kubeclaw/exiftool:latest',
+        pattern: 'file',
+        mount: 'scratch',
+        allowedEgress: [],
+        // credentials intentionally absent
+      },
+      timeout: 60_000,
+    };
+
+    const built = await runner.buildSidecarToolPodJobForTest(probeSpec);
+
+    // (a) No credential sidecar container
+    const containers = (built.spec!.template!.spec!.containers as any[]);
+    const credSidecar = containers.find((c: any) => c.name === 'credential-sidecar');
+    expect(credSidecar).toBeUndefined();
+
+    // (b) allowedEgress (empty for default-deny) forwarded to egressApplier
+    expect(applied).toHaveLength(1);
+    expect(applied[0].allowedEgress).toEqual([]);
+    expect(applied[0].jobLabel).toBe('probe-test-1');
+  });
+
+  it('forwards a non-empty allowedEgress from the probe spec', async () => {
+    const applied: Parameters<EgressApplier['applyForJob']>[0][] = [];
+    runner.egressApplier = {
+      applyForJob: async (a) => { applied.push(a); },
+      deleteForJob: async () => {},
+    };
+
+    const probeSpec: SidecarToolPodJobSpec = {
+      agentJobId: 'probe-test-2',
+      groupFolder: 'probe',
+      toolName: 'weather_tool',
+      toolSpec: {
+        name: 'weather_tool',
+        description: 'Fetch weather',
+        parameters: {},
+        image: 'kubeclaw/weather:latest',
+        pattern: 'http',
+        allowedEgress: [{ host: 'api.weather.example.com', ports: [443] }],
+      },
+      timeout: 60_000,
+    };
+
+    await runner.buildSidecarToolPodJobForTest(probeSpec);
+
+    expect(applied[0].allowedEgress).toEqual([
+      { host: 'api.weather.example.com', ports: [443] },
+    ]);
   });
 });
