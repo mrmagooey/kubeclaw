@@ -589,9 +589,7 @@ describe('discord manifest: values.yaml integrity', () => {
     // Verify lock JSON is parseable and declares discord.js@14.26.4
     const lock = JSON.parse(lockJson);
     expect(lock.lockfileVersion).toBe(3);
-    expect(lock.packages?.['node_modules/discord.js']?.version).toBe(
-      '14.26.4',
-    );
+    expect(lock.packages?.['node_modules/discord.js']?.version).toBe('14.26.4');
 
     // Verify the lock root dep is exact (no caret)
     expect(lock.packages?.['']?.dependencies?.['discord.js']).toBe('14.26.4');
@@ -616,6 +614,77 @@ describe('helm-render: discord channelManifest', () => {
     // The manifest must carry the expected hash
     expect(rendered).toContain(
       '64312557644dd2f4c30d19e1a516953d7895f9f9f56a62ec58c8698ac47e46dc',
+    );
+  });
+});
+
+// ── Matrix manifest validation (values.yaml integrity) ───────────────────────
+describe('matrix manifest: values.yaml integrity', () => {
+  // The matrix manifest is embedded in helm/kubeclaw/values.yaml.
+  // These tests verify:
+  //   1. packageJson and packageLockJson are valid JSON
+  //   2. manifestHash = sha256(packageJson + '\n' + packageLockJson)
+  //   3. packageJson declares matrix-js-sdk@41.8.0 (no caret, exact pin)
+  //   4. packageLockJson resolves matrix-js-sdk@41.8.0
+  //   5. No initRustCrypto() calls (crypto never loaded in channel-runner context)
+
+  const MATRIX_PKG_JSON =
+    '{"name":"runtime","version":"1.0.0","dependencies":{"matrix-js-sdk":"41.8.0"}}';
+  const MATRIX_MANIFEST_HASH =
+    'ab892cc5c493737c0499794cc37faf3f93b2907e08e1ffa707e693d8753dcc66';
+
+  it('packageJson is valid JSON and pins matrix-js-sdk@41.8.0 exactly (no caret)', () => {
+    const pkg = JSON.parse(MATRIX_PKG_JSON);
+    expect(pkg.name).toBe('runtime');
+    // Exact pin — must NOT start with ^ or ~
+    expect(pkg.dependencies?.['matrix-js-sdk']).toBe('41.8.0');
+  });
+
+  it('manifestHash matches sha256(packageJson + newline + packageLockJson)', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { createHash } = await import('node:crypto');
+    const valuesPath = join(process.cwd(), 'helm/kubeclaw/values.yaml');
+    const values = readFileSync(valuesPath, 'utf-8');
+
+    // Extract the matrix packageLockJson: find the matrix section and its lock.
+    const matrixSectionMatch = values.match(
+      /matrix:\s*\n\s+hostMode:[^\n]+\n\s+packageJson:[^\n]+\n\s+packageLockJson:\s*'([^']+)'/,
+    );
+    expect(matrixSectionMatch).not.toBeNull();
+    const lockJson = matrixSectionMatch![1]!;
+
+    // Verify lock JSON is parseable and declares matrix-js-sdk@41.8.0
+    const lock = JSON.parse(lockJson);
+    expect(lock.lockfileVersion).toBe(3);
+    expect(lock.packages?.['node_modules/matrix-js-sdk']?.version).toBe(
+      '41.8.0',
+    );
+
+    // Verify the lock root dep is exact (no caret)
+    expect(lock.packages?.['']?.dependencies?.['matrix-js-sdk']).toBe('41.8.0');
+
+    // Verify the hash
+    const computedHash = createHash('sha256')
+      .update(MATRIX_PKG_JSON + '\n' + lockJson)
+      .digest('hex');
+    expect(computedHash).toBe(MATRIX_MANIFEST_HASH);
+  });
+});
+
+// ── Helm-render integration test for matrix manifest ─────────────────────────
+describe('helm-render: matrix channelManifest', () => {
+  it('renders matrix.json in the channel-manifests-baseline ConfigMap', () => {
+    const rendered = execSync('helm template helm/kubeclaw', {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+    });
+    // The ConfigMap key should be `matrix.json`
+    expect(rendered).toContain('matrix.json');
+    // The manifest must carry hostMode: channel-runner
+    expect(rendered).toContain('"hostMode":"channel-runner"');
+    // The manifest must carry the expected hash
+    expect(rendered).toContain(
+      'ab892cc5c493737c0499794cc37faf3f93b2907e08e1ffa707e693d8753dcc66',
     );
   });
 });

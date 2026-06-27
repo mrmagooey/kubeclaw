@@ -2,7 +2,7 @@
 
 This guide is for **operators** who want to install an existing channel (Telegram, Slack, etc.) or capability (RAG, image-vision, MCP server) into a running KubeClaw deployment.
 
-For developers who want to *write a brand-new channel TYPE* (the TypeScript code), see [ADDING_A_CHANNEL.md](ADDING_A_CHANNEL.md). For other dev-time customization (modifying behavior, triggers, router), use the `/customize` Claude Code skill.
+For developers who want to _write a brand-new channel TYPE_ (the TypeScript code), see [ADDING_A_CHANNEL.md](ADDING_A_CHANNEL.md). For other dev-time customization (modifying behavior, triggers, router), use the `/customize` Claude Code skill.
 
 ---
 
@@ -73,7 +73,7 @@ channels:
     type: http
     httpPort: 3000
     envVars:
-      HTTP_BASIC_USERS: "alice:secret,bob:s3cr3t"
+      HTTP_BASIC_USERS: 'alice:secret,bob:s3cr3t'
 ```
 
 The channel pod includes a `stage-runtime` init container that copies `<type>__channel-entry.js` from the `kubeclaw-channel-src` ConfigMap and the package files from `kubeclaw-channel-manifests-baseline` into a `/runtime` emptyDir, then runs `npm ci`. The resident `channel-runner.js` then loads `/runtime/channel-entry.js`.
@@ -109,23 +109,24 @@ Apply with `helm upgrade --install kubeclaw ./helm/kubeclaw -n kubeclaw -f your-
 
 Credentials are gathered by the bootstrap dialogue (interactive) or supplied via `envVars` / a channel Secret (declarative). The table below lists what each adapter needs — note that most of these channel types are aspirational; only `http`, `irc`, and `oauth-webchat` have adapters today.
 
-| Channel | Credentials needed | Where to obtain |
-|---|---|---|
-| `http` | Username:password pairs | None (you choose them) |
-| `irc` | Server, nick, optional channels list | None (just the IRC server you want to join) |
-| `oauth-webchat` | OIDC issuer, client ID, client secret, allowed emails | Your OIDC provider (Google Workspace, Okta, etc.) |
-| `telegram` | Bot token | Talk to [@BotFather](https://t.me/BotFather) |
-| `discord` | Bot token | https://discord.com/developers/applications → Bot → Token |
-| `slack` _(aspirational)_ | Bot token + App token | https://api.slack.com/apps → OAuth & Permissions / Socket Mode |
-| `whatsapp` _(aspirational)_ | Phone number | WhatsApp Business API setup |
-| `signal` | Phone number (E.164) | See [Signal](#signal) below — the signal-cli sidecar is created with the channel pod; link the device afterward via port-forward |
-| `gmail` _(aspirational)_ | OAuth credentials | Google Cloud project with Gmail API enabled |
+| Channel                     | Credentials needed                                    | Where to obtain                                                                                                                  |
+| --------------------------- | ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `http`                      | Username:password pairs                               | None (you choose them)                                                                                                           |
+| `irc`                       | Server, nick, optional channels list                  | None (just the IRC server you want to join)                                                                                      |
+| `oauth-webchat`             | OIDC issuer, client ID, client secret, allowed emails | Your OIDC provider (Google Workspace, Okta, etc.)                                                                                |
+| `telegram`                  | Bot token                                             | Talk to [@BotFather](https://t.me/BotFather)                                                                                     |
+| `discord`                   | Bot token                                             | https://discord.com/developers/applications → Bot → Token                                                                        |
+| `slack` _(aspirational)_    | Bot token + App token                                 | https://api.slack.com/apps → OAuth & Permissions / Socket Mode                                                                   |
+| `whatsapp` _(aspirational)_ | Phone number                                          | WhatsApp Business API setup                                                                                                      |
+| `signal`                    | Phone number (E.164)                                  | See [Signal](#signal) below — the signal-cli sidecar is created with the channel pod; link the device afterward via port-forward |
+| `gmail` _(aspirational)_    | OAuth credentials                                     | Google Cloud project with Gmail API enabled                                                                                      |
 
 ### Signal
 
 Signal is a **channel-runner** adapter backed by a per-channel `bbernhard/signal-cli-rest-api` sidecar. There is no separately-deployed shared Signal daemon — the sidecar is created automatically alongside the channel pod when you install a Signal instance.
 
 **What the sidecar field does:**
+
 - Adds a second container (`signal-backend`) to the channel pod running `bbernhard/signal-cli-rest-api:0.93`.
 - Creates a `kubeclaw-channel-<instance>-auxsession` PVC (5 GiB by default) mounted exclusively on the sidecar at `/home/.local/share/signal-cli`.
 - Injects `SIGNAL_API_URL=http://localhost:8080` into the channel container automatically (via `apiUrlEnv`).
@@ -151,17 +152,19 @@ You will be asked for the bot's E.164 phone number (e.g. `+61412345678`). That i
 After the channel pod reaches Running state, link the Signal account. The session persists on the `auxsession` PVC and survives pod restarts.
 
 1. Find the channel pod name:
+
    ```bash
    kubectl get pods -n kubeclaw -l app=kubeclaw-channel-<instance>
    ```
 
 2. Port-forward into the pod (the sidecar listens on 8080):
+
    ```bash
    kubectl port-forward pod/<pod-name> 8080:8080 -n kubeclaw
    ```
 
 3. Two paths:
-   - **Link as secondary device (recommended):** Open `http://localhost:8080/v1/qrcodelink?device_name=kubeclaw` in a browser. On your phone: *Signal → Settings → Linked devices → +* and scan the QR code. The bot sends/receives as your existing number.
+   - **Link as secondary device (recommended):** Open `http://localhost:8080/v1/qrcodelink?device_name=kubeclaw` in a browser. On your phone: _Signal → Settings → Linked devices → +_ and scan the QR code. The bot sends/receives as your existing number.
    - **Register a dedicated number:** `POST http://localhost:8080/v1/register/<number>` (with captcha token), then `POST http://localhost:8080/v1/register/<number>/verify/<sms-code>`.
 
 Once linked, the session is durable — the `auxsession` PVC keeps the linked-device credentials across pod restarts and upgrades.
@@ -217,7 +220,7 @@ channels:
     enabled: true
     type: telegram
     envVars:
-      TELEGRAM_BOT_USERNAME: "mybotname"   # optional but recommended
+      TELEGRAM_BOT_USERNAME: 'mybotname' # optional but recommended
 ```
 
 Apply with `helm upgrade --install kubeclaw ./helm/kubeclaw -n kubeclaw -f your-values.yaml`.
@@ -323,6 +326,85 @@ and the bot will start receiving message text immediately (no pod restart needed
 
 For developer notes on the Discord adapter, see [DEVELOPING_A_CHANNEL.md](DEVELOPING_A_CHANNEL.md).
 
+### Matrix
+
+Matrix is a **channel-runner** adapter that uses [matrix-js-sdk](https://github.com/matrix-org/matrix-js-sdk) and the `/sync` long-poll transport. No sidecar or external backend is needed — three credentials are required.
+
+**IMPORTANT — Unencrypted rooms only (v1):** This adapter runs in unencrypted mode. It does **not** call `initRustCrypto()`, so end-to-end encrypted rooms (rooms with the padlock icon in Element) will not work. The bot can only send and receive messages in rooms without E2EE. This is a deliberate design choice for v1 — it avoids the complexity of key management and the `@matrix-org/matrix-sdk-crypto-wasm` native binary.
+
+**Prerequisites:** You need a Matrix bot account and its access token:
+
+1. Create or use an existing Matrix account for the bot (e.g. on matrix.org or your own homeserver).
+
+2. Obtain a long-lived access token — either:
+
+   **Via Element Web / Desktop:**
+   - Log in as the bot account.
+   - Go to **Settings → Help & About → Advanced**.
+   - Copy the **Access Token** value shown there.
+
+   **Via the REST API (automated):**
+
+   ```bash
+   curl -XPOST -H "Content-Type: application/json" \
+     -d '{"type":"m.login.password","user":"@botname:server","password":"secret"}' \
+     https://your-homeserver/_matrix/client/v3/login
+   ```
+
+   The `access_token` field in the response is your token.
+
+3. Invite the bot account to any rooms you want it to monitor.
+
+4. Create rooms **without** end-to-end encryption. In Element: click **+** next to Rooms → do NOT enable "Enable end-to-end encryption" when creating.
+
+**Bootstrap (Path A — interactive):**
+
+Run the bootstrap skill from the admin shell:
+
+```
+bootstrap_channel_from_skill("bootstrap-matrix", instance_name="matrix-main")
+```
+
+The skill asks for:
+
+- Homeserver URL (e.g. `https://matrix.org`)
+- User ID (e.g. `@mybot:matrix.org`)
+- Access token
+
+It validates by calling `GET /_matrix/client/v3/account/whoami` with the token,
+then calls `commit_channel_config` to install the channel.
+
+**Declarative (Path B — Helm values):**
+
+```yaml
+channels:
+  - type: matrix
+    name: matrix-main
+    secretRef: kubeclaw-channel-matrix-main
+```
+
+Create the Secret:
+
+```bash
+kubectl create secret generic kubeclaw-channel-matrix-main \
+  -n kubeclaw \
+  --from-literal=MATRIX_HOMESERVER_URL=https://matrix.org \
+  --from-literal=MATRIX_USER_ID=@mybot:matrix.org \
+  --from-literal=MATRIX_ACCESS_TOKEN=syt_...
+```
+
+**JID scheme:** `matrix:<roomId>` where `roomId` is the full Matrix room ID including its internal colon, e.g. `matrix:!abc123:home.server`. Find the room ID in Element: **Room Settings → Advanced → Internal room ID**.
+
+**Registering rooms:** After the channel pod starts, register rooms as KubeClaw groups using their Matrix JID:
+
+```
+add_group(jid="matrix:!abc123:home.server", name="my-room", trigger="@Andy")
+```
+
+**Capabilities:** `typing`, `inboundImages`. No `markdownOutput` in v1 (plain text only). No outbound media.
+
+For developer notes on the Matrix adapter, see [DEVELOPING_A_CHANNEL.md](DEVELOPING_A_CHANNEL.md).
+
 ### Removing a channel
 
 Use the `remove_channel` admin shell tool. It deletes the full per-channel resource set — Deployment, ServiceAccount, Services (including `-metrics`), Ingress, NetworkPolicy, all Secret name variants, PVCs (`groups`, `store`, `sessions`, `runtime`, versioned runtime), and the bootstrap/upgrade Jobs. Failures are reported under a `FAILED` section; the operation never aborts early.
@@ -339,12 +421,12 @@ Capabilities are configured via Helm values and applied with `helm upgrade`. The
 
 ### Capability shape decision tree
 
-| If the capability is... | Install via... |
-|---|---|
-| A separate model server you'd run anyway (Ollama LLM, image vision API) | Helm values `capabilities:` map |
-| An MCP server exposing tools (calendar, weather, your own service) | Helm values `mcpServers:` map |
-| Voice transcription (Whisper-class STT) | A `transcription` capability — install the spec via the admin shell (see "Installing voice transcription" below). The channel-side preprocessor reads the `[VoiceAttachment: …]` marker and calls it automatically. |
-| An inline preprocessing pipeline (image resize, PDF text extraction) that runs inside channel/orchestrator pods | Source code change via `/customize` (see ADDING_A_CHANNEL.md for the markers contract) |
+| If the capability is...                                                                                         | Install via...                                                                                                                                                                                                      |
+| --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A separate model server you'd run anyway (Ollama LLM, image vision API)                                         | Helm values `capabilities:` map                                                                                                                                                                                     |
+| An MCP server exposing tools (calendar, weather, your own service)                                              | Helm values `mcpServers:` map                                                                                                                                                                                       |
+| Voice transcription (Whisper-class STT)                                                                         | A `transcription` capability — install the spec via the admin shell (see "Installing voice transcription" below). The channel-side preprocessor reads the `[VoiceAttachment: …]` marker and calls it automatically. |
+| An inline preprocessing pipeline (image resize, PDF text extraction) that runs inside channel/orchestrator pods | Source code change via `/customize` (see ADDING_A_CHANNEL.md for the markers contract)                                                                                                                              |
 
 ### `capabilities:` example — `use-local-whisper`
 
@@ -364,7 +446,7 @@ capabilities:
         cpu: 500m
       limits:
         memory: 4Gi
-        cpu: "2"
+        cpu: '2'
 ```
 
 Apply with:
@@ -385,7 +467,7 @@ mcpServers:
     image: your-org/ollama-mcp-server:1.0.0
     port: 3000
     path: /mcp
-    channels: [telegram]   # only telegram channel sees this; empty list = all
+    channels: [telegram] # only telegram channel sees this; empty list = all
     env:
       OLLAMA_HOST: http://ollama-server:11434
     resources:
@@ -395,13 +477,13 @@ mcpServers:
 
 ### Inline-preprocessing capabilities — `/customize`
 
-These previously had `/add-*` Claude skills that modified source files directly. They cannot be installed via Helm because they need to run *inside* the channel or orchestrator pod's existing process:
+These previously had `/add-*` Claude skills that modified source files directly. They cannot be installed via Helm because they need to run _inside_ the channel or orchestrator pod's existing process:
 
-| Capability | What it does | Where to add it |
-|---|---|---|
+| Capability     | What it does                                                                       | Where to add it                                                                                 |
+| -------------- | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
 | `image-vision` | Reads `[ImageAttachment: ...]` markers, resizes images, rewrites to `[Image: ...]` | New module `src/preprocessing/image-vision.ts` called from the orchestrator's preprocessing job |
-| `pdf-reader` | Extracts text from PDF attachments before the agent sees them | New module `src/preprocessing/pdf-reader.ts` |
-| `parallel` | Parallel skill execution support | Orchestrator router/runtime change |
+| `pdf-reader`   | Extracts text from PDF attachments before the agent sees them                      | New module `src/preprocessing/pdf-reader.ts`                                                    |
+| `parallel`     | Parallel skill execution support                                                   | Orchestrator router/runtime change                                                              |
 
 Use the `/customize` Claude Code skill to add these; it'll ask the right questions and write the code following the existing patterns.
 
