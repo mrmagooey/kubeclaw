@@ -79,7 +79,7 @@ Before committing, verify the server responds to a ping.
 **Call the `local_bash` tool now** with this `command` (substituting the actual URL and password):
 
 ```
-curl -fsS "<IMESSAGE_BRIDGE_URL>/api/v1/ping?password=<IMESSAGE_BRIDGE_PASSWORD>"
+PASSWORD="<IMESSAGE_BRIDGE_PASSWORD>" curl -fsS "<IMESSAGE_BRIDGE_URL>/api/v1/ping?password=${PASSWORD}"
 ```
 
 - If the response contains `"status":200` or `"message":"pong"` → proceed.

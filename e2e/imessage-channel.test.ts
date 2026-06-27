@@ -363,4 +363,45 @@ describe('imessage-channel: e2e (fake BlueBubbles server)', () => {
     expect(queries.length).toBe(2);
     expect(queries[1].body.after).toBe(ts1);
   });
+
+  it('client-side cursor guard: second poll returning same message does not re-deliver', async () => {
+    // Exercises the Fix 1 client-side guard end-to-end: the fake server returns
+    // the SAME message on both polls (simulating a server that ignores `after`
+    // or treats it as inclusive). The adapter must deliver it only once.
+    const fake = await startFakeBBServer();
+    openResources.push(fake);
+
+    const bridgeUrl = `http://127.0.0.1:${fake.port}`;
+    const sdk = makeSdk(bridgeUrl);
+
+    const opts = makeOpts({
+      [SENDER_JID]: { folder: 'e2e-dm', name: 'E2E User' },
+    });
+    const cfg = parseConfig(sdk);
+    if (!cfg) throw new Error('parseConfig returned null');
+    const ch = new IMessageChannel(cfg, opts, sdk);
+    openResources.push({ close: () => ch.disconnect() });
+
+    await ch.connect();
+
+    const ts1 = Date.now() + 1;
+    const sameMsg = {
+      chats: [{ guid: 'iMessage;-;+19005550001' }],
+      handle: { address: '+19005550001', displayName: 'E2E User' },
+      text: 'deduplicate me',
+      dateCreated: ts1,
+      isFromMe: false,
+    };
+
+    // First poll: message delivered, cursor advances to ts1
+    fake.queueMessages([sameMsg]);
+    await ch.pollOnce();
+    expect(opts.onMessage).toHaveBeenCalledTimes(1);
+    expect(ch.lastSeen).toBe(ts1);
+
+    // Second poll: same message returned again — client guard must suppress it
+    fake.queueMessages([sameMsg]);
+    await ch.pollOnce();
+    expect(opts.onMessage).toHaveBeenCalledTimes(1);
+  });
 });

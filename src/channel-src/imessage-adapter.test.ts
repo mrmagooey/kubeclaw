@@ -116,12 +116,12 @@ describe('imessage-adapter: factory + config parsing', () => {
     expect(ch.config.pollMs).toBe(5000);
   });
 
-  it('capabilities is an empty object (text-only v1)', () => {
+  it('declares markdownOutput:false (iMessage renders plain text)', () => {
     const { ch } = buildChannel({
       IMESSAGE_BRIDGE_URL: BRIDGE_URL,
       IMESSAGE_BRIDGE_PASSWORD: BRIDGE_PW,
     });
-    expect(ch.capabilities).toEqual({});
+    expect(ch.capabilities.markdownOutput).toBe(false);
   });
 });
 
@@ -404,13 +404,13 @@ describe('imessage-adapter: pollOnce advances cursor, no re-delivery', () => {
     expect(ch.lastSeen).toBe(ts1);
   });
 
-  it('second poll with same data (cursor advanced) returns nothing new', async () => {
+  it('second poll with empty response delivers nothing new', async () => {
     const opts = fakeOpts();
     const { ch } = buildChannel(
       { IMESSAGE_BRIDGE_URL: BRIDGE_URL, IMESSAGE_BRIDGE_PASSWORD: BRIDGE_PW },
       opts,
     );
-    const ts1 = 1700000001000;
+    const ts1 = Date.now() + 999_999_999;
 
     // First poll: one message
     fetchMock.mockResolvedValueOnce({
@@ -438,6 +438,44 @@ describe('imessage-adapter: pollOnce advances cursor, no re-delivery', () => {
     });
     await ch.pollOnce();
     // No additional calls
+    expect(opts.onMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('second poll with same data (client-side cursor guard prevents re-delivery)', async () => {
+    const opts = fakeOpts();
+    const { ch } = buildChannel(
+      { IMESSAGE_BRIDGE_URL: BRIDGE_URL, IMESSAGE_BRIDGE_PASSWORD: BRIDGE_PW },
+      opts,
+    );
+    const ts1 = Date.now() + 999_999_999;
+
+    const sameMessage = {
+      chats: [{ guid: 'iMessage;-;+61400000000' }],
+      handle: { address: '+61400000000', displayName: 'Alice' },
+      text: 'hello again',
+      dateCreated: ts1,
+      isFromMe: false,
+    };
+
+    // First poll: delivers the message
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ status: 200, data: [sameMessage] }),
+    });
+    await ch.pollOnce();
+    expect(opts.onMessage).toHaveBeenCalledTimes(1);
+    expect(ch.lastSeen).toBe(ts1);
+
+    // Second poll: server returns the SAME message (ts1 <= cursor now).
+    // The client-side guard must suppress re-delivery even though the server
+    // returned it again (simulates a server that treats `after` as inclusive
+    // or ignores it).
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ status: 200, data: [sameMessage] }),
+    });
+    await ch.pollOnce();
+    // Still only 1 delivery — the client-side guard blocked the duplicate.
     expect(opts.onMessage).toHaveBeenCalledTimes(1);
   });
 

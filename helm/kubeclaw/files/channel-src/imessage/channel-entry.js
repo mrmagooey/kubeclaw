@@ -8,10 +8,11 @@
  * adapter is a REST client of that external server; it uses a POLLING receive
  * model (no webhook/httpPort required).
  *
- * Receive model: poll `GET <url>/api/v1/message/count/me?after=<lastSeen>` and
- * then `POST <url>/api/v1/message/query` on an interval, filtering for messages
- * newer than the lastSeen cursor (a Unix ms timestamp). This prevents duplicate
- * delivery across polls.
+ * Receive model: poll `POST <url>/api/v1/message/query` on an interval with an
+ * `after` filter (Unix ms timestamp cursor), delivering only messages newer than
+ * the cursor. A client-side guard additionally skips any message whose
+ * dateCreated is at or below the cursor captured at the start of each poll,
+ * making dedup server-version-agnostic.
  *
  * Send model: `POST <url>/api/v1/message/text?password=<pw>` with
  * `{ chatGuid, message, tempGuid }`.
@@ -36,7 +37,7 @@ const MAX_MESSAGE_LENGTH = 10000;
 
 class IMessageChannel {
   name = 'imessage';
-  capabilities = {};
+  capabilities = { markdownOutput: false };
 
   constructor(config, opts, sdk) {
     this.config = config;
@@ -163,11 +164,22 @@ class IMessageChannel {
     // BlueBubbles returns { status: 200, message: 'Success', data: [...] }
     const messages = Array.isArray(data?.data) ? data.data : [];
 
+    // Capture the cursor value at the start of this batch. We use this for the
+    // per-message skip test so that intra-batch cursor updates don't suppress
+    // later messages in the same batch that share the same timestamp.
+    const cursorAtStart = this.lastSeen;
+
     let maxSeen = this.lastSeen;
     for (const msg of messages) {
+      // Client-side dedup guard: skip messages at or below the cursor value
+      // captured at the start of this poll. This makes dedup server-version-
+      // agnostic — if the server treats `after` as inclusive (or ignores it),
+      // we still won't re-deliver already-seen messages.
+      const ts = Number(msg?.dateCreated ?? msg?.date_created ?? 0);
+      if (ts <= cursorAtStart) continue;
+
       await this.handleMessage(msg);
       // Advance cursor to the newest dateCreated we've seen.
-      const ts = Number(msg?.dateCreated ?? msg?.date_created ?? 0);
       if (ts > maxSeen) maxSeen = ts;
     }
     // Update cursor even if no messages (idempotent).
