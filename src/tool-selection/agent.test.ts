@@ -5,21 +5,30 @@ import { getAutoTool } from './provenance.js';
 import type { ToolSpec } from '../tools/types.js';
 
 const exif: ToolSpec = {
-  name: 'extract_metadata', description: 'Extract EXIF metadata from an image',
-  parameters: {}, image: 'kubeclaw/exiftool:latest', pattern: 'file', mount: 'group',
+  name: 'extract_metadata',
+  description: 'Extract EXIF metadata from an image',
+  parameters: {},
+  image: 'kubeclaw/exiftool:latest',
+  pattern: 'file',
+  mount: 'group',
 };
 const imageSearch: ToolSpec = {
-  name: 'image_search', description: 'Search the web for images',
-  parameters: {}, image: 'kubeclaw/image-search:latest', pattern: 'http',
+  name: 'image_search',
+  description: 'Search the web for images',
+  parameters: {},
+  image: 'kubeclaw/image-search:latest',
+  pattern: 'http',
   credentials: ['brave-search'],
 };
 
 function deps(over: Partial<TsaDeps> = {}): TsaDeps {
   return {
-    chat: async () => JSON.stringify({ name: null, confidence: 0, reason: 'no' }),
+    chat: async () =>
+      JSON.stringify({ name: null, confidence: 0, reason: 'no' }),
     liveCatalog: () => [],
     library: () => [],
-    catalogHostLookup: (id) => (id === 'brave-search' ? 'api.search.brave.com' : undefined),
+    catalogHostLookup: (id) =>
+      id === 'brave-search' ? 'api.search.brave.com' : undefined,
     reconcile: async () => {},
     now: () => 1000,
     nonce: 'n',
@@ -35,10 +44,20 @@ describe('runToolSelection', () => {
 
   it('returns ready from the live catalog without registering', async () => {
     const r = await runToolSelection(
-      { requestId: 'r', groupFolder: 'g', channel: 'http', taskDescription: 'exif' },
+      {
+        requestId: 'r',
+        groupFolder: 'g',
+        channel: 'http',
+        taskDescription: 'exif',
+      },
       deps({
         liveCatalog: () => [exif],
-        chat: async () => JSON.stringify({ name: 'extract_metadata', confidence: 0.9, reason: 'ok' }),
+        chat: async () =>
+          JSON.stringify({
+            name: 'extract_metadata',
+            confidence: 0.9,
+            reason: 'ok',
+          }),
       }),
     );
     expect(r.status).toBe('ready');
@@ -46,10 +65,20 @@ describe('runToolSelection', () => {
 
   it('activates a credential-free library tool and records provenance=library', async () => {
     const r = await runToolSelection(
-      { requestId: 'r', groupFolder: 'g', channel: 'http', taskDescription: 'exif' },
+      {
+        requestId: 'r',
+        groupFolder: 'g',
+        channel: 'http',
+        taskDescription: 'exif',
+      },
       deps({
         library: () => [exif],
-        chat: async () => JSON.stringify({ name: 'extract_metadata', confidence: 0.9, reason: 'ok' }),
+        chat: async () =>
+          JSON.stringify({
+            name: 'extract_metadata',
+            confidence: 0.9,
+            reason: 'ok',
+          }),
       }),
     );
     expect(r.status).toBe('ready');
@@ -58,10 +87,20 @@ describe('runToolSelection', () => {
 
   it('returns pending_credential (and does NOT register) for a credentialed library tool', async () => {
     const r = await runToolSelection(
-      { requestId: 'r', groupFolder: 'g', channel: 'http', taskDescription: 'image' },
+      {
+        requestId: 'r',
+        groupFolder: 'g',
+        channel: 'http',
+        taskDescription: 'image',
+      },
       deps({
         library: () => [imageSearch],
-        chat: async () => JSON.stringify({ name: 'image_search', confidence: 0.9, reason: 'ok' }),
+        chat: async () =>
+          JSON.stringify({
+            name: 'image_search',
+            confidence: 0.9,
+            reason: 'ok',
+          }),
       }),
     );
     expect(r.status).toBe('pending_credential');
@@ -75,9 +114,43 @@ describe('runToolSelection', () => {
 
   it('returns unavailable when nothing matches', async () => {
     const r = await runToolSelection(
-      { requestId: 'r', groupFolder: 'g', channel: 'http', taskDescription: 'xyz' },
+      {
+        requestId: 'r',
+        groupFolder: 'g',
+        channel: 'http',
+        taskDescription: 'xyz',
+      },
       deps(),
     );
     expect(r.status).toBe('unavailable');
+  });
+});
+
+import { finalizeCredentialApproval } from './agent.js';
+import { mintApprovalToken } from './credential-gate.js';
+
+describe('finalizeCredentialApproval', () => {
+  beforeEach(async () => {
+    await _initTestDatabase();
+    __resetDbForTest();
+  });
+
+  it('registers the credentialed tool when the token is valid', async () => {
+    const token = mintApprovalToken('image_search', 'brave-search', 'n');
+    const r = await finalizeCredentialApproval(
+      { toolName: 'image_search', catalogId: 'brave-search', approvalToken: token },
+      { library: () => [imageSearch], catalogHostLookup: () => 'api.search.brave.com', reconcile: async () => {}, now: () => 1, nonce: 'n' },
+    );
+    expect(r.status).toBe('ready');
+    expect(getAutoTool('image_search')?.provenance).toBe('library');
+  });
+
+  it('rejects an invalid token without registering', async () => {
+    const r = await finalizeCredentialApproval(
+      { toolName: 'image_search', catalogId: 'brave-search', approvalToken: 'bad' },
+      { library: () => [imageSearch], catalogHostLookup: () => 'api.search.brave.com', reconcile: async () => {}, now: () => 1, nonce: 'n' },
+    );
+    expect(r.status).toBe('unavailable');
+    expect(getAutoTool('image_search')).toBeUndefined();
   });
 });
