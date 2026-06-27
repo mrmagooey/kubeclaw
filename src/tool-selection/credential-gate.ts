@@ -1,4 +1,4 @@
-import { createHmac } from 'node:crypto';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { ToolSpec } from '../tools/types.js';
 
 export interface GateDecision {
@@ -32,5 +32,9 @@ export function verifyApprovalToken(
   catalogId: string,
   nonce: string,
 ): boolean {
-  return token === mintApprovalToken(toolName, catalogId, nonce);
+  const expected = mintApprovalToken(toolName, catalogId, nonce);
+  const a = Buffer.from(token);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
 }
