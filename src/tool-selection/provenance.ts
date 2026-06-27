@@ -32,6 +32,13 @@ export function touchAutoTool(name: string, now: number): void {
   ]);
 }
 
+/** Touch the last-used timestamp iff `name` is an auto-acquired tool. Returns true if a row was touched. */
+export function recordAutoToolUse(name: string, now: number): boolean {
+  if (!getAutoTool(name)) return false;
+  touchAutoTool(name, now);
+  return true;
+}
+
 function rowToMeta(row: unknown[]): AutoToolMeta {
   return {
     name: row[0] as string,

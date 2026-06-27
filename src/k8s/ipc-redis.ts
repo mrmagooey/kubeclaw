@@ -68,7 +68,7 @@ import {
   finalizeCredentialApproval,
 } from '../tool-selection/agent.js';
 import type { ChatFn } from '../tool-selection/matcher.js';
-import { getAutoTool, touchAutoTool } from '../tool-selection/provenance.js';
+import { recordAutoToolUse } from '../tool-selection/provenance.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
@@ -1075,7 +1075,7 @@ export async function startToolPodSpawnWatcher(
               groupsPvc,
               sessionsPvc,
             });
-            if (getAutoTool(category)) touchAutoTool(category, Date.now());
+            recordAutoToolUse(category, Date.now());
             logger.debug(
               { agentJobId, category, image: spec.image },
               'Resolved + spawned catalog sidecar tool pod',
