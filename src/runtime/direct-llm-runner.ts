@@ -60,6 +60,10 @@ import { loadSkills } from './skill-loader.js';
 import { proposeSkill, DupCheckFn } from './tools/propose-skill.js';
 import { makeSetReminderTool } from './tools/set-reminder.js';
 import { resolveToolByName } from '../tools/reconciler.js';
+import {
+  requestFindTools,
+  requestCredentialApproval,
+} from './find-tools-client.js';
 
 const DEFAULT_SYSTEM_PROMPT =
   'You are a helpful assistant. Be concise and direct in your responses. ' +
@@ -340,6 +344,46 @@ export const TOOLS: OpenAI.ChatCompletionFunctionTool[] = [
           },
         },
         required: ['proposed_name', 'description', 'body', 'rationale'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'find_tools',
+      description:
+        'Find and enable a tool capability you do not currently have (e.g. image search, ' +
+        'metadata extraction). Describe the capability you need in plain language. The system ' +
+        'searches trusted tools first and enables the best match. If the tool needs a secret, ' +
+        'you will get a pending_credential result to relay to the user for approval.',
+      parameters: {
+        type: 'object',
+        properties: {
+          task_description: {
+            type: 'string',
+            description: 'The capability you need, in plain language.',
+          },
+        },
+        required: ['task_description'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'approve_tool_credential',
+      description:
+        'Call ONLY after the user explicitly approves using a credential that a prior find_tools ' +
+        'result reported as pending_credential. Pass the exact tool_name, catalog_id, and approval_token ' +
+        'from that result.',
+      parameters: {
+        type: 'object',
+        properties: {
+          tool_name: { type: 'string' },
+          catalog_id: { type: 'string' },
+          approval_token: { type: 'string' },
+        },
+        required: ['tool_name', 'catalog_id', 'approval_token'],
       },
     },
   },
@@ -1374,6 +1418,20 @@ export class DirectLLMRunner implements MessageRunner {
                   groupFolder: group.folder,
                 },
               );
+            } else if (call.function.name === 'find_tools') {
+              result = await requestFindTools({
+                groupFolder: input.groupFolder,
+                channel: KUBECLAW_CHANNEL,
+                taskDescription: String(args.task_description ?? ''),
+              });
+            } else if (call.function.name === 'approve_tool_credential') {
+              result = await requestCredentialApproval({
+                groupFolder: input.groupFolder,
+                channel: KUBECLAW_CHANNEL,
+                toolName: String(args.tool_name ?? ''),
+                catalogId: String(args.catalog_id ?? ''),
+                approvalToken: String(args.approval_token ?? ''),
+              });
             } else {
               result = await executeToolViaK8s(
                 toolJobId,

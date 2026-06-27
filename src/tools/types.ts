@@ -77,9 +77,11 @@ const NAME_RE = /^[A-Za-z][A-Za-z0-9_-]*$/;
 // tool cannot collide with a historical built-in category name.
 const RESERVED_NAMES = new Set([
   // direct-llm-runner TOOLS array
+  'approve_tool_credential',
   'cancel_task',
   'deploy_mcp_server',
   'execute_agent',
+  'find_tools',
   'list_mcp_servers',
   'list_tasks',
   'pause_task',
