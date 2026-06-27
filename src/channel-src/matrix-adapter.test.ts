@@ -372,6 +372,104 @@ describe('matrix-adapter: _handleTimelineEvent', () => {
     expect(msg.content).toBe('@C++Bot hey @C++Bot help');
   });
 
+  it('FIFO bounded dedup: evicted (oldest) id is re-delivered; still-cached recent id is not', () => {
+    // Regression for the clear()-on-overflow bug: the old code evicted ALL entries when the
+    // cap was hit, which could re-deliver recently-seen events. The new code uses FIFO
+    // eviction — only the oldest entry is removed per new unique event added at cap.
+    //
+    // Strategy: pre-fill _seenEventIds / _seenEventIdQueue to EVENT_ID_CAP-1 entries, then
+    // push two real events through _handleTimelineEvent:
+    //   1. A genuinely-new event ('new-id') — triggers eviction of 'oldest-id', gets delivered.
+    //   2. Re-send 'oldest-id' — now evicted from Set, so delivered again (bounded behaviour).
+    //   3. Re-send 'new-id' — still in Set, must NOT re-deliver.
+    const opts = fakeOpts();
+    const { ch } = buildChannel(VALID_ENV, opts);
+    ch.syncReady = true;
+
+    // Pre-fill to exactly EVENT_ID_CAP entries so that the NEXT unique event triggers
+    // FIFO eviction. The eviction path is: size >= EVENT_ID_CAP → shift oldest → delete it.
+    // We pre-fill directly on internal state to avoid firing 10000 real events (too slow).
+    const REAL_CAP = 10000; // matches EVENT_ID_CAP in the module
+    ch._seenEventIds = new Set(['oldest-id']);
+    ch._seenEventIdQueue = ['oldest-id'];
+    // Fill slots 1..(cap-1) with placeholder ids, making total size = cap.
+    // The last fill entry is named 'recent-id' for our cached-entry assertion below.
+    const recentId = 'recent-id';
+    for (let i = 1; i < REAL_CAP; i++) {
+      const id = i === REAL_CAP - 1 ? recentId : `fill-${i}`;
+      ch._seenEventIds.add(id);
+      ch._seenEventIdQueue.push(id);
+    }
+    // size should now be exactly cap (eviction fires on the next unique event)
+    expect(ch._seenEventIds.size).toBe(REAL_CAP);
+
+    // Step 1: send 'new-id' — size is at cap so eviction fires: 'oldest-id' is removed,
+    // 'new-id' is added, and the event is delivered.
+    const evNew = makeEvent({ getId: vi.fn().mockReturnValue('new-id') });
+    ch._handleTimelineEvent(evNew, makeRoom('!room1:home.server', 'Test Room'));
+    expect(opts.onMessage).toHaveBeenCalledTimes(1); // delivered
+
+    // After eviction: 'oldest-id' must have been removed from the Set
+    expect(ch._seenEventIds.has('oldest-id')).toBe(false);
+    // 'recent-id' and 'new-id' must still be in the Set
+    expect(ch._seenEventIds.has(recentId)).toBe(true);
+    expect(ch._seenEventIds.has('new-id')).toBe(true);
+
+    // Step 2: re-send 'oldest-id' — now evicted, so it IS re-delivered (correct bounded behaviour)
+    opts.onMessage.mockClear();
+    const evOldest = makeEvent({ getId: vi.fn().mockReturnValue('oldest-id') });
+    ch._handleTimelineEvent(
+      evOldest,
+      makeRoom('!room1:home.server', 'Test Room'),
+    );
+    expect(opts.onMessage).toHaveBeenCalledTimes(1); // re-delivered exactly once
+
+    // Step 3: re-send 'new-id' — still in Set → must NOT re-deliver
+    opts.onMessage.mockClear();
+    const evNewAgain = makeEvent({ getId: vi.fn().mockReturnValue('new-id') });
+    ch._handleTimelineEvent(
+      evNewAgain,
+      makeRoom('!room1:home.server', 'Test Room'),
+    );
+    expect(opts.onMessage).not.toHaveBeenCalled(); // still cached → suppressed
+  });
+
+  it('echo guard runs BEFORE dedup: self-message does not consume a dedup slot', () => {
+    // If the echo guard ran AFTER dedup, a self-echo would occupy a slot in the Set
+    // and then — if the same event id were somehow re-sent by another user — it would
+    // be incorrectly suppressed. With the guard BEFORE dedup, self-events never touch
+    // the Set at all.
+    const opts = fakeOpts();
+    const { ch } = buildChannel(VALID_ENV, opts);
+    ch.syncReady = true;
+    const selfEventId = '$self-before-dedup:server';
+
+    // Fire a self-echo (from own userId)
+    const selfEvent = makeEvent({
+      getId: vi.fn().mockReturnValue(selfEventId),
+      getSender: vi.fn().mockReturnValue('@mybot:matrix.org'), // own userId
+    });
+    ch._handleTimelineEvent(
+      selfEvent,
+      makeRoom('!room1:home.server', 'Test Room'),
+    );
+    expect(opts.onMessage).not.toHaveBeenCalled(); // echo suppressed
+
+    // The self event id must NOT have been added to the dedup Set
+    expect(ch._seenEventIds.has(selfEventId)).toBe(false);
+
+    // Now the same event id arrives from a different user — should deliver (not deduped)
+    const realEvent = makeEvent({
+      getId: vi.fn().mockReturnValue(selfEventId),
+      getSender: vi.fn().mockReturnValue('@alice:home.server'),
+    });
+    ch._handleTimelineEvent(
+      realEvent,
+      makeRoom('!room1:home.server', 'Test Room'),
+    );
+    expect(opts.onMessage).toHaveBeenCalledTimes(1);
+  });
+
   it('isGroup is always true', () => {
     const opts = fakeOpts();
     const { ch } = buildChannel(VALID_ENV, opts);
@@ -572,7 +670,7 @@ describe('matrix-adapter: lifecycle', () => {
 // ── setTyping ─────────────────────────────────────────────────────────────────
 
 describe('matrix-adapter: setTyping', () => {
-  it('calls client.sendTyping with roomId, isTyping, 20000', async () => {
+  it('calls client.sendTyping with roomId, isTyping=true, timeout=20000', async () => {
     const opts = fakeOpts();
     const { ch } = buildChannel(VALID_ENV, opts);
     const sendTypingSpy = vi.fn().mockResolvedValue(undefined);
@@ -584,6 +682,16 @@ describe('matrix-adapter: setTyping', () => {
       true,
       20000,
     );
+  });
+
+  it('calls client.sendTyping with roomId, isTyping=false, timeout=0 (stop typing)', async () => {
+    const opts = fakeOpts();
+    const { ch } = buildChannel(VALID_ENV, opts);
+    const sendTypingSpy = vi.fn().mockResolvedValue(undefined);
+    ch.client = { sendTyping: sendTypingSpy, stopClient: vi.fn() };
+
+    await ch.setTyping('matrix:!room1:home.server', false);
+    expect(sendTypingSpy).toHaveBeenCalledWith('!room1:home.server', false, 0);
   });
 
   it('does nothing for non-matrix JID', async () => {
@@ -608,10 +716,11 @@ describe('matrix-adapter: setTyping', () => {
 // ── capabilities ──────────────────────────────────────────────────────────────
 
 describe('matrix-adapter: capabilities', () => {
-  it('declares typing=true, inboundImages=true, outboundMedia=false, no markdownOutput', () => {
+  it('declares typing=true, inboundImages=false (v1: m.image dropped), outboundMedia=false, no markdownOutput', () => {
     const { ch } = buildChannel(VALID_ENV);
     expect(ch.capabilities.typing).toBe(true);
-    expect(ch.capabilities.inboundImages).toBe(true);
+    // v1 only processes m.text — m.image events are dropped; capability is false
+    expect(ch.capabilities.inboundImages).toBe(false);
     expect(ch.capabilities.outboundMedia).toBe(false);
     expect(ch.capabilities.markdownOutput).toBeUndefined();
   });

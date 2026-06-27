@@ -15,7 +15,7 @@ Every channel is a **runtime adapter** — a plain JS file shipped in the `kubec
 
 Both produce the same steady-state Deployment. Credentials reach the channel pod via environment variables sourced from its Secret.
 
-Currently available adapters: `discord`, `http`, `irc`, `oauth-webchat`, `signal`, `telegram`. Additional channel types (slack, matrix, whatsapp, imessage, etc.) follow the same pattern but their adapters are not yet built.
+Currently available adapters: `discord`, `http`, `irc`, `matrix`, `oauth-webchat`, `signal`, `telegram`. Additional channel types (slack, whatsapp, imessage, etc.) follow the same pattern but their adapters are not yet built.
 
 For developers writing a new adapter, see [DEVELOPING_A_CHANNEL.md](DEVELOPING_A_CHANNEL.md).
 
@@ -401,7 +401,9 @@ kubectl create secret generic kubeclaw-channel-matrix-main \
 add_group(jid="matrix:!abc123:home.server", name="my-room", trigger="@Andy")
 ```
 
-**Capabilities:** `typing`, `inboundImages`. No `markdownOutput` in v1 (plain text only). No outbound media.
+**Capabilities:** `typing`. No `inboundImages` in v1 — image messages (`m.image`) are silently dropped; only `m.text` is processed. No `markdownOutput` (plain text only). No outbound media.
+
+**Node version requirement:** The Matrix channel pod image must run Node ≥22 (required by matrix-js-sdk@41). The standard KubeClaw channel pod image satisfies this. The repo-wide `engines.node >=20` is intentionally not bumped — only the Matrix channel has this constraint.
 
 For developer notes on the Matrix adapter, see [DEVELOPING_A_CHANNEL.md](DEVELOPING_A_CHANNEL.md).
 

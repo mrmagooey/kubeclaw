@@ -19,9 +19,10 @@
  *
  * Inbound: /sync long-poll via client.startClient().
  *   Only processes Room.timeline events after the client reaches PREPARED state.
- *   Deduplicates events by event id (bounded Set).
- *   Echo guard: ignores events from our own MATRIX_USER_ID.
+ *   Echo guard: ignores events from our own MATRIX_USER_ID (runs before dedup).
+ *   Deduplicates events by event id (FIFO bounded Set — avoids double-delivery on reconnect).
  *   Only handles m.room.message / m.text (skips other event types in v1).
+ *   m.image and other non-text types are dropped; inboundImages capability is false in v1.
  *
  * Outbound: client.sendTextMessage(); chunks at 32000 chars.
  *   setTyping: client.sendTyping(roomId, isTyping, 20000).
@@ -49,7 +50,7 @@ class MatrixChannel {
   name = 'matrix';
   capabilities = {
     typing: true,
-    inboundImages: true,
+    inboundImages: false, // v1: m.image events are dropped; only m.text is handled
     outboundMedia: false,
   };
 
@@ -62,6 +63,7 @@ class MatrixChannel {
     this.messageId = 0;
     this.syncReady = false;
     this._seenEventIds = new Set();
+    this._seenEventIdQueue = []; // parallel FIFO queue for bounded FIFO eviction
     // Injectable in tests: (opts) => client instance. Set in connect() when null.
     this._makeClient = null;
   }
@@ -98,21 +100,23 @@ class MatrixChannel {
     // Only handle plain text messages in v1.
     if (!content || content.msgtype !== 'm.text') return;
 
+    // Echo guard: ignore messages from our own user (cheapest check first — avoids
+    // consuming a dedup slot on our own echoes).
+    const sender = event.getSender();
+    if (sender === this.config.userId) return;
+
     const eventId = event.getId();
     if (!eventId) return;
 
-    // Deduplicate by event id (bounded).
+    // Deduplicate by event id (FIFO bounded eviction — avoids double-delivery on
+    // reconnect that a full clear() would cause).
     if (this._seenEventIds.has(eventId)) return;
     if (this._seenEventIds.size >= EVENT_ID_CAP) {
-      // Evict oldest by clearing — simple approximation sufficient here.
-      this._seenEventIds.clear();
+      const oldest = this._seenEventIdQueue.shift();
+      if (oldest) this._seenEventIds.delete(oldest);
     }
     this._seenEventIds.add(eventId);
-
-    const sender = event.getSender();
-
-    // Echo guard: ignore messages from our own user.
-    if (sender === this.config.userId) return;
+    this._seenEventIdQueue.push(eventId);
 
     const roomId = room.roomId;
     const jid = this._jidFromRoomId(roomId);
@@ -207,6 +211,9 @@ class MatrixChannel {
       }
     });
 
+    // IMPORTANT: all client.on(...) listeners MUST be registered before startClient()
+    // is called. startClient() is async and resolves before the first /sync response
+    // arrives, so moving it earlier in this function would cause events to be dropped.
     await this.client.startClient();
     this.connected = true;
     this.sdk.logger.info('matrix: connected (/sync long-poll)');
@@ -246,7 +253,7 @@ class MatrixChannel {
     if (!this.ownsJid(jid) || !this.client) return;
     const roomId = this._roomIdFromJid(jid);
     try {
-      await this.client.sendTyping(roomId, isTyping, 20000);
+      await this.client.sendTyping(roomId, isTyping, isTyping ? 20000 : 0);
     } catch (err) {
       this.sdk.logger.debug({ err: String(err) }, 'matrix: typing failed');
     }

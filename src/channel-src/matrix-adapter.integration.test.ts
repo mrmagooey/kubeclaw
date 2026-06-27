@@ -273,7 +273,7 @@ describe('matrix-adapter: integration (fake client)', () => {
     expect(opts.onMessage).toHaveBeenCalledTimes(1);
   });
 
-  it('setTyping calls client.sendTyping when client is connected', async () => {
+  it('setTyping(true) calls client.sendTyping with timeout=20000', async () => {
     const sendTypingSpy = vi.fn().mockResolvedValue(undefined);
     const fakeClient = {
       on: vi.fn(),
@@ -291,6 +291,22 @@ describe('matrix-adapter: integration (fake client)', () => {
       true,
       20000,
     );
+  });
+
+  it('setTyping(false) calls client.sendTyping with timeout=0 (stop typing)', async () => {
+    const sendTypingSpy = vi.fn().mockResolvedValue(undefined);
+    const fakeClient = {
+      on: vi.fn(),
+      startClient: vi.fn().mockResolvedValue(undefined),
+      stopClient: vi.fn(),
+      sendTyping: sendTypingSpy,
+    };
+
+    const { ch } = buildIntegrationChannel(() => fakeClient);
+    await ch.connect();
+
+    await ch.setTyping('matrix:!room1:home.server', false);
+    expect(sendTypingSpy).toHaveBeenCalledWith('!room1:home.server', false, 0);
   });
 
   it('non-m.text event types in Room.timeline are silently ignored', async () => {

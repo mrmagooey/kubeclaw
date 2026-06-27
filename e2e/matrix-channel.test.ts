@@ -402,12 +402,75 @@ describe('Matrix Channel End-to-End', () => {
       expect(receivedMetadata[0]?.isGroup).toBe(true);
     });
 
-    it('should only process events after sync PREPARED (before beforeAll fires PREPARED)', () => {
-      // This is structural: beforeAll emits PREPARED, so syncReady must be true.
-      // We verify the guard logic in the unit tests. Here we just confirm the
-      // channel is correctly in sync-ready state in our e2e suite.
-      expect(channel!.syncReady).toBe(true);
-    });
+    it('should NOT process Room.timeline events before sync PREPARED is emitted (real emitter regression)', async () => {
+      // Regression: previously this test only asserted syncReady===true (tautological —
+      // beforeAll already emitted PREPARED). This replacement builds a SECOND channel
+      // instance whose real matrix-js-sdk client has NOT emitted PREPARED, fires a
+      // Room.timeline event through its real TypedEventEmitter, and asserts onMessage
+      // was NOT called. This exercises the syncReady guard via the real SDK dispatch chain.
+      const sdk2 = makeSdk();
+      const cfg2 = parseConfig(sdk2);
+      const onMessageSpy = vi.fn();
+      const opts2 = {
+        onMessage: onMessageSpy,
+        onChatMetadata: vi.fn(),
+        registeredGroups: () => ({
+          [ROOM_1_JID]: {
+            name: 'Pre-PREPARED Test Room',
+            folder: 'matrix-pre-prepared',
+            trigger: '@Andy',
+            added_at: new Date().toISOString(),
+          },
+        }),
+      };
+
+      const ch2 = new MatrixChannel(cfg2!, opts2, sdk2);
+      let client2: any = null;
+
+      ch2._makeClient = async (opts: {
+        baseUrl: string;
+        userId: string;
+        accessToken: string;
+      }) => {
+        const sdkModule = await import('matrix-js-sdk');
+        const store = new sdkModule.MemoryStore();
+        const c = sdkModule.createClient({
+          baseUrl: opts.baseUrl,
+          userId: opts.userId,
+          accessToken: opts.accessToken,
+          store,
+        });
+        c.startClient = vi.fn().mockResolvedValue(undefined);
+        client2 = c;
+        return c;
+      };
+
+      await ch2.connect();
+      // Deliberately do NOT emit 'sync' PREPARED — syncReady must remain false
+      expect(ch2.syncReady).toBe(false);
+
+      // Emit a Room.timeline event through the real TypedEventEmitter
+      client2!.emit(
+        'Room.timeline',
+        makeFakeMatrixEvent({
+          getId: vi.fn().mockReturnValue('$pre-prepared-guard:server'),
+          getSender: vi.fn().mockReturnValue('@alice:home.server'),
+          getContent: vi
+            .fn()
+            .mockReturnValue({
+              msgtype: 'm.text',
+              body: 'this should be dropped',
+            }),
+        }),
+        { roomId: ROOM_1_ID, name: 'Pre-PREPARED Test Room' },
+      );
+
+      // The syncReady guard must have dropped the event
+      expect(onMessageSpy).not.toHaveBeenCalled();
+
+      // Tear down to prevent leaked handles
+      await ch2.disconnect();
+    }, 15000);
 
     it('should ignore non-m.text message types (e.g. m.image)', () => {
       realClient!.emit(
@@ -460,9 +523,9 @@ describe('Matrix Channel End-to-End', () => {
       expect(sendTypingSpy).toHaveBeenCalledWith(ROOM_1_ID, true, 20000);
     });
 
-    it('should call client.sendTyping with isTyping=false', async () => {
+    it('should call client.sendTyping with isTyping=false, timeout=0 (stop typing)', async () => {
       await channel!.setTyping(ROOM_1_JID, false);
-      expect(sendTypingSpy).toHaveBeenCalledWith(ROOM_1_ID, false, 20000);
+      expect(sendTypingSpy).toHaveBeenCalledWith(ROOM_1_ID, false, 0);
     });
 
     it('should NOT call sendTyping for non-matrix JIDs', async () => {
