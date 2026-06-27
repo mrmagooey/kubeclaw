@@ -412,6 +412,52 @@ describe('validateTool — cdp pattern', () => {
   });
 });
 
+describe('allowedEgress validation', () => {
+  const baseEgress = {
+    name: 'x',
+    description: 'd',
+    parameters: { type: 'object' },
+    image: 'i',
+    pattern: 'http' as const,
+  };
+
+  it('accepts a valid egress rule', () => {
+    expect(
+      validateTool({
+        ...baseEgress,
+        allowedEgress: [{ host: 'api.search.brave.com', ports: [443] }],
+      }).ok,
+    ).toBe(true);
+  });
+
+  it('accepts an empty egress list (no external access)', () => {
+    expect(
+      validateTool({ ...baseEgress, pattern: 'file', allowedEgress: [] }).ok,
+    ).toBe(true);
+  });
+
+  it('rejects a non-array', () => {
+    const r = validateTool({ ...baseEgress, allowedEgress: 'nope' });
+    expect(r.ok).toBe(false);
+  });
+
+  it('rejects an entry with no host', () => {
+    const r = validateTool({
+      ...baseEgress,
+      allowedEgress: [{ ports: [443] }],
+    });
+    expect(r.ok).toBe(false);
+  });
+
+  it('rejects an out-of-range port', () => {
+    const r = validateTool({
+      ...baseEgress,
+      allowedEgress: [{ host: 'h.example.com', ports: [70000] }],
+    });
+    expect(r.ok).toBe(false);
+  });
+});
+
 describe('parseToolCatalog', () => {
   it('parses a valid wire object', () => {
     const json = JSON.stringify({ version: 1, generation: 3, tools: [base] });

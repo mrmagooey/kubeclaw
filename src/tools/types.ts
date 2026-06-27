@@ -15,6 +15,11 @@ export interface RequestMapping {
   responsePath?: string;
 }
 
+export interface EgressRule {
+  host: string;
+  ports?: number[];
+}
+
 export interface ToolSpec {
   name: string;
   description: string;
@@ -50,6 +55,8 @@ export interface ToolSpec {
    *  user-tool container; the in-pod Envoy + broker substitute the real value at
    *  egress. Presence of any id triggers credential-sidecar attachment. */
   credentials?: string[];
+  /** List of allowed external hosts this tool may connect to. */
+  allowedEgress?: EgressRule[];
   /** Optional per-tool execution timeout in milliseconds. When set, overrides the
    *  caller-supplied default for the tool's sidecar Job (activeDeadlineSeconds) and
    *  the agent/channel result-wait deadline. */
@@ -136,6 +143,7 @@ const ALLOWED_KEYS = new Set([
   'acpMode',
   'channels',
   'credentials',
+  'allowedEgress',
   'timeout',
 ]);
 const PATTERNS = new Set(['http', 'file', 'acp', 'cdp']);
@@ -367,6 +375,40 @@ export function validateTool(t: unknown): ValidationResult {
       obj.timeout <= 0
     ) {
       return { ok: false, error: 'timeout must be a positive integer (ms)' };
+    }
+  }
+  if (obj.allowedEgress !== undefined) {
+    if (!Array.isArray(obj.allowedEgress)) {
+      return { ok: false, error: 'allowedEgress must be an array' };
+    }
+    for (const rule of obj.allowedEgress as unknown[]) {
+      if (typeof rule !== 'object' || rule === null) {
+        return {
+          ok: false,
+          error: 'each allowedEgress entry must be an object',
+        };
+      }
+      const r = rule as Record<string, unknown>;
+      if (
+        typeof r.host !== 'string' ||
+        !/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(r.host)
+      ) {
+        return {
+          ok: false,
+          error: 'allowedEgress host must be a valid hostname',
+        };
+      }
+      if (r.ports !== undefined) {
+        if (
+          !Array.isArray(r.ports) ||
+          r.ports.some((p) => typeof p !== 'number' || p < 1 || p > 65535)
+        ) {
+          return {
+            ok: false,
+            error: 'allowedEgress ports must be integers 1-65535',
+          };
+        }
+      }
     }
   }
   return { ok: true };
