@@ -19,5 +19,6 @@ export default defineConfig({
       'container/agent-runner/**/*.test.ts',
       'container/postgres-mcp/**/*.test.ts',
     ],
+    globals: true,
   },
 });
