@@ -15,7 +15,7 @@ Every channel is a **runtime adapter** — a plain JS file shipped in the `kubec
 
 Both produce the same steady-state Deployment. Credentials reach the channel pod via environment variables sourced from its Secret.
 
-Currently available adapters: `http`, `irc`, `oauth-webchat`, `signal`, `telegram`. Additional channel types (discord, slack, matrix, whatsapp, imessage, etc.) follow the same pattern but their adapters are not yet built.
+Currently available adapters: `discord`, `http`, `irc`, `oauth-webchat`, `signal`, `telegram`. Additional channel types (slack, matrix, whatsapp, imessage, etc.) follow the same pattern but their adapters are not yet built.
 
 For developers writing a new adapter, see [DEVELOPING_A_CHANNEL.md](DEVELOPING_A_CHANNEL.md).
 
@@ -115,7 +115,7 @@ Credentials are gathered by the bootstrap dialogue (interactive) or supplied via
 | `irc` | Server, nick, optional channels list | None (just the IRC server you want to join) |
 | `oauth-webchat` | OIDC issuer, client ID, client secret, allowed emails | Your OIDC provider (Google Workspace, Okta, etc.) |
 | `telegram` | Bot token | Talk to [@BotFather](https://t.me/BotFather) |
-| `discord` _(aspirational)_ | Bot token | https://discord.com/developers/applications → Bot → Token |
+| `discord` | Bot token | https://discord.com/developers/applications → Bot → Token |
 | `slack` _(aspirational)_ | Bot token + App token | https://api.slack.com/apps → OAuth & Permissions / Socket Mode |
 | `whatsapp` _(aspirational)_ | Phone number | WhatsApp Business API setup |
 | `signal` | Phone number (E.164) | See [Signal](#signal) below — the signal-cli sidecar is created with the channel pod; link the device afterward via port-forward |
@@ -248,6 +248,80 @@ kubectl create secret generic kubeclaw-channel-telegram-work \
 **Group trigger:** In group chats, a message must mention the assistant by name (e.g. `@Andy`) to trigger a response. Private chats respond to every message that passes the trigger pattern.
 
 For developer notes on the Telegram adapter, see [DEVELOPING_A_CHANNEL.md](DEVELOPING_A_CHANNEL.md).
+
+### Discord
+
+Discord is a **channel-runner** adapter that uses [discord.js@14](https://discord.js.org/) and the Gateway WebSocket transport. No sidecar or external backend is needed — the bot token is the only credential required.
+
+**Prerequisites:** Create a bot in the Discord Developer Portal:
+
+1. Go to https://discord.com/developers/applications and click **New Application**.
+2. Give your application a name (e.g. `KubeClaw`), then go to **Bot** in the left sidebar.
+3. Click **Reset Token** to generate your bot token. Copy it — you will need it during bootstrap.
+4. Under **Privileged Gateway Intents**, toggle **Message Content Intent** to **ON** and save.
+   This step is mandatory. Without it the bot will receive empty messages in servers.
+5. Under **OAuth2 → URL Generator**, select scopes `bot` and permissions `Send Messages` and
+   `Read Message History`, then use the generated URL to invite the bot to your server.
+
+**Bootstrap (interactive, Path A):**
+
+```
+# In the admin shell:
+bootstrap_channel_from_skill(type="discord")
+# Or for a named instance:
+bootstrap_channel_from_skill(type="discord", instance_name="discord-personal")
+```
+
+You will be prompted for `DISCORD_BOT_TOKEN`. The bootstrap skill also validates the token
+against the Discord API (`GET /users/@me`) and reminds you to enable the Message Content Intent.
+
+**Declarative Helm (Path B):**
+
+Create a Secret first, then reference it in `values.yaml`:
+
+```bash
+kubectl create secret generic kubeclaw-channel-discord \
+  --from-literal=DISCORD_BOT_TOKEN="MTIzNDU2Nzg5MDEyMzQ1Njc4OQ.EXAMPLE.abc123" \
+  -n kubeclaw
+```
+
+```yaml
+# In your values overrides:
+channels:
+  discord:
+    enabled: true
+    type: discord
+```
+
+Apply with `helm upgrade --install kubeclaw ./helm/kubeclaw -n kubeclaw -f your-values.yaml`.
+
+**Multi-instance** — one bot per instance; use distinct keys:
+
+```yaml
+channels:
+  discord-personal:
+    enabled: true
+    type: discord
+  discord-work:
+    enabled: true
+    type: discord
+```
+
+Each instance needs its own bot token stored in a distinct Secret.
+
+**Registering channels:** After the pod starts, register the Discord channel IDs (not server IDs)
+that the bot should monitor using `register_group` in the admin shell. The JID format is
+`discord:<channelId>` — you can find the channel ID by right-clicking a channel in Discord with
+Developer Mode enabled.
+
+**Group trigger:** In server (guild) channels, a message must mention the assistant by name
+(e.g. `@Andy`) to trigger a response. DM channels respond to every message.
+
+**MessageContent intent note:** If you see `empty message content in guild` warnings in the pod
+logs, the Message Content privileged intent is not enabled in the Developer Portal. Enable it
+and the bot will start receiving message text immediately (no pod restart needed).
+
+For developer notes on the Discord adapter, see [DEVELOPING_A_CHANNEL.md](DEVELOPING_A_CHANNEL.md).
 
 ### Removing a channel
 

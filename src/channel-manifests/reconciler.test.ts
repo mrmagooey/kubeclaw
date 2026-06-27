@@ -549,3 +549,73 @@ describe('helm-render: telegram channelManifest', () => {
     );
   });
 });
+
+// ── Discord manifest validation (values.yaml integrity) ──────────────────────
+describe('discord manifest: values.yaml integrity', () => {
+  // The discord manifest is embedded in helm/kubeclaw/values.yaml.
+  // These tests verify:
+  //   1. packageJson and packageLockJson are valid JSON
+  //   2. manifestHash = sha256(packageJson + '\n' + packageLockJson)
+  //   3. packageJson declares discord.js@14.26.4 (no caret, exact pin)
+  //   4. packageLockJson resolves discord.js@14.26.4
+
+  const DISCORD_PKG_JSON =
+    '{"name":"runtime","version":"1.0.0","dependencies":{"discord.js":"14.26.4"}}';
+  const DISCORD_MANIFEST_HASH =
+    '64312557644dd2f4c30d19e1a516953d7895f9f9f56a62ec58c8698ac47e46dc';
+
+  it('packageJson is valid JSON and pins discord.js@14.26.4 exactly (no caret)', () => {
+    const pkg = JSON.parse(DISCORD_PKG_JSON);
+    expect(pkg.name).toBe('runtime');
+    // Exact pin — must NOT start with ^ or ~
+    expect(pkg.dependencies?.['discord.js']).toBe('14.26.4');
+  });
+
+  it('manifestHash matches sha256(packageJson + newline + packageLockJson)', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { createHash } = await import('node:crypto');
+    const valuesPath = join(process.cwd(), 'helm/kubeclaw/values.yaml');
+    const values = readFileSync(valuesPath, 'utf-8');
+
+    // Extract the discord packageLockJson specifically by finding the discord
+    // manifest section: locate 'discord:' and then extract its packageLockJson.
+    // We use a two-step approach: find the discord section and then the lock.
+    const discordSectionMatch = values.match(
+      /discord:\s*\n\s+hostMode:[^\n]+\n\s+packageJson:[^\n]+\n\s+packageLockJson:\s*'([^']+)'/,
+    );
+    expect(discordSectionMatch).not.toBeNull();
+    const lockJson = discordSectionMatch![1]!;
+
+    // Verify lock JSON is parseable and declares discord.js@14.26.4
+    const lock = JSON.parse(lockJson);
+    expect(lock.lockfileVersion).toBe(3);
+    expect(lock.packages?.['node_modules/discord.js']?.version).toBe(
+      '14.26.4',
+    );
+
+    // Verify the lock root dep is exact (no caret)
+    expect(lock.packages?.['']?.dependencies?.['discord.js']).toBe('14.26.4');
+
+    // Verify the hash
+    const computedHash = createHash('sha256')
+      .update(DISCORD_PKG_JSON + '\n' + lockJson)
+      .digest('hex');
+    expect(computedHash).toBe(DISCORD_MANIFEST_HASH);
+  });
+});
+
+// ── Helm-render integration test for discord manifest ────────────────────────
+describe('helm-render: discord channelManifest', () => {
+  it('renders discord.json in the channel-manifests-baseline ConfigMap', () => {
+    const rendered = execSync('helm template helm/kubeclaw', {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+    });
+    // The ConfigMap key should be `discord.json`
+    expect(rendered).toContain('discord.json');
+    // The manifest must carry the expected hash
+    expect(rendered).toContain(
+      '64312557644dd2f4c30d19e1a516953d7895f9f9f56a62ec58c8698ac47e46dc',
+    );
+  });
+});
