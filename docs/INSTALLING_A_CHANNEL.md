@@ -695,6 +695,7 @@ Register chats as groups using these JIDs in the orchestrator admin shell.
 - **Text messages only** — inbound images and other media are delivered with an `[Attachment: unsupported in v1]` marker appended to any text
 - `inboundImages: false`, `outboundMedia: false`
 - No markdown rendering (plain text output)
+- **1:1 messaging only** — the Cloud API supports sending to individual E.164 numbers (`whatsapp:+14155238886`) only; outbound to group JIDs (`whatsapp:group.<id>`) is not supported and will be dropped with a warning (v1 limitation)
 
 ---
 

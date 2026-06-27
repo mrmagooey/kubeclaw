@@ -70,15 +70,28 @@ export function verifySignature(rawBody, appSecret, headerSig) {
  * Handle the GET /webhook verification handshake from Meta.
  * query: object from URLSearchParams
  * Returns the challenge string if valid, null otherwise.
+ *
+ * Uses a timing-safe comparison for the verify token to be consistent with
+ * the HMAC path and avoid timing-oracle attacks on short secrets.
  */
 export function handleVerify(query, verifyToken) {
-  if (
-    query['hub.mode'] === 'subscribe' &&
-    query['hub.verify_token'] === verifyToken
-  ) {
-    return query['hub.challenge'] ?? null;
+  if (query['hub.mode'] !== 'subscribe') return null;
+  const provided = query['hub.verify_token'];
+  if (typeof provided !== 'string' || typeof verifyToken !== 'string')
+    return null;
+  // Timing-safe token comparison
+  let match;
+  if (provided.length !== verifyToken.length) {
+    match = false;
+  } else {
+    try {
+      match = timingSafeEqual(Buffer.from(provided), Buffer.from(verifyToken));
+    } catch {
+      match = false;
+    }
   }
-  return null;
+  if (!match) return null;
+  return query['hub.challenge'] ?? null;
 }
 
 /**
@@ -97,8 +110,10 @@ export function parseWebhook(body) {
         const value = change?.value;
         if (!value) continue;
 
-        // Skip statuses payloads (delivery receipts, read receipts)
-        if (value.statuses) continue;
+        // Skip changes that are not message events (e.g. status delivery receipts)
+        if (change.field !== 'messages') continue;
+        if (!Array.isArray(value.messages) || value.messages.length === 0)
+          continue;
 
         const messages = value.messages ?? [];
         for (const msg of messages) {
@@ -182,11 +197,20 @@ class WhatsAppChannel {
 
   // ── Inbound handling ──────────────────────────────────────────────────────
 
-  /** Read the full request body as a Buffer. */
-  _readBody(req) {
+  /** Read the full request body as a Buffer, rejecting if it exceeds maxBytes. */
+  _readBody(req, maxBytes = 65536) {
     return new Promise((resolve, reject) => {
       const chunks = [];
-      req.on('data', (chunk) => chunks.push(chunk));
+      let total = 0;
+      req.on('data', (c) => {
+        total += c.length;
+        if (total > maxBytes) {
+          req.destroy();
+          reject(new Error('body too large'));
+          return;
+        }
+        chunks.push(c);
+      });
       req.on('end', () => resolve(Buffer.concat(chunks)));
       req.on('error', reject);
     });
@@ -235,12 +259,15 @@ class WhatsAppChannel {
       try {
         rawBody = await this._readBody(req);
       } catch (err) {
+        const tooLarge = String(err).includes('body too large');
         this.sdk.logger.warn(
           { err: String(err) },
-          'whatsapp: failed to read webhook body',
+          tooLarge
+            ? 'whatsapp: webhook body exceeded 64 KiB limit'
+            : 'whatsapp: failed to read webhook body',
         );
-        res.writeHead(400);
-        res.end('Bad Request');
+        res.writeHead(tooLarge ? 413 : 400);
+        res.end(tooLarge ? 'Payload Too Large' : 'Bad Request');
         return;
       }
 
@@ -369,10 +396,11 @@ class WhatsAppChannel {
 
   async disconnect() {
     this.connected = false;
-    if (this.server) {
-      await new Promise((resolve) => this.server.close(resolve));
-      this.server = null;
-    }
+    // Null the server reference BEFORE awaiting close so a concurrent/second
+    // disconnect() call is a no-op rather than racing on the same handle.
+    const srv = this.server;
+    this.server = null;
+    if (srv) await new Promise((resolve) => srv.close(resolve));
   }
 
   // ── Outbound ──────────────────────────────────────────────────────────────
@@ -396,6 +424,17 @@ class WhatsAppChannel {
 
   async sendMessage(jid, text) {
     if (!this.ownsJid(jid)) return;
+
+    // The WhatsApp Cloud API is 1:1 business↔consumer and does NOT support
+    // sending to group JIDs. Attempting to POST `{ to: 'group.<id>' }` will
+    // be silently rejected by Meta. Return early with a warning in v1.
+    if (jid.startsWith('whatsapp:group.')) {
+      this.sdk.logger.warn(
+        { jid },
+        'whatsapp: outbound to group JIDs is not supported by the Cloud API (v1)',
+      );
+      return;
+    }
 
     const recipient = this._recipientForJid(jid);
     const url = `${GRAPH_API_BASE}/${this.config.phoneNumberId}/messages`;

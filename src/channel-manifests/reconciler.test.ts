@@ -781,4 +781,41 @@ describe('helm-render: whatsapp channelManifest', () => {
     // Port 4080 should appear in the rendered output
     expect(rendered).toContain('4080');
   });
+
+  it('renders Ingress for whatsapp channel with ingress.enabled + TLS (HTTPS is a hard requirement)', () => {
+    // HTTPS/Ingress is a hard requirement for WhatsApp webhook delivery.
+    // This test guards that the Ingress resource renders correctly including
+    // the host and TLS secret.
+    const valuesFile = join(
+      require('os').tmpdir(),
+      'whatsapp-ingress-test-values.yaml',
+    );
+    require('fs').writeFileSync(
+      valuesFile,
+      [
+        'channels:',
+        '  whatsapp-ingress:',
+        '    type: whatsapp',
+        '    httpPort: 4080',
+        '    enabled: true',
+        '    ingress:',
+        '      enabled: true',
+        '      host: whatsapp.example.com',
+        '      tls:',
+        '        - secretName: whatsapp-tls',
+        '          hosts:',
+        '            - whatsapp.example.com',
+      ].join('\n'),
+    );
+    const rendered = execSync(`helm template helm/kubeclaw -f ${valuesFile}`, {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+    });
+    // Ingress kind must be present
+    expect(rendered).toContain('kind: Ingress');
+    // The host must appear in the Ingress spec
+    expect(rendered).toContain('whatsapp.example.com');
+    // TLS secret must appear
+    expect(rendered).toContain('whatsapp-tls');
+  });
 });

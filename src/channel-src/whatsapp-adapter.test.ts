@@ -535,13 +535,80 @@ describe('sendMessage', () => {
     expect(sdk.logger.error).toHaveBeenCalled();
   });
 
-  it('sends to group JID correctly (strips whatsapp: prefix)', async () => {
-    const ch = makeChannel();
+  it('does NOT call fetch for group JID (Cloud API does not support group send)', async () => {
+    const sdk = makeSdk();
+    const ch = new WhatsAppChannel(makeConfig(), makeOpts(), sdk);
     await ch.sendMessage('whatsapp:group.abc123', 'Group message');
 
-    expect(fetchSpy).toHaveBeenCalledOnce();
-    const body = JSON.parse(fetchSpy.mock.calls[0][1].body);
-    expect(body.to).toBe('group.abc123');
+    // No HTTP call should be made — group send is unsupported in v1
+    expect(fetchSpy).not.toHaveBeenCalled();
+    // A warning must have been logged
+    expect(sdk.logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ jid: 'whatsapp:group.abc123' }),
+      expect.stringContaining('group JIDs is not supported'),
+    );
+  });
+});
+
+// ── _readBody size cap ────────────────────────────────────────────────────────
+
+describe('_readBody: size cap', () => {
+  it('resolves with body when within 64 KiB limit', async () => {
+    const ch = makeChannel();
+    const smallData = Buffer.alloc(100, 'x');
+    const fakeReq = {
+      on: (event: string, handler: (chunk?: any) => void) => {
+        if (event === 'data') handler(smallData);
+        if (event === 'end') handler();
+      },
+      destroy: vi.fn(),
+    } as any;
+    const body = await (ch as any)._readBody(fakeReq);
+    expect(body.length).toBe(100);
+  });
+
+  it('rejects with "body too large" and destroys when body exceeds 64 KiB', async () => {
+    const ch = makeChannel();
+    // 65537 bytes — one byte over the 65536 limit
+    const bigChunk = Buffer.alloc(65537, 'a');
+    let destroyCalled = false;
+    const fakeReq = {
+      on: (event: string, handler: (chunk?: any) => void) => {
+        if (event === 'data') handler(bigChunk);
+        // 'end' is deliberately never fired after destroy in real Node
+      },
+      destroy: () => {
+        destroyCalled = true;
+      },
+    } as any;
+    await expect((ch as any)._readBody(fakeReq)).rejects.toThrow(
+      'body too large',
+    );
+    expect(destroyCalled).toBe(true);
+  });
+});
+
+// ── disconnect idempotency ────────────────────────────────────────────────────
+
+describe('disconnect: idempotency', () => {
+  it('calling disconnect() twice does not throw', async () => {
+    const ch = makeChannel();
+    // Fake a server so we can test disconnect without binding a port
+    let closeCalled = 0;
+    (ch as any).server = {
+      close: (cb: () => void) => {
+        closeCalled++;
+        cb();
+      },
+    };
+    (ch as any).connected = true;
+
+    await expect(
+      Promise.all([ch.disconnect(), ch.disconnect()]),
+    ).resolves.not.toThrow();
+    // Only one close call because the second disconnect sees server === null
+    expect(closeCalled).toBe(1);
+    expect(ch.isConnected()).toBe(false);
   });
 });
 

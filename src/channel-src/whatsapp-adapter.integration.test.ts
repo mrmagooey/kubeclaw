@@ -248,4 +248,54 @@ describe('whatsapp-adapter: integration (real HTTP server)', () => {
     // Confirm port is no longer listening
     await expect(fetch(`http://127.0.0.1:${port}/healthz`)).rejects.toThrow();
   });
+
+  it('POST /webhook with body > 64 KiB → 413 or connection closed; no onMessage', async () => {
+    const opts = makeOpts();
+    const { ch, port } = await startChannel(opts);
+    openChannels.push(ch);
+
+    // 65537 bytes — one byte over the 65536 cap.
+    // HMAC will be wrong, but the size check fires first.
+    const bigBody = Buffer.alloc(65537, 'a');
+
+    // req.destroy() in the handler causes the socket to close before the
+    // response is sent, so the client sees either 413 or a socket hang-up.
+    // Both outcomes prove the body was rejected and no payload was processed.
+    const { request } = await import('node:http');
+    const result = await new Promise<number | 'hangup'>((resolve) => {
+      const req = request(
+        {
+          hostname: '127.0.0.1',
+          port,
+          path: '/webhook',
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/octet-stream',
+            'Content-Length': bigBody.length,
+            'X-Hub-Signature-256': 'sha256=00',
+          },
+        },
+        (res) => resolve(res.statusCode ?? 0),
+      );
+      req.on('error', () => resolve('hangup'));
+      req.write(bigBody);
+      req.end();
+    });
+
+    // Accept 413 (header written before body exhausted) or hangup (req.destroy races)
+    expect(result === 413 || result === 'hangup').toBe(true);
+
+    await new Promise((r) => setTimeout(r, 20));
+    expect(opts.onMessage).not.toHaveBeenCalled();
+  });
+
+  it('calling disconnect() twice does not throw', async () => {
+    const opts = makeOpts();
+    const { ch } = await startChannel(opts);
+    // Not added to openChannels — we manage cleanup here
+    await expect(
+      Promise.all([ch.disconnect(), ch.disconnect()]),
+    ).resolves.not.toThrow();
+    expect(ch.isConnected()).toBe(false);
+  });
 });
