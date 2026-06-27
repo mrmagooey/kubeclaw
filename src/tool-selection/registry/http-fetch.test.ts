@@ -28,6 +28,9 @@ describe('makeHttpJsonFetcher', () => {
     const [url, init] = vi.mocked(globalThis.fetch).mock.calls[0];
     expect(url).toBe('https://example.com/api');
     expect((init as RequestInit).method).toBe('GET');
+    // The abort signal must actually reach fetch, otherwise the timeout is a
+    // no-op even though AbortSignal.timeout was called.
+    expect((init as RequestInit).signal).toBeInstanceOf(AbortSignal);
   });
 
   it('throws on non-2xx status', async () => {
@@ -42,8 +45,11 @@ describe('makeHttpJsonFetcher', () => {
     );
   });
 
-  it('applies a timeout via AbortSignal', async () => {
-    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
+  it('applies a timeout and passes that exact signal to fetch', async () => {
+    const knownSignal = AbortSignal.timeout(60_000);
+    const timeoutSpy = vi
+      .spyOn(AbortSignal, 'timeout')
+      .mockReturnValue(knownSignal);
     vi.mocked(globalThis.fetch).mockResolvedValueOnce({
       ok: true,
       json: async () => ({}),
@@ -53,6 +59,10 @@ describe('makeHttpJsonFetcher', () => {
     await fetcher('https://example.com/api');
 
     expect(timeoutSpy).toHaveBeenCalledWith(5_000);
+    // Identity check: the signal produced from the timeout must be the very
+    // signal handed to fetch. Drops of the `signal:` line fail here.
+    const [, init] = vi.mocked(globalThis.fetch).mock.calls[0];
+    expect((init as RequestInit).signal).toBe(knownSignal);
   });
 
   it('uses a default timeout of 10 000 ms', async () => {

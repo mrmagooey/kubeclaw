@@ -968,8 +968,9 @@ async function main(): Promise<void> {
     );
     toolLibraryLoader.start();
     const brokerCatalogHostLookup = buildBrokerCatalogHostLookup();
+    const orchestratorChat = makeOrchestratorChatFn();
     startFindToolsWatcher({
-      chat: makeOrchestratorChatFn(),
+      chat: orchestratorChat,
       liveCatalog: () =>
         mergeCatalog(loadToolBaselineFromDisk(), listToolOverrides()),
       library: () => toolLibraryLoader.getAll(),
@@ -978,7 +979,7 @@ async function main(): Promise<void> {
       secret: process.env.TOOL_SELECTION_SECRET ?? randomUUID(),
       searchRegistry: buildTsaSearchRegistry(process.env, {
         fetchJson: makeHttpJsonFetcher(),
-        chat: makeOrchestratorChatFn(),
+        chat: orchestratorChat,
         probe: { runProbeToolJob: (a) => jobRunner.runProbeToolJob(a) },
         catalogHostLookup: brokerCatalogHostLookup,
       }),

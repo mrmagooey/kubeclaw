@@ -14,6 +14,6 @@ export function makeHttpJsonFetcher(timeoutMs = 10_000): FetchJson {
     if (!res.ok) {
       throw new Error(`HTTP ${res.status} fetching ${url}`);
     }
-    return res.json() as Promise<unknown>;
+    return res.json();
   };
 }
