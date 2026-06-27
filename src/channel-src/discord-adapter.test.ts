@@ -294,6 +294,65 @@ describe('discord-adapter: handleMessage → onMessage', () => {
     );
     expect(opts.onMessage).not.toHaveBeenCalled();
   });
+
+  it('does NOT warn for empty-content guild message from a bot (echo guard runs first)', () => {
+    // A bot's embed/sticker arrives with empty content — the echo guard must fire
+    // before the MessageContent warn so operators don't get false-positive alerts.
+    const opts = fakeOpts();
+    const { sdk, ch } = buildChannel({ DISCORD_BOT_TOKEN: 'tok' }, opts);
+    ch.handleMessage({
+      channelId: '999888777',
+      guild: { id: '123', name: 'My Server' },
+      author: { id: '777', username: 'embedbot', bot: true },
+      channel: { id: '999888777', name: 'general' },
+      content: '', // embed/sticker — empty content, but author is a bot
+    });
+    expect(sdk.logger.warn).not.toHaveBeenCalled();
+    expect(opts.onMessage).not.toHaveBeenCalled();
+  });
+
+  it('rewrites mention when assistantName contains regex metacharacters (e.g. C++Bot)', () => {
+    // Ensure assistantName is escaped before building RegExp — "C++Bot" must not
+    // throw or mis-match due to unescaped '+' quantifiers.
+    const { sdk, factories } = (() => {
+      const fac: Record<string, any> = {};
+      const s = {
+        registerChannel: (name: string, f: any) => {
+          fac[name] = f;
+        },
+        logger: {
+          info: vi.fn(),
+          warn: vi.fn(),
+          error: vi.fn(),
+          debug: vi.fn(),
+        },
+        readEnvFile: () => ({ DISCORD_BOT_TOKEN: 'tok' }),
+        assistantName: 'C++Bot',
+        groupsDir: '/groups',
+      };
+      return { sdk: s, factories: fac };
+    })();
+    const opts = fakeOpts();
+    sdk.registerChannel('discord', (o: any) => {
+      const cfg = parseConfig(sdk as any);
+      if (!cfg) return null;
+      return new DiscordChannel(cfg, o, sdk as any);
+    });
+    const ch = factories['discord'](opts);
+
+    // Should not throw, and should rewrite the mention
+    ch.handleMessage({
+      channelId: '999888777',
+      guild: { id: '123', name: 'My Server' },
+      author: { id: '789', username: 'alice', bot: false },
+      channel: { id: '999888777', name: 'general' },
+      content: 'hey @C++Bot help me',
+    });
+    expect(opts.onMessage).toHaveBeenCalledWith(
+      'discord:999888777',
+      expect.objectContaining({ content: '@C++Bot hey @C++Bot help me' }),
+    );
+  });
 });
 
 // ── sendMessage ───────────────────────────────────────────────────────────────

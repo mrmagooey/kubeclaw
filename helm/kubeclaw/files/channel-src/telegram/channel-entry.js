@@ -97,8 +97,9 @@ class TelegramChannel {
     // Group trigger rewrite: if message contains @AssistantName but doesn't
     // start with it, prepend "@AssistantName " so the runtime trigger fires.
     if (inb.isGroup && this.sdk.assistantName && content) {
-      const triggerRegex = new RegExp(`^@${this.sdk.assistantName}\\b`, 'i');
-      const mentionRegex = new RegExp(`@${this.sdk.assistantName}\\b`, 'i');
+      const esc = this.sdk.assistantName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const triggerRegex = new RegExp(`^@${esc}\\b`, 'i');
+      const mentionRegex = new RegExp(`@${esc}\\b`, 'i');
       if (mentionRegex.test(content) && !triggerRegex.test(content)) {
         content = `@${this.sdk.assistantName} ${content}`;
       }

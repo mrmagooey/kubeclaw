@@ -89,15 +89,18 @@ class DiscordChannel {
 
   // ── Inbound handling ──────────────────────────────────────────────────────
   handleMessage(message) {
-    // Empty content in a guild message: likely the MessageContent intent is not enabled.
+    // Echo guard first — ignore bot messages (including our own) before any
+    // other checks, so embed/sticker messages from other bots never trigger
+    // the empty-content warning below.
+    if (message.author?.bot) return;
+
+    // Empty content in a guild message from a human: likely the MessageContent
+    // intent is not enabled. This signals an operator misconfiguration.
     if (message.guild && !message.content) {
       this.sdk.logger.warn(
         { channelId: message.channelId ?? message.channel?.id },
         'discord: empty message content in guild — ensure the MessageContent privileged intent is enabled in the Discord Developer Portal',
       );
-      // Do not drop immediately; fall through so buildInbound can check the jid
-      // and let the unregistered-chat guard drop it cleanly if needed.
-      // But since content is empty, there is nothing to deliver — return here.
       return;
     }
 
@@ -116,8 +119,9 @@ class DiscordChannel {
     // Group trigger rewrite: if message contains @AssistantName but doesn't
     // start with it, prepend "@AssistantName " so the runtime trigger fires.
     if (inb.isGroup && this.sdk.assistantName && content) {
-      const triggerRegex = new RegExp(`^@${this.sdk.assistantName}\\b`, 'i');
-      const mentionRegex = new RegExp(`@${this.sdk.assistantName}\\b`, 'i');
+      const esc = this.sdk.assistantName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const triggerRegex = new RegExp(`^@${esc}\\b`, 'i');
+      const mentionRegex = new RegExp(`@${esc}\\b`, 'i');
       if (mentionRegex.test(content) && !triggerRegex.test(content)) {
         content = `@${this.sdk.assistantName} ${content}`;
       }

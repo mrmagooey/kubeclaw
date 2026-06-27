@@ -278,6 +278,49 @@ describe('telegram-adapter: handleCtx → onMessage', () => {
     });
     expect(opts.onMessage).not.toHaveBeenCalled();
   });
+
+  it('rewrites mention when assistantName contains regex metacharacters (e.g. Andy.Bot)', () => {
+    // Ensure assistantName is escaped before building RegExp — "Andy.Bot" must not
+    // match "Andy_Bot" or throw due to an unescaped '.' wildcard.
+    const { sdk, factories } = (() => {
+      const fac: Record<string, any> = {};
+      const s = {
+        registerChannel: (name: string, f: any) => {
+          fac[name] = f;
+        },
+        logger: {
+          info: vi.fn(),
+          warn: vi.fn(),
+          error: vi.fn(),
+          debug: vi.fn(),
+        },
+        readEnvFile: () => ({ TELEGRAM_BOT_TOKEN: 'tok:ABC' }),
+        assistantName: 'Andy.Bot',
+        groupsDir: '/groups',
+      };
+      return { sdk: s, factories: fac };
+    })();
+    const opts = fakeOpts();
+    sdk.registerChannel('telegram', (o: any) => {
+      const cfg = parseConfig(sdk as any);
+      if (!cfg) return null;
+      return new TelegramChannel(cfg, o, sdk as any);
+    });
+    const ch = factories['telegram'](opts);
+
+    // Should not throw, and should rewrite the literal @Andy.Bot mention
+    ch.handleCtx({
+      chat: { id: -1001234567890, type: 'group', title: 'Test Group' },
+      from: { id: 789, username: 'alice', is_bot: false },
+      message: { text: 'hey @Andy.Bot what time is it' },
+    });
+    expect(opts.onMessage).toHaveBeenCalledWith(
+      'telegram:-1001234567890',
+      expect.objectContaining({
+        content: '@Andy.Bot hey @Andy.Bot what time is it',
+      }),
+    );
+  });
 });
 
 // ── sendMessage ───────────────────────────────────────────────────────────────

@@ -172,7 +172,9 @@ describe('Discord Channel End-to-End', () => {
         partials: [Partials.Channel],
       });
 
-      // Inject fake channel resolver so sendMessage / setTyping work without REST
+      // Inject fake channel resolver so sendMessage / setTyping work without REST.
+      // NOTE: relies on discord.js v14 exposing `channels` as a writable property;
+      // a future version could seal it, which would require an alternative approach.
       client.channels = {
         fetch: vi.fn().mockResolvedValue(fakeDiscordChannel),
       } as any;
