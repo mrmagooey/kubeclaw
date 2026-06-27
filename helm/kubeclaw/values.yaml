@@ -777,3 +777,28 @@ bootstrap:
   #
   #       ...skill body...
   skills: {}
+
+# Curated library of vetted-but-inactive tools the Tool Selection Agent can activate on demand.
+toolLibrary:
+  tools:
+    - name: extract_metadata
+      description: Extract EXIF and file metadata from an image stored in the group workspace.
+      parameters:
+        type: object
+        properties:
+          filename: { type: string, description: "Path to the image file under the group workspace" }
+        required: [filename]
+      image: kubeclaw/exiftool:latest
+      pattern: file
+      mount: group
+      run: 'exiftool "$(cat "$INPUT_DIR/filename")"'
+    - name: image_search
+      description: Search the web for an image matching a query and download it into the group workspace.
+      parameters:
+        type: object
+        properties:
+          query: { type: string }
+        required: [query]
+      image: kubeclaw/image-search:latest
+      pattern: http
+      credentials: [brave-search]

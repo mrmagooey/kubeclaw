@@ -282,6 +282,9 @@ spec:
             - name: tools-baseline
               mountPath: /etc/kubeclaw/tools-baseline
               readOnly: true
+            - name: tool-library
+              mountPath: /etc/kubeclaw/tool-library
+              readOnly: true
             - name: channel-manifests-baseline
               mountPath: /etc/kubeclaw/channel-manifests-baseline
               readOnly: true
@@ -311,6 +314,9 @@ spec:
           configMap:
             name: kubeclaw-tools-baseline
             optional: true
+        - name: tool-library
+          configMap:
+            name: kubeclaw-tool-library
         - name: channel-manifests-baseline
           configMap:
             name: kubeclaw-channel-manifests-baseline

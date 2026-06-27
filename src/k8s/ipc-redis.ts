@@ -68,6 +68,7 @@ import {
   finalizeCredentialApproval,
 } from '../tool-selection/agent.js';
 import type { ChatFn } from '../tool-selection/matcher.js';
+import { getAutoTool, touchAutoTool } from '../tool-selection/provenance.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
@@ -1074,6 +1075,7 @@ export async function startToolPodSpawnWatcher(
               groupsPvc,
               sessionsPvc,
             });
+            if (getAutoTool(category)) touchAutoTool(category, Date.now());
             logger.debug(
               { agentJobId, category, image: spec.image },
               'Resolved + spawned catalog sidecar tool pod',
@@ -2114,7 +2116,9 @@ export async function handleFindToolsMessage(
   }
 
   // Derive a per-request nonce from the shared secret.
-  const nonce = createHmac('sha256', deps.secret).update(requestId).digest('hex');
+  const nonce = createHmac('sha256', deps.secret)
+    .update(requestId)
+    .digest('hex');
 
   let result: import('../tool-selection/types.js').FindToolsResult;
 
@@ -2162,7 +2166,10 @@ export async function startFindToolsWatcher(
   const stream = getFindToolsStream();
   let lastId = await resolveStreamTip(redis, stream);
 
-  const writeResult = async (requestId: string, json: string): Promise<void> => {
+  const writeResult = async (
+    requestId: string,
+    json: string,
+  ): Promise<void> => {
     await getRedisClient().xadd(
       getFindToolsResultStream(requestId),
       '*',
@@ -2193,10 +2200,14 @@ export async function startFindToolsWatcher(
           lastId = id;
           ipcMetrics?.recordRedisMessage({ stream });
           const obj: Record<string, string> = {};
-          for (let i = 0; i < fields.length; i += 2) obj[fields[i]] = fields[i + 1];
+          for (let i = 0; i < fields.length; i += 2)
+            obj[fields[i]] = fields[i + 1];
 
           handleFindToolsMessage(obj, handlerDeps).catch((err) =>
-            logger.error({ err, requestId: obj.requestId }, 'find-tools handler error'),
+            logger.error(
+              { err, requestId: obj.requestId },
+              'find-tools handler error',
+            ),
           );
         }
       }

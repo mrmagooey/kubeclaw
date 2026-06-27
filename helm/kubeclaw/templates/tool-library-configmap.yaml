@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kubeclaw-tool-library
+  namespace: {{ include "kubeclaw.namespace" . }}
+  labels:
+    app: kubeclaw
+    component: tool-library
+data:
+  library.json: |-
+    {
+      "version": 1,
+      "generation": 1,
+      "tools": {{ toJson (default (list) .Values.toolLibrary.tools) }}
+    }
