@@ -241,3 +241,62 @@ describe('finalizeCredentialApproval', () => {
     expect(getAutoTool('image_search')).toBeUndefined();
   });
 });
+
+describe('runToolSelection tier-3', () => {
+  beforeEach(async () => {
+    await _initTestDatabase();
+    __resetDbForTest();
+  });
+
+  it('registers a discovered credential-free tool group-scoped with provenance=discovered', async () => {
+    const discovered: ToolSpec = {
+      name: 'extract_metadata',
+      description: 'EXIF',
+      parameters: { type: 'object' },
+      image: 'r@sha256:abc',
+      pattern: 'file',
+      mount: 'group',
+      allowedEgress: [],
+    };
+    const r = await runToolSelection(
+      { requestId: 'r', groupFolder: 'team-a', channel: 'http', taskDescription: 'exif' },
+      deps({
+        liveCatalog: () => [],
+        library: () => [],
+        chat: async () => JSON.stringify({ name: null, confidence: 0, reason: 'no' }),
+        searchRegistry: async () => discovered,
+      }),
+    );
+    expect(r.status).toBe('ready');
+    const meta = getAutoTool('extract_metadata');
+    expect(meta?.provenance).toBe('discovered');
+    expect(meta?.scopeGroup).toBe('team-a');
+  });
+
+  it('returns pending_credential (and does NOT register) for a credentialed discovered tool', async () => {
+    const discoveredCredentialed: ToolSpec = {
+      name: 'smart_search',
+      description: 'Web search via brave',
+      parameters: {},
+      image: 'kubeclaw/smart-search:latest@sha256:def',
+      pattern: 'http',
+      credentials: ['brave-search'],
+      allowedEgress: [{ host: 'api.search.brave.com' }],
+    };
+    const r = await runToolSelection(
+      { requestId: 'r', groupFolder: 'team-a', channel: 'http', taskDescription: 'search' },
+      deps({
+        liveCatalog: () => [],
+        library: () => [],
+        chat: async () => JSON.stringify({ name: null, confidence: 0, reason: 'no' }),
+        searchRegistry: async () => discoveredCredentialed,
+      }),
+    );
+    expect(r.status).toBe('pending_credential');
+    if (r.status === 'pending_credential') {
+      expect(r.catalogId).toBe('brave-search');
+      expect(r.approvalToken).toBeTruthy();
+    }
+    expect(getAutoTool('smart_search')).toBeUndefined();
+  });
+});

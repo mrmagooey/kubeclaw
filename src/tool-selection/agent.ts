@@ -101,11 +101,43 @@ export async function runToolSelection(
     try {
       const discovered = await deps.searchRegistry(req.taskDescription);
       if (discovered) {
-        // Phase 3 owns gating, scope, and registration of discovered tools.
+        const scoped: ToolSpec = { ...discovered, channels: [req.channel] };
+        const gate = evaluateGate(scoped, deps.catalogHostLookup);
+        if (gate.needsApproval) {
+          if (!gate.host) {
+            return {
+              status: 'unavailable',
+              message: `Discovered tool ${scoped.name} needs a credential (${gate.catalogId}) that is not configured in the broker; an administrator must set it up.`,
+            };
+          }
+          const token = mintApprovalToken(scoped.name, gate.catalogId!, deps.nonce);
+          return {
+            status: 'pending_credential',
+            toolName: scoped.name,
+            catalogId: gate.catalogId!,
+            host: gate.host,
+            approvalToken: token,
+            message: `Discovered tool ${scoped.name} needs your ${gate.catalogId} credential. Approve to enable it.`,
+          };
+        }
+        const reg = registerTool(scoped, undefined, deps.catalogHostLookup);
+        if (!reg.ok)
+          return {
+            status: 'unavailable',
+            message: `Could not register discovered ${scoped.name}: ${reg.error}`,
+          };
+        await deps.reconcile();
+        recordAutoTool({
+          name: scoped.name,
+          provenance: 'discovered',
+          scopeGroup: req.groupFolder,
+          sourceDigest: scoped.image.split('@')[1] ?? null,
+          now: deps.now(),
+        });
         return {
           status: 'ready',
-          tools: [candidate(discovered, 'discovered')],
-          message: `Discovered ${discovered.name}.`,
+          tools: [candidate(scoped, 'discovered')],
+          message: `Discovered and enabled ${scoped.name} (this group only).`,
         };
       }
     } catch (err) {
@@ -141,6 +173,9 @@ export async function finalizeCredentialApproval(
   ) {
     return { status: 'unavailable', message: 'Invalid or expired approval.' };
   }
+  // NOTE: credentialed *discovered* tools cannot be finalized here — they are not
+  // in library() and the approve message can't reconstruct the drafted spec.
+  // Completing them needs a pending-discovered-spec store (future work; see Phase 3 plan Task 7).
   const spec = deps.library().find((s) => s.name === args.toolName);
   if (!spec)
     return {
