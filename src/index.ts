@@ -128,6 +128,7 @@ import {
 import { listCapabilities } from './capabilities/registry.js';
 import { ToolLibraryLoader } from './tool-selection/library.js';
 import { makeOrchestratorChatFn } from './tool-selection/chat-adapter.js';
+import { sweepStaleAutoTools } from './tool-selection/sweep.js';
 import { loadBrokerConfig } from './credential-broker/config.js';
 
 // Re-export for backwards compatibility during refactor
@@ -960,18 +961,30 @@ async function main(): Promise<void> {
     // Watch the kubeclaw:find-tools stream and run tool selection on behalf of
     // channel pods (which have no K8s RBAC or LLM context).
     const toolLibraryLoader = new ToolLibraryLoader(
-      process.env.TOOL_LIBRARY_PATH ?? '/etc/kubeclaw/tool-library/library.json',
+      process.env.TOOL_LIBRARY_PATH ??
+        '/etc/kubeclaw/tool-library/library.json',
     );
     toolLibraryLoader.start();
     const brokerCatalogHostLookup = buildBrokerCatalogHostLookup();
     startFindToolsWatcher({
       chat: makeOrchestratorChatFn(),
-      liveCatalog: () => mergeCatalog(loadToolBaselineFromDisk(), listToolOverrides()),
+      liveCatalog: () =>
+        mergeCatalog(loadToolBaselineFromDisk(), listToolOverrides()),
       library: () => toolLibraryLoader.getAll(),
       catalogHostLookup: brokerCatalogHostLookup,
       reconcile: () => toolReconciler.apply(),
       secret: process.env.TOOL_SELECTION_SECRET ?? randomUUID(),
     }).catch((err) => logger.error({ err }, 'find-tools watcher failed'));
+
+    // ── Auto-tool TTL sweep ───────────────────────────────────────────────────
+    // Periodically remove stale auto-acquired tools from provenance and overrides.
+    const AUTO_TOOL_TTL_MS = Number(process.env.AUTO_TOOL_TTL_MS ?? 14 * 24 * 60 * 60 * 1000); // 14d
+    const AUTO_TOOL_SWEEP_MS = Number(process.env.AUTO_TOOL_SWEEP_MS ?? 60 * 60 * 1000); // hourly
+    setInterval(() => {
+      void sweepStaleAutoTools({ now: Date.now(), ttlMs: AUTO_TOOL_TTL_MS, reconcile: () => toolReconciler.apply() })
+        .then((pruned) => { if (pruned.length) logger.info({ pruned }, 'pruned stale auto tools'); })
+        .catch((err) => logger.warn({ err }, 'auto-tool sweep failed'));
+    }, AUTO_TOOL_SWEEP_MS);
   }
 
   // ── Orphaned tool-job reconciliation (Story 37) ───────────────────────────
