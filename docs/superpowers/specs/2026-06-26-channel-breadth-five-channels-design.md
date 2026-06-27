@@ -1,7 +1,15 @@
 # Channel Breadth: Five New Channel Types — Design Spec
 
 **Date:** 2026-06-26
-**Status:** Draft — produced via `auto-develop`; design approved by an independent coherence reviewer (verdict: coherent, no blockers). Reviewer should-fix items folded in below.
+**Status:** Implemented (2026-06-27) on branch `feat/channel-breadth-five-channels` — all five channels built sequentially via subagent-driven-development, each with a two-stage review; final whole-branch review passed after fixing one blocker (WhatsApp `/readyz`). Awaiting user decision on merge/PR. Originally produced via `auto-develop`; design approved by an independent coherence reviewer (verdict: coherent, no blockers).
+
+## Deferred to v2 (intentional v1 scope cuts)
+- **Inbound/outbound media** on all channels (Telegram surfaces image/pdf/voice capability flags but v1 delivers text only; WhatsApp/iMessage mark inbound media `[Attachment: unsupported in v1]`; Matrix drops `m.image` and declares `inboundImages:false`).
+- **Matrix E2E encryption** (unencrypted rooms only; `initRustCrypto()` deliberately never called).
+- **Rich formatting**: only Discord sets `markdownOutput:true`; the others send plain text (avoids MarkdownV2/HTML escaping failures).
+- **WhatsApp group send** (Meta Cloud API is 1:1 only — group JIDs early-return with a warning).
+- **Live round-trips for WhatsApp & iMessage** are not CI-able (need a Meta Business account / a Mac running BlueBubbles); covered by fakes + documented.
+- Reactions/tapbacks, Discord threads/embeds/slash-commands, interactive buttons.
 **Goal (one sentence):** Add five new channel types — **Telegram, Discord, Matrix, WhatsApp, iMessage** — as runtime SDK adapters, each following the existing one-mechanism channel model, to close the channel-breadth gap versus comparable assistants (OpenClaw/NanoClaw support 13–30+ channels; KubeClaw today has only `irc`, `http`, `oauth-webchat`, `signal`).
 
 ## Why
