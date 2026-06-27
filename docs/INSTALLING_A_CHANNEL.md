@@ -15,7 +15,7 @@ Every channel is a **runtime adapter** — a plain JS file shipped in the `kubec
 
 Both produce the same steady-state Deployment. Credentials reach the channel pod via environment variables sourced from its Secret.
 
-Currently available adapters: `discord`, `http`, `irc`, `matrix`, `oauth-webchat`, `signal`, `telegram`, `whatsapp`. Additional channel types (slack, imessage, etc.) follow the same pattern but their adapters are not yet built.
+Currently available adapters: `discord`, `http`, `imessage`, `irc`, `matrix`, `oauth-webchat`, `signal`, `telegram`, `whatsapp`.
 
 For developers writing a new adapter, see [DEVELOPING_A_CHANNEL.md](DEVELOPING_A_CHANNEL.md).
 
@@ -119,6 +119,7 @@ Credentials are gathered by the bootstrap dialogue (interactive) or supplied via
 | `slack` _(aspirational)_ | Bot token + App token                                   | https://api.slack.com/apps → OAuth & Permissions / Socket Mode                                                                   |
 | `whatsapp`               | Access token, Phone Number ID, Verify Token, App Secret | Meta App Dashboard (see [WhatsApp](#whatsapp) below); requires HTTPS Ingress                                                     |
 | `signal`                 | Phone number (E.164)                                    | See [Signal](#signal) below — the signal-cli sidecar is created with the channel pod; link the device afterward via port-forward |
+| `imessage`               | BlueBubbles server URL, BlueBubbles password            | See [iMessage](#imessage) below — **requires a Mac running BlueBubbles** (https://bluebubbles.app)                               |
 | `gmail` _(aspirational)_ | OAuth credentials                                       | Google Cloud project with Gmail API enabled                                                                                      |
 
 ### Signal
@@ -696,6 +697,101 @@ Register chats as groups using these JIDs in the orchestrator admin shell.
 - `inboundImages: false`, `outboundMedia: false`
 - No markdown rendering (plain text output)
 - **1:1 messaging only** — the Cloud API supports sending to individual E.164 numbers (`whatsapp:+14155238886`) only; outbound to group JIDs (`whatsapp:group.<id>`) is not supported and will be dropped with a warning (v1 limitation)
+
+---
+
+### iMessage
+
+> **⚠️ HARD EXTERNAL PREREQUISITE — a Mac running BlueBubbles is required.**
+>
+> iMessage is Apple-hardware-only. There is no Linux/container iMessage client.
+> KubeClaw bridges iMessage through **BlueBubbles** (https://bluebubbles.app),
+> a third-party open-source macOS app that exposes iMessage via a REST API.
+> **You must run BlueBubbles on a Mac that has iMessage signed in**, and that
+> Mac must be network-reachable from the Kubernetes cluster at all times while
+> the channel is active.
+
+iMessage is a **channel-runner** adapter. It polls the BlueBubbles REST API on an interval (default 3 s) and tracks a `lastSeen` cursor to prevent duplicate delivery. **No npm dependencies** — native `fetch` only. **No httpPort** — the adapter polls outbound; no inbound webhook server is needed.
+
+#### BlueBubbles Setup
+
+1. Download and install BlueBubbles from https://bluebubbles.app on a Mac that is signed into iMessage.
+2. During BlueBubbles setup, set a **server password** and note the **server URL** (typically `http://<mac-local-ip>:<port>`).
+3. Make the BlueBubbles URL reachable from your Kubernetes cluster. Options:
+   - **Same local network**: use `http://<mac-ip>:<port>` directly.
+   - **Reverse proxy / tunnel**: use ngrok, Cloudflare Tunnel, or a self-hosted proxy to expose the BlueBubbles port with a stable URL.
+   - **Static IP or domain**: configure port forwarding on your router.
+4. Verify reachability before bootstrapping:
+   ```bash
+   curl "http://<mac-ip>:<port>/api/v1/ping?password=<your-password>"
+   # expect: {"status":200,"message":"pong"}
+   ```
+
+#### Installing via the admin shell (interactive)
+
+```python
+bootstrap_channel_from_skill(type="imessage")
+# or with a custom instance name:
+bootstrap_channel_from_skill(type="imessage", instance_name="imessage-personal")
+```
+
+The bootstrap skill will:
+
+1. Prominently remind you of the BlueBubbles prerequisite.
+2. Ask for `IMESSAGE_BRIDGE_URL` (the full URL, e.g. `http://192.168.1.50:1234`) and `IMESSAGE_BRIDGE_PASSWORD`.
+3. Validate by calling `GET <url>/api/v1/ping` — fails fast if BlueBubbles is unreachable.
+4. Call `commit_channel_config`.
+
+#### Declarative Helm values
+
+```yaml
+channels:
+  my-imessage:
+    type: imessage
+    enabled: true
+    # No httpPort — iMessage uses polling, not webhooks
+```
+
+Create the Secret manually:
+
+```bash
+kubectl create secret generic kubeclaw-channel-my-imessage \
+  --from-literal=IMESSAGE_BRIDGE_URL='http://192.168.1.50:1234' \
+  --from-literal=IMESSAGE_BRIDGE_PASSWORD='your-bluebubbles-password' \
+  -n kubeclaw
+```
+
+Optional tuning:
+
+```bash
+# Poll interval in milliseconds (default: 3000)
+kubectl patch secret kubeclaw-channel-my-imessage \
+  --patch='{"stringData":{"IMESSAGE_POLL_MS":"5000"}}' -n kubeclaw
+```
+
+#### JID scheme
+
+| Conversation type | JID format                      |
+| ----------------- | ------------------------------- |
+| 1:1 (phone)       | `imessage:+14155238886` (E.164) |
+| 1:1 (email)       | `imessage:alice@example.com`    |
+| Group chat        | `imessage:group.<chatGuid>`     |
+
+The `chatGuid` for group chats comes from the BlueBubbles API (format: `iMessage;+;<uuid>`). Use the BlueBubbles web UI or API to find the GUID of an existing group chat.
+
+Register chats as groups using these JIDs in the orchestrator admin shell.
+
+#### Capabilities (v1)
+
+- **Text messages only** — inbound images and other media are delivered with an `[Attachment: unsupported in v1]` marker prepended to any text
+- No media capabilities declared (`capabilities: {}`)
+- No markdown rendering (plain text output)
+- Polling model: messages arrive within one poll interval (default 3 s) of being sent
+
+#### Operational notes
+
+- The Mac running BlueBubbles must remain **on, awake, and connected** for the channel to function. If the Mac sleeps or BlueBubbles stops, messages will be missed until it resumes (the poll cursor will skip ahead on reconnect — missed messages are not replayed).
+- BlueBubbles handles iMessage authentication; no Apple ID credentials are stored in KubeClaw.
 
 ---
 

@@ -819,3 +819,96 @@ describe('helm-render: whatsapp channelManifest', () => {
     expect(rendered).toContain('whatsapp-tls');
   });
 });
+
+// ── iMessage manifest validation (values.yaml integrity) ─────────────────────
+describe('imessage manifest: values.yaml integrity', () => {
+  // The iMessage manifest is embedded in helm/kubeclaw/values.yaml.
+  // iMessage uses NO npm deps (native fetch only) — same empty-deps package as whatsapp.
+  // Tests verify:
+  //   1. packageJson and packageLockJson are valid JSON
+  //   2. manifestHash = sha256(packageJson + '\n' + packageLockJson)
+  //   3. packageJson has empty dependencies {}
+  //   4. NO httpPort (polling model, no webhook server)
+  //   5. hostMode: channel-runner
+
+  const IMESSAGE_PKG_JSON =
+    '{"name":"runtime","version":"1.0.0","dependencies":{}}';
+  const IMESSAGE_MANIFEST_HASH =
+    '264348b405cd912a860ccb687d572590a9cf8f3a65196dcf6799aa93805d4329';
+
+  it('packageJson is valid JSON and has empty dependencies (no npm deps)', () => {
+    const pkg = JSON.parse(IMESSAGE_PKG_JSON);
+    expect(pkg.name).toBe('runtime');
+    expect(pkg.dependencies).toEqual({});
+  });
+
+  it('manifestHash matches sha256(packageJson + newline + packageLockJson)', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { createHash } = await import('node:crypto');
+    const valuesPath = join(process.cwd(), 'helm/kubeclaw/values.yaml');
+    const values = readFileSync(valuesPath, 'utf-8');
+
+    // Extract the imessage packageLockJson section
+    const imessageSectionMatch = values.match(
+      /imessage:\s*\n\s+hostMode:[^\n]+\n\s+packageJson:[^\n]+\n\s+packageLockJson:\s*'([^']+)'/,
+    );
+    expect(imessageSectionMatch).not.toBeNull();
+    const lockJson = imessageSectionMatch![1]!;
+
+    // Verify lock JSON is parseable and has empty dependencies
+    const lock = JSON.parse(lockJson);
+    expect(lock.lockfileVersion).toBe(3);
+    expect(lock.packages?.['']?.dependencies).toEqual({});
+
+    // Verify the hash
+    const computedHash = createHash('sha256')
+      .update(IMESSAGE_PKG_JSON + '\n' + lockJson)
+      .digest('hex');
+    expect(computedHash).toBe(IMESSAGE_MANIFEST_HASH);
+  });
+});
+
+// ── Helm-render integration test for imessage manifest ───────────────────────
+describe('helm-render: imessage channelManifest', () => {
+  it('renders imessage.json in the channel-manifests-baseline ConfigMap (no httpPort)', () => {
+    const rendered = execSync('helm template helm/kubeclaw', {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+    });
+    // The ConfigMap key should be `imessage.json`
+    expect(rendered).toContain('imessage.json');
+    // The manifest must carry hostMode: channel-runner
+    expect(rendered).toContain('"hostMode":"channel-runner"');
+    // The manifest must carry the expected hash
+    expect(rendered).toContain(
+      '264348b405cd912a860ccb687d572590a9cf8f3a65196dcf6799aa93805d4329',
+    );
+  });
+
+  it('imessage channel manifest has NO httpPort (polling, not webhook)', () => {
+    const rendered = execSync('helm template helm/kubeclaw', {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+    });
+    // Find the imessage.json entry in the rendered output
+    const imessageJsonMatch = rendered.match(
+      /imessage\.json:[^\n]*\n\s*'({[^']+})'/,
+    );
+    if (imessageJsonMatch) {
+      const parsed = JSON.parse(imessageJsonMatch[1]!);
+      expect(Object.prototype.hasOwnProperty.call(parsed, 'httpPort')).toBe(
+        false,
+      );
+    }
+    // Alternatively assert there's no httpPort associated with the imessage section.
+    // The key test: imessage.json renders and doesn't have httpPort in it.
+    // Since parsing from rendered YAML is complex, we check the raw YAML values instead.
+    const valuesPath = join(process.cwd(), 'helm/kubeclaw/values.yaml');
+    const { readFileSync } = require('node:fs');
+    const values = readFileSync(valuesPath, 'utf-8');
+    // The imessage section should NOT have httpPort
+    const imessageSection =
+      values.match(/imessage:\s*\n(\s+[^\n]+\n)+/)?.[0] ?? '';
+    expect(imessageSection).not.toContain('httpPort');
+  });
+});

@@ -754,6 +754,11 @@ bootstrap:
       packageJson: '{"name":"runtime","version":"1.0.0","dependencies":{}}'
       packageLockJson: '{"name":"runtime","version":"1.0.0","lockfileVersion":3,"requires":true,"packages":{"":{"name":"runtime","version":"1.0.0","dependencies":{}}}}'
       manifestHash: "264348b405cd912a860ccb687d572590a9cf8f3a65196dcf6799aa93805d4329"
+    imessage:
+      hostMode: channel-runner
+      packageJson: '{"name":"runtime","version":"1.0.0","dependencies":{}}'
+      packageLockJson: '{"name":"runtime","version":"1.0.0","lockfileVersion":3,"requires":true,"packages":{"":{"name":"runtime","version":"1.0.0","dependencies":{}}}}'
+      manifestHash: "264348b405cd912a860ccb687d572590a9cf8f3a65196dcf6799aa93805d4329"
   # bootstrap.skills: map of skill name to raw markdown string.
   # Each entry is mounted as <name>.md in the kubeclaw-bootstrap-skills-baseline ConfigMap
   # and merged with admin-registered skills at runtime.
