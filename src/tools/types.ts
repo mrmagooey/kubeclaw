@@ -401,7 +401,13 @@ export function validateTool(t: unknown): ValidationResult {
       if (r.ports !== undefined) {
         if (
           !Array.isArray(r.ports) ||
-          r.ports.some((p) => typeof p !== 'number' || p < 1 || p > 65535)
+          r.ports.some(
+            (p) =>
+              typeof p !== 'number' ||
+              !Number.isInteger(p) ||
+              p < 1 ||
+              p > 65535,
+          )
         ) {
           return {
             ok: false,

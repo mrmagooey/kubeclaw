@@ -456,6 +456,14 @@ describe('allowedEgress validation', () => {
     });
     expect(r.ok).toBe(false);
   });
+
+  it('rejects a non-integer port', () => {
+    const r = validateTool({
+      ...baseEgress,
+      allowedEgress: [{ host: 'h.example.com', ports: [443.5] }],
+    });
+    expect(r.ok).toBe(false);
+  });
 });
 
 describe('parseToolCatalog', () => {
