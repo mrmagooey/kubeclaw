@@ -1,0 +1,75 @@
+import type { ToolSpec } from '../tools/types.js';
+import { registerTool } from '../skills/orchestrator/tool-registry.js';
+import { matchTool, type ChatFn } from './matcher.js';
+import { evaluateGate, mintApprovalToken } from './credential-gate.js';
+import { recordAutoTool } from './provenance.js';
+import type { FindToolsRequest, FindToolsResult, ToolCandidate } from './types.js';
+import { logger } from '../logger.js';
+
+const MIN_CONFIDENCE = 0.5;
+
+export interface TsaDeps {
+  chat: ChatFn;
+  liveCatalog: () => ToolSpec[];
+  library: () => ToolSpec[];
+  catalogHostLookup: (id: string) => string | undefined;
+  reconcile: () => Promise<void>;
+  now: () => number;
+  nonce: string;
+  searchRegistry?: (task: string) => Promise<ToolSpec | null>;
+}
+
+function candidate(spec: ToolSpec, provenance: ToolCandidate['provenance']): ToolCandidate {
+  return { name: spec.name, description: spec.description, provenance };
+}
+
+export async function runToolSelection(
+  req: FindToolsRequest,
+  deps: TsaDeps,
+): Promise<FindToolsResult> {
+  // Tier 1: live catalog.
+  const live = deps.liveCatalog();
+  const m1 = await matchTool(req.taskDescription, live, deps.chat);
+  if (m1.name && m1.confidence >= MIN_CONFIDENCE) {
+    const spec = live.find((s) => s.name === m1.name)!;
+    return { status: 'ready', tools: [candidate(spec, 'catalog')], message: `Using existing tool ${spec.name}.` };
+  }
+
+  // Tier 2: curated library.
+  const lib = deps.library();
+  const m2 = await matchTool(req.taskDescription, lib, deps.chat);
+  if (m2.name && m2.confidence >= MIN_CONFIDENCE) {
+    const spec = lib.find((s) => s.name === m2.name)!;
+    const gate = evaluateGate(spec, deps.catalogHostLookup);
+    if (gate.needsApproval) {
+      const token = mintApprovalToken(spec.name, gate.catalogId!, deps.nonce);
+      return {
+        status: 'pending_credential',
+        toolName: spec.name,
+        catalogId: gate.catalogId!,
+        host: gate.host ?? '(unknown host)',
+        approvalToken: token,
+        message: `Tool ${spec.name} needs your ${gate.catalogId} credential. Approve to enable it.`,
+      };
+    }
+    const reg = registerTool(spec, deps.reconcile);
+    if (!reg.ok) return { status: 'unavailable', message: `Could not register ${spec.name}: ${reg.error}` };
+    recordAutoTool({ name: spec.name, provenance: 'library', scopeGroup: null, now: deps.now() });
+    return { status: 'ready', tools: [candidate(spec, 'library')], message: `Activated ${spec.name} from the library.` };
+  }
+
+  // Tier 3: open discovery (Phase 3 injects searchRegistry).
+  if (deps.searchRegistry) {
+    try {
+      const discovered = await deps.searchRegistry(req.taskDescription);
+      if (discovered) {
+        // Phase 3 owns gating, scope, and registration of discovered tools.
+        return { status: 'ready', tools: [candidate(discovered, 'discovered')], message: `Discovered ${discovered.name}.` };
+      }
+    } catch (err) {
+      logger.warn({ err, requestId: req.requestId }, 'registry discovery failed');
+    }
+  }
+
+  return { status: 'unavailable', message: 'No suitable tool found.' };
+}
