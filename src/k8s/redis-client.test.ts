@@ -48,6 +48,8 @@ import {
   getChannelStatusChannel,
   getDiscoveryRequestStream,
   getDiscoveryResponseKey,
+  getFindToolsStream,
+  getFindToolsResultStream,
 } from './redis-client.js';
 import { logger } from '../logger.js';
 
@@ -422,5 +424,16 @@ describe('createRedisClient event handlers (A5)', () => {
 
     await closeRedisConnections();
     vi.doUnmock('ioredis');
+  });
+});
+
+describe('find-tools stream names', () => {
+  it('produces the request stream name', () => {
+    expect(getFindToolsStream()).toBe('kubeclaw:find-tools');
+  });
+  it('produces a per-request result stream name', () => {
+    expect(getFindToolsResultStream('abc')).toBe(
+      'kubeclaw:find-tools-result:abc',
+    );
   });
 });

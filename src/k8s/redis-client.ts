@@ -185,6 +185,14 @@ export function getSpawnToolJobStream(): string {
   return 'kubeclaw:spawn-agent-job';
 }
 
+export function getFindToolsStream(): string {
+  return 'kubeclaw:find-tools';
+}
+
+export function getFindToolsResultStream(requestId: string): string {
+  return `kubeclaw:find-tools-result:${requestId}`;
+}
+
 export function getToolJobResultStream(toolJobId: string): string {
   return `kubeclaw:agent-job-result:${toolJobId}`;
 }
