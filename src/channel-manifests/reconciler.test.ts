@@ -688,3 +688,97 @@ describe('helm-render: matrix channelManifest', () => {
     );
   });
 });
+
+// ── WhatsApp manifest validation (values.yaml integrity) ─────────────────────
+describe('whatsapp manifest: values.yaml integrity', () => {
+  // The whatsapp manifest is embedded in helm/kubeclaw/values.yaml.
+  // WhatsApp uses NO npm deps (native fetch/http/crypto) — empty dependencies.
+  // Tests verify:
+  //   1. packageJson and packageLockJson are valid JSON
+  //   2. manifestHash = sha256(packageJson + '\n' + packageLockJson)
+  //   3. packageJson has empty dependencies {}
+  //   4. httpPort: 4080 is set (webhook server)
+
+  const WHATSAPP_PKG_JSON =
+    '{"name":"runtime","version":"1.0.0","dependencies":{}}';
+  const WHATSAPP_MANIFEST_HASH =
+    '264348b405cd912a860ccb687d572590a9cf8f3a65196dcf6799aa93805d4329';
+
+  it('packageJson is valid JSON and has empty dependencies (no npm deps)', () => {
+    const pkg = JSON.parse(WHATSAPP_PKG_JSON);
+    expect(pkg.name).toBe('runtime');
+    expect(pkg.dependencies).toEqual({});
+  });
+
+  it('manifestHash matches sha256(packageJson + newline + packageLockJson)', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { createHash } = await import('node:crypto');
+    const valuesPath = join(process.cwd(), 'helm/kubeclaw/values.yaml');
+    const values = readFileSync(valuesPath, 'utf-8');
+
+    // Extract the whatsapp packageLockJson section
+    const whatsappSectionMatch = values.match(
+      /whatsapp:\s*\n\s+hostMode:[^\n]+\n\s+httpPort:[^\n]+\n\s+packageJson:[^\n]+\n\s+packageLockJson:\s*'([^']+)'/,
+    );
+    expect(whatsappSectionMatch).not.toBeNull();
+    const lockJson = whatsappSectionMatch![1]!;
+
+    // Verify lock JSON is parseable and has empty dependencies
+    const lock = JSON.parse(lockJson);
+    expect(lock.lockfileVersion).toBe(3);
+    expect(lock.packages?.['']?.dependencies).toEqual({});
+
+    // Verify the hash
+    const computedHash = createHash('sha256')
+      .update(WHATSAPP_PKG_JSON + '\n' + lockJson)
+      .digest('hex');
+    expect(computedHash).toBe(WHATSAPP_MANIFEST_HASH);
+  });
+});
+
+// ── Helm-render integration test for whatsapp manifest ───────────────────────
+describe('helm-render: whatsapp channelManifest', () => {
+  it('renders whatsapp.json in the channel-manifests-baseline ConfigMap with httpPort', () => {
+    const rendered = execSync('helm template helm/kubeclaw', {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+    });
+    // The ConfigMap key should be `whatsapp.json`
+    expect(rendered).toContain('whatsapp.json');
+    // The manifest must carry hostMode: channel-runner
+    expect(rendered).toContain('"hostMode":"channel-runner"');
+    // The manifest must carry httpPort: 4080
+    expect(rendered).toContain('"httpPort":4080');
+    // The manifest must carry the expected hash
+    expect(rendered).toContain(
+      '264348b405cd912a860ccb687d572590a9cf8f3a65196dcf6799aa93805d4329',
+    );
+  });
+
+  it('renders Service and NetworkPolicy for the whatsapp channel (httpPort wiring)', () => {
+    // Render with an enabled whatsapp channel instance + httpPort to verify Service renders.
+    // channels.*.enabled must be true for the Deployment/Service to be included.
+    const valuesFile = join(
+      require('os').tmpdir(),
+      'whatsapp-test-values.yaml',
+    );
+    require('fs').writeFileSync(
+      valuesFile,
+      [
+        'channels:',
+        '  whatsapp-test:',
+        '    type: whatsapp',
+        '    httpPort: 4080',
+        '    enabled: true',
+      ].join('\n'),
+    );
+    const rendered = execSync(`helm template helm/kubeclaw -f ${valuesFile}`, {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+    });
+    // Service should render for the whatsapp channel instance
+    expect(rendered).toContain('kubeclaw-channel-whatsapp-test');
+    // Port 4080 should appear in the rendered output
+    expect(rendered).toContain('4080');
+  });
+});

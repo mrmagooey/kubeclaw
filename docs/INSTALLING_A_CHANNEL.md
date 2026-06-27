@@ -15,7 +15,7 @@ Every channel is a **runtime adapter** — a plain JS file shipped in the `kubec
 
 Both produce the same steady-state Deployment. Credentials reach the channel pod via environment variables sourced from its Secret.
 
-Currently available adapters: `discord`, `http`, `irc`, `matrix`, `oauth-webchat`, `signal`, `telegram`. Additional channel types (slack, whatsapp, imessage, etc.) follow the same pattern but their adapters are not yet built.
+Currently available adapters: `discord`, `http`, `irc`, `matrix`, `oauth-webchat`, `signal`, `telegram`, `whatsapp`. Additional channel types (slack, imessage, etc.) follow the same pattern but their adapters are not yet built.
 
 For developers writing a new adapter, see [DEVELOPING_A_CHANNEL.md](DEVELOPING_A_CHANNEL.md).
 
@@ -109,17 +109,17 @@ Apply with `helm upgrade --install kubeclaw ./helm/kubeclaw -n kubeclaw -f your-
 
 Credentials are gathered by the bootstrap dialogue (interactive) or supplied via `envVars` / a channel Secret (declarative). The table below lists what each adapter needs — note that most of these channel types are aspirational; only `http`, `irc`, and `oauth-webchat` have adapters today.
 
-| Channel                     | Credentials needed                                    | Where to obtain                                                                                                                  |
-| --------------------------- | ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `http`                      | Username:password pairs                               | None (you choose them)                                                                                                           |
-| `irc`                       | Server, nick, optional channels list                  | None (just the IRC server you want to join)                                                                                      |
-| `oauth-webchat`             | OIDC issuer, client ID, client secret, allowed emails | Your OIDC provider (Google Workspace, Okta, etc.)                                                                                |
-| `telegram`                  | Bot token                                             | Talk to [@BotFather](https://t.me/BotFather)                                                                                     |
-| `discord`                   | Bot token                                             | https://discord.com/developers/applications → Bot → Token                                                                        |
-| `slack` _(aspirational)_    | Bot token + App token                                 | https://api.slack.com/apps → OAuth & Permissions / Socket Mode                                                                   |
-| `whatsapp` _(aspirational)_ | Phone number                                          | WhatsApp Business API setup                                                                                                      |
-| `signal`                    | Phone number (E.164)                                  | See [Signal](#signal) below — the signal-cli sidecar is created with the channel pod; link the device afterward via port-forward |
-| `gmail` _(aspirational)_    | OAuth credentials                                     | Google Cloud project with Gmail API enabled                                                                                      |
+| Channel                  | Credentials needed                                      | Where to obtain                                                                                                                  |
+| ------------------------ | ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `http`                   | Username:password pairs                                 | None (you choose them)                                                                                                           |
+| `irc`                    | Server, nick, optional channels list                    | None (just the IRC server you want to join)                                                                                      |
+| `oauth-webchat`          | OIDC issuer, client ID, client secret, allowed emails   | Your OIDC provider (Google Workspace, Okta, etc.)                                                                                |
+| `telegram`               | Bot token                                               | Talk to [@BotFather](https://t.me/BotFather)                                                                                     |
+| `discord`                | Bot token                                               | https://discord.com/developers/applications → Bot → Token                                                                        |
+| `slack` _(aspirational)_ | Bot token + App token                                   | https://api.slack.com/apps → OAuth & Permissions / Socket Mode                                                                   |
+| `whatsapp`               | Access token, Phone Number ID, Verify Token, App Secret | Meta App Dashboard (see [WhatsApp](#whatsapp) below); requires HTTPS Ingress                                                     |
+| `signal`                 | Phone number (E.164)                                    | See [Signal](#signal) below — the signal-cli sidecar is created with the channel pod; link the device afterward via port-forward |
+| `gmail` _(aspirational)_ | OAuth credentials                                       | Google Cloud project with Gmail API enabled                                                                                      |
 
 ### Signal
 
@@ -620,6 +620,81 @@ To invoke from the admin shell, describe what you want and the LLM will call
 
 After install, use `list_capabilities` to confirm the lifecycle reaches `ready`,
 or `get_capability_logs(name="whisper")` to diagnose startup issues.
+
+---
+
+### WhatsApp
+
+WhatsApp is a **channel-runner** adapter using the **Meta WhatsApp Business Cloud API**. Inbound messages arrive via a webhook HTTP server (port 4080 by default); outbound messages are sent via HTTPS to `graph.facebook.com`. No npm dependencies — native `fetch`, `node:http`, and `node:crypto` only.
+
+**HTTPS/`ingress.tls` requirement:** Meta requires that your webhook callback URL uses HTTPS. You **must** configure TLS termination at the Ingress. Without HTTPS, the Meta webhook verification handshake will fail and no inbound messages will be received.
+
+#### Meta App Setup
+
+1. Go to https://developers.facebook.com/ and create or open a **Business App**.
+2. Add the **WhatsApp** product to your app.
+3. Under **WhatsApp → API Setup**, note your **Phone Number ID** (numeric string).
+4. Create a **System User** and generate a long-lived **Access Token** with `whatsapp_business_messaging` permission.
+5. Note your **App Secret** from **App Settings → Basic**.
+6. After deploying the channel, go to **WhatsApp → Configuration → Webhooks**:
+   - Set **Callback URL** to `https://<your-domain>/webhook` (must be HTTPS)
+   - Set **Verify Token** to the value you will provide as `WHATSAPP_VERIFY_TOKEN`
+   - Click **Verify and Save**
+   - Subscribe to the **messages** webhook field
+
+#### Installing via the admin shell (interactive)
+
+```python
+bootstrap_channel_from_skill(type="whatsapp")
+# or with a custom instance name:
+bootstrap_channel_from_skill(type="whatsapp", instance_name="whatsapp-business")
+```
+
+The bootstrap skill will ask for all four credentials, validate the access token against the Graph API, and call `commit_channel_config`.
+
+#### Declarative Helm values
+
+```yaml
+channels:
+  my-whatsapp:
+    type: whatsapp
+    httpPort: 4080
+    enabled: true
+    ingress:
+      enabled: true
+      host: whatsapp.example.com
+      # REQUIRED: Meta mandates HTTPS for webhook delivery
+      tls:
+        - secretName: whatsapp-tls
+          hosts:
+            - whatsapp.example.com
+```
+
+Create the Secret manually:
+
+```bash
+kubectl create secret generic kubeclaw-channel-my-whatsapp \
+  --from-literal=WHATSAPP_ACCESS_TOKEN='EAAxxxxxxxx...' \
+  --from-literal=WHATSAPP_PHONE_NUMBER_ID='123456789012345' \
+  --from-literal=WHATSAPP_VERIFY_TOKEN='my-random-verify-token' \
+  --from-literal=WHATSAPP_APP_SECRET='abcdef1234567890...' \
+  -n kubeclaw
+```
+
+#### JID scheme
+
+| Conversation type | JID format                      |
+| ----------------- | ------------------------------- |
+| 1:1 chat          | `whatsapp:+14155238886` (E.164) |
+| Group chat        | `whatsapp:group.<groupId>`      |
+
+Register chats as groups using these JIDs in the orchestrator admin shell.
+
+#### Capabilities (v1)
+
+- **Text messages only** — inbound images and other media are delivered with an `[Attachment: unsupported in v1]` marker appended to any text
+- `inboundImages: false`, `outboundMedia: false`
+- No markdown rendering (plain text output)
 
 ---
 
