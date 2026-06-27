@@ -66,6 +66,13 @@ rules:
   - apiGroups: [""]
     resources: ["configmaps"]
     verbs: ["get", "list", "create", "patch", "update"]
+  # Dynamic tool selection: manage per-tool egress policies (Cilium + Istio CRDs)
+  - apiGroups: ["cilium.io"]
+    resources: ["ciliumnetworkpolicies"]
+    verbs: ["create", "delete", "get", "list"]
+  - apiGroups: ["networking.istio.io"]
+    resources: ["serviceentries", "sidecars"]
+    verbs: ["create", "delete", "get", "list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

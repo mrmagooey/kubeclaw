@@ -1,13 +1,22 @@
 import { logger } from '../../logger.js';
 import { db } from '../../db.js';
 import { ToolSpec, validateTool } from '../../tools/types.js';
+import { checkEgressCredentialCoherence } from '../../k8s/egress/coherence.js';
 
 export type Result = { ok: true } | { ok: false; error: string };
 export type ReconcileFn = () => Promise<void>;
 
-export function registerTool(t: ToolSpec, reconcile?: ReconcileFn): Result {
+export function registerTool(
+  t: ToolSpec,
+  reconcile?: ReconcileFn,
+  catalogHostLookup?: (id: string) => string | undefined,
+): Result {
   const v = validateTool(t);
   if (!v.ok) return v;
+  if (catalogHostLookup) {
+    const c = checkEgressCredentialCoherence(t, catalogHostLookup);
+    if (!c.ok) return { ok: false, error: c.error ?? 'egress/credential coherence failed' };
+  }
 
   const existing = db.exec(`SELECT 1 FROM tool_overrides WHERE name = ?`, [
     t.name,
@@ -31,6 +40,7 @@ export function registerTool(t: ToolSpec, reconcile?: ReconcileFn): Result {
 export function editTool(
   args: { name: string; patch: Partial<ToolSpec> },
   reconcile?: ReconcileFn,
+  catalogHostLookup?: (id: string) => string | undefined,
 ): Result {
   const rows = db.exec(`SELECT spec_json FROM tool_overrides WHERE name = ?`, [
     args.name,
@@ -48,6 +58,10 @@ export function editTool(
 
   const v = validateTool(merged);
   if (!v.ok) return v;
+  if (catalogHostLookup) {
+    const c = checkEgressCredentialCoherence(merged, catalogHostLookup);
+    if (!c.ok) return { ok: false, error: c.error ?? 'egress/credential coherence failed' };
+  }
 
   db.run(
     `UPDATE tool_overrides SET spec_json = ?, updated_at = ? WHERE name = ?`,

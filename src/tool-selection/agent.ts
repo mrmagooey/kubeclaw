@@ -76,7 +76,7 @@ export async function runToolSelection(
         message: `Tool ${spec.name} needs your ${gate.catalogId} credential. Approve to enable it.`,
       };
     }
-    const reg = registerTool(spec);
+    const reg = registerTool(spec, undefined, deps.catalogHostLookup);
     if (!reg.ok)
       return {
         status: 'unavailable',
@@ -147,7 +147,7 @@ export async function finalizeCredentialApproval(
       status: 'unavailable',
       message: `Tool ${args.toolName} no longer available.`,
     };
-  const reg = registerTool(spec);
+  const reg = registerTool(spec, undefined, deps.catalogHostLookup);
   if (!reg.ok)
     return {
       status: 'unavailable',

@@ -19,6 +19,7 @@ const imageSearch: ToolSpec = {
   image: 'kubeclaw/image-search:latest',
   pattern: 'http',
   credentials: ['brave-search'],
+  allowedEgress: [{ host: 'api.search.brave.com', ports: [443] }],
 };
 
 function deps(over: Partial<TsaDeps> = {}): TsaDeps {

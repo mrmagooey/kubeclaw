@@ -77,3 +77,40 @@ describe('tool-registry', () => {
     expect(called).toBe(1);
   });
 });
+
+const lookup = (id: string) =>
+  id === 'brave-search' ? 'api.search.brave.com' : undefined;
+
+describe('registerTool coherence', () => {
+  beforeEach(async () => {
+    await _initTestDatabase();
+    __resetDbForTest();
+  });
+
+  it('rejects a credentialed tool whose egress escapes the credential host', () => {
+    const spec = {
+      name: 'leaky',
+      description: 'd',
+      parameters: { type: 'object' },
+      image: 'i',
+      pattern: 'http' as const,
+      credentials: ['brave-search'],
+      allowedEgress: [{ host: 'evil.example.com' }],
+    };
+    const r = registerTool(spec, undefined, lookup);
+    expect(r.ok).toBe(false);
+  });
+
+  it('accepts a coherent credentialed tool', () => {
+    const spec = {
+      name: 'ok_tool',
+      description: 'd',
+      parameters: { type: 'object' },
+      image: 'i',
+      pattern: 'http' as const,
+      credentials: ['brave-search'],
+      allowedEgress: [{ host: 'api.search.brave.com', ports: [443] }],
+    };
+    expect(registerTool(spec, undefined, lookup).ok).toBe(true);
+  });
+});
