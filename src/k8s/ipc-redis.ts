@@ -58,6 +58,16 @@ import {
 } from '../per-group-capabilities/index.js';
 import { processCommitChannelConfig } from './ipc-redis-bootstrap.js';
 import type { CommitChannelConfigDeps } from './ipc-redis-bootstrap.js';
+import { createHmac } from 'node:crypto';
+import {
+  getFindToolsStream,
+  getFindToolsResultStream,
+} from './redis-client.js';
+import {
+  runToolSelection,
+  finalizeCredentialApproval,
+} from '../tool-selection/agent.js';
+import type { ChatFn } from '../tool-selection/matcher.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
@@ -2073,6 +2083,130 @@ export function _testSetActiveAgentJob(
   jobName: string,
 ): void {
   activeAgentJobsByGroup.set(groupFolder, jobName);
+}
+
+// ── find-tools watcher ────────────────────────────────────────────────────────
+
+export interface FindToolsHandlerDeps {
+  chat: ChatFn;
+  liveCatalog: () => import('../tools/types.js').ToolSpec[];
+  library: () => import('../tools/types.js').ToolSpec[];
+  catalogHostLookup: (id: string) => string | undefined;
+  reconcile: () => Promise<void>;
+  /** Write the serialized result back to the caller stream. */
+  writeResult: (requestId: string, json: string) => Promise<void>;
+  /** Shared HMAC secret used to derive per-request nonces. */
+  secret: string;
+}
+
+/**
+ * Handle a single message from the kubeclaw:find-tools stream.
+ * Exported so it can be unit-tested without a live Redis loop.
+ */
+export async function handleFindToolsMessage(
+  obj: Record<string, string> & { kind?: string },
+  deps: FindToolsHandlerDeps,
+): Promise<void> {
+  const { requestId } = obj;
+  if (!requestId) {
+    logger.warn({ obj }, 'find-tools message missing requestId; skipped');
+    return;
+  }
+
+  // Derive a per-request nonce from the shared secret.
+  const nonce = createHmac('sha256', deps.secret).update(requestId).digest('hex');
+
+  let result: import('../tool-selection/types.js').FindToolsResult;
+
+  if (obj.kind === 'approve') {
+    const { toolName, catalogId, approvalToken } = obj;
+    result = await finalizeCredentialApproval(
+      { toolName, catalogId, approvalToken },
+      {
+        library: deps.library,
+        catalogHostLookup: deps.catalogHostLookup,
+        reconcile: deps.reconcile,
+        now: () => Date.now(),
+        nonce,
+      },
+    );
+  } else {
+    const { groupFolder, channel, taskDescription } = obj;
+    result = await runToolSelection(
+      { requestId, groupFolder, channel, taskDescription },
+      {
+        chat: deps.chat,
+        liveCatalog: deps.liveCatalog,
+        library: deps.library,
+        catalogHostLookup: deps.catalogHostLookup,
+        reconcile: deps.reconcile,
+        now: () => Date.now(),
+        nonce,
+      },
+    );
+  }
+
+  await deps.writeResult(requestId, JSON.stringify(result));
+}
+
+/**
+ * Watch the kubeclaw:find-tools stream and run tool selection on behalf of
+ * channel pods (which have no LLM context). Writes the result JSON to
+ * kubeclaw:find-tools-result:{requestId} so the channel pod can read it.
+ * Called by the orchestrator at startup.
+ */
+export async function startFindToolsWatcher(
+  deps: Omit<FindToolsHandlerDeps, 'writeResult'>,
+): Promise<void> {
+  const redis = createStreamWatcherClient();
+  const stream = getFindToolsStream();
+  let lastId = await resolveStreamTip(redis, stream);
+
+  const writeResult = async (requestId: string, json: string): Promise<void> => {
+    await getRedisClient().xadd(
+      getFindToolsResultStream(requestId),
+      '*',
+      'result',
+      json,
+    );
+  };
+
+  const handlerDeps: FindToolsHandlerDeps = { ...deps, writeResult };
+
+  logger.info('Find-tools watcher started');
+
+  while (ipcWatcherRunning) {
+    try {
+      const resp = await redis.xread(
+        'COUNT',
+        10,
+        'BLOCK',
+        5000,
+        'STREAMS',
+        stream,
+        lastId,
+      );
+      if (!resp) continue;
+
+      for (const [, messages] of resp as [string, [string, string[]][]][]) {
+        for (const [id, fields] of messages) {
+          lastId = id;
+          ipcMetrics?.recordRedisMessage({ stream });
+          const obj: Record<string, string> = {};
+          for (let i = 0; i < fields.length; i += 2) obj[fields[i]] = fields[i + 1];
+
+          handleFindToolsMessage(obj, handlerDeps).catch((err) =>
+            logger.error({ err, requestId: obj.requestId }, 'find-tools handler error'),
+          );
+        }
+      }
+    } catch (err) {
+      if (ipcWatcherRunning) {
+        logger.error({ err }, 'Find-tools watcher error');
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+    }
+  }
 }
 
 /**

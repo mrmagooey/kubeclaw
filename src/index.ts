@@ -1,6 +1,7 @@
-import fs from 'fs';
+import fs, { existsSync, readFileSync } from 'fs';
 import http from 'http';
 import path from 'path';
+import { randomUUID } from 'node:crypto';
 
 import {
   ASSISTANT_NAME,
@@ -50,6 +51,7 @@ import {
   registerCapabilityDeps,
   registerBootstrapDeps,
   startBootstrapTaskWatcher,
+  startFindToolsWatcher,
 } from './k8s/ipc-redis.js';
 import { CatalogInformer } from './k8s/catalog.js';
 import { startAclCleanupSweep } from './k8s/acl-manager.js';
@@ -124,9 +126,28 @@ import {
   type PerGroupCapabilityHelmEntry,
 } from './per-group-capabilities/builders/index.js';
 import { listCapabilities } from './capabilities/registry.js';
+import { ToolLibraryLoader } from './tool-selection/library.js';
+import { makeOrchestratorChatFn } from './tool-selection/chat-adapter.js';
+import { loadBrokerConfig } from './credential-broker/config.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
+
+// ── Credential-broker catalog host lookup ─────────────────────────────────────
+function buildBrokerCatalogHostLookup(): (id: string) => string | undefined {
+  try {
+    const p =
+      process.env.BROKER_CONFIG_PATH ?? '/etc/credential-broker/config.yaml';
+    if (!existsSync(p)) return () => undefined;
+    const cfg = loadBrokerConfig(readFileSync(p, 'utf-8'));
+    const byId = new Map(
+      (cfg.catalog ?? []).map((e) => [e.id, e.host] as const),
+    );
+    return (id) => byId.get(id);
+  } catch {
+    return () => undefined;
+  }
+}
 
 let lastTimestamp = '';
 let sessions: Record<string, string> = {};
@@ -420,7 +441,11 @@ async function main(): Promise<void> {
             },
           });
         } catch (err: any) {
-          if (err?.code === 409 || err?.statusCode === 409 || err?.body?.code === 409) {
+          if (
+            err?.code === 409 ||
+            err?.statusCode === 409 ||
+            err?.body?.code === 409
+          ) {
             // Already exists — patch it
             await coreApi.patchNamespacedSecret({
               name,
@@ -439,7 +464,11 @@ async function main(): Promise<void> {
             body,
           });
         } catch (err: any) {
-          if (err?.code === 409 || err?.statusCode === 409 || err?.body?.code === 409) {
+          if (
+            err?.code === 409 ||
+            err?.statusCode === 409 ||
+            err?.body?.code === 409
+          ) {
             await appsApi.replaceNamespacedDeployment({
               name: body.metadata!.name!,
               namespace: KUBECLAW_NAMESPACE,
@@ -530,11 +559,19 @@ async function main(): Promise<void> {
               apiVersion: 'v1',
               kind: 'PersistentVolumeClaim',
               metadata: { name, labels: { 'kubeclaw/channel-pvc': 'true' } },
-              spec: { accessModes: ['ReadWriteOnce'], resources: { requests: { storage: `${sizeGi}Gi` } } },
+              spec: {
+                accessModes: ['ReadWriteOnce'],
+                resources: { requests: { storage: `${sizeGi}Gi` } },
+              },
             },
           });
         } catch (err: any) {
-          if (err?.code === 409 || err?.statusCode === 409 || err?.body?.code === 409) return;
+          if (
+            err?.code === 409 ||
+            err?.statusCode === 409 ||
+            err?.body?.code === 409
+          )
+            return;
           throw err;
         }
       },
@@ -546,7 +583,12 @@ async function main(): Promise<void> {
             gracePeriodSeconds: 0,
           });
         } catch (err: any) {
-          if (err?.code === 404 || err?.statusCode === 404 || err?.body?.code === 404) return;
+          if (
+            err?.code === 404 ||
+            err?.statusCode === 404 ||
+            err?.body?.code === 404
+          )
+            return;
           throw err;
         }
       },
@@ -558,7 +600,12 @@ async function main(): Promise<void> {
             gracePeriodSeconds: 0,
           });
         } catch (err: any) {
-          if (err?.code === 404 || err?.statusCode === 404 || err?.body?.code === 404) return;
+          if (
+            err?.code === 404 ||
+            err?.statusCode === 404 ||
+            err?.body?.code === 404
+          )
+            return;
           throw err;
         }
       },
@@ -656,14 +703,18 @@ async function main(): Promise<void> {
           });
           const raw = cm.data?.[`${channelType}.json`];
           if (!raw) return undefined;
-          const parsed = JSON.parse(raw) as { sidecar?: import('./skills/orchestrator/channel-manifest-registry.js').SidecarSpec };
+          const parsed = JSON.parse(raw) as {
+            sidecar?: import('./skills/orchestrator/channel-manifest-registry.js').SidecarSpec;
+          };
           return parsed.sidecar ?? undefined;
         } catch {
           return undefined;
         }
       },
       // Task 2: idempotent create-or-replace a K8s Service.
-      createService: async (body: import('@kubernetes/client-node').V1Service) => {
+      createService: async (
+        body: import('@kubernetes/client-node').V1Service,
+      ) => {
         const name = body.metadata!.name!;
         try {
           await coreApi.createNamespacedService({
@@ -671,7 +722,11 @@ async function main(): Promise<void> {
             body,
           });
         } catch (err: any) {
-          if (err?.code === 409 || err?.statusCode === 409 || err?.body?.code === 409) {
+          if (
+            err?.code === 409 ||
+            err?.statusCode === 409 ||
+            err?.body?.code === 409
+          ) {
             // Already exists — read resourceVersion, then replace
             const existing = await coreApi.readNamespacedService({
               name,
@@ -688,7 +743,11 @@ async function main(): Promise<void> {
                 },
               });
             } catch (replaceErr: any) {
-              if (replaceErr?.code === 404 || replaceErr?.statusCode === 404 || replaceErr?.body?.code === 404) {
+              if (
+                replaceErr?.code === 404 ||
+                replaceErr?.statusCode === 404 ||
+                replaceErr?.body?.code === 404
+              ) {
                 // Rare race: disappeared between read and replace — create again
                 await coreApi.createNamespacedService({
                   namespace: KUBECLAW_NAMESPACE,
@@ -704,7 +763,9 @@ async function main(): Promise<void> {
         }
       },
       // Task 2: idempotent create-or-replace a K8s NetworkPolicy.
-      createNetworkPolicy: async (body: import('@kubernetes/client-node').V1NetworkPolicy) => {
+      createNetworkPolicy: async (
+        body: import('@kubernetes/client-node').V1NetworkPolicy,
+      ) => {
         const name = body.metadata!.name!;
         try {
           await networkingApi.createNamespacedNetworkPolicy({
@@ -712,7 +773,11 @@ async function main(): Promise<void> {
             body,
           });
         } catch (err: any) {
-          if (err?.code === 409 || err?.statusCode === 409 || err?.body?.code === 409) {
+          if (
+            err?.code === 409 ||
+            err?.statusCode === 409 ||
+            err?.body?.code === 409
+          ) {
             // Already exists — read resourceVersion, then replace
             const existing = await networkingApi.readNamespacedNetworkPolicy({
               name,
@@ -729,7 +794,11 @@ async function main(): Promise<void> {
                 },
               });
             } catch (replaceErr: any) {
-              if (replaceErr?.code === 404 || replaceErr?.statusCode === 404 || replaceErr?.body?.code === 404) {
+              if (
+                replaceErr?.code === 404 ||
+                replaceErr?.statusCode === 404 ||
+                replaceErr?.body?.code === 404
+              ) {
                 // Rare race: disappeared between read and replace — create again
                 await networkingApi.createNamespacedNetworkPolicy({
                   namespace: KUBECLAW_NAMESPACE,
@@ -886,6 +955,23 @@ async function main(): Promise<void> {
         'Channel-manifests reconcile failed; bootstrap Jobs will use stale or empty catalog',
       );
     }
+
+    // ── Find-tools watcher ────────────────────────────────────────────────────
+    // Watch the kubeclaw:find-tools stream and run tool selection on behalf of
+    // channel pods (which have no K8s RBAC or LLM context).
+    const toolLibraryLoader = new ToolLibraryLoader(
+      process.env.TOOL_LIBRARY_PATH ?? '/etc/kubeclaw/tool-library/library.json',
+    );
+    toolLibraryLoader.start();
+    const brokerCatalogHostLookup = buildBrokerCatalogHostLookup();
+    startFindToolsWatcher({
+      chat: makeOrchestratorChatFn(),
+      liveCatalog: () => mergeCatalog(loadToolBaselineFromDisk(), listToolOverrides()),
+      library: () => toolLibraryLoader.getAll(),
+      catalogHostLookup: brokerCatalogHostLookup,
+      reconcile: () => toolReconciler.apply(),
+      secret: process.env.TOOL_SELECTION_SECRET ?? randomUUID(),
+    }).catch((err) => logger.error({ err }, 'find-tools watcher failed'));
   }
 
   // ── Orphaned tool-job reconciliation (Story 37) ───────────────────────────
