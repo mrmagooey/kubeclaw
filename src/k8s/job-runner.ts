@@ -2043,7 +2043,7 @@ export class JobRunner {
     const { job, jobName, toolMode } =
       await this.buildSidecarToolPodManifest(spec);
 
-    await this.batchApi.createNamespacedJob({
+    const createdJob = await this.batchApi.createNamespacedJob({
       namespace: this.namespace,
       body: job,
     });
@@ -2057,11 +2057,17 @@ export class JobRunner {
       'Sidecar tool pod job created',
     );
 
+    const createdJobName = createdJob.metadata?.name ?? jobName;
+    const createdJobUid = createdJob.metadata?.uid;
+
     await this.egressApplier.applyForJob({
       jobName,
       jobLabel: spec.agentJobId,
       namespace: this.namespace,
       allowedEgress: spec.toolSpec.allowedEgress ?? [],
+      ...(createdJobUid && {
+        ownerRef: { name: createdJobName, uid: createdJobUid },
+      }),
     });
 
     return jobName;

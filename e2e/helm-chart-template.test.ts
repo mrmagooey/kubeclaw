@@ -1507,3 +1507,106 @@ describe('helm values — database capability declared correctly', () => {
     expect(env?.PG_RO_USER).toBe('kubeclaw_ro');
   });
 });
+
+// ─── C1: substrate env vars wired onto orchestrator pod ──────────────────────
+//
+// Verifies that the orchestrator Deployment's container env includes both
+// CILIUM_NETWORK_POLICY_ENABLED and CREDENTIAL_INJECTION_MODE when the
+// corresponding Helm values are set (fix for detectEgressSubstrate always
+// returning 'none' because the vars were never mounted).
+
+describe('helm template — substrate env vars on orchestrator (C1 fix)', () => {
+  it('orchestrator container env contains CILIUM_NETWORK_POLICY_ENABLED=true when ciliumNetworkPolicy.enabled=true', () => {
+    const result = spawnSync(
+      'helm',
+      [
+        'template',
+        'smoke',
+        CHART_DIR,
+        '--set',
+        'ciliumNetworkPolicy.enabled=true',
+        '--set',
+        'secrets.anthropicApiKey=test',
+        '--set',
+        'redis.password=test',
+      ],
+      { encoding: 'utf8' },
+    );
+    expect(result.status, result.stderr).toBe(0);
+
+    // Parse out the orchestrator Deployment document
+    const docs = result.stdout.split(/\n---\n/);
+    const orchDeploy = docs.find(
+      (d) =>
+        /^kind: Deployment$/m.test(d) &&
+        /name: kubeclaw-orchestrator/m.test(d),
+    );
+    expect(orchDeploy, 'orchestrator Deployment not found').toBeDefined();
+    expect(orchDeploy).toContain('CILIUM_NETWORK_POLICY_ENABLED');
+    expect(orchDeploy).toContain('"true"');
+  });
+
+  it('orchestrator container env contains CREDENTIAL_INJECTION_MODE=istio when credentialInjection.mode=istio', () => {
+    const result = spawnSync(
+      'helm',
+      [
+        'template',
+        'smoke',
+        CHART_DIR,
+        '--set',
+        'credentialInjection.mode=istio',
+        '--set',
+        'namespace=kubeclaw',
+        '--set',
+        'secrets.anthropicApiKey=test',
+        '--set',
+        'redis.password=test',
+      ],
+      { encoding: 'utf8' },
+    );
+    expect(result.status, result.stderr).toBe(0);
+
+    const docs = result.stdout.split(/\n---\n/);
+    const orchDeploy = docs.find(
+      (d) =>
+        /^kind: Deployment$/m.test(d) &&
+        /name: kubeclaw-orchestrator/m.test(d),
+    );
+    expect(orchDeploy, 'orchestrator Deployment not found').toBeDefined();
+    expect(orchDeploy).toContain('CREDENTIAL_INJECTION_MODE');
+    expect(orchDeploy).toContain('istio');
+  });
+
+  it('orchestrator env contains both CILIUM_NETWORK_POLICY_ENABLED and CREDENTIAL_INJECTION_MODE', () => {
+    const result = spawnSync(
+      'helm',
+      [
+        'template',
+        'smoke',
+        CHART_DIR,
+        '--set',
+        'ciliumNetworkPolicy.enabled=true',
+        '--set',
+        'credentialInjection.mode=istio',
+        '--set',
+        'namespace=kubeclaw',
+        '--set',
+        'secrets.anthropicApiKey=test',
+        '--set',
+        'redis.password=test',
+      ],
+      { encoding: 'utf8' },
+    );
+    expect(result.status, result.stderr).toBe(0);
+
+    const docs = result.stdout.split(/\n---\n/);
+    const orchDeploy = docs.find(
+      (d) =>
+        /^kind: Deployment$/m.test(d) &&
+        /name: kubeclaw-orchestrator/m.test(d),
+    );
+    expect(orchDeploy, 'orchestrator Deployment not found').toBeDefined();
+    expect(orchDeploy).toContain('CILIUM_NETWORK_POLICY_ENABLED');
+    expect(orchDeploy).toContain('CREDENTIAL_INJECTION_MODE');
+  });
+});

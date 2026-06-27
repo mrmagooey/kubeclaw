@@ -258,6 +258,10 @@ spec:
             - name: BOOTSTRAP_NPM_REGISTRY
               value: {{ .Values.bootstrap.npmRegistry | quote }}
             {{- end }}
+            - name: CILIUM_NETWORK_POLICY_ENABLED
+              value: {{ .Values.ciliumNetworkPolicy.enabled | quote }}
+            - name: CREDENTIAL_INJECTION_MODE
+              value: {{ .Values.credentialInjection.mode | quote }}
           ports:
             - name: health
               containerPort: 8080
