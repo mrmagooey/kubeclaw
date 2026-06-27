@@ -2137,14 +2137,24 @@ export class JobRunner {
     toolSpec: ToolSpec;
     input: Record<string, string>;
     timeoutMs: number;
-  }): Promise<{ ok: boolean; output?: string; egressViolation?: boolean; error?: string }> {
+  }): Promise<{
+    ok: boolean;
+    output?: string;
+    egressViolation?: boolean;
+    error?: string;
+  }> {
     const { toolSpec, input, timeoutMs } = args;
+    // Hard guarantee at the SEAM: a probe pod must NEVER receive credentials,
+    // even if a future caller bypasses probeTool (which also strips them). The
+    // credential-injection gate keys off toolSpec.credentials, so stripping it
+    // here forces wantsCreds=false and no credential sidecar downstream.
+    const strippedSpec: ToolSpec = { ...toolSpec, credentials: undefined };
     // Unique IDs for this probe run
     const probeJobId = `probe-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
     const requestId = crypto.randomUUID();
 
-    const callsStream = getToolCallsStream(probeJobId, toolSpec.name);
-    const resultsStream = getToolResultsStream(probeJobId, toolSpec.name);
+    const callsStream = getToolCallsStream(probeJobId, strippedSpec.name);
+    const resultsStream = getToolResultsStream(probeJobId, strippedSpec.name);
     const redis = getRedisClient();
 
     // Write tool call BEFORE creating the job so the bridge picks it up with
@@ -2152,27 +2162,30 @@ export class JobRunner {
     await redis.xadd(
       callsStream,
       '*',
-      'requestId', requestId,
-      'tool', toolSpec.name,
-      'input', JSON.stringify(input),
+      'requestId',
+      requestId,
+      'tool',
+      strippedSpec.name,
+      'input',
+      JSON.stringify(input),
     );
 
-    // Create job via existing plumbing.  The spec must have no credentials so the
-    // credential-injection gate (wantsCreds) stays false and no sidecar is attached.
+    // Create job via existing plumbing.  The stripped spec has no credentials so
+    // the credential-injection gate (wantsCreds) stays false and no sidecar is attached.
     let jobName: string;
     try {
       jobName = await this.createSidecarToolPodJob({
         agentJobId: probeJobId,
         groupFolder: 'probe',
-        toolName: toolSpec.name,
-        toolSpec,
+        toolName: strippedSpec.name,
+        toolSpec: strippedSpec,
         timeout: timeoutMs,
       });
     } catch (err) {
       return { ok: false, error: `probe job creation failed: ${String(err)}` };
     }
 
-    logger.info({ jobName, toolName: toolSpec.name }, 'probe job created');
+    logger.info({ jobName, toolName: strippedSpec.name }, 'probe job created');
 
     // Wait for the tool result on the Redis results stream.
     const deadline = Date.now() + timeoutMs;
@@ -2183,35 +2196,48 @@ export class JobRunner {
       if (blockMs <= 0) break;
       try {
         const response = await redis.xread(
-          'COUNT', 10,
-          'BLOCK', blockMs,
-          'STREAMS', resultsStream, lastId,
+          'COUNT',
+          10,
+          'BLOCK',
+          blockMs,
+          'STREAMS',
+          resultsStream,
+          lastId,
         );
         if (!response) continue;
 
-        for (const [, messages] of response as [string, [string, string[]][]][]) {
+        for (const [, messages] of response as [
+          string,
+          [string, string[]][],
+        ][]) {
           for (const [msgId, fields] of messages) {
             lastId = msgId;
             const obj: Record<string, string> = {};
-            for (let i = 0; i < fields.length; i += 2) obj[fields[i]] = fields[i + 1];
+            for (let i = 0; i < fields.length; i += 2)
+              obj[fields[i]] = fields[i + 1];
             if (obj['requestId'] !== requestId) continue;
 
             if (obj['error']) {
-              const egressViolation = isEgressViolation(obj['error']) || undefined;
+              const egressViolation = isEgressViolation(obj['error'])
+                ? true
+                : undefined;
               return { ok: false, egressViolation, error: obj['error'] };
             }
             return { ok: true, output: obj['result'] ?? '' };
           }
         }
       } catch (err) {
-        logger.warn({ err, jobName }, 'probe: error reading tool results stream');
+        logger.warn(
+          { err, jobName },
+          'probe: error reading tool results stream',
+        );
       }
     }
 
     // Timed out waiting for result — try pod logs for a best-effort egress signal.
     try {
       const logs = await this.getJobLogs(jobName);
-      const egressViolation = isEgressViolation(logs) || undefined;
+      const egressViolation = isEgressViolation(logs) ? true : undefined;
       return { ok: false, egressViolation, error: 'probe timed out' };
     } catch {
       return { ok: false, error: 'probe timed out' };
