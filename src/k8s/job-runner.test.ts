@@ -117,15 +117,24 @@ vi.mock('@kubernetes/client-node', () => {
         if (apiClass === 'CoreV1Api') return mockCoreApi;
         if (apiClass === 'BatchV1Api') return mockBatchApi;
         if (apiClass === 'AppsV1Api') return mockAppsApi;
+        // CustomObjectsApi — no-op stub (egress not exercised in these tests)
+        if (apiClass === 'CustomObjectsApi') return {};
         return {};
       });
     },
     CoreV1Api: 'CoreV1Api',
     BatchV1Api: 'BatchV1Api',
     AppsV1Api: 'AppsV1Api',
+    CustomObjectsApi: 'CustomObjectsApi',
     loadAllYaml: mockLoadAllYaml,
   };
 });
+
+// Stub egress substrate detection so default egressApplier is a no-op
+vi.mock('./egress/substrate.js', () => ({
+  detectEgressSubstrate: vi.fn(() => 'none'),
+  hasHardEgressEnforcement: vi.fn(() => false),
+}));
 
 // Now import after mocks are set up
 import {

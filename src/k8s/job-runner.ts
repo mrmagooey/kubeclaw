@@ -7,9 +7,20 @@ import {
   CoreV1Api,
   BatchV1Api,
   AppsV1Api,
+  CustomObjectsApi,
   KubeConfig,
   loadAllYaml,
 } from '@kubernetes/client-node';
+import {
+  hardenedPodSecurityContext,
+  hardenedContainerSecurityContext,
+} from './security-context.js';
+import {
+  makeEgressApplier,
+  type EgressApplier,
+  type CustomObjectsClient,
+} from './egress/apply.js';
+import { detectEgressSubstrate } from './egress/substrate.js';
 
 import { RegisteredGroup } from '../types.js';
 import { logger } from '../logger.js';
@@ -298,6 +309,7 @@ export class JobRunner {
   private coreApi: CoreV1Api;
   private batchApi: BatchV1Api;
   private appsApi: AppsV1Api;
+  private customObjectsApi: CustomObjectsApi;
   private namespace: string;
   private activeSubscriptions: Map<string, () => void>;
   private catalog?: CatalogInformer;
@@ -307,6 +319,8 @@ export class JobRunner {
   timeoutPublisher?: ToolJobTimeoutPublisher;
   /** Optional publisher for OOMKill notices. Uses the same interface as timeoutPublisher. */
   oomKillPublisher?: ToolJobTimeoutPublisher;
+  /** Egress applier — injectable for tests; defaults to a substrate-detecting real applier. */
+  egressApplier: EgressApplier;
 
   constructor(opts: JobRunnerOpts = {}) {
     const kc = new KubeConfig();
@@ -314,10 +328,30 @@ export class JobRunner {
     this.coreApi = kc.makeApiClient(CoreV1Api);
     this.batchApi = kc.makeApiClient(BatchV1Api);
     this.appsApi = kc.makeApiClient(AppsV1Api);
+    this.customObjectsApi = kc.makeApiClient(CustomObjectsApi);
     this.namespace = NAMESPACE;
     this.activeSubscriptions = new Map();
     this.catalog = opts.catalog;
     this.secretManager = opts.secretManager;
+
+    // Build a CustomObjectsClient adapter over the k8s CustomObjectsApi
+    const coApi = this.customObjectsApi;
+    const customObjectsClient: CustomObjectsClient = {
+      create: (group, version, namespace, plural, body) =>
+        coApi
+          .createNamespacedCustomObject({ group, version, namespace, plural, body })
+          .then(() => undefined),
+      delete: (group, version, namespace, plural, name) =>
+        coApi
+          .deleteNamespacedCustomObject({ group, version, namespace, plural, name })
+          .then(() => undefined),
+    };
+
+    this.egressApplier = makeEgressApplier({
+      substrate: detectEgressSubstrate(),
+      customObjects: customObjectsClient,
+      redisNamespace: NAMESPACE,
+    });
   }
 
   /**
@@ -1617,7 +1651,14 @@ export class JobRunner {
    * custom tool container sharing localhost (http) or an emptyDir (file).
    * Returns the K8s job name.
    */
-  async createSidecarToolPodJob(spec: SidecarToolPodJobSpec): Promise<string> {
+  /**
+   * Build the sidecar tool pod Job manifest and derived job name.
+   * Extracted so `createSidecarToolPodJob` and `buildSidecarToolPodJobForTest`
+   * can share the manifest-construction logic without duplicating it.
+   */
+  private async buildSidecarToolPodManifest(
+    spec: SidecarToolPodJobSpec,
+  ): Promise<{ job: V1Job; jobName: string }> {
     const { toolSpec } = spec;
     assertToolImageAllowed(toolSpec.image);
     const port = toolSpec.port ?? 8080;
@@ -1919,16 +1960,14 @@ export class JobRunner {
             ...(credServiceAccount
               ? { automountServiceAccountToken: false }
               : {}),
-            // fsGroup ensures the emptyDir (/shared) is group-owned by GID 2000
-            // and that both containers get GID 2000 as a supplementary group.
-            // Without this, whichever container creates /shared/req first owns it
-            // exclusively, and the other container's UID gets EACCES on rename().
-            // fsGroupChangePolicy: OnRootMismatch avoids a recursive chown on every
-            // pod start (which would otherwise chown the group PVC for bash_persist).
-            securityContext: {
-              fsGroup: 2000,
-              fsGroupChangePolicy: 'OnRootMismatch',
-            },
+            // hardenedPodSecurityContext() sets runAsNonRoot, runAsUser 65534,
+            // fsGroup 2000 (so emptyDir /shared is group-owned by GID 2000 and
+            // both containers get GID 2000 as a supplementary group — without this
+            // whichever container creates /shared/req first owns it exclusively and
+            // the other UID gets EACCES on rename()), fsGroupChangePolicy:
+            // OnRootMismatch (avoids recursive chown on every pod start, preventing
+            // chowning the group PVC for bash_persist), and seccompProfile:RuntimeDefault.
+            securityContext: hardenedPodSecurityContext(),
             ...(cdpInitContainers && { initContainers: cdpInitContainers }),
             containers: [
               {
@@ -1957,6 +1996,7 @@ export class JobRunner {
                           : {}),
                       env: [...userEnv, ...credEnv],
                       volumeMounts: userMounts,
+                      securityContext: hardenedContainerSecurityContext(),
                       resources: {
                         requests: {
                           memory:
@@ -1978,6 +2018,18 @@ export class JobRunner {
       },
     };
 
+    return { job, jobName };
+  }
+
+  /**
+   * Create a sidecar tool pod job: two-container K8s job with a tool-bridge
+   * container (tool-server in http-bridge or file-bridge mode) and the user's
+   * custom tool container sharing localhost (http) or an emptyDir (file).
+   * Returns the K8s job name.
+   */
+  async createSidecarToolPodJob(spec: SidecarToolPodJobSpec): Promise<string> {
+    const { job, jobName } = await this.buildSidecarToolPodManifest(spec);
+
     await this.batchApi.createNamespacedJob({
       namespace: this.namespace,
       body: job,
@@ -1986,12 +2038,39 @@ export class JobRunner {
       {
         jobName,
         toolName: spec.toolName,
-        toolMode,
         agentJobId: spec.agentJobId,
       },
       'Sidecar tool pod job created',
     );
+
+    await this.egressApplier.applyForJob({
+      jobName,
+      jobLabel: spec.agentJobId,
+      namespace: this.namespace,
+      allowedEgress: spec.toolSpec.allowedEgress ?? [],
+    });
+
     return jobName;
+  }
+
+  /**
+   * Test-only: build the sidecar pod manifest and invoke the injected
+   * egressApplier without submitting the job to Kubernetes.
+   * Set `runner.egressApplier` to a spy before calling.
+   */
+  async buildSidecarToolPodJobForTest(
+    spec: SidecarToolPodJobSpec,
+  ): Promise<V1Job> {
+    const { job, jobName } = await this.buildSidecarToolPodManifest(spec);
+
+    await this.egressApplier.applyForJob({
+      jobName,
+      jobLabel: spec.agentJobId,
+      namespace: this.namespace,
+      allowedEgress: spec.toolSpec.allowedEgress ?? [],
+    });
+
+    return job;
   }
   /**
    * Delete a Deployment by name.
