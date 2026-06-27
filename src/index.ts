@@ -129,6 +129,8 @@ import { listCapabilities } from './capabilities/registry.js';
 import { ToolLibraryLoader } from './tool-selection/library.js';
 import { makeOrchestratorChatFn } from './tool-selection/chat-adapter.js';
 import { sweepStaleAutoTools } from './tool-selection/sweep.js';
+import { buildTsaSearchRegistry } from './tool-selection/discovery.js';
+import { makeHttpJsonFetcher } from './tool-selection/registry/http-fetch.js';
 import { loadBrokerConfig } from './credential-broker/config.js';
 
 // Re-export for backwards compatibility during refactor
@@ -974,6 +976,12 @@ async function main(): Promise<void> {
       catalogHostLookup: brokerCatalogHostLookup,
       reconcile: () => toolReconciler.apply(),
       secret: process.env.TOOL_SELECTION_SECRET ?? randomUUID(),
+      searchRegistry: buildTsaSearchRegistry(process.env, {
+        fetchJson: makeHttpJsonFetcher(),
+        chat: makeOrchestratorChatFn(),
+        probe: { runProbeToolJob: (a) => jobRunner.runProbeToolJob(a) },
+        catalogHostLookup: brokerCatalogHostLookup,
+      }),
     }).catch((err) => logger.error({ err }, 'find-tools watcher failed'));
 
     // ── Auto-tool TTL sweep ───────────────────────────────────────────────────

@@ -2098,6 +2098,11 @@ export interface FindToolsHandlerDeps {
   writeResult: (requestId: string, json: string) => Promise<void>;
   /** Stable server secret used to key approval-token HMACs (mint/verify). */
   secret: string;
+  /**
+   * Tier-3 open discovery: search the container registry for a matching tool.
+   * Only present when the cluster has hard egress enforcement (Cilium/Istio).
+   */
+  searchRegistry?: (task: string) => Promise<import('../tools/types.js').ToolSpec | null>;
 }
 
 /**
@@ -2146,6 +2151,7 @@ export async function handleFindToolsMessage(
         reconcile: deps.reconcile,
         now: () => Date.now(),
         nonce,
+        searchRegistry: deps.searchRegistry,
       },
     );
   }
