@@ -233,10 +233,23 @@ class WhatsAppChannel {
       return;
     }
 
-    // GET /healthz
-    if (req.method === 'GET' && pathname === '/healthz') {
+    // GET /healthz and HEAD /healthz
+    if (
+      (req.method === 'GET' || req.method === 'HEAD') &&
+      pathname === '/healthz'
+    ) {
       res.writeHead(200, { 'Content-Type': 'text/plain' });
-      res.end('ok');
+      res.end(req.method === 'HEAD' ? undefined : 'ok');
+      return;
+    }
+
+    // GET /readyz and HEAD /readyz (Kubernetes readiness probe)
+    if (
+      (req.method === 'GET' || req.method === 'HEAD') &&
+      pathname === '/readyz'
+    ) {
+      res.writeHead(200, { 'Content-Type': 'text/plain' });
+      res.end(req.method === 'HEAD' ? undefined : 'ok');
       return;
     }
 

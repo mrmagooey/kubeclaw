@@ -229,6 +229,37 @@ describe('whatsapp-adapter: integration (real HTTP server)', () => {
     expect(res.status).toBe(200);
   });
 
+  it('HEAD /healthz → 200', async () => {
+    const opts = makeOpts();
+    const { ch, port } = await startChannel(opts);
+    openChannels.push(ch);
+
+    const res = await fetch(`http://127.0.0.1:${port}/healthz`, {
+      method: 'HEAD',
+    });
+    expect(res.status).toBe(200);
+  });
+
+  it('GET /readyz → 200 (Kubernetes readiness probe)', async () => {
+    const opts = makeOpts();
+    const { ch, port } = await startChannel(opts);
+    openChannels.push(ch);
+
+    const res = await fetch(`http://127.0.0.1:${port}/readyz`);
+    expect(res.status).toBe(200);
+  });
+
+  it('HEAD /readyz → 200 (Kubernetes readiness probe)', async () => {
+    const opts = makeOpts();
+    const { ch, port } = await startChannel(opts);
+    openChannels.push(ch);
+
+    const res = await fetch(`http://127.0.0.1:${port}/readyz`, {
+      method: 'HEAD',
+    });
+    expect(res.status).toBe(200);
+  });
+
   it('unknown path → 404', async () => {
     const opts = makeOpts();
     const { ch, port } = await startChannel(opts);
