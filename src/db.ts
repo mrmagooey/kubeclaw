@@ -212,6 +212,18 @@ function createSchema(database: SqlJsDatabase): void {
     )
   `);
 
+  database.run(`
+    CREATE TABLE IF NOT EXISTS auto_tool_meta (
+      name          TEXT PRIMARY KEY,
+      provenance    TEXT NOT NULL,
+      scope_group   TEXT,
+      source_digest TEXT,
+      acquired_at   INTEGER NOT NULL,
+      last_used_at  INTEGER NOT NULL,
+      transcript    TEXT
+    )
+  `);
+
   // Story 178: admin-registered channel manifests (runtime write path).
   database.run(`
     CREATE TABLE IF NOT EXISTS channel_manifest_overrides (
