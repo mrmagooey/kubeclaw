@@ -31,7 +31,11 @@ describe('find-tools integration', () => {
       },
       {
         chat: async () =>
-          JSON.stringify({ name: 'extract_metadata', confidence: 0.95, reason: 'ok' }),
+          JSON.stringify({
+            name: 'extract_metadata',
+            confidence: 0.95,
+            reason: 'ok',
+          }),
         liveCatalog: () => [],
         library: () => [exif],
         catalogHostLookup: () => undefined,

@@ -39,6 +39,9 @@ export function recordAutoToolUse(name: string, now: number): boolean {
   return true;
 }
 
+// Positional mapping: relies on `SELECT *` returning columns in the same order
+// as the `auto_tool_meta` DDL (name, provenance, scope_group, source_digest,
+// acquired_at, last_used_at, transcript). Keep in sync if the DDL changes.
 function rowToMeta(row: unknown[]): AutoToolMeta {
   return {
     name: row[0] as string,

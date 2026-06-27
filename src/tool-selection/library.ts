@@ -31,13 +31,19 @@ export class ToolLibraryLoader {
     try {
       const r = parseToolCatalog(readFileSync(this.path, 'utf-8'));
       if (!r.ok) {
-        logger.warn({ error: r.error, path: this.path }, 'tool library parse failed; keeping cache');
+        logger.warn(
+          { error: r.error, path: this.path },
+          'tool library parse failed; keeping cache',
+        );
         return;
       }
       this.cache = r.tools;
       logger.info({ count: r.tools.length }, 'tool library loaded');
     } catch (err) {
-      logger.warn({ err, path: this.path }, 'tool library read failed; keeping cache');
+      logger.warn(
+        { err, path: this.path },
+        'tool library read failed; keeping cache',
+      );
     }
   }
 

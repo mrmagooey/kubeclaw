@@ -1,7 +1,11 @@
 import type { ToolSpec } from '../tools/types.js';
 import { registerTool } from '../skills/orchestrator/tool-registry.js';
 import { matchTool, type ChatFn } from './matcher.js';
-import { evaluateGate, mintApprovalToken, verifyApprovalToken } from './credential-gate.js';
+import {
+  evaluateGate,
+  mintApprovalToken,
+  verifyApprovalToken,
+} from './credential-gate.js';
 import { recordAutoTool } from './provenance.js';
 import type {
   FindToolsRequest,
@@ -53,22 +57,32 @@ export async function runToolSelection(
     const spec = lib.find((s) => s.name === m2.name)!;
     const gate = evaluateGate(spec, deps.catalogHostLookup);
     if (gate.needsApproval) {
+      // Do not offer approval for a credential the broker does not hold: if the
+      // broker catalog lookup did not resolve a host for this credential id, no
+      // amount of user approval can make the tool work.
+      if (!gate.host) {
+        return {
+          status: 'unavailable',
+          message: `Tool ${spec.name} needs a credential (${gate.catalogId}) that is not configured in the broker; an administrator must set it up.`,
+        };
+      }
       const token = mintApprovalToken(spec.name, gate.catalogId!, deps.nonce);
       return {
         status: 'pending_credential',
         toolName: spec.name,
         catalogId: gate.catalogId!,
-        host: gate.host ?? '(unknown host)',
+        host: gate.host,
         approvalToken: token,
         message: `Tool ${spec.name} needs your ${gate.catalogId} credential. Approve to enable it.`,
       };
     }
-    const reg = registerTool(spec, deps.reconcile);
+    const reg = registerTool(spec);
     if (!reg.ok)
       return {
         status: 'unavailable',
         message: `Could not register ${spec.name}: ${reg.error}`,
       };
+    await deps.reconcile();
     recordAutoTool({
       name: spec.name,
       provenance: 'library',
@@ -117,13 +131,38 @@ export async function finalizeCredentialApproval(
   args: { toolName: string; catalogId: string; approvalToken: string },
   deps: ApprovalDeps,
 ): Promise<FindToolsResult> {
-  if (!verifyApprovalToken(args.approvalToken, args.toolName, args.catalogId, deps.nonce)) {
+  if (
+    !verifyApprovalToken(
+      args.approvalToken,
+      args.toolName,
+      args.catalogId,
+      deps.nonce,
+    )
+  ) {
     return { status: 'unavailable', message: 'Invalid or expired approval.' };
   }
   const spec = deps.library().find((s) => s.name === args.toolName);
-  if (!spec) return { status: 'unavailable', message: `Tool ${args.toolName} no longer available.` };
-  const reg = registerTool(spec, deps.reconcile);
-  if (!reg.ok) return { status: 'unavailable', message: `Could not register ${spec.name}: ${reg.error}` };
-  recordAutoTool({ name: spec.name, provenance: 'library', scopeGroup: null, now: deps.now() });
-  return { status: 'ready', tools: [candidate(spec, 'library')], message: `Enabled ${spec.name}.` };
+  if (!spec)
+    return {
+      status: 'unavailable',
+      message: `Tool ${args.toolName} no longer available.`,
+    };
+  const reg = registerTool(spec);
+  if (!reg.ok)
+    return {
+      status: 'unavailable',
+      message: `Could not register ${spec.name}: ${reg.error}`,
+    };
+  await deps.reconcile();
+  recordAutoTool({
+    name: spec.name,
+    provenance: 'library',
+    scopeGroup: null,
+    now: deps.now(),
+  });
+  return {
+    status: 'ready',
+    tools: [candidate(spec, 'library')],
+    message: `Enabled ${spec.name}.`,
+  };
 }

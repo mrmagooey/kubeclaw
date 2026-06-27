@@ -58,7 +58,6 @@ import {
 } from '../per-group-capabilities/index.js';
 import { processCommitChannelConfig } from './ipc-redis-bootstrap.js';
 import type { CommitChannelConfigDeps } from './ipc-redis-bootstrap.js';
-import { createHmac } from 'node:crypto';
 import {
   getFindToolsStream,
   getFindToolsResultStream,
@@ -2097,7 +2096,7 @@ export interface FindToolsHandlerDeps {
   reconcile: () => Promise<void>;
   /** Write the serialized result back to the caller stream. */
   writeResult: (requestId: string, json: string) => Promise<void>;
-  /** Shared HMAC secret used to derive per-request nonces. */
+  /** Stable server secret used to key approval-token HMACs (mint/verify). */
   secret: string;
 }
 
@@ -2115,10 +2114,11 @@ export async function handleFindToolsMessage(
     return;
   }
 
-  // Derive a per-request nonce from the shared secret.
-  const nonce = createHmac('sha256', deps.secret)
-    .update(requestId)
-    .digest('hex');
+  // Key the approval token on the stable server secret (not a per-request
+  // nonce): mint (during the find request) and verify (during the separate
+  // approve request) must agree even though the two requests carry different
+  // requestIds. Forging a token still requires the secret.
+  const nonce = deps.secret;
 
   let result: import('../tool-selection/types.js').FindToolsResult;
 

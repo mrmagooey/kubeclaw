@@ -15,10 +15,14 @@ export async function matchTool(
   specs: ToolSpec[],
   chat: ChatFn,
 ): Promise<MatchResult> {
-  if (specs.length === 0) return { name: null, confidence: 0, reason: 'empty set' };
+  if (specs.length === 0)
+    return { name: null, confidence: 0, reason: 'empty set' };
 
   const catalogText = specs
-    .map((s) => `- ${s.name}: ${s.description} (params: ${JSON.stringify(s.parameters)})`)
+    .map(
+      (s) =>
+        `- ${s.name}: ${s.description} (params: ${JSON.stringify(s.parameters)})`,
+    )
     .join('\n');
 
   const system =
@@ -41,7 +45,11 @@ export async function matchTool(
 
   // Guard against hallucinated names.
   if (parsed.name !== null && !specs.some((s) => s.name === parsed.name)) {
-    return { name: null, confidence: 0, reason: 'selected name not in candidate set' };
+    return {
+      name: null,
+      confidence: 0,
+      reason: 'selected name not in candidate set',
+    };
   }
   return {
     name: parsed.name ?? null,

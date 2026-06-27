@@ -3,9 +3,12 @@
  * from startFindToolsWatcher so it can be tested without a live Redis loop.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
-import { createHmac } from 'node:crypto';
-import { handleFindToolsMessage, type FindToolsHandlerDeps } from '../k8s/ipc-redis.js';
+import {
+  handleFindToolsMessage,
+  type FindToolsHandlerDeps,
+} from '../k8s/ipc-redis.js';
 import { _initTestDatabase, __resetDbForTest } from '../db.js';
+import { listToolOverrides } from '../skills/orchestrator/tool-registry.js';
 import type { ToolSpec } from '../tools/types.js';
 import { mintApprovalToken } from '../tool-selection/credential-gate.js';
 
@@ -18,13 +21,20 @@ const exif: ToolSpec = {
   mount: 'group',
 };
 
+const imageSearch: ToolSpec = {
+  name: 'image_search',
+  description: 'Search the web for images',
+  parameters: {},
+  image: 'kubeclaw/image-search:latest',
+  pattern: 'http',
+  credentials: ['brave-search'],
+};
+
 const SECRET = 'test-secret';
 
-function nonce(requestId: string): string {
-  return createHmac('sha256', SECRET).update(requestId).digest('hex');
-}
-
-function makeDeps(over: Partial<FindToolsHandlerDeps> = {}): FindToolsHandlerDeps {
+function makeDeps(
+  over: Partial<FindToolsHandlerDeps> = {},
+): FindToolsHandlerDeps {
   return {
     chat: async () =>
       JSON.stringify({ name: null, confidence: 0, reason: 'no match' }),
@@ -55,14 +65,21 @@ describe('handleFindToolsMessage — library match', () => {
       taskDescription: 'extract EXIF from image',
     };
 
-    await handleFindToolsMessage(obj, makeDeps({
-      library: () => [exif],
-      chat: async () =>
-        JSON.stringify({ name: 'extract_metadata', confidence: 0.9, reason: 'ok' }),
-      writeResult: async (_requestId, json) => {
-        written.push(json);
-      },
-    }));
+    await handleFindToolsMessage(
+      obj,
+      makeDeps({
+        library: () => [exif],
+        chat: async () =>
+          JSON.stringify({
+            name: 'extract_metadata',
+            confidence: 0.9,
+            reason: 'ok',
+          }),
+        writeResult: async (_requestId, json) => {
+          written.push(json);
+        },
+      }),
+    );
 
     expect(written).toHaveLength(1);
     const result = JSON.parse(written[0]);
@@ -80,8 +97,9 @@ describe('handleFindToolsMessage — approve path', () => {
 
   it('writes a serialized ready result when a valid approval token is submitted', async () => {
     const requestId = 'req-2';
-    const n = nonce(requestId);
-    const approvalToken = mintApprovalToken(exif.name, 'some-catalog', n);
+    // Token is keyed on the stable server secret (deps.secret), not a
+    // per-request nonce — mint with the same raw SECRET the handler uses.
+    const approvalToken = mintApprovalToken(exif.name, 'some-catalog', SECRET);
     const written: string[] = [];
 
     const obj = {
@@ -92,16 +110,90 @@ describe('handleFindToolsMessage — approve path', () => {
       approvalToken,
     };
 
-    await handleFindToolsMessage(obj, makeDeps({
-      library: () => [exif],
-      writeResult: async (_requestId, json) => {
-        written.push(json);
-      },
-    }));
+    await handleFindToolsMessage(
+      obj,
+      makeDeps({
+        library: () => [exif],
+        writeResult: async (_requestId, json) => {
+          written.push(json);
+        },
+      }),
+    );
 
     expect(written).toHaveLength(1);
     const result = JSON.parse(written[0]);
     expect(result.status).toBe('ready');
     expect(result.tools[0].name).toBe(exif.name);
+  });
+});
+
+describe('handleFindToolsMessage — cross-request credential approval', () => {
+  beforeEach(async () => {
+    await _initTestDatabase();
+    __resetDbForTest();
+  });
+
+  it('approves across two separate requests (R1 mint, R2 verify) and registers the tool', async () => {
+    let reconciled = 0;
+    const deps = makeDeps({
+      library: () => [imageSearch],
+      catalogHostLookup: (id) =>
+        id === 'brave-search' ? 'api.search.brave.com' : undefined,
+      reconcile: async () => {
+        reconciled++;
+      },
+      chat: async () =>
+        JSON.stringify({
+          name: 'image_search',
+          confidence: 0.9,
+          reason: 'ok',
+        }),
+    });
+
+    // Request 1 (R1): find a credentialed library tool → pending_credential.
+    let firstResult = '';
+    await handleFindToolsMessage(
+      {
+        requestId: 'R1',
+        groupFolder: 'g',
+        channel: 'http',
+        taskDescription: 'search the web for images',
+      },
+      {
+        ...deps,
+        writeResult: async (_id, json) => {
+          firstResult = json;
+        },
+      },
+    );
+
+    const pending = JSON.parse(firstResult);
+    expect(pending.status).toBe('pending_credential');
+    expect(pending.approvalToken).toBeTruthy();
+    expect(pending.toolName).toBe('image_search');
+    expect(listToolOverrides()).toHaveLength(0);
+
+    // Request 2 (R2): a DIFFERENT requestId carrying the captured token.
+    let secondResult = '';
+    await handleFindToolsMessage(
+      {
+        kind: 'approve',
+        requestId: 'R2',
+        toolName: pending.toolName,
+        catalogId: pending.catalogId,
+        approvalToken: pending.approvalToken,
+      },
+      {
+        ...deps,
+        writeResult: async (_id, json) => {
+          secondResult = json;
+        },
+      },
+    );
+
+    const ready = JSON.parse(secondResult);
+    expect(ready.status).toBe('ready');
+    expect(reconciled).toBe(1);
+    expect(listToolOverrides().map((t) => t.name)).toContain('image_search');
   });
 });

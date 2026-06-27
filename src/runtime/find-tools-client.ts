@@ -52,7 +52,8 @@ async function awaitFindToolsResult(requestId: string): Promise<string> {
       for (const [msgId, fields] of messages) {
         lastId = msgId;
         const obj: Record<string, string> = {};
-        for (let i = 0; i < fields.length; i += 2) obj[fields[i]] = fields[i + 1];
+        for (let i = 0; i < fields.length; i += 2)
+          obj[fields[i]] = fields[i + 1];
         if (obj.result) return formatFindToolsResult(obj.result);
       }
     }

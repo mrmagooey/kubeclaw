@@ -7,7 +7,11 @@ describe('formatFindToolsResult', () => {
       JSON.stringify({
         status: 'ready',
         tools: [
-          { name: 'extract_metadata', description: 'EXIF', provenance: 'library' },
+          {
+            name: 'extract_metadata',
+            description: 'EXIF',
+            provenance: 'library',
+          },
         ],
         message: 'Activated.',
       }),
@@ -29,5 +33,16 @@ describe('formatFindToolsResult', () => {
     );
     expect(s).toContain('approval');
     expect(s).toContain('brave-search');
+  });
+
+  it('formats an unavailable result with its message', () => {
+    const s = formatFindToolsResult(
+      JSON.stringify({
+        status: 'unavailable',
+        message: 'No suitable tool found.',
+      }),
+    );
+    expect(s).toContain('unavailable');
+    expect(s).toContain('No suitable tool found.');
   });
 });

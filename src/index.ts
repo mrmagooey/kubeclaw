@@ -978,11 +978,21 @@ async function main(): Promise<void> {
 
     // ── Auto-tool TTL sweep ───────────────────────────────────────────────────
     // Periodically remove stale auto-acquired tools from provenance and overrides.
-    const AUTO_TOOL_TTL_MS = Number(process.env.AUTO_TOOL_TTL_MS ?? 14 * 24 * 60 * 60 * 1000); // 14d
-    const AUTO_TOOL_SWEEP_MS = Number(process.env.AUTO_TOOL_SWEEP_MS ?? 60 * 60 * 1000); // hourly
+    const AUTO_TOOL_TTL_MS = Number(
+      process.env.AUTO_TOOL_TTL_MS ?? 14 * 24 * 60 * 60 * 1000,
+    ); // 14d
+    const AUTO_TOOL_SWEEP_MS = Number(
+      process.env.AUTO_TOOL_SWEEP_MS ?? 60 * 60 * 1000,
+    ); // hourly
     setInterval(() => {
-      void sweepStaleAutoTools({ now: Date.now(), ttlMs: AUTO_TOOL_TTL_MS, reconcile: () => toolReconciler.apply() })
-        .then((pruned) => { if (pruned.length) logger.info({ pruned }, 'pruned stale auto tools'); })
+      void sweepStaleAutoTools({
+        now: Date.now(),
+        ttlMs: AUTO_TOOL_TTL_MS,
+        reconcile: () => toolReconciler.apply(),
+      })
+        .then((pruned) => {
+          if (pruned.length) logger.info({ pruned }, 'pruned stale auto tools');
+        })
         .catch((err) => logger.warn({ err }, 'auto-tool sweep failed'));
     }, AUTO_TOOL_SWEEP_MS);
   }

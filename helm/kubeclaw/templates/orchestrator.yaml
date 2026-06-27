@@ -164,6 +164,16 @@ spec:
                 secretKeyRef:
                   name: kubeclaw-redis
                   key: acl-encryption-key
+            # Stable HMAC key for tool-selection credential-approval tokens.
+            # Must survive restarts/replicas so a token minted on the find
+            # request still verifies on the later approve request. An empty
+            # value falls back (in src/index.ts) to a per-process random
+            # secret; approvals then won't survive a restart.
+            - name: TOOL_SELECTION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: kubeclaw-tool-selection
+                  key: secret
             - name: KUBECLAW_MODE
               value: orchestrator
             - name: KUBECLAW_RUNTIME

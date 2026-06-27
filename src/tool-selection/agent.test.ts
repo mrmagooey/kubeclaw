@@ -61,6 +61,40 @@ describe('runToolSelection', () => {
       }),
     );
     expect(r.status).toBe('ready');
+    expect(getAutoTool('extract_metadata')).toBeUndefined();
+  });
+
+  it('falls through to the library when the catalog match is low-confidence', async () => {
+    // matchTool is called once per tier (catalog then library). The first
+    // (catalog) call names the tool but at confidence 0.3 (< MIN_CONFIDENCE),
+    // so it must fall through; the second (library) call confidently matches
+    // the same credential-free tool, which should then be activated.
+    let call = 0;
+    const r = await runToolSelection(
+      {
+        requestId: 'r',
+        groupFolder: 'g',
+        channel: 'http',
+        taskDescription: 'exif',
+      },
+      deps({
+        liveCatalog: () => [exif],
+        library: () => [exif],
+        chat: async () => {
+          call += 1;
+          return JSON.stringify({
+            name: 'extract_metadata',
+            confidence: call === 1 ? 0.3 : 0.9,
+            reason: 'match',
+          });
+        },
+      }),
+    );
+    expect(r.status).toBe('ready');
+    if (r.status === 'ready') {
+      expect(r.tools[0].provenance).toBe('library');
+    }
+    expect(getAutoTool('extract_metadata')?.provenance).toBe('library');
   });
 
   it('activates a credential-free library tool and records provenance=library', async () => {
@@ -112,6 +146,38 @@ describe('runToolSelection', () => {
     expect(getAutoTool('image_search')).toBeUndefined();
   });
 
+  it('returns unavailable (not pending_credential) when the credential is not in the broker', async () => {
+    const unknownCred: ToolSpec = {
+      name: 'mystery_tool',
+      description: 'Needs a credential the broker does not hold',
+      parameters: {},
+      image: 'kubeclaw/mystery:latest',
+      pattern: 'http',
+      credentials: ['unknown-cred'],
+    };
+    const r = await runToolSelection(
+      {
+        requestId: 'r',
+        groupFolder: 'g',
+        channel: 'http',
+        taskDescription: 'mystery',
+      },
+      deps({
+        library: () => [unknownCred],
+        // Broker lookup resolves nothing for 'unknown-cred'.
+        catalogHostLookup: () => undefined,
+        chat: async () =>
+          JSON.stringify({
+            name: 'mystery_tool',
+            confidence: 0.9,
+            reason: 'ok',
+          }),
+      }),
+    );
+    expect(r.status).toBe('unavailable');
+    expect(getAutoTool('mystery_tool')).toBeUndefined();
+  });
+
   it('returns unavailable when nothing matches', async () => {
     const r = await runToolSelection(
       {
@@ -138,8 +204,18 @@ describe('finalizeCredentialApproval', () => {
   it('registers the credentialed tool when the token is valid', async () => {
     const token = mintApprovalToken('image_search', 'brave-search', 'n');
     const r = await finalizeCredentialApproval(
-      { toolName: 'image_search', catalogId: 'brave-search', approvalToken: token },
-      { library: () => [imageSearch], catalogHostLookup: () => 'api.search.brave.com', reconcile: async () => {}, now: () => 1, nonce: 'n' },
+      {
+        toolName: 'image_search',
+        catalogId: 'brave-search',
+        approvalToken: token,
+      },
+      {
+        library: () => [imageSearch],
+        catalogHostLookup: () => 'api.search.brave.com',
+        reconcile: async () => {},
+        now: () => 1,
+        nonce: 'n',
+      },
     );
     expect(r.status).toBe('ready');
     expect(getAutoTool('image_search')?.provenance).toBe('library');
@@ -147,8 +223,18 @@ describe('finalizeCredentialApproval', () => {
 
   it('rejects an invalid token without registering', async () => {
     const r = await finalizeCredentialApproval(
-      { toolName: 'image_search', catalogId: 'brave-search', approvalToken: 'bad' },
-      { library: () => [imageSearch], catalogHostLookup: () => 'api.search.brave.com', reconcile: async () => {}, now: () => 1, nonce: 'n' },
+      {
+        toolName: 'image_search',
+        catalogId: 'brave-search',
+        approvalToken: 'bad',
+      },
+      {
+        library: () => [imageSearch],
+        catalogHostLookup: () => 'api.search.brave.com',
+        reconcile: async () => {},
+        now: () => 1,
+        nonce: 'n',
+      },
     );
     expect(r.status).toBe('unavailable');
     expect(getAutoTool('image_search')).toBeUndefined();

@@ -71,6 +71,14 @@ storage:
     project: 10Gi
     store: 1Gi
 
+# Dynamic tool selection.
+toolSelection:
+  # Stable HMAC key for credential-approval tokens. Leave empty to let Helm
+  # generate one on first install and preserve it across upgrades (via Secret
+  # lookup). If the orchestrator falls back to a per-process random secret
+  # (e.g. the Secret is unavailable), approvals won't survive a restart.
+  secret: ""
+
 # Application credentials.
 secrets:
   # Your Anthropic API key (https://console.anthropic.com/) — for channel pods and tool Jobs
