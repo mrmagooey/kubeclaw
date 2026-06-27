@@ -72,7 +72,14 @@ vi.mock('@kubernetes/client-node', () => ({
   CoreV1Api: 'CoreV1Api',
   BatchV1Api: 'BatchV1Api',
   AppsV1Api: 'AppsV1Api',
+  CustomObjectsApi: 'CustomObjectsApi',
   loadAllYaml: vi.fn(() => []),
+}));
+
+// Stub egress substrate detection so the default egressApplier is a no-op
+vi.mock('./egress/substrate.js', () => ({
+  detectEgressSubstrate: vi.fn(() => 'none'),
+  hasHardEgressEnforcement: vi.fn(() => false),
 }));
 
 // ── Import the module under test AFTER mocks (config is NOT mocked) ─────────
@@ -205,7 +212,8 @@ describe('mount=group enforcement wired through createSidecarToolPodJob', () => 
     // Leave assertGroupMountAllowed real; only stub parts config.js that
     // require env vars not relevant to this test.
     vi.doMock('../config.js', async () => {
-      const real = await vi.importActual<typeof import('../config.js')>('../config.js');
+      const real =
+        await vi.importActual<typeof import('../config.js')>('../config.js');
       return {
         ...real,
         assertToolImageAllowed: vi.fn(), // don't block on image allowlist
@@ -227,7 +235,8 @@ describe('mount=group enforcement wired through createSidecarToolPodJob', () => 
     process.env.TOOL_GROUP_MOUNT_ALLOWLIST = 'alpine:*';
 
     vi.doMock('../config.js', async () => {
-      const real = await vi.importActual<typeof import('../config.js')>('../config.js');
+      const real =
+        await vi.importActual<typeof import('../config.js')>('../config.js');
       return {
         ...real,
         assertToolImageAllowed: vi.fn(),
