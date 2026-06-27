@@ -339,11 +339,23 @@ export class JobRunner {
     const customObjectsClient: CustomObjectsClient = {
       create: (group, version, namespace, plural, body) =>
         coApi
-          .createNamespacedCustomObject({ group, version, namespace, plural, body })
+          .createNamespacedCustomObject({
+            group,
+            version,
+            namespace,
+            plural,
+            body,
+          })
           .then(() => undefined),
       delete: (group, version, namespace, plural, name) =>
         coApi
-          .deleteNamespacedCustomObject({ group, version, namespace, plural, name })
+          .deleteNamespacedCustomObject({
+            group,
+            version,
+            namespace,
+            plural,
+            name,
+          })
           .then(() => undefined),
     };
 
@@ -1658,7 +1670,7 @@ export class JobRunner {
    */
   private async buildSidecarToolPodManifest(
     spec: SidecarToolPodJobSpec,
-  ): Promise<{ job: V1Job; jobName: string }> {
+  ): Promise<{ job: V1Job; jobName: string; toolMode: string }> {
     const { toolSpec } = spec;
     assertToolImageAllowed(toolSpec.image);
     const port = toolSpec.port ?? 8080;
@@ -2018,7 +2030,7 @@ export class JobRunner {
       },
     };
 
-    return { job, jobName };
+    return { job, jobName, toolMode };
   }
 
   /**
@@ -2028,7 +2040,8 @@ export class JobRunner {
    * Returns the K8s job name.
    */
   async createSidecarToolPodJob(spec: SidecarToolPodJobSpec): Promise<string> {
-    const { job, jobName } = await this.buildSidecarToolPodManifest(spec);
+    const { job, jobName, toolMode } =
+      await this.buildSidecarToolPodManifest(spec);
 
     await this.batchApi.createNamespacedJob({
       namespace: this.namespace,
@@ -2038,6 +2051,7 @@ export class JobRunner {
       {
         jobName,
         toolName: spec.toolName,
+        toolMode,
         agentJobId: spec.agentJobId,
       },
       'Sidecar tool pod job created',
