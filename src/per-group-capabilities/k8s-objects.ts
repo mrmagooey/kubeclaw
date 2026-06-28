@@ -79,10 +79,19 @@ export function renderDeployment(
   const pvcMountContainer = spec.storage?.container ?? 'mcp';
 
   // Group-PVC subPath mount (existing behavior) is independent of the dedicated PVC.
-  const groupMount: Array<{ name: string; mountPath: string; subPath?: string }> =
-    resolved.volumeFromGroupPvc
-      ? [{ name: 'groups', mountPath: '/data', subPath: `groups/${ctx.groupFolder}` }]
-      : [];
+  const groupMount: Array<{
+    name: string;
+    mountPath: string;
+    subPath?: string;
+  }> = resolved.volumeFromGroupPvc
+    ? [
+        {
+          name: 'groups',
+          mountPath: '/data',
+          subPath: `groups/${ctx.groupFolder}`,
+        },
+      ]
+    : [];
 
   function mountsFor(containerName: string) {
     const m = [...groupMount];
@@ -115,8 +124,14 @@ export function renderDeployment(
       failureThreshold: 15,
     },
     resources: {
-      requests: { memory: spec.resources?.memoryRequest ?? '64Mi', cpu: spec.resources?.cpuRequest ?? '50m' },
-      limits: { memory: spec.resources?.memoryLimit ?? '256Mi', cpu: spec.resources?.cpuLimit ?? '500m' },
+      requests: {
+        memory: spec.resources?.memoryRequest ?? '64Mi',
+        cpu: spec.resources?.cpuRequest ?? '50m',
+      },
+      limits: {
+        memory: spec.resources?.memoryLimit ?? '256Mi',
+        cpu: spec.resources?.cpuLimit ?? '500m',
+      },
     },
     securityContext: containerSecurity,
   };
@@ -135,9 +150,16 @@ export function renderDeployment(
 
   const volumes = [
     ...(resolved.volumeFromGroupPvc
-      ? [{ name: 'groups', persistentVolumeClaim: { claimName: ctx.groupsPvcName } }]
+      ? [
+          {
+            name: 'groups',
+            persistentVolumeClaim: { claimName: ctx.groupsPvcName },
+          },
+        ]
       : []),
-    ...(pvcClaim ? [{ name: 'data', persistentVolumeClaim: { claimName: pvcClaim } }] : []),
+    ...(pvcClaim
+      ? [{ name: 'data', persistentVolumeClaim: { claimName: pvcClaim } }]
+      : []),
   ];
 
   return {

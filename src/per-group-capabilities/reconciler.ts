@@ -1,6 +1,10 @@
 import type { CapabilitySpec } from '../capabilities/types.js';
 import type { PerGroupK8sClient } from './k8s-client.js';
-import { getScope, validateScopeFields, resolveGroupCapability } from './types.js';
+import {
+  getScope,
+  validateScopeFields,
+  resolveGroupCapability,
+} from './types.js';
 import { groupHash } from './hash.js';
 import {
   renderDeployment,
@@ -69,7 +73,10 @@ export async function reconcileGroupCapabilities(
         // Ensure the empty placeholder Secret exists first so the envFrom reference
         // is satisfied even if credential generation fails mid-flight.
         const secretName = credsSecretName(spec.name, hash);
-        const existingSecret = await args.client.readSecret(args.namespace, secretName);
+        const existingSecret = await args.client.readSecret(
+          args.namespace,
+          secretName,
+        );
         if (!existingSecret) {
           await args.client.applySecret({
             apiVersion: 'v1',

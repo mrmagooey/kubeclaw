@@ -259,11 +259,17 @@ describe('runToolSelection tier-3', () => {
       allowedEgress: [],
     };
     const r = await runToolSelection(
-      { requestId: 'r', groupFolder: 'team-a', channel: 'http', taskDescription: 'exif' },
+      {
+        requestId: 'r',
+        groupFolder: 'team-a',
+        channel: 'http',
+        taskDescription: 'exif',
+      },
       deps({
         liveCatalog: () => [],
         library: () => [],
-        chat: async () => JSON.stringify({ name: null, confidence: 0, reason: 'no' }),
+        chat: async () =>
+          JSON.stringify({ name: null, confidence: 0, reason: 'no' }),
         searchRegistry: async () => discovered,
       }),
     );
@@ -284,11 +290,17 @@ describe('runToolSelection tier-3', () => {
       allowedEgress: [{ host: 'api.search.brave.com' }],
     };
     const r = await runToolSelection(
-      { requestId: 'r', groupFolder: 'team-a', channel: 'http', taskDescription: 'search' },
+      {
+        requestId: 'r',
+        groupFolder: 'team-a',
+        channel: 'http',
+        taskDescription: 'search',
+      },
       deps({
         liveCatalog: () => [],
         library: () => [],
-        chat: async () => JSON.stringify({ name: null, confidence: 0, reason: 'no' }),
+        chat: async () =>
+          JSON.stringify({ name: null, confidence: 0, reason: 'no' }),
         searchRegistry: async () => discoveredCredentialed,
       }),
     );

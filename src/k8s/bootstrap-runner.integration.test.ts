@@ -121,7 +121,10 @@ function makeCommitDeps(): CommitChannelConfigDeps & {
     deletePvc: async (_name: string) => {},
     recordMismatch: (_labels: { channel_type: string }) => {},
     // Task 3: write channel source files — no-op
-    writeChannelSource: async (_instanceName: string, _channelType: string) => {},
+    writeChannelSource: async (
+      _instanceName: string,
+      _channelType: string,
+    ) => {},
     // Task 5: host mode deps — default standalone
     getChannelHostMode: async (_channelType: string) => 'standalone' as const,
     createPvc: async (_name: string, _sizeGi: number) => {},

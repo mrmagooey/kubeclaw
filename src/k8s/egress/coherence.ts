@@ -15,17 +15,25 @@ export function checkEgressCredentialCoherence(
   const allowedHosts = new Set<string>();
   for (const id of creds) {
     const host = catalogHostLookup(id);
-    if (!host) return { ok: false, error: `unknown credential catalog id: ${id}` };
+    if (!host)
+      return { ok: false, error: `unknown credential catalog id: ${id}` };
     allowedHosts.add(host);
   }
 
   const egress = spec.allowedEgress ?? [];
   if (egress.length === 0) {
-    return { ok: false, error: 'a credentialed tool must declare allowedEgress (no implicit open egress)' };
+    return {
+      ok: false,
+      error:
+        'a credentialed tool must declare allowedEgress (no implicit open egress)',
+    };
   }
   for (const rule of egress) {
     if (!allowedHosts.has(rule.host)) {
-      return { ok: false, error: `egress host ${rule.host} is not among credential hosts [${[...allowedHosts].join(', ')}]` };
+      return {
+        ok: false,
+        error: `egress host ${rule.host} is not among credential hosts [${[...allowedHosts].join(', ')}]`,
+      };
     }
   }
   return { ok: true };

@@ -8,7 +8,10 @@
  */
 
 import { readFileSync, existsSync, readdirSync } from 'fs';
-import { listChannelManifestOverrides, type SidecarSpec } from '../skills/orchestrator/channel-manifest-registry.js';
+import {
+  listChannelManifestOverrides,
+  type SidecarSpec,
+} from '../skills/orchestrator/channel-manifest-registry.js';
 import { logger } from '../logger.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -121,7 +124,13 @@ export function loadBaselineFromDisk(
 /** Minimal shape needed to render a manifest into the per-type ConfigMap value. */
 export type RenderableManifest = Pick<
   ChannelManifestEntry,
-  'channel_type' | 'package_json' | 'package_lock_json' | 'manifest_hash' | 'hostMode' | 'httpPort' | 'sidecar'
+  | 'channel_type'
+  | 'package_json'
+  | 'package_lock_json'
+  | 'manifest_hash'
+  | 'hostMode'
+  | 'httpPort'
+  | 'sidecar'
 >;
 
 /**
@@ -195,8 +204,12 @@ export class ChannelManifestReconciler {
         registered_by: row.registered_by,
         package_json: row.package_json,
         package_lock_json: row.package_lock_json,
-        hostMode: (row.host_mode as 'standalone' | 'channel-runner' | undefined) ?? 'standalone',
-        ...(row.http_port !== undefined ? { httpPort: row.http_port as number } : {}),
+        hostMode:
+          (row.host_mode as 'standalone' | 'channel-runner' | undefined) ??
+          'standalone',
+        ...(row.http_port !== undefined
+          ? { httpPort: row.http_port as number }
+          : {}),
         ...(row.sidecar !== undefined ? { sidecar: row.sidecar } : {}),
       };
     });

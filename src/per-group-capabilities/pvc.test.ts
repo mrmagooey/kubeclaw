@@ -10,13 +10,22 @@ const ctx = {
 };
 
 const dbSpec: McpCapabilitySpec = {
-  name: 'database', kind: 'mcp', image: 'pg-mcp:1', scope: 'group',
-  storage: { sizeGi: 5, mountPath: '/var/lib/postgresql/data', container: 'postgres' },
+  name: 'database',
+  kind: 'mcp',
+  image: 'pg-mcp:1',
+  scope: 'group',
+  storage: {
+    sizeGi: 5,
+    mountPath: '/var/lib/postgresql/data',
+    container: 'postgres',
+  },
 };
 
 describe('renderPersistentVolumeClaim', () => {
   it('returns null when no storage declared', () => {
-    expect(renderPersistentVolumeClaim({ ...dbSpec, storage: undefined }, ctx)).toBeNull();
+    expect(
+      renderPersistentVolumeClaim({ ...dbSpec, storage: undefined }, ctx),
+    ).toBeNull();
   });
 
   it('renders an RWO PVC named <instance>-data with the requested size', () => {

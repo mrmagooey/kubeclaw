@@ -61,8 +61,14 @@ vi.mock('./redis-client.js', () => ({
   getRedisClient: vi.fn(() => ({})),
   getOutputChannel: vi.fn((gf: string) => `kubeclaw:messages:${gf}`),
   closeRedisConnections: vi.fn().mockResolvedValue(undefined),
-  getToolCallsStream: vi.fn((jobId: string, toolName: string) => `kubeclaw:toolcalls:${jobId}:${toolName}`),
-  getToolResultsStream: vi.fn((jobId: string, toolName: string) => `kubeclaw:toolresults:${jobId}:${toolName}`),
+  getToolCallsStream: vi.fn(
+    (jobId: string, toolName: string) =>
+      `kubeclaw:toolcalls:${jobId}:${toolName}`,
+  ),
+  getToolResultsStream: vi.fn(
+    (jobId: string, toolName: string) =>
+      `kubeclaw:toolresults:${jobId}:${toolName}`,
+  ),
 }));
 
 vi.mock('../db.js', () => ({
@@ -232,7 +238,9 @@ describe('runProbeToolJob: credential-free manifest + egress (via buildSidecarTo
   it('produces a manifest with no credential sidecar for a credential-free probe spec', async () => {
     const applied: Parameters<EgressApplier['applyForJob']>[0][] = [];
     runner.egressApplier = {
-      applyForJob: async (a) => { applied.push(a); },
+      applyForJob: async (a) => {
+        applied.push(a);
+      },
       deleteForJob: async () => {},
     };
 
@@ -244,7 +252,11 @@ describe('runProbeToolJob: credential-free manifest + egress (via buildSidecarTo
       toolSpec: {
         name: 'extract_metadata',
         description: 'Extract file metadata',
-        parameters: { type: 'object', properties: { filename: { type: 'string' } }, required: ['filename'] },
+        parameters: {
+          type: 'object',
+          properties: { filename: { type: 'string' } },
+          required: ['filename'],
+        },
         image: 'kubeclaw/exiftool:latest',
         pattern: 'file',
         mount: 'scratch',
@@ -257,8 +269,10 @@ describe('runProbeToolJob: credential-free manifest + egress (via buildSidecarTo
     const built = await runner.buildSidecarToolPodJobForTest(probeSpec);
 
     // (a) No credential sidecar container
-    const containers = (built.spec!.template!.spec!.containers as any[]);
-    const credSidecar = containers.find((c: any) => c.name === 'credential-sidecar');
+    const containers = built.spec!.template!.spec!.containers as any[];
+    const credSidecar = containers.find(
+      (c: any) => c.name === 'credential-sidecar',
+    );
     expect(credSidecar).toBeUndefined();
 
     // (b) allowedEgress (empty for default-deny) forwarded to egressApplier
@@ -270,7 +284,9 @@ describe('runProbeToolJob: credential-free manifest + egress (via buildSidecarTo
   it('forwards a non-empty allowedEgress from the probe spec', async () => {
     const applied: Parameters<EgressApplier['applyForJob']>[0][] = [];
     runner.egressApplier = {
-      applyForJob: async (a) => { applied.push(a); },
+      applyForJob: async (a) => {
+        applied.push(a);
+      },
       deleteForJob: async () => {},
     };
 

@@ -142,7 +142,9 @@ export interface CommitChannelConfigDeps {
    */
   writeChannelSource(instanceName: string, channelType: string): Promise<void>;
   /** Read the channel manifest's hostMode (default 'standalone'). */
-  getChannelHostMode(channelType: string): Promise<'standalone' | 'channel-runner'>;
+  getChannelHostMode(
+    channelType: string,
+  ): Promise<'standalone' | 'channel-runner'>;
   /**
    * Image for channel-runner-mode pods. channel-runner.js (the resident host)
    * lives in the ORCHESTRATOR image (WORKDIR /app), not the agent image
@@ -432,11 +434,31 @@ export async function processCommitChannelConfig(
         ? await deps.getChannelRunnerImage()
         : channelBaseImage;
 
-      const extraVolumes: Array<{ name: string; claimName: string; mountPath: string; sizeGi: number }> = channelRunnerMode
+      const extraVolumes: Array<{
+        name: string;
+        claimName: string;
+        mountPath: string;
+        sizeGi: number;
+      }> = channelRunnerMode
         ? [
-            { name: 'groups', claimName: `kubeclaw-channel-${instance_name}-groups`, mountPath: '/app/groups', sizeGi: 2 },
-            { name: 'store', claimName: `kubeclaw-channel-${instance_name}-store`, mountPath: '/app/store', sizeGi: 1 },
-            { name: 'sessions', claimName: `kubeclaw-channel-${instance_name}-sessions`, mountPath: '/data/sessions', sizeGi: 1 },
+            {
+              name: 'groups',
+              claimName: `kubeclaw-channel-${instance_name}-groups`,
+              mountPath: '/app/groups',
+              sizeGi: 2,
+            },
+            {
+              name: 'store',
+              claimName: `kubeclaw-channel-${instance_name}-store`,
+              mountPath: '/app/store',
+              sizeGi: 1,
+            },
+            {
+              name: 'sessions',
+              claimName: `kubeclaw-channel-${instance_name}-sessions`,
+              mountPath: '/data/sessions',
+              sizeGi: 1,
+            },
           ]
         : [];
       for (const v of extraVolumes) await deps.createPvc(v.claimName, v.sizeGi);
@@ -468,7 +490,9 @@ export async function processCommitChannelConfig(
         };
       };
       const passEnv = (k: string): EnvEntry[] =>
-        process.env[k] !== undefined ? [{ name: k, value: process.env[k] }] : [];
+        process.env[k] !== undefined
+          ? [{ name: k, value: process.env[k] }]
+          : [];
       const channelRunnerEnv: EnvEntry[] = channelRunnerMode
         ? [
             { name: 'KUBECLAW_MODE', value: 'channel' },
@@ -478,26 +502,41 @@ export async function processCommitChannelConfig(
             {
               name: 'REDIS_ADMIN_PASSWORD',
               valueFrom: {
-                secretKeyRef: { name: 'kubeclaw-redis', key: 'channel-password' },
+                secretKeyRef: {
+                  name: 'kubeclaw-redis',
+                  key: 'channel-password',
+                },
               },
             },
             // LLM provider config via secretKeyRef (optional in some modes).
             {
               name: 'OPENAI_API_KEY',
               valueFrom: {
-                secretKeyRef: { name: 'kubeclaw-secrets', key: 'openai-api-key', optional: true },
+                secretKeyRef: {
+                  name: 'kubeclaw-secrets',
+                  key: 'openai-api-key',
+                  optional: true,
+                },
               },
             },
             {
               name: 'OPENAI_BASE_URL',
               valueFrom: {
-                secretKeyRef: { name: 'kubeclaw-secrets', key: 'openai-base-url', optional: true },
+                secretKeyRef: {
+                  name: 'kubeclaw-secrets',
+                  key: 'openai-base-url',
+                  optional: true,
+                },
               },
             },
             {
               name: 'DIRECT_LLM_MODEL',
               valueFrom: {
-                secretKeyRef: { name: 'kubeclaw-secrets', key: 'direct-llm-model', optional: true },
+                secretKeyRef: {
+                  name: 'kubeclaw-secrets',
+                  key: 'direct-llm-model',
+                  optional: true,
+                },
               },
             },
             ...passEnv('TOOL_JOBS_PRUNE_INTERVAL_MS'),
@@ -531,7 +570,12 @@ export async function processCommitChannelConfig(
       // and apiUrlEnv is set — wires the channel adapter to the in-pod backend.
       const sidecarApiUrlEnv: Array<{ name: string; value: string }> =
         sidecar?.apiUrlEnv
-          ? [{ name: sidecar.apiUrlEnv, value: `http://localhost:${sidecar.port}` }]
+          ? [
+              {
+                name: sidecar.apiUrlEnv,
+                value: `http://localhost:${sidecar.port}`,
+              },
+            ]
           : [];
 
       // Sidecar container definition (rendered only when sidecar is present).
@@ -660,7 +704,10 @@ export async function processCommitChannelConfig(
                     // Runtime PVC mounted READ-ONLY (AC5)
                     { name: 'runtime', mountPath: '/runtime', readOnly: true },
                     // extraVolumes mount on the CHANNEL container only (groups/store/sessions PVCs)
-                    ...extraVolumes.map((v) => ({ name: v.name, mountPath: v.mountPath })),
+                    ...extraVolumes.map((v) => ({
+                      name: v.name,
+                      mountPath: v.mountPath,
+                    })),
                     ...channelRunnerConfigVolumes.map((v) => ({
                       name: v.name,
                       mountPath: v.mountPath,
@@ -681,14 +728,22 @@ export async function processCommitChannelConfig(
                     // in volumeMounts is the binding enforcement. Both are set for clarity.
                   } as any,
                 },
-                ...extraVolumes.map((v) => ({ name: v.name, persistentVolumeClaim: { claimName: v.claimName } })),
+                ...extraVolumes.map((v) => ({
+                  name: v.name,
+                  persistentVolumeClaim: { claimName: v.claimName },
+                })),
                 ...channelRunnerConfigVolumes.map((v) => ({
                   name: v.name,
                   configMap: { name: v.configMapName },
                 })),
                 // Sidecar session PVC volume (only when sidecar spec is present)
                 ...(sidecar
-                  ? [{ name: 'auxsession', persistentVolumeClaim: { claimName: auxSessionPvcName } }]
+                  ? [
+                      {
+                        name: 'auxsession',
+                        persistentVolumeClaim: { claimName: auxSessionPvcName },
+                      },
+                    ]
                   : []),
               ],
             },
@@ -722,14 +777,16 @@ export async function processCommitChannelConfig(
             type: 'ClusterIP',
             selector: { app: `kubeclaw-channel-${instance_name}` },
             ports: [
-              { name: 'http', port: 80, targetPort: 'http' as any, protocol: 'TCP' },
+              {
+                name: 'http',
+                port: 80,
+                targetPort: 'http' as any,
+                protocol: 'TCP',
+              },
             ],
           },
         });
-        logger.info(
-          { instance_name, httpPort },
-          'Channel Service created',
-        );
+        logger.info({ instance_name, httpPort }, 'Channel Service created');
 
         await deps.createNetworkPolicy({
           apiVersion: 'networking.k8s.io/v1',
@@ -738,9 +795,16 @@ export async function processCommitChannelConfig(
             name: `kubeclaw-channel-${instance_name}-ingress`,
           },
           spec: {
-            podSelector: { matchLabels: { app: `kubeclaw-channel-${instance_name}` } },
+            podSelector: {
+              matchLabels: { app: `kubeclaw-channel-${instance_name}` },
+            },
             policyTypes: ['Ingress'],
-            ingress: [{ _from: [], ports: [{ protocol: 'TCP', port: httpPort as any }] }],
+            ingress: [
+              {
+                _from: [],
+                ports: [{ protocol: 'TCP', port: httpPort as any }],
+              },
+            ],
           },
         });
         logger.info(
@@ -761,7 +825,9 @@ export async function processCommitChannelConfig(
             name: `kubeclaw-channel-${instance_name}-sidecar-egress`,
           },
           spec: {
-            podSelector: { matchLabels: { app: `kubeclaw-channel-${instance_name}` } },
+            podSelector: {
+              matchLabels: { app: `kubeclaw-channel-${instance_name}` },
+            },
             policyTypes: ['Egress'],
             egress: sidecar.egressPorts.map((port) => ({
               to: [],

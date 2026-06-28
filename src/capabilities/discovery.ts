@@ -105,7 +105,9 @@ async function handleRequest(req: DiscoveryRequest): Promise<void> {
           if (baseEntry.kind !== 'mcp') {
             // ensureGroupMcpToken is only meaningful for MCP capabilities; other
             // group-scoped kinds don't carry a token.
-            result = [{ ...baseEntry, endpoint: up.endpoint, state: 'ready' as const }];
+            result = [
+              { ...baseEntry, endpoint: up.endpoint, state: 'ready' as const },
+            ];
           } else {
             const token = await ensureGroupMcpToken({
               client: deps.perGroupK8sClient,

@@ -97,7 +97,11 @@ export async function ensureGroupMcpToken(
   });
   if (existing) return existing;
   const token = randomBytes(32).toString('hex');
-  await setGroupCredential({ ...args, envName: 'KUBECLAW_MCP_TOKEN', value: token });
+  await setGroupCredential({
+    ...args,
+    envName: 'KUBECLAW_MCP_TOKEN',
+    value: token,
+  });
   return token;
 }
 

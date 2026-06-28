@@ -5,7 +5,10 @@ import {
   renderNetworkPolicy,
   COMMON_LABELS_KEYS,
 } from './k8s-objects.js';
-import type { CapabilitySpec, McpCapabilitySpec } from '../capabilities/types.js';
+import type {
+  CapabilitySpec,
+  McpCapabilitySpec,
+} from '../capabilities/types.js';
 
 const baseSpec: CapabilitySpec = {
   name: 'filesystem',
@@ -103,14 +106,27 @@ describe('COMMON_LABELS_KEYS', () => {
   });
 });
 
-const dbCtx = { namespace: 'kubeclaw', groupFolder: 'alice', groupHash: 'abc123', groupsPvcName: 'kubeclaw-groups' };
+const dbCtx = {
+  namespace: 'kubeclaw',
+  groupFolder: 'alice',
+  groupHash: 'abc123',
+  groupsPvcName: 'kubeclaw-groups',
+};
 
 const dbSpec: McpCapabilitySpec = {
-  name: 'database', kind: 'mcp', image: 'pg-mcp:1', scope: 'group', port: 3000,
+  name: 'database',
+  kind: 'mcp',
+  image: 'pg-mcp:1',
+  scope: 'group',
+  port: 3000,
   pinned: true,
   credentialsFrom: 'secret',
   podSecurity: { fsGroup: 999 },
-  storage: { sizeGi: 5, mountPath: '/var/lib/postgresql/data', container: 'postgres' },
+  storage: {
+    sizeGi: 5,
+    mountPath: '/var/lib/postgresql/data',
+    container: 'postgres',
+  },
   sidecars: [{ name: 'postgres', image: 'postgres:16', port: 5432 }],
 };
 
@@ -134,19 +150,35 @@ describe('renderDeployment — stateful multi-container', () => {
     const c = dep.spec?.template.spec?.containers ?? [];
     const pg = c.find((x) => x.name === 'postgres')!;
     const mcp = c.find((x) => x.name === 'mcp')!;
-    expect(pg.volumeMounts?.some((m) => m.mountPath === '/var/lib/postgresql/data')).toBe(true);
-    expect(mcp.volumeMounts?.some((m) => m.mountPath === '/var/lib/postgresql/data')).toBe(false);
-    const vol = dep.spec?.template.spec?.volumes?.find((v) => v.persistentVolumeClaim?.claimName === 'mcp-database-abc123-data');
+    expect(
+      pg.volumeMounts?.some((m) => m.mountPath === '/var/lib/postgresql/data'),
+    ).toBe(true);
+    expect(
+      mcp.volumeMounts?.some((m) => m.mountPath === '/var/lib/postgresql/data'),
+    ).toBe(false);
+    const vol = dep.spec?.template.spec?.volumes?.find(
+      (v) => v.persistentVolumeClaim?.claimName === 'mcp-database-abc123-data',
+    );
     expect(vol).toBeTruthy();
   });
   it('shares the creds secret to all containers via envFrom', () => {
     for (const c of dep.spec?.template.spec?.containers ?? []) {
-      expect(c.envFrom?.some((e) => e.secretRef?.name === 'mcp-database-abc123-creds')).toBe(true);
+      expect(
+        c.envFrom?.some(
+          (e) => e.secretRef?.name === 'mcp-database-abc123-creds',
+        ),
+      ).toBe(true);
     }
   });
 
   it('still renders a single container at replicas 0 for a plain group MCP', () => {
-    const plain: McpCapabilitySpec = { name: 'fs', kind: 'mcp', image: 'x:1', scope: 'group', volumeFromGroupPvc: true };
+    const plain: McpCapabilitySpec = {
+      name: 'fs',
+      kind: 'mcp',
+      image: 'x:1',
+      scope: 'group',
+      volumeFromGroupPvc: true,
+    };
     const d = renderDeployment(plain, dbCtx);
     expect(d.spec?.replicas).toBe(0);
     expect(d.spec?.strategy).toBeUndefined();

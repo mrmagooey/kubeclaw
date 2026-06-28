@@ -5,7 +5,9 @@ function fakeSdk(env: Record<string, string>) {
   const factories: Record<string, any> = {};
   return {
     sdk: {
-      registerChannel: (name: string, f: any) => { factories[name] = f; },
+      registerChannel: (name: string, f: any) => {
+        factories[name] = f;
+      },
       logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
       readEnvFile: () => env,
       assistantName: 'Andy',
@@ -58,7 +60,8 @@ describe('oauth-webchat-adapter: factory registration', () => {
 
   it('factory returns null when OIDC issuer is missing', () => {
     const env = { ...REQUIRED_ENV };
-    delete (env as Record<string, string | undefined>).OAUTH_WEBCHAT_OIDC_ISSUER;
+    delete (env as Record<string, string | undefined>)
+      .OAUTH_WEBCHAT_OIDC_ISSUER;
     const { sdk, factories } = fakeSdk(env as Record<string, string>);
     register(sdk);
     expect(factories['oauth-webchat'](fakeOpts())).toBeNull();
@@ -67,7 +70,8 @@ describe('oauth-webchat-adapter: factory registration', () => {
   it('factory returns null when client credentials are missing', () => {
     const env = { ...REQUIRED_ENV };
     delete (env as Record<string, string | undefined>).OAUTH_WEBCHAT_CLIENT_ID;
-    delete (env as Record<string, string | undefined>).OAUTH_WEBCHAT_CLIENT_SECRET;
+    delete (env as Record<string, string | undefined>)
+      .OAUTH_WEBCHAT_CLIENT_SECRET;
     const { sdk, factories } = fakeSdk(env as Record<string, string>);
     register(sdk);
     expect(factories['oauth-webchat'](fakeOpts())).toBeNull();
@@ -75,7 +79,8 @@ describe('oauth-webchat-adapter: factory registration', () => {
 
   it('factory returns null when allowed emails is missing', () => {
     const env = { ...REQUIRED_ENV };
-    delete (env as Record<string, string | undefined>).OAUTH_WEBCHAT_ALLOWED_EMAILS;
+    delete (env as Record<string, string | undefined>)
+      .OAUTH_WEBCHAT_ALLOWED_EMAILS;
     const { sdk, factories } = fakeSdk(env as Record<string, string>);
     register(sdk);
     expect(factories['oauth-webchat'](fakeOpts())).toBeNull();

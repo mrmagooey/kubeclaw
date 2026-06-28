@@ -139,7 +139,10 @@ export function registerChannelManifest(
 
   // 6. Validate host_mode (if provided)
   const validHostModes = ['standalone', 'channel-runner'];
-  if (args.host_mode !== undefined && !validHostModes.includes(args.host_mode)) {
+  if (
+    args.host_mode !== undefined &&
+    !validHostModes.includes(args.host_mode)
+  ) {
     return {
       ok: false,
       error: `host_mode must be one of ${validHostModes.map((m) => `'${m}'`).join(', ')} (got '${args.host_mode}')`,
@@ -149,7 +152,11 @@ export function registerChannelManifest(
 
   // 7. Validate http_port (if provided)
   if (args.http_port !== undefined) {
-    if (!Number.isInteger(args.http_port) || args.http_port < 1024 || args.http_port > 65535) {
+    if (
+      !Number.isInteger(args.http_port) ||
+      args.http_port < 1024 ||
+      args.http_port > 65535
+    ) {
       return {
         ok: false,
         error: `http_port must be an integer in range 1024..65535 (got ${String(args.http_port)})`,
@@ -175,10 +182,15 @@ export function registerChannelManifest(
         error: `sidecar.port must be an integer in range 1..65535 (got ${String(s.port)})`,
       };
     }
-    if (!s.sessionMountPath || typeof s.sessionMountPath !== 'string' || !s.sessionMountPath.startsWith('/')) {
+    if (
+      !s.sessionMountPath ||
+      typeof s.sessionMountPath !== 'string' ||
+      !s.sessionMountPath.startsWith('/')
+    ) {
       return {
         ok: false,
-        error: 'sidecar.sessionMountPath must be a non-empty absolute path (starts with /)',
+        error:
+          'sidecar.sessionMountPath must be a non-empty absolute path (starts with /)',
       };
     }
     if (typeof s.sessionStorageGi !== 'number' || s.sessionStorageGi <= 0) {
@@ -238,10 +250,14 @@ export function registerChannelManifest(
   );
   if (existing.length > 0 && existing[0].values.length > 0) {
     const storedHash = existing[0].values[0][0] as string;
-    const storedHostMode = ((existing[0].values[0][1] as string | null) ?? 'standalone') as 'standalone' | 'channel-runner';
-    const storedHttpPort = (existing[0].values[0][2] as number | null) ?? undefined;
-    const storedSidecarJson = (existing[0].values[0][3] as string | null) ?? undefined;
-    const newSidecarJson = args.sidecar !== undefined ? JSON.stringify(args.sidecar) : undefined;
+    const storedHostMode = ((existing[0].values[0][1] as string | null) ??
+      'standalone') as 'standalone' | 'channel-runner';
+    const storedHttpPort =
+      (existing[0].values[0][2] as number | null) ?? undefined;
+    const storedSidecarJson =
+      (existing[0].values[0][3] as string | null) ?? undefined;
+    const newSidecarJson =
+      args.sidecar !== undefined ? JSON.stringify(args.sidecar) : undefined;
     if (
       storedHash === manifest_hash &&
       storedHostMode === host_mode &&
@@ -300,9 +316,13 @@ export function listChannelManifestOverrides(): OverrideRow[] {
       manifest_hash: row[3] as string,
       registered_at: row[4] as string,
       registered_by: row[5] as string,
-      host_mode: ((row[6] as string | null) ?? 'standalone') as 'standalone' | 'channel-runner',
+      host_mode: ((row[6] as string | null) ?? 'standalone') as
+        | 'standalone'
+        | 'channel-runner',
       http_port: (row[7] as number | null) ?? undefined,
-      ...(sidecarJson !== null ? { sidecar: JSON.parse(sidecarJson) as SidecarSpec } : {}),
+      ...(sidecarJson !== null
+        ? { sidecar: JSON.parse(sidecarJson) as SidecarSpec }
+        : {}),
     };
   });
 }

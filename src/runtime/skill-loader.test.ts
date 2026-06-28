@@ -2,7 +2,11 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { _initTestDatabase, getSkillLoadStats, recordSkillLoad } from '../db.js';
+import {
+  _initTestDatabase,
+  getSkillLoadStats,
+  recordSkillLoad,
+} from '../db.js';
 import { writeCandidate, acceptCandidate } from './skill-store.js';
 import { SkillFile } from './skill-format.js';
 import { loadSkills, SKILL_CAP } from './skill-loader.js';
@@ -103,7 +107,7 @@ describe('loadSkills', () => {
     // Skills vol-skill-00..vol-skill-19 get timestamps 1000,2000,...,20000.
     const BASE_TS = 1_000_000_000_000; // well in the past, distinct from Date.now()
     const topSkills = names.slice(0, SKILL_CAP); // 20 skills with history
-    const bottomSkills = names.slice(SKILL_CAP);  // 10 skills with no history
+    const bottomSkills = names.slice(SKILL_CAP); // 10 skills with no history
 
     for (let i = 0; i < topSkills.length; i++) {
       // Ascending timestamps: vol-skill-19 has the highest last_loaded

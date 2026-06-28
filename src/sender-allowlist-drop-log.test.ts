@@ -29,7 +29,9 @@ function wouldDrop(
   sender: string,
   cfg: SenderAllowlistConfig,
 ): boolean {
-  return shouldDropMessage(chatJid, cfg) && !isSenderAllowed(chatJid, sender, cfg);
+  return (
+    shouldDropMessage(chatJid, cfg) && !isSenderAllowed(chatJid, sender, cfg)
+  );
 }
 
 function cfg(
@@ -41,11 +43,15 @@ function cfg(
 
 describe('shouldDropMessage — drop mode predicate', () => {
   it('returns true when the entry mode is "drop"', () => {
-    expect(shouldDropMessage('chat@g.us', cfg({ allow: '*', mode: 'drop' }))).toBe(true);
+    expect(
+      shouldDropMessage('chat@g.us', cfg({ allow: '*', mode: 'drop' })),
+    ).toBe(true);
   });
 
   it('returns false when the entry mode is "trigger"', () => {
-    expect(shouldDropMessage('chat@g.us', cfg({ allow: '*', mode: 'trigger' }))).toBe(false);
+    expect(
+      shouldDropMessage('chat@g.us', cfg({ allow: '*', mode: 'trigger' })),
+    ).toBe(false);
   });
 
   it('uses the per-chat override over the default', () => {

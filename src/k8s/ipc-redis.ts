@@ -2102,7 +2102,9 @@ export interface FindToolsHandlerDeps {
    * Tier-3 open discovery: search the container registry for a matching tool.
    * Only present when the cluster has hard egress enforcement (Cilium/Istio).
    */
-  searchRegistry?: (task: string) => Promise<import('../tools/types.js').ToolSpec | null>;
+  searchRegistry?: (
+    task: string,
+  ) => Promise<import('../tools/types.js').ToolSpec | null>;
 }
 
 /**

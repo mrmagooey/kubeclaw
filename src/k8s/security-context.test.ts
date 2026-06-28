@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { hardenedPodSecurityContext, hardenedContainerSecurityContext } from './security-context';
+import {
+  hardenedPodSecurityContext,
+  hardenedContainerSecurityContext,
+} from './security-context';
 
 describe('hardened securityContext', () => {
   it('pod context requires non-root and keeps fsGroup 2000', () => {

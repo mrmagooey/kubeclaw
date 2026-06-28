@@ -94,17 +94,37 @@ export interface DataFacadeConfig {
 }
 
 export interface DataFacadeHistory {
-  getPage(groupFolder: string, opts?: { limit?: number; before?: string }): ConversationHistoryPageRow[];
+  getPage(
+    groupFolder: string,
+    opts?: { limit?: number; before?: string },
+  ): ConversationHistoryPageRow[];
   getAll(groupFolder: string, username: string): ConversationExportRow[];
   getById(id: string, groupFolder: string): ConversationHistoryRow | null;
   search(args: SearchConversationsArgs): SearchResult[];
-  getOutboundSince(chatJid: string, sinceTimestamp: string, limit?: number): Pick<NewMessage, 'id' | 'content' | 'timestamp'>[];
-  append(groupFolder: string, role: 'user' | 'assistant', content: string): void;
+  getOutboundSince(
+    chatJid: string,
+    sinceTimestamp: string,
+    limit?: number,
+  ): Pick<NewMessage, 'id' | 'content' | 'timestamp'>[];
+  append(
+    groupFolder: string,
+    role: 'user' | 'assistant',
+    content: string,
+  ): void;
   update(id: string, content: string, groupFolder: string): boolean;
   deleteById(id: string, groupFolder: string): boolean;
   deleteBefore(groupFolder: string, before: Date): number;
   clear(groupFolder: string): void;
-  storeOutbound(msg: { id: string; chat_jid: string; sender: string; sender_name: string; content: string; timestamp: string; is_from_me: boolean; is_bot_message?: boolean }): void;
+  storeOutbound(msg: {
+    id: string;
+    chat_jid: string;
+    sender: string;
+    sender_name: string;
+    content: string;
+    timestamp: string;
+    is_from_me: boolean;
+    is_bot_message?: boolean;
+  }): void;
   groupFolderForMessage(id: string): string | null;
 }
 
@@ -115,18 +135,35 @@ export interface DataFacadeTasks {
   deleteForGroup(id: string, groupFolder: string): boolean;
   pause(id: string, groupFolder: string): boolean;
   resume(id: string, groupFolder: string): boolean;
-  getRunLogs(taskId: string, groupFolder: string, limit: number): TaskRunLogRow[];
+  getRunLogs(
+    taskId: string,
+    groupFolder: string,
+    limit: number,
+  ): TaskRunLogRow[];
 }
 
 export interface DataFacadeJobs {
   active(): ToolJobRecord[];
   recentForGroup(groupFolder: string, limit: number): ToolJobRecord[];
   byIdForGroup(jobId: string, groupFolder: string): ToolJobRecord | null;
-  insertForDebug(args: { jobId: string; groupFolder: string; chatJid?: string; status: string; createdAt?: string; resolvedAt?: string | null }): void;
+  insertForDebug(args: {
+    jobId: string;
+    groupFolder: string;
+    chatJid?: string;
+    status: string;
+    createdAt?: string;
+    resolvedAt?: string | null;
+  }): void;
 }
 
 export interface DataFacadeAudit {
-  write(args: { groupFolder: string; actor: string; action: string; target?: string; detail?: string }): void;
+  write(args: {
+    groupFolder: string;
+    actor: string;
+    action: string;
+    target?: string;
+    detail?: string;
+  }): void;
   entries(groupFolder: string, limit?: number): AuditEntry[];
 }
 

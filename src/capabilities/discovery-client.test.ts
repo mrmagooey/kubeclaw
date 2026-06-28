@@ -37,7 +37,10 @@ describe('requestGroupCapability', () => {
       ]),
     );
     const res = await requestGroupCapability('echo', 'Family', 1000);
-    expect(res).toEqual({ endpoint: 'http://mcp-echo-h1.kubeclaw.svc:3000', token: undefined });
+    expect(res).toEqual({
+      endpoint: 'http://mcp-echo-h1.kubeclaw.svc:3000',
+      token: undefined,
+    });
     expect(mockXadd).toHaveBeenCalledTimes(1);
     const [stream, ...fields] = mockXadd.mock.calls[0];
     expect(stream).toBe('kubeclaw:discovery:request');

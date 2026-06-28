@@ -105,7 +105,9 @@ describe('makeSearchRegistry', () => {
       // Unparseable for bad/one, valid JSON for good/two.
       chat: async (messages) => {
         const user = messages.find((m) => m.role === 'user')?.content ?? '';
-        return user.includes('good/two') ? JSON.stringify(goodDraft) : 'not-json';
+        return user.includes('good/two')
+          ? JSON.stringify(goodDraft)
+          : 'not-json';
       },
       probe: {
         runProbeToolJob: async () => ({ ok: true, output: 'good output' }),

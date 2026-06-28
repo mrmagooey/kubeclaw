@@ -126,7 +126,10 @@ describe('registerTool coherence', () => {
     };
     expect(registerTool(spec, undefined, lookup).ok).toBe(true);
     const r = editTool(
-      { name: 'edit_me', patch: { allowedEgress: [{ host: 'evil.example.com' }] } },
+      {
+        name: 'edit_me',
+        patch: { allowedEgress: [{ host: 'evil.example.com' }] },
+      },
       undefined,
       lookup,
     );
@@ -147,7 +150,9 @@ describe('registerTool coherence', () => {
     const r = editTool(
       {
         name: 'edit_ok',
-        patch: { allowedEgress: [{ host: 'api.search.brave.com', ports: [80, 443] }] },
+        patch: {
+          allowedEgress: [{ host: 'api.search.brave.com', ports: [80, 443] }],
+        },
       },
       undefined,
       lookup,

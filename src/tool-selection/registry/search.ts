@@ -27,11 +27,14 @@ export async function searchImages(
       if (typeof o.repo_name !== 'string') return null;
       return {
         repo: o.repo_name,
-        description: typeof o.short_description === 'string' ? o.short_description : '',
+        description:
+          typeof o.short_description === 'string' ? o.short_description : '',
         stars: typeof o.star_count === 'number' ? o.star_count : 0,
         official: o.is_official === true,
       };
     })
     .filter((x): x is ImageCandidate => x !== null);
-  return mapped.sort((a, b) => Number(b.official) - Number(a.official) || b.stars - a.stars);
+  return mapped.sort(
+    (a, b) => Number(b.official) - Number(a.official) || b.stars - a.stars,
+  );
 }

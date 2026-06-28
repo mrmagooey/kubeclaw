@@ -77,7 +77,10 @@ describe('egress/credential coherence', () => {
       image: 'i',
       pattern: 'http',
       credentials: ['openai', 'brave-search'],
-      allowedEgress: [{ host: 'api.openai.com' }, { host: 'api.search.brave.com' }],
+      allowedEgress: [
+        { host: 'api.openai.com' },
+        { host: 'api.search.brave.com' },
+      ],
     };
     expect(checkEgressCredentialCoherence(spec, lookup).ok).toBe(true);
   });

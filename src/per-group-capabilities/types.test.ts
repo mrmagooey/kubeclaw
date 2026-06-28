@@ -150,7 +150,12 @@ describe('resolveGroupCapability', () => {
 });
 
 describe('pinned scope validation', () => {
-  const base: CapabilitySpec = { name: 'db', kind: 'mcp', image: 'x:1', scope: 'group' };
+  const base: CapabilitySpec = {
+    name: 'db',
+    kind: 'mcp',
+    image: 'x:1',
+    scope: 'group',
+  };
 
   it('accepts pinned on a group capability', () => {
     expect(() => validateScopeFields({ ...base, pinned: true })).not.toThrow();

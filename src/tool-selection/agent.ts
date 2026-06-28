@@ -110,7 +110,11 @@ export async function runToolSelection(
               message: `Discovered tool ${scoped.name} needs a credential (${gate.catalogId}) that is not configured in the broker; an administrator must set it up.`,
             };
           }
-          const token = mintApprovalToken(scoped.name, gate.catalogId!, deps.nonce);
+          const token = mintApprovalToken(
+            scoped.name,
+            gate.catalogId!,
+            deps.nonce,
+          );
           return {
             status: 'pending_credential',
             toolName: scoped.name,

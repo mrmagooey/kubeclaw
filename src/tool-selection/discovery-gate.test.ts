@@ -29,7 +29,10 @@ describe('discovery hard-gate', () => {
 
   it('returns undefined (tier-3 disabled) without hard enforcement', () => {
     expect(
-      buildTsaSearchRegistry({ CREDENTIAL_INJECTION_MODE: 'sidecar' }, factoryDeps),
+      buildTsaSearchRegistry(
+        { CREDENTIAL_INJECTION_MODE: 'sidecar' },
+        factoryDeps,
+      ),
     ).toBeUndefined();
   });
 

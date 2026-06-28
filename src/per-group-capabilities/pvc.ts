@@ -1,6 +1,10 @@
 import type { V1PersistentVolumeClaim } from '@kubernetes/client-node';
 import type { CapabilitySpec } from '../capabilities/types.js';
-import { instanceName, commonLabels, type RenderContext } from './k8s-objects.js';
+import {
+  instanceName,
+  commonLabels,
+  type RenderContext,
+} from './k8s-objects.js';
 
 export function pvcName(capabilityName: string, groupHash: string): string {
   return `${instanceName(capabilityName, groupHash)}-data`;

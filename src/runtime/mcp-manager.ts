@@ -302,7 +302,12 @@ export class McpManager {
         });
       }
       try {
-        return await callOneShotMcp(resolved.endpoint, parsed.tool, args, resolved.token);
+        return await callOneShotMcp(
+          resolved.endpoint,
+          parsed.tool,
+          args,
+          resolved.token,
+        );
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         return JSON.stringify({
@@ -534,7 +539,9 @@ async function callOneShotMcp(
 ): Promise<string> {
   const transport = new StreamableHTTPClientTransport(
     new URL(endpointUrl + '/mcp'),
-    token ? { requestInit: { headers: { Authorization: `Bearer ${token}` } } } : undefined,
+    token
+      ? { requestInit: { headers: { Authorization: `Bearer ${token}` } } }
+      : undefined,
   );
   const client = new Client(
     { name: 'kubeclaw-mcp-group-client', version: '0.0.1' },

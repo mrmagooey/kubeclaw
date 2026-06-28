@@ -145,18 +145,26 @@ describe('removeChannel — comprehensive name-based cleanup', () => {
       allDeletesSucceed();
       const result = await removeChannel('http');
       // The sidecar-egress netpol delete must have been attempted
-      const netpolNames = mockDeleteNetworkPolicy.mock.calls.map((c: any) => c[0].name);
+      const netpolNames = mockDeleteNetworkPolicy.mock.calls.map(
+        (c: any) => c[0].name,
+      );
       expect(netpolNames).toContain('kubeclaw-channel-http-sidecar-egress');
       // And it should appear in the deleted list
-      expect(result.deleted).toContain('networkpolicy/kubeclaw-channel-http-sidecar-egress');
+      expect(result.deleted).toContain(
+        'networkpolicy/kubeclaw-channel-http-sidecar-egress',
+      );
     });
 
     it('does NOT delete a different instance sidecar-egress netpol (http vs http-staging cross-instance safety)', async () => {
       allDeletesSucceed();
       await removeChannel('http');
       // Specifically targeting http-sidecar-egress — must NOT touch http-staging-sidecar-egress
-      const netpolNames = mockDeleteNetworkPolicy.mock.calls.map((c: any) => c[0].name);
-      expect(netpolNames).not.toContain('kubeclaw-channel-http-staging-sidecar-egress');
+      const netpolNames = mockDeleteNetworkPolicy.mock.calls.map(
+        (c: any) => c[0].name,
+      );
+      expect(netpolNames).not.toContain(
+        'kubeclaw-channel-http-staging-sidecar-egress',
+      );
     });
 
     it('lists PVCs WITHOUT a label selector (the install paths do not label them consistently)', async () => {
@@ -192,14 +200,14 @@ describe('removeChannel — comprehensive name-based cleanup', () => {
     it('deletes the auxsession PVC', async () => {
       allDeletesSucceed();
       mockListPvc.mockResolvedValue({
-        items: [
-          pvcItem('kubeclaw-channel-http-auxsession'),
-        ],
+        items: [pvcItem('kubeclaw-channel-http-auxsession')],
       });
       const result = await removeChannel('http');
       const deletedPvc = mockDeletePvc.mock.calls.map((c) => c[0].name);
       expect(deletedPvc).toContain('kubeclaw-channel-http-auxsession');
-      expect(result.deleted).toContain('persistentvolumeclaim/kubeclaw-channel-http-auxsession');
+      expect(result.deleted).toContain(
+        'persistentvolumeclaim/kubeclaw-channel-http-auxsession',
+      );
     });
 
     it('does NOT delete a different instance auxsession PVC (http vs http-staging)', async () => {
@@ -213,7 +221,9 @@ describe('removeChannel — comprehensive name-based cleanup', () => {
       await removeChannel('http');
       const deletedPvc = mockDeletePvc.mock.calls.map((c) => c[0].name);
       expect(deletedPvc).toContain('kubeclaw-channel-http-auxsession');
-      expect(deletedPvc).not.toContain('kubeclaw-channel-http-staging-auxsession');
+      expect(deletedPvc).not.toContain(
+        'kubeclaw-channel-http-staging-auxsession',
+      );
     });
 
     it('deletes the four standard PVCs and a versioned runtime PVC', async () => {
@@ -338,7 +348,6 @@ describe('removeChannel — comprehensive name-based cleanup', () => {
   });
 
   describe('summary', () => {
-
     it('summary lists deleted resources', async () => {
       allDeletesSucceed();
       mockListPvc.mockResolvedValue({

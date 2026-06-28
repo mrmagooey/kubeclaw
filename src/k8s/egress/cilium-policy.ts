@@ -43,7 +43,7 @@ export function buildCiliumEgressPolicy(args: {
   if (args.allowedEgress.length > 0) {
     const ports = new Set<number>();
     for (const r of args.allowedEgress)
-      for (const p of (r.ports?.length ? r.ports : [443])) ports.add(p);
+      for (const p of r.ports?.length ? r.ports : [443]) ports.add(p);
     egress.push({
       toFQDNs: args.allowedEgress.map((r) => ({ matchName: r.host })),
       toPorts: [

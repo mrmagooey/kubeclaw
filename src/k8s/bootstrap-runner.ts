@@ -47,7 +47,7 @@ export function buildStageRuntimeInitContainer(
     command: [
       'sh',
       '-c',
-      'node -e "const fs=require(\'fs\');const t=process.env.KUBECLAW_BOOTSTRAP_CHANNEL_TYPE;const m=JSON.parse(fs.readFileSync(\'/workspace/manifests/\'+t+\'.json\',\'utf8\'));fs.writeFileSync(\'/runtime/package.json\',m.packageJson);fs.writeFileSync(\'/runtime/package-lock.json\',m.packageLockJson);" && npm ci --prefix /runtime --omit=dev --ignore-scripts',
+      "node -e \"const fs=require('fs');const t=process.env.KUBECLAW_BOOTSTRAP_CHANNEL_TYPE;const m=JSON.parse(fs.readFileSync('/workspace/manifests/'+t+'.json','utf8'));fs.writeFileSync('/runtime/package.json',m.packageJson);fs.writeFileSync('/runtime/package-lock.json',m.packageLockJson);\" && npm ci --prefix /runtime --omit=dev --ignore-scripts",
     ],
     env: [{ name: 'KUBECLAW_BOOTSTRAP_CHANNEL_TYPE', value: channelType }],
     volumeMounts: [
@@ -752,7 +752,10 @@ export async function runUpgrade(
           // bootstrap agent starts. This eliminates MANIFEST_DIVERGENCE caused by the
           // LLM agent staging non-verbatim bytes.
           initContainers: [
-            buildStageRuntimeInitContainer(channelBaseImage, upgradeChannelType),
+            buildStageRuntimeInitContainer(
+              channelBaseImage,
+              upgradeChannelType,
+            ),
             {
               name: 'inspector',
               image: channelBaseImage,

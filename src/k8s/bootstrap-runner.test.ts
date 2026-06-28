@@ -1890,7 +1890,10 @@ describe('buildStageRuntimeInitContainer', () => {
   });
 
   it('does not have a restartPolicy (regular init container, not sidecar)', () => {
-    const c = buildStageRuntimeInitContainer('kubeclaw-agent:test', 'irc') as Record<string, unknown>;
+    const c = buildStageRuntimeInitContainer(
+      'kubeclaw-agent:test',
+      'irc',
+    ) as Record<string, unknown>;
     expect(c['restartPolicy']).toBeUndefined();
   });
 });

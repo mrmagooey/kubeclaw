@@ -4,7 +4,11 @@ describe('buildSmokeInput', () => {
   it('fills required params with type-appropriate benign values', () => {
     const params = {
       type: 'object',
-      properties: { filename: { type: 'string' }, count: { type: 'number' }, flag: { type: 'boolean' } },
+      properties: {
+        filename: { type: 'string' },
+        count: { type: 'number' },
+        flag: { type: 'boolean' },
+      },
       required: ['filename', 'count'],
     };
     const input = buildSmokeInput(params);

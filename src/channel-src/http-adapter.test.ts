@@ -190,11 +190,13 @@ function makeRes(): ServerResponse {
     end: vi.fn(),
     write: vi.fn(),
   } as unknown as ServerResponse;
-  (res.writeHead as any) = vi.fn((code: number, headers?: Record<string, string>) => {
-    (res as any).statusCode = code;
-    if (headers) Object.assign((res as any).headers, headers);
-    (res as any).headersSent = true;
-  });
+  (res.writeHead as any) = vi.fn(
+    (code: number, headers?: Record<string, string>) => {
+      (res as any).statusCode = code;
+      if (headers) Object.assign((res as any).headers, headers);
+      (res as any).headersSent = true;
+    },
+  );
   (res.end as any) = vi.fn((body?: string) => {
     if (body) (res as any).body = body;
     (res as any).writableEnded = true;
@@ -223,7 +225,10 @@ describe('http-adapter: factory registration', () => {
   it('registers an http factory that builds a channel when HTTP_CHANNEL_USERS is set', () => {
     const sdk = makeFakeSdk({ HTTP_CHANNEL_USERS: 'alice:secret' });
     register(sdk);
-    expect(sdk.registerChannel).toHaveBeenCalledWith('http', expect.any(Function));
+    expect(sdk.registerChannel).toHaveBeenCalledWith(
+      'http',
+      expect.any(Function),
+    );
     const factory = sdk.registerChannel.mock.calls[0][1];
     const ch = factory(makeOpts());
     expect(ch).not.toBeNull();
@@ -457,7 +462,11 @@ describe('http-adapter: opts secret fns pass-through', () => {
     const ch = factory(makeOpts({ listSecretsFn, addSecretFn }));
     await ch.connect();
 
-    const req = makeReq({ method: 'GET', url: '/secrets', auth: 'alice:secret' });
+    const req = makeReq({
+      method: 'GET',
+      url: '/secrets',
+      auth: 'alice:secret',
+    });
     const res = makeRes();
     await dispatch(ch, req, res);
 

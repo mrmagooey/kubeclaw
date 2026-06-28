@@ -9,7 +9,11 @@ export async function draftToolSpec(args: {
   chat: ChatFn;
 }): Promise<{ ok: true; spec: ToolSpec } | { ok: false; error: string }> {
   if (!args.metadata.digest) {
-    return { ok: false, error: 'image has no resolvable digest; refusing to draft a mutable-tag tool' };
+    return {
+      ok: false,
+      error:
+        'image has no resolvable digest; refusing to draft a mutable-tag tool',
+    };
   }
 
   const system =
@@ -19,15 +23,16 @@ export async function draftToolSpec(args: {
     '"$(cat \\"$INPUT_DIR/<param>\\")"), mount ("none"|"scratch"|"group"), allowedEgress ' +
     '([{host,ports}]). PREFER pattern "file" and NO credentials. Only include allowedEgress hosts ' +
     'the tool genuinely needs; an offline tool (e.g. metadata extraction) MUST use allowedEgress: [].';
-  const user =
-    `Task: ${args.taskDescription}\nImage: ${args.metadata.repo}\nReadme:\n${args.metadata.readme.slice(0, 4000)}`;
+  const user = `Task: ${args.taskDescription}\nImage: ${args.metadata.repo}\nReadme:\n${args.metadata.readme.slice(0, 4000)}`;
 
   let parsed: Record<string, unknown>;
   try {
-    parsed = JSON.parse(await args.chat([
-      { role: 'system', content: system },
-      { role: 'user', content: user },
-    ])) as Record<string, unknown>;
+    parsed = JSON.parse(
+      await args.chat([
+        { role: 'system', content: system },
+        { role: 'user', content: user },
+      ]),
+    ) as Record<string, unknown>;
   } catch {
     return { ok: false, error: 'unparseable draft' };
   }

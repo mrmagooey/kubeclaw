@@ -153,7 +153,8 @@ describe('sweepIdleInstances', () => {
     // Pinned instance must not be scaled down — DB and K8s replicas stay at 1.
     expect(getInstance('alice', 'database')?.currentReplicas).toBe(1);
     expect(
-      (await c.readDeployment('kubeclaw', 'mcp-database-abc123'))?.spec?.replicas,
+      (await c.readDeployment('kubeclaw', 'mcp-database-abc123'))?.spec
+        ?.replicas,
     ).toBe(1);
   });
 });

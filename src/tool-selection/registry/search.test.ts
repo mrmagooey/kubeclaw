@@ -3,8 +3,18 @@ import { searchImages } from './search.js';
 
 const fakeResponse = {
   results: [
-    { repo_name: 'someuser/exiftool', short_description: 'exif', star_count: 5, is_official: false },
-    { repo_name: 'library/alpine', short_description: 'tiny', star_count: 9000, is_official: true },
+    {
+      repo_name: 'someuser/exiftool',
+      short_description: 'exif',
+      star_count: 5,
+      is_official: false,
+    },
+    {
+      repo_name: 'library/alpine',
+      short_description: 'tiny',
+      star_count: 9000,
+      is_official: true,
+    },
   ],
 };
 

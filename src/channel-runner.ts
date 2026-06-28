@@ -3543,12 +3543,18 @@ async function main(): Promise<void> {
       const catalog = res.result as CatalogEntry[];
       return (catalog ?? []).map((e) => ({
         type: e.id,
-        required_fields: e.credentialFields.map((f: { name: string }) => f.name),
+        required_fields: e.credentialFields.map(
+          (f: { name: string }) => f.name,
+        ),
         optional_fields: [],
         description: e.host ?? '',
       }));
     },
-    addSecretFn: async (group: string, type: string, fields: Record<string, string>) => {
+    addSecretFn: async (
+      group: string,
+      type: string,
+      fields: Record<string, string>,
+    ) => {
       const ipc = buildCredentialIpcClient();
       const res = await ipc('secret.add', {
         group,
@@ -3614,11 +3620,13 @@ async function main(): Promise<void> {
           lastId,
         );
         if (!response) continue;
-        for (const [, messages] of response as [string, [string, string[]][]][]) {
+        for (const [, messages] of response as [
+          string,
+          [string, string[]][],
+        ][]) {
           for (const [, flds] of messages) {
             const obj: Record<string, string> = {};
-            for (let i = 0; i < flds.length; i += 2)
-              obj[flds[i]] = flds[i + 1];
+            for (let i = 0; i < flds.length; i += 2) obj[flds[i]] = flds[i + 1];
             if (obj.result) {
               return JSON.parse(obj.result) as {
                 ok: boolean;

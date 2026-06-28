@@ -59,13 +59,19 @@ describe('irc-adapter: factory registration', () => {
   });
 
   it('factory returns null when IRC_NICK is missing', () => {
-    const { sdk, factories } = fakeSdk({ IRC_SERVER: 'irc.test', IRC_CHANNELS: '#x' });
+    const { sdk, factories } = fakeSdk({
+      IRC_SERVER: 'irc.test',
+      IRC_CHANNELS: '#x',
+    });
     register(sdk);
     expect(factories['irc'](fakeOpts())).toBeNull();
   });
 
   it('factory returns null when IRC_CHANNELS is missing', () => {
-    const { sdk, factories } = fakeSdk({ IRC_SERVER: 'irc.test', IRC_NICK: 'bot' });
+    const { sdk, factories } = fakeSdk({
+      IRC_SERVER: 'irc.test',
+      IRC_NICK: 'bot',
+    });
     register(sdk);
     expect(factories['irc'](fakeOpts())).toBeNull();
   });

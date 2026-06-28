@@ -15,7 +15,11 @@ export function registerTool(
   if (!v.ok) return v;
   if (catalogHostLookup) {
     const c = checkEgressCredentialCoherence(t, catalogHostLookup);
-    if (!c.ok) return { ok: false, error: c.error ?? 'egress/credential coherence failed' };
+    if (!c.ok)
+      return {
+        ok: false,
+        error: c.error ?? 'egress/credential coherence failed',
+      };
   }
 
   const existing = db.exec(`SELECT 1 FROM tool_overrides WHERE name = ?`, [
@@ -60,7 +64,11 @@ export function editTool(
   if (!v.ok) return v;
   if (catalogHostLookup) {
     const c = checkEgressCredentialCoherence(merged, catalogHostLookup);
-    if (!c.ok) return { ok: false, error: c.error ?? 'egress/credential coherence failed' };
+    if (!c.ok)
+      return {
+        ok: false,
+        error: c.error ?? 'egress/credential coherence failed',
+      };
   }
 
   db.run(

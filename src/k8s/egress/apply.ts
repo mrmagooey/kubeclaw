@@ -44,7 +44,13 @@ export function makeEgressApplier(deps: {
   redisNamespace: string;
 }): EgressApplier {
   return {
-    async applyForJob({ jobName, jobLabel, namespace, allowedEgress, ownerRef }) {
+    async applyForJob({
+      jobName,
+      jobLabel,
+      namespace,
+      allowedEgress,
+      ownerRef,
+    }) {
       if (deps.substrate === 'cilium') {
         const policy = buildCiliumEgressPolicy({
           name: `egress-${jobName}`,

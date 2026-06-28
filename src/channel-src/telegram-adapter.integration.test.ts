@@ -44,9 +44,9 @@ function buildIntegrationChannel(botFactory: (token: string) => any) {
   });
   const cfg = parseConfig(sdk);
   const ch = new TelegramChannel(cfg!, opts, sdk);
-  ch._makeBot = vi.fn().mockImplementation(async (token: string) =>
-    botFactory(token),
-  );
+  ch._makeBot = vi
+    .fn()
+    .mockImplementation(async (token: string) => botFactory(token));
   return { ch, sdk, opts };
 }
 

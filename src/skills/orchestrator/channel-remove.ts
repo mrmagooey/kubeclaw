@@ -134,7 +134,10 @@ const tryDeleteIngress = (name: string) =>
   );
 const tryDeleteSecret = (name: string) =>
   tryDelete(() =>
-    getK8sClients().coreV1.deleteNamespacedSecret({ name, namespace: NAMESPACE }),
+    getK8sClients().coreV1.deleteNamespacedSecret({
+      name,
+      namespace: NAMESPACE,
+    }),
   );
 const tryDeletePvc = (name: string) =>
   tryDelete(() =>

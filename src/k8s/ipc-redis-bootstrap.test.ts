@@ -248,24 +248,44 @@ describe('processCommitChannelConfig', () => {
   });
 
   it('standalone hostMode → channel-loader command, only runtime volume', async () => {
-    const deps = makeDeps({ getChannelHostMode: vi.fn(async () => 'standalone') });
+    const deps = makeDeps({
+      getChannelHostMode: vi.fn(async () => 'standalone'),
+    });
     let built: any;
-    deps.createDeployment = vi.fn(async (b) => { built = b; });
-    await processCommitChannelConfig(validPayload, deps, 'kubeclaw', 'kubeclaw-agent:latest');
+    deps.createDeployment = vi.fn(async (b) => {
+      built = b;
+    });
+    await processCommitChannelConfig(
+      validPayload,
+      deps,
+      'kubeclaw',
+      'kubeclaw-agent:latest',
+    );
     const c = built.spec.template.spec.containers[0];
     expect(c.command).toEqual(['node', '/app/channel-loader.js']);
     // standalone uses the agent/base image (channel-loader.js), not the orchestrator image.
     expect(c.image).toBe('kubeclaw-agent:latest');
-    expect(built.spec.template.spec.volumes.map((v: any) => v.name)).toEqual(['runtime']);
+    expect(built.spec.template.spec.volumes.map((v: any) => v.name)).toEqual([
+      'runtime',
+    ]);
     expect(deps.createPvc).not.toHaveBeenCalled();
   });
 
   it('channel-runner hostMode → channel-runner command + groups/store/sessions PVCs + catalog mounts + host env', async () => {
     {
-      const deps = makeDeps({ getChannelHostMode: vi.fn(async () => 'channel-runner') });
+      const deps = makeDeps({
+        getChannelHostMode: vi.fn(async () => 'channel-runner'),
+      });
       let built: any;
-      deps.createDeployment = vi.fn(async (b) => { built = b; });
-      await processCommitChannelConfig(validPayload, deps, 'kubeclaw', 'kubeclaw-agent:latest');
+      deps.createDeployment = vi.fn(async (b) => {
+        built = b;
+      });
+      await processCommitChannelConfig(
+        validPayload,
+        deps,
+        'kubeclaw',
+        'kubeclaw-agent:latest',
+      );
       const c = built.spec.template.spec.containers[0];
       expect(c.command).toEqual(['node', 'dist/channel-runner.js']);
       // channel-runner mode MUST use the orchestrator image (has channel-runner.js
@@ -275,12 +295,23 @@ describe('processCommitChannelConfig', () => {
       // Mounts: runtime + groups/store/sessions PVCs + the two catalog ConfigMaps.
       const mountPaths = c.volumeMounts.map((m: any) => m.mountPath).sort();
       expect(mountPaths).toEqual(
-        ['/app/groups', '/app/store', '/data/sessions', '/runtime', '/etc/kubeclaw/specialists', '/etc/kubeclaw/tools'].sort(),
+        [
+          '/app/groups',
+          '/app/store',
+          '/data/sessions',
+          '/runtime',
+          '/etc/kubeclaw/specialists',
+          '/etc/kubeclaw/tools',
+        ].sort(),
       );
-      const volNames = built.spec.template.spec.volumes.map((v: any) => v.name).sort();
+      const volNames = built.spec.template.spec.volumes
+        .map((v: any) => v.name)
+        .sort();
       expect(volNames).toContain('specialists-catalog');
       expect(volNames).toContain('tools-catalog');
-      const specVol = built.spec.template.spec.volumes.find((v: any) => v.name === 'specialists-catalog');
+      const specVol = built.spec.template.spec.volumes.find(
+        (v: any) => v.name === 'specialists-catalog',
+      );
       expect(specVol.configMap.name).toBe('kubeclaw-specialists');
 
       // Env: KUBECLAW_MODE=channel; Redis uses the RESTRICTED `channel` ACL
@@ -295,24 +326,46 @@ describe('processCommitChannelConfig', () => {
       });
       // LLM secrets referenced, never copied as literals into the Deployment.
       expect(byName.OPENAI_API_KEY.value).toBeUndefined();
-      expect(byName.OPENAI_API_KEY.valueFrom.secretKeyRef.name).toBe('kubeclaw-secrets');
+      expect(byName.OPENAI_API_KEY.valueFrom.secretKeyRef.name).toBe(
+        'kubeclaw-secrets',
+      );
 
       const inst = validPayload.instance_name;
-      expect(deps.createPvc).toHaveBeenCalledWith(`kubeclaw-channel-${inst}-groups`, 2);
-      expect(deps.createPvc).toHaveBeenCalledWith(`kubeclaw-channel-${inst}-store`, 1);
-      expect(deps.createPvc).toHaveBeenCalledWith(`kubeclaw-channel-${inst}-sessions`, 1);
+      expect(deps.createPvc).toHaveBeenCalledWith(
+        `kubeclaw-channel-${inst}-groups`,
+        2,
+      );
+      expect(deps.createPvc).toHaveBeenCalledWith(
+        `kubeclaw-channel-${inst}-store`,
+        1,
+      );
+      expect(deps.createPvc).toHaveBeenCalledWith(
+        `kubeclaw-channel-${inst}-sessions`,
+        1,
+      );
     }
   });
 
   it('standalone hostMode → no host env / no catalog mounts', async () => {
-    const deps = makeDeps({ getChannelHostMode: vi.fn(async () => 'standalone') });
+    const deps = makeDeps({
+      getChannelHostMode: vi.fn(async () => 'standalone'),
+    });
     let built: any;
-    deps.createDeployment = vi.fn(async (b) => { built = b; });
-    await processCommitChannelConfig(validPayload, deps, 'kubeclaw', 'kubeclaw-agent:latest');
+    deps.createDeployment = vi.fn(async (b) => {
+      built = b;
+    });
+    await processCommitChannelConfig(
+      validPayload,
+      deps,
+      'kubeclaw',
+      'kubeclaw-agent:latest',
+    );
     const c = built.spec.template.spec.containers[0];
     const env = Object.fromEntries(c.env.map((e: any) => [e.name, e.value]));
     expect(env.KUBECLAW_MODE).toBeUndefined();
-    expect(c.volumeMounts.some((m: any) => m.mountPath.startsWith('/etc/kubeclaw'))).toBe(false);
+    expect(
+      c.volumeMounts.some((m: any) => m.mountPath.startsWith('/etc/kubeclaw')),
+    ).toBe(false);
   });
 });
 
@@ -1023,7 +1076,12 @@ describe('processCommitChannelConfig — httpPort / Service / NetworkPolicy (Tas
         builtDeployment = b;
       }),
     });
-    await processCommitChannelConfig(validPayload, deps, 'kubeclaw', 'kubeclaw-agent:latest');
+    await processCommitChannelConfig(
+      validPayload,
+      deps,
+      'kubeclaw',
+      'kubeclaw-agent:latest',
+    );
 
     // Deployment container ports
     const container = builtDeployment.spec.template.spec.containers[0];
@@ -1044,7 +1102,8 @@ describe('processCommitChannelConfig — httpPort / Service / NetworkPolicy (Tas
 
     // Service created once with correct name + port
     expect(deps.createService).toHaveBeenCalledOnce();
-    const svcBody = (deps.createService as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    const svcBody = (deps.createService as ReturnType<typeof vi.fn>).mock
+      .calls[0][0];
     expect(svcBody.metadata.name).toBe(`kubeclaw-channel-${inst}`);
     expect(svcBody.spec.ports[0].port).toBe(80);
     // Regression: the body must NOT hardcode metadata.namespace — the
@@ -1054,7 +1113,8 @@ describe('processCommitChannelConfig — httpPort / Service / NetworkPolicy (Tas
 
     // NetworkPolicy created once with correct name + port
     expect(deps.createNetworkPolicy).toHaveBeenCalledOnce();
-    const netpolBody = (deps.createNetworkPolicy as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    const netpolBody = (deps.createNetworkPolicy as ReturnType<typeof vi.fn>)
+      .mock.calls[0][0];
     expect(netpolBody.metadata.name).toBe(`kubeclaw-channel-${inst}-ingress`);
     expect(netpolBody.spec.ingress[0].ports[0].port).toBe(4080);
     expect(netpolBody.metadata.namespace).toBeUndefined();
@@ -1069,7 +1129,12 @@ describe('processCommitChannelConfig — httpPort / Service / NetworkPolicy (Tas
         builtDeployment = b;
       }),
     });
-    await processCommitChannelConfig(validPayload, deps, 'kubeclaw', 'kubeclaw-agent:latest');
+    await processCommitChannelConfig(
+      validPayload,
+      deps,
+      'kubeclaw',
+      'kubeclaw-agent:latest',
+    );
 
     const container = builtDeployment.spec.template.spec.containers[0];
     // No ports field (or empty/undefined)
@@ -1089,7 +1154,12 @@ describe('processCommitChannelConfig — httpPort / Service / NetworkPolicy (Tas
       // Even if getChannelHttpPort were wired, standalone must not call it or create resources
       getChannelHttpPort: vi.fn(async () => 8080),
     });
-    await processCommitChannelConfig(validPayload, deps, 'kubeclaw', 'kubeclaw-agent:latest');
+    await processCommitChannelConfig(
+      validPayload,
+      deps,
+      'kubeclaw',
+      'kubeclaw-agent:latest',
+    );
 
     expect(deps.createService).not.toHaveBeenCalled();
     expect(deps.createNetworkPolicy).not.toHaveBeenCalled();
@@ -1115,9 +1185,16 @@ describe('processCommitChannelConfig — sidecar aux-backend rendering', () => {
     const deps = makeDeps({
       getChannelHostMode: vi.fn(async () => 'channel-runner' as const),
       getChannelSidecar: vi.fn(async () => baseSidecar),
-      createDeployment: vi.fn(async (b) => { builtDeployment = b; }),
+      createDeployment: vi.fn(async (b) => {
+        builtDeployment = b;
+      }),
     });
-    await processCommitChannelConfig(validPayload, deps, 'kubeclaw', 'kubeclaw-agent:latest');
+    await processCommitChannelConfig(
+      validPayload,
+      deps,
+      'kubeclaw',
+      'kubeclaw-agent:latest',
+    );
 
     expect(builtDeployment.spec.template.spec.containers).toHaveLength(2);
   });
@@ -1127,9 +1204,16 @@ describe('processCommitChannelConfig — sidecar aux-backend rendering', () => {
     const deps = makeDeps({
       getChannelHostMode: vi.fn(async () => 'channel-runner' as const),
       getChannelSidecar: vi.fn(async () => baseSidecar),
-      createDeployment: vi.fn(async (b) => { builtDeployment = b; }),
+      createDeployment: vi.fn(async (b) => {
+        builtDeployment = b;
+      }),
     });
-    await processCommitChannelConfig(validPayload, deps, 'kubeclaw', 'kubeclaw-agent:latest');
+    await processCommitChannelConfig(
+      validPayload,
+      deps,
+      'kubeclaw',
+      'kubeclaw-agent:latest',
+    );
 
     const sidecarContainer = builtDeployment.spec.template.spec.containers[1];
     expect(sidecarContainer.name).toBe(`${validPayload.channel_type}-backend`);
@@ -1143,26 +1227,49 @@ describe('processCommitChannelConfig — sidecar aux-backend rendering', () => {
     const deps = makeDeps({
       getChannelHostMode: vi.fn(async () => 'channel-runner' as const),
       getChannelSidecar: vi.fn(async () => baseSidecar),
-      createDeployment: vi.fn(async (b) => { builtDeployment = b; }),
+      createDeployment: vi.fn(async (b) => {
+        builtDeployment = b;
+      }),
     });
-    await processCommitChannelConfig(validPayload, deps, 'kubeclaw', 'kubeclaw-agent:latest');
+    await processCommitChannelConfig(
+      validPayload,
+      deps,
+      'kubeclaw',
+      'kubeclaw-agent:latest',
+    );
 
     const sidecarContainer = builtDeployment.spec.template.spec.containers[1];
     expect(sidecarContainer.readinessProbe).toBeDefined();
-    expect(sidecarContainer.readinessProbe.httpGet).toEqual({ path: '/health', port: 8765 });
+    expect(sidecarContainer.readinessProbe.httpGet).toEqual({
+      path: '/health',
+      port: 8765,
+    });
     expect(sidecarContainer.livenessProbe).toBeDefined();
-    expect(sidecarContainer.livenessProbe.httpGet).toEqual({ path: '/health', port: 8765 });
+    expect(sidecarContainer.livenessProbe.httpGet).toEqual({
+      path: '/health',
+      port: 8765,
+    });
   });
 
   it('sidecar without healthPath → no probes on sidecar container', async () => {
-    const sidecarNoHealth: SidecarSpec = { ...baseSidecar, healthPath: undefined };
+    const sidecarNoHealth: SidecarSpec = {
+      ...baseSidecar,
+      healthPath: undefined,
+    };
     let builtDeployment: any;
     const deps = makeDeps({
       getChannelHostMode: vi.fn(async () => 'channel-runner' as const),
       getChannelSidecar: vi.fn(async () => sidecarNoHealth),
-      createDeployment: vi.fn(async (b) => { builtDeployment = b; }),
+      createDeployment: vi.fn(async (b) => {
+        builtDeployment = b;
+      }),
     });
-    await processCommitChannelConfig(validPayload, deps, 'kubeclaw', 'kubeclaw-agent:latest');
+    await processCommitChannelConfig(
+      validPayload,
+      deps,
+      'kubeclaw',
+      'kubeclaw-agent:latest',
+    );
 
     const sidecarContainer = builtDeployment.spec.template.spec.containers[1];
     expect(sidecarContainer.readinessProbe).toBeUndefined();
@@ -1174,7 +1281,12 @@ describe('processCommitChannelConfig — sidecar aux-backend rendering', () => {
       getChannelHostMode: vi.fn(async () => 'channel-runner' as const),
       getChannelSidecar: vi.fn(async () => baseSidecar),
     });
-    await processCommitChannelConfig(validPayload, deps, 'kubeclaw', 'kubeclaw-agent:latest');
+    await processCommitChannelConfig(
+      validPayload,
+      deps,
+      'kubeclaw',
+      'kubeclaw-agent:latest',
+    );
 
     expect(deps.createPvc).toHaveBeenCalledWith(
       `kubeclaw-channel-${inst}-auxsession`,
@@ -1187,9 +1299,16 @@ describe('processCommitChannelConfig — sidecar aux-backend rendering', () => {
     const deps = makeDeps({
       getChannelHostMode: vi.fn(async () => 'channel-runner' as const),
       getChannelSidecar: vi.fn(async () => baseSidecar),
-      createDeployment: vi.fn(async (b) => { builtDeployment = b; }),
+      createDeployment: vi.fn(async (b) => {
+        builtDeployment = b;
+      }),
     });
-    await processCommitChannelConfig(validPayload, deps, 'kubeclaw', 'kubeclaw-agent:latest');
+    await processCommitChannelConfig(
+      validPayload,
+      deps,
+      'kubeclaw',
+      'kubeclaw-agent:latest',
+    );
 
     const volumes: any[] = builtDeployment.spec.template.spec.volumes;
     const auxVol = volumes.find((v: any) => v.name === 'auxsession');
@@ -1204,9 +1323,16 @@ describe('processCommitChannelConfig — sidecar aux-backend rendering', () => {
     const deps = makeDeps({
       getChannelHostMode: vi.fn(async () => 'channel-runner' as const),
       getChannelSidecar: vi.fn(async () => baseSidecar),
-      createDeployment: vi.fn(async (b) => { builtDeployment = b; }),
+      createDeployment: vi.fn(async (b) => {
+        builtDeployment = b;
+      }),
     });
-    await processCommitChannelConfig(validPayload, deps, 'kubeclaw', 'kubeclaw-agent:latest');
+    await processCommitChannelConfig(
+      validPayload,
+      deps,
+      'kubeclaw',
+      'kubeclaw-agent:latest',
+    );
 
     const channelContainer = builtDeployment.spec.template.spec.containers[0];
     const sidecarContainer = builtDeployment.spec.template.spec.containers[1];
@@ -1226,16 +1352,27 @@ describe('processCommitChannelConfig — sidecar aux-backend rendering', () => {
   });
 
   it('apiUrlEnv set → channel container env has the backend URL injected', async () => {
-    const sidecarWithApiUrl: SidecarSpec = { ...baseSidecar, apiUrlEnv: 'BACKEND_URL' };
+    const sidecarWithApiUrl: SidecarSpec = {
+      ...baseSidecar,
+      apiUrlEnv: 'BACKEND_URL',
+    };
     let builtDeployment: any;
     const deps = makeDeps({
       getChannelHostMode: vi.fn(async () => 'channel-runner' as const),
       getChannelSidecar: vi.fn(async () => sidecarWithApiUrl),
-      createDeployment: vi.fn(async (b) => { builtDeployment = b; }),
+      createDeployment: vi.fn(async (b) => {
+        builtDeployment = b;
+      }),
     });
-    await processCommitChannelConfig(validPayload, deps, 'kubeclaw', 'kubeclaw-agent:latest');
+    await processCommitChannelConfig(
+      validPayload,
+      deps,
+      'kubeclaw',
+      'kubeclaw-agent:latest',
+    );
 
-    const channelEnv: any[] = builtDeployment.spec.template.spec.containers[0].env;
+    const channelEnv: any[] =
+      builtDeployment.spec.template.spec.containers[0].env;
     const apiUrlEntry = channelEnv.find((e: any) => e.name === 'BACKEND_URL');
     expect(apiUrlEntry).toBeDefined();
     expect(apiUrlEntry.value).toBe('http://localhost:8765');
@@ -1246,11 +1383,19 @@ describe('processCommitChannelConfig — sidecar aux-backend rendering', () => {
     const deps = makeDeps({
       getChannelHostMode: vi.fn(async () => 'channel-runner' as const),
       getChannelSidecar: vi.fn(async () => baseSidecar), // no apiUrlEnv
-      createDeployment: vi.fn(async (b) => { builtDeployment = b; }),
+      createDeployment: vi.fn(async (b) => {
+        builtDeployment = b;
+      }),
     });
-    await processCommitChannelConfig(validPayload, deps, 'kubeclaw', 'kubeclaw-agent:latest');
+    await processCommitChannelConfig(
+      validPayload,
+      deps,
+      'kubeclaw',
+      'kubeclaw-agent:latest',
+    );
 
-    const channelEnv: any[] = builtDeployment.spec.template.spec.containers[0].env;
+    const channelEnv: any[] =
+      builtDeployment.spec.template.spec.containers[0].env;
     // Should not have any auxsession-related env
     expect(channelEnv.every((e: any) => e.name !== 'BACKEND_URL')).toBe(true);
   });
@@ -1260,9 +1405,16 @@ describe('processCommitChannelConfig — sidecar aux-backend rendering', () => {
     const deps = makeDeps({
       getChannelHostMode: vi.fn(async () => 'channel-runner' as const),
       getChannelSidecar: vi.fn(async () => undefined), // no sidecar
-      createDeployment: vi.fn(async (b) => { builtDeployment = b; }),
+      createDeployment: vi.fn(async (b) => {
+        builtDeployment = b;
+      }),
     });
-    await processCommitChannelConfig(validPayload, deps, 'kubeclaw', 'kubeclaw-agent:latest');
+    await processCommitChannelConfig(
+      validPayload,
+      deps,
+      'kubeclaw',
+      'kubeclaw-agent:latest',
+    );
 
     expect(builtDeployment.spec.template.spec.containers).toHaveLength(1);
 
@@ -1271,8 +1423,9 @@ describe('processCommitChannelConfig — sidecar aux-backend rendering', () => {
 
     // createPvc for auxsession must NOT have been called
     const pvcCalls = (deps.createPvc as ReturnType<typeof vi.fn>).mock.calls;
-    const auxCall = pvcCalls.find((args: any[]) =>
-      typeof args[0] === 'string' && args[0].includes('auxsession'),
+    const auxCall = pvcCalls.find(
+      (args: any[]) =>
+        typeof args[0] === 'string' && args[0].includes('auxsession'),
     );
     expect(auxCall).toBeUndefined();
   });
@@ -1282,9 +1435,16 @@ describe('processCommitChannelConfig — sidecar aux-backend rendering', () => {
     const deps = makeDeps({
       getChannelHostMode: vi.fn(async () => 'standalone' as const),
       getChannelSidecar: vi.fn(async () => baseSidecar),
-      createDeployment: vi.fn(async (b) => { builtDeployment = b; }),
+      createDeployment: vi.fn(async (b) => {
+        builtDeployment = b;
+      }),
     });
-    await processCommitChannelConfig(validPayload, deps, 'kubeclaw', 'kubeclaw-agent:latest');
+    await processCommitChannelConfig(
+      validPayload,
+      deps,
+      'kubeclaw',
+      'kubeclaw-agent:latest',
+    );
 
     // standalone always produces 1 container
     expect(builtDeployment.spec.template.spec.containers).toHaveLength(1);
@@ -1297,9 +1457,16 @@ describe('processCommitChannelConfig — sidecar aux-backend rendering', () => {
     const deps = makeDeps({
       getChannelHostMode: vi.fn(async () => 'channel-runner' as const),
       getChannelSidecar: vi.fn(async () => baseSidecar), // no runAsUser field
-      createDeployment: vi.fn(async (b) => { builtDeployment = b; }),
+      createDeployment: vi.fn(async (b) => {
+        builtDeployment = b;
+      }),
     });
-    await processCommitChannelConfig(validPayload, deps, 'kubeclaw', 'kubeclaw-agent:latest');
+    await processCommitChannelConfig(
+      validPayload,
+      deps,
+      'kubeclaw',
+      'kubeclaw-agent:latest',
+    );
 
     const sc = builtDeployment.spec.template.spec.containers[1].securityContext;
     // Always-present hardening fields
@@ -1319,9 +1486,16 @@ describe('processCommitChannelConfig — sidecar aux-backend rendering', () => {
     const deps = makeDeps({
       getChannelHostMode: vi.fn(async () => 'channel-runner' as const),
       getChannelSidecar: vi.fn(async () => sidecarWithUid),
-      createDeployment: vi.fn(async (b) => { builtDeployment = b; }),
+      createDeployment: vi.fn(async (b) => {
+        builtDeployment = b;
+      }),
     });
-    await processCommitChannelConfig(validPayload, deps, 'kubeclaw', 'kubeclaw-agent:latest');
+    await processCommitChannelConfig(
+      validPayload,
+      deps,
+      'kubeclaw',
+      'kubeclaw-agent:latest',
+    );
 
     const sc = builtDeployment.spec.template.spec.containers[1].securityContext;
     expect(sc.runAsUser).toBe(101);
@@ -1338,11 +1512,20 @@ describe('processCommitChannelConfig — sidecar aux-backend rendering', () => {
     const deps = makeDeps({
       getChannelHostMode: vi.fn(async () => 'channel-runner' as const),
       getChannelSidecar: vi.fn(async () => baseSidecar),
-      createDeployment: vi.fn(async (b) => { builtDeployment = b; }),
+      createDeployment: vi.fn(async (b) => {
+        builtDeployment = b;
+      }),
     });
-    await processCommitChannelConfig(validPayload, deps, 'kubeclaw', 'kubeclaw-agent:latest');
+    await processCommitChannelConfig(
+      validPayload,
+      deps,
+      'kubeclaw',
+      'kubeclaw-agent:latest',
+    );
 
-    expect(builtDeployment.spec.template.spec.securityContext?.fsGroup).toBe(1000);
+    expect(builtDeployment.spec.template.spec.securityContext?.fsGroup).toBe(
+      1000,
+    );
   });
 
   // F4(c): no sidecar → pod-level securityContext is NOT changed (no fsGroup added)
@@ -1351,12 +1534,21 @@ describe('processCommitChannelConfig — sidecar aux-backend rendering', () => {
     const deps = makeDeps({
       getChannelHostMode: vi.fn(async () => 'channel-runner' as const),
       getChannelSidecar: vi.fn(async () => undefined),
-      createDeployment: vi.fn(async (b) => { builtDeployment = b; }),
+      createDeployment: vi.fn(async (b) => {
+        builtDeployment = b;
+      }),
     });
-    await processCommitChannelConfig(validPayload, deps, 'kubeclaw', 'kubeclaw-agent:latest');
+    await processCommitChannelConfig(
+      validPayload,
+      deps,
+      'kubeclaw',
+      'kubeclaw-agent:latest',
+    );
 
     // Should not have fsGroup set when no sidecar
-    expect(builtDeployment.spec.template.spec.securityContext?.fsGroup).toBeUndefined();
+    expect(
+      builtDeployment.spec.template.spec.securityContext?.fsGroup,
+    ).toBeUndefined();
   });
 });
 
@@ -1379,11 +1571,18 @@ describe('processCommitChannelConfig — sidecar-egress NetworkPolicy', () => {
       getChannelHostMode: vi.fn(async () => 'channel-runner' as const),
       getChannelSidecar: vi.fn(async () => sidecarWithEgress),
     });
-    await processCommitChannelConfig(validPayload, deps, 'kubeclaw', 'kubeclaw-agent:latest');
+    await processCommitChannelConfig(
+      validPayload,
+      deps,
+      'kubeclaw',
+      'kubeclaw-agent:latest',
+    );
 
-    const netpolCalls = (deps.createNetworkPolicy as ReturnType<typeof vi.fn>).mock.calls;
+    const netpolCalls = (deps.createNetworkPolicy as ReturnType<typeof vi.fn>)
+      .mock.calls;
     const egressCall = netpolCalls.find(
-      ([body]: [any]) => body.metadata.name === `kubeclaw-channel-${inst}-sidecar-egress`,
+      ([body]: [any]) =>
+        body.metadata.name === `kubeclaw-channel-${inst}-sidecar-egress`,
     );
     expect(egressCall).toBeDefined();
 
@@ -1391,7 +1590,9 @@ describe('processCommitChannelConfig — sidecar-egress NetworkPolicy', () => {
     // policyTypes must be ['Egress']
     expect(body.spec.policyTypes).toEqual(['Egress']);
     // podSelector matches the channel pod label (same as the ingress netpol + Helm template)
-    expect(body.spec.podSelector.matchLabels).toEqual({ app: `kubeclaw-channel-${inst}` });
+    expect(body.spec.podSelector.matchLabels).toEqual({
+      app: `kubeclaw-channel-${inst}`,
+    });
     // egress rule for port 443
     const egressRules: any[] = body.spec.egress;
     expect(egressRules).toBeDefined();
@@ -1403,16 +1604,26 @@ describe('processCommitChannelConfig — sidecar-egress NetworkPolicy', () => {
 
   // Test A2: multiple egressPorts → each port in egress rules
   it('sidecar.egressPorts:[443,5222] → egress rules cover both ports', async () => {
-    const sidecarMulti: SidecarSpec = { ...sidecarWithEgress, egressPorts: [443, 5222] };
+    const sidecarMulti: SidecarSpec = {
+      ...sidecarWithEgress,
+      egressPorts: [443, 5222],
+    };
     const deps = makeDeps({
       getChannelHostMode: vi.fn(async () => 'channel-runner' as const),
       getChannelSidecar: vi.fn(async () => sidecarMulti),
     });
-    await processCommitChannelConfig(validPayload, deps, 'kubeclaw', 'kubeclaw-agent:latest');
+    await processCommitChannelConfig(
+      validPayload,
+      deps,
+      'kubeclaw',
+      'kubeclaw-agent:latest',
+    );
 
-    const netpolCalls = (deps.createNetworkPolicy as ReturnType<typeof vi.fn>).mock.calls;
+    const netpolCalls = (deps.createNetworkPolicy as ReturnType<typeof vi.fn>)
+      .mock.calls;
     const egressCall = netpolCalls.find(
-      ([body]: [any]) => body.metadata.name === `kubeclaw-channel-${inst}-sidecar-egress`,
+      ([body]: [any]) =>
+        body.metadata.name === `kubeclaw-channel-${inst}-sidecar-egress`,
     );
     expect(egressCall).toBeDefined();
     const body = egressCall![0];
@@ -1437,11 +1648,18 @@ describe('processCommitChannelConfig — sidecar-egress NetworkPolicy', () => {
       getChannelHostMode: vi.fn(async () => 'channel-runner' as const),
       getChannelSidecar: vi.fn(async () => sidecarNoEgress),
     });
-    await processCommitChannelConfig(validPayload, deps, 'kubeclaw', 'kubeclaw-agent:latest');
+    await processCommitChannelConfig(
+      validPayload,
+      deps,
+      'kubeclaw',
+      'kubeclaw-agent:latest',
+    );
 
-    const netpolCalls = (deps.createNetworkPolicy as ReturnType<typeof vi.fn>).mock.calls;
+    const netpolCalls = (deps.createNetworkPolicy as ReturnType<typeof vi.fn>)
+      .mock.calls;
     const egressCall = netpolCalls.find(
-      ([body]: [any]) => body.metadata.name === `kubeclaw-channel-${inst}-sidecar-egress`,
+      ([body]: [any]) =>
+        body.metadata.name === `kubeclaw-channel-${inst}-sidecar-egress`,
     );
     expect(egressCall).toBeUndefined();
   });
@@ -1452,11 +1670,18 @@ describe('processCommitChannelConfig — sidecar-egress NetworkPolicy', () => {
       getChannelHostMode: vi.fn(async () => 'channel-runner' as const),
       getChannelSidecar: vi.fn(async () => undefined),
     });
-    await processCommitChannelConfig(validPayload, deps, 'kubeclaw', 'kubeclaw-agent:latest');
+    await processCommitChannelConfig(
+      validPayload,
+      deps,
+      'kubeclaw',
+      'kubeclaw-agent:latest',
+    );
 
-    const netpolCalls = (deps.createNetworkPolicy as ReturnType<typeof vi.fn>).mock.calls;
+    const netpolCalls = (deps.createNetworkPolicy as ReturnType<typeof vi.fn>)
+      .mock.calls;
     const egressCall = netpolCalls.find(
-      ([body]: [any]) => body.metadata.name === `kubeclaw-channel-${inst}-sidecar-egress`,
+      ([body]: [any]) =>
+        body.metadata.name === `kubeclaw-channel-${inst}-sidecar-egress`,
     );
     expect(egressCall).toBeUndefined();
   });

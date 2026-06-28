@@ -23,7 +23,9 @@ function fakeSdk(env: Record<string, string>) {
   };
 }
 
-function fakeOpts(overrides?: { registeredGroups?: () => Record<string, any> }) {
+function fakeOpts(overrides?: {
+  registeredGroups?: () => Record<string, any>;
+}) {
   return {
     onMessage: vi.fn(),
     onChatMetadata: vi.fn(),
@@ -91,7 +93,10 @@ describe('signal-adapter: factory + config parsing', () => {
   });
 
   it('honours SIGNAL_POLL_MS as the poll interval (m3)', () => {
-    const { ch } = buildChannel({ SIGNAL_PHONE_NUMBER: BOT, SIGNAL_POLL_MS: '5000' });
+    const { ch } = buildChannel({
+      SIGNAL_PHONE_NUMBER: BOT,
+      SIGNAL_POLL_MS: '5000',
+    });
     expect(ch.config.pollMs).toBe(5000);
   });
 });
@@ -122,9 +127,9 @@ describe('signal-adapter: JID derivation', () => {
   });
   it('uses the sender number for 1:1', () => {
     const { ch } = buildChannel({ SIGNAL_PHONE_NUMBER: BOT });
-    expect(ch.jidForEnvelope({ sourceNumber: '+61400000000', dataMessage: {} })).toBe(
-      'signal:+61400000000',
-    );
+    expect(
+      ch.jidForEnvelope({ sourceNumber: '+61400000000', dataMessage: {} }),
+    ).toBe('signal:+61400000000');
   });
 });
 
@@ -164,7 +169,10 @@ describe('signal-adapter: handleEnvelope → onMessage', () => {
       sourceNumber: '+61400000000',
       sourceName: 'Bob',
       timestamp: 1700000000000,
-      dataMessage: { message: 'hey @Andy what time is it', groupInfo: { groupId: 'ABCD' } },
+      dataMessage: {
+        message: 'hey @Andy what time is it',
+        groupInfo: { groupId: 'ABCD' },
+      },
     });
     expect(opts.onMessage).toHaveBeenCalledWith(
       'signal:group.ABCD',
@@ -242,7 +250,11 @@ describe('signal-adapter: receiveOnce drains the queue', () => {
   it('does nothing on a non-200 receive response', async () => {
     const opts = fakeOpts();
     const { ch } = buildChannel({ SIGNAL_PHONE_NUMBER: BOT }, opts);
-    fetchMock.mockResolvedValueOnce({ ok: false, status: 500, json: async () => ({}) });
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      json: async () => ({}),
+    });
     await ch.receiveOnce();
     expect(opts.onMessage).not.toHaveBeenCalled();
   });
@@ -321,7 +333,9 @@ describe('signal-adapter: sendMessage → POST /v2/send', () => {
   it('sends a group recipient as group.<id>', async () => {
     const { ch } = buildChannel({ SIGNAL_PHONE_NUMBER: BOT });
     await ch.sendMessage('signal:group.ABCD', 'team update');
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body).recipients).toEqual(['group.ABCD']);
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).recipients).toEqual([
+      'group.ABCD',
+    ]);
   });
 
   it('chunks messages longer than the limit into multiple sends', async () => {
@@ -329,8 +343,12 @@ describe('signal-adapter: sendMessage → POST /v2/send', () => {
     await ch.sendMessage('signal:+61400000000', 'x'.repeat(9000));
     // 9000 / 4000 = 3 chunks (4000 + 4000 + 1000)
     expect(fetchMock).toHaveBeenCalledTimes(3);
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body).message.length).toBe(4000);
-    expect(JSON.parse(fetchMock.mock.calls[2][1].body).message.length).toBe(1000);
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).message.length).toBe(
+      4000,
+    );
+    expect(JSON.parse(fetchMock.mock.calls[2][1].body).message.length).toBe(
+      1000,
+    );
   });
 
   it('ignores a non-signal JID', async () => {
@@ -402,7 +420,13 @@ describe('signal-adapter: inbound attachments', () => {
               timestamp: 1700000000000,
               dataMessage: {
                 message: '',
-                attachments: [{ id: 'att1', contentType: 'image/jpeg', filename: 'pic.jpg' }],
+                attachments: [
+                  {
+                    id: 'att1',
+                    contentType: 'image/jpeg',
+                    filename: 'pic.jpg',
+                  },
+                ],
               },
             },
           },
@@ -425,7 +449,9 @@ describe('signal-adapter: inbound attachments', () => {
     );
     expect(opts.onMessage).toHaveBeenCalledTimes(1);
     const [_jid, msg] = opts.onMessage.mock.calls[0];
-    expect(msg.content).toMatch(/\[ImageAttachment: attachments\/raw\/pic\.jpg\]/);
+    expect(msg.content).toMatch(
+      /\[ImageAttachment: attachments\/raw\/pic\.jpg\]/,
+    );
   });
 
   it('downloads a PDF attachment and passes a PdfAttachment marker', async () => {
@@ -445,7 +471,13 @@ describe('signal-adapter: inbound attachments', () => {
               timestamp: 1700000002000,
               dataMessage: {
                 message: '',
-                attachments: [{ id: 'att2', contentType: 'application/pdf', filename: 'doc.pdf' }],
+                attachments: [
+                  {
+                    id: 'att2',
+                    contentType: 'application/pdf',
+                    filename: 'doc.pdf',
+                  },
+                ],
               },
             },
           },
@@ -459,7 +491,9 @@ describe('signal-adapter: inbound attachments', () => {
     await ch.receiveOnce();
 
     const [_jid, msg] = opts.onMessage.mock.calls[0];
-    expect(msg.content).toMatch(/\[PdfAttachment: attachments\/raw\/doc\.pdf\]/);
+    expect(msg.content).toMatch(
+      /\[PdfAttachment: attachments\/raw\/doc\.pdf\]/,
+    );
   });
 
   it('downloads a voice attachment and passes a VoiceAttachment marker', async () => {
@@ -479,7 +513,13 @@ describe('signal-adapter: inbound attachments', () => {
               timestamp: 1700000003000,
               dataMessage: {
                 message: '',
-                attachments: [{ id: 'att3', contentType: 'audio/ogg', filename: 'voice.ogg' }],
+                attachments: [
+                  {
+                    id: 'att3',
+                    contentType: 'audio/ogg',
+                    filename: 'voice.ogg',
+                  },
+                ],
               },
             },
           },
@@ -493,7 +533,9 @@ describe('signal-adapter: inbound attachments', () => {
     await ch.receiveOnce();
 
     const [_jid, msg] = opts.onMessage.mock.calls[0];
-    expect(msg.content).toMatch(/\[VoiceAttachment: attachments\/raw\/voice\.ogg\]/);
+    expect(msg.content).toMatch(
+      /\[VoiceAttachment: attachments\/raw\/voice\.ogg\]/,
+    );
   });
 
   it('combines text caption with image marker (text after marker)', async () => {
@@ -513,7 +555,14 @@ describe('signal-adapter: inbound attachments', () => {
               timestamp: 1700000004000,
               dataMessage: {
                 message: 'see this image',
-                attachments: [{ id: 'att4', contentType: 'image/jpeg', filename: 'photo.jpg', caption: '' }],
+                attachments: [
+                  {
+                    id: 'att4',
+                    contentType: 'image/jpeg',
+                    filename: 'photo.jpg',
+                    caption: '',
+                  },
+                ],
               },
             },
           },
@@ -527,7 +576,9 @@ describe('signal-adapter: inbound attachments', () => {
     await ch.receiveOnce();
 
     const [_jid, msg] = opts.onMessage.mock.calls[0];
-    expect(msg.content).toMatch(/\[ImageAttachment: attachments\/raw\/photo\.jpg\]/);
+    expect(msg.content).toMatch(
+      /\[ImageAttachment: attachments\/raw\/photo\.jpg\]/,
+    );
     expect(msg.content).toContain('see this image');
   });
 });
@@ -547,7 +598,12 @@ describe('signal-adapter: sendMedia', () => {
   it('posts base64_attachments + message to /v2/send for a 1:1 JID', async () => {
     const { ch } = buildChannel({ SIGNAL_PHONE_NUMBER: BOT });
     const imgBuf = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
-    await (ch as any).sendMedia('signal:+61400000000', imgBuf, 'image/png', 'hello caption');
+    await (ch as any).sendMedia(
+      'signal:+61400000000',
+      imgBuf,
+      'image/png',
+      'hello caption',
+    );
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe('http://localhost:8080/v2/send');
@@ -569,14 +625,23 @@ describe('signal-adapter: sendMedia', () => {
 
   it('does not call fetch for a non-signal JID', async () => {
     const { ch } = buildChannel({ SIGNAL_PHONE_NUMBER: BOT });
-    await (ch as any).sendMedia('oauth-webchat:user@example.com', Buffer.from('x'), 'image/png');
+    await (ch as any).sendMedia(
+      'oauth-webchat:user@example.com',
+      Buffer.from('x'),
+      'image/png',
+    );
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('sends to a group JID with the group recipient', async () => {
     const { ch } = buildChannel({ SIGNAL_PHONE_NUMBER: BOT });
     const buf = Buffer.from([1, 2, 3]);
-    await (ch as any).sendMedia('signal:group.ABCD', buf, 'image/jpeg', 'caption');
+    await (ch as any).sendMedia(
+      'signal:group.ABCD',
+      buf,
+      'image/jpeg',
+      'caption',
+    );
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(body.recipients).toEqual(['group.ABCD']);
   });
