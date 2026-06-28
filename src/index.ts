@@ -129,6 +129,7 @@ import { listCapabilities } from './capabilities/registry.js';
 import { ToolLibraryLoader } from './tool-selection/library.js';
 import { makeOrchestratorChatFn } from './tool-selection/chat-adapter.js';
 import { sweepStaleAutoTools } from './tool-selection/sweep.js';
+import { prunePendingDiscovered } from './tool-selection/pending-discovered.js';
 import { buildTsaSearchRegistry } from './tool-selection/discovery.js';
 import { makeHttpJsonFetcher } from './tool-selection/registry/http-fetch.js';
 import { loadBrokerConfig } from './credential-broker/config.js';
@@ -993,6 +994,9 @@ async function main(): Promise<void> {
     const AUTO_TOOL_SWEEP_MS = Number(
       process.env.AUTO_TOOL_SWEEP_MS ?? 60 * 60 * 1000,
     ); // hourly
+    // Pending discovered specs expire after 1 h — these are ephemeral
+    // mid-session drafts; any approval that takes longer than this is stale.
+    const PENDING_DISCOVERED_TTL_MS = 60 * 60 * 1000; // 1h
     setInterval(() => {
       void sweepStaleAutoTools({
         now: Date.now(),
@@ -1003,6 +1007,16 @@ async function main(): Promise<void> {
           if (pruned.length) logger.info({ pruned }, 'pruned stale auto tools');
         })
         .catch((err) => logger.warn({ err }, 'auto-tool sweep failed'));
+
+      const prunedPending = prunePendingDiscovered(
+        Date.now(),
+        PENDING_DISCOVERED_TTL_MS,
+      );
+      if (prunedPending.length)
+        logger.info(
+          { prunedPending },
+          'pruned expired pending-discovered specs',
+        );
     }, AUTO_TOOL_SWEEP_MS);
   }
 

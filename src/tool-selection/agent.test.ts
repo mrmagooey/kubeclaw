@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { runToolSelection, type TsaDeps } from './agent.js';
 import { _initTestDatabase, __resetDbForTest } from '../db.js';
 import { getAutoTool } from './provenance.js';
+import { getPendingDiscovered } from './pending-discovered.js';
 import type { ToolSpec } from '../tools/types.js';
 
 const exif: ToolSpec = {
@@ -195,8 +196,9 @@ describe('runToolSelection', () => {
 
 import { finalizeCredentialApproval } from './agent.js';
 import { mintApprovalToken } from './credential-gate.js';
+import { putPendingDiscovered } from './pending-discovered.js';
 
-describe('finalizeCredentialApproval', () => {
+describe('finalizeCredentialApproval — library path', () => {
   beforeEach(async () => {
     await _initTestDatabase();
     __resetDbForTest();
@@ -239,6 +241,136 @@ describe('finalizeCredentialApproval', () => {
     );
     expect(r.status).toBe('unavailable');
     expect(getAutoTool('image_search')).toBeUndefined();
+  });
+});
+
+describe('finalizeCredentialApproval — discovered path (end-to-end)', () => {
+  beforeEach(async () => {
+    await _initTestDatabase();
+    __resetDbForTest();
+  });
+
+  const discoveredSpec: ToolSpec = {
+    name: 'smart_search',
+    description: 'Web search via brave',
+    parameters: {},
+    image: 'kubeclaw/smart-search:latest@sha256:abc123def',
+    pattern: 'http',
+    credentials: ['brave-search'],
+    allowedEgress: [{ host: 'api.search.brave.com', ports: [443] }],
+    channels: ['http'],
+  };
+
+  it('drive end-to-end: pending_credential → finalise → ready with provenance=discovered', async () => {
+    // R1: runToolSelection returns pending_credential AND persists the draft.
+    const r1 = await runToolSelection(
+      {
+        requestId: 'r1',
+        groupFolder: 'team-a',
+        channel: 'http',
+        taskDescription: 'search the web',
+      },
+      deps({
+        liveCatalog: () => [],
+        library: () => [],
+        chat: async () =>
+          JSON.stringify({ name: null, confidence: 0, reason: 'no' }),
+        searchRegistry: async () => discoveredSpec,
+        catalogHostLookup: (id) =>
+          id === 'brave-search' ? 'api.search.brave.com' : undefined,
+        now: () => 1000,
+        nonce: 'n',
+      }),
+    );
+    expect(r1.status).toBe('pending_credential');
+
+    const pending = getPendingDiscovered('smart_search');
+    expect(pending).toBeDefined();
+    expect(pending!.scopeGroup).toBe('team-a');
+
+    // R2: finaliseCredentialApproval looks up the pending row and registers it.
+    const token = (r1 as { approvalToken: string }).approvalToken;
+    const r2 = await finalizeCredentialApproval(
+      {
+        toolName: 'smart_search',
+        catalogId: 'brave-search',
+        approvalToken: token,
+      },
+      {
+        library: () => [], // library is empty — must come from pending-discovered
+        catalogHostLookup: (id) =>
+          id === 'brave-search' ? 'api.search.brave.com' : undefined,
+        reconcile: async () => {},
+        now: () => 2000,
+        nonce: 'n',
+      },
+    );
+    expect(r2.status).toBe('ready');
+    if (r2.status === 'ready') {
+      expect(r2.tools[0].provenance).toBe('discovered');
+      expect(r2.tools[0].name).toBe('smart_search');
+    }
+    const meta = getAutoTool('smart_search');
+    expect(meta?.provenance).toBe('discovered');
+    expect(meta?.scopeGroup).toBe('team-a');
+    // Pending row must be deleted after successful finalization.
+    expect(getPendingDiscovered('smart_search')).toBeUndefined();
+  });
+
+  it('falls through to library when no pending-discovered row exists', async () => {
+    // Seed only the library, no pending-discovered row.
+    const token = mintApprovalToken('image_search', 'brave-search', 'n');
+    const r = await finalizeCredentialApproval(
+      {
+        toolName: 'image_search',
+        catalogId: 'brave-search',
+        approvalToken: token,
+      },
+      {
+        library: () => [imageSearch],
+        catalogHostLookup: () => 'api.search.brave.com',
+        reconcile: async () => {},
+        now: () => 1,
+        nonce: 'n',
+      },
+    );
+    expect(r.status).toBe('ready');
+    expect(getAutoTool('image_search')?.provenance).toBe('library');
+  });
+
+  it('registers pending-discovered spec directly (seed via putPendingDiscovered)', async () => {
+    putPendingDiscovered({
+      name: 'smart_search',
+      spec: discoveredSpec,
+      scopeGroup: 'team-b',
+      catalogId: 'brave-search',
+      now: 1000,
+    });
+
+    const token = mintApprovalToken('smart_search', 'brave-search', 'n');
+    const r = await finalizeCredentialApproval(
+      {
+        toolName: 'smart_search',
+        catalogId: 'brave-search',
+        approvalToken: token,
+      },
+      {
+        library: () => [],
+        catalogHostLookup: (id) =>
+          id === 'brave-search' ? 'api.search.brave.com' : undefined,
+        reconcile: async () => {},
+        now: () => 2000,
+        nonce: 'n',
+      },
+    );
+    expect(r.status).toBe('ready');
+    if (r.status === 'ready') {
+      expect(r.tools[0].provenance).toBe('discovered');
+    }
+    const meta = getAutoTool('smart_search');
+    expect(meta?.provenance).toBe('discovered');
+    expect(meta?.scopeGroup).toBe('team-b');
+    expect(getPendingDiscovered('smart_search')).toBeUndefined();
   });
 });
 
@@ -310,5 +442,39 @@ describe('runToolSelection tier-3', () => {
       expect(r.approvalToken).toBeTruthy();
     }
     expect(getAutoTool('smart_search')).toBeUndefined();
+  });
+
+  it('persists pending-discovered spec when returning pending_credential', async () => {
+    const discoveredCredentialed: ToolSpec = {
+      name: 'smart_search',
+      description: 'Web search via brave',
+      parameters: {},
+      image: 'kubeclaw/smart-search:latest@sha256:def',
+      pattern: 'http',
+      credentials: ['brave-search'],
+      allowedEgress: [{ host: 'api.search.brave.com' }],
+    };
+    const r = await runToolSelection(
+      {
+        requestId: 'r',
+        groupFolder: 'team-a',
+        channel: 'http',
+        taskDescription: 'search',
+      },
+      deps({
+        liveCatalog: () => [],
+        library: () => [],
+        chat: async () =>
+          JSON.stringify({ name: null, confidence: 0, reason: 'no' }),
+        searchRegistry: async () => discoveredCredentialed,
+      }),
+    );
+    expect(r.status).toBe('pending_credential');
+    // Pending-discovered row must exist with the scoped spec.
+    const pending = getPendingDiscovered('smart_search');
+    expect(pending).toBeDefined();
+    expect(pending!.scopeGroup).toBe('team-a');
+    expect(pending!.catalogId).toBe('brave-search');
+    expect(pending!.spec.channels).toContain('http');
   });
 });

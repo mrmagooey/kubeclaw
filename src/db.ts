@@ -224,6 +224,20 @@ function createSchema(database: SqlJsDatabase): void {
     )
   `);
 
+  // Pending discovered specs: mid-session ToolSpec drafts awaiting credential
+  // approval.  Keyed by tool name; pruned on a short TTL (pending approvals are
+  // ephemeral).  The finalizer looks here first so it can register a discovered
+  // tool even though only {toolName, catalogId, approvalToken} cross the wire.
+  database.run(`
+    CREATE TABLE IF NOT EXISTS pending_discovered_tools (
+      name        TEXT PRIMARY KEY,
+      spec_json   TEXT NOT NULL,
+      scope_group TEXT,
+      catalog_id  TEXT NOT NULL,
+      created_at  INTEGER NOT NULL
+    )
+  `);
+
   // Story 178: admin-registered channel manifests (runtime write path).
   database.run(`
     CREATE TABLE IF NOT EXISTS channel_manifest_overrides (

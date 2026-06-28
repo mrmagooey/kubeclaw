@@ -198,3 +198,84 @@ describe('handleFindToolsMessage — cross-request credential approval', () => {
     expect(listToolOverrides().map((t) => t.name)).toContain('image_search');
   });
 });
+
+describe('handleFindToolsMessage — discovered cross-request credential approval', () => {
+  beforeEach(async () => {
+    await _initTestDatabase();
+    __resetDbForTest();
+  });
+
+  const discoveredCredentialed: ToolSpec = {
+    name: 'smart_search',
+    description: 'Web search via brave',
+    parameters: {},
+    image: 'registry.example.com/smart-search:latest@sha256:deadbeef',
+    pattern: 'http',
+    credentials: ['brave-search'],
+    allowedEgress: [{ host: 'api.search.brave.com', ports: [443] }],
+  };
+
+  it('approves a discovered credentialed tool across R1/R2 and registers it group-scoped with provenance=discovered', async () => {
+    let reconciled = 0;
+    const handlerDeps = makeDeps({
+      library: () => [], // no library tools — must come from discovery
+      catalogHostLookup: (id) =>
+        id === 'brave-search' ? 'api.search.brave.com' : undefined,
+      reconcile: async () => {
+        reconciled++;
+      },
+      chat: async () =>
+        JSON.stringify({ name: null, confidence: 0, reason: 'no match' }),
+      searchRegistry: async () => discoveredCredentialed,
+    });
+
+    // R1: Tier-3 discovery finds a credentialed tool → pending_credential.
+    let firstResult = '';
+    await handleFindToolsMessage(
+      {
+        requestId: 'R1',
+        groupFolder: 'team-a',
+        channel: 'http',
+        taskDescription: 'search the web for smart results',
+      },
+      {
+        ...handlerDeps,
+        writeResult: async (_id, json) => {
+          firstResult = json;
+        },
+      },
+    );
+
+    const pendingResult = JSON.parse(firstResult);
+    expect(pendingResult.status).toBe('pending_credential');
+    expect(pendingResult.toolName).toBe('smart_search');
+    expect(pendingResult.approvalToken).toBeTruthy();
+    // Tool must NOT be registered yet.
+    expect(listToolOverrides()).toHaveLength(0);
+
+    // R2: User approves; a separate approve-kind message arrives.
+    let secondResult = '';
+    await handleFindToolsMessage(
+      {
+        kind: 'approve',
+        requestId: 'R2',
+        toolName: pendingResult.toolName,
+        catalogId: pendingResult.catalogId,
+        approvalToken: pendingResult.approvalToken,
+      },
+      {
+        ...handlerDeps,
+        writeResult: async (_id, json) => {
+          secondResult = json;
+        },
+      },
+    );
+
+    const readyResult = JSON.parse(secondResult);
+    expect(readyResult.status).toBe('ready');
+    expect(readyResult.tools[0].name).toBe('smart_search');
+    expect(readyResult.tools[0].provenance).toBe('discovered');
+    expect(reconciled).toBe(1);
+    expect(listToolOverrides().map((t) => t.name)).toContain('smart_search');
+  });
+});

@@ -7,6 +7,11 @@ import {
   verifyApprovalToken,
 } from './credential-gate.js';
 import { recordAutoTool } from './provenance.js';
+import {
+  putPendingDiscovered,
+  getPendingDiscovered,
+  deletePendingDiscovered,
+} from './pending-discovered.js';
 import type {
   FindToolsRequest,
   FindToolsResult,
@@ -115,6 +120,13 @@ export async function runToolSelection(
             gate.catalogId!,
             deps.nonce,
           );
+          putPendingDiscovered({
+            name: scoped.name,
+            spec: scoped,
+            scopeGroup: req.groupFolder,
+            catalogId: gate.catalogId!,
+            now: deps.now(),
+          });
           return {
             status: 'pending_credential',
             toolName: scoped.name,
@@ -177,9 +189,37 @@ export async function finalizeCredentialApproval(
   ) {
     return { status: 'unavailable', message: 'Invalid or expired approval.' };
   }
-  // NOTE: credentialed *discovered* tools cannot be finalized here — they are not
-  // in library() and the approve message can't reconstruct the drafted spec.
-  // Completing them needs a pending-discovered-spec store (future work; see Phase 3 plan Task 7).
+
+  // Check the pending-discovered store first: a credentialed tier-3 discovered
+  // tool was persisted here when runToolSelection returned pending_credential.
+  // Only {toolName, catalogId, approvalToken} cross the wire (the LLM is
+  // untrusted to echo a full ToolSpec), so the orchestrator must hold the spec
+  // server-side.
+  const pending = getPendingDiscovered(args.toolName);
+  if (pending) {
+    const reg = registerTool(pending.spec, undefined, deps.catalogHostLookup);
+    if (!reg.ok)
+      return {
+        status: 'unavailable',
+        message: `Could not register ${pending.spec.name}: ${reg.error}`,
+      };
+    recordAutoTool({
+      name: pending.spec.name,
+      provenance: 'discovered',
+      scopeGroup: pending.scopeGroup,
+      sourceDigest: pending.spec.image.split('@')[1] ?? null,
+      now: deps.now(),
+    });
+    deletePendingDiscovered(args.toolName);
+    await deps.reconcile();
+    return {
+      status: 'ready',
+      tools: [candidate(pending.spec, 'discovered')],
+      message: `Enabled ${pending.spec.name} (this group only).`,
+    };
+  }
+
+  // Fall through to library path for credentialed library tools.
   const spec = deps.library().find((s) => s.name === args.toolName);
   if (!spec)
     return {
