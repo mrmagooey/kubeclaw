@@ -2,7 +2,7 @@
  * Minikube-live: database capability end-to-end tests.
  *
  * Proves the full database capability stack end-to-end:
- *   - kubeclaw-postgres-mcp image built + loaded into minikube
+ *   - kubeclaw-agent image built + loaded into minikube (runs mcp-server.js --server database)
  *   - Per-group deployment (mcp-database-<groupHash>) provisioned with a
  *     dedicated PVC for Postgres data (pinned: true, scope: group)
  *   - Credentials (POSTGRES_PASSWORD / PG_RO_PASSWORD / KUBECLAW_MCP_TOKEN)
@@ -18,7 +18,7 @@
  *      orchestrator (which triggers onGroupAdded → per-group reconcile).
  *   3. Made the Redis port-forward live on localhost:KUBECLAW_LIVE_REDIS_LOCAL_PORT.
  *
- * This test also builds + loads kubeclaw-postgres-mcp:latest into minikube.
+ * This test also builds + loads kubeclaw-agent:latest into minikube if not already present.
  * If the image is already present and up to date, the build step is skipped.
  *
  * Skip guard:
@@ -121,10 +121,10 @@ function isRedisReachable(): boolean {
   return r.status === 0;
 }
 
-/** Build the postgres-mcp image inside minikube's docker daemon if needed. */
-function ensurePostgresMcpImage(): void {
-  const IMAGE = 'kubeclaw-postgres-mcp:latest';
-  const DOCKERFILE = 'container/postgres-mcp/Dockerfile';
+/** Build the agent image inside minikube's docker daemon if needed. */
+function ensureAgentImage(): void {
+  const IMAGE = 'kubeclaw-agent:latest';
+  const DOCKERFILE = 'container/Dockerfile';
   const CONTEXT = '.';
 
   const check = spawnSync(
@@ -214,7 +214,7 @@ function readSecretKey(secretName: string, key: string): string | null {
  * token cannot break the script syntax.
  */
 // Container names inside the database capability pod:
-//   - 'mcp'      — the postgres-mcp Node.js server (primary container, renderDeployment)
+//   - 'mcp'      — the database MCP server (primary container, runs mcp-server.js --server database)
 //   - 'postgres' — the Postgres sidecar (values.yaml sidecars[0].name)
 const MCP_CONTAINER = 'mcp';
 
@@ -289,7 +289,7 @@ function stripSseFraming(raw: string): string {
 }
 
 /**
- * Call an MCP tool by kubectl exec-ing into a database pod's postgres-mcp
+ * Call an MCP tool by kubectl exec-ing into a database pod's mcp
  * container and sending a JSON-RPC request to the MCP server on localhost:3000.
  *
  * Returns the parsed tool result { rows, truncated } on success.
@@ -361,7 +361,7 @@ async function callMcpTool(
 
 // ── Suite ─────────────────────────────────────────────────────────────────────
 
-describe('Minikube-live: database capability (per-group postgres-mcp, execute+query, isolation)', () => {
+describe('Minikube-live: database capability (per-group mcp-server.js, execute+query, isolation)', () => {
   let provisioned = false;
   let alicePodName = '';
   let bobPodName = '';
@@ -379,11 +379,11 @@ describe('Minikube-live: database capability (per-group postgres-mcp, execute+qu
       return;
     }
 
-    // 2. Build + load the postgres-mcp image if it's not already present.
+    // 2. Build + load the agent image if it's not already present.
     try {
-      ensurePostgresMcpImage();
+      ensureAgentImage();
     } catch (err) {
-      console.warn('[db-e2e] postgres-mcp image build failed:', err);
+      console.warn('[db-e2e] agent image build failed:', err);
       return;
     }
 
@@ -434,7 +434,8 @@ describe('Minikube-live: database capability (per-group postgres-mcp, execute+qu
       name: 'database',
       scope: 'group',
       pinned: true,
-      image: 'kubeclaw-postgres-mcp:latest',
+      image: 'kubeclaw-agent:latest',
+      command: ['node', '/app/dist/mcp-server.js', '--server', 'database', '--port', '3000'],
       port: 3000,
       path: '/mcp',
       credentialsFrom: 'secret',

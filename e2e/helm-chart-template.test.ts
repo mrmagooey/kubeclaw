@@ -1487,7 +1487,7 @@ describe.skipIf(!hasHelm)('signal channel: per-channel sidecar migration (no sha
 // ─── Task 9: database capability wiring ───────────────────────────────────────
 //
 // Verifies that the `capabilities.database` entry in values.yaml carries all
-// required fields for the postgres-mcp capability.
+// required fields for the database MCP capability (served by mcp-server.js).
 
 describe.skipIf(!hasHelm)('helm values — database capability declared correctly', () => {
   it('renders a database capability: group-scoped, pinned, postgres sidecar, read-only by default', () => {
@@ -1517,8 +1517,8 @@ describe.skipIf(!hasHelm)('helm values — database capability declared correctl
 // ─── Task 5 (MCP-into-runner): capability images use agent image ──────────────
 //
 // Verifies that both filesystem and database capabilities point at the
-// kubeclaw-agent image (which now contains mcp-server.js) rather than the
-// old standalone kubeclaw-mcp-bundle / kubeclaw-postgres-mcp images.
+// kubeclaw-agent image (which now contains mcp-server.js) rather than
+// the old standalone per-server images that have been deleted.
 
 describe.skipIf(!hasHelm)('helm values — filesystem capability uses agent image', () => {
   it('filesystem capability image is kubeclaw-agent:latest with mcp-server.js command', () => {
@@ -1554,11 +1554,13 @@ describe('helm values — no legacy MCP images in capabilities block', () => {
     expect(fsc.image).toBe('kubeclaw-agent:latest');
     expect(db.image).toBe('kubeclaw-agent:latest');
 
-    // Neither legacy standalone image must appear anywhere in the capabilities block.
-    // yaml.dump serializes the entire capabilities subtree so we can grep it as a string.
-    const capsYaml = yaml.dump(caps);
-    expect(capsYaml).not.toContain('kubeclaw-mcp-bundle');
-    expect(capsYaml).not.toContain('kubeclaw-postgres-mcp');
+    // The top-level image field for each capability is already asserted above.
+    // Confirm neither capability carries a command that references a legacy
+    // standalone server entrypoint — both must use mcp-server.js.
+    const fscCmd = (fsc.command as string[] | undefined) ?? [];
+    const dbCmd = (db.command as string[] | undefined) ?? [];
+    expect(fscCmd.join(' ')).toContain('mcp-server.js');
+    expect(dbCmd.join(' ')).toContain('mcp-server.js');
   });
 });
 

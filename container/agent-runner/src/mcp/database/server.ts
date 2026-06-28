@@ -241,7 +241,7 @@ export async function start(opts: { port: number }): Promise<void> {
       } catch {
         if (i < BOOTSTRAP_RETRIES - 1) {
           console.log(
-            `postgres-mcp: waiting for Postgres (attempt ${i + 1}/${BOOTSTRAP_RETRIES})…`,
+            `database-mcp: waiting for Postgres (attempt ${i + 1}/${BOOTSTRAP_RETRIES})…`,
           );
           await new Promise((r) => setTimeout(r, BOOTSTRAP_RETRY_DELAY_MS));
         }
@@ -285,7 +285,7 @@ export async function start(opts: { port: number }): Promise<void> {
       }
 
       console.log(
-        `postgres-mcp: ro role "${PG_RO_USER}" bootstrapped successfully.`,
+        `database-mcp: ro role "${PG_RO_USER}" bootstrapped successfully.`,
       );
     } catch (err) {
       console.error('FATAL: ro role bootstrap failed:', err);
@@ -302,7 +302,7 @@ export async function start(opts: { port: number }): Promise<void> {
 
   function createMcpServer() {
     const mcp = new Server(
-      { name: 'postgres-mcp', version: '1.0.0' },
+      { name: 'database-mcp', version: '1.0.0' },
       { capabilities: { tools: {} } },
     );
 
@@ -379,6 +379,6 @@ export async function start(opts: { port: number }): Promise<void> {
   });
 
   httpServer.listen(opts.port, () =>
-    console.log(`postgres-mcp listening on ${opts.port}`),
+    console.log(`database-mcp listening on ${opts.port}`),
   );
 }

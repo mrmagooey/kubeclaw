@@ -13,7 +13,6 @@ CONTAINER_RUNTIME="${CONTAINER_RUNTIME:-docker}"
 BUILD_AGENT=true
 BUILD_BROWSER=false
 BUILD_ORCHESTRATOR=false
-BUILD_MCP_BUNDLE=false
 while [[ $# -gt 0 ]]; do
   case $1 in
     --browser)
@@ -24,10 +23,6 @@ while [[ $# -gt 0 ]]; do
       BUILD_ORCHESTRATOR=true
       shift
       ;;
-    --mcp-bundle)
-      BUILD_MCP_BUNDLE=true
-      shift
-      ;;
     --all)
       # The canonical first-party production image set. The browser sidecar is
       # NOT included — it is legacy (see below); the modern `browser` catalog
@@ -35,12 +30,11 @@ while [[ $# -gt 0 ]]; do
       # legacy sidecar explicitly with --browser if you still use it.
       BUILD_AGENT=true
       BUILD_ORCHESTRATOR=true
-      BUILD_MCP_BUNDLE=true
       shift
       ;;
     *)
       echo "Unknown option: $1"
-      echo "Usage: $0 [--browser|--orchestrator|--mcp-bundle|--all]"
+      echo "Usage: $0 [--browser|--orchestrator|--all]"
       exit 1
       ;;
   esac
@@ -85,15 +79,6 @@ if [ "$BUILD_ORCHESTRATOR" = true ]; then
   echo ""
 fi
 
-# Build MCP Bundle (default image for the filesystem capability pod)
-if [ "$BUILD_MCP_BUNDLE" = true ]; then
-  echo "Building MCP Bundle..."
-  echo "Image: kubeclaw-mcp-bundle:latest"
-  bash container/mcp-bundle/build.sh kubeclaw-mcp-bundle:latest
-  echo "MCP Bundle build complete!"
-  echo ""
-fi
-
 # Channel-base image removed: bootstrap + steady-state channel modes are now
 # served by the kubeclaw-agent image (built above) via channel-loader.js, which
 # branches on KUBECLAW_BOOTSTRAP_SKILL / presence of /runtime/channel-entry.js.
@@ -112,10 +97,6 @@ fi
 if [ "$BUILD_ORCHESTRATOR" = true ]; then
   echo "  Orchestrator image: kubeclaw-orchestrator:latest"
 fi
-if [ "$BUILD_MCP_BUNDLE" = true ]; then
-  echo "  MCP bundle image: kubeclaw-mcp-bundle:latest"
-fi
-
 echo ""
 echo "Test agent with:"
 echo "  echo '{\"prompt\":\"What is 2+2?\",\"groupFolder\":\"test\",\"chatJid\":\"test@g.us\",\"isMain\":false}' | ${CONTAINER_RUNTIME} run -i kubeclaw-agent:latest"
