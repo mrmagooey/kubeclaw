@@ -1497,6 +1497,8 @@ describe('helm values — database capability declared correctly', () => {
     expect(db.kind).toBe('mcp');
     expect(db.scope).toBe('group');
     expect(db.pinned).toBe(true);
+    expect(db.image).toBe('kubeclaw-agent:latest');
+    expect(db.command).toEqual(['node', '/app/dist/mcp-server.js', '--server', 'database', '--port', '3000']);
     expect(db.credentialsFrom).toBe('secret');
     const sidecars = db.sidecars as Array<Record<string, unknown>>;
     expect(sidecars?.[0]?.name).toBe('postgres');
@@ -1505,6 +1507,47 @@ describe('helm values — database capability declared correctly', () => {
     expect(db.allowedTools).toEqual(['query']);
     const env = db.env as Record<string, unknown>;
     expect(env?.PG_RO_USER).toBe('kubeclaw_ro');
+  });
+});
+
+// ─── Task 5 (MCP-into-runner): capability images use agent image ──────────────
+//
+// Verifies that both filesystem and database capabilities point at the
+// kubeclaw-agent image (which now contains mcp-server.js) rather than the
+// old standalone kubeclaw-mcp-bundle / kubeclaw-postgres-mcp images.
+
+describe('helm values — filesystem capability uses agent image', () => {
+  it('filesystem capability image is kubeclaw-agent:latest with mcp-server.js command', () => {
+    const yaml = require('js-yaml');
+    const fs = require('fs');
+    const valuesRaw = fs.readFileSync('./helm/kubeclaw/values.yaml', 'utf-8');
+    const values = yaml.load(valuesRaw) as Record<string, unknown>;
+    const fsc = (values.capabilities as Record<string, unknown>).filesystem as Record<string, unknown>;
+    expect(fsc.image).toBe('kubeclaw-agent:latest');
+    expect(fsc.command).toEqual([
+      'node', '/app/dist/mcp-server.js', '--server', 'filesystem', '--root', '/data', '--port', '3000',
+    ]);
+  });
+});
+
+describe('helm template — no legacy MCP images in rendered output', () => {
+  it('rendered chart contains no kubeclaw-mcp-bundle or kubeclaw-postgres-mcp image references', () => {
+    const result = spawnSync(
+      'helm',
+      [
+        'template',
+        'smoke',
+        CHART_DIR,
+        '--set',
+        'secrets.anthropicApiKey=test',
+        '--set',
+        'redis.password=test',
+      ],
+      { encoding: 'utf8' },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).not.toContain('kubeclaw-mcp-bundle');
+    expect(result.stdout).not.toContain('kubeclaw-postgres-mcp');
   });
 });
 

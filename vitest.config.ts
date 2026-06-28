@@ -18,6 +18,7 @@ export default defineConfig({
       'skills-engine/**/*.test.ts',
       'container/agent-runner/**/*.test.ts',
       'container/postgres-mcp/**/*.test.ts',
+      'e2e/helm-chart-template.test.ts',
     ],
     globals: true,
   },
