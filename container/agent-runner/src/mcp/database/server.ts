@@ -13,6 +13,10 @@
  * dynamic imports so the module can be loaded in tests without pg installed.
  */
 
+// Type-only import: erased at compile time, no runtime module load (safe for
+// test environments that skip the dynamic pg / MCP SDK imports inside start()).
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+
 // ─── Role bootstrap SQL (pure helper, no external deps) ──────────────────────
 
 /** Regex that matches safe Postgres identifier characters. */
@@ -99,7 +103,7 @@ export interface ToolHandlerInput {
 }
 
 export interface ToolHandlerOutput {
-  content: Array<{ type: string; text: string }>;
+  content: Array<{ type: 'text'; text: string }>;
 }
 
 /**
@@ -111,7 +115,7 @@ export function buildToolHandlers(opts: {
   rwPool: QueryPool;
   maxRows: number;
   statementTimeoutMs: number;
-}): (req: ToolHandlerInput) => Promise<ToolHandlerOutput> {
+}): (req: ToolHandlerInput) => Promise<CallToolResult> {
   const { roPool, rwPool, maxRows, statementTimeoutMs } = opts;
 
   return async (req) => {
