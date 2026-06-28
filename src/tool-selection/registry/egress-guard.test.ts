@@ -28,6 +28,18 @@ describe('isPubliclyRoutableHost', () => {
     expect(isPubliclyRoutableHost('redis.default.svc')).toBe(false);
   });
 
+  // Cloud-metadata / internal DNS names (resolve to 169.254.169.254 etc.)
+  it('blocks cloud-metadata hostnames', () => {
+    expect(isPubliclyRoutableHost('metadata.google.internal')).toBe(false);
+    expect(isPubliclyRoutableHost('metadata.goog')).toBe(false);
+    expect(isPubliclyRoutableHost('instance-data.ec2.internal')).toBe(false);
+    expect(isPubliclyRoutableHost('METADATA.GOOGLE.INTERNAL')).toBe(false);
+  });
+
+  it('blocks the ICANN-reserved .internal private-use TLD', () => {
+    expect(isPubliclyRoutableHost('anything.internal')).toBe(false);
+  });
+
   // IPv4 private ranges
   it('blocks 127.0.0.0/8 (loopback)', () => {
     expect(isPubliclyRoutableHost('127.0.0.1')).toBe(false);

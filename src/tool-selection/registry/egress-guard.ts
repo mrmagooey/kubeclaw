@@ -52,6 +52,16 @@ export function isPubliclyRoutableHost(host: string): boolean {
     return false;
   }
 
+  // Cloud-metadata / internal DNS names. The IP literal 169.254.169.254 is
+  // already blocked, but the canonical metadata *hostnames* resolve to it and
+  // would otherwise pass as ordinary dotted FQDNs — a node-credential
+  // exfiltration vector for a prompt-injected discovered spec. `.internal` is
+  // an ICANN-reserved private-use TLD (covers metadata.google.internal and
+  // *.ec2.internal); `.goog` is a public TLD so we deny the exact metadata host.
+  if (lower.endsWith('.internal') || lower === 'metadata.goog') {
+    return false;
+  }
+
   // IPv4 literal.
   if (isIPv4(stripped)) {
     return !isPrivateIPv4(stripped);
@@ -66,6 +76,9 @@ export function isPubliclyRoutableHost(host: string): boolean {
     // Link-local (fe80::/10): first byte fe, third hex digit 8..b (80..bf).
     if (/^fe[89ab]/i.test(lower)) return false;
     // IPv4-mapped (::ffff:a.b.c.d): extract the IPv4 part and check it.
+    // NOTE: only the dotted-quad form is matched; the hex form
+    // (::ffff:0a00:0001) is not — vanishingly unlikely from an LLM draft and
+    // the substrate (Cilium/Istio) resolves it at enforcement time regardless.
     const mapped = lower.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
     if (mapped && isPrivateIPv4(mapped[1])) return false;
     // Unrecognised IPv6 literal: treat as publicly routable.
