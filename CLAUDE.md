@@ -27,6 +27,7 @@ Four-tier pod architecture: **Orchestrator** (high priv, only K8s API access, Re
 | `src/skills/orchestrator/specialist-registry.ts` | Admin-shell IPC tools: register / edit / remove / list specialists |
 | `src/credential-broker/`            | Stamps `Authorization` headers via Envoy `ext_authz`; orchestrator-side secret holder |
 | `src/credential-injection/`         | Mode flag (`sidecar`/`istio`/`off`) + Envoy sidecar spec for tool-job pods |
+| `src/tool-selection/`               | Tool Selection Agent: tiered tool discovery — catalog (tier 1) / library (tier 2) / open discovery (tier 3); `agent.ts` orchestrates tiers; `discovery.ts` runs the registry-search → draft → coherence → probe pipeline; `probe/` runs sandboxed one-shot probe jobs; `provenance.ts` + `sweep.ts` track and prune auto-acquired tools |
 | `groups/{name}/CLAUDE.md`           | Per-group memory (isolated)                                |
 | `src/runtime/skill-curator.ts`      | 24h auto-harvester: scans `conversation_history`, proposes skill candidates |
 | `src/runtime/skill-store.ts`        | Skill filesystem store: accepted / `_candidates/` / `_archive/` |

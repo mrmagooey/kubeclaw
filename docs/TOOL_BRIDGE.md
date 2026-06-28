@@ -17,6 +17,17 @@ Tools are defined once in a cluster-wide **tool catalog**; nothing about a tool 
 
 The orchestrator's `ToolReconciler` merges baseline + overrides and writes the result to the `kubeclaw-tools` ConfigMap. Channel pods mount that ConfigMap (hot-reloaded) to build the LLM tool list. When a tool is invoked, the caller sends only the tool **name** on `kubeclaw:spawn-tool-pod`; the orchestrator resolves the full `ToolSpec` by name, re-checks the tool's `channels` ACL against the requesting channel, and spawns the pod with the resolved image/pattern/port. The orchestrator is the single authority on what image a tool name maps to — see [REDIS_IPC_PROTOCOL.md](./REDIS_IPC_PROTOCOL.md#spawn-tool-pod-stream).
 
+### Discovered tools
+
+Tools can also be added at runtime by the Tool Selection Agent (TSA) without operator pre-registration. When a channel asks `find_tools` and neither the live catalog nor the curated library has a match, the TSA searches the public container registry, asks an LLM to draft a `ToolSpec`, and verifies the candidate in a sandboxed probe job before registering it. Key properties of a discovered tool:
+
+- **Digest-pinned image**: the registered spec always uses `repo@sha256:<digest>` — never a mutable tag — so the image that passed the probe is exactly what runs in production.
+- **Sandboxed probe**: the probe runs as a one-shot, credential-free Kubernetes Job with hardened `securityContext` (runAsNonRoot, readOnlyRootFilesystem, all capabilities dropped) and default-deny egress enforced by Cilium or Istio. A connection attempt outside the tool's declared `allowedEgress` list surfaces as an `egressViolation` and the candidate is rejected.
+- **Hard-gated**: tier-3 discovery is only available when the cluster has kernel-enforced egress control (`CILIUM_NETWORK_POLICY_ENABLED=true` or `CREDENTIAL_INJECTION_MODE=istio`). Without that, discovery is disabled and `find_tools` falls back to `unavailable`.
+- **Group-scoped**: a discovered tool is registered with `channels: [<requesting channel>]` and is not available to other groups until an administrator explicitly promotes it.
+
+See [docs/DYNAMIC_TOOL_SELECTION.md](./DYNAMIC_TOOL_SELECTION.md) for the full tier model, probe security details, provenance tracking, and TTL pruning.
+
 Every tool in the Helm baseline runs on a **standard third-party image** — no first-party tool images are required:
 
 | Tool                                       | Image                            | Pattern |
