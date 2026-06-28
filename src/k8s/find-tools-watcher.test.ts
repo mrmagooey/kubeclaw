@@ -100,7 +100,12 @@ describe('handleFindToolsMessage — approve path', () => {
     const requestId = 'req-2';
     // Token is keyed on the stable server secret (deps.secret), not a
     // per-request nonce — mint with the same raw SECRET the handler uses.
-    const approvalToken = mintApprovalToken(exif.name, 'some-catalog', SECRET);
+    const approvalToken = mintApprovalToken(
+      exif.name,
+      'some-catalog',
+      SECRET,
+      Date.now(),
+    );
     const written: string[] = [];
 
     const obj = {

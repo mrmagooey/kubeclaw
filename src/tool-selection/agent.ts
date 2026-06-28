@@ -71,7 +71,12 @@ export async function runToolSelection(
           message: `Tool ${spec.name} needs a credential (${gate.catalogId}) that is not configured in the broker; an administrator must set it up.`,
         };
       }
-      const token = mintApprovalToken(spec.name, gate.catalogId!, deps.nonce);
+      const token = mintApprovalToken(
+        spec.name,
+        gate.catalogId!,
+        deps.nonce,
+        deps.now(),
+      );
       return {
         status: 'pending_credential',
         toolName: spec.name,
@@ -119,6 +124,7 @@ export async function runToolSelection(
             scoped.name,
             gate.catalogId!,
             deps.nonce,
+            deps.now(),
           );
           putPendingDiscovered({
             name: scoped.name,
@@ -185,6 +191,7 @@ export async function finalizeCredentialApproval(
       args.toolName,
       args.catalogId,
       deps.nonce,
+      deps.now(),
     )
   ) {
     return { status: 'unavailable', message: 'Invalid or expired approval.' };
@@ -197,26 +204,41 @@ export async function finalizeCredentialApproval(
   // server-side.
   const pending = getPendingDiscovered(args.toolName);
   if (pending) {
-    const reg = registerTool(pending.spec, undefined, deps.catalogHostLookup);
-    if (!reg.ok)
+    if (pending.catalogId !== args.catalogId) {
+      // The pending row belongs to a different credential than what was approved.
+      // This can happen when a second discovery run overwrites the pending row
+      // (INSERT OR REPLACE) before the first approval arrives. Treat as stale.
+      logger.warn(
+        {
+          toolName: args.toolName,
+          pendingCatalogId: pending.catalogId,
+          requestedCatalogId: args.catalogId,
+        },
+        'catalogId mismatch on pending-discovered finalize; stale or overwritten row — falling through to library',
+      );
+      // fall through to library path (do not return here)
+    } else {
+      const reg = registerTool(pending.spec, undefined, deps.catalogHostLookup);
+      if (!reg.ok)
+        return {
+          status: 'unavailable',
+          message: `Could not register ${pending.spec.name}: ${reg.error}`,
+        };
+      recordAutoTool({
+        name: pending.spec.name,
+        provenance: 'discovered',
+        scopeGroup: pending.scopeGroup,
+        sourceDigest: pending.spec.image.split('@')[1] ?? null,
+        now: deps.now(),
+      });
+      deletePendingDiscovered(args.toolName);
+      await deps.reconcile();
       return {
-        status: 'unavailable',
-        message: `Could not register ${pending.spec.name}: ${reg.error}`,
+        status: 'ready',
+        tools: [candidate(pending.spec, 'discovered')],
+        message: `Enabled ${pending.spec.name} (this group only).`,
       };
-    recordAutoTool({
-      name: pending.spec.name,
-      provenance: 'discovered',
-      scopeGroup: pending.scopeGroup,
-      sourceDigest: pending.spec.image.split('@')[1] ?? null,
-      now: deps.now(),
-    });
-    deletePendingDiscovered(args.toolName);
-    await deps.reconcile();
-    return {
-      status: 'ready',
-      tools: [candidate(pending.spec, 'discovered')],
-      message: `Enabled ${pending.spec.name} (this group only).`,
-    };
+    }
   }
 
   // Fall through to library path for credentialed library tools.

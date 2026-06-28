@@ -1,3 +1,4 @@
+import { describe, it, expect } from 'vitest';
 import { makeSearchRegistry } from './discovery.js';
 
 const exifDraft = {
@@ -183,5 +184,122 @@ describe('makeSearchRegistry', () => {
     const spec = await search('do a thing');
     expect(spec?.name).toBe('good_tool');
     expect(spec?.image).toBe('good/two@sha256:good');
+  });
+
+  // FIX 1 — internal egress guard: discovered credential-free specs that declare
+  // egress to cluster-internal or private hosts must be rejected before the probe
+  // runs. These tests verify the guard fires for a single-label cluster service
+  // name and a cloud-metadata IP, and that a normal public FQDN still passes.
+  it('rejects a credential-free discovered spec with internal egress (single-label host) and advances to next candidate', async () => {
+    const internalEgressDraft = {
+      name: 'bad_redis_tool',
+      description: 'accesses internal redis',
+      parameters: {
+        type: 'object',
+        properties: { key: { type: 'string' } },
+        required: ['key'],
+      },
+      image: 'bad/one:latest',
+      pattern: 'http',
+      mount: 'none',
+      allowedEgress: [{ host: 'kubeclaw-redis', ports: [6379] }],
+    };
+    const probedImages: string[] = [];
+    const search = makeSearchRegistry({
+      fetchJson: async (url) => twoCandidateSearch(url),
+      chat: async (messages) => {
+        const user = messages.find((m) => m.role === 'user')?.content ?? '';
+        return user.includes('good/two')
+          ? JSON.stringify(goodDraft)
+          : JSON.stringify(internalEgressDraft);
+      },
+      probe: {
+        runProbeToolJob: async ({ toolSpec }) => {
+          probedImages.push(toolSpec.image);
+          return { ok: true, output: 'ok' };
+        },
+      },
+      catalogHostLookup: () => undefined,
+    });
+    const spec = await search('do a thing');
+    // Must skip bad/one (internal egress) and return good/two.
+    expect(spec?.name).toBe('good_tool');
+    // bad/one must NEVER reach the probe.
+    expect(probedImages.some((img) => img.includes('bad/one'))).toBe(false);
+  });
+
+  it('rejects a credential-free discovered spec with internal egress (169.254.169.254 cloud-metadata) and advances', async () => {
+    const cloudMetaDraft = {
+      name: 'cloud_meta_tool',
+      description: 'hits cloud metadata endpoint',
+      parameters: {
+        type: 'object',
+        properties: { key: { type: 'string' } },
+      },
+      image: 'bad/one:latest',
+      pattern: 'http',
+      mount: 'none',
+      allowedEgress: [{ host: '169.254.169.254', ports: [80] }],
+    };
+    const probedImages: string[] = [];
+    const search = makeSearchRegistry({
+      fetchJson: async (url) => twoCandidateSearch(url),
+      chat: async (messages) => {
+        const user = messages.find((m) => m.role === 'user')?.content ?? '';
+        return user.includes('good/two')
+          ? JSON.stringify(goodDraft)
+          : JSON.stringify(cloudMetaDraft);
+      },
+      probe: {
+        runProbeToolJob: async ({ toolSpec }) => {
+          probedImages.push(toolSpec.image);
+          return { ok: true, output: 'ok' };
+        },
+      },
+      catalogHostLookup: () => undefined,
+    });
+    const spec = await search('do a thing');
+    expect(spec?.name).toBe('good_tool');
+    expect(probedImages.some((img) => img.includes('bad/one'))).toBe(false);
+  });
+
+  it('allows a credential-free discovered spec with a public FQDN egress host', async () => {
+    const publicEgressDraft = {
+      name: 'public_api_tool',
+      description: 'calls a public API',
+      parameters: {
+        type: 'object',
+        properties: { query: { type: 'string' } },
+      },
+      image: 'someuser/exiftool:latest',
+      pattern: 'http',
+      mount: 'none',
+      allowedEgress: [{ host: 'api.example.com', ports: [443] }],
+    };
+    const search = makeSearchRegistry({
+      fetchJson: async (url) => {
+        if (url.includes('/search/'))
+          return {
+            results: [
+              {
+                repo_name: 'someuser/exiftool',
+                star_count: 5,
+                is_official: false,
+              },
+            ],
+          };
+        if (url.includes('/tags/'))
+          return { images: [{ digest: 'sha256:abc' }] };
+        return { full_description: 'exiftool' };
+      },
+      chat: async () => JSON.stringify(publicEgressDraft),
+      probe: {
+        runProbeToolJob: async () => ({ ok: true, output: 'ok' }),
+      },
+      catalogHostLookup: () => undefined,
+    });
+    const spec = await search('call a public API');
+    // Public egress is fine — the spec should be accepted.
+    expect(spec?.name).toBe('public_api_tool');
   });
 });

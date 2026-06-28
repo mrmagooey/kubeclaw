@@ -133,4 +133,33 @@ describe('pending-discovered store', () => {
     const pruned = prunePendingDiscovered(10000, 5000);
     expect(pruned).toEqual([]);
   });
+
+  // TTL boundary: the predicate is strictly `(now - created_at) > ttl`.
+  it('does NOT prune a row when now === created_at + ttl (boundary is exclusive)', () => {
+    // created_at=0, ttl=5000 → boundary now=5000 → 5000 > 5000 = false → not pruned.
+    putPendingDiscovered({
+      name: 'boundary_tool',
+      spec: exampleSpec,
+      scopeGroup: null,
+      catalogId: 'brave-search',
+      now: 0,
+    });
+    const pruned = prunePendingDiscovered(5000, 5000);
+    expect(pruned).toEqual([]);
+    expect(getPendingDiscovered('boundary_tool')).toBeDefined();
+  });
+
+  it('DOES prune a row when now === created_at + ttl + 1 (one ms past boundary)', () => {
+    // created_at=0, ttl=5000 → now=5001 → 5001 > 5000 = true → pruned.
+    putPendingDiscovered({
+      name: 'just_expired_tool',
+      spec: exampleSpec,
+      scopeGroup: null,
+      catalogId: 'brave-search',
+      now: 0,
+    });
+    const pruned = prunePendingDiscovered(5001, 5000);
+    expect(pruned).toEqual(['just_expired_tool']);
+    expect(getPendingDiscovered('just_expired_tool')).toBeUndefined();
+  });
 });

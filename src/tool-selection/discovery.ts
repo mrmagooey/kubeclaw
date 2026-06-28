@@ -6,6 +6,7 @@ import { draftToolSpec } from './registry/draft.js';
 import { probeTool, type ProbeJobRunner } from './probe/probe.js';
 import { checkEgressCredentialCoherence } from '../k8s/egress/coherence.js';
 import { hasHardEgressEnforcement } from '../k8s/egress/substrate.js';
+import { isPubliclyRoutableHost } from './registry/egress-guard.js';
 import type { ChatFn } from './matcher.js';
 import { logger } from '../logger.js';
 
@@ -38,6 +39,21 @@ export function makeSearchRegistry(
           logger.debug(
             { repo: c.repo, error: drafted.error },
             'draft rejected; next candidate',
+          );
+          continue;
+        }
+        // Security: reject discovered specs that declare egress to non-public hosts.
+        // Discovered specs are UNTRUSTED (LLM-drafted from external registry); a
+        // spec claiming egress to kubeclaw-redis, 10.x, or cloud-metadata endpoints
+        // would result in a CiliumNetworkPolicy that opens an SSRF / internal-reach
+        // hole. Catalog/library tools are human-vetted and bypass this check.
+        const internalEgressRule = (drafted.spec.allowedEgress ?? []).find(
+          (r) => !isPubliclyRoutableHost(r.host),
+        );
+        if (internalEgressRule) {
+          logger.warn(
+            { repo: c.repo, host: internalEgressRule.host },
+            'discovered spec declares internal egress host; rejecting — next candidate',
           );
           continue;
         }

@@ -2239,7 +2239,11 @@ export class JobRunner {
       const logs = await this.getJobLogs(jobName);
       const egressViolation = isEgressViolation(logs) ? true : undefined;
       return { ok: false, egressViolation, error: 'probe timed out' };
-    } catch {
+    } catch (logsErr) {
+      logger.warn(
+        { logsErr, jobName },
+        'runProbeToolJob: could not fetch logs after timeout; returning bare timeout',
+      );
       return { ok: false, error: 'probe timed out' };
     }
   }

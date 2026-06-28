@@ -908,3 +908,11 @@ git commit -m "docs: document dynamic tool selection (tiers, gate, discovery, se
 - **Placeholders:** none — code complete. The `runProbeToolJob` job-runner seam (Task 5 Step 4) and e2e harness invocations are described as reuse of existing plumbing, not deferred stubs.
 - **Cross-phase dependency:** requires Phase 1 (TSA, gate, provenance, find_tools) and Phase 2 (`allowedEgress`, coherence, substrate detection, hardened probe pods, `hasHardEgressEnforcement`). Stated in the header.
 ```
+
+---
+
+## Deferred follow-ups
+
+1. **[#3] Apply the tool-job egress NetworkPolicy BEFORE pod creation** — currently `createSidecarToolPodJob` creates the Job then applies the policy via `egressApplier.applyForJob`, leaving a brief unrestricted-egress window before Cilium/Istio enforcement lands. This is a pre-existing race for ALL tool jobs, but the impact is higher for unvetted discovery probe images. The fix requires restructuring `createSidecarToolPodJob` to apply the policy first (or atomically), then submit the Job — which touches shared job-runner plumbing and ownerRef garbage-collection semantics. Deferred to a dedicated fix so it can be reviewed and tested independently (`src/k8s/job-runner.ts`, `createSidecarToolPodJob` / `buildSidecarToolPodManifest`).
+
+2. **[Task 10] Tier-3 e2e authored but not run** — the e2e test in `e2e/dynamic-tool-selection-discovery.test.ts` requires a live 8 Gi minikube cluster with Cilium network policy enforcement enabled. This environment is not available in the standard CI runner for this project (9.5 Gi host, no free headroom). The test is a placeholder/skeleton that documents the expected flow; it must be run on a CI environment or dedicated larger host before the tier-3 discovery feature can be considered fully verified end-to-end.

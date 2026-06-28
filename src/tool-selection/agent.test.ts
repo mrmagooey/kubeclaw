@@ -205,7 +205,7 @@ describe('finalizeCredentialApproval — library path', () => {
   });
 
   it('registers the credentialed tool when the token is valid', async () => {
-    const token = mintApprovalToken('image_search', 'brave-search', 'n');
+    const token = mintApprovalToken('image_search', 'brave-search', 'n', 1);
     const r = await finalizeCredentialApproval(
       {
         toolName: 'image_search',
@@ -319,7 +319,7 @@ describe('finalizeCredentialApproval — discovered path (end-to-end)', () => {
 
   it('falls through to library when no pending-discovered row exists', async () => {
     // Seed only the library, no pending-discovered row.
-    const token = mintApprovalToken('image_search', 'brave-search', 'n');
+    const token = mintApprovalToken('image_search', 'brave-search', 'n', 1);
     const r = await finalizeCredentialApproval(
       {
         toolName: 'image_search',
@@ -347,7 +347,7 @@ describe('finalizeCredentialApproval — discovered path (end-to-end)', () => {
       now: 1000,
     });
 
-    const token = mintApprovalToken('smart_search', 'brave-search', 'n');
+    const token = mintApprovalToken('smart_search', 'brave-search', 'n', 2000);
     const r = await finalizeCredentialApproval(
       {
         toolName: 'smart_search',
@@ -371,6 +371,49 @@ describe('finalizeCredentialApproval — discovered path (end-to-end)', () => {
     expect(meta?.provenance).toBe('discovered');
     expect(meta?.scopeGroup).toBe('team-b');
     expect(getPendingDiscovered('smart_search')).toBeUndefined();
+  });
+
+  it('does NOT register the pending spec when catalogId mismatches the approval', async () => {
+    // Seed a pending-discovered row for smart_search with catalogId='google-maps'.
+    const googleMapsSpec: ToolSpec = {
+      name: 'smart_search',
+      description: 'Maps search via Google',
+      parameters: {},
+      image: 'kubeclaw/google-maps:latest@sha256:aabbcc',
+      pattern: 'http',
+      credentials: ['google-maps'],
+      allowedEgress: [{ host: 'maps.googleapis.com', ports: [443] }],
+      channels: ['http'],
+    };
+    putPendingDiscovered({
+      name: 'smart_search',
+      spec: googleMapsSpec,
+      scopeGroup: 'team-a',
+      catalogId: 'google-maps',
+      now: 1000,
+    });
+
+    // Approve with a VALID token for brave-search (different catalogId).
+    const token = mintApprovalToken('smart_search', 'brave-search', 'n', 1000);
+    const r = await finalizeCredentialApproval(
+      {
+        toolName: 'smart_search',
+        catalogId: 'brave-search',
+        approvalToken: token,
+      },
+      {
+        library: () => [], // empty library — falls through to unavailable
+        catalogHostLookup: (id) =>
+          id === 'brave-search' ? 'api.search.brave.com' : undefined,
+        reconcile: async () => {},
+        now: () => 1000,
+        nonce: 'n',
+      },
+    );
+    // The google-maps spec must NOT be registered.
+    expect(getAutoTool('smart_search')).toBeUndefined();
+    // Falls through to an empty library → unavailable.
+    expect(r.status).toBe('unavailable');
   });
 });
 
