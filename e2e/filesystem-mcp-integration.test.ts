@@ -19,17 +19,17 @@ import { isKubernetesAvailable } from './setup.js';
 
 const K8S_AVAILABLE = isKubernetesAvailable();
 const NAMESPACE = process.env.PGC_TEST_NAMESPACE || 'kubeclaw-test-pgc';
-const BUNDLE_IMAGE = 'kubeclaw-mcp-bundle:test';
+const AGENT_IMAGE = 'kubeclaw-agent:test';
 
 const fsSpec = {
   name: 'filesystem',
   kind: 'mcp' as const,
-  image: BUNDLE_IMAGE,
+  image: AGENT_IMAGE,
   scope: 'group' as const,
   scaleDownAfterIdleSeconds: 60,
   volumeFromGroupPvc: true,
   credentialsFrom: 'none' as const,
-  command: ['node', '/app/index.js', '--server', 'filesystem', '--root', '/data'],
+  command: ['node', '/app/dist/mcp-server.js', '--server', 'filesystem', '--root', '/data', '--port', '3000'],
   env: {
     KUBECLAW_FS_MAX_FILE_BYTES: '104857600',
     NODE_OPTIONS: '--max-old-space-size=384',
@@ -138,13 +138,13 @@ EOF`,
       console.warn('PVC setup failed:', err);
     }
     try {
-      sh(`./container/mcp-bundle/build.sh ${BUNDLE_IMAGE}`);
+      sh(`docker build --network=host -f container/Dockerfile -t ${AGENT_IMAGE} .`);
     } catch {
-      console.warn('mcp-bundle build failed.');
+      console.warn('agent image build failed.');
     }
     // Load image into the active local cluster. Try minikube first, then kind.
     try {
-      sh(`minikube image load ${BUNDLE_IMAGE} 2>&1 || true`);
+      sh(`minikube image load ${AGENT_IMAGE} 2>&1 || true`);
     } catch {
       /* not minikube */
     }
@@ -152,7 +152,7 @@ EOF`,
       const ctx = sh('kubectl config current-context').trim();
       if (ctx.startsWith('kind-')) {
         const clusterName = ctx.replace(/^kind-/, '');
-        sh(`kind load docker-image ${BUNDLE_IMAGE} --name ${clusterName} 2>&1 || true`);
+        sh(`kind load docker-image ${AGENT_IMAGE} --name ${clusterName} 2>&1 || true`);
       }
     } catch {
       /* not kind */
@@ -220,7 +220,7 @@ EOF`,
     } finally {
       stop();
     }
-    const cached = getCachedSchemas('filesystem', BUNDLE_IMAGE);
+    const cached = getCachedSchemas('filesystem', AGENT_IMAGE);
     expect(cached).not.toBeNull();
     const names = (cached ?? []).map((s) => s.name).sort();
     expect(names).toEqual([

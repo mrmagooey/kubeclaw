@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { createServer as createHttpServer } from 'node:http';
+import { createServer as createHttpServer, type Server as HttpServer } from 'node:http';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import {
@@ -13,19 +13,19 @@ import { resolveSafePath } from './paths.js';
  * Read the file-size cap on each call (not at module load) so tests can
  * stub it via process.env without restarting the module.
  */
-function maxFileBytes() {
+function maxFileBytes(): number {
   return Number(process.env.KUBECLAW_FS_MAX_FILE_BYTES) || 100 * 1024 * 1024;
 }
 
-function errorResult(message) {
+function errorResult(message: string) {
   return {
     isError: true,
-    content: [{ type: 'text', text: message }],
+    content: [{ type: 'text' as const, text: message }],
   };
 }
 
-function textResult(text) {
-  return { content: [{ type: 'text', text }] };
+function textResult(text: string) {
+  return { content: [{ type: 'text' as const, text }] };
 }
 
 const TOOL_DEFINITIONS = [
@@ -86,7 +86,7 @@ const TOOL_DEFINITIONS = [
   },
 ];
 
-function createMcpServer(root) {
+function createMcpServer(root: string): Server {
   const mcp = new Server(
     { name: 'kubeclaw-filesystem', version: '0.0.1' },
     { capabilities: { tools: {} } },
@@ -98,13 +98,13 @@ function createMcpServer(root) {
 
   mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
     const name = req.params.name;
-    const args = req.params.arguments ?? {};
+    const args = (req.params.arguments ?? {}) as Record<string, unknown>;
     try {
       switch (name) {
         case 'read_file': {
-          const full = resolveSafePath(root, args.path);
+          const full = resolveSafePath(root, args['path'] as string);
           const stat = await fs.promises.stat(full);
-          if (!stat.isFile()) return errorResult(`not a file: ${args.path}`);
+          if (!stat.isFile()) return errorResult(`not a file: ${args['path']}`);
           const cap = maxFileBytes();
           if (stat.size > cap) {
             return errorResult(
@@ -115,7 +115,7 @@ function createMcpServer(root) {
           return textResult(content);
         }
         case 'write_file': {
-          const content = String(args.content ?? '');
+          const content = String(args['content'] ?? '');
           const bytes = Buffer.byteLength(content, 'utf8');
           const cap = maxFileBytes();
           if (bytes > cap) {
@@ -123,17 +123,20 @@ function createMcpServer(root) {
               `content too large (${bytes} bytes > ${cap} byte limit)`,
             );
           }
-          const full = resolveSafePath(root, args.path);
+          const full = resolveSafePath(root, args['path'] as string);
           await fs.promises.mkdir(path.dirname(full), { recursive: true });
           await fs.promises.writeFile(full, content, 'utf8');
-          return textResult(`wrote ${bytes} bytes to ${args.path}`);
+          return textResult(`wrote ${bytes} bytes to ${args['path']}`);
         }
         case 'list_directory': {
-          const full = resolveSafePath(root, args.path);
+          const full = resolveSafePath(root, args['path'] as string);
           const entries = await fs.promises.readdir(full, { withFileTypes: true });
           const out = await Promise.all(
             entries.map(async (e) => {
-              const item = { name: e.name, type: e.isDirectory() ? 'dir' : 'file' };
+              const item: { name: string; type: string; size?: number } = {
+                name: e.name,
+                type: e.isDirectory() ? 'dir' : 'file',
+              };
               if (!e.isDirectory()) {
                 try {
                   const s = await fs.promises.stat(path.join(full, e.name));
@@ -148,14 +151,14 @@ function createMcpServer(root) {
           return textResult(JSON.stringify(out));
         }
         case 'search_files': {
-          const full = resolveSafePath(root, args.path);
-          const matches = await searchGlob(full, args.pattern, root);
+          const full = resolveSafePath(root, args['path'] as string);
+          const matches = await searchGlob(full, args['pattern'] as string, root);
           return textResult(JSON.stringify(matches));
         }
         case 'create_directory': {
-          const full = resolveSafePath(root, args.path);
+          const full = resolveSafePath(root, args['path'] as string);
           await fs.promises.mkdir(full, { recursive: true });
-          return textResult(`created ${args.path}`);
+          return textResult(`created ${args['path']}`);
         }
         default:
           return errorResult(`unknown tool: ${name}`);
@@ -173,8 +176,8 @@ function createMcpServer(root) {
  * `*`, `**`, and `?` against POSIX paths. Output paths are relative to
  * `capabilityRoot`.
  */
-async function searchGlob(searchRoot, pattern, capabilityRoot) {
-  const matches = [];
+async function searchGlob(searchRoot: string, pattern: string, capabilityRoot: string): Promise<string[]> {
+  const matches: string[] = [];
   await walk(searchRoot, '', (relPath) => {
     if (matchesGlob(relPath, pattern)) {
       const absolute = path.join(searchRoot, relPath);
@@ -184,7 +187,7 @@ async function searchGlob(searchRoot, pattern, capabilityRoot) {
   return matches;
 }
 
-async function walk(dir, prefix, visit) {
+async function walk(dir: string, prefix: string, visit: (rel: string) => void): Promise<void> {
   let entries;
   try {
     entries = await fs.promises.readdir(dir, { withFileTypes: true });
@@ -201,7 +204,7 @@ async function walk(dir, prefix, visit) {
   }
 }
 
-function matchesGlob(p, pattern) {
+function matchesGlob(p: string, pattern: string): boolean {
   // Convert glob to regex: ** → .*, * → [^/]*, ? → [^/]
   const re =
     '^' +
@@ -219,8 +222,11 @@ function matchesGlob(p, pattern) {
  * Start the filesystem MCP server listening on `port`, serving files
  * under `root`. Per-request transport+server factory pattern (matches the
  * echo-mcp container; required by MCP SDK >=1.10 stateless mode).
+ *
+ * Returns the underlying http.Server so callers (e.g. tests) can close it.
  */
-export async function startFilesystemServer({ root, port }) {
+export async function startFilesystemServer(opts: { root: string; port: number }): Promise<HttpServer> {
+  const { root, port } = opts;
   await fs.promises.mkdir(root, { recursive: true });
 
   const httpServer = createHttpServer(async (req, res) => {
@@ -249,4 +255,13 @@ export async function startFilesystemServer({ root, port }) {
       resolve(httpServer);
     });
   });
+}
+
+/**
+ * Dispatcher-facing entrypoint. Boots the HTTP server and resolves when
+ * the server is listening. Does not return the server handle — the process
+ * is expected to run indefinitely.
+ */
+export async function start(opts: { root: string; port: number }): Promise<void> {
+  await startFilesystemServer(opts);
 }

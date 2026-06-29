@@ -53,7 +53,7 @@ tag `latest`). Build them with:
 
 ```bash
 eval "$(minikube docker-env)"
-./container/build.sh --all      # kubeclaw-agent, -orchestrator, -mcp-bundle (:latest)
+./container/build.sh --all      # kubeclaw-agent, -orchestrator, -mock-llm (:latest)
 ```
 
 `global-setup` rebuilds the **orchestrator** image automatically when anything
@@ -106,7 +106,7 @@ install the baseline release. It expects images tagged `:e2e-test`.
 
 eval "$(minikube docker-env)"
 ./container/build.sh --all
-for img in orchestrator agent mcp-bundle; do
+for img in orchestrator agent; do
   docker tag "kubeclaw-${img}:latest" "kubeclaw-${img}:e2e-test"
 done
 

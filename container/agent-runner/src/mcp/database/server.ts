@@ -1,5 +1,5 @@
 /**
- * Postgres-MCP server: exposes a read-only `query` tool and a gated
+ * Database MCP server: exposes a read-only `query` tool and a gated
  * `execute` tool over MCP, token-gated via Bearer auth on the /mcp endpoint.
  *
  * Read-only enforcement is ROLE-BASED: the `query` tool runs on a pool
@@ -9,9 +9,13 @@
  * kept on the ro pool as defence-in-depth only.
  *
  * Pure helpers (capRows, isAuthorized, buildToolHandlers) are exported for
- * unit testing. The pg Pools and MCP wiring live inside main() and use
+ * unit testing. The pg Pools and MCP wiring live inside start() and use
  * dynamic imports so the module can be loaded in tests without pg installed.
  */
+
+// Type-only import: erased at compile time, no runtime module load (safe for
+// test environments that skip the dynamic pg / MCP SDK imports inside start()).
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
 // ─── Role bootstrap SQL (pure helper, no external deps) ──────────────────────
 
@@ -25,7 +29,7 @@ export const SAFE_IDENTIFIER_RE = /^[a-z_][a-z0-9_]*$/;
  *
  * The role name is validated against a strict safe-identifier regex because
  * it is interpolated directly into the SQL string (identifiers cannot be
- * parameterized). The role password is handled separately by `main()` via a
+ * parameterized). The role password is handled separately by `start()` via a
  * parameterized `ALTER ROLE ... PASSWORD $1` query — never string-interpolated.
  *
  * @throws if roUser contains characters outside `^[a-z_][a-z0-9_]*$`
@@ -99,7 +103,7 @@ export interface ToolHandlerInput {
 }
 
 export interface ToolHandlerOutput {
-  content: Array<{ type: string; text: string }>;
+  content: Array<{ type: 'text'; text: string }>;
 }
 
 /**
@@ -111,7 +115,7 @@ export function buildToolHandlers(opts: {
   rwPool: QueryPool;
   maxRows: number;
   statementTimeoutMs: number;
-}): (req: ToolHandlerInput) => Promise<ToolHandlerOutput> {
+}): (req: ToolHandlerInput) => Promise<CallToolResult> {
   const { roPool, rwPool, maxRows, statementTimeoutMs } = opts;
 
   return async (req) => {
@@ -147,7 +151,7 @@ export function buildToolHandlers(opts: {
 
 // ─── Server wiring ────────────────────────────────────────────────────────────
 
-export async function main(): Promise<void> {
+export async function start(opts: { port: number }): Promise<void> {
   // ── Startup validation ────────────────────────────────────────────────────
   const MCP_TOKEN = process.env.KUBECLAW_MCP_TOKEN;
   if (!MCP_TOKEN) {
@@ -237,7 +241,7 @@ export async function main(): Promise<void> {
       } catch {
         if (i < BOOTSTRAP_RETRIES - 1) {
           console.log(
-            `postgres-mcp: waiting for Postgres (attempt ${i + 1}/${BOOTSTRAP_RETRIES})…`,
+            `database-mcp: waiting for Postgres (attempt ${i + 1}/${BOOTSTRAP_RETRIES})…`,
           );
           await new Promise((r) => setTimeout(r, BOOTSTRAP_RETRY_DELAY_MS));
         }
@@ -281,7 +285,7 @@ export async function main(): Promise<void> {
       }
 
       console.log(
-        `postgres-mcp: ro role "${PG_RO_USER}" bootstrapped successfully.`,
+        `database-mcp: ro role "${PG_RO_USER}" bootstrapped successfully.`,
       );
     } catch (err) {
       console.error('FATAL: ro role bootstrap failed:', err);
@@ -298,7 +302,7 @@ export async function main(): Promise<void> {
 
   function createMcpServer() {
     const mcp = new Server(
-      { name: 'postgres-mcp', version: '1.0.0' },
+      { name: 'database-mcp', version: '1.0.0' },
       { capabilities: { tools: {} } },
     );
 
@@ -374,22 +378,7 @@ export async function main(): Promise<void> {
     res.end();
   });
 
-  const port = parseInt(process.env.PORT ?? '3000', 10);
-  httpServer.listen(port, () =>
-    console.log(`postgres-mcp listening on ${port}`),
+  httpServer.listen(opts.port, () =>
+    console.log(`database-mcp listening on ${opts.port}`),
   );
-}
-
-// Auto-start when executed directly (not imported by tests).
-// In ESM, import.meta.url is the canonical URL of this module.
-// When run as `node server.js`, process.argv[1] resolves to the same path.
-import { fileURLToPath } from 'url';
-import { resolve } from 'path';
-
-const __filename = fileURLToPath(import.meta.url);
-if (resolve(process.argv[1]) === resolve(__filename)) {
-  main().catch((err) => {
-    console.error('Fatal error in postgres-mcp:', err);
-    process.exit(1);
-  });
 }

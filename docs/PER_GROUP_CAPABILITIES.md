@@ -15,7 +15,8 @@ capabilities:
   filesystem:
     kind: mcp
     scope: group
-    image: ghcr.io/your-org/kubeclaw-mcp-bundle:1.0.0
+    image: ghcr.io/your-org/kubeclaw-agent:1.0.0
+    cmd: ["node", "/app/dist/mcp-server.js", "--server", "filesystem", "--root", "/data", "--port", "3000"]
     volumeFromGroupPvc: true        # mount /data with group's subPath
     credentialsFrom: none
     scaleDownAfterIdleSeconds: 600  # default 600; min 60
@@ -157,8 +158,8 @@ turn picks up the new names from the refreshed tool list.
 ## Filesystem MCP (Phase B Spec 2)
 
 The filesystem capability ships **default-on**. Every registered group gets
-its own `kubeclaw-mcp-bundle` pod (scaled to zero when idle) exposing five
-tools under `mcp__filesystem__*`:
+its own MCP server pod running `kubeclaw-agent` with `mcp-server.js --server filesystem`
+(scaled to zero when idle) exposing five tools under `mcp__filesystem__*`:
 
 - `read_file(path)` — UTF-8 contents
 - `write_file(path, content)` — overwrites
@@ -282,10 +283,10 @@ to a group via the admin shell:
 
 This triggers reconcile: the orchestrator provisions a dedicated PVC, generates
 per-group credentials (MCP bearer token, rw Postgres password, ro Postgres
-password), and applies a Deployment containing the `kubeclaw-postgres-mcp` MCP
-server as the primary container and a `postgres:16` sidecar. Because the
-capability is `pinned: true`, the pod starts immediately at `replicas: 1` and
-never idles down.
+password), and applies a Deployment containing the `kubeclaw-agent` MCP server
+(running `mcp-server.js --server database`) as the primary container and a
+`postgres:16` sidecar. Because the capability is `pinned: true`, the pod starts
+immediately at `replicas: 1` and never idles down.
 
 To remove the capability (pod and K8s objects only — see PVC note below):
 
@@ -443,4 +444,4 @@ create a new Deployment that mounts the existing PVC.
 - Spec: `docs/superpowers/specs/2026-05-17-per-group-mcp-capabilities-phase-a-design.md`
 - Implementation plan: `docs/superpowers/plans/2026-05-17-per-group-mcp-capabilities-phase-a.md`
 - Source: `src/per-group-capabilities/`
-- Database capability server: `container/postgres-mcp/server.ts`
+- MCP server implementations: `container/agent-runner/src/mcp-server.ts`

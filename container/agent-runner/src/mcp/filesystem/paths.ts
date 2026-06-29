@@ -13,7 +13,7 @@ import fs from 'node:fs';
  *
  * Returns the absolute, realpath'd path inside `root`. Throws on violation.
  */
-export function resolveSafePath(root, rawPath) {
+export function resolveSafePath(root: string, rawPath: string): string {
   if (rawPath === undefined || rawPath === null || rawPath === '') {
     throw new Error('path is required');
   }
@@ -42,7 +42,7 @@ export function resolveSafePath(root, rawPath) {
   return joined;
 }
 
-function isUnder(target, root) {
+function isUnder(target: string, root: string): boolean {
   const rel = path.relative(root, target);
   return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
 }

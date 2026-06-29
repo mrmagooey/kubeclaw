@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { resolveSafePath } from './paths.js';
 
-let root;
+let root: string;
 
 beforeEach(() => {
   root = mkdtempSync(path.join(tmpdir(), 'paths-test-'));

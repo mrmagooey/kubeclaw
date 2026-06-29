@@ -2,13 +2,14 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import type { Server as HttpServer } from 'node:http';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { startFilesystemServer } from './server.js';
 
-let root;
-let server;
-let port;
+let root: string;
+let server: HttpServer;
+let port: number;
 
 beforeEach(async () => {
   root = mkdtempSync(path.join(tmpdir(), 'fs-mcp-test-'));
@@ -18,11 +19,11 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await new Promise((r) => server.close(r));
+  await new Promise<void>((r) => server.close(() => r()));
   rmSync(root, { recursive: true, force: true });
 });
 
-async function call(name, args) {
+async function call(name: string, args: Record<string, unknown>) {
   const transport = new StreamableHTTPClientTransport(
     new URL(`http://127.0.0.1:${port}/mcp`),
   );
@@ -42,14 +43,14 @@ describe('filesystem MCP server', () => {
   it('write_file then read_file round-trip', async () => {
     await call('write_file', { path: 'notes.md', content: 'hello' });
     const read = await call('read_file', { path: 'notes.md' });
-    expect(read.content?.[0]?.text).toBe('hello');
+    expect((read.content as Array<{ text: string }>)?.[0]?.text).toBe('hello');
   });
 
   it('list_directory returns entries with type and size', async () => {
     writeFileSync(path.join(root, 'a.md'), 'aaa');
     mkdirSync(path.join(root, 'sub'));
     const out = await call('list_directory', { path: '.' });
-    const entries = JSON.parse(out.content?.[0]?.text);
+    const entries = JSON.parse((out.content as Array<{ text: string }>)?.[0]?.text) as Array<{ name: string; type: string; size?: number }>;
     const byName = Object.fromEntries(entries.map((e) => [e.name, e]));
     expect(byName['a.md']?.type).toBe('file');
     expect(byName['a.md']?.size).toBe(3);
@@ -61,7 +62,7 @@ describe('filesystem MCP server', () => {
     writeFileSync(path.join(root, 'a/b/c.md'), 'x');
     writeFileSync(path.join(root, 'a/d.txt'), 'x');
     const out = await call('search_files', { path: '.', pattern: '**/*.md' });
-    const matches = JSON.parse(out.content?.[0]?.text);
+    const matches = JSON.parse((out.content as Array<{ text: string }>)?.[0]?.text) as string[];
     expect(matches).toContain('a/b/c.md');
     expect(matches).not.toContain('a/d.txt');
   });
@@ -75,13 +76,13 @@ describe('filesystem MCP server', () => {
   it('path traversal is rejected', async () => {
     const out = await call('read_file', { path: '../../etc/passwd' });
     expect(out.isError).toBe(true);
-    expect(out.content?.[0]?.text).toMatch(/traversal/i);
+    expect((out.content as Array<{ text: string }>)?.[0]?.text).toMatch(/traversal/i);
   });
 
   it('absolute paths are rejected', async () => {
     const out = await call('read_file', { path: '/etc/passwd' });
     expect(out.isError).toBe(true);
-    expect(out.content?.[0]?.text).toMatch(/absolute/i);
+    expect((out.content as Array<{ text: string }>)?.[0]?.text).toMatch(/absolute/i);
   });
 
   it('symlink escape is rejected', async () => {
@@ -91,7 +92,7 @@ describe('filesystem MCP server', () => {
   });
 
   it('write_file rejects content over the configured cap', async () => {
-    // The server reads the env on each call (maxFileBytes() in server.js),
+    // The server reads the env on each call (maxFileBytes() in server.ts),
     // so this works without restarting the server.
     const prev = process.env.KUBECLAW_FS_MAX_FILE_BYTES;
     process.env.KUBECLAW_FS_MAX_FILE_BYTES = '10';
@@ -101,7 +102,7 @@ describe('filesystem MCP server', () => {
         content: 'this content is longer than ten bytes',
       });
       expect(out.isError).toBe(true);
-      expect(out.content?.[0]?.text).toMatch(/too large/i);
+      expect((out.content as Array<{ text: string }>)?.[0]?.text).toMatch(/too large/i);
     } finally {
       if (prev === undefined) delete process.env.KUBECLAW_FS_MAX_FILE_BYTES;
       else process.env.KUBECLAW_FS_MAX_FILE_BYTES = prev;
@@ -115,7 +116,7 @@ describe('filesystem MCP server', () => {
     try {
       const out = await call('read_file', { path: 'big.md' });
       expect(out.isError).toBe(true);
-      expect(out.content?.[0]?.text).toMatch(/too large/i);
+      expect((out.content as Array<{ text: string }>)?.[0]?.text).toMatch(/too large/i);
     } finally {
       if (prev === undefined) delete process.env.KUBECLAW_FS_MAX_FILE_BYTES;
       else process.env.KUBECLAW_FS_MAX_FILE_BYTES = prev;
@@ -126,6 +127,6 @@ describe('filesystem MCP server', () => {
     mkdirSync(path.join(root, 'sub'));
     const out = await call('read_file', { path: 'sub' });
     expect(out.isError).toBe(true);
-    expect(out.content?.[0]?.text).toMatch(/not a file/i);
+    expect((out.content as Array<{ text: string }>)?.[0]?.text).toMatch(/not a file/i);
   });
 });

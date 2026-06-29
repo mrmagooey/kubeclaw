@@ -6,6 +6,7 @@ All notable changes to KubeClaw will be documented in this file.
 
 ### Breaking changes
 
+- **MCP capability images `kubeclaw-mcp-bundle` and `kubeclaw-postgres-mcp` have been removed.** Both filesystem and database MCP capabilities are now served from the `kubeclaw-agent` image via `node /app/dist/mcp-server.js --server <filesystem|database>`. Build and push only `kubeclaw-agent`, `kubeclaw-orchestrator`, and `kubeclaw-mock-llm` to your registry. The `postgres:16` sidecar for the database capability remains unchanged.
 - **`agents.json` per-group specialist files are no longer read.** Specialists are now defined in a cluster-wide catalog via Helm `values.yaml` (`specialists: [...]`) or registered at runtime via the admin shell (`register_specialist`). See `docs/SPECIALISTS.md` (rewritten) and `docs/superpowers/specs/2026-05-16-global-specialist-catalog-design.md`.
 - **`src/index.ts:373-559` (orchestrator-mode `processGroupMessages`) and the `_processGroupMessages` export have been removed.** They were dead code post-four-tier architecture.
 - **`conversation_history` schema:** new `session_key` column. Additive migration with online backfill; no operator action needed.
@@ -43,15 +44,12 @@ All notable changes to KubeClaw will be documented in this file.
 - **New orchestrator background loop:** schema scraper. Runs every 60 s, scrapes any (capability, image) pair without a cached schema, caps retries at 3 per orchestrator-process lifetime.
 - **Per-group Deployments now expose a readinessProbe on `/health`** so the K8s API only reports them ready once the MCP server is accepting connections. Removes a race against scrape and discovery RPCs.
 - **Filesystem MCP capability (Phase B Spec 2)** — default-on. Each
-  registered group gets a per-group `kubeclaw-mcp-bundle` pod (scales to
-  zero when idle) exposing five tools to the LLM under the
-  `mcp__filesystem__*` prefix: `read_file`, `write_file`, `list_directory`,
-  `search_files`, `create_directory`. Files are stored on the group's PVC
-  subPath; 100 MiB file-size cap (configurable via
-  `KUBECLAW_FS_MAX_FILE_BYTES`).
-- **New container image `kubeclaw-mcp-bundle`** — Node-based, hosts
-  multiple MCP server kinds selected via `--server` arg. Filesystem is the
-  first inhabitant.
+  registered group gets a per-group pod (scales to zero when idle) running
+  the `kubeclaw-agent` image with `mcp-server.js --server filesystem`,
+  exposing five tools to the LLM under the `mcp__filesystem__*` prefix:
+  `read_file`, `write_file`, `list_directory`, `search_files`, `create_directory`.
+  Files are stored on the group's PVC subPath; 100 MiB file-size cap (configurable
+  via `KUBECLAW_FS_MAX_FILE_BYTES`).
 - **Helm static-template gate for group-scoped capabilities** —
   capability-pods, serviceaccounts, and metrics-servicemonitor now skip
   entries with `scope: group`, leaving their deployment to the
