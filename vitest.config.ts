@@ -12,6 +12,16 @@ export default defineConfig({
     },
   },
   test: {
+    // Default forks pool is uncapped (≈ core count). Each fork carries libuv's
+    // threadpool + V8 background threads (~8-12 kernel tasks), and on Linux
+    // threads count against the cgroup pids limit (2048 in our sandbox/CI,
+    // shared with everything else in the session). Isolation also churns a
+    // fresh fork per file across ~770 files, so spawn rate spikes the task
+    // count. Cap concurrency to keep the footprint well under the limit.
+    // ponytail: maxForks=2 trades some speed for headroom; drop to
+    // singleFork:true if a runner's pids.max is tighter still.
+    pool: 'forks',
+    poolOptions: { forks: { maxForks: 2, minForks: 1 } },
     include: [
       'src/**/*.test.ts',
       'setup/**/*.test.ts',

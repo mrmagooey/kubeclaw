@@ -21,18 +21,16 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             container/agent-runner/package-lock.json
-            container/postgres-mcp/package-lock.json
 
       - name: Install root dependencies
         run: npm ci
 
       - name: Install sub-package dependencies
-        # vitest.config.ts includes tests from these sub-packages, which resolve
-        # their own dependencies (e.g. @mariozechner/pi-agent-core); without these
-        # installs those test files fail to load.
-        run: |
-          npm ci --prefix container/agent-runner
-          npm ci --prefix container/postgres-mcp
+        # vitest.config.ts includes tests from container/agent-runner, which
+        # resolves its own dependencies (e.g. @mariozechner/pi-agent-core and the
+        # MCP servers folded in from the old postgres-mcp/mcp-bundle images);
+        # without this install those test files fail to load.
+        run: npm ci --prefix container/agent-runner
 
       - name: Run unit tests
         run: npm test
